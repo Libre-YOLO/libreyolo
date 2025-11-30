@@ -119,11 +119,26 @@ class BDDCollapse(nn.Module):
     INPUTS: [B,8400,64]
     OUTPUTS: [B,8400,4]
     """
-    def __init__(self, x):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(16, 1, 1, bias=False).requires_grad_(False)
+        x = torch.arange(c1, dtype=torch.float)
+        self.conv.weight.data[:] = nn.Parameter(x.view(1, 16, 1, 1))
+        self.c1 = 16
+
+    def forward(self,x):
         if x.ndim != 3 or x.shape[1:] != (8400, 64): #check if the input shape is correct (B,8400,64)
-            raise ValueError(f"Expected input of shape [B,8400,64], got {tuple(x.shape)}")    
+            raise ValueError(f"Expected input of shape [B,8400,64], got {tuple(x.shape)}")
+        b, c, h, w = x.shape
+        # Reshape to (Batch, 4, 16, H, W) and transpose to (Batch, 16, 4, H, W)
+        x = x.view(b, 4, self.c1, h, w).transpose(2, 1)
+        # Apply softmax to get probability distribution
+        x = F.softmax(x, dim=1)
+        # Apply the convolution (weighted sum) to reduce 16 channels to 1
+        # Reshape to (Batch, 16, 4*H, W) so Conv2d sees a valid 4D tensor
+        x = self.conv(x.reshape(b, self.c1, 4 * h, w))
+        # Reshape back to (Batch, 4, H, W)
+        return x.view(b, 4, h, w)
         
-
-
 
         
