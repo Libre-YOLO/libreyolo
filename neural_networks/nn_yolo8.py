@@ -2,128 +2,103 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from nn_blocks import Conv, CSP, SPPF, C2F, Head
+from constant import P1_CHANNELS, P2_CHANNELS, P3_CHANNELS, P4_CHANNELS, P5_CHANNELS
+from constant import D, W, R
 
-class Conv(nn.Module):
-    def __init__(self, k, s, p, c_out):
+
+class YoloV8(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.convolution = nn.LazyConv2d(out_channels=c_out, kernel_size=k, stride=s, padding=p, bias=False)
-        self.normalization = nn.BatchNorm2d(num_features=c_out)
-        self.activation_function = nn.SiLU()
+        self.backbone = Backbone()
+        self.neck = Neck()
+        self.head = Head()
+
     def forward(self, activation):
-        x = self.convolution(activation)
-        x = self.normalization(x)
-        x = self.activation_function(x)
-        return x
-
-class C2F(nn.Module):
-    def __init__(self, c_out, shortcut, bottlenecks=3):
-        super().__init__()
-        self.convolution1 = Conv(k=1, s=1, p=0, c_out=c_out)
-        self.convolution2 = Conv(k=1, s=1, p=0, c_out=c_out)
-        self.bottleneck = Bottleneck(k=3, s=1, p=1, c=c_out, shortcut=shortcut)
-        self.nb_bottlenecks = bottlenecks
-
-    def forward(self,activation):
-        x = self.convolution(activation)
-        x1,x2 = torch.tensor_split(x)
-        # x = torch.cat(x1,x2)
-        for i in range(self.nb_bottlenecks - 1):
-            x2 = self.bottleneck(x2)
-            x = torch.cat(x,x2)
-        x = self.convolution(activation)
-        return x
-
-class CSP(nn.Module):
-    def __init__(self):
-        super().__init__()
-        # Branch A (light)
-        self.branch_A = Conv(k=1, s=1, p=0)
-        # Branch B (two Conv)
-        self.branch_B_1= Conv(k=1, s=1, p=0)
-        self.branch_B_2= Conv(k=1, s=1, p=0)
-        # Fuse both branches
-        self.fuse = Conv(k=1, s=1, p=0, c_in=128)
-
-    def forward(self, activations):
-        a = self.branch_A(activations)
-        b = self.branch_B_1(activations)
-        b = self.branch_B_2(b)
-        x = torch.cat((a,b), dim=1)
-        x = self.fuse(x)
-        return x
-
-
-class SPPF(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = Conv(k=1, s=1, p=0)
-        self.pool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
-        self.fuse = Conv(k=1, s=1, p=0)
-    def forward(self, activations):
-        x0 = self.conv(activations)
-        x1 = self.pool(x0)
-        x2 = self.pool(x1)
-        x3 = self.pool(x2)
-        x = torch.cat((x0, x1, x2, x3), dim=1)
-        return self.conv(x)
-        # return self.fuse(y)
-
-
-class Bottleneck(torch.nn.Module):
-    def __init__(self, k, s, p, c, shortcut=False):
-        super().__init__()
-        """
-        # Old Conv implementation with c_in
-        self.layer1 = Conv(k=k,s=s,p=p,c_in=c)
-        self.layer2 = Conv(k=k,s=s,p=p,c_in=c)
-        """
+        small, medium, large = self.backbone(activation)
+        small, medium, large = self.neck(small, medium, large)
+        return self.head(small, medium, large)
         
-        self.layer1 = Conv(k=k, s=s, p=p) # Aqui falta c_out
-        self.layer2 = Conv(k=k, s=s, p=p) # Aqui falta c_out
-        self.use_shortcut = shortcut
 
-    def forward(self, activations):
-        x = self.layer1(activations)
-        x = self.layer2(x)
-        if self.use_shortcut:
-            x += activations
-        return x
-
-
-class Head(nn.Module):
-    def __init__(self, nc=80, reg_max=1):
+class Backbone(nn.Module):
+    def __init__(self, d=D, w=W, ratio=R):
         super().__init__()
-        self.conv = Conv(k=3, s=1, p=1)
-        self.bb_conv2d  = nn.LazyConv2d(out_channels=4*reg_max, kernel_size=1, stride=1, padding=0)
-        self.cls_conv2d  = nn.LazyConv2d(out_channels=nc, kernel_size=1, stride=1, padding=0)
-    
+        # 640x640x3
+        self.layer0 = Conv(k=3, s=2, p=1, c_out=P1_CHANNELS) # P1
+        # 320x320x64
+        self.layer1 = Conv(k=3, s=2, p=1, c_out=P2_CHANNELS) # P2
+        # 160x160x128
+        self.layer2 = C2F(c_out=P2_CHANNELS, shortcut=True, bottlenecks=3*d)
+        self.layer3 = Conv(k=3, s=2, p=1, c_out=P3_CHANNELS) # P3
+        # 80x80x256
+        self.layer4 = C2F(c_out=P3_CHANNELS, shortcut=True, bottlenecks=6*d)
+        self.layer5 = Conv(k=3, s=2, p=1, c_out=P4_CHANNELS) # P4
+        # 40x40x512
+        self.layer6 = C2F(c_out=P4_CHANNELS, shortcut=True, bottlenecks=6*d)
+        self.layer7 = Conv(k=3, s=2, p=1, c_out=P5_CHANNELS) # P5
+        # 20x20x512
+        self.layer8 = C2F(c_out=P5_CHANNELS, shortcut=True, bottlenecks=3*d)
+        self.layer9 = SPPF()
+
     def forward(self, x):
-        # box path
-        b = self.conv(x)
-        b = self.conv(b)
-        b = self.bb_conv2d(b)
+        x = self.layer0(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        large = self.layer4(x)
+        x = self.layer5(large)
+        medium = self.layer6(x)
+        x = self.layer7(medium)
+        x = self.layer8(x)
+        small = self.layer9(x)
+        return small, medium, large
 
-        # class path
-        c = self.conv(x)
-        c = self.conv(c)
-        c = self.cls_conv2d(c)
 
-        return b, c
+class Neck(nn.Module):
+    def __init__(self, d=D, w=W, ratio=R):
+        super().__init__()
+        # layer 10 and 13
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+        # layer 11 is a Concat (implemented in forward) - P3
+        self.layer12 = C2F(c_out=P3_CHANNELS, shortcut=False, bottlenecks=3*d)
+        # layer 14 is a Concat (implemented in forward) - P3
+        self.layer15 = C2F(c_out=P3_CHANNELS, shortcut=False, bottlenecks=3*d)
+        self.layer16 = Conv(k=3, s=2, p=1, c_out=P3_CHANNELS)
+        # layer 17 is a Concat (implemented in forward) - P4
+        self.layer18 = C2F(c_out=P4_CHANNELS, shortcut=False, bottlenecks=3*d)
+        self.layer19 = Conv(k=3, s=2, p=1, c_out=P4_CHANNELS)
+        # layer 20 is a Concat (implemented in forward) - P5
+        self.layer21 = C2F(c_out=P5_CHANNELS, shortcut=False, bottlenecks=3*d)
+
+    def forward(self, small, medium, large):
+        x = self.upsample(small)
+        x = torch.cat((x, medium), dim=1)
+        medium_c2f_out = self.layer12(x)
+        x = self.upsample(medium_c2f_out)
+        x = torch.cat((x, large), dim=1)
+        large_out = self.layer15(x)
+        x = self.layer16(x)
+        x = torch.cat((x, medium_c2f_out), dim=1)
+        medium_out = self.layer18(x)
+        x = self.layer19(medium_out)
+        x = torch.cat((x, small), dim=1)
+        small_out = self.layer21(x)
+        return small_out, medium_out, large_out
 
 
-class BDDCollapse(nn.Module):
-    """
-    The goal of decode_bbox is to input the prediction ditribution tensor (16 per side following DFL)
-    and to output a single bounding box.
-    Prediction distribution tensor shape:(B,4*16,feature_map_h,feature_map_w)
-    INPUTS: [B,8400,64]
-    OUTPUTS: [B,8400,4]
-    """
-    def __init__(self, x):
-        if x.ndim != 3 or x.shape[1:] != (8400, 64): #check if the input shape is correct (B,8400,64)
-            raise ValueError(f"Expected input of shape [B,8400,64], got {tuple(x.shape)}")    
+class Detect(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.small_detect = Head()
+        self.medium_detect = Head()
+        self.large_detect = Head()
+
+    def forward(self, small, medium, large):
+        small_out = self.small_detect.forward(small)
+        medium_out = self.medium_detect.forward(medium)
+        large_out = self.large_detect.forward(large)
+        x = nn.cat((small_out,medium_out,large_out),dim=0)
         
 
+        return x
 
-
-        
