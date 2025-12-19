@@ -10,6 +10,7 @@ of the source weights they are converting.
 """
 
 import torch
+import argparse
 
 # LICENSE NOTICE: Weights inherit the license from their source
 print("=" * 70)
@@ -18,7 +19,7 @@ print("they originated. Converted weights maintain the same license restrictions
 print("=" * 70)
 
 
-def convert_weights(source_path="yolov8x.pt", output_path="libreyolo8x.pt"):
+def convert_weights(source_path, output_path):
     """
     Convert YOLOv8 weights to Libre YOLO format.
     
@@ -28,15 +29,20 @@ def convert_weights(source_path="yolov8x.pt", output_path="libreyolo8x.pt"):
     """
     print(f"Loading weights from: {source_path}")
     
-    # LICENSE NOTICE: Weights inherit license from source
     try:
         source_data = torch.load(source_path, map_location='cpu', weights_only=False)
     except FileNotFoundError:
         print(f"Error: Could not find {source_path}.")
         return
     except Exception as e:
-        print(f"Error loading file: {e}")
-        return
+        error_str = str(e)
+        if "module" in error_str.lower() or "import" in error_str.lower() or "unpicklingerror" in error_str.lower():
+            print("Error: Missing required dependencies to load this checkpoint.")
+            print("Install with: pip install ultralytics")
+            return
+        else:
+            print(f"Error loading checkpoint: {error_str}")
+            return
     
     # Extract state_dict
     if 'model' in source_data:
@@ -167,4 +173,9 @@ def convert_weights(source_path="yolov8x.pt", output_path="libreyolo8x.pt"):
 
 
 if __name__ == "__main__":
-    convert_weights()
+    parser = argparse.ArgumentParser(description="Convert YOLOv8 weights to Libre YOLO format")
+    parser.add_argument("--source", type=str, required=True, help="Path to source YOLOv8 weights file")
+    parser.add_argument("--output", type=str, required=True, help="Path to output converted weights file")
+    
+    args = parser.parse_args()
+    convert_weights(source_path=args.source, output_path=args.output)
