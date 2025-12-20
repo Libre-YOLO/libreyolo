@@ -286,9 +286,9 @@ class LibreYOLO8Model(nn.Module):
         decoded_box32 = self.dfl(box32)
         
         out = {
-            'x8': {'box': decoded_box8, 'cls': cls8},
-            'x16': {'box': decoded_box16, 'cls': cls16},
-            'x32': {'box': decoded_box32, 'cls': cls32}
+            'x8': {'box': decoded_box8, 'cls': cls8, 'raw_box': box8},
+            'x16': {'box': decoded_box16, 'cls': cls16, 'raw_box': box16},
+            'x32': {'box': decoded_box32, 'cls': cls32, 'raw_box': box32}
         }
         
         return out
