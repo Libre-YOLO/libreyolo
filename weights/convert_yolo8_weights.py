@@ -1,5 +1,5 @@
 """
-Weight conversion utility for converting YOLOv8 weights to Libre YOLO format.
+Weight conversion utility for converting weights to Libre YOLO format.
 
 IMPORTANT LICENSE NOTICE:
 =========================
@@ -21,7 +21,7 @@ print("=" * 70)
 
 def convert_weights(source_path, output_path):
     """
-    Convert YOLOv8 weights to Libre YOLO format.
+    Convert weights to Libre YOLO format.
     
     LICENSE NOTICE: Any weights from external sources inherit the license from where
     those weights originated. The converted weights maintain the same license
@@ -173,8 +173,8 @@ def convert_weights(source_path, output_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert YOLOv8 weights to Libre YOLO format")
-    parser.add_argument("--source", type=str, required=True, help="Path to source YOLOv8 weights file")
+    parser = argparse.ArgumentParser(description="Convert weights to Libre YOLO format")
+    parser.add_argument("--source", type=str, required=True, help="Path to source weights file")
     parser.add_argument("--output", type=str, required=True, help="Path to output converted weights file")
     
     args = parser.parse_args()
