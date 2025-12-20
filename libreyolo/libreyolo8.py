@@ -271,6 +271,76 @@ class LIBREYOLO8:
         
         return detections
     
+        
+    def export(self, output_path: str = None, input_size: int = 640, opset: int = 12) -> str:
+        """
+        Export the model to ONNX format.
+        
+        Args:
+            output_path: Path to save the ONNX file. If None, uses the model's weights path with .onnx extension.
+            input_size: The image size to export for (default: 640).
+            opset: ONNX opset version (default: 12).
+            
+        Returns:
+            Path to the exported ONNX file.
+        """
+        import torch.onnx
+        
+        if output_path is None:
+            if self.model_path and isinstance(self.model_path, str):
+                output_path = str(Path(self.model_path).with_suffix('.onnx'))
+            else:
+                output_path = f"libreyolo8_{self.size}.onnx"
+        
+        print(f"Exporting LibreYOLO8 {self.size} to {output_path}...")
+        
+        # 1. Create a dummy input (Batch, Channels, Height, Width)
+        device = next(self.model.parameters()).device
+        dummy_input = torch.randn(1, 3, input_size, input_size).to(device)
+        
+        # 2. Define a wrapper to flatten the dictionary output into a tuple
+        class ONNXWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            def forward(self, x):
+                out = self.model(x)
+                # Return tensors in a fixed order:
+                # box8, cls8, box16, cls16, box32, cls32
+                return (
+                    out['x8']['box'], out['x8']['cls'],
+                    out['x16']['box'], out['x16']['cls'],
+                    out['x32']['box'], out['x32']['cls']
+                )
+
+        wrapper = ONNXWrapper(self.model)
+        wrapper.eval()
+        
+        # 3. Perform the export
+        try:
+            import torch.onnx
+            torch.onnx.export(
+                wrapper,
+                dummy_input,
+                output_path,
+                export_params=True,
+                opset_version=opset,
+                do_constant_folding=True,
+                input_names=['images'],
+                output_names=['box8', 'cls8', 'box16', 'cls16', 'box32', 'cls32'],
+                dynamic_axes={
+                    'images': {0: 'batch', 2: 'height', 3: 'width'},
+                    'box8': {0: 'batch'}, 'cls8': {0: 'batch'},
+                    'box16': {0: 'batch'}, 'cls16': {0: 'batch'},
+                    'box32': {0: 'batch'}, 'cls32': {0: 'batch'}
+                }
+            )
+            print(f"Export complete: {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"Export failed: {e}")
+            raise e
+
     def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Alias for __call__ method.
