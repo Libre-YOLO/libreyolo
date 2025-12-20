@@ -1,6 +1,5 @@
 """
 Neural network architecture for Libre YOLO11.
-Matches the actual YOLO11 architecture from Ultralytics.
 """
 
 import torch
@@ -58,7 +57,6 @@ class Conv(nn.Module):
         if p is None:
             p = autopad(k, p, d)
         self.cnn = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=k, stride=s, padding=p, groups=g, dilation=d, bias=False)
-        # Match Ultralytics BatchNorm parameters: eps=0.001, momentum=0.03
         self.batchnorm = nn.BatchNorm2d(num_features=c_out, eps=0.001, momentum=0.03)
         self.silu = nn.SiLU() if act else nn.Identity()
         
@@ -151,7 +149,7 @@ class SPPF(nn.Module):
 
 
 class Attention(nn.Module):
-    """Ultralytics-style attention (used by C2PSA)."""
+    """Attention mechanism (used by C2PSA)."""
     def __init__(self, dim, num_heads=8, attn_ratio=0.5):
         super().__init__()
         if num_heads < 1:
@@ -208,7 +206,7 @@ class C2PSA(nn.Module):
         self.c = int(c_in * e)
         self.conv1 = Conv(c_out=2 * self.c, c_in=c_in, k=1, s=1, p=0)
         self.conv2 = Conv(c_out=c_in, c_in=2 * self.c, k=1, s=1, p=0)
-        # In Ultralytics: num_heads=self.c // 64 (floor). Ensure at least 1.
+        # num_heads=self.c // 64 (floor). Ensure at least 1.
         nh = max(1, self.c // 64)
         self.bottlenecks = nn.Sequential(*(PSABlock(self.c, attn_ratio=0.5, num_heads=nh) for _ in range(n)))
 
@@ -223,58 +221,58 @@ class Backbone(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
+        # Channel configurations for each model size
+        # Format: {size: (p1, p2, c2f1, c2f2, c2f3, c2f4, sppf, c2psa, n_bottlenecks, use_c3k_everywhere)}
+        # use_c3k_everywhere: For m/l/x models, ALL C3k2 blocks use C3k structure
+        self.channel_config = {
+            'n': (16, 32, 64, 128, 128, 256, 256, 256, 1, False),     # w=0.25
+            's': (32, 64, 128, 256, 256, 512, 512, 512, 1, False),    # w=0.5
+            'm': (64, 128, 256, 512, 512, 512, 512, 512, 1, True),    # w=1.0, max_ch=512, c3k everywhere, n=1
+            'l': (64, 128, 256, 512, 512, 512, 512, 512, 2, True),    # w=1.0, max_ch=512, c3k everywhere, n=2
+            'x': (96, 192, 384, 768, 768, 768, 768, 768, 2, True),    # w=1.5, max_ch=768, c3k everywhere, n=2
         }
-
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
         
-        # YOLO11n structure (matching actual Ultralytics model)
-        # Layer 0: Conv 3->16
-        self.p1 = Conv(c_out=16, c_in=3, k=3, s=2, p=1)
-        # Layer 1: Conv 16->32
-        self.p2 = Conv(c_out=32, c_in=16, k=3, s=2, p=1)
-        # Layer 2: C3k2 32->64 (with Bottleneck, not C3k)
-        self.c2f1 = C3k2(c_out=64, c_in=32, n=1, c3k=False, e=0.25, shortcut=True)
-        # Layer 3: Conv 64->64
-        self.p3 = Conv(c_out=64, c_in=64, k=3, s=2, p=1)
-        # Layer 4: C3k2 64->128 (with Bottleneck)
-        self.c2f2 = C3k2(c_out=128, c_in=64, n=1, c3k=False, e=0.25, shortcut=True)
-        # Layer 5: Conv 128->128
-        self.p4 = Conv(c_out=128, c_in=128, k=3, s=2, p=1)
-        # Layer 6: C3k2 128->128 (with C3k nested) - uses e=0.5
-        self.c2f3 = C3k2(c_out=128, c_in=128, n=1, c3k=True, e=0.5, shortcut=True)
-        # Layer 7: Conv 128->256
-        self.p5 = Conv(c_out=256, c_in=128, k=3, s=2, p=1)
-        # Layer 8: C3k2 256->256 (with C3k nested) - uses e=0.5
-        self.c2f4 = C3k2(c_out=256, c_in=256, n=1, c3k=True, e=0.5, shortcut=True)
-        # Layer 9: SPPF 256->256
-        self.sppf = SPPF(c_out=256, c_in=256, k=5)
-        # Layer 10: C2PSA 256->256
-        self.c2psa = C2PSA(c_out=256, c_in=256, n=1, e=0.5)
+        c1, c2, c3, c4_out, c4_mid, c5_out, c5_sppf, c5_psa, n, c3k_all = self.channel_config[config]
+        
+        # Layer 0: Conv 3->c1
+        self.p1 = Conv(c_out=c1, c_in=3, k=3, s=2, p=1)
+        # Layer 1: Conv c1->c2
+        self.p2 = Conv(c_out=c2, c_in=c1, k=3, s=2, p=1)
+        # Layer 2: C3k2 c2->c3 (C3k for m/l/x, Bottleneck for n/s)
+        self.c2f1 = C3k2(c_out=c3, c_in=c2, n=n, c3k=c3k_all, e=0.25, shortcut=True)
+        # Layer 3: Conv c3->c3
+        self.p3 = Conv(c_out=c3, c_in=c3, k=3, s=2, p=1)
+        # Layer 4: C3k2 c3->c4_out (C3k for m/l/x, Bottleneck for n/s)
+        self.c2f2 = C3k2(c_out=c4_out, c_in=c3, n=n, c3k=c3k_all, e=0.25, shortcut=True)
+        # Layer 5: Conv c4_out->c4_mid
+        self.p4 = Conv(c_out=c4_mid, c_in=c4_out, k=3, s=2, p=1)
+        # Layer 6: C3k2 c4_mid->c4_mid (always C3k) - uses e=0.5
+        self.c2f3 = C3k2(c_out=c4_mid, c_in=c4_mid, n=n, c3k=True, e=0.5, shortcut=True)
+        # Layer 7: Conv c4_mid->c5_out
+        self.p5 = Conv(c_out=c5_out, c_in=c4_mid, k=3, s=2, p=1)
+        # Layer 8: C3k2 c5_out->c5_out (always C3k) - uses e=0.5
+        self.c2f4 = C3k2(c_out=c5_out, c_in=c5_out, n=n, c3k=True, e=0.5, shortcut=True)
+        # Layer 9: SPPF c5_out->c5_sppf
+        self.sppf = SPPF(c_out=c5_sppf, c_in=c5_out, k=5)
+        # Layer 10: C2PSA c5_sppf->c5_psa
+        self.c2psa = C2PSA(c_out=c5_psa, c_in=c5_sppf, n=n, e=0.5)
         
     def forward(self, x):
-        x = self.p1(x)      # 16
-        x = self.p2(x)      # 32
-        x = self.c2f1(x)    # 64
-        x = self.p3(x)      # 64
-        x = self.c2f2(x)    # 128
-        x8 = x.clone()      # P3 (Stride 8), 128 channels
+        x = self.p1(x)
+        x = self.p2(x)
+        x = self.c2f1(x)
+        x = self.p3(x)
+        x = self.c2f2(x)
+        x8 = x.clone()      # P3 (Stride 8)
         
-        x = self.p4(x)      # 128
-        x = self.c2f3(x)    # 128
-        x16 = x.clone()     # P4 (Stride 16), 128 channels
+        x = self.p4(x)
+        x = self.c2f3(x)
+        x16 = x.clone()     # P4 (Stride 16)
         
-        x = self.p5(x)      # 256
-        x = self.c2f4(x)    # 256
-        x = self.sppf(x)    # 256
-        x32 = self.c2psa(x) # P5 (Stride 32), 256 channels
+        x = self.p5(x)
+        x = self.c2f4(x)
+        x = self.sppf(x)
+        x32 = self.c2psa(x) # P5 (Stride 32)
         
         return x8, x16, x32
 
@@ -284,69 +282,72 @@ class Neck(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
+        # Channel configurations for neck
+        # Format: {size: (bb_p3, bb_p4, bb_p5, neck_p3, neck_p4, neck_p5, n, use_c3k_everywhere)}
+        # bb_p3/p4/p5 = backbone outputs (c2f2, c2f3, c2psa)
+        # neck_p3/p4/p5 = neck outputs
+        # use_c3k_everywhere: For m/l/x models, ALL C3k2 blocks use C3k structure
+        self.channel_config = {
+            'n': (128, 128, 256, 64, 128, 256, 1, False),    # w=0.25
+            's': (256, 256, 512, 128, 256, 512, 1, False),   # w=0.5
+            'm': (512, 512, 512, 256, 512, 512, 1, True),    # w=1.0, max_ch=512, c3k everywhere, n=1
+            'l': (512, 512, 512, 256, 512, 512, 2, True),    # w=1.0, max_ch=512, c3k everywhere, n=2
+            'x': (768, 768, 768, 384, 768, 768, 2, True),    # w=1.5, max_ch=768, c3k everywhere, n=2
         }
+        
+        bb_p3, bb_p4, bb_p5, neck_p3, neck_p4, neck_p5, n, c3k_all = self.channel_config[config]
 
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
-
-        # YOLO11n neck structure (matching actual Ultralytics model)
         # Layer 11: Upsample
         self.upsample1 = nn.Upsample(scale_factor=2, mode='nearest')
-        # Layer 12: Concat (256+128=384)
-        # Layer 13: C3k2 384->128 (with Bottleneck) - uses e=0.5
-        self.c2f21 = C3k2(c_out=128, c_in=384, n=1, c3k=False, e=0.5, shortcut=True)
+        # Layer 12: Concat (bb_p5 + bb_p4)
+        # Layer 13: C3k2 -> c2f21_out (intermediate P4, C3k for m/l/x)
+        c2f21_out = neck_p4  # Uses neck_p4 as intermediate output
+        self.c2f21 = C3k2(c_out=c2f21_out, c_in=bb_p5 + bb_p4, n=n, c3k=c3k_all, e=0.5, shortcut=True)
         
         # Layer 14: Upsample
         self.upsample2 = nn.Upsample(scale_factor=2, mode='nearest')
-        # Layer 15: Concat (128+128=256)
-        # Layer 16: C3k2 256->64 (with Bottleneck) - uses e=0.5
-        self.c2f11 = C3k2(c_out=64, c_in=256, n=1, c3k=False, e=0.5, shortcut=True)
+        # Layer 15: Concat (c2f21_out + bb_p3)
+        # Layer 16: C3k2 -> neck_p3 (final P3 output, C3k for m/l/x)
+        self.c2f11 = C3k2(c_out=neck_p3, c_in=c2f21_out + bb_p3, n=n, c3k=c3k_all, e=0.5, shortcut=True)
         
-        # Layer 17: Conv 64->64
-        self.conv1 = Conv(c_out=64, c_in=64, k=3, s=2, p=1)
-        # Layer 18: Concat (64+128=192)
-        # Layer 19: C3k2 192->128 (with Bottleneck) - uses e=0.5
-        self.c2f12 = C3k2(c_out=128, c_in=192, n=1, c3k=False, e=0.5, shortcut=True)
+        # Layer 17: Conv neck_p3->neck_p3
+        self.conv1 = Conv(c_out=neck_p3, c_in=neck_p3, k=3, s=2, p=1)
+        # Layer 18: Concat (neck_p3 + c2f21_out)
+        # Layer 19: C3k2 -> neck_p4 (final P4 output, C3k for m/l/x)
+        self.c2f12 = C3k2(c_out=neck_p4, c_in=neck_p3 + c2f21_out, n=n, c3k=c3k_all, e=0.5, shortcut=True)
         
-        # Layer 20: Conv 128->128
-        self.conv2 = Conv(c_out=128, c_in=128, k=3, s=2, p=1)
-        # Layer 21: Concat (128+256=384)
-        # Layer 22: C3k2 384->256 (with C3k nested) - uses e=0.5
-        self.c2f22 = C3k2(c_out=256, c_in=384, n=1, c3k=True, e=0.5, shortcut=True)
+        # Layer 20: Conv neck_p4->neck_p4
+        self.conv2 = Conv(c_out=neck_p4, c_in=neck_p4, k=3, s=2, p=1)
+        # Layer 21: Concat (neck_p4 + bb_p5)
+        # Layer 22: C3k2 -> neck_p5 (final P5 output, always C3k)
+        self.c2f22 = C3k2(c_out=neck_p5, c_in=neck_p4 + bb_p5, n=n, c3k=True, e=0.5, shortcut=True)
         
     def forward(self, x8, x16, x32):
-        # 1. Upsample P5 (x32=256) to P4 size
-        aux1 = self.upsample1(x32)  # 256
-        x16 = torch.cat((aux1, x16), dim=1)  # 256+128=384
-        x16 = self.c2f21(x16)  # 128
+        # 1. Upsample P5 (x32) to P4 size
+        aux1 = self.upsample1(x32)
+        x16 = torch.cat((aux1, x16), dim=1)
+        x16 = self.c2f21(x16)
         
-        # 2. Upsample P4 (x16=128) to P3 size
-        aux2 = self.upsample2(x16)  # 128
-        x8 = torch.cat((aux2, x8), dim=1)  # 128+128=256
-        x8 = self.c2f11(x8)  # 64
+        # 2. Upsample P4 (x16) to P3 size
+        aux2 = self.upsample2(x16)
+        x8 = torch.cat((aux2, x8), dim=1)
+        x8 = self.c2f11(x8)
         
-        # 3. Downsample P3 (x8=64) to P4 size
-        aux3 = self.conv1(x8)  # 64
-        x16 = torch.cat((aux3, x16), dim=1)  # 64+128=192
-        x16 = self.c2f12(x16)  # 128
+        # 3. Downsample P3 (x8) to P4 size
+        aux3 = self.conv1(x8)
+        x16 = torch.cat((aux3, x16), dim=1)
+        x16 = self.c2f12(x16)
         
-        # 4. Downsample P4 (x16=128) to P5 size
-        aux4 = self.conv2(x16)  # 128
-        x32 = torch.cat((aux4, x32), dim=1)  # 128+256=384
-        x32 = self.c2f22(x32)  # 256
+        # 4. Downsample P4 (x16) to P5 size
+        aux4 = self.conv2(x16)
+        x32 = torch.cat((aux4, x32), dim=1)
+        x32 = self.c2f22(x32)
         
         return x8, x16, x32
 
 
 class Head(nn.Module):
-    """Decoupled detection head for YOLO11 - matches Ultralytics structure"""
+    """Decoupled detection head for YOLO11"""
     def __init__(self, c_in, c_box, c_cls, reg_max, nb_classes):
         super().__init__()
         
@@ -365,7 +366,7 @@ class Head(nn.Module):
         )
         self.conv22 = nn.Sequential(
             DWConv(c_out=c_cls, c_in=c_cls, k=3, s=1),
-            Conv(c_out=c_cls, c_in=c_cls, k=1, s=1, p=0, act=True)  # Note: Ultralytics has activation here
+            Conv(c_out=c_cls, c_in=c_cls, k=1, s=1, p=0, act=True)
         )
         self.cnn2 = nn.Conv2d(in_channels=c_cls, out_channels=nb_classes, kernel_size=1, stride=1, padding=0)
         
@@ -380,32 +381,29 @@ class LibreYOLO11Model(nn.Module):
     def __init__(self, config, reg_max, nb_classes):
         super().__init__()
         
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
+        # Head channel configurations
+        # Format: {size: (neck_p3, neck_p4, neck_p5, c_box)}
+        self.head_config = {
+            'n': (64, 128, 256, 64),     # w=0.25
+            's': (128, 256, 512, 64),    # w=0.5
+            'm': (256, 512, 512, 64),    # w=1.0, max_ch=512
+            'l': (256, 512, 512, 64),    # w=1.0, max_ch=512
+            'x': (384, 768, 768, 96),    # w=1.5, max_ch=768
         }
-
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
+        
+        c_p3, c_p4, c_p5, c_box = self.head_config[config]
         
         self.backbone = Backbone(config=config)
         self.neck = Neck(config=config)
         
-        # --- HEAD CONFIGURATION (Matches Ultralytics 'Detect' Logic) ---
-        # For YOLO11n: P3=64, P4=128, P5=256
-        # Box channels: max(16, c_p3 // 4, reg_max * 4)
-        c_box = max(16, 64 // 4, reg_max * 4)  # max(16, 16, 64) = 64
+        # --- HEAD CONFIGURATION ---
         # Cls channels: max(c_p3, min(nb_classes, 100))
-        c_cls = max(64, min(nb_classes, 100))  # max(64, min(80, 100)) = 80
+        c_cls = max(c_p3, min(nb_classes, 100))
         
-        # Head inputs: P3=64, P4=128, P5=256
-        self.head8 = Head(c_in=64, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
-        self.head16 = Head(c_in=128, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
-        self.head32 = Head(c_in=256, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
+        # Head inputs: P3, P4, P5 channels
+        self.head8 = Head(c_in=c_p3, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
+        self.head16 = Head(c_in=c_p4, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
+        self.head32 = Head(c_in=c_p5, c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
         
         self.dfl = DFL(c1=reg_max)
 
