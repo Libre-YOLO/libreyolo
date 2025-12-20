@@ -12,8 +12,8 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .model11 import LibreYOLO11Model
-from .utils11 import preprocess_image, postprocess, draw_boxes
+from .model import LibreYOLO11Model
+from .utils import preprocess_image, postprocess, draw_boxes
 
 
 class LIBREYOLO11:
@@ -31,7 +31,7 @@ class LIBREYOLO11:
             - List of layer names: Save only specified layers (e.g., ["backbone_p1", "neck_c2f21"])
     
     Example:
-        >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="n", save_feature_maps=True)
+        >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
         >>> detections = model(image=image_path, save=True)
     """
     
@@ -208,7 +208,7 @@ class LIBREYOLO11:
         
         return str(save_dir)
     
-    def __call__(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.5, iou_thres: float = 0.7) -> dict:
+    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Run inference on an image.
         
@@ -242,8 +242,7 @@ class LIBREYOLO11:
             conf_thres=conf_thres,
             iou_thres=iou_thres,
             input_size=640,
-            original_size=original_size,
-            max_det=100
+            original_size=original_size
         )
         
         # Save feature maps if enabled
@@ -274,7 +273,7 @@ class LIBREYOLO11:
         
         return detections
     
-    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Alias for __call__ method.
         
@@ -288,4 +287,3 @@ class LIBREYOLO11:
             Dictionary containing detection results.
         """
         return self(image=image, save=save, conf_thres=conf_thres, iou_thres=iou_thres)
-

@@ -12,8 +12,8 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .model8 import LibreYOLO8Model
-from .utils8 import preprocess_image, postprocess, draw_boxes
+from .model import LibreYOLO8Model
+from .utils import preprocess_image, postprocess, draw_boxes
 
 
 class LIBREYOLO8:
