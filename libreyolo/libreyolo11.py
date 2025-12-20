@@ -1,5 +1,5 @@
 """
-Libre YOLO8 implementation.
+Libre YOLO11 implementation.
 """
 
 import os
@@ -9,13 +9,13 @@ import torch
 from PIL import Image
 import numpy as np
 
-from .model8 import LibreYOLO8Model
-from .utils8 import preprocess_image, postprocess, draw_boxes
+from .model11 import LibreYOLO11Model
+from .utils11 import preprocess_image, postprocess, draw_boxes
 
 
-class LIBREYOLO8:
+class LIBREYOLO11:
     """
-    Libre YOLO8 model for object detection.
+    Libre YOLO11 model for object detection.
     
     Args:
         model_path: Path to model weights file (required)
@@ -24,13 +24,13 @@ class LIBREYOLO8:
         nb_classes: Number of classes (default: 80 for COCO)
     
     Example:
-        >>> model = LIBREYOLO8(model_path="path/to/weights.pt", size="x")
+        >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="n")
         >>> detections = model(image=image_path, save=True)
     """
     
     def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80):
         """
-        Initialize the Libre YOLO8 model.
+        Initialize the Libre YOLO11 model.
         
         Args:
             model_path: Path to user-provided model weights file or loaded state dict
@@ -46,7 +46,7 @@ class LIBREYOLO8:
         self.nb_classes = nb_classes
         
         # Initialize model
-        self.model = LibreYOLO8Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
+        self.model = LibreYOLO11Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
         
         # Load weights
         if isinstance(model_path, dict):
@@ -70,7 +70,7 @@ class LIBREYOLO8:
         except Exception as e:
             raise RuntimeError(f"Failed to load model weights from {model_path}: {e}") from e
     
-    def __call__(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def __call__(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.5, iou_thres: float = 0.7) -> dict:
         """
         Run inference on an image.
         
@@ -104,7 +104,8 @@ class LIBREYOLO8:
             conf_thres=conf_thres,
             iou_thres=iou_thres,
             input_size=640,
-            original_size=original_size
+            original_size=original_size,
+            max_det=100
         )
         
         # Draw and save if requested
