@@ -1,316 +1,287 @@
 """
-Neural network architecture for Libre YOLO8.
+Libre YOLO8 implementation.
 """
 
+import os
+import json
+from datetime import datetime
+from typing import Union, List
+from pathlib import Path
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
+from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
+
+from .nn import LibreYOLO8Model
+from .utils import preprocess_image, postprocess, draw_boxes
 
 
-class DFL(nn.Module):
+class LIBREYOLO8:
     """
-    Distribution Focal Loss (DFL) module.
-    Converts the distribution of 4*reg_max channels into the final 4 coordinates (x, y, w, h).
+    Libre YOLO8 model for object detection.
+    
+    Args:
+        model_path: Path to model weights file (required)
+        size: Model size variant (required). Must be one of: "n", "s", "m", "l", "x"
+        reg_max: Regression max value for DFL (default: 16)
+        nb_classes: Number of classes (default: 80 for COCO)
+        save_feature_maps: Feature map saving mode. Options:
+            - False: Disabled (default)
+            - True: Save all layers
+            - List of layer names: Save only specified layers (e.g., ["backbone_p1", "neck_c2f21"])
+    
+    Example:
+        >>> model = LIBREYOLO8(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
+        >>> detections = model(image=image_path, save=True)
     """
-    def __init__(self, c1=16):
-        super().__init__()
-        # 1x1 convolution with fixed weights 0..c1-1 to calculate the expectation
-        self.conv = nn.Conv2d(c1, 1, 1, bias=False).requires_grad_(False)
-        x = torch.arange(c1, dtype=torch.float)
-        self.conv.weight.data[:] = nn.Parameter(x.view(1, c1, 1, 1))
-        self.c1 = c1
-
-    def forward(self, x):
-        # Input x: (Batch, 64, H, W) for reg_max=16
-        b, c, h, w = x.shape
-        # Reshape to (Batch, 4, 16, H, W) and transpose to (Batch, 16, 4, H, W)
-        x = x.view(b, 4, self.c1, h, w).transpose(2, 1)
-        # Apply softmax to get probability distribution
-        x = F.softmax(x, dim=1)
-        # Apply the convolution (weighted sum) to reduce 16 channels to 1
-        # Reshape to (Batch, 16, 4*H, W) so Conv2d sees a valid 4D tensor
-        x = self.conv(x.reshape(b, self.c1, 4 * h, w))
-        # Reshape back to (Batch, 4, H, W)
-        return x.view(b, 4, h, w)
-
-
-class Conv(nn.Module):
-    """Standard convolution block: Conv2d + BatchNorm + SiLU"""
-    def __init__(self, c_out, c_in, k, s, p):
-        super().__init__()
-        self.cnn = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=k, stride=s, padding=p, bias=False)
-        self.batchnorm = nn.BatchNorm2d(num_features=c_out)
-        self.silu = nn.SiLU()
+    
+    def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80, save_feature_maps: Union[bool, List[str]] = False):
+        """
+        Initialize the Libre YOLO8 model.
         
-    def forward(self, x):
-        x = self.cnn(x)
-        x = self.batchnorm(x)
-        x = self.silu(x)
-        return x
-
-
-class Bottleneck(nn.Module):
-    """Residual bottleneck block"""
-    def __init__(self, c_out, c_in, res_connection):
-        super().__init__()
-        self.conv1 = Conv(c_out=c_out, c_in=c_in, k=3, s=1, p=1)
-        self.conv2 = Conv(c_out=c_out, c_in=c_out, k=3, s=1, p=1)
-        self.res_connection = res_connection
+        Args:
+            model_path: Path to user-provided model weights file or loaded state dict
+            size: Model size variant. Must be "n", "s", "m", "l", or "x"
+            reg_max: Regression max value for DFL (default: 16)
+            nb_classes: Number of classes (default: 80)
+            save_feature_maps: Feature map saving mode. Options:
+                - False: Disabled
+                - True: Save all layers
+                - List[str]: Save only specified layer names
+        """
+        if size not in ['n', 's', 'm', 'l', 'x']:
+            raise ValueError(f"Invalid size: {size}. Must be one of: 'n', 's', 'm', 'l', 'x'")
         
-    def forward(self, x):
-        if self.res_connection:
-            return x + self.conv2(self.conv1(x))
-        return self.conv2(self.conv1(x))
-
-
-class C2F(nn.Module):
-    """C2f module with split-concat-bottleneck structure"""
-    def __init__(self, c_out, c_in, res_connection, nb_bottlenecks):
-        super().__init__()
-        self.conv1 = Conv(c_out=c_out, c_in=c_in, k=1, s=1, p=0)
-        # Calculate input channels for the final convolution based on concatenation size
-        self.conv2 = Conv(c_out=c_out, c_in=int((nb_bottlenecks + 2) * c_out / 2), k=1, s=1, p=0)
+        self.size = size
+        self.reg_max = reg_max
+        self.nb_classes = nb_classes
+        self.save_feature_maps = save_feature_maps
+        self.feature_maps = {}
+        self.hooks = []
         
-        self.bottlenecks = nn.ModuleList([
-            Bottleneck(c_out=c_out//2, c_in=c_out//2, res_connection=res_connection) 
-            for _ in range(nb_bottlenecks)
-        ])
+        # Initialize model
+        self.model = LibreYOLO8Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
         
-    def forward(self, x):
-        x = self.conv1(x)
-        batch, c, h, w = x.shape
+        # Load weights
+        if isinstance(model_path, dict):
+            self.model_path = None
+            self.model.load_state_dict(model_path, strict=True)
+        else:
+            self.model_path = model_path
+            self._load_weights(model_path)
         
-        # Split features
-        x2 = x[:, c//2:, :, :]
+        # Set to evaluation mode
+        self.model.eval()
         
-        # Pass through bottlenecks and concatenate results
-        for bottleneck in self.bottlenecks:
-            x2 = bottleneck(x2)
-            x = torch.cat((x, x2), dim=1)
+        # Register hooks for feature map extraction
+        if self.save_feature_maps:
+            self._register_hooks()
+    
+    def _load_weights(self, model_path: str):
+        """Load model weights from file."""
+        if not Path(model_path).exists():
+            raise FileNotFoundError(f"Model weights file not found: {model_path}")
         
-        x = self.conv2(x)
-        return x
-
-
-class SPPF(nn.Module):
-    """Spatial Pyramid Pooling Fast"""
-    def __init__(self, c_out, c_in):
-        super().__init__()
-        self.conv1 = Conv(c_out=c_out//2, c_in=c_in, k=1, s=1, p=0)
-        self.maxpool = nn.MaxPool2d(kernel_size=5, stride=1, padding=2)
-        self.conv2 = Conv(c_out=c_out, c_in=4*(c_out//2), k=1, s=1, p=0)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x1 = self.maxpool(x)
-        x2 = self.maxpool(x1)
-        x3 = self.maxpool(x2)
-        x = torch.cat((x, x1, x2, x3), dim=1)
-        x = self.conv2(x)
-        return x
-
-
-class Backbone(nn.Module):
-    """Feature extraction backbone"""
-    def __init__(self, config):
-        super().__init__()
+        try:
+            state_dict = torch.load(model_path, map_location='cpu', weights_only=False)
+            self.model.load_state_dict(state_dict, strict=True)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model weights from {model_path}: {e}") from e
+    
+    def get_available_layer_names(self) -> List[str]:
+        """
+        Get list of available layer names for feature map saving.
         
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
+        Returns:
+            List of layer names that can be used with save_feature_maps parameter.
+        """
+        return sorted(self._get_available_layers().keys())
+    
+    def _get_available_layers(self) -> dict:
+        """Get mapping of layer names to module objects."""
+        return {
+            # Backbone layers
+            "backbone_p1": self.model.backbone.p1,
+            "backbone_p2": self.model.backbone.p2,
+            "backbone_c2f1": self.model.backbone.c2f1,
+            "backbone_p3": self.model.backbone.p3,
+            "backbone_c2f2_P3": self.model.backbone.c2f2,
+            "backbone_p4": self.model.backbone.p4,
+            "backbone_c2f3_P4": self.model.backbone.c2f3,
+            "backbone_p5": self.model.backbone.p5,
+            "backbone_c2f4": self.model.backbone.c2f4,
+            "backbone_sppf_P5": self.model.backbone.sppf,
+            # Neck layers
+            "neck_c2f21": self.model.neck.c2f21,
+            "neck_c2f11": self.model.neck.c2f11,
+            "neck_c2f12": self.model.neck.c2f12,
+            "neck_c2f22": self.model.neck.c2f22,
+            # Head layers
+            "head8_conv11": self.model.head8.conv11,
+            "head8_conv21": self.model.head8.conv21,
+            "head16_conv11": self.model.head16.conv11,
+            "head16_conv21": self.model.head16.conv21,
+            "head32_conv11": self.model.head32.conv11,
+            "head32_conv21": self.model.head32.conv21,
         }
-
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
-                
-        self.p1 = Conv(c_out=int(64*w), c_in=3, k=3, s=2, p=1)
-        self.p2 = Conv(c_out=int(128*w), c_in=int(64*w), k=3, s=2, p=1)
-        self.c2f1 = C2F(c_out=int(128*w), c_in=int(128*w), res_connection=True, nb_bottlenecks=max(1, int(round(3*d))))
+    
+    def _register_hooks(self):
+        """Register forward hooks to capture feature maps from model layers."""
+        def get_hook(name):
+            def hook(module, input, output):
+                # Detach and move to CPU to prevent memory leaks
+                self.feature_maps[name] = output.detach().cpu()
+            return hook
         
-        self.p3 = Conv(c_out=int(256*w), c_in=int(128*w), k=3, s=2, p=1)
-        self.c2f2 = C2F(c_out=int(256*w), c_in=int(256*w), res_connection=True, nb_bottlenecks=max(1, int(round(6*d))))
+        available_layers = self._get_available_layers()
         
-        self.p4 = Conv(c_out=int(512*w), c_in=int(256*w), k=3, s=2, p=1)
-        self.c2f3 = C2F(c_out=int(512*w), c_in=int(512*w), res_connection=True, nb_bottlenecks=max(1, int(round(6*d))))
+        if self.save_feature_maps is True:
+            # Hook into all available layers
+            for layer_name, module in available_layers.items():
+                self.hooks.append(module.register_forward_hook(get_hook(layer_name)))
         
-        self.p5 = Conv(c_out=int(512*w*r), c_in=int(512*w), k=3, s=2, p=1)
-        self.c2f4 = C2F(c_out=int(512*w*r), c_in=int(512*w*r), res_connection=True, nb_bottlenecks=max(1, int(round(3*d))))
+        elif isinstance(self.save_feature_maps, list):
+            # Hook into specified layers only
+            invalid_layers = []
+            for layer_name in self.save_feature_maps:
+                if layer_name not in available_layers:
+                    invalid_layers.append(layer_name)
+                else:
+                    self.hooks.append(available_layers[layer_name].register_forward_hook(get_hook(layer_name)))
+            
+            if invalid_layers:
+                available = ", ".join(sorted(available_layers.keys()))
+                raise ValueError(
+                    f"Invalid layer names: {invalid_layers}. "
+                    f"Available layers: {available}"
+                )
+    
+    def _save_feature_maps(self, image_path):
+        """Save feature map visualizations to disk."""
+        # Determine the base name for the output directory
+        if isinstance(image_path, str):
+            stem = Path(image_path).stem
+        else:
+            stem = "inference"
         
-        self.sppf = SPPF(c_out=int(512*w*r), c_in=int(512*w*r))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir = Path("runs/feature_maps") / f"{stem}_{timestamp}"
+        save_dir.mkdir(parents=True, exist_ok=True)
         
-    def forward(self, x):
-        x = self.p1(x)
-        x = self.p2(x)
-        x = self.c2f1(x)
-        x = self.p3(x)
-        x = self.c2f2(x)
-        x8 = x.clone()  # P3 (Stride 8)
-        
-        x = self.p4(x)
-        x = self.c2f3(x)
-        x16 = x.clone()  # P4 (Stride 16)
-        
-        x = self.p5(x)
-        x = self.c2f4(x)
-        x32 = self.sppf(x)  # P5 (Stride 32)
-        
-        return x8, x16, x32
-
-
-class Neck(nn.Module):
-    """Feature pyramid network neck"""
-    def __init__(self, config):
-        super().__init__()
-        
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
+        # Save metadata
+        metadata = {
+            "model": "LIBREYOLO8",
+            "size": self.size,
+            "input_size": [640, 640],
+            "image_source": str(image_path) if isinstance(image_path, str) else "PIL/numpy input",
+            "layers_captured": list(self.feature_maps.keys())
         }
-
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
-
-        self.upsample1 = nn.Upsample(scale_factor=2, mode='nearest')        
-        self.c2f21 = C2F(c_out=int(512*w), c_in=int(512*w*(1 + r)), res_connection=False, nb_bottlenecks=max(1, int(round(3*d))))
+        with open(save_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
         
-        self.upsample2 = nn.Upsample(scale_factor=2, mode='nearest')
-        self.c2f11 = C2F(c_out=int(256*w), c_in=int(768*w), res_connection=False, nb_bottlenecks=max(1, int(round(3*d))))    
+        # Save feature map visualizations
+        for layer_name, fmap in self.feature_maps.items():
+            # fmap shape: (batch, channels, H, W) - take first batch item
+            fmap = fmap[0] if fmap.dim() == 4 else fmap
+            
+            # Create a 4x4 grid of the first 16 channels
+            channels = min(fmap.shape[0], 16)
+            fig, axes = plt.subplots(4, 4, figsize=(12, 12))
+            
+            for i in range(16):
+                ax = axes[i // 4, i % 4]
+                if i < channels:
+                    # Normalize the feature map for better visualization
+                    channel_data = fmap[i].numpy()
+                    ax.imshow(channel_data, cmap='viridis')
+                ax.axis('off')
+            
+            plt.suptitle(f"Feature Maps: {layer_name}\nShape: {list(fmap.shape)}", fontsize=14)
+            plt.tight_layout()
+            plt.savefig(save_dir / f"{layer_name}.png", bbox_inches='tight', dpi=100)
+            plt.close()
         
-        self.conv1 = Conv(c_out=int(256*w), c_in=int(256*w), k=3, s=2, p=1)
-        self.c2f12 = C2F(c_out=int(512*w), c_in=int(768*w), res_connection=False, nb_bottlenecks=max(1, int(round(3*d))))
+        # Clear feature maps after saving
+        self.feature_maps.clear()
         
-        self.conv2 = Conv(c_out=int(512*w), c_in=int(512*w), k=3, s=2, p=1)
-        self.c2f22 = C2F(c_out=int(512*w*r), c_in=int(512*w*(1 + r)), res_connection=False, nb_bottlenecks=max(1, int(round(3*d))))
+        return str(save_dir)
+    
+    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+        """
+        Run inference on an image.
         
-    def forward(self, x8, x16, x32):
-        # 1. Upsample P5 (x32) to P4 size
-        aux1 = self.upsample1(x32)
-        x16 = torch.cat((aux1, x16), dim=1) 
-        x16 = self.c2f21(x16)
+        Args:
+            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            save: If True, saves the image with detections drawn. Defaults to False.
+            conf_thres: Confidence threshold (default: 0.25)
+            iou_thres: IoU threshold for NMS (default: 0.45)
         
-        # 2. Upsample P4 (x16) to P3 size
-        aux2 = self.upsample2(x16)
-        x8 = torch.cat((aux2, x8), dim=1)   
-        x8 = self.c2f11(x8)
+        Returns:
+            Dictionary containing detection results with keys:
+            - boxes: List of bounding boxes in xyxy format
+            - scores: List of confidence scores
+            - classes: List of class IDs
+            - num_detections: Number of detections
+            - saved_path: Path to saved image (if save=True)
+        """
+        # Store original image path for saving
+        image_path = image if isinstance(image, str) else None
         
-        # 3. Downsample P3 (x8) to P4 size
-        aux3 = self.conv1(x8)
-        x16 = torch.cat((aux3, x16), dim=1) 
-        x16 = self.c2f12(x16)
+        # Preprocess image
+        input_tensor, original_img, original_size = preprocess_image(image, input_size=640)
         
-        # 4. Downsample P4 (x16) to P5 size
-        aux4 = self.conv2(x16)
-        x32 = torch.cat((aux4, x32), dim=1) 
-        x32 = self.c2f22(x32)
+        # Run inference
+        with torch.no_grad():
+            output = self.model(input_tensor)
         
-        return x8, x16, x32
-
-
-class Head(nn.Module):
-    """Decoupled detection head"""
-    def __init__(self, c_in, c_box, c_cls, reg_max, nb_classes):
-        super().__init__()
+        # Postprocess
+        detections = postprocess(
+            output,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            input_size=640,
+            original_size=original_size
+        )
         
-        # Decoupled Head: Two branches with different widths
-        # Box Branch: c_in -> c_box -> c_box -> 4*reg_max
-        self.conv11 = Conv(c_out=c_box, c_in=c_in, k=3, s=1, p=1)
-        self.conv12 = Conv(c_out=c_box, c_in=c_box, k=3, s=1, p=1)
+        # Save feature maps if enabled
+        if self.save_feature_maps:
+            feature_maps_path = self._save_feature_maps(image_path)
+            detections["feature_maps_path"] = feature_maps_path
         
-        # Class Branch: c_in -> c_cls -> c_cls -> nb_classes
-        self.conv21 = Conv(c_out=c_cls, c_in=c_in, k=3, s=1, p=1)
-        self.conv22 = Conv(c_out=c_cls, c_in=c_cls, k=3, s=1, p=1)
+        # Draw and save if requested
+        if save:
+            if detections["num_detections"] > 0:
+                annotated_img = draw_boxes(
+                    original_img,
+                    detections["boxes"],
+                    detections["scores"],
+                    detections["classes"]
+                )
+            else:
+                annotated_img = original_img
+            
+            if image_path:
+                base, ext = os.path.splitext(image_path)
+                output_path = f"{base}_detections{ext}"
+            else:
+                output_path = "detections_output.jpg"
+            
+            annotated_img.save(output_path)
+            detections["saved_path"] = output_path
         
-        self.cnn1 = nn.Conv2d(in_channels=c_box, out_channels=4*reg_max, kernel_size=1, stride=1, padding=0)
-        self.cnn2 = nn.Conv2d(in_channels=c_cls, out_channels=nb_classes, kernel_size=1, stride=1, padding=0)
+        return detections
+    
+    def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+        """
+        Alias for __call__ method.
         
-        self.initialize_weights()
+        Args:
+            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            save: If True, saves the image with detections drawn. Defaults to False.
+            conf_thres: Confidence threshold (default: 0.25)
+            iou_thres: IoU threshold for NMS (default: 0.45)
         
-    def initialize_weights(self):
-        # Initialize classification head with specific bias
-        # to prevent instability at the start of training
-        for m in [self.cnn1, self.cnn2]:
-             nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
-             if m.bias is not None:
-                 fan_in, _ = nn.init._calculate_fan_in_and_fan_out(m.weight)
-                 bound = 1 / math.sqrt(fan_in)
-                 nn.init.uniform_(m.bias, -bound, bound)
-
-        # Special initialization for classification head (cnn2)
-        # bias = -log((1-pi)/pi) for focal loss / BCE
-        pi = 0.01
-        bias_val = -math.log((1 - pi) / pi)
-        nn.init.constant_(self.cnn2.bias, bias_val)
-        
-    def forward(self, x):
-        box = self.cnn1(self.conv12(self.conv11(x)))
-        cls = self.cnn2(self.conv22(self.conv21(x)))
-        return box, cls
-
-
-class LibreYOLO8Model(nn.Module):
-    """Main Libre YOLO model"""
-    def __init__(self, config, reg_max, nb_classes, img_size=640):
-        super().__init__()
-        
-        self.nc = nb_classes
-        self.img_size = img_size
-        self.configuration = {
-            'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
-            's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.67, 'w': 0.75, 'r': 1.5},
-            'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
-            'x': {'d': 1.00, 'w': 1.25, 'r': 1.0}
-        }
-
-        d = self.configuration[config]['d']
-        w = self.configuration[config]['w']
-        r = self.configuration[config]['r']
-        
-        self.backbone = Backbone(config=config)
-        self.neck = Neck(config=config)
-        
-        # --- HEAD CONFIGURATION ---
-        # Channels P3 = 256 * w
-        c_p3 = int(256 * w)
-        
-        # Box channels: max(64, c_p3 // 4)
-        c_box = max(64, c_p3 // 4)
-        
-        # Cls channels: max(c_p3, min(nb_classes, 100))
-        c_cls = max(c_p3, min(nb_classes, 100))
-        
-        self.head8 = Head(c_in=int(256*w), c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
-        self.head16 = Head(c_in=int(512*w), c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
-        self.head32 = Head(c_in=int(512*w*r), c_box=c_box, c_cls=c_cls, reg_max=reg_max, nb_classes=nb_classes)
-        
-        self.dfl = DFL(c1=reg_max)
-
-    def forward(self, x):
-        x8, x16, x32 = self.backbone(x)
-        x8, x16, x32 = self.neck(x8, x16, x32)
-        
-        box8, cls8 = self.head8(x8)
-        box16, cls16 = self.head16(x16)
-        box32, cls32 = self.head32(x32)
-        
-        decoded_box8 = self.dfl(box8)
-        decoded_box16 = self.dfl(box16)
-        decoded_box32 = self.dfl(box32)
-        
-        out = {
-            'x8': {'box': decoded_box8, 'cls': cls8, 'raw_box': box8},
-            'x16': {'box': decoded_box16, 'cls': cls16, 'raw_box': box16},
-            'x32': {'box': decoded_box32, 'cls': cls32, 'raw_box': box32}
-        }
-        
-        return out
-
+        Returns:
+            Dictionary containing detection results.
+        """
+        return self(image=image, save=save, conf_thres=conf_thres, iou_thres=iou_thres)
