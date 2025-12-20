@@ -5,6 +5,7 @@ Neural network architecture for Libre YOLO11.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 class DFL(nn.Module):
@@ -300,6 +301,19 @@ class Detect(nn.Module):
             nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch
         )
         self.dfl = DFL(self.reg_max)
+        
+        self.initialize_weights()
+
+    def initialize_weights(self):
+        # Initialize classification heads
+        pi = 0.01
+        bias_val = -math.log((1 - pi) / pi)
+        
+        for head_block in self.cv3:
+            # The last layer in the sequential block is the classification Conv2d
+            cls_conv = head_block[-1]
+            if isinstance(cls_conv, nn.Conv2d):
+                 nn.init.constant_(cls_conv.bias, bias_val)
 
     def forward(self, x):
         shape = x[0].shape  # BCHW
@@ -332,11 +346,13 @@ class Detect(nn.Module):
 
 class LibreYOLO11Model(nn.Module):
     """Main Libre YOLO11 model"""
-    def __init__(self, config='n', reg_max=16, nb_classes=80):
+    def __init__(self, config='n', reg_max=16, nb_classes=80, img_size=640):
         super().__init__()
         
+        self.nc = nb_classes
         # Config params
         self.config_name = config
+        self.img_size = img_size
         
         # Configuration (w)
         w_dict = {
