@@ -206,7 +206,7 @@ class LIBREYOLO8:
         
         return str(save_dir)
     
-    def __call__(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Run inference on an image.
         
@@ -271,7 +271,7 @@ class LIBREYOLO8:
         
         return detections
     
-    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Alias for __call__ method.
         
@@ -285,4 +285,3 @@ class LIBREYOLO8:
             Dictionary containing detection results.
         """
         return self(image=image, save=save, conf_thres=conf_thres, iou_thres=iou_thres)
-
