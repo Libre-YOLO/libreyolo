@@ -12,8 +12,13 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
+<<<<<<< HEAD:libreyolo/libreyolo8.py
+from .model8 import LibreYOLO8Model
+from .utils8 import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
+=======
 from .nn import LibreYOLO8Model
 from .utils import preprocess_image, postprocess, draw_boxes
+>>>>>>> origin/main:libreyolo/v8/model.py
 
 
 class LIBREYOLO8:
@@ -271,7 +276,95 @@ class LIBREYOLO8:
         
         return detections
     
+<<<<<<< HEAD:libreyolo/libreyolo8.py
+        
+    def export(self, output_path: str = None, input_size: int = 640, opset: int = 12) -> str:
+        """
+        Export the model to ONNX format.
+        
+        Args:
+            output_path: Path to save the ONNX file. If None, uses the model's weights path with .onnx extension.
+            input_size: The image size to export for (default: 640).
+            opset: ONNX opset version (default: 12).
+            
+        Returns:
+            Path to the exported ONNX file.
+        """
+        import torch.onnx
+        
+        if output_path is None:
+            if self.model_path and isinstance(self.model_path, str):
+                output_path = str(Path(self.model_path).with_suffix('.onnx'))
+            else:
+                output_path = f"libreyolo8{self.size}.onnx"
+        
+        print(f"Exporting LibreYOLO8 {self.size} to {output_path}...")
+        
+        # 1. Create a dummy input (Batch, Channels, Height, Width)
+        device = next(self.model.parameters()).device
+        dummy_input = torch.randn(1, 3, input_size, input_size).to(device)
+        
+        # 2. Define a wrapper that decodes boxes for end-to-end inference
+        class ONNXWrapper(torch.nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            def forward(self, x):
+                output = self.model(x)
+                
+                # Collect outputs from the 3 heads
+                box_layers = [output['x8']['box'], output['x16']['box'], output['x32']['box']]
+                cls_layers = [output['x8']['cls'], output['x16']['cls'], output['x32']['cls']]
+                strides = [8, 16, 32]
+                
+                # Generate anchors (Traceable)
+                anchors, stride_tensor = make_anchors(box_layers, strides)
+                
+                # Flatten and concatenate predictions
+                # Box: (Batch, 4, H, W) -> (Batch, N, 4)
+                box_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in box_layers], dim=1)
+                # Cls: (Batch, 80, H, W) -> (Batch, N, 80)
+                cls_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in cls_layers], dim=1)
+                
+                # Decode boxes to xyxy (Batch, N, 4)
+                decoded_boxes = decode_boxes(box_preds, anchors, stride_tensor)
+                
+                # Apply sigmoid to class scores
+                cls_scores = cls_preds.sigmoid()
+                
+                # Return concatenated [boxes, scores]: (Batch, N, 84)
+                return torch.cat([decoded_boxes, cls_scores], dim=-1)
+
+        wrapper = ONNXWrapper(self.model)
+        wrapper.eval()
+        
+        # 3. Perform the export
+        try:
+            import torch.onnx
+            torch.onnx.export(
+                wrapper,
+                dummy_input,
+                output_path,
+                export_params=True,
+                opset_version=opset,
+                do_constant_folding=True,
+                input_names=['images'],
+                output_names=['output'],
+                dynamic_axes={
+                    'images': {0: 'batch', 2: 'height', 3: 'width'},
+                    'output': {0: 'batch'}
+                }
+            )
+            print(f"Export complete: {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"Export failed: {e}")
+            raise e
+
+    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+=======
     def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+>>>>>>> origin/main:libreyolo/v8/model.py
         """
         Alias for __call__ method.
         
