@@ -12,13 +12,8 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-<<<<<<< HEAD:libreyolo/libreyolo8.py
-from .model8 import LibreYOLO8Model
-from .utils8 import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
-=======
 from .nn import LibreYOLO8Model
 from .utils import preprocess_image, postprocess, draw_boxes
->>>>>>> origin/main:libreyolo/v8/model.py
 
 
 class LIBREYOLO8:
@@ -276,7 +271,6 @@ class LIBREYOLO8:
         
         return detections
     
-<<<<<<< HEAD:libreyolo/libreyolo8.py
         
     def export(self, output_path: str = None, input_size: int = 640, opset: int = 12) -> str:
         """
@@ -362,9 +356,6 @@ class LIBREYOLO8:
             raise e
 
     def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
-=======
-    def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
->>>>>>> origin/main:libreyolo/v8/model.py
         """
         Alias for __call__ method.
         
