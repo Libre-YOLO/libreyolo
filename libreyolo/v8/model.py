@@ -1,5 +1,5 @@
 """
-Libre YOLO11 implementation.
+Libre YOLO8 implementation.
 """
 
 import os
@@ -12,13 +12,18 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .model11 import LibreYOLO11Model
-from .utils11 import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
+<<<<<<< HEAD:libreyolo/libreyolo8.py
+from .model8 import LibreYOLO8Model
+from .utils8 import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
+=======
+from .nn import LibreYOLO8Model
+from .utils import preprocess_image, postprocess, draw_boxes
+>>>>>>> origin/main:libreyolo/v8/model.py
 
 
-class LIBREYOLO11:
+class LIBREYOLO8:
     """
-    Libre YOLO11 model for object detection.
+    Libre YOLO8 model for object detection.
     
     Args:
         model_path: Path to model weights file (required)
@@ -31,13 +36,13 @@ class LIBREYOLO11:
             - List of layer names: Save only specified layers (e.g., ["backbone_p1", "neck_c2f21"])
     
     Example:
-        >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="n", save_feature_maps=True)
+        >>> model = LIBREYOLO8(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
         >>> detections = model(image=image_path, save=True)
     """
     
     def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80, save_feature_maps: Union[bool, List[str]] = False):
         """
-        Initialize the Libre YOLO11 model.
+        Initialize the Libre YOLO8 model.
         
         Args:
             model_path: Path to user-provided model weights file or loaded state dict
@@ -60,7 +65,7 @@ class LIBREYOLO11:
         self.hooks = []
         
         # Initialize model
-        self.model = LibreYOLO11Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
+        self.model = LibreYOLO8Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
         
         # Load weights
         if isinstance(model_path, dict):
@@ -99,7 +104,7 @@ class LIBREYOLO11:
     
     def _get_available_layers(self) -> dict:
         """Get mapping of layer names to module objects."""
-        layers = {
+        return {
             # Backbone layers
             "backbone_p1": self.model.backbone.p1,
             "backbone_p2": self.model.backbone.p2,
@@ -110,8 +115,7 @@ class LIBREYOLO11:
             "backbone_c2f3_P4": self.model.backbone.c2f3,
             "backbone_p5": self.model.backbone.p5,
             "backbone_c2f4": self.model.backbone.c2f4,
-            "backbone_sppf": self.model.backbone.sppf,
-            "backbone_c2psa_P5": self.model.backbone.c2psa,
+            "backbone_sppf_P5": self.model.backbone.sppf,
             # Neck layers
             "neck_c2f21": self.model.neck.c2f21,
             "neck_c2f11": self.model.neck.c2f11,
@@ -125,7 +129,6 @@ class LIBREYOLO11:
             "head32_conv11": self.model.head32.conv11,
             "head32_conv21": self.model.head32.conv21,
         }
-        return layers
     
     def _register_hooks(self):
         """Register forward hooks to capture feature maps from model layers."""
@@ -172,7 +175,7 @@ class LIBREYOLO11:
         
         # Save metadata
         metadata = {
-            "model": "LIBREYOLO11",
+            "model": "LIBREYOLO8",
             "size": self.size,
             "input_size": [640, 640],
             "image_source": str(image_path) if isinstance(image_path, str) else "PIL/numpy input",
@@ -208,7 +211,7 @@ class LIBREYOLO11:
         
         return str(save_dir)
     
-    def __call__(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.5, iou_thres: float = 0.7) -> dict:
+    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Run inference on an image.
         
@@ -242,8 +245,7 @@ class LIBREYOLO11:
             conf_thres=conf_thres,
             iou_thres=iou_thres,
             input_size=640,
-            original_size=original_size,
-            max_det=100
+            original_size=original_size
         )
         
         # Save feature maps if enabled
@@ -274,6 +276,7 @@ class LIBREYOLO11:
         
         return detections
     
+<<<<<<< HEAD:libreyolo/libreyolo8.py
         
     def export(self, output_path: str = None, input_size: int = 640, opset: int = 12) -> str:
         """
@@ -293,9 +296,9 @@ class LIBREYOLO11:
             if self.model_path and isinstance(self.model_path, str):
                 output_path = str(Path(self.model_path).with_suffix('.onnx'))
             else:
-                output_path = f"libreyolo11{self.size}.onnx"
+                output_path = f"libreyolo8{self.size}.onnx"
         
-        print(f"Exporting LibreYOLO11 {self.size} to {output_path}...")
+        print(f"Exporting LibreYOLO8 {self.size} to {output_path}...")
         
         # 1. Create a dummy input (Batch, Channels, Height, Width)
         device = next(self.model.parameters()).device
@@ -359,6 +362,9 @@ class LIBREYOLO11:
             raise e
 
     def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+=======
+    def predict(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+>>>>>>> origin/main:libreyolo/v8/model.py
         """
         Alias for __call__ method.
         
@@ -372,4 +378,3 @@ class LIBREYOLO11:
             Dictionary containing detection results.
         """
         return self(image=image, save=save, conf_thres=conf_thres, iou_thres=iou_thres)
-

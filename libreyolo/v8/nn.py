@@ -5,6 +5,7 @@ Neural network architecture for Libre YOLO8.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 class DFL(nn.Module):
@@ -231,6 +232,24 @@ class Head(nn.Module):
         self.cnn1 = nn.Conv2d(in_channels=c_box, out_channels=4*reg_max, kernel_size=1, stride=1, padding=0)
         self.cnn2 = nn.Conv2d(in_channels=c_cls, out_channels=nb_classes, kernel_size=1, stride=1, padding=0)
         
+        self.initialize_weights()
+        
+    def initialize_weights(self):
+        # Initialize classification head with specific bias
+        # to prevent instability at the start of training
+        for m in [self.cnn1, self.cnn2]:
+             nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+             if m.bias is not None:
+                 fan_in, _ = nn.init._calculate_fan_in_and_fan_out(m.weight)
+                 bound = 1 / math.sqrt(fan_in)
+                 nn.init.uniform_(m.bias, -bound, bound)
+
+        # Special initialization for classification head (cnn2)
+        # bias = -log((1-pi)/pi) for focal loss / BCE
+        pi = 0.01
+        bias_val = -math.log((1 - pi) / pi)
+        nn.init.constant_(self.cnn2.bias, bias_val)
+        
     def forward(self, x):
         box = self.cnn1(self.conv12(self.conv11(x)))
         cls = self.cnn2(self.conv22(self.conv21(x)))
@@ -239,9 +258,11 @@ class Head(nn.Module):
 
 class LibreYOLO8Model(nn.Module):
     """Main Libre YOLO model"""
-    def __init__(self, config, reg_max, nb_classes):
+    def __init__(self, config, reg_max, nb_classes, img_size=640):
         super().__init__()
         
+        self.nc = nb_classes
+        self.img_size = img_size
         self.configuration = {
             'n': {'d': 0.33, 'w': 0.25, 'r': 2.0},
             's': {'d': 0.33, 'w': 0.50, 'r': 2.0},
@@ -286,9 +307,9 @@ class LibreYOLO8Model(nn.Module):
         decoded_box32 = self.dfl(box32)
         
         out = {
-            'x8': {'box': decoded_box8, 'cls': cls8},
-            'x16': {'box': decoded_box16, 'cls': cls16},
-            'x32': {'box': decoded_box32, 'cls': cls32}
+            'x8': {'box': decoded_box8, 'cls': cls8, 'raw_box': box8},
+            'x16': {'box': decoded_box16, 'cls': cls16, 'raw_box': box16},
+            'x32': {'box': decoded_box32, 'cls': cls32, 'raw_box': box32}
         }
         
         return out
