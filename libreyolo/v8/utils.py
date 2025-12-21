@@ -169,7 +169,8 @@ def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45,
             "num_detections": 0
         }
     
-    valid_boxes = decoded_boxes[mask]
+    # decoded_boxes is (Batch, N, 4), take first batch
+    valid_boxes = decoded_boxes[0][mask]
     valid_scores = max_scores[mask]
     valid_classes = class_ids[mask]
     

@@ -194,6 +194,7 @@ def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45,
             "num_detections": 0
         }
     
+    # decoded_boxes is (N, 4) after removing batch dim above
     valid_boxes = decoded_boxes[mask]
     valid_scores = max_scores[mask]
     valid_classes = class_ids[mask]

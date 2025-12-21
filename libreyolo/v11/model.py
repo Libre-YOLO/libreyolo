@@ -110,7 +110,7 @@ class LIBREYOLO11:
             "backbone_c2f3_P4": self.model.backbone.c2f3,
             "backbone_p5": self.model.backbone.p5,
             "backbone_c2f4": self.model.backbone.c2f4,
-            "backbone_sppf": self.model.backbone.sppf,
+            "backbone_sppf_P5": self.model.backbone.sppf,
             "backbone_c2psa_P5": self.model.backbone.c2psa,
             # Neck layers
             "neck_c2f21": self.model.neck.c2f21,
