@@ -2,7 +2,7 @@ import os
 from libreyolo import LIBREYOLO
 
 def export_yolo8():
-    weights_path = "weights/libreyolo8n.pt"
+    weights_path = "/Users/xuban.ceccon/Documents/GitHub/libreyolo/weights/libreyolo8n.pt"
     if not os.path.exists(weights_path):
         print(f"Error: {weights_path} not found.")
         return

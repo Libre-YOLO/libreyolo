@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .nn import LibreYOLO8Model
-from .utils import preprocess_image, postprocess, draw_boxes
+from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
 
 
 class LIBREYOLO8:
@@ -310,7 +310,20 @@ class LIBREYOLO8:
         Returns:
             Path to the exported ONNX file.
         """
+        import inspect
         import torch.onnx
+
+        # Torch's exporter requires the `onnx` package in the environment.
+        # Use a spec check (instead of importing) so optional deps don't trigger
+        # static-analysis import errors.
+        import importlib.util
+
+        if importlib.util.find_spec("onnx") is None:
+            raise ImportError(
+                "ONNX export requires the optional ONNX dependencies. "
+                "Install them with `uv sync --extra onnx` (recommended) or "
+                "`pip install -e '.[onnx]'`."
+            )
         
         if output_path is None:
             if self.model_path and isinstance(self.model_path, str):
@@ -360,7 +373,17 @@ class LIBREYOLO8:
         
         # 3. Perform the export
         try:
-            import torch.onnx
+            # Newer PyTorch versions may default to the "dynamo" ONNX exporter, which
+            # pulls in extra deps like `onnxscript`. Prefer the legacy exporter by
+            # explicitly setting `dynamo=False` when the argument exists.
+            export_kwargs = {}
+            try:
+                if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+                    export_kwargs["dynamo"] = False
+            except Exception:
+                # If signature introspection fails for any reason, just proceed.
+                pass
+
             torch.onnx.export(
                 wrapper,
                 dummy_input,
@@ -373,7 +396,8 @@ class LIBREYOLO8:
                 dynamic_axes={
                     'images': {0: 'batch', 2: 'height', 3: 'width'},
                     'output': {0: 'batch'}
-                }
+                },
+                **export_kwargs,
             )
             print(f"Export complete: {output_path}")
             return output_path

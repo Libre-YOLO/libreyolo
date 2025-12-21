@@ -1,8 +1,14 @@
-import onnxruntime as ort
 import numpy as np
-import cv2
 import os
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import onnxruntime as ort
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        "Missing dependency `onnxruntime`. Install it with `uv pip install onnxruntime`."
+    ) from e
 
 # COCO class names (80 classes)
 COCO_CLASSES = [
@@ -27,19 +33,38 @@ def get_class_color(class_id):
     return f"#{int(rgb[0]*255):02x}{int(rgb[1]*255):02x}{int(rgb[2]*255):02x}"
 
 def preprocess(image_path, input_size=640):
-    img = cv2.imread(image_path)
-    if img is None:
+    """
+    Letterbox + normalize image for ONNX inference (no OpenCV dependency).
+
+    Returns:
+        blob: float32 NCHW array in [0, 1], shape (1, 3, input_size, input_size)
+        (h0, w0): original image height/width
+        (dw, dh): half-padding applied (float, in pixels)
+        r: resize ratio used
+    """
+    if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image not found: {image_path}")
-    h0, w0 = img.shape[:2]
+
+    img = Image.open(image_path).convert("RGB")
+    w0, h0 = img.size
+
     r = min(input_size / h0, input_size / w0)
-    img_resized = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=cv2.INTER_LINEAR)
-    h, w = img_resized.shape[:2]
-    dw, dh = input_size - w, input_size - h
-    dw /= 2; dh /= 2
+    new_w, new_h = int(w0 * r), int(h0 * r)
+    img_resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+
+    dw, dh = input_size - new_w, input_size - new_h
+    dw /= 2
+    dh /= 2
+
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-    img_padded = cv2.copyMakeBorder(img_resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-    blob = cv2.dnn.blobFromImage(img_padded, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
+
+    img_padded = Image.new("RGB", (input_size, input_size), (114, 114, 114))
+    img_padded.paste(img_resized, (left, top))
+
+    arr = np.asarray(img_padded, dtype=np.float32) / 255.0  # HWC RGB
+    blob = np.transpose(arr, (2, 0, 1))[None, ...]  # NCHW
+
     return blob, (h0, w0), (dw, dh), r
 
 def nms(boxes, scores, iou_threshold=0.45):
@@ -90,8 +115,12 @@ def run_inference(onnx_path, image_path, output_path="yolo8_onnx_result.jpg"):
     print(f"Saved results to {output_path}")
 
 if __name__ == "__main__":
-    ONNX_MODEL = "libreyolo8n.onnx"
-    TEST_IMAGE = "media/test_image_1_creative_commons.jpg"
+    here = Path(__file__).resolve().parent
+    repo_root = here.parent
+
+    ONNX_MODEL = str((here / "libreyolo8n.onnx").resolve())
+    TEST_IMAGE = str((repo_root / "media" / "test_image_1_creative_commons.jpg").resolve())
+
     if not os.path.exists(ONNX_MODEL):
         print(f"Error: {ONNX_MODEL} not found. Run export_yolo8_onnx.py first.")
     elif not os.path.exists(TEST_IMAGE):
