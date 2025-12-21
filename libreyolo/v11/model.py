@@ -208,13 +208,15 @@ class LIBREYOLO11:
         
         return str(save_dir)
     
-    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, output_path: str = None, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Run inference on an image.
         
         Args:
             image: Input image. Can be a file path (str), PIL Image, or numpy array.
             save: If True, saves the image with detections drawn. Defaults to False.
+            output_path: Optional path to save the annotated image. If not provided, 
+                         saves to 'runs/detections/' with a timestamped name.
             conf_thres: Confidence threshold (default: 0.25)
             iou_thres: IoU threshold for NMS (default: 0.45)
         
@@ -262,14 +264,38 @@ class LIBREYOLO11:
             else:
                 annotated_img = original_img
             
-            if image_path:
-                base, ext = os.path.splitext(image_path)
-                output_path = f"{base}_detections{ext}"
+            if output_path:
+                final_output_path = Path(output_path)
+                if final_output_path.suffix == "":
+                    # If directory, create it and use default naming
+                    final_output_path.mkdir(parents=True, exist_ok=True)
+                    if isinstance(image_path, str):
+                        stem = Path(image_path).stem
+                        ext = Path(image_path).suffix
+                    else:
+                        stem = "inference"
+                        ext = ".jpg"
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    final_output_path = final_output_path / f"{stem}_{timestamp}{ext}"
+                else:
+                    # If file path, ensure parent directory exists
+                    final_output_path.parent.mkdir(parents=True, exist_ok=True)
             else:
-                output_path = "detections_output.jpg"
+                # Determine save directory (matching feature map style)
+                if isinstance(image_path, str):
+                    stem = Path(image_path).stem
+                    ext = Path(image_path).suffix
+                else:
+                    stem = "inference"
+                    ext = ".jpg"
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_dir = Path("runs/detections")
+                save_dir.mkdir(parents=True, exist_ok=True)
+                final_output_path = save_dir / f"{stem}_{timestamp}{ext}"
             
-            annotated_img.save(output_path)
-            detections["saved_path"] = output_path
+            annotated_img.save(final_output_path)
+            detections["saved_path"] = str(final_output_path)
         
         return detections
     
@@ -357,17 +383,18 @@ class LIBREYOLO11:
             print(f"Export failed: {e}")
             raise e
 
-    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, output_path: str = None, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
         """
         Alias for __call__ method.
         
         Args:
             image: Input image. Can be a file path (str), PIL Image, or numpy array.
             save: If True, saves the image with detections drawn. Defaults to False.
+            output_path: Optional path to save the annotated image.
             conf_thres: Confidence threshold (default: 0.25)
             iou_thres: IoU threshold for NMS (default: 0.45)
         
         Returns:
             Dictionary containing detection results.
         """
-        return self(image=image, save=save, conf_thres=conf_thres, iou_thres=iou_thres)
+        return self(image=image, save=save, output_path=output_path, conf_thres=conf_thres, iou_thres=iou_thres)
