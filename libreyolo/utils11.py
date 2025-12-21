@@ -131,27 +131,26 @@ def decode_boxes(box_preds: torch.Tensor, anchors: torch.Tensor, stride_tensor: 
     # anchors shape: (N, 2) where 2 = [x, y] in grid coordinates
     # stride_tensor shape: (N, 1)
     
-    # YOLO11 does: dist2bbox(dfl(box), anchors, xywh=True) * strides
-    # So we need to:
-    # 1. Use dist2bbox with grid coordinates (box_preds and anchors both in grid space)
-    # 2. Convert result to pixel coordinates by multiplying by strides
+    # Reshape anchors and strides for broadcasting: (1, N, 2) and (1, N, 1)
+    anchors = anchors.unsqueeze(0)
+    stride_tensor = stride_tensor.unsqueeze(0)
     
-    # Decode in grid space first (dist2bbox expects same coordinate space for both inputs)
-    decoded_boxes_grid = dist2bbox(box_preds[0], anchors, xywh=True, dim=-1)  # (N, 4) in xywh format, grid space
+    # Decode in grid space first
+    # dist2bbox expects (B, N, 4) and (B, N, 2) or similar
+    decoded_boxes_grid = dist2bbox(box_preds, anchors, xywh=True, dim=-1)  # (B, N, 4) in xywh format, grid space
     
     # Convert to pixel coordinates: multiply center and size by stride
-    # xywh format: [cx, cy, w, h]
-    decoded_boxes_px = decoded_boxes_grid * stride_tensor  # (N, 4) in xywh format, pixel space
+    decoded_boxes_px = decoded_boxes_grid * stride_tensor  # (B, N, 4) in xywh format, pixel space
     
     # Convert xywh to xyxy
-    cx, cy, w, h = decoded_boxes_px[:, 0], decoded_boxes_px[:, 1], decoded_boxes_px[:, 2], decoded_boxes_px[:, 3]
+    cx, cy, w, h = decoded_boxes_px[..., 0], decoded_boxes_px[..., 1], decoded_boxes_px[..., 2], decoded_boxes_px[..., 3]
     x1 = cx - w / 2
     y1 = cy - h / 2
     x2 = cx + w / 2
     y2 = cy + h / 2
-    decoded_boxes = torch.stack([x1, y1, x2, y2], dim=1)  # (N, 4) in xyxy format
+    decoded_boxes = torch.stack([x1, y1, x2, y2], dim=-1)  # (B, N, 4) in xyxy format
     
-    return decoded_boxes.unsqueeze(0)  # (1, N, 4)
+    return decoded_boxes
 
 
 def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.45) -> torch.Tensor:

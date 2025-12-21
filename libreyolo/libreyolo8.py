@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from .model8 import LibreYOLO8Model
-from .utils8 import preprocess_image, postprocess, draw_boxes
+from .utils8 import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
 
 
 class LIBREYOLO8:
@@ -290,7 +290,7 @@ class LIBREYOLO8:
             if self.model_path and isinstance(self.model_path, str):
                 output_path = str(Path(self.model_path).with_suffix('.onnx'))
             else:
-                output_path = f"libreyolo8_{self.size}.onnx"
+                output_path = f"libreyolo8{self.size}.onnx"
         
         print(f"Exporting LibreYOLO8 {self.size} to {output_path}...")
         
@@ -298,20 +298,36 @@ class LIBREYOLO8:
         device = next(self.model.parameters()).device
         dummy_input = torch.randn(1, 3, input_size, input_size).to(device)
         
-        # 2. Define a wrapper to flatten the dictionary output into a tuple
+        # 2. Define a wrapper that decodes boxes for end-to-end inference
         class ONNXWrapper(torch.nn.Module):
             def __init__(self, model):
                 super().__init__()
                 self.model = model
             def forward(self, x):
-                out = self.model(x)
-                # Return tensors in a fixed order:
-                # box8, cls8, box16, cls16, box32, cls32
-                return (
-                    out['x8']['box'], out['x8']['cls'],
-                    out['x16']['box'], out['x16']['cls'],
-                    out['x32']['box'], out['x32']['cls']
-                )
+                output = self.model(x)
+                
+                # Collect outputs from the 3 heads
+                box_layers = [output['x8']['box'], output['x16']['box'], output['x32']['box']]
+                cls_layers = [output['x8']['cls'], output['x16']['cls'], output['x32']['cls']]
+                strides = [8, 16, 32]
+                
+                # Generate anchors (Traceable)
+                anchors, stride_tensor = make_anchors(box_layers, strides)
+                
+                # Flatten and concatenate predictions
+                # Box: (Batch, 4, H, W) -> (Batch, N, 4)
+                box_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in box_layers], dim=1)
+                # Cls: (Batch, 80, H, W) -> (Batch, N, 80)
+                cls_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in cls_layers], dim=1)
+                
+                # Decode boxes to xyxy (Batch, N, 4)
+                decoded_boxes = decode_boxes(box_preds, anchors, stride_tensor)
+                
+                # Apply sigmoid to class scores
+                cls_scores = cls_preds.sigmoid()
+                
+                # Return concatenated [boxes, scores]: (Batch, N, 84)
+                return torch.cat([decoded_boxes, cls_scores], dim=-1)
 
         wrapper = ONNXWrapper(self.model)
         wrapper.eval()
@@ -327,12 +343,10 @@ class LIBREYOLO8:
                 opset_version=opset,
                 do_constant_folding=True,
                 input_names=['images'],
-                output_names=['box8', 'cls8', 'box16', 'cls16', 'box32', 'cls32'],
+                output_names=['output'],
                 dynamic_axes={
                     'images': {0: 'batch', 2: 'height', 3: 'width'},
-                    'box8': {0: 'batch'}, 'cls8': {0: 'batch'},
-                    'box16': {0: 'batch'}, 'cls16': {0: 'batch'},
-                    'box32': {0: 'batch'}, 'cls32': {0: 'batch'}
+                    'output': {0: 'batch'}
                 }
             )
             print(f"Export complete: {output_path}")
