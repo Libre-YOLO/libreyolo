@@ -31,20 +31,14 @@ def preprocess(image_path, input_size=640):
     if img is None:
         raise FileNotFoundError(f"Image not found: {image_path}")
     h0, w0 = img.shape[:2]
-    
-    # Resize keeping aspect ratio
     r = min(input_size / h0, input_size / w0)
     img_resized = cv2.resize(img, (int(w0 * r), int(h0 * r)), interpolation=cv2.INTER_LINEAR)
-    
-    # Pad to square
     h, w = img_resized.shape[:2]
     dw, dh = input_size - w, input_size - h
     dw /= 2; dh /= 2
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
     img_padded = cv2.copyMakeBorder(img_resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
-    
-    # HWC to CHW, normalize
     blob = cv2.dnn.blobFromImage(img_padded, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     return blob, (h0, w0), (dw, dh), r
 
@@ -64,59 +58,44 @@ def nms(boxes, scores, iou_threshold=0.45):
         order = order[np.where(ovr <= iou_threshold)[0] + 1]
     return keep
 
-def run_inference(onnx_path, image_path):
-    print(f"Running end-to-end inference on {image_path}...")
+def run_inference(onnx_path, image_path, output_path="yolo11_onnx_result.jpg"):
+    print(f"Running YOLOv11 ONNX inference on {image_path}...")
     session = ort.InferenceSession(onnx_path)
-    
-    # 1. Preprocess
     INPUT_SIZE = 640
     blob, (h0, w0), (dw, dh), ratio = preprocess(image_path, INPUT_SIZE)
-    
-    # 2. Run Inference - Now returns [Batch, N, 84] (boxes + scores)
     outputs = session.run(None, {session.get_inputs()[0].name: blob})[0][0]
-    
-    # 3. Postprocess (only NMS and scaling)
     boxes = outputs[:, :4]
     scores = outputs[:, 4:]
-    
     max_scores = np.max(scores, axis=1)
     class_ids = np.argmax(scores, axis=1)
-    
     mask = max_scores > 0.25
     boxes, max_scores, class_ids = boxes[mask], max_scores[mask], class_ids[mask]
-    
     if len(boxes) == 0:
         print("No objects detected.")
         return
-
-    # Scale boxes back to original image
     boxes[:, [0, 2]] = (boxes[:, [0, 2]] - dw) / ratio
     boxes[:, [1, 3]] = (boxes[:, [1, 3]] - dh) / ratio
-    
-    # NMS
     keep = nms(boxes, max_scores)
     boxes, scores, classes = boxes[keep], max_scores[keep], class_ids[keep]
-    
-    # 4. Draw and Save
-    print(f"Detected {len(boxes)} objects.")
     img = Image.open(image_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     try: font = ImageFont.truetype("arial.ttf", 15)
     except: font = ImageFont.load_default()
-
     for box, score, cls_id in zip(boxes, scores, classes):
         color = get_class_color(int(cls_id))
         draw.rectangle(box.tolist(), outline=color, width=3)
         label = f"{COCO_CLASSES[int(cls_id)]}: {score:.2f}"
         draw.text((box[0], box[1] - 15), label, fill=color, font=font)
-    
-    img.save("onnx_result.jpg")
-    print("Saved results to onnx_result.jpg")
+    img.save(output_path)
+    print(f"Saved results to {output_path}")
 
 if __name__ == "__main__":
     ONNX_MODEL = "libreyolo11n.onnx"
     TEST_IMAGE = "media/test_image_1_creative_commons.jpg"
     if not os.path.exists(ONNX_MODEL):
-        print(f"Error: {ONNX_MODEL} not found. Run export_onnx.py first.")
+        print(f"Error: {ONNX_MODEL} not found. Run export_yolo11_onnx.py first.")
+    elif not os.path.exists(TEST_IMAGE):
+        print(f"Error: {TEST_IMAGE} not found.")
     else:
         run_inference(ONNX_MODEL, TEST_IMAGE)
+
