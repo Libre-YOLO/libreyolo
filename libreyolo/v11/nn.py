@@ -44,13 +44,15 @@ class Conv(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    """Standard bottleneck with expansion factor e=0.5"""
-    def __init__(self, c_out, c_in, res_connection, e=0.5):
+    """Standard bottleneck"""
+    def __init__(self, c_out, c_in, res_connection, e=0.5, k=(3, 3)):
         super().__init__()
         c_ = int(c_out * e)  # hidden channels
-        self.conv1 = Conv(c_, c_in, 3, 1, 1)
-        self.conv2 = Conv(c_out, c_, 3, 1, 1)
-        self.res_connection = res_connection
+        if isinstance(k, int):
+            k = (k, k)
+        self.conv1 = Conv(c_, c_in, k[0], 1, k[0]//2)
+        self.conv2 = Conv(c_out, c_, k[1], 1, k[1]//2)
+        self.res_connection = res_connection and c_out == c_in
         
     def forward(self, x):
         if self.res_connection:
@@ -58,86 +60,52 @@ class Bottleneck(nn.Module):
         return self.conv2(self.conv1(x))
 
 
-class C3kBottleneck(nn.Module):
-    """
-    C3k-style bottleneck with nested bottlenecks.
-    Structure: cv3(concat(m(cv1(x)), cv2(x)))
-    - conv1: c_in -> c_/2, then through nested bottlenecks (branch 1)
-    - conv2: c_in -> c_/2 (branch 2, no bottlenecks)
-    - conv3: combines both branches
-    """
-    def __init__(self, c_out, c_in, n=2):
+class C3k(nn.Module):
+    """C3k module, a CSP bottleneck with 3 convolutions"""
+    def __init__(self, c_out, c_in, n=1, shortcut=True, e=0.5, k=3):
         super().__init__()
-        c_ = c_out // 2  # hidden channels
-        self.conv1 = Conv(c_, c_in, 1, 1, 0)  # branch 1 (goes through bottlenecks)
-        self.conv2 = Conv(c_, c_in, 1, 1, 0)  # branch 2 (direct)
-        self.conv3 = Conv(c_out, c_out, 1, 1, 0)  # combine
-        # Nested bottlenecks with e=1.0 (full width)
+        c_ = int(c_out * e)  # hidden channels
+        self.conv1 = Conv(c_, c_in, 1, 1, 0)
+        self.conv2 = Conv(c_, c_in, 1, 1, 0)
+        self.conv3 = Conv(c_out, 2 * c_, 1, 1, 0)
+        
         self.bottlenecks = nn.Sequential(*[
-            Bottleneck(c_, c_, res_connection=True, e=1.0)
+            Bottleneck(c_, c_, shortcut, e=1.0, k=k)
             for _ in range(n)
         ])
         
     def forward(self, x):
-        # Branch 1: conv1 -> nested bottlenecks
-        y1 = self.bottlenecks(self.conv1(x))
-        # Branch 2: conv2 only (no bottlenecks)
-        y2 = self.conv2(x)
-        # Concat (y1 first, then y2) and combine
-        return self.conv3(torch.cat([y1, y2], dim=1))
+        return self.conv3(torch.cat((self.bottlenecks(self.conv1(x)), self.conv2(x)), dim=1))
 
 
-class C2F(nn.Module):
-    """C2f module with split-concat-bottleneck structure for YOLO11"""
-    def __init__(self, c_out, c_in, res_connection, nb_bottlenecks):
+class C3k2(nn.Module):
+    """
+    C3k2 module (CSP Bottleneck with 2 convolutions)
+    Adapts structure based on c3k flag:
+    - c3k=True: Uses C3k blocks internally (for m/l/x models)
+    - c3k=False: Uses Bottleneck blocks internally (for n/s models)
+    """
+    def __init__(self, c_out, c_in, n=1, c3k=False, e=0.5, shortcut=False):
         super().__init__()
-        # For YOLO11: conv1 outputs c_out/2, bottleneck uses c_out/4
-        self.c_half = c_out // 2  # conv1 output channels
-        self.c_ = c_out // 4  # bottleneck channels
-        self.conv1 = Conv(self.c_half, c_in, 1, 1, 0)
-        self.conv2 = Conv(c_out, (nb_bottlenecks + 2) * self.c_, 1, 1, 0)
+        self.c_ = int(c_out * e)  # hidden channels
+        # Input splits into two branches (hence 2 * c_)
+        self.conv1 = Conv(2 * self.c_, c_in, 1, 1, 0)
+        # Output concatenates 2 branches + n bottleneck outputs (hence (2 + n) * c_)
+        self.conv2 = Conv(c_out, (2 + n) * self.c_, 1, 1, 0)
         
         self.bottlenecks = nn.ModuleList([
-            Bottleneck(self.c_, self.c_, res_connection=res_connection, e=0.5)
-            for _ in range(nb_bottlenecks)
+            C3k(self.c_, self.c_, 2, shortcut) if c3k 
+            else Bottleneck(self.c_, self.c_, shortcut, e=0.5)
+            for _ in range(n)
         ])
         
     def forward(self, x):
-        x = self.conv1(x)
-        # Split: first half stays, second half goes through bottlenecks
-        # x has c_half channels, split into two c_ chunks
-        x2 = x[:, self.c_:, :, :]
-        
-        for bottleneck in self.bottlenecks:
-            x2 = bottleneck(x2)
-            x = torch.cat((x, x2), dim=1)
-        
-        return self.conv2(x)
-
-
-class C2FC3k(nn.Module):
-    """C2F module with C3k-style nested bottlenecks"""
-    def __init__(self, c_out, c_in, nb_bottlenecks):
-        super().__init__()
-        # For C3k blocks: conv1 outputs c_out, bottleneck uses c_out/2
-        self.c_ = c_out // 2
-        self.conv1 = Conv(c_out, c_in, 1, 1, 0)
-        self.conv2 = Conv(c_out, (nb_bottlenecks + 2) * self.c_, 1, 1, 0)
-        
-        self.bottlenecks = nn.ModuleList([
-            C3kBottleneck(self.c_, self.c_, n=2)
-            for _ in range(nb_bottlenecks)
-        ])
-        
-    def forward(self, x):
-        x = self.conv1(x)
-        x2 = x[:, self.c_:, :, :]
-        
-        for bottleneck in self.bottlenecks:
-            x2 = bottleneck(x2)
-            x = torch.cat((x, x2), dim=1)
-        
-        return self.conv2(x)
+        # Split input into two branches
+        y = list(self.conv1(x).chunk(2, 1))
+        # Extend with bottleneck outputs
+        y.extend(m(y[-1]) for m in self.bottlenecks)
+        # Concatenate all and project
+        return self.conv2(torch.cat(y, 1))
 
 
 class Attention(nn.Module):
@@ -249,11 +217,11 @@ class Backbone(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        # YOLO11 configurations
+        # YOLO11 configurations (r = ratio for P5 scale channels)
         self.configuration = {
             'n': {'d': 0.50, 'w': 0.25, 'r': 2.0},
             's': {'d': 0.50, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.50, 'w': 1.00, 'r': 1.5},
+            'm': {'d': 0.50, 'w': 1.00, 'r': 1.0},
             'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
             'x': {'d': 1.00, 'w': 1.50, 'r': 1.0}
         }
@@ -261,22 +229,25 @@ class Backbone(nn.Module):
         d = self.configuration[config]['d']
         w = self.configuration[config]['w']
         r = self.configuration[config]['r']
+        
+        # c3k_setting: True for m/l/x, False for n/s
+        c3k_setting = config in ('m', 'l', 'x')
                 
         # Stem
         self.p1 = Conv(int(64*w), 3, 3, 2, 1)
         self.p2 = Conv(int(128*w), int(64*w), 3, 2, 1)
         
-        # Stage 1-2: regular C2F (note: C2F doubles channels in YOLO11!)
-        self.c2f1 = C2F(int(256*w), int(128*w), True, max(1, int(round(2*d))))
+        # Stage 1-2: C3k2 with e=0.25 (all models), c3k varies by model size
+        self.c2f1 = C3k2(int(256*w), int(128*w), n=max(1, int(round(2*d))), c3k=c3k_setting, e=0.25, shortcut=True)
         self.p3 = Conv(int(256*w), int(256*w), 3, 2, 1)
-        self.c2f2 = C2F(int(512*w), int(256*w), True, max(1, int(round(2*d))))
+        self.c2f2 = C3k2(int(512*w), int(256*w), n=max(1, int(round(2*d))), c3k=c3k_setting, e=0.25, shortcut=True)
         
-        # Stage 3-4: C3k-style C2F  
+        # Stage 3-4: C3k2 with c3k=True always, e=0.5
         self.p4 = Conv(int(512*w), int(512*w), 3, 2, 1)
-        self.c2f3 = C2FC3k(int(512*w), int(512*w), max(1, int(round(2*d))))
+        self.c2f3 = C3k2(int(512*w), int(512*w), n=max(1, int(round(2*d))), c3k=True, e=0.5, shortcut=True)
         
         self.p5 = Conv(int(512*w*r), int(512*w), 3, 2, 1)
-        self.c2f4 = C2FC3k(int(512*w*r), int(512*w*r), max(1, int(round(2*d))))
+        self.c2f4 = C3k2(int(512*w*r), int(512*w*r), n=max(1, int(round(2*d))), c3k=True, e=0.5, shortcut=True)
         
         # SPPF + C2PSA
         self.sppf = SPPF(int(512*w*r), int(512*w*r))
@@ -302,30 +273,6 @@ class Backbone(nn.Module):
         return x8, x16, x32
 
 
-class NeckC2F(nn.Module):
-    """C2F for neck - uses c_out/2 for hidden (different from backbone's c_out/4)"""
-    def __init__(self, c_out, c_in, nb_bottlenecks):
-        super().__init__()
-        self.c_ = c_out // 2  # neck uses half, not quarter
-        self.conv1 = Conv(c_out, c_in, 1, 1, 0)
-        self.conv2 = Conv(c_out, (nb_bottlenecks + 2) * self.c_, 1, 1, 0)
-        
-        self.bottlenecks = nn.ModuleList([
-            Bottleneck(self.c_, self.c_, res_connection=False, e=0.5)
-            for _ in range(nb_bottlenecks)
-        ])
-        
-    def forward(self, x):
-        x = self.conv1(x)
-        x2 = x[:, self.c_:, :, :]
-        
-        for bottleneck in self.bottlenecks:
-            x2 = bottleneck(x2)
-            x = torch.cat((x, x2), dim=1)
-        
-        return self.conv2(x)
-
-
 class Neck(nn.Module):
     """YOLO11 Neck (PANet)"""
     def __init__(self, config):
@@ -334,7 +281,7 @@ class Neck(nn.Module):
         self.configuration = {
             'n': {'d': 0.50, 'w': 0.25, 'r': 2.0},
             's': {'d': 0.50, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.50, 'w': 1.00, 'r': 1.5},
+            'm': {'d': 0.50, 'w': 1.00, 'r': 1.0},
             'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
             'x': {'d': 1.00, 'w': 1.50, 'r': 1.0}
         }
@@ -343,23 +290,22 @@ class Neck(nn.Module):
         w = self.configuration[config]['w']
         r = self.configuration[config]['r']
         
-        # For 'n': x32=256, x16=128, x8=128
-        # c2f21: concat(x32, x16) = 384 -> 128
-        # c2f11: concat(up(c2f21), x8) = 128+128=256 -> 64
-        # c2f12: concat(down(c2f11), c2f21) = 64+128=192 -> 128  
-        # c2f22: concat(down(c2f12), x32) = 128+256=384 -> 256
+        # c3k_setting: True for m/l/x, False for n/s
+        c3k_setting = config in ('m', 'l', 'x')
 
         self.upsample1 = nn.Upsample(scale_factor=2, mode='nearest')        
-        self.c2f21 = NeckC2F(int(512*w), int(512*w*(1+r)), max(1, int(round(2*d))))
+        # All neck C3k2 blocks use shortcut=True
+        self.c2f21 = C3k2(int(512*w), int(512*w*(1+r)), n=max(1, int(round(2*d))), c3k=c3k_setting, e=0.5, shortcut=True)
         
         self.upsample2 = nn.Upsample(scale_factor=2, mode='nearest')
-        self.c2f11 = NeckC2F(int(256*w), int(512*w + 512*w), max(1, int(round(2*d))))    
+        self.c2f11 = C3k2(int(256*w), int(512*w + 512*w), n=max(1, int(round(2*d))), c3k=c3k_setting, e=0.5, shortcut=True)    
         
         self.conv1 = Conv(int(256*w), int(256*w), 3, 2, 1)
-        self.c2f12 = NeckC2F(int(512*w), int(256*w + 512*w), max(1, int(round(2*d))))
+        self.c2f12 = C3k2(int(512*w), int(256*w + 512*w), n=max(1, int(round(2*d))), c3k=c3k_setting, e=0.5, shortcut=True)
         
         self.conv2 = Conv(int(512*w), int(512*w), 3, 2, 1)
-        self.c2f22 = C2FC3k(int(512*w*r), int(512*w + 512*w*r), max(1, int(round(2*d))))
+        # Last C2F block: c3k=True always
+        self.c2f22 = C3k2(int(512*w*r), int(512*w + 512*w*r), n=max(1, int(round(2*d))), c3k=True, e=0.5, shortcut=True)
         
     def forward(self, x8, x16, x32):
         aux1 = self.upsample1(x32)
@@ -433,7 +379,7 @@ class LibreYOLO11Model(nn.Module):
         self.configuration = {
             'n': {'d': 0.50, 'w': 0.25, 'r': 2.0},
             's': {'d': 0.50, 'w': 0.50, 'r': 2.0},
-            'm': {'d': 0.50, 'w': 1.00, 'r': 1.5},
+            'm': {'d': 0.50, 'w': 1.00, 'r': 1.0},
             'l': {'d': 1.00, 'w': 1.00, 'r': 1.0},
             'x': {'d': 1.00, 'w': 1.50, 'r': 1.0}
         }
