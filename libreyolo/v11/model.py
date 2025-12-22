@@ -5,16 +5,18 @@ Libre YOLO11 implementation.
 import os
 import json
 from datetime import datetime
-from typing import Union, List
+from typing import Union, List, Optional
 from pathlib import Path
 import torch
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2
 
 from .nn import LibreYOLO11Model
 from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
 from ..common.eigen_cam import compute_eigen_cam, overlay_heatmap
+from ..common.cam import CAM_METHODS
 
 
 class LIBREYOLO11:
@@ -31,13 +33,28 @@ class LIBREYOLO11:
             - True: Save all layers
             - List of layer names: Save only specified layers (e.g., ["backbone_p1", "neck_c2f21"])
         save_eigen_cam: If True, saves EigenCAM heatmap visualizations on each inference (default: False)
+        cam_method: CAM method for explain(). Options: "eigencam", "gradcam", "gradcam++",
+                   "xgradcam", "hirescam", "layercam", "eigengradcam" (default: "eigencam")
+        cam_layer: Target layer for CAM computation (default: "neck_c2f22")
     
     Example:
         >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
         >>> detections = model(image=image_path, save=True)
+        >>> # Use explain() for XAI heatmaps
+        >>> heatmap = model.explain("image.jpg", method="gradcam")
     """
     
-    def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80, save_feature_maps: Union[bool, List[str]] = False, save_eigen_cam: bool = False):
+    def __init__(
+        self,
+        model_path: Union[str, dict],
+        size: str,
+        reg_max: int = 16,
+        nb_classes: int = 80,
+        save_feature_maps: Union[bool, List[str]] = False,
+        save_eigen_cam: bool = False,
+        cam_method: str = "eigencam",
+        cam_layer: Optional[str] = None
+    ):
         """
         Initialize the Libre YOLO11 model.
         
@@ -51,6 +68,8 @@ class LIBREYOLO11:
                 - True: Save all layers
                 - List[str]: Save only specified layer names
             save_eigen_cam: If True, saves EigenCAM heatmap visualizations
+            cam_method: Default CAM method for explain() (default: "eigencam")
+            cam_layer: Target layer for CAM computation (default: "neck_c2f22")
         """
         if size not in ['n', 's', 'm', 'l', 'x']:
             raise ValueError(f"Invalid size: {size}. Must be one of: 'n', 's', 'm', 'l', 'x'")
@@ -60,9 +79,10 @@ class LIBREYOLO11:
         self.nb_classes = nb_classes
         self.save_feature_maps = save_feature_maps
         self.save_eigen_cam = save_eigen_cam
+        self.cam_method = cam_method.lower()
         self.feature_maps = {}
         self.hooks = []
-        self._eigen_cam_layer = "neck_c2f22"  # Default layer for EigenCAM
+        self._eigen_cam_layer = cam_layer or "neck_c2f22"  # Default layer for EigenCAM/CAM
         
         # Initialize model
         self.model = LibreYOLO11Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
@@ -487,3 +507,164 @@ class LIBREYOLO11:
             Dictionary containing detection results.
         """
         return self(image=image, save=save, output_path=output_path, conf_thres=conf_thres, iou_thres=iou_thres)
+
+    def explain(
+        self,
+        image: Union[str, Image.Image, np.ndarray],
+        method: Optional[str] = None,
+        target_layer: Optional[str] = None,
+        eigen_smooth: bool = False,
+        save: bool = False,
+        output_path: Optional[str] = None,
+        alpha: float = 0.5
+    ) -> dict:
+        """
+        Generate explainability heatmap for the given image using CAM methods.
+        
+        This method provides visual explanations of what the model focuses on
+        when making predictions. It supports multiple CAM (Class Activation Mapping)
+        techniques including gradient-based and gradient-free methods.
+        
+        Args:
+            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            method: CAM method to use. Options:
+                - "eigencam": Gradient-free, SVD-based (default)
+                - "gradcam": Gradient-weighted class activation
+                - "gradcam++": Improved GradCAM with second-order gradients
+                - "xgradcam": Axiom-based GradCAM
+                - "hirescam": High-resolution CAM
+                - "layercam": Layer-wise CAM
+                - "eigengradcam": Eigen-based gradient CAM
+            target_layer: Layer name for CAM computation. Use get_available_layer_names()
+                         to see options. Defaults to "neck_c2f22".
+            eigen_smooth: Apply SVD smoothing to the heatmap (default: False).
+            save: If True, saves the heatmap visualization to disk.
+            output_path: Optional path to save the visualization.
+            alpha: Blending factor for overlay (default: 0.5).
+        
+        Returns:
+            Dictionary containing:
+            - heatmap: Grayscale heatmap array of shape (H, W) with values in [0, 1]
+            - overlay: RGB overlay image as numpy array
+            - original_image: Original image as PIL Image
+            - method: CAM method used
+            - target_layer: Target layer used
+            - saved_path: Path to saved visualization (if save=True)
+        
+        Example:
+            >>> model = LIBREYOLO11("yolo11n.pt", size="n")
+            >>> result = model.explain("image.jpg", method="gradcam", save=True)
+            >>> heatmap = result["heatmap"]
+            >>> overlay = result["overlay"]
+        """
+        # Determine method and layer
+        method = (method or self.cam_method).lower()
+        target_layer = target_layer or self._eigen_cam_layer
+        
+        # Validate method
+        if method not in CAM_METHODS:
+            available = ", ".join(CAM_METHODS.keys())
+            raise ValueError(f"Unknown CAM method '{method}'. Available: {available}")
+        
+        # Validate layer
+        available_layers = self._get_available_layers()
+        if target_layer not in available_layers:
+            available = ", ".join(sorted(available_layers.keys()))
+            raise ValueError(f"Unknown layer '{target_layer}'. Available: {available}")
+        
+        # Preprocess image
+        input_tensor, original_img, original_size = preprocess_image(image, input_size=640)
+        
+        # Get target layer module
+        target_module = available_layers[target_layer]
+        
+        # Create CAM instance
+        cam_class = CAM_METHODS[method]
+        cam = cam_class(
+            model=self.model,
+            target_layers=[target_module],
+            reshape_transform=None
+        )
+        
+        try:
+            # Compute CAM
+            grayscale_cam = cam(input_tensor, eigen_smooth=eigen_smooth)
+            
+            # Get the first batch item
+            heatmap = grayscale_cam[0]
+            
+            # Resize heatmap to original image size
+            heatmap_resized = cv2.resize(heatmap, (original_size[0], original_size[1]))
+            
+            # Normalize to [0, 1]
+            heatmap_min, heatmap_max = heatmap_resized.min(), heatmap_resized.max()
+            if heatmap_max - heatmap_min > 1e-8:
+                heatmap_resized = (heatmap_resized - heatmap_min) / (heatmap_max - heatmap_min)
+            
+            # Create overlay
+            img_array = np.array(original_img)
+            overlay = overlay_heatmap(img_array, heatmap_resized, alpha=alpha)
+            
+            result = {
+                "heatmap": heatmap_resized,
+                "overlay": overlay,
+                "original_image": original_img,
+                "method": method,
+                "target_layer": target_layer,
+            }
+            
+            # Save if requested
+            if save:
+                image_path = image if isinstance(image, str) else None
+                if isinstance(image_path, str):
+                    stem = Path(image_path).stem
+                else:
+                    stem = "inference"
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                if output_path:
+                    save_dir = Path(output_path)
+                    if save_dir.suffix:
+                        save_dir = save_dir.parent
+                else:
+                    save_dir = Path(f"runs/{method}") / f"{stem}_{timestamp}"
+                
+                save_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Save overlay
+                Image.fromarray(overlay).save(save_dir / "heatmap_overlay.jpg")
+                
+                # Save grayscale heatmap
+                heatmap_gray = (heatmap_resized * 255).astype(np.uint8)
+                Image.fromarray(heatmap_gray).save(save_dir / "heatmap_grayscale.png")
+                
+                # Save metadata
+                metadata = {
+                    "model": "LIBREYOLO11",
+                    "size": self.size,
+                    "method": method,
+                    "target_layer": target_layer,
+                    "eigen_smooth": eigen_smooth,
+                    "image_source": str(image) if isinstance(image, str) else "PIL/numpy input"
+                }
+                with open(save_dir / "metadata.json", "w") as f:
+                    json.dump(metadata, f, indent=2)
+                
+                result["saved_path"] = str(save_dir)
+            
+            return result
+            
+        finally:
+            # Clean up CAM resources
+            cam.release()
+
+    @staticmethod
+    def get_available_cam_methods() -> List[str]:
+        """
+        Get list of available CAM methods.
+        
+        Returns:
+            List of CAM method names that can be used with explain().
+        """
+        return list(CAM_METHODS.keys())
