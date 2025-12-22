@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 
 from .nn import LibreYOLO8Model
 from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
+from ..common.eigen_cam import compute_eigen_cam, overlay_heatmap
 
 
 class LIBREYOLO8:
@@ -29,13 +30,14 @@ class LIBREYOLO8:
             - False: Disabled (default)
             - True: Save all layers
             - List of layer names: Save only specified layers (e.g., ["backbone_p1", "neck_c2f21"])
+        save_eigen_cam: If True, saves EigenCAM heatmap visualizations on each inference (default: False)
     
     Example:
         >>> model = LIBREYOLO8(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
         >>> detections = model(image=image_path, save=True)
     """
     
-    def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80, save_feature_maps: Union[bool, List[str]] = False):
+    def __init__(self, model_path: Union[str, dict], size: str, reg_max: int = 16, nb_classes: int = 80, save_feature_maps: Union[bool, List[str]] = False, save_eigen_cam: bool = False):
         """
         Initialize the Libre YOLO8 model.
         
@@ -48,6 +50,7 @@ class LIBREYOLO8:
                 - False: Disabled
                 - True: Save all layers
                 - List[str]: Save only specified layer names
+            save_eigen_cam: If True, saves EigenCAM heatmap visualizations
         """
         if size not in ['n', 's', 'm', 'l', 'x']:
             raise ValueError(f"Invalid size: {size}. Must be one of: 'n', 's', 'm', 'l', 'x'")
@@ -56,8 +59,10 @@ class LIBREYOLO8:
         self.reg_max = reg_max
         self.nb_classes = nb_classes
         self.save_feature_maps = save_feature_maps
+        self.save_eigen_cam = save_eigen_cam
         self.feature_maps = {}
         self.hooks = []
+        self._eigen_cam_layer = "neck_c2f22"  # Default layer for EigenCAM
         
         # Initialize model
         self.model = LibreYOLO8Model(config=size, reg_max=reg_max, nb_classes=nb_classes)
@@ -74,7 +79,7 @@ class LIBREYOLO8:
         self.model.eval()
         
         # Register hooks for feature map extraction
-        if self.save_feature_maps:
+        if self.save_feature_maps or self.save_eigen_cam:
             self._register_hooks()
     
     def _load_weights(self, model_path: str):
@@ -134,27 +139,30 @@ class LIBREYOLO8:
             return hook
         
         available_layers = self._get_available_layers()
+        layers_to_hook = set()
         
         if self.save_feature_maps is True:
             # Hook into all available layers
-            for layer_name, module in available_layers.items():
-                self.hooks.append(module.register_forward_hook(get_hook(layer_name)))
-        
+            layers_to_hook.update(available_layers.keys())
         elif isinstance(self.save_feature_maps, list):
             # Hook into specified layers only
-            invalid_layers = []
-            for layer_name in self.save_feature_maps:
-                if layer_name not in available_layers:
-                    invalid_layers.append(layer_name)
-                else:
-                    self.hooks.append(available_layers[layer_name].register_forward_hook(get_hook(layer_name)))
-            
+            invalid_layers = [l for l in self.save_feature_maps if l not in available_layers]
             if invalid_layers:
                 available = ", ".join(sorted(available_layers.keys()))
                 raise ValueError(
                     f"Invalid layer names: {invalid_layers}. "
                     f"Available layers: {available}"
                 )
+            layers_to_hook.update(self.save_feature_maps)
+        
+        # Add EigenCAM layer if enabled
+        if self.save_eigen_cam:
+            layers_to_hook.add(self._eigen_cam_layer)
+        
+        # Register hooks for all required layers
+        for layer_name in layers_to_hook:
+            module = available_layers[layer_name]
+            self.hooks.append(module.register_forward_hook(get_hook(layer_name)))
     
     def _save_feature_maps(self, image_path):
         """Save feature map visualizations to disk."""
@@ -200,6 +208,58 @@ class LIBREYOLO8:
             plt.tight_layout()
             plt.savefig(save_dir / f"{layer_name}.png", bbox_inches='tight', dpi=100)
             plt.close()
+        
+        # Clear feature maps after saving (only if not using eigen_cam)
+        if not self.save_eigen_cam:
+            self.feature_maps.clear()
+        
+        return str(save_dir)
+    
+    def _save_eigen_cam(self, image_path, original_img: Image.Image):
+        """Save EigenCAM heatmap visualizations to disk."""
+        # Get the activation from the target layer
+        if self._eigen_cam_layer not in self.feature_maps:
+            return None
+        
+        activation = self.feature_maps[self._eigen_cam_layer]
+        # activation shape: (batch, channels, H, W) - take first batch item
+        activation = activation[0].numpy() if activation.dim() == 4 else activation.numpy()
+        
+        # Compute EigenCAM heatmap
+        heatmap = compute_eigen_cam(activation)
+        
+        # Determine the base name for the output directory
+        if isinstance(image_path, str):
+            stem = Path(image_path).stem
+        else:
+            stem = "inference"
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir = Path("runs/eigen_cam") / f"{stem}_{timestamp}"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Convert PIL Image to numpy array for overlay
+        img_array = np.array(original_img)
+        
+        # Save heatmap overlay
+        overlay = overlay_heatmap(img_array, heatmap, alpha=0.5)
+        Image.fromarray(overlay).save(save_dir / "heatmap_overlay.jpg")
+        
+        # Save grayscale heatmap
+        import cv2
+        heatmap_resized = cv2.resize(heatmap, (img_array.shape[1], img_array.shape[0]))
+        heatmap_gray = (heatmap_resized * 255).astype(np.uint8)
+        Image.fromarray(heatmap_gray).save(save_dir / "heatmap_grayscale.png")
+        
+        # Save metadata
+        metadata = {
+            "model": "LIBREYOLO8",
+            "size": self.size,
+            "target_layer": self._eigen_cam_layer,
+            "image_source": str(image_path) if isinstance(image_path, str) else "PIL/numpy input"
+        }
+        with open(save_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
         
         # Clear feature maps after saving
         self.feature_maps.clear()
@@ -249,6 +309,11 @@ class LIBREYOLO8:
         if self.save_feature_maps:
             feature_maps_path = self._save_feature_maps(image_path)
             detections["feature_maps_path"] = feature_maps_path
+        
+        # Save EigenCAM heatmap if enabled
+        if self.save_eigen_cam:
+            eigen_cam_path = self._save_eigen_cam(image_path, original_img)
+            detections["eigen_cam_path"] = eigen_cam_path
         
         # Draw and save if requested
         if save:
