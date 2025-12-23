@@ -17,7 +17,7 @@ from .nn import LibreYOLO8Model
 from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
 from ..common.eigen_cam import compute_eigen_cam, overlay_heatmap
 from ..common.cam import CAM_METHODS
-from ..common.image_loader import ImageInput
+from ..common.image_loader import ImageInput, ImageLoader
 
 
 class LIBREYOLO8:
@@ -311,14 +311,14 @@ class LIBREYOLO8:
         conf_thres: float = 0.25,
         iou_thres: float = 0.45,
         color_format: str = "auto"
-    ) -> dict:
+    ) -> Union[dict, List[dict]]:
         """
-        Run inference on an image.
+        Run inference on an image or directory of images.
         
         Args:
-            image: Input image. Supported types:
-                - str: Local file path or URL (http/https/s3/gs)
-                - pathlib.Path: Local file path
+            image: Input image or directory. Supported types:
+                - str: Local file path, directory path, or URL (http/https/s3/gs)
+                - pathlib.Path: Local file path or directory path
                 - PIL.Image: PIL Image object
                 - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
                 - torch.Tensor: PyTorch tensor (CHW or NCHW)
@@ -335,12 +335,42 @@ class LIBREYOLO8:
                 - "bgr": Input is BGR format (e.g., OpenCV)
         
         Returns:
-            Dictionary containing detection results with keys:
-            - boxes: List of bounding boxes in xyxy format
-            - scores: List of confidence scores
-            - classes: List of class IDs
-            - num_detections: Number of detections
-            - saved_path: Path to saved image (if save=True)
+            For single image: Dictionary containing detection results with keys:
+                - boxes: List of bounding boxes in xyxy format
+                - scores: List of confidence scores
+                - classes: List of class IDs
+                - num_detections: Number of detections
+                - source: Source image path (if available)
+                - saved_path: Path to saved image (if save=True)
+            
+            For directory: List of dictionaries, one per image processed.
+        """
+        # Check if input is a directory
+        if isinstance(image, (str, Path)) and Path(image).is_dir():
+            image_paths = ImageLoader.collect_images(image)
+            if not image_paths:
+                return []
+            return [
+                self._predict_single(p, save, output_path, conf_thres, iou_thres, color_format)
+                for p in image_paths
+            ]
+        
+        return self._predict_single(image, save, output_path, conf_thres, iou_thres, color_format)
+    
+    def _predict_single(
+        self,
+        image: ImageInput,
+        save: bool = False,
+        output_path: str = None,
+        conf_thres: float = 0.25,
+        iou_thres: float = 0.45,
+        color_format: str = "auto"
+    ) -> dict:
+        """
+        Run inference on a single image.
+        
+        This is the internal implementation for single-image inference.
+        Use __call__ for the public API which also supports directories.
         """
         # Store original image path for saving
         image_path = image if isinstance(image, (str, Path)) else None
@@ -360,6 +390,9 @@ class LIBREYOLO8:
             input_size=640,
             original_size=original_size
         )
+        
+        # Add source path for traceability
+        detections["source"] = str(image_path) if image_path else None
         
         # Save feature maps if enabled
         if self.save_feature_maps:
@@ -388,7 +421,7 @@ class LIBREYOLO8:
                 if final_output_path.suffix == "":
                     # If directory, create it and use default naming
                     final_output_path.mkdir(parents=True, exist_ok=True)
-                    if isinstance(image_path, str):
+                    if isinstance(image_path, (str, Path)):
                         stem = Path(image_path).stem
                         ext = Path(image_path).suffix
                     else:
@@ -401,7 +434,7 @@ class LIBREYOLO8:
                     final_output_path.parent.mkdir(parents=True, exist_ok=True)
             else:
                 # Determine save directory (matching feature map style)
-                if isinstance(image_path, str):
+                if isinstance(image_path, (str, Path)):
                     stem = Path(image_path).stem
                     ext = Path(image_path).suffix
                 else:
@@ -534,14 +567,14 @@ class LIBREYOLO8:
         conf_thres: float = 0.25,
         iou_thres: float = 0.45,
         color_format: str = "auto"
-    ) -> dict:
+    ) -> Union[dict, List[dict]]:
         """
         Alias for __call__ method.
         
         Args:
-            image: Input image. Supported types:
-                - str: Local file path or URL (http/https/s3/gs)
-                - pathlib.Path: Local file path
+            image: Input image or directory. Supported types:
+                - str: Local file path, directory path, or URL (http/https/s3/gs)
+                - pathlib.Path: Local file path or directory path
                 - PIL.Image: PIL Image object
                 - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
                 - torch.Tensor: PyTorch tensor (CHW or NCHW)
@@ -554,7 +587,8 @@ class LIBREYOLO8:
             color_format: Color format hint for NumPy/OpenCV arrays ("auto", "rgb", "bgr")
         
         Returns:
-            Dictionary containing detection results.
+            For single image: Dictionary containing detection results.
+            For directory: List of dictionaries, one per image processed.
         """
         return self(image=image, save=save, output_path=output_path, conf_thres=conf_thres, iou_thres=iou_thres, color_format=color_format)
 
