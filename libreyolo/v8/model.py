@@ -18,6 +18,7 @@ from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, deco
 from ..common.eigen_cam import compute_eigen_cam, overlay_heatmap
 from ..common.cam import CAM_METHODS
 from ..common.image_loader import ImageInput, ImageLoader
+from ..common.utils import get_safe_stem
 
 
 class LIBREYOLO8:
@@ -205,7 +206,7 @@ class LIBREYOLO8:
         """Save feature map visualizations to disk."""
         # Determine the base name for the output directory
         if isinstance(image_path, str):
-            stem = Path(image_path).stem
+            stem = get_safe_stem(image_path)
         else:
             stem = "inference"
         
@@ -267,7 +268,7 @@ class LIBREYOLO8:
         
         # Determine the base name for the output directory
         if isinstance(image_path, str):
-            stem = Path(image_path).stem
+            stem = get_safe_stem(image_path)
         else:
             stem = "inference"
         
@@ -282,8 +283,6 @@ class LIBREYOLO8:
         overlay = overlay_heatmap(img_array, heatmap, alpha=0.5)
         Image.fromarray(overlay).save(save_dir / "heatmap_overlay.jpg")
         
-        # Save grayscale heatmap
-        import cv2
         heatmap_resized = cv2.resize(heatmap, (img_array.shape[1], img_array.shape[0]))
         heatmap_gray = (heatmap_resized * 255).astype(np.uint8)
         Image.fromarray(heatmap_gray).save(save_dir / "heatmap_grayscale.png")
@@ -422,7 +421,7 @@ class LIBREYOLO8:
                     # If directory, create it and use default naming
                     final_output_path.mkdir(parents=True, exist_ok=True)
                     if isinstance(image_path, (str, Path)):
-                        stem = Path(image_path).stem
+                        stem = get_safe_stem(image_path)
                         ext = Path(image_path).suffix
                     else:
                         stem = "inference"
@@ -435,7 +434,7 @@ class LIBREYOLO8:
             else:
                 # Determine save directory (matching feature map style)
                 if isinstance(image_path, (str, Path)):
-                    stem = Path(image_path).stem
+                    stem = get_safe_stem(image_path)
                     ext = Path(image_path).suffix
                 else:
                     stem = "inference"
@@ -650,11 +649,12 @@ class LIBREYOLO8:
             >>> heatmap = result["heatmap"]
             >>> overlay = result["overlay"]
         """
-        # Determine method and layer
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError(f"alpha must be between 0 and 1, got {alpha}")
+        
         method = (method or self.cam_method).lower()
         target_layer = target_layer or self._eigen_cam_layer
         
-        # Validate method
         if method not in CAM_METHODS:
             available = ", ".join(CAM_METHODS.keys())
             raise ValueError(f"Unknown CAM method '{method}'. Available: {available}")
@@ -710,7 +710,7 @@ class LIBREYOLO8:
             if save:
                 image_path = image if isinstance(image, str) else None
                 if isinstance(image_path, str):
-                    stem = Path(image_path).stem
+                    stem = get_safe_stem(image_path)
                 else:
                     stem = "inference"
                 

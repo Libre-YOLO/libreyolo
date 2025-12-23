@@ -125,7 +125,7 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.45) 
     return torch.tensor(keep, dtype=torch.long, device=boxes.device)
 
 
-def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45, input_size: int = 640, original_size: Tuple[int, int] = None) -> Dict:
+def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45, input_size: int = 640, original_size: Tuple[int, int] = None, max_det: int = 300) -> Dict:
     """
     Postprocess model outputs to get final detections.
     
@@ -135,29 +135,24 @@ def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45,
         iou_thres: IoU threshold for NMS (default: 0.45)
         input_size: Input image size (default: 640)
         original_size: Original image size (width, height) for scaling
+        max_det: Maximum number of detections to return (default: 300)
         
     Returns:
         Dictionary with boxes, scores, classes, num_detections
     """
-    # Collect outputs from the 3 heads
     box_layers = [output['x8']['box'], output['x16']['box'], output['x32']['box']]
     cls_layers = [output['x8']['cls'], output['x16']['cls'], output['x32']['cls']]
     strides = [8, 16, 32]
     
-    # Generate anchors
     anchors, stride_tensor = make_anchors(box_layers, strides)
     
-    # Flatten and concatenate predictions
-    # Box: (Batch, 4, H, W) -> (Batch, H*W, 4)
     box_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in box_layers], dim=1)
-    # Cls: (Batch, 80, H, W) -> (Batch, H*W, 80)
     cls_preds = torch.cat([x.flatten(2).permute(0, 2, 1) for x in cls_layers], dim=1)
     
-    # Decode boxes
     decoded_boxes = decode_boxes(box_preds, anchors, stride_tensor)
+    decoded_boxes = decoded_boxes[0]
     
-    # Apply confidence threshold
-    scores = cls_preds[0].sigmoid()  # (N, 80)
+    scores = cls_preds[0].sigmoid()
     max_scores, class_ids = torch.max(scores, dim=1)
     
     mask = max_scores > conf_thres
@@ -169,20 +164,69 @@ def postprocess(output: Dict, conf_thres: float = 0.25, iou_thres: float = 0.45,
             "num_detections": 0
         }
     
-    # decoded_boxes is (Batch, N, 4), take first batch
-    valid_boxes = decoded_boxes[0][mask]
+    valid_boxes = decoded_boxes[mask]
     valid_scores = max_scores[mask]
     valid_classes = class_ids[mask]
     
-    # Scale boxes to original image size if provided
     if original_size is not None:
         scale_x = original_size[0] / input_size
         scale_y = original_size[1] / input_size
         valid_boxes[:, [0, 2]] *= scale_x
         valid_boxes[:, [1, 3]] *= scale_y
+        
+        valid_boxes[:, [0, 2]] = torch.clamp(valid_boxes[:, [0, 2]], 0, original_size[0])
+        valid_boxes[:, [1, 3]] = torch.clamp(valid_boxes[:, [1, 3]], 0, original_size[1])
+        
+        box_widths = valid_boxes[:, 2] - valid_boxes[:, 0]
+        box_heights = valid_boxes[:, 3] - valid_boxes[:, 1]
+        valid_mask = (box_widths > 0) & (box_heights > 0)
+        
+        if not valid_mask.all():
+            valid_boxes = valid_boxes[valid_mask]
+            valid_scores = valid_scores[valid_mask]
+            valid_classes = valid_classes[valid_mask]
     
-    # Apply NMS
-    keep_indices = nms(valid_boxes, valid_scores, iou_thres)
+    try:
+        import torchvision.ops
+        use_torchvision_nms = True
+    except ImportError:
+        use_torchvision_nms = False
+    
+    unique_classes = torch.unique(valid_classes)
+    keep_indices_list = []
+    
+    for cls in unique_classes:
+        cls_mask = valid_classes == cls
+        cls_boxes = valid_boxes[cls_mask]
+        cls_scores = valid_scores[cls_mask]
+        
+        if len(cls_boxes) == 0:
+            continue
+        
+        if use_torchvision_nms:
+            max_wh = 7680.0
+            boxes_for_nms = cls_boxes + cls.float() * max_wh
+            cls_keep = torchvision.ops.nms(boxes_for_nms, cls_scores, iou_thres)
+        else:
+            cls_keep = nms(cls_boxes, cls_scores, iou_thres)
+        
+        cls_indices = torch.where(cls_mask)[0]
+        keep_indices_list.append(cls_indices[cls_keep])
+    
+    if len(keep_indices_list) == 0:
+        return {
+            "boxes": [],
+            "scores": [],
+            "classes": [],
+            "num_detections": 0
+        }
+    
+    keep_indices = torch.cat(keep_indices_list)
+    
+    if len(keep_indices) > max_det:
+        final_scores_temp = valid_scores[keep_indices]
+        _, top_indices = torch.topk(final_scores_temp, max_det)
+        keep_indices = keep_indices[top_indices]
     
     final_boxes = valid_boxes[keep_indices].cpu().numpy()
     final_scores = valid_scores[keep_indices].cpu().numpy()
