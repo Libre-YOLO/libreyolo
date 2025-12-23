@@ -2,7 +2,7 @@
 Libre YOLO8 implementation.
 """
 
-import os
+import io
 import json
 from datetime import datetime
 from typing import Union, List, Optional
@@ -17,6 +17,7 @@ from .nn import LibreYOLO8Model
 from .utils import preprocess_image, postprocess, draw_boxes, make_anchors, decode_boxes
 from ..common.eigen_cam import compute_eigen_cam, overlay_heatmap
 from ..common.cam import CAM_METHODS
+from ..common.image_loader import ImageInput
 
 
 class LIBREYOLO8:
@@ -286,17 +287,36 @@ class LIBREYOLO8:
         
         return str(save_dir)
     
-    def __call__(self, image: str | Image.Image | np.ndarray, save: bool = False, output_path: str = None, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def __call__(
+        self,
+        image: ImageInput,
+        save: bool = False,
+        output_path: str = None,
+        conf_thres: float = 0.25,
+        iou_thres: float = 0.45,
+        color_format: str = "auto"
+    ) -> dict:
         """
         Run inference on an image.
         
         Args:
-            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            image: Input image. Supported types:
+                - str: Local file path or URL (http/https/s3/gs)
+                - pathlib.Path: Local file path
+                - PIL.Image: PIL Image object
+                - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
+                - torch.Tensor: PyTorch tensor (CHW or NCHW)
+                - bytes: Raw image bytes
+                - io.BytesIO: BytesIO object containing image data
             save: If True, saves the image with detections drawn. Defaults to False.
             output_path: Optional path to save the annotated image. If not provided, 
                          saves to 'runs/detections/' with a timestamped name.
             conf_thres: Confidence threshold (default: 0.25)
             iou_thres: IoU threshold for NMS (default: 0.45)
+            color_format: Color format hint for NumPy/OpenCV arrays.
+                - "auto": Auto-detect (default)
+                - "rgb": Input is RGB format
+                - "bgr": Input is BGR format (e.g., OpenCV)
         
         Returns:
             Dictionary containing detection results with keys:
@@ -307,10 +327,10 @@ class LIBREYOLO8:
             - saved_path: Path to saved image (if save=True)
         """
         # Store original image path for saving
-        image_path = image if isinstance(image, str) else None
+        image_path = image if isinstance(image, (str, Path)) else None
         
         # Preprocess image
-        input_tensor, original_img, original_size = preprocess_image(image, input_size=640)
+        input_tensor, original_img, original_size = preprocess_image(image, input_size=640, color_format=color_format)
         
         # Run inference
         with torch.no_grad():
@@ -490,31 +510,48 @@ class LIBREYOLO8:
             print(f"Export failed: {e}")
             raise e
 
-    def predict(self, image: Union[str, Image.Image, np.ndarray], save: bool = False, output_path: str = None, conf_thres: float = 0.25, iou_thres: float = 0.45) -> dict:
+    def predict(
+        self,
+        image: ImageInput,
+        save: bool = False,
+        output_path: str = None,
+        conf_thres: float = 0.25,
+        iou_thres: float = 0.45,
+        color_format: str = "auto"
+    ) -> dict:
         """
         Alias for __call__ method.
         
         Args:
-            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            image: Input image. Supported types:
+                - str: Local file path or URL (http/https/s3/gs)
+                - pathlib.Path: Local file path
+                - PIL.Image: PIL Image object
+                - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
+                - torch.Tensor: PyTorch tensor (CHW or NCHW)
+                - bytes: Raw image bytes
+                - io.BytesIO: BytesIO object containing image data
             save: If True, saves the image with detections drawn. Defaults to False.
             output_path: Optional path to save the annotated image.
             conf_thres: Confidence threshold (default: 0.25)
             iou_thres: IoU threshold for NMS (default: 0.45)
+            color_format: Color format hint for NumPy/OpenCV arrays ("auto", "rgb", "bgr")
         
         Returns:
             Dictionary containing detection results.
         """
-        return self(image=image, save=save, output_path=output_path, conf_thres=conf_thres, iou_thres=iou_thres)
+        return self(image=image, save=save, output_path=output_path, conf_thres=conf_thres, iou_thres=iou_thres, color_format=color_format)
 
     def explain(
         self,
-        image: Union[str, Image.Image, np.ndarray],
+        image: ImageInput,
         method: Optional[str] = None,
         target_layer: Optional[str] = None,
         eigen_smooth: bool = False,
         save: bool = False,
         output_path: Optional[str] = None,
-        alpha: float = 0.5
+        alpha: float = 0.5,
+        color_format: str = "auto"
     ) -> dict:
         """
         Generate explainability heatmap for the given image using CAM methods.
@@ -524,7 +561,14 @@ class LIBREYOLO8:
         techniques including gradient-based and gradient-free methods.
         
         Args:
-            image: Input image. Can be a file path (str), PIL Image, or numpy array.
+            image: Input image. Supported types:
+                - str: Local file path or URL (http/https/s3/gs)
+                - pathlib.Path: Local file path
+                - PIL.Image: PIL Image object
+                - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
+                - torch.Tensor: PyTorch tensor (CHW or NCHW)
+                - bytes: Raw image bytes
+                - io.BytesIO: BytesIO object containing image data
             method: CAM method to use. Options:
                 - "eigencam": Gradient-free, SVD-based (default)
                 - "gradcam": Gradient-weighted class activation
@@ -539,6 +583,7 @@ class LIBREYOLO8:
             save: If True, saves the heatmap visualization to disk.
             output_path: Optional path to save the visualization.
             alpha: Blending factor for overlay (default: 0.5).
+            color_format: Color format hint for NumPy/OpenCV arrays ("auto", "rgb", "bgr").
         
         Returns:
             Dictionary containing:
@@ -571,7 +616,7 @@ class LIBREYOLO8:
             raise ValueError(f"Unknown layer '{target_layer}'. Available: {available}")
         
         # Preprocess image
-        input_tensor, original_img, original_size = preprocess_image(image, input_size=640)
+        input_tensor, original_img, original_size = preprocess_image(image, input_size=640, color_format=color_format)
         
         # Get target layer module
         target_module = available_layers[target_layer]
