@@ -40,6 +40,8 @@ class LIBREYOLO8:
         cam_layer: Target layer for CAM computation (default: "neck_c2f22")
         device: Device for inference. "auto" (default) uses CUDA if available, else MPS, else CPU.
                 Can also specify directly: "cuda", "cuda:0", "mps", "cpu".
+        tiling: Enable SAHI-based tiling for processing large/high-resolution images (default: False).
+                NOT YET IMPLEMENTED - reserved for future SAHI integration.
     
     Example:
         >>> model = LIBREYOLO8(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
@@ -58,7 +60,8 @@ class LIBREYOLO8:
         save_eigen_cam: bool = False,
         cam_method: str = "eigencam",
         cam_layer: Optional[str] = None,
-        device: str = "auto"
+        device: str = "auto",
+        tiling: bool = False
     ):
         """
         Initialize the Libre YOLO8 model.
@@ -76,7 +79,20 @@ class LIBREYOLO8:
             cam_method: Default CAM method for explain() (default: "eigencam")
             cam_layer: Target layer for CAM computation (default: "neck_c2f22")
             device: Device for inference ("auto", "cuda", "mps", "cpu")
+            tiling: Enable SAHI tiling for large images (default: False). NOT YET IMPLEMENTED.
         """
+        # TODO: SAHI tiling integration - when enabled, this will use SAHI (Slicing Aided
+        # Hyper Inference) to process large/high-resolution images by splitting them into
+        # overlapping tiles, running inference on each tile, and merging the results.
+        # This allows detecting small objects in large images without memory issues.
+        # See: https://github.com/obss/sahi
+        if tiling:
+            raise NotImplementedError(
+                "Tiling is not yet implemented. SAHI-based tiling for processing large "
+                "images will be added in a future release."
+            )
+        self.tiling = tiling
+        
         if size not in ['n', 's', 'm', 'l', 'x']:
             raise ValueError(f"Invalid size: {size}. Must be one of: 'n', 's', 'm', 'l', 'x'")
         
