@@ -37,6 +37,8 @@ class LIBREYOLO11:
         cam_method: CAM method for explain(). Options: "eigencam", "gradcam", "gradcam++",
                    "xgradcam", "hirescam", "layercam", "eigengradcam" (default: "eigencam")
         cam_layer: Target layer for CAM computation (default: "neck_c2f22")
+        device: Device for inference. "auto" (default) uses CUDA if available, else MPS, else CPU.
+                Can also specify directly: "cuda", "cuda:0", "mps", "cpu".
     
     Example:
         >>> model = LIBREYOLO11(model_path="path/to/weights.pt", size="x", save_feature_maps=True)
@@ -54,7 +56,8 @@ class LIBREYOLO11:
         save_feature_maps: Union[bool, List[str]] = False,
         save_eigen_cam: bool = False,
         cam_method: str = "eigencam",
-        cam_layer: Optional[str] = None
+        cam_layer: Optional[str] = None,
+        device: str = "auto"
     ):
         """
         Initialize the Libre YOLO11 model.
@@ -71,9 +74,21 @@ class LIBREYOLO11:
             save_eigen_cam: If True, saves EigenCAM heatmap visualizations
             cam_method: Default CAM method for explain() (default: "eigencam")
             cam_layer: Target layer for CAM computation (default: "neck_c2f22")
+            device: Device for inference ("auto", "cuda", "mps", "cpu")
         """
         if size not in ['n', 's', 'm', 'l', 'x']:
             raise ValueError(f"Invalid size: {size}. Must be one of: 'n', 's', 'm', 'l', 'x'")
+        
+        # Resolve device
+        if device == "auto":
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
+        else:
+            self.device = torch.device(device)
         
         self.size = size
         self.reg_max = reg_max
@@ -96,8 +111,9 @@ class LIBREYOLO11:
             self.model_path = model_path
             self._load_weights(model_path)
         
-        # Set to evaluation mode
+        # Set to evaluation mode and move to device
         self.model.eval()
+        self.model.to(self.device)
         
         # Register hooks for feature map extraction
         if self.save_feature_maps or self.save_eigen_cam:
@@ -336,7 +352,7 @@ class LIBREYOLO11:
         
         # Run inference
         with torch.no_grad():
-            output = self.model(input_tensor)
+            output = self.model(input_tensor.to(self.device))
         
         # Postprocess
         detections = postprocess(
@@ -633,7 +649,7 @@ class LIBREYOLO11:
         
         try:
             # Compute CAM
-            grayscale_cam = cam(input_tensor, eigen_smooth=eigen_smooth)
+            grayscale_cam = cam(input_tensor.to(self.device), eigen_smooth=eigen_smooth)
             
             # Get the first batch item
             heatmap = grayscale_cam[0]
