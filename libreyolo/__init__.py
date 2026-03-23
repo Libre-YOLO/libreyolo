@@ -119,6 +119,8 @@ def __getattr__(name):
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
+        "Distiller": (".distillation", "Distiller"),
+        "get_distill_config": (".distillation", "get_distill_config"),
     }
     if name in ("LibreRFDETR", "LibreDINOv2"):
         # RF-DETR and DINOv2 share the same transformers dependency check.
@@ -219,4 +221,7 @@ __all__ = [
     "DATASETS_DIR",
     "load_data_config",
     "check_dataset",
+    # Distillation
+    "Distiller",
+    "get_distill_config",
 ]
