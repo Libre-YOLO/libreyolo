@@ -146,6 +146,8 @@ class BaseTrainer(ABC):
         self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+        self.distiller = None
+        self._distill_loss_val = 0.0
 
         # Profiling (opt-in via config.profile). None = disabled, zero overhead.
         self._profiler = None
@@ -418,6 +420,51 @@ class BaseTrainer(ABC):
     def _enforce_frozen_bn_eval(self) -> None:
         for module in getattr(self, "_frozen_bn_modules", ()):
             module.eval()
+
+    def _setup_distillation(self):
+        """Set up knowledge distillation if enabled in config."""
+        if not self.config.distill:
+            return
+
+        if not self.config.distill_teacher:
+            raise ValueError(
+                "distill=True requires distill_teacher (path to teacher weights)"
+            )
+
+        from ..distillation import Distiller
+        from ..distillation.configs import get_distill_config
+        from ..models import LibreYOLO
+
+        # Load teacher via the factory (handles family detection, weight loading)
+        logger.info(f"Loading teacher model: {self.config.distill_teacher}")
+        teacher_wrapper = LibreYOLO(self.config.distill_teacher)
+        teacher_nn = teacher_wrapper.model.to(self.device)
+
+        # Get distillation configs (tap points + channels + strides)
+        teacher_cfg = get_distill_config(teacher_wrapper.FAMILY, teacher_wrapper.size)
+        student_cfg = get_distill_config(self.get_model_family(), self.config.size)
+
+        self.distiller = Distiller(
+            teacher_model=teacher_nn,
+            student_model=self.model,
+            teacher_config=teacher_cfg,
+            student_config=student_cfg,
+            loss_type=self.config.distill_loss_type,
+            loss_weight=self.config.distill_loss_weight,
+            mask_ratio=self.config.distill_mask_ratio,
+            tau=self.config.distill_tau,
+        )
+        self.distiller.to(self.device)
+
+        # Add distiller's learnable params (align/generation convs) to optimizer
+        distill_params = list(self.distiller.loss_modules.parameters())
+        if distill_params:
+            self.optimizer.add_param_group(
+                {"params": distill_params, "lr": self.effective_lr}
+            )
+            logger.info(
+                f"Added {len(distill_params)} distillation params to optimizer"
+            )
 
     def _get_save_dir(self) -> Path:
         project = Path(self.config.project)
@@ -1075,6 +1122,7 @@ class BaseTrainer(ABC):
         self._setup_data()
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
+        self._setup_distillation()
         self.lr_scheduler = self.create_scheduler(self._scheduler_steps_per_epoch())
 
         # resume() may be called before setup() when the optimizer doesn't exist
@@ -1335,6 +1383,9 @@ class BaseTrainer(ABC):
 
                 if getattr(self, "_stop_training", False):
                     break
+
+            if self.distiller is not None:
+                self.distiller.cleanup()
 
             total_time = time.time() - start_time
             if is_main_process():
@@ -1709,6 +1760,10 @@ class BaseTrainer(ABC):
                     step=self.current_iter,
                 )
 
+            # Teacher forward (no-grad, outside autocast)
+            if self.distiller is not None:
+                self.distiller.teacher_forward(imgs)
+
             # Forward + backward. Under DDP we multiply loss by world_size
             # so that backward() gradient averaging produces the same
             # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
@@ -1717,6 +1772,10 @@ class BaseTrainer(ABC):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if self.distiller is not None:
+                            distill_loss = self.distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
@@ -1731,6 +1790,10 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if self.distiller is not None:
+                        distill_loss = self.distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
@@ -1738,6 +1801,9 @@ class BaseTrainer(ABC):
                     self._clip_gradients()
                 with self._prof_phase("optimizer"):
                     self.optimizer.step()
+
+            if self.distiller is not None:
+                self.distiller.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1748,6 +1814,8 @@ class BaseTrainer(ABC):
             # already returns a Python float and detaches from autograd.
             loss_val = float(total_loss_raw.item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if self.distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
