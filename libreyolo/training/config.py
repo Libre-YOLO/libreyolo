@@ -156,6 +156,14 @@ class TrainConfig:
     eval_interval: int = 10
     save_plots: bool = False
 
+    # Distillation
+    distill: bool = False
+    distill_teacher: Optional[str] = None
+    distill_loss_type: str = "mgd"
+    distill_loss_weight: Optional[float] = None
+    distill_mask_ratio: float = 0.65
+    distill_tau: float = 1.0
+
     # System
     workers: int = 4
     # Image caching to speed dataloading across epochs. Accepts False (off),
