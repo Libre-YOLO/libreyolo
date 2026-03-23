@@ -432,7 +432,6 @@ class BaseTrainer(ABC):
             )
 
         from ..distillation import Distiller
-        from ..distillation.configs import get_distill_config
         from ..models import LibreYOLO
 
         # Load teacher via the factory (handles family detection, weight loading)
@@ -440,9 +439,9 @@ class BaseTrainer(ABC):
         teacher_wrapper = LibreYOLO(self.config.distill_teacher)
         teacher_nn = teacher_wrapper.model.to(self.device)
 
-        # Get distillation configs (tap points + channels + strides)
-        teacher_cfg = get_distill_config(teacher_wrapper.FAMILY, teacher_wrapper.size)
-        student_cfg = get_distill_config(self.get_model_family(), self.config.size)
+        # Get distillation configs from the models themselves
+        teacher_cfg = teacher_wrapper.get_distill_config()
+        student_cfg = self.wrapper_model.get_distill_config()
 
         self.distiller = Distiller(
             teacher_model=teacher_nn,
