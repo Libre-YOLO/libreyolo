@@ -250,3 +250,76 @@ def test_polygon_out_of_range_class_raises(tmp_path):
 
     with pytest.raises(ValueError, match="outside 0..0"):
         dataset[0]
+
+
+class TestStretchAugmentation:
+    def _config(self, tmp_path):
+        return _make_mask_dataset(tmp_path, n_images=1)
+
+    def test_stretch_augment_keeps_shapes_and_label_domain(self, tmp_path):
+        dataset = SemanticDataset(
+            self._config(tmp_path),
+            split="train",
+            imgsz=32,
+            augment=True,
+            resize_mode="stretch",
+        )
+        for _ in range(8):
+            img, mask, _, _ = dataset[0]
+            assert img.shape == (3, 32, 32)
+            assert mask.shape == (32, 32)
+            assert set(torch.unique(mask).tolist()) <= {0, 1, 255}
+
+    def test_random_resized_crop_varies_content(self, tmp_path):
+        import random as _random
+
+        _random.seed(7)
+        dataset = SemanticDataset(
+            self._config(tmp_path),
+            split="train",
+            imgsz=32,
+            augment=True,
+            resize_mode="stretch",
+            color_jitter=0.0,
+        )
+        fractions = set()
+        for _ in range(12):
+            _, mask, _, _ = dataset[0]
+            fractions.add(round(float((mask == 1).float().mean()), 3))
+        # Crops shift the class boundary, so the class-1 share must vary.
+        assert len(fractions) > 1
+
+    def test_color_jitter_changes_image_not_mask(self, tmp_path):
+        import random as _random
+
+        dataset = SemanticDataset(
+            self._config(tmp_path),
+            split="train",
+            imgsz=32,
+            augment=True,
+            resize_mode="stretch",
+            rrc_scale=(1.0, 1.0),  # disable crop so only color varies
+            color_jitter=0.4,
+        )
+        _random.seed(3)
+        img_a, mask_a, _, _ = dataset[0]
+        _random.seed(4)
+        img_b, mask_b, _, _ = dataset[0]
+
+        assert not torch.equal(img_a, img_b)
+        assert torch.equal(mask_a, mask_b) or torch.equal(
+            mask_a, torch.flip(mask_b, dims=[1])
+        )
+
+    def test_augment_off_is_deterministic(self, tmp_path):
+        dataset = SemanticDataset(
+            self._config(tmp_path),
+            split="train",
+            imgsz=32,
+            augment=False,
+            resize_mode="stretch",
+        )
+        img_a, mask_a, _, _ = dataset[0]
+        img_b, mask_b, _, _ = dataset[0]
+        assert torch.equal(img_a, img_b)
+        assert torch.equal(mask_a, mask_b)

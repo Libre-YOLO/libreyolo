@@ -27,6 +27,7 @@ read as palette indices, which is the conventional encoding for class maps.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import random
 from pathlib import Path
@@ -34,7 +35,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 from torch.utils.data import Dataset
 
 from .utils import get_img_files, img2label_paths, load_data_config
@@ -169,7 +170,9 @@ class SemanticDataset(Dataset):
 
     Images are letterboxed (default) or stretched to ``imgsz``; masks follow
     with nearest-neighbor geometry and ignore-valued padding. Training
-    augmentation applies horizontal flips and scale jitter with random crops.
+    augmentation applies horizontal flips and photometric jitter in both
+    modes, plus scale jitter with random crops (letterbox mode) or a
+    random-resized crop (stretch mode).
     """
 
     def __init__(
@@ -181,6 +184,8 @@ class SemanticDataset(Dataset):
         resize_mode: str = "letterbox",
         ignore_index: int = IGNORE_INDEX,
         scale_jitter: Tuple[float, float] = (0.5, 1.5),
+        rrc_scale: Tuple[float, float] = (0.35, 1.0),
+        color_jitter: float = 0.3,
     ):
         if resize_mode not in ("letterbox", "stretch"):
             raise ValueError(
@@ -192,6 +197,8 @@ class SemanticDataset(Dataset):
         self.resize_mode = resize_mode
         self.ignore_index = int(ignore_index)
         self.scale_jitter = scale_jitter
+        self.rrc_scale = rrc_scale
+        self.color_jitter = float(color_jitter)
 
         split_value = data_config.get(split)
         if not split_value:
@@ -318,6 +325,39 @@ class SemanticDataset(Dataset):
             )
         return img, mask, ratio, (0, 0)
 
+    def _random_resized_crop(
+        self, img: np.ndarray, mask: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Sample a paired area/aspect crop; the stretch resize follows."""
+        height, width = img.shape[:2]
+        for _ in range(10):
+            area = height * width * random.uniform(*self.rrc_scale)
+            aspect = math.exp(random.uniform(math.log(3 / 4), math.log(4 / 3)))
+            crop_w = int(round(math.sqrt(area * aspect)))
+            crop_h = int(round(math.sqrt(area / aspect)))
+            if 0 < crop_w <= width and 0 < crop_h <= height:
+                left = random.randint(0, width - crop_w)
+                top = random.randint(0, height - crop_h)
+                return (
+                    img[top : top + crop_h, left : left + crop_w],
+                    mask[top : top + crop_h, left : left + crop_w],
+                )
+        return img, mask
+
+    def _apply_color_jitter(self, img: np.ndarray) -> np.ndarray:
+        """Photometric-only jitter; the mask is untouched by construction."""
+        if not self.color_jitter:
+            return img
+        pil = Image.fromarray(img)
+        for enhancer in (
+            ImageEnhance.Brightness,
+            ImageEnhance.Contrast,
+            ImageEnhance.Color,
+        ):
+            factor = 1.0 + random.uniform(-self.color_jitter, self.color_jitter)
+            pil = enhancer(pil).enhance(factor)
+        return np.array(pil)
+
     def __getitem__(self, index: int):
         img_path = self.img_files[index]
         with Image.open(img_path) as img_pil:
@@ -332,6 +372,9 @@ class SemanticDataset(Dataset):
                 mask = np.ascontiguousarray(mask[:, ::-1])
             if self.resize_mode == "letterbox":
                 scale = random.uniform(*self.scale_jitter)
+            else:
+                img, mask = self._random_resized_crop(img, mask)
+            img = self._apply_color_jitter(img)
 
         img, mask, ratio, pad = self._resize(img, mask, scale)
 
