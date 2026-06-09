@@ -170,9 +170,9 @@ class SemanticDataset(Dataset):
 
     Images are letterboxed (default) or stretched to ``imgsz``; masks follow
     with nearest-neighbor geometry and ignore-valued padding. Training
-    augmentation applies horizontal flips and photometric jitter in both
-    modes, plus scale jitter with random crops (letterbox mode) or a
-    random-resized crop (stretch mode).
+    augmentation applies horizontal flips in both modes; letterbox mode adds
+    scale jitter with random crops, stretch mode adds a random-resized crop
+    plus photometric jitter.
     """
 
     def __init__(
@@ -374,7 +374,7 @@ class SemanticDataset(Dataset):
                 scale = random.uniform(*self.scale_jitter)
             else:
                 img, mask = self._random_resized_crop(img, mask)
-            img = self._apply_color_jitter(img)
+                img = self._apply_color_jitter(img)
 
         img, mask, ratio, pad = self._resize(img, mask, scale)
 

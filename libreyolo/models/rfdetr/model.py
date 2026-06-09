@@ -1,5 +1,6 @@
 """LibreRFDETR implementation for LibreYOLO."""
 
+import re
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -340,6 +341,7 @@ class LibreRFDETR(BaseModel):
         task: str | None = None,
         num_keypoints: int = 17,
         keypoint_dim: int = 3,
+        semantic_decoder_depth: int = 1,
         allow_detect_to_obb_transfer: bool = False,
         allow_detect_to_pose_transfer: bool = False,
         **kwargs,
@@ -356,6 +358,7 @@ class LibreRFDETR(BaseModel):
             nb_classes = 1
         self.num_keypoints = int(num_keypoints)
         self.keypoint_dim = int(keypoint_dim)
+        self.semantic_decoder_depth = int(semantic_decoder_depth)
         if size is None and (
             model_path is None or (isinstance(model_path, dict) and not model_path)
         ):
@@ -407,14 +410,18 @@ class LibreRFDETR(BaseModel):
                 resolved_task = checkpoint_task
             elif checkpoint_task is not None:
                 requested_task = normalize_task(resolved_task)
-                allowed = requested_task == checkpoint_task or (
-                    requested_task == "obb"
-                    and checkpoint_task == "detect"
-                    and self._allow_detect_to_obb_transfer
-                ) or (
-                    requested_task == "pose"
-                    and checkpoint_task == "detect"
-                    and self._allow_detect_to_pose_transfer
+                allowed = (
+                    requested_task == checkpoint_task
+                    or (
+                        requested_task == "obb"
+                        and checkpoint_task == "detect"
+                        and self._allow_detect_to_obb_transfer
+                    )
+                    or (
+                        requested_task == "pose"
+                        and checkpoint_task == "detect"
+                        and self._allow_detect_to_pose_transfer
+                    )
                 )
                 if not allowed:
                     raise ValueError(
@@ -594,6 +601,7 @@ class LibreRFDETR(BaseModel):
             classification=self._is_classification,
             obb=self._is_obb,
             semantic=self._is_semantic,
+            semantic_decoder_depth=self.semantic_decoder_depth,
             num_keypoints=self.num_keypoints,
         )
 
@@ -904,9 +912,24 @@ class LibreRFDETR(BaseModel):
         if ckpt_nc is None:
             state = _checkpoint_model_state(loaded)
             predict_weight = state.get("predict.weight")
-            ckpt_nc = int(predict_weight.shape[0]) if predict_weight is not None else None
+            ckpt_nc = (
+                int(predict_weight.shape[0]) if predict_weight is not None else None
+            )
         if ckpt_nc is not None and ckpt_nc != self.nb_classes:
             self._rebuild_for_new_classes(int(ckpt_nc))
+
+        # Match the dense-decoder depth before loading: each block stores one
+        # 4-D conv weight under smooth.<i>.weight.
+        state = _checkpoint_model_state(loaded)
+        ckpt_depth = sum(
+            1
+            for key, tensor in state.items()
+            if re.fullmatch(r"smooth\.\d+\.weight", key) and tensor.ndim == 4
+        )
+        if ckpt_depth >= 1 and ckpt_depth != self.semantic_decoder_depth:
+            self.semantic_decoder_depth = ckpt_depth
+            self.model = self._init_model()
+            self.model.to(self.device)
 
         result = self.model.load_state_dict(loaded, strict=False)
         missing = list(getattr(result, "missing_keys", []) or [])
@@ -959,14 +982,18 @@ class LibreRFDETR(BaseModel):
             normalized_ckpt_task = None
             if ckpt_task is not None:
                 normalized_ckpt_task = normalize_task(ckpt_task)
-                allowed = normalized_ckpt_task == self.task or (
-                    self.task == "obb"
-                    and normalized_ckpt_task == "detect"
-                    and self._allow_detect_to_obb_transfer
-                ) or (
-                    self._is_pose
-                    and normalized_ckpt_task == "detect"
-                    and self._allow_detect_to_pose_transfer
+                allowed = (
+                    normalized_ckpt_task == self.task
+                    or (
+                        self.task == "obb"
+                        and normalized_ckpt_task == "detect"
+                        and self._allow_detect_to_obb_transfer
+                    )
+                    or (
+                        self._is_pose
+                        and normalized_ckpt_task == "detect"
+                        and self._allow_detect_to_pose_transfer
+                    )
                 )
                 if not allowed:
                     raise RuntimeError(
@@ -994,20 +1021,14 @@ class LibreRFDETR(BaseModel):
                 and normalized_ckpt_task == "detect"
                 and self._allow_detect_to_pose_transfer
             )
-            if (
-                self._is_pose
-                and normalized_ckpt_task == "pose"
-                and not pose_checkpoint
-            ):
+            if self._is_pose and normalized_ckpt_task == "pose" and not pose_checkpoint:
                 raise RuntimeError(
                     "RF-DETR pose checkpoints must include keypoint_head.* weights. "
                     "Detect-to-pose initialization is only supported through "
                     "explicit training transfer."
                 )
             already_lora = module_has_lora(self.model)
-            if not already_lora and state_dict_has_lora(
-                loaded_state
-            ):
+            if not already_lora and state_dict_has_lora(loaded_state):
                 apply_lora_to_rfdetr(self.model.model)
 
             missing, unexpected = self.model.load_state_dict(loaded, strict=False)
@@ -1226,7 +1247,9 @@ class LibreRFDETR(BaseModel):
             )
             kpt_shape = data_cfg.get("kpt_shape")
             if not kpt_shape or len(kpt_shape) < 1:
-                raise ValueError("RF-DETR pose training requires kpt_shape in the dataset yaml")
+                raise ValueError(
+                    "RF-DETR pose training requires kpt_shape in the dataset yaml"
+                )
             num_keypoints = int(kpt_shape[0])
             keypoint_dim = int(kpt_shape[1]) if len(kpt_shape) > 1 else 3
             if keypoint_dim not in (2, 3):

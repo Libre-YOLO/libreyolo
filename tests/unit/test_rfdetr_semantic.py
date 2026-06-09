@@ -303,3 +303,61 @@ def test_rfdetr_semantic_rejects_lora(fake_backbone, tmp_path):
             warmup_epochs=0,
             lora=True,
         )
+
+
+class TestDecoderDepth:
+    def test_depth_two_forward_and_backward(self, fake_backbone):
+        from libreyolo.models.rfdetr.nn import RFDETRSemanticSegmenter
+
+        model = RFDETRSemanticSegmenter(config="n", nb_classes=3, decoder_depth=2)
+        assert len([m for m in model.smooth if isinstance(m, torch.nn.Conv2d)]) == 2
+
+        model.train()
+        out = model(
+            torch.rand(1, 3, 84, 84),  # 6x14: arbitrary patch-grid multiple
+            targets=torch.randint(0, 3, (1, 84, 84)),
+        )
+        assert torch.isfinite(out["total_loss"])
+        out["total_loss"].backward()
+
+    def test_depth_one_keys_unchanged(self, fake_backbone):
+        from libreyolo.models.rfdetr.nn import RFDETRSemanticSegmenter
+
+        model = RFDETRSemanticSegmenter(config="n", nb_classes=2, decoder_depth=1)
+        keys = {k for k in model.state_dict() if k.startswith("smooth.")}
+        assert keys == {
+            "smooth.0.weight",
+            "smooth.0.bias",
+            "smooth.1.weight",
+            "smooth.1.bias",
+        }
+
+    def test_checkpoint_depth_autodetected_on_load(self, fake_backbone, tmp_path):
+        from libreyolo.models.rfdetr.model import LibreRFDETR
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        deep = LibreRFDETR(
+            model_path=None,
+            size="n",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+            semantic_decoder_depth=2,
+        )
+        ckpt = wrap_libreyolo_checkpoint(
+            deep.model.state_dict(),
+            model_family="rfdetr",
+            size="n",
+            task="semantic",
+            nc=3,
+            names={0: "a", 1: "b", 2: "c"},
+            imgsz=518,
+        )
+        path = tmp_path / "LibreRFDETRn-sem.pt"
+        torch.save(ckpt, path)
+
+        reloaded = LibreRFDETR(str(path), size="n", device="cpu")
+
+        assert reloaded.task == "semantic"
+        assert reloaded.semantic_decoder_depth == 2
+        assert reloaded.model.segmenter.decoder_depth == 2

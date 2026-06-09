@@ -192,29 +192,41 @@ def _make_semantic_yaml(root, n_images=8, size=64, split_names=("train", "val"))
 
 
 def test_yolo9_semantic_train_smoke(tmp_path):
-    """A few epochs on the synthetic set run end-to-end and reduce loss."""
+    """A few epochs on the synthetic set run end-to-end and reduce loss.
+
+    Seeded and single-threaded: the tiny set gives only two optimizer steps
+    per epoch, so the loss-decrease assertion needs a reproducible
+    trajectory — multi-threaded CPU reductions reorder float accumulation
+    under system load and push a 10-step run across the noise floor.
+    """
     yaml_path = _make_semantic_yaml(tmp_path)
     m = LibreYOLO9(None, size="t", task="semantic", nb_classes=2, device="cpu")
 
-    res = m.train(
-        data=str(yaml_path),
-        epochs=3,
-        batch=4,
-        imgsz=64,
-        optimizer="adamw",
-        lr0=2e-3,
-        workers=0,
-        eval_interval=1,
-        project=str(tmp_path / "runs"),
-        name="sem_smoke",
-        exist_ok=True,
-        amp=False,
-        ema=False,
-        warmup_epochs=0,
-    )
+    previous_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        res = m.train(
+            data=str(yaml_path),
+            epochs=5,
+            batch=4,
+            imgsz=64,
+            optimizer="adamw",
+            lr0=2e-3,
+            workers=0,
+            seed=7,
+            eval_interval=1,
+            project=str(tmp_path / "runs"),
+            name="sem_smoke",
+            exist_ok=True,
+            amp=False,
+            ema=False,
+            warmup_epochs=0,
+        )
+    finally:
+        torch.set_num_threads(previous_threads)
 
     losses = res["epoch_losses"]
-    assert len(losses) == 3
+    assert len(losses) == 5
     assert all(np.isfinite(losses))
     assert losses[-1] < losses[0]
     assert res["epoch_metrics"][-1]["val_metrics"].get("metrics/mIoU") is not None
