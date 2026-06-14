@@ -26,6 +26,20 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
     return model_family in {"dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetrv4"}
 
 
+def _requires_onnx_opset17(model_family) -> bool:
+    """Whether the family needs opset 17 for ONNX auto-opset selection."""
+    return model_family in {
+        "dfine",
+        "deim",
+        "deimv2",
+        "ec",
+        "rfdetr",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+    }
+
+
 def _set_metadata(model_proto, metadata: dict) -> None:
     """Replace ONNX metadata with the provided key/value pairs."""
     del model_proto.metadata_props[:]

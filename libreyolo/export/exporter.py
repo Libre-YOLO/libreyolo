@@ -19,12 +19,13 @@ import torch
 
 from .onnx import (
     _get_version,
-    _uses_dfine_style_export_wrapper,
+    _requires_onnx_opset17,
     check_onnx_int8_available,
     export_onnx,
     quantize_onnx_int8,
 )
 from .torchscript import export_torchscript
+from ..tasks import task_to_suffix
 from ..utils.serialization import SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
@@ -245,7 +246,7 @@ class BaseExporter(ABC):
             # in the tuple export wrapper). Other families default to 13.
             opset = (
                 17
-                if _uses_dfine_style_export_wrapper(self.model._get_model_name())
+                if _requires_onnx_opset17(self.model._get_model_name())
                 else 13
             )
 
@@ -446,26 +447,37 @@ class BaseExporter(ABC):
         return imgsz, device, output_path
 
     def _auto_output_path(self, half: bool, int8: bool) -> str:
-        model_name = self.model._get_model_name().lower()
-        task = getattr(self.model, "task", "detect")
-        is_segment = (
-            task == "segment" or getattr(self.model, "_is_segmentation", False) is True
-        )
-        if is_segment:
-            task_suffix = "_seg"
-        elif task == "pose":
-            task_suffix = "_pose"
-        elif task == "obb":
-            task_suffix = "_obb"
-        elif task == "classify":
-            task_suffix = "_cls"
-        else:
-            task_suffix = ""
+        stem = self._auto_output_stem()
         precision_suffix = "_int8" if int8 else ("_fp16" if half else "")
-        return str(
-            Path("weights")
-            / f"{model_name}_{self.model.size}{task_suffix}{precision_suffix}{self.suffix}"
-        )
+        return str(Path("weights") / f"{stem}{precision_suffix}{self.suffix}")
+
+    def _auto_output_stem(self) -> str:
+        model_path = getattr(self.model, "model_path", None)
+        if isinstance(model_path, (str, Path)):
+            source = Path(model_path)
+            if source.suffix.lower() in {".pt", ".pth", ".safetensors"}:
+                return source.stem
+
+        prefix = getattr(self.model, "FILENAME_PREFIX", None)
+        size = getattr(self.model, "size", None)
+        if isinstance(prefix, str) and prefix and isinstance(size, str) and size:
+            task_suffix = self._auto_output_task_suffix()
+            return f"{prefix}{size}{task_suffix}"
+
+        model_name = self.model._get_model_name().lower()
+        return f"{model_name}_{self.model.size}"
+
+    def _auto_output_task_suffix(self) -> str:
+        task = getattr(self.model, "task", "detect")
+        if not isinstance(task, str):
+            task = "detect"
+        if getattr(self.model, "_is_segmentation", False) is True:
+            task = "segment"
+        try:
+            suffix = task_to_suffix(task)
+        except ValueError:
+            return ""
+        return f"-{suffix}" if suffix else ""
 
     @contextmanager
     def _model_context(self, device, half, int8, batch, imgsz):

@@ -727,7 +727,7 @@ def test_tensorrt_backend_detects_obb_task_from_filename():
     from libreyolo.backends.tensorrt import TensorRTBackend
 
     backend = object.__new__(TensorRTBackend)
-    backend.model_path = "weights/yolo9_t_obb.engine"
+    backend.model_path = "weights/LibreYOLO9t-obb.engine"
 
     assert backend._detect_task_from_filename() == "obb"
 
