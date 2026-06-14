@@ -65,6 +65,11 @@ vlm = [
     "lmdb>=1.7.0",
     "peft>=0.12.0",
 ]
+sam = [
+    # Promptable-segmentation families (SAM) load through transformers
+    # (SamModel/SamProcessor); huggingface_hub ships with it.
+    "transformers>=5.1.0",
+]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
     # [[tool.uv.dependency-metadata]] blocks below.
@@ -116,6 +121,7 @@ all = [
     "libreyolo[gaze]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
+    "libreyolo[sam]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
@@ -257,6 +263,7 @@ markers = [
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
+    "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",
