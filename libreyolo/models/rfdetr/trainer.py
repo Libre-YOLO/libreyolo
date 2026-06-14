@@ -344,6 +344,11 @@ class RFDETRTrainer(BaseTrainer):
             num_windows,
         )
 
+    def _scale_lr(self, base_lr: float, param_group: dict) -> float:
+        # Honor per-group LR scales (the semantic encoder trains 10x cooler);
+        # groups without the key keep today's uniform scheduler behavior.
+        return base_lr * param_group.get("lr_scale", 1.0)
+
     def _apply_multi_scale_batch(
         self,
         imgs: torch.Tensor,
@@ -625,20 +630,47 @@ class RFDETRTrainer(BaseTrainer):
             # The DINOv2 backbone + projector is LayerNorm-only (no BatchNorm),
             # so the shared BN/conv/bias grouping leaves an empty first group.
             # Use a standard AdamW with no weight decay on norms/biases — the
-            # conventional recipe for fine-tuning a ViT classifier.
-            decay, no_decay = [], []
+            # conventional recipe for fine-tuning a ViT classifier. For the
+            # semantic task the pretrained encoder additionally trains at a
+            # 10x lower LR than the task decoder/projector (``lr_scale``,
+            # honored by ``_scale_lr`` on every scheduler step).
+            task_is_semantic = (
+                getattr(getattr(self, "wrapper_model", None), "task", "detect")
+                == "semantic"
+            )
+            buckets = {
+                ("hot", True): [],
+                ("hot", False): [],
+                ("cold", True): [],
+                ("cold", False): [],
+            }
             for name, param in self.model.named_parameters():
                 if not param.requires_grad:
                     continue
-                if param.ndim <= 1 or name.endswith(".bias") or "norm" in name.lower():
-                    no_decay.append(param)
-                else:
-                    decay.append(param)
+                temperature = (
+                    "cold"
+                    if task_is_semantic and ".backbone.encoder" in name
+                    else "hot"
+                )
+                use_decay = not (
+                    param.ndim <= 1
+                    or name.endswith(".bias")
+                    or "norm" in name.lower()
+                )
+                buckets[(temperature, use_decay)].append(param)
             groups = []
-            if decay:
-                groups.append({"params": decay, "weight_decay": self.config.weight_decay})
-            if no_decay:
-                groups.append({"params": no_decay, "weight_decay": 0.0})
+            for (temperature, use_decay), params in buckets.items():
+                if not params:
+                    continue
+                groups.append(
+                    {
+                        "params": params,
+                        "weight_decay": self.config.weight_decay if use_decay else 0.0,
+                        "lr": self.effective_lr
+                        * (0.1 if temperature == "cold" else 1.0),
+                        "lr_scale": 0.1 if temperature == "cold" else 1.0,
+                    }
+                )
             return torch.optim.AdamW(groups, lr=self.effective_lr, betas=(0.9, 0.999))
         upstream_groups = self._setup_upstream_optimizer_groups()
         if upstream_groups:
