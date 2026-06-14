@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.2
+Version: 2.3
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -10,7 +10,7 @@ This is the CI/test contract for LibreYOLO. Times are UTC.
 | --- | --- | --- | --- | --- |
 | Unit | `.github/workflows/unit-tests.yml` | GitHub Linux, macOS, Windows; Python 3.10 | push to `dev`, PR to `dev`, manual | CPU-safe library and CLI/API behavior works. |
 | Install smoke | `.github/workflows/install-smoke.yml` | GitHub clean VMs; Python 3.10 | push to `dev`, PR to `dev`, manual, daily, publish | A clean user env can install, import, and start LibreYOLO. |
-| GPU e2e nightly | `.github/workflows/e2e-nightly-dev.yml` | self-hosted `gpu`, `libreyolo-e2e` tower runner | daily schedule, manual | Selected real-model GPU tests execute and pass on latest `dev`. |
+| GPU e2e nightly | `.github/workflows/e2e-nightly-dev.yml` | GitHub-hosted controller; Modal L4 GPU worker | daily schedule, manual | Selected real-model GPU tests execute and pass on latest `dev`. |
 | GPU e2e manual | `.github/workflows/e2e-nightly-{release,pypi}.yml` | self-hosted `gpu`, `libreyolo-e2e` tower runner | manual | Selected real-model GPU tests execute and pass on `release` or latest PyPI when explicitly requested. |
 | Manual QA | humans | human machine | before releases/demos/hackathons | Representative user behavior was checked by a human. |
 
@@ -95,15 +95,24 @@ and visual inspection.
 Files: `.github/workflows/e2e-nightly-release.yml`,
 `.github/workflows/e2e-nightly-dev.yml`,
 `.github/workflows/e2e-nightly-pypi.yml`,
+`tools/ci/modal_nightly.py`,
 `tests/e2e/nightly_contract.py`, `tests/e2e/conftest.py`,
 `tests/e2e/test_deterministic_inference.py`,
 `tests/e2e/test_rf1_training.py`, `Makefile`.
 
 Execution: scheduled nightly targets latest `dev` only; manual workflows can
-target `release` and latest PyPI. Each target has a 180 minute timeout;
+target `release` and latest PyPI. The scheduled `dev` workflow runs from a
+GitHub-hosted controller job and executes GPU work on Modal L4 via
+`tools/ci/modal_nightly.py`; release and PyPI manual workflows still use the
+self-hosted `gpu`, `libreyolo-e2e` runner. Each target has a 180 minute timeout.
 SHA/version cache skips unchanged targets; manual `force=true` runs the selected
 target. The scheduled `dev` run starts at `04:00` UTC. Do not add a
 `pull_request` trigger.
+
+The Modal-backed `dev` run stores `modal-nightly.log` and
+`modal-nightly-result.json` as GitHub Actions artifacts and writes runtime, GPU,
+and estimated GPU cost to the step summary. Exact billing remains authoritative
+in Modal; the GitHub value is a GPU-runtime estimate.
 
 Commands:
 

@@ -164,7 +164,7 @@ def checkout_ref(ref: str) -> None:
 def run_test_target(target: str) -> None:
     if target == "test_nightly":
         has_target = subprocess.run(
-            ["grep", "-q", "^test_nightly:", "Makefile"], cwd=WORKDIR
+            ["grep", "-q", "^test_nightly:", "Makefile"], cwd=WORKDIR, check=False
         ).returncode == 0
         if not has_target:
             print(
@@ -263,9 +263,21 @@ def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
         error = repr(exc)
         raise
     finally:
-        if WORKDIR.exists():
-            sync_downloaded_weights_to_cache()
-        cache.commit()
+        cache_error = None
+        cache_status = "skipped"
+        step = time.monotonic()
+        try:
+            if WORKDIR.exists():
+                sync_downloaded_weights_to_cache()
+                cache.commit()
+                cache_status = "committed"
+            else:
+                cache_status = "workdir-missing"
+        except Exception as exc:
+            cache_error = repr(exc)
+            cache_status = "failed"
+        timings["cache_s"] = time.monotonic() - step
+
         total_s = time.monotonic() - started
         gpu_usd_per_s = float(
             os.getenv("LIBREYOLO_MODAL_GPU_USD_PER_S", GPU_USD_PER_S.get(GPU, 0.0))
@@ -279,10 +291,13 @@ def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
             "estimated_gpu_cost_usd": round(total_s * gpu_usd_per_s, 4),
             "gpu_cost_rate_usd_per_s": gpu_usd_per_s,
             "cost_note": "GPU runtime estimate only; exact total billing is authoritative in Modal.",
+            "cache_status": cache_status,
             "timings": timings,
         }
         if error:
             result["error"] = error
+        if cache_error:
+            result["cache_error"] = cache_error
         print("MODAL_NIGHTLY_RESULT", json.dumps(result, sort_keys=True), flush=True)
 
     return result

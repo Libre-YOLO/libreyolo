@@ -62,9 +62,6 @@ jobs:
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    env:
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - name: Checkout dev
         uses: actions/checkout@v4
@@ -75,6 +72,9 @@ jobs:
 
       - name: Run e2e on Modal
         shell: bash
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           set -uo pipefail
           uvx modal run tools/ci/modal_nightly.py \
