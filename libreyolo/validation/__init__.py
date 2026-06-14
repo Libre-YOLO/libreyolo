@@ -7,6 +7,7 @@ from .obb_validator import OBBValidator
 from .coco_evaluator import COCOEvaluator
 from .pose_validator import PoseValidator
 from .point_validator import PointValidator
+from .depth_validator import DepthValidator
 from .semantic_validator import SemanticValidator
 from .val_plotter import ValPlotter, ConfusionMatrix
 
@@ -18,6 +19,7 @@ __all__ = [
     "OBBValidator",
     "PoseValidator",
     "PointValidator",
+    "DepthValidator",
     "SemanticValidator",
     "COCOEvaluator",
     "ValPlotter",

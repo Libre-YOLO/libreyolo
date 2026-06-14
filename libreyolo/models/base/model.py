@@ -709,6 +709,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support semantic segmentation yet. "
                 "Use augment=False for semantic models."
             )
+        if getattr(self, "task", "detect") == "depth":
+            raise ValueError(
+                "Test-time augmentation does not support depth estimation yet. "
+                "Use augment=False for depth models."
+            )
 
         from PIL import Image as PILImage
         from ...utils.image_loader import ImageLoader
@@ -968,6 +973,11 @@ class BaseModel(ABC):
                 "Tracking does not support point results yet. "
                 "Use predict() for point models."
             )
+        if task == "depth":
+            raise NotImplementedError(
+                "Tracking does not support depth maps yet. "
+                "Use predict() for depth models."
+            )
 
         from ...tracking import ByteTracker, TrackConfig
         from ...utils.drawing import draw_boxes, draw_masks
@@ -1093,6 +1103,7 @@ class BaseModel(ABC):
         """
         from libreyolo.validation import (
             ClassifyValidator,
+            DepthValidator,
             DetectionValidator,
             OBBValidator,
             PointValidator,
@@ -1126,6 +1137,11 @@ class BaseModel(ABC):
                 "Augmented validation does not support semantic segmentation "
                 "yet. Use augment=False for semantic models."
             )
+        if augment and self.task == "depth":
+            raise ValueError(
+                "Augmented validation does not support depth estimation yet. "
+                "Use augment=False for depth models."
+            )
 
         config = ValidationConfig(
             data=data,
@@ -1157,6 +1173,8 @@ class BaseModel(ABC):
             validator_cls = SegmentationValidator
         elif self.task == "semantic":
             validator_cls = SemanticValidator
+        elif self.task == "depth":
+            validator_cls = DepthValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

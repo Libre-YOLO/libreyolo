@@ -8,6 +8,7 @@ from PIL import Image
 from libreyolo.models.base.inference import InferenceRunner
 from libreyolo.utils.results import (
     Boxes,
+    DepthMap,
     Keypoints,
     Masks,
     OBB,
@@ -16,7 +17,12 @@ from libreyolo.utils.results import (
     Results,
     SemanticMask,
 )
-from libreyolo.utils.drawing import draw_obb, draw_points, draw_semantic_mask
+from libreyolo.utils.drawing import (
+    draw_depth_map,
+    draw_obb,
+    draw_points,
+    draw_semantic_mask,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -246,6 +252,32 @@ class TestResults:
         assert result.probs.top1conf.item() == pytest.approx(0.7)
         assert result.probs.top5conf.tolist() == pytest.approx([0.7, 0.2, 0.1])
         assert result.summary()[0]["name"] == "b"
+
+    def test_depth_map_result_ignores_nonfinite_summary_values(self):
+        depth = DepthMap(torch.tensor([[1.0, float("nan")], [float("inf"), 3.0]]))
+        result = Results(
+            boxes=None,
+            orig_shape=(2, 2),
+            depth_map=depth,
+            names={0: "depth"},
+        )
+
+        assert len(result) == 1
+        row = result.summary()[0]
+        assert row["name"] == "depth_map"
+        assert row["min"] == pytest.approx(1.0)
+        assert row["max"] == pytest.approx(3.0)
+        assert row["mean"] == pytest.approx(2.0)
+        assert torch.isfinite(depth.normalized()).all()
+
+    def test_draw_depth_map_handles_nonfinite_values(self):
+        img = Image.new("RGB", (2, 2), color=(0, 0, 0))
+        depth = np.array([[1.0, np.nan], [np.inf, 3.0]], dtype=np.float32)
+
+        rendered = draw_depth_map(img, depth)
+
+        assert rendered.size == img.size
+        assert rendered.mode == "RGB"
 
     def test_keypoints_and_obb_accessors(self):
         keypoints = Keypoints(torch.tensor([[[10.0, 20.0, 0.9]]]), (100, 200))

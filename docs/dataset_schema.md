@@ -89,6 +89,34 @@ the object classes (`nc` grows by one).
 
 Canonical loader: `libreyolo.data.SemanticDataset`.
 
+## depth
+
+Depth estimation pairs each image with a dense single-channel depth map instead
+of a `.txt` label file:
+
+```text
+images/.../image.jpg -> <depths_dir>/.../image.png
+```
+
+Depth rules:
+
+- single channel PNG/TIF or `.npy`;
+- map resolution must equal the paired image resolution;
+- values are plain depth in a dataset-consistent unit;
+- `0`, negative, NaN, and inf mark invalid pixels and are excluded from loss
+  and metrics.
+
+YAML adds two optional keys on top of the common contract:
+
+- `depths_dir`: depth directory name substituted for `images` in each image
+  path (default `depths`).
+- `depth_scale`: divisor for integer-typed depth maps (default `256.0`, the
+  common 16-bit PNG convention where stored value / 256 is the depth).
+
+Float `.npy` maps are used as-is and do not apply `depth_scale`.
+
+Canonical loader: `libreyolo.data.DepthDataset`.
+
 ## pose
 
 YAML adds:

@@ -32,6 +32,7 @@ from .utils.results import (
     OBB,
     Gaze,
     SemanticMask,
+    DepthMap,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -83,6 +84,7 @@ def __getattr__(name):
         "SegmentationValidator": (".validation", "SegmentationValidator"),
         "PoseValidator": (".validation", "PoseValidator"),
         "SemanticValidator": (".validation", "SemanticValidator"),
+        "DepthValidator": (".validation", "DepthValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
         "TrackConfig": (".tracking", "TrackConfig"),
@@ -148,6 +150,7 @@ __all__ = [
     "OBB",
     "Gaze",
     "SemanticMask",
+    "DepthMap",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
@@ -167,6 +170,7 @@ __all__ = [
     "SegmentationValidator",
     "PoseValidator",
     "SemanticValidator",
+    "DepthValidator",
     "ValidationConfig",
     "DATASETS_DIR",
     "load_data_config",
