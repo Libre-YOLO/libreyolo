@@ -125,6 +125,18 @@ _RECTANGULAR_EXPORT_FORMATS = {
 }
 
 
+class _RTDETRExportWrapper(torch.nn.Module):
+    """Trace RT-DETR dict outputs as the two tensors used by exported backends."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        outputs = self.model(x)
+        return outputs["pred_logits"], outputs["pred_boxes"]
+
+
 # =============================================================================
 # BaseExporter ABC
 # =============================================================================
@@ -524,6 +536,10 @@ class BaseExporter(ABC):
             nn_model = ECExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
+        elif family in {"rtdetr", "rtdetrv2"}:
+            nn_model = _RTDETRExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family == "rfdetr" and getattr(self.model, "task", None) == "classify":
             # Classification has no detection decoder; trace the backbone +
             # linear classifier directly (it returns logits). The detection

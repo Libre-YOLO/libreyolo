@@ -68,6 +68,21 @@ class _TinyRFDETRExport(nn.Module):
         return boxes, logits
 
 
+class _TinyRTDETRExport(nn.Module):
+    """Small RT-DETR-shaped module that returns the native output dict."""
+
+    def __init__(self):
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+
+    def forward(self, x):
+        batch = x.shape[0]
+        signal = x.mean(dim=(1, 2, 3), keepdim=True) + self.anchor
+        logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
+        boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
+        return {"pred_logits": logits, "pred_boxes": boxes}
+
+
 class _TinyRFDETRClassifierRoot(nn.Module):
     """Small RF-DETR classification root with a classifier submodule."""
 
@@ -355,12 +370,18 @@ class TestExporterFormats:
         wrapper = _make_wrapper(model_name=family)
         if family == "rfdetr":
             wrapper.model = _TinyRFDETRExport(segmentation=False)
+        elif family in {"rtdetr", "rtdetrv2"}:
+            wrapper.model = _TinyRTDETRExport()
         wrapper.task = "detect"
         wrapper.SUPPORTED_TASKS = ("detect",)
         wrapper.DEFAULT_TASK = "detect"
 
         def fake_export_onnx(_nn_model, _dummy, **kwargs):
             captured.update(kwargs)
+            if family in {"rtdetr", "rtdetrv2"}:
+                output = _nn_model(_dummy)
+                captured["output_is_tuple"] = isinstance(output, tuple)
+                captured["output_len"] = len(output)
             Path(kwargs["output_path"]).write_bytes(b"onnx")
             return kwargs["output_path"]
 
@@ -376,6 +397,9 @@ class TestExporterFormats:
 
         assert exported == str(output_path)
         assert captured["opset"] == 17
+        if family in {"rtdetr", "rtdetrv2"}:
+            assert captured["output_is_tuple"] is True
+            assert captured["output_len"] == 2
 
     @pytest.mark.parametrize(
         ("task", "segmentation", "obb", "expected_outputs"),
@@ -409,6 +433,30 @@ class TestExporterFormats:
         proto = onnx.load(output_path)
         assert [i.name for i in proto.graph.input] == ["input"]
         assert [o.name for o in proto.graph.output] == expected_outputs
+
+    @pytest.mark.parametrize("family", ["rtdetr", "rtdetrv2"])
+    def test_rtdetr_onnx_uses_detr_io_names(self, tmp_path, family):
+        onnx = pytest.importorskip("onnx")
+        output_path = tmp_path / f"{family}.onnx"
+
+        export_onnx(
+            _TinyRTDETRExport(),
+            torch.zeros(1, 3, 32, 32),
+            output_path=str(output_path),
+            opset=17,
+            simplify=False,
+            dynamic=False,
+            half=False,
+            metadata={
+                "model_family": family,
+                "task": "detect",
+                "segmentation": "false",
+            },
+        )
+
+        proto = onnx.load(output_path)
+        assert [i.name for i in proto.graph.input] == ["images"]
+        assert [o.name for o in proto.graph.output] == ["pred_logits", "pred_boxes"]
 
     def test_onnx_metadata_uses_export_imgsz_override(self, tmp_path):
         onnx = pytest.importorskip("onnx")
