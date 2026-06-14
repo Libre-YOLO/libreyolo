@@ -65,6 +65,8 @@ class SemanticValidator(BaseValidator):
         self._num_classes = dataset.nc
         self._class_names = dict(dataset.names)
         self._ignore_index = dataset.ignore_index
+        self._dataset = dataset
+        self._original_res = bool(getattr(self.config, "original_res", False))
         return DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -98,17 +100,19 @@ class SemanticValidator(BaseValidator):
                 f"Semantic validation expects [B, C, H, W] logits, got shape "
                 f"{tuple(logits.shape)}."
             )
+        if getattr(self, "_original_res", False):
+            # Original-resolution protocol: keep logits; _update_metrics
+            # reverses each image's geometry individually.
+            return logits.float()
         if tuple(logits.shape[-2:]) != target_hw:
             logits = F.interpolate(
                 logits.float(), size=target_hw, mode="bilinear", align_corners=False
             )
         return logits.argmax(dim=1)
 
-    def _update_metrics(
-        self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
-    ) -> None:
-        pred_maps = preds.detach().cpu().long().view(-1)
-        target_maps = targets.detach().cpu().long().view(-1)
+    def _accumulate(self, pred_maps: torch.Tensor, target_maps: torch.Tensor) -> None:
+        pred_maps = pred_maps.detach().cpu().long().view(-1)
+        target_maps = target_maps.detach().cpu().long().view(-1)
 
         valid = target_maps != self._ignore_index
         if not bool(valid.any()):
@@ -119,6 +123,42 @@ class SemanticValidator(BaseValidator):
         index = target_valid * self._num_classes + pred_valid
         counts = torch.bincount(index, minlength=self._num_classes**2)
         self._confusion += counts.reshape(self._num_classes, self._num_classes)
+
+    def _update_metrics(
+        self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
+    ) -> None:
+        if not getattr(self, "_original_res", False):
+            self._accumulate(preds, targets)
+            return
+
+        # Publication protocol: undo each image's letterbox/stretch, compare
+        # against the untransformed ground-truth mask at native resolution.
+        for position, info in enumerate(img_info):
+            orig_h, orig_w = info["orig_shape"]
+            item_logits = preds[position : position + 1]
+            if info["resize_mode"] == "letterbox":
+                # Mirror SemanticDataset._resize rounding for the content box.
+                ratio = info["ratio"]
+                content_h = min(
+                    item_logits.shape[-2], max(1, int(round(orig_h * ratio)))
+                )
+                content_w = min(
+                    item_logits.shape[-1], max(1, int(round(orig_w * ratio)))
+                )
+                item_logits = item_logits[..., :content_h, :content_w]
+            item_logits = F.interpolate(
+                item_logits,
+                size=(orig_h, orig_w),
+                mode="bilinear",
+                align_corners=False,
+            )
+            pred_map = item_logits.argmax(dim=1)[0]
+            gt = torch.from_numpy(
+                self._dataset._load_target_mask(
+                    int(img_ids[position]), (orig_h, orig_w)
+                )
+            )
+            self._accumulate(pred_map, gt)
 
     def _per_class_iou(self) -> torch.Tensor:
         confusion = self._confusion.double()

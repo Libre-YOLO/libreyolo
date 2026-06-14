@@ -11,8 +11,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
+from ..semantic_loss import semantic_loss
 from .backbone import build_backbone
-from .lwdetr import LWDETR, MLP, PostProcess, build_criterion_and_postprocessors, build_model
+from .lwdetr import (
+    LWDETR,
+    MLP,
+    PostProcess,
+    build_criterion_and_postprocessors,
+    build_model,
+)
 from .tensors import NestedTensor
 
 
@@ -139,7 +146,9 @@ RFDETR_SEG_CONFIGS: dict[str, RFDETRSizeConfig] = {
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 
-def interpolate_position_embeddings(checkpoint_state: dict[str, torch.Tensor], pe_size: int) -> None:
+def interpolate_position_embeddings(
+    checkpoint_state: dict[str, torch.Tensor], pe_size: int
+) -> None:
     """Resize DINOv2 positional embeddings in-place when checkpoint resolution differs."""
     n_target = pe_size * pe_size
     for key in [k for k in checkpoint_state if k.endswith(_PE_KEY_SUFFIX)]:
@@ -179,7 +188,9 @@ def _make_args(
     oks_sigmas=None,
 ) -> SimpleNamespace:
     cfg_values = {
-        f.name: list(getattr(cfg, f.name)) if isinstance(getattr(cfg, f.name), tuple) else getattr(cfg, f.name)
+        f.name: list(getattr(cfg, f.name))
+        if isinstance(getattr(cfg, f.name), tuple)
+        else getattr(cfg, f.name)
         for f in fields(cfg)
     }
     cfg_values["pretrain_weights"] = "__libreyolo_no_backbone_download__"
@@ -286,7 +297,12 @@ def _slice_query_param_per_group(
     target_group_detr: int,
 ) -> torch.Tensor:
     """Resize packed Group-DETR query rows without mixing group slots."""
-    if ckpt_num_queries <= 0 or ckpt_group_detr <= 0 or target_num_queries <= 0 or target_group_detr <= 0:
+    if (
+        ckpt_num_queries <= 0
+        or ckpt_group_detr <= 0
+        or target_num_queries <= 0
+        or target_group_detr <= 0
+    ):
         return tensor[: target_num_queries * target_group_detr]
 
     expected_rows = ckpt_num_queries * ckpt_group_detr
@@ -299,7 +315,9 @@ def _slice_query_param_per_group(
     keep_groups = min(ckpt_group_detr, target_group_detr)
     keep_queries = min(ckpt_num_queries, target_num_queries)
     pieces = [
-        tensor[group_idx * ckpt_num_queries : group_idx * ckpt_num_queries + keep_queries]
+        tensor[
+            group_idx * ckpt_num_queries : group_idx * ckpt_num_queries + keep_queries
+        ]
         for group_idx in range(keep_groups)
     ]
     return torch.cat(pieces, dim=0)
@@ -315,7 +333,9 @@ def _resize_query_param_from_checkpoint(
     ckpt_num_queries = _get_arg(checkpoint_args, "num_queries")
     ckpt_group_detr = _get_arg(checkpoint_args, "group_detr")
     try:
-        ckpt_num_queries = int(ckpt_num_queries) if ckpt_num_queries is not None else None
+        ckpt_num_queries = (
+            int(ckpt_num_queries) if ckpt_num_queries is not None else None
+        )
         ckpt_group_detr = int(ckpt_group_detr) if ckpt_group_detr is not None else None
     except (TypeError, ValueError):
         ckpt_num_queries = None
@@ -452,6 +472,16 @@ class RFDETRSemanticSegmenter(nn.Module):
     _NUM_WINDOWS = 1
 
     IGNORE_INDEX = 255
+    # Weight on the Lovász-Softmax (IoU-surrogate) term added to cross entropy.
+    # 0.0 reproduces the original CE-only behavior.
+    lovasz_weight = 1.0
+    # Projector feature levels the dense decoder fuses. DINOv2 is a single-
+    # stride ViT; RF-DETR's projector resamples it to these strides (P4=stride
+    # 16). Override with e.g. ("P3", "P4", "P5") for multi-scale features.
+    semantic_projector_scale = ("P4",)
+    # Optional per-class CE weights (median-frequency balanced); set externally.
+    class_weights = None
+    label_smoothing = 0.0
 
     def __init__(
         self,
@@ -459,12 +489,15 @@ class RFDETRSemanticSegmenter(nn.Module):
         nb_classes: int = 19,
         device: str = "cpu",
         dropout: float = 0.1,
+        decoder_depth: int = 1,
     ):
         super().__init__()
         if config not in RFDETR_CONFIGS:
             raise ValueError(
                 f"Invalid RF-DETR size: {config}. Must be one of {sorted(RFDETR_CONFIGS)}"
             )
+        if decoder_depth < 1:
+            raise ValueError(f"decoder_depth must be >= 1, got {decoder_depth}")
         cfg = RFDETR_CONFIGS[config]
         self.config_name = config
         self.nb_classes = nb_classes
@@ -472,21 +505,29 @@ class RFDETRSemanticSegmenter(nn.Module):
         self.patch_size = self._PATCH_SIZE
         self.num_windows = self._NUM_WINDOWS
         self.resolution = self._POS_ENC_SIZE * self._PATCH_SIZE  # 518
+        self.decoder_depth = int(decoder_depth)
 
         joiner = self._build_backbone(cfg, device)
         # joiner = Sequential(Backbone, PositionEmbedding); the dense decoder
         # only needs the Backbone (DINOv2 encoder + projector).
         self.backbone = joiner[0]
 
-        num_levels = len(cfg.projector_scale)
+        num_levels = len(self.semantic_projector_scale)
         self.laterals = nn.ModuleList(
             nn.Conv2d(self.hidden_dim, self.hidden_dim, 1) for _ in range(num_levels)
         )
-        self.smooth = nn.Sequential(
-            nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
-            nn.GroupNorm(32, self.hidden_dim),
-            nn.GELU(),
-        )
+        # depth 1 keeps the original smooth.{0,1,2} key layout, so existing
+        # checkpoints load unchanged; deeper decoders append further blocks.
+        blocks = []
+        for _ in range(self.decoder_depth):
+            blocks.extend(
+                (
+                    nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
+                    nn.GroupNorm(32, self.hidden_dim),
+                    nn.GELU(),
+                )
+            )
+        self.smooth = nn.Sequential(*blocks)
         self.drop = nn.Dropout2d(p=dropout)
         self.predict = nn.Conv2d(self.hidden_dim, nb_classes, 1)
 
@@ -504,7 +545,7 @@ class RFDETRSemanticSegmenter(nn.Module):
             drop_path=0.0,
             out_channels=cfg.hidden_dim,
             out_feature_indexes=list(cfg.out_feature_indexes),
-            projector_scale=list(cfg.projector_scale),
+            projector_scale=list(self.semantic_projector_scale),
             use_cls_token=False,
             hidden_dim=cfg.hidden_dim,
             position_embedding="sine",
@@ -541,30 +582,32 @@ class RFDETRSemanticSegmenter(nn.Module):
         fused = self.laterals[0](finest)
         for lateral, level in zip(self.laterals[1:], feats[1:]):
             fused = fused + F.interpolate(
-                lateral(level.tensors), size=finest.shape[-2:], mode="bilinear",
+                lateral(level.tensors),
+                size=finest.shape[-2:],
+                mode="bilinear",
                 align_corners=False,
             )
         fused = self.smooth(fused)
         logits = self.predict(self.drop(fused))
 
         if self.training and targets is not None:
-            logits = F.interpolate(
-                logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
+            # semantic_loss upsamples logits for CE and evaluates the Lovász
+            # IoU-surrogate at native logit resolution; it also handles the
+            # all-ignore batch with a graph-connected zero.
+            cw = self.class_weights
+            if cw is not None:
+                cw = cw.to(logits.device)
+            loss = semantic_loss(
+                logits,
+                targets,
+                ignore_index=self.IGNORE_INDEX,
+                lovasz_weight=self.lovasz_weight,
+                class_weights=cw,
+                label_smoothing=self.label_smoothing,
             )
-            targets = targets.long()
-            if bool((targets != self.IGNORE_INDEX).any()):
-                loss = F.cross_entropy(
-                    logits, targets, ignore_index=self.IGNORE_INDEX
-                )
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit
-                # a graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
             return {"total_loss": loss, "sem": loss}
 
-        return F.interpolate(
-            logits, size=(h, w), mode="bilinear", align_corners=False
-        )
+        return F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
 
 
 class LibreRFDETRModel(nn.Module):
@@ -580,12 +623,16 @@ class LibreRFDETRModel(nn.Module):
         classification: bool = False,
         obb: bool = False,
         semantic: bool = False,
+        semantic_decoder_depth: int = 1,
         num_keypoints: int = 17,
         oks_sigmas=None,
     ):
         super().__init__()
 
-        if sum(bool(x) for x in (segmentation, pose, classification, obb, semantic)) > 1:
+        if (
+            sum(bool(x) for x in (segmentation, pose, classification, obb, semantic))
+            > 1
+        ):
             raise ValueError("RF-DETR can enable only one task head at a time")
 
         self.classification = classification
@@ -614,7 +661,10 @@ class LibreRFDETRModel(nn.Module):
             self.nb_classes = nb_classes
             self.segmentation = False
             self.segmenter = RFDETRSemanticSegmenter(
-                config=config, nb_classes=nb_classes, device=device
+                config=config,
+                nb_classes=nb_classes,
+                device=device,
+                decoder_depth=semantic_decoder_depth,
             )
             self.resolution = self.segmenter.resolution
             self.hidden_dim = self.segmenter.hidden_dim
@@ -628,7 +678,9 @@ class LibreRFDETRModel(nn.Module):
         if pose or obb:
             configs = RFDETR_CONFIGS
         if config not in configs:
-            raise ValueError(f"Invalid RF-DETR size: {config}. Must be one of {sorted(configs)}")
+            raise ValueError(
+                f"Invalid RF-DETR size: {config}. Must be one of {sorted(configs)}"
+            )
 
         self.config_name = config
         self.config = configs[config]
@@ -678,11 +730,16 @@ class LibreRFDETRModel(nn.Module):
                 _unwrap_state_dict(state_dict), strict=strict
             )
 
-        checkpoint_args = state_dict.get("args") if isinstance(state_dict, dict) else None
+        checkpoint_args = (
+            state_dict.get("args") if isinstance(state_dict, dict) else None
+        )
         state_dict = _unwrap_state_dict(state_dict)
 
         class_bias = state_dict.get("class_embed.bias")
-        if class_bias is not None and class_bias.shape[0] != self.model.class_embed.bias.shape[0]:
+        if (
+            class_bias is not None
+            and class_bias.shape[0] != self.model.class_embed.bias.shape[0]
+        ):
             out_features = int(class_bias.shape[0])
             self.model.reinitialize_detection_head(out_features)
             if self.pose:

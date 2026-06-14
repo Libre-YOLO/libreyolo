@@ -201,3 +201,102 @@ def test_imgsz_divisor_mismatch_raises(tmp_path):
 
     with pytest.raises(ValueError, match="divisible by 14"):
         SemanticValidator(model, config).run()
+
+
+def _make_rect_dataset_yaml(root: Path, n_images: int = 2):
+    """Rectangular (64w x 32h) dataset: left half class 0, right half class 1."""
+    for i in range(n_images):
+        _write_image(root / "images" / "val" / f"rect{i}.jpg", 64, 32)
+        mask = np.zeros((32, 64), dtype=np.uint8)
+        mask[:, 32:] = 1
+        _write_mask(root / "masks" / "val" / f"rect{i}.png", mask)
+    yaml_path = root / "data.yaml"
+    yaml_path.write_text(
+        "\n".join(
+            [
+                f"path: {root.as_posix()}",
+                "val: images/val",
+                "masks_dir: masks",
+                "nc: 2",
+                "names:",
+                "  0: left",
+                "  1: right",
+                "",
+            ]
+        )
+    )
+    return yaml_path
+
+
+class _RectAwareModel(_StubSemanticModel):
+    """Emits a left/right split across the full input width.
+
+    Under letterbox the rectangular content sits in the top rows; a perfect
+    original-resolution score therefore requires the validator to crop the
+    content region before comparing.
+    """
+
+    def _forward(self, images: torch.Tensor) -> torch.Tensor:
+        batch, _, height, width = images.shape
+        logits = torch.zeros((batch, self.nb_classes, height, width))
+        logits[:, 0, :, : width // 2] = 10.0
+        logits[:, 1, :, width // 2 :] = 10.0
+        return logits
+
+
+def test_original_res_letterbox_unpads_and_scores_full(tmp_path):
+    yaml_path = _make_rect_dataset_yaml(tmp_path)
+    config = ValidationConfig(
+        data=str(yaml_path),
+        imgsz=64,
+        batch_size=2,
+        device="cpu",
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "runs"),
+        original_res=True,
+    )
+    validator = SemanticValidator(_RectAwareModel(), config)
+    metrics = validator.run()
+
+    assert metrics["metrics/mIoU"] == pytest.approx(1.0)
+    # Confusion must hold original-resolution pixel counts: 2 imgs x 32 x 64.
+    assert int(validator._confusion.sum()) == 2 * 32 * 64
+
+
+def test_original_res_stretch_mode(tmp_path):
+    yaml_path = _make_dataset_yaml(tmp_path)
+    config = ValidationConfig(
+        data=str(yaml_path),
+        imgsz=IMGSZ,
+        device="cpu",
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "runs"),
+        original_res=True,
+    )
+    model = _StubSemanticModel("perfect")
+    model.semantic_resize_mode = "stretch"
+    metrics = SemanticValidator(model, config).run()
+
+    assert metrics["metrics/mIoU"] == pytest.approx(1.0)
+
+
+def test_default_mode_still_input_resolution(tmp_path):
+    yaml_path = _make_rect_dataset_yaml(tmp_path)
+    config = ValidationConfig(
+        data=str(yaml_path),
+        imgsz=64,
+        batch_size=2,
+        device="cpu",
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "runs"),
+    )
+    validator = SemanticValidator(_RectAwareModel(), config)
+    metrics = validator.run()
+
+    # Input-res protocol also scores 1.0 here (pad rows are ignore), but the
+    # confusion holds letterboxed content counts, not original-res counts.
+    assert metrics["metrics/mIoU"] == pytest.approx(1.0)
+    assert int(validator._confusion.sum()) == 2 * 32 * 64

@@ -5,6 +5,7 @@ Model-specific trainers subclass BaseTrainer and override hooks.
 
 import logging
 import math
+import random
 import sys
 import time
 from abc import ABC, abstractmethod
@@ -12,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
@@ -102,9 +104,16 @@ class BaseTrainer(ABC):
         self.world_size = get_world_size()
         self.is_distributed = is_distributed()
 
-        # Per-rank seed so dataloader/aug RNG differs across ranks.
-        if self.is_distributed and getattr(self.config, "seed", None) is not None:
-            seed = seed_for_rank(int(self.config.seed))
+        # Seed every training RNG (python, numpy, torch) so seed= reproduces
+        # runs; augmentations draw from python's random, which the previous
+        # torch-only (and DDP-only) seeding never covered. The per-rank offset
+        # keeps dataloader/aug RNG decorrelated across DDP ranks.
+        if getattr(self.config, "seed", None) is not None:
+            seed = int(self.config.seed)
+            if self.is_distributed:
+                seed = seed_for_rank(seed)
+            random.seed(seed)
+            np.random.seed(seed)
             torch.manual_seed(seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
@@ -1471,6 +1480,19 @@ class BaseTrainer(ABC):
                 with autocast("cuda"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                # Skip a non-finite batch BEFORE it can poison weights via
+                # optimizer.step / EMA. A single inf/nan loss (rare activation
+                # overflow) otherwise corrupts the whole model permanently.
+                if not torch.isfinite(total_loss_raw.detach()):
+                    self.optimizer.zero_grad(set_to_none=True)
+                    self._nonfinite_skips = getattr(self, "_nonfinite_skips", 0) + 1
+                    if self._nonfinite_skips <= 5 or self._nonfinite_skips % 50 == 0:
+                        logger.warning(
+                            "Skipped non-finite loss batch (total skips: %d)",
+                            self._nonfinite_skips,
+                        )
+                    del outputs
+                    continue
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -1482,6 +1504,16 @@ class BaseTrainer(ABC):
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
                 total_loss_raw = outputs["total_loss"]
+                if not torch.isfinite(total_loss_raw.detach()):
+                    self.optimizer.zero_grad(set_to_none=True)
+                    self._nonfinite_skips = getattr(self, "_nonfinite_skips", 0) + 1
+                    if self._nonfinite_skips <= 5 or self._nonfinite_skips % 50 == 0:
+                        logger.warning(
+                            "Skipped non-finite loss batch (total skips: %d)",
+                            self._nonfinite_skips,
+                        )
+                    del outputs
+                    continue
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 loss.backward()

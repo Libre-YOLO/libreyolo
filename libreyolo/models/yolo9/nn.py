@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..semantic_loss import semantic_loss
+
 
 def auto_pad(kernel_size, padding=None, dilation=1):
     """Return symmetric padding for stride-preserving convolutions."""
@@ -1254,6 +1256,12 @@ class SemanticDecoder(nn.Module):
     when training targets are given, the per-pixel cross-entropy loss.
     """
 
+    # Weight on the Lovász-Softmax (IoU-surrogate) term added to cross entropy.
+    # 0.0 reproduces the original CE-only behavior.
+    lovasz_weight = 1.0
+    class_weights = None
+    label_smoothing = 0.0
+
     def __init__(self, ch, num_classes, decoder_channels=128, ignore_index=255):
         super().__init__()
         self.nc = num_classes
@@ -1280,18 +1288,20 @@ class SemanticDecoder(nn.Module):
         logits = self.predict(x)
 
         if self.training and targets is not None:
-            logits = F.interpolate(
-                logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
+            # semantic_loss upsamples logits for CE, evaluates the Lovász
+            # IoU-surrogate at native logit resolution, and handles the
+            # all-ignore batch with a graph-connected zero.
+            cw = self.class_weights
+            if cw is not None:
+                cw = cw.to(logits.device)
+            loss = semantic_loss(
+                logits,
+                targets,
+                ignore_index=self.ignore_index,
+                lovasz_weight=self.lovasz_weight,
+                class_weights=cw,
+                label_smoothing=self.label_smoothing,
             )
-            targets = targets.long()
-            if bool((targets != self.ignore_index).any()):
-                loss = F.cross_entropy(
-                    logits, targets, ignore_index=self.ignore_index
-                )
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit
-                # a graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
             return {"total_loss": loss, "sem": loss}
 
         if out_size is None:

@@ -77,6 +77,11 @@ class ValidationConfig:
     # TTA
     augment: bool = False
 
+    # Dense-task protocol: when True, semantic predictions are compared
+    # against ground truth at each image's original resolution (publication
+    # protocol) instead of the model input resolution.
+    original_res: bool = False
+
     # Pose validation
     keypoints_json: Optional[str] = None
     images_dir: Optional[str] = None
