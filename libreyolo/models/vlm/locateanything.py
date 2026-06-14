@@ -156,7 +156,7 @@ class LibreLocateAnything(LibreVLMModel):
     """LocateAnything used as an open-vocabulary detector and pointer."""
 
     FAMILY = "locateanything"
-    FILENAME_PREFIX = "LibreLocateAnything"
+    FILENAME_PREFIX = "LocateAnything"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
         "3b": "nvidia/LocateAnything-3B",

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
@@ -39,6 +40,7 @@ _INSTALL_HINT = (
     "    pip install 'libreyolo[vlm]'"
 )
 _SNAPSHOT_COMPLETE_MARKER = ".libreyolo_snapshot_complete"
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class LibreVLMModel(BaseModel):
@@ -245,7 +247,7 @@ class LibreVLMModel(BaseModel):
                 marker = json.loads(marker_path.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 return False
-            if repo is not None and marker.get("repo") not in (None, repo):
+            if repo is not None and marker.get("repo") != repo:
                 return False
             if revision is not None and marker.get("revision") != revision:
                 return False
@@ -287,11 +289,17 @@ class LibreVLMModel(BaseModel):
         """
         repo = self.HF_REPOS[self.size]
         revision = self.HF_REVISIONS.get(self.size)
-        if self.TRUST_REMOTE_CODE and not revision:
-            raise ValueError(
-                f"{type(self).__name__} enables trust_remote_code but has no "
-                f"pinned HF_REVISIONS entry for size {self.size!r}."
-            )
+        if self.TRUST_REMOTE_CODE:
+            if not revision:
+                raise ValueError(
+                    f"{type(self).__name__} enables trust_remote_code but has no "
+                    f"pinned HF_REVISIONS entry for size {self.size!r}."
+                )
+            if not _COMMIT_SHA_RE.fullmatch(revision):
+                raise ValueError(
+                    f"{type(self).__name__} requires HF_REVISIONS[{self.size!r}] "
+                    "to be a 40-char commit SHA when trust_remote_code=True."
+                )
         local_dir = Path("weights") / f"{self.FILENAME_PREFIX}{self.size}"
         self._notify_license_once()
         # Only short-circuit on a *complete* snapshot; otherwise (re)download.

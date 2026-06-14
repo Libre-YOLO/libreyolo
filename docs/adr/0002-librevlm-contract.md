@@ -86,7 +86,7 @@ To support a new model, subclass it and declare the adapter:
 | Field             | Meaning                                                  |
 |-------------------|----------------------------------------------------------|
 | `FAMILY`          | family id (e.g. `qwen3vl`)                               |
-| `FILENAME_PREFIX` | `Libre`-prefixed display name and weights dir prefix     |
+| `FILENAME_PREFIX` | upstream brand-cased weights dir prefix                  |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload                |
 | `HF_REVISIONS`    | `{size: commit_sha}`; required for remote-code families  |
 | `INPUT_SIZES`     | `{size: nominal_px}`; nominal, the processor owns resize |

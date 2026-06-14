@@ -197,7 +197,8 @@ directory, matching LibreYOLO's existing `weights/` convention. Note that
 `FILENAME_PREFIX` here is a weights-directory prefix, not a LibreYOLO `.pt`
 checkpoint name: VLM families download Hugging Face repos rather than emitting
 `Libre<FAMILY><size>.pt` checkpoints, so the checkpoint-filename nomenclature
-does not apply and brand casing (`LibreQwen3VL`) is kept.
+does not apply and upstream brand casing (`LibreQwen3VL`, `LocateAnything`) is
+kept.
 Models under non-permissive licenses log a one-time license notice before
 loading/downloading (following the existing download-notice pattern in the repo);
 LFM2-VL (LFM Open License v1.0, with a revenue threshold) and InternVL3 (Qwen

@@ -172,6 +172,43 @@ class TestSnapshotComplete:
             is False
         )
 
+    def test_pinned_repo_marker_must_match_and_be_present(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+
+        self._mark_complete(tmp_path, {"revision": "abc123"})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="abc123"
+            )
+            is False
+        )
+
+        self._mark_complete(tmp_path, {"repo": "other/model", "revision": "abc123"})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="abc123"
+            )
+            is False
+        )
+
+    def test_remote_code_revision_must_be_commit_sha(self):
+        from libreyolo.models.vlm.base import LibreVLMModel
+
+        class MutableRevisionVLM(LibreVLMModel):
+            FAMILY = "mutable-revision-vlm"
+            FILENAME_PREFIX = "MutableRevisionVLM"
+            HF_REPOS = {"x": "example/mutable-revision-vlm"}
+            HF_REVISIONS = {"x": "main"}
+            INPUT_SIZES = {"x": 1}
+            TRUST_REMOTE_CODE = True
+
+        m = object.__new__(MutableRevisionVLM)
+        m.size = "x"
+
+        with pytest.raises(ValueError, match="40-char commit SHA"):
+            m._ensure_weights()
+
     def test_license_notice_is_logged_for_cached_snapshot(
         self, tmp_path, monkeypatch, caplog
     ):
@@ -211,7 +248,7 @@ class TestSnapshotComplete:
         cached.mkdir(parents=True)
         (cached / "config.json").write_text("{}")
         (cached / "model.safetensors").write_text("x")
-        self._mark_complete(cached)
+        self._mark_complete(cached, {"repo": "example/notice-vlm", "revision": None})
 
         monkeypatch.chdir(tmp_path)
         caplog.set_level(logging.WARNING, logger="libreyolo.models.vlm.base")

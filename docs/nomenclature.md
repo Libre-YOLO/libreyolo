@@ -60,12 +60,13 @@ For these checkpoint-emitting detector families the casing rule is uniform:
 **every family prefix is all-caps after `Libre`**, with the only mixed-case
 fragment being the lowercase version suffix `DEIMv2`.
 
-The VLM tier is a separate category and does not follow this rule. Its families
-(`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`, `LibreInternVL3`,
-`LibreFlorence2`, `LibreKosmos2`) are not registered into the detector factory
-and do not emit `Libre<FAMILY><size>.pt` checkpoints. Their `FILENAME_PREFIX` is
-only a weights-directory prefix for a downloaded Hugging Face snapshot, so brand
-casing (CamelCase) is intentionally preserved. See
+The VLM tier is a separate category and does not follow this rule. Its
+weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`,
+`LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`, `LocateAnything`) are not
+registered into the detector factory and do not emit `Libre<FAMILY><size>.pt`
+checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
+downloaded Hugging Face snapshot, so upstream brand casing (CamelCase) is
+intentionally preserved. See
 [`librevlm_design.md`](librevlm_design.md).
 
 ## Size codes
