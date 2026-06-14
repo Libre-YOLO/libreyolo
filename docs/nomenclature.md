@@ -111,6 +111,7 @@ From `libreyolo/tasks.py`:
 | `gaze`        | `-gaze` |
 | `obb`         | `-obb` |
 | `point`       | `-point` |
+| `depth`       | `-depth` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -126,6 +127,11 @@ pixel with no instance separation. `segment` remains the task for
 instance segmentation (per-object masks). Semantic models expose
 `Results.semantic_mask` and use per-pixel validation metrics (mIoU,
 pixel accuracy) instead of box/mask mAP.
+
+`depth` is the task for dense monocular depth estimation. Models expose
+`Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
+original image canvas. Higher values mean closer to the camera; no metric unit
+is implied without user-side calibration.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -143,7 +149,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
-| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb")` | detect | classify uses 224; semantic uses 518; seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb", "depth")` | detect | classify uses 224; semantic/depth use 518; seg uses smaller sizes; pose/OBB use detect sizes |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -194,13 +200,14 @@ LibreYOLO9t-pose.pt        # pose
 LibreYOLO9t-cls.pt         # classify
 LibreYOLO9t-obb.pt         # obb
 
-# rfdetr - detect + segment + semantic + pose + classify + obb
+# rfdetr - detect + segment + semantic + pose + classify + obb + depth
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
 LibreRFDETRn-sem.pt        # semantic
 LibreRFDETRn-pose.pt       # pose
 LibreRFDETRn-cls.pt        # classify
 LibreRFDETRn-obb.pt        # obb
+LibreRFDETRn-depth.pt      # depth
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

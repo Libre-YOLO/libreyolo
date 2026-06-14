@@ -453,6 +453,65 @@ class SemanticMask(_TensorPayload):
         )
 
 
+class DepthMap(_TensorPayload):
+    """Dense relative inverse-depth map for a single image.
+
+    Data shape is ``(H, W)`` float values on the original image canvas. Higher
+    values mean closer to the camera. Values are relative, not metric meters.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) depth map but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    def _finite_values(self) -> np.ndarray:
+        values = np.asarray(_numpy(self.data), dtype=np.float32)
+        return values[np.isfinite(values)]
+
+    @property
+    def min(self) -> float:
+        values = self._finite_values()
+        return float(values.min()) if values.size else 0.0
+
+    @property
+    def max(self) -> float:
+        values = self._finite_values()
+        return float(values.max()) if values.size else 0.0
+
+    @property
+    def mean(self) -> float:
+        values = self._finite_values()
+        return float(values.mean()) if values.size else 0.0
+
+    def normalized(self) -> TensorLike:
+        """Depth map rescaled to ``[0, 1]`` over finite values."""
+        data = self.data
+        lo, hi = self.min, self.max
+        if hi - lo <= 0:
+            return data * 0
+        normalized = (data - lo) / (hi - lo)
+        if isinstance(normalized, torch.Tensor):
+            return torch.where(torch.isfinite(normalized), normalized, torch.zeros_like(normalized))
+        return np.where(np.isfinite(normalized), normalized, np.zeros_like(normalized))
+
+    def __getitem__(self, idx):
+        # Instance indexing does not apply to a dense map; keep it intact so
+        # shared Results slicing paths cannot corrupt the (H, W) layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"DepthMap(shape={tuple(self.data.shape)}, "
+            f"range=({self.min:.4g}, {self.max:.4g}), "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class OBB(_TensorPayload):
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
         if data.ndim == 1:
@@ -625,7 +684,17 @@ class Gaze(_TensorPayload):
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
-    _keys = ("boxes", "masks", "probs", "keypoints", "obb", "gaze", "points", "semantic_mask")
+    _keys = (
+        "boxes",
+        "masks",
+        "probs",
+        "keypoints",
+        "obb",
+        "gaze",
+        "points",
+        "semantic_mask",
+        "depth_map",
+    )
 
     def __init__(
         self,
@@ -640,6 +709,7 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
+        depth_map: Optional[DepthMap] = None,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -650,6 +720,8 @@ class Results:
             boxes = boxes.with_id(track_id)
         if points is not None and points.orig_shape is None:
             points = Points(points.data, orig_shape)
+        if depth_map is not None and depth_map.orig_shape is None:
+            depth_map = DepthMap(depth_map.data, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -659,6 +731,7 @@ class Results:
         self.gaze = gaze
         self.points = points
         self.semantic_mask = semantic_mask
+        self.depth_map = depth_map
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -679,6 +752,7 @@ class Results:
             "gaze": self.gaze,
             "points": self.points,
             "semantic_mask": self.semantic_mask,
+            "depth_map": self.depth_map,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -731,6 +805,7 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
+        depth_map: Optional[DepthMap] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -749,6 +824,8 @@ class Results:
             self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
         if semantic_mask is not None:
             self.semantic_mask = semantic_mask
+        if depth_map is not None:
+            self.depth_map = depth_map
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -790,6 +867,15 @@ class Results:
                         }
                     )
                 return rows
+            if self.depth_map is not None:
+                return [
+                    {
+                        "name": "depth_map",
+                        "min": round(self.depth_map.min, decimals),
+                        "max": round(self.depth_map.max, decimals),
+                        "mean": round(self.depth_map.mean, decimals),
+                    }
+                ]
             if self.probs is None:
                 return []
             probs_np = _numpy(self.probs.data)
@@ -878,6 +964,8 @@ class Results:
             return 1
         if self.semantic_mask is not None:
             return 1
+        if self.depth_map is not None:
+            return 1
         return 0
 
     def __repr__(self) -> str:
@@ -892,6 +980,8 @@ class Results:
             parts.append(f"masks={self.masks}")
         if self.semantic_mask is not None:
             parts.append(f"semantic_mask={self.semantic_mask}")
+        if self.depth_map is not None:
+            parts.append(f"depth_map={self.depth_map}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

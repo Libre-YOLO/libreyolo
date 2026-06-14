@@ -418,6 +418,64 @@ def draw_semantic_mask(
     return result.convert("RGB")
 
 
+# Anchor colors for the depth colormap, near (warm) to far (cold). Linear
+# interpolation between anchors gives a smooth ramp without a matplotlib
+# dependency.
+_DEPTH_COLOR_ANCHORS: Tuple[Tuple[int, int, int], ...] = (
+    (122, 4, 3),
+    (228, 65, 26),
+    (249, 152, 40),
+    (164, 252, 60),
+    (58, 222, 130),
+    (32, 144, 222),
+    (64, 67, 166),
+    (48, 18, 59),
+)
+
+
+@lru_cache(maxsize=1)
+def _depth_colormap_lut() -> np.ndarray:
+    """256-entry RGB lookup table interpolated between depth anchors."""
+    anchors = np.asarray(_DEPTH_COLOR_ANCHORS, dtype=np.float64)
+    positions = np.linspace(0.0, 1.0, len(anchors))
+    samples = np.linspace(0.0, 1.0, 256)
+    lut = np.stack(
+        [np.interp(samples, positions, anchors[:, c]) for c in range(3)], axis=1
+    )
+    return lut.round().astype(np.uint8)
+
+
+def draw_depth_map(
+    img: Image.Image,
+    depth_map: np.ndarray,
+    alpha: float = 1.0,
+) -> Image.Image:
+    """Render a relative inverse-depth map as a colormapped image."""
+    depth = np.asarray(depth_map, dtype=np.float32)
+    if depth.shape[:2] != (img.height, img.width):
+        depth_img = Image.fromarray(depth, mode="F")
+        depth_img = depth_img.resize((img.width, img.height), Image.BILINEAR)
+        depth = np.asarray(depth_img, dtype=np.float32)
+
+    finite = np.isfinite(depth)
+    normalized = np.zeros_like(depth, dtype=np.float32)
+    if finite.any():
+        values = depth[finite]
+        lo = float(values.min())
+        hi = float(values.max())
+        if hi - lo > 0:
+            normalized[finite] = (values - lo) / (hi - lo)
+    # Higher values are closer; index 0 of the LUT is the near anchor.
+    indices = ((1.0 - normalized) * 255).round().astype(np.uint8)
+    colored = _depth_colormap_lut()[indices]
+    colored[~finite] = 0
+
+    result = Image.fromarray(colored, mode="RGB")
+    if alpha < 1.0:
+        result = Image.blend(img.convert("RGB"), result, alpha)
+    return result
+
+
 # COCO 17-keypoint skeleton + colors (matches super-gradients defaults).
 COCO_KEYPOINT_EDGES: Tuple[Tuple[int, int], ...] = (
     (0, 1), (0, 2), (1, 2), (1, 3), (2, 4),
