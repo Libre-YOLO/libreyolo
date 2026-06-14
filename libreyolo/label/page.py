@@ -612,6 +612,12 @@ function hitPoly(mx,my){
   for(let i=polys.length-1;i>=0;i--){ if(pointInPoly(x,y,polys[i].pts)) return i; }
   return -1;
 }
+function hitVertex(p, mx, my){
+  for(let k=0;k<p.pts.length;k+=2){
+    if(Math.abs(sx(p.pts[k])-mx)<=HR+2 && Math.abs(sy(p.pts[k+1])-my)<=HR+2) return k/2;
+  }
+  return -1;
+}
 async function segmentAt(mx,my){
   if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable) return;
   const iw=img.naturalWidth, ih=img.naturalHeight, X=ix(mx), Y=iy(my);
@@ -819,6 +825,13 @@ cv.addEventListener("pointerdown", e=>{
     const k = hitHandle(boxes[sel], mx, my);
     if(k){ snapStart(); mode="resize"; drag={k, b:boxes[sel]}; return; }
   }
+  if(selPoly>=0){
+    const vi = hitVertex(polys[selPoly], mx, my);
+    if(vi>=0){
+      if(e.altKey){ if(polys[selPoly].pts.length>6){ pushUndo(); polys[selPoly].pts.splice(vi*2,2); markDirty(); draw(); } return; }
+      snapStart(); mode="vertex"; drag={vi}; return;
+    }
+  }
   const hit = hitBox(mx,my);
   if(hit>=0){
     snapStart(); sel=hit; selPoly=-1; mode="move";
@@ -853,6 +866,7 @@ cv.addEventListener("pointermove", e=>{
   if(mode==="resize"){ resizeBox(drag.b, drag.k, ix(mx), iy(my)); markDirty(); draw(); return; }
   if(mode==="movepoly"){ const dx=ix(mx)-ix(drag.mx), dy=iy(my)-iy(drag.my); const p=polys[selPoly];
     for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=drag.pts[k]+dx; p.pts[k+1]=drag.pts[k+1]+dy; } markDirty(); draw(); return; }
+  if(mode==="vertex"){ const p=polys[selPoly]; p.pts[drag.vi*2]=ix(mx); p.pts[drag.vi*2+1]=iy(my); markDirty(); draw(); return; }
   let hb=-1;
   if(imgOk && sel>=0 && hitHandle(boxes[sel],mx,my)){ cv.style.cursor="pointer"; }
   else { hb = imgOk?hitBox(mx,my):-1; cv.style.cursor = spaceDown?"grab":(hb>=0?"move":"crosshair"); }
@@ -868,8 +882,21 @@ cv.addEventListener("pointerup", e=>{
   } else if(mode==="resize"){ normalizeRect(drag.b); clipToImage(drag.b); }
   else if(mode==="move"){ clipToImage(boxes[sel]); }
   else if(mode==="movepoly"){ clipPoly(polys[selPoly]); }
+  else if(mode==="vertex"){ clipPoly(polys[selPoly]); }
   snapCommit();
   mode=null; drag=null; draw();
+});
+cv.addEventListener("dblclick", e=>{
+  if(selPoly<0 || !imgOk) return;
+  const mx=e.offsetX, my=e.offsetY, p=polys[selPoly], X=ix(mx), Y=iy(my), n=p.pts.length/2;
+  let best=-1, bestD=1e18, bx=0, by=0;
+  for(let i=0;i<n;i++){ const a=2*i, b=2*((i+1)%n);
+    const ax=p.pts[a], ay=p.pts[a+1], cx=p.pts[b], cy=p.pts[b+1];
+    const dx=cx-ax, dy=cy-ay, L=dx*dx+dy*dy||1;
+    let t=((X-ax)*dx+(Y-ay)*dy)/L; t=Math.max(0,Math.min(1,t));
+    const px=ax+t*dx, py=ay+t*dy, d=(X-px)*(X-px)+(Y-py)*(Y-py);
+    if(d<bestD){ bestD=d; best=i; bx=px; by=py; } }
+  if(best>=0 && Math.hypot(sx(bx)-mx, sy(by)-my)<14){ pushUndo(); p.pts.splice(2*(best+1),0, bx, by); markDirty(); draw(); }
 });
 function clipPoly(p){ if(!imgOk||!p) return; const iw=img.naturalWidth, ih=img.naturalHeight;
   for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=Math.max(0,Math.min(p.pts[k],iw)); p.pts[k+1]=Math.max(0,Math.min(p.pts[k+1],ih)); } }
