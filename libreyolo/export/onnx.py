@@ -5,6 +5,17 @@ import warnings
 
 import torch
 
+_DETR_TUPLE_OUTPUT_FAMILIES = {
+    "dfine",
+    "deim",
+    "deimv2",
+    "ec",
+    "rfdetr",
+    "rtdetr",
+    "rtdetrv2",
+    "rtdetrv4",
+}
+
 
 def _get_version() -> str:
     """Return the installed libreyolo version string."""
@@ -23,7 +34,12 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
     module that returns a 2-tuple. ONNX export can skip the dynamic output
     probe for them, and they all need opset 17 for ``aten::scaled_dot_product``.
     """
-    return model_family in {"dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetrv4"}
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES
+
+
+def _requires_onnx_opset17(model_family) -> bool:
+    """Whether the family needs opset 17 for ONNX auto-opset selection."""
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES
 
 
 def _set_metadata(model_proto, metadata: dict) -> None:

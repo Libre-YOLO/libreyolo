@@ -68,6 +68,21 @@ class _TinyRFDETRExport(nn.Module):
         return boxes, logits
 
 
+class _TinyRTDETRExport(nn.Module):
+    """Small RT-DETR-shaped module that returns the native output dict."""
+
+    def __init__(self):
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+
+    def forward(self, x):
+        batch = x.shape[0]
+        signal = x.mean(dim=(1, 2, 3), keepdim=True) + self.anchor
+        logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
+        boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
+        return {"pred_logits": logits, "pred_boxes": boxes}
+
+
 class _TinyRFDETRClassifierRoot(nn.Module):
     """Small RF-DETR classification root with a classifier submodule."""
 
@@ -88,6 +103,8 @@ def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
     wrapper.nb_classes = nb_classes
     wrapper.names = {i: f"class_{i}" for i in range(nb_classes)}
     wrapper.device = torch.device("cpu")
+    wrapper.model_path = None
+    wrapper.FILENAME_PREFIX = ""
     wrapper._get_model_name.return_value = model_name
     wrapper._get_input_size.return_value = input_size
     return wrapper
@@ -347,21 +364,29 @@ class TestExporterFormats:
 
         assert device == torch.device("cuda:0")
 
-    def test_rfdetr_export_auto_opset_is_17(self, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("family", ["rfdetr", "rtdetr", "rtdetrv2"])
+    def test_detr_export_auto_opset_is_17(self, monkeypatch, tmp_path, family):
         captured = {}
-        wrapper = _make_wrapper(model_name="rfdetr")
-        wrapper.model = _TinyRFDETRExport(segmentation=False)
+        wrapper = _make_wrapper(model_name=family)
+        if family == "rfdetr":
+            wrapper.model = _TinyRFDETRExport(segmentation=False)
+        elif family in {"rtdetr", "rtdetrv2"}:
+            wrapper.model = _TinyRTDETRExport()
         wrapper.task = "detect"
         wrapper.SUPPORTED_TASKS = ("detect",)
         wrapper.DEFAULT_TASK = "detect"
 
         def fake_export_onnx(_nn_model, _dummy, **kwargs):
             captured.update(kwargs)
+            if family in {"rtdetr", "rtdetrv2"}:
+                output = _nn_model(_dummy)
+                captured["output_is_tuple"] = isinstance(output, tuple)
+                captured["output_len"] = len(output)
             Path(kwargs["output_path"]).write_bytes(b"onnx")
             return kwargs["output_path"]
 
         monkeypatch.setattr("libreyolo.export.exporter.export_onnx", fake_export_onnx)
-        output_path = tmp_path / "rfdetr.onnx"
+        output_path = tmp_path / f"{family}.onnx"
 
         exported = OnnxExporter(wrapper)(
             output_path=str(output_path),
@@ -372,6 +397,9 @@ class TestExporterFormats:
 
         assert exported == str(output_path)
         assert captured["opset"] == 17
+        if family in {"rtdetr", "rtdetrv2"}:
+            assert captured["output_is_tuple"] is True
+            assert captured["output_len"] == 2
 
     @pytest.mark.parametrize(
         ("task", "segmentation", "obb", "expected_outputs"),
@@ -405,6 +433,27 @@ class TestExporterFormats:
         proto = onnx.load(output_path)
         assert [i.name for i in proto.graph.input] == ["input"]
         assert [o.name for o in proto.graph.output] == expected_outputs
+
+    @pytest.mark.parametrize("family", ["rtdetr", "rtdetrv2", "rtdetrv4"])
+    def test_rtdetr_onnx_uses_detr_io_names(self, tmp_path, family):
+        onnx = pytest.importorskip("onnx")
+        wrapper = _make_wrapper(model_name=family, input_size=32)
+        wrapper.model = _TinyRTDETRExport()
+        wrapper.task = "detect"
+        wrapper.SUPPORTED_TASKS = ("detect",)
+        wrapper.DEFAULT_TASK = "detect"
+        output_path = tmp_path / f"{family}.onnx"
+
+        OnnxExporter(wrapper)(
+            output_path=str(output_path),
+            simplify=False,
+            dynamic=False,
+            device="cpu",
+        )
+
+        proto = onnx.load(output_path)
+        assert [i.name for i in proto.graph.input] == ["images"]
+        assert [o.name for o in proto.graph.output] == ["pred_logits", "pred_boxes"]
 
     def test_onnx_metadata_uses_export_imgsz_override(self, tmp_path):
         onnx = pytest.importorskip("onnx")
@@ -843,6 +892,7 @@ class TestExporterValidation:
 class TestOutputPathGeneration:
     def test_auto_path_torchscript(self):
         wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.model_path = "weights/LibreYOLO9t.pt"
         exporter = TorchScriptExporter(wrapper)
         with tempfile.TemporaryDirectory() as tmpdir:
             import os
@@ -851,45 +901,67 @@ class TestOutputPathGeneration:
             try:
                 os.chdir(tmpdir)
                 path = exporter()
-                assert path == str(Path("weights") / "yolo9_t.torchscript")
+                assert path == str(Path("weights") / "LibreYOLO9t.torchscript")
                 assert Path(path).exists()
             finally:
                 os.chdir(orig)
 
+    def test_auto_path_prefers_weight_file_stem(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.model_path = "runs/train/best.pt"
+        exporter = OnnxExporter(wrapper)
+
+        assert exporter._auto_output_path(half=False, int8=False) == str(
+            Path("weights") / "best.onnx"
+        )
+
     def test_auto_path_includes_segmentation_task(self):
         wrapper = _make_wrapper(model_name="rfdetr", size="n")
+        wrapper.FILENAME_PREFIX = "LibreRFDETR"
         wrapper.task = "segment"
         exporter = OnnxExporter(wrapper)
         assert exporter._auto_output_path(half=False, int8=False) == str(
-            Path("weights") / "rfdetr_n_seg.onnx"
+            Path("weights") / "LibreRFDETRn-seg.onnx"
         )
         assert exporter._auto_output_path(half=True, int8=False) == str(
-            Path("weights") / "rfdetr_n_seg_fp16.onnx"
+            Path("weights") / "LibreRFDETRn-seg_fp16.onnx"
         )
 
     def test_auto_path_includes_obb_task(self):
         wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
         wrapper.task = "obb"
         exporter = OnnxExporter(wrapper)
 
         assert exporter._auto_output_path(half=False, int8=False) == str(
-            Path("weights") / "yolo9_t_obb.onnx"
+            Path("weights") / "LibreYOLO9t-obb.onnx"
         )
         assert exporter._auto_output_path(half=True, int8=False) == str(
-            Path("weights") / "yolo9_t_obb_fp16.onnx"
+            Path("weights") / "LibreYOLO9t-obb_fp16.onnx"
         )
 
     def test_auto_path_includes_rfdetr_obb_task(self):
         wrapper = _make_wrapper(model_name="rfdetr", size="n")
+        wrapper.FILENAME_PREFIX = "LibreRFDETR"
         wrapper.task = "obb"
         exporter = OnnxExporter(wrapper)
 
         assert exporter._auto_output_path(half=False, int8=False) == str(
-            Path("weights") / "rfdetr_n_obb.onnx"
+            Path("weights") / "LibreRFDETRn-obb.onnx"
         )
         assert exporter._auto_output_path(half=True, int8=False) == str(
-            Path("weights") / "rfdetr_n_obb_fp16.onnx"
+            Path("weights") / "LibreRFDETRn-obb_fp16.onnx"
         )
+
+    def test_auto_path_rejects_unknown_task(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.task = "bad-task"
+        exporter = OnnxExporter(wrapper)
+
+        with pytest.raises(ValueError, match="Unsupported task for auto output naming"):
+            exporter._auto_output_path(half=False, int8=False)
 
     def test_explicit_path(self):
         wrapper = _make_wrapper()
