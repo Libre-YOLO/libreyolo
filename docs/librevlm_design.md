@@ -30,11 +30,12 @@ size marked with `*`. The authoritative list is `_ALIASES` in
 | Aliases                                      | Family    | License             | Notes                                    |
 |----------------------------------------------|-----------|---------------------|------------------------------------------|
 | `qwen3-vl`, `-2b`, `-4b`*, `-8b`             | Qwen3-VL  | Apache-2.0          | default model; strongest detector here   |
-| `lfm2-vl`, `-450m`*, `-1.6b`                 | LFM2-VL   | LFM Open License v1.0 | edge VLM; non-permissive, notice-gated  |
-| `internvl3`, `-1b`, `-2b`*, `-8b`            | InternVL3 | Qwen License        | Qwen-backbone weights, notice-gated; weak small |
+| `lfm2-vl`, `-450m`*, `-1.6b`                 | LFM2-VL   | LFM Open License v1.0 | edge VLM; non-permissive, logs notice   |
+| `internvl3`, `-1b`, `-2b`*, `-8b`            | InternVL3 | Qwen License        | Qwen-backbone weights, logs notice; weak small |
 | `florence-2`, `-base`*, `-large`             | Florence-2 | MIT                | small purpose-built detector; tight boxes |
 | `kosmos-2`*                                   | Kosmos-2  | MIT                 | 2023 grounder; loads clean, coarse boxes |
 | `smolvlm2`, `-2.2b`*, `-500m`                | SmolVLM2  | Apache-2.0          | tiny; weak detector, zero-code family    |
+| `locate-anything`, `-3b`*                     | LocateAnything | NVIDIA non-commercial | remote-code grounder; boxes and points |
 
 Florence-2 and Kosmos-2 do not use a chat template: they are driven by task /
 grounding prompts and decode boxes via the processor's `post_process_generation`,
@@ -45,12 +46,12 @@ checkpoints; the original `microsoft/*` ones do not load on current transformers
 Larger Qwen3-VL tiers (30B and up) and Qwen2.5-VL are not included: the big ones
 do not fit a single consumer GPU, and Qwen2.5-VL uses a different coordinate
 convention that would need its own family. Some strong models are deliberately
-left out for being remote-code (Ovis2.5, MiniCPM-V, Moondream2, Molmo2; fragile
-on current transformers), gated (PaliGemma2, Gemma3), too large for ~16 GB
-(GLM-4.1V-9B), or not a clean drop-in (Rex-Omni crashes on the standard Qwen2.5-VL
-path despite being the strongest generative detector). `LibreVLM()` defaults to
-`qwen3-vl-4b`. Detection quality varies a lot by family and size; Qwen3-VL,
-LFM2-VL, and Florence-2 are the strong ones.
+left out for being remote-code without enough payoff (Ovis2.5, MiniCPM-V,
+Moondream2, Molmo2; fragile on current transformers), gated (PaliGemma2, Gemma3),
+too large for ~16 GB (GLM-4.1V-9B), or not a clean drop-in (Rex-Omni crashes on
+the standard Qwen2.5-VL path despite being the strongest generative detector).
+`LibreVLM()` defaults to `qwen3-vl-4b`. Detection quality varies a lot by family
+and size; Qwen3-VL, LFM2-VL, and Florence-2 are the strong ones.
 
 ## Decision 1: two layers, raw chat under a detection convenience
 
@@ -137,6 +138,7 @@ class LibreQwen3VL(LibreVLMModel):
     FAMILY = "qwen3vl"
     FILENAME_PREFIX = "LibreQwen3VL"
     HF_REPOS = {"4b": "Qwen/Qwen3-VL-4B-Instruct", ...}
+    # HF_REVISIONS required if TRUST_REMOTE_CODE=True
     INPUT_SIZES = {"4b": 1024, ...}
     BBOX_KEY = "bbox_2d"        # this model's JSON key
     COORD_DIVISOR = 1000.0      # this model's coordinate scale
@@ -159,6 +161,7 @@ synthetic image with a known box and read back the numbers. Verified so far:
 | LFM2-VL    | `bbox`    | [0, 1] | xyxy   | defaults                                |
 | SmolVLM2   | `bbox`    | [0, 1] | xyxy   | defaults                                |
 | InternVL3  | `bbox`    | 0-1000 | xyxy   | `COORD_DIVISOR=1000` + flatten override |
+| LocateAnything | `bbox` | 0-1000 | xyxy   | remote-code adapter, boxes + points     |
 
 Three knobs cover the output variation without touching the parser:
 
@@ -174,8 +177,9 @@ InternVL3 wraps each object's boxes in an extra list, so its family overrides
 `_postprocess` to flatten before the shared builder runs; a grounding-token
 model whose boxes come from a processor `post_process_generation` call overrides
 `_preprocess`/`_forward`/`_postprocess` (Florence-2 and Kosmos-2 do exactly this).
-The tier ships six distinct families (Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
-Florence-2, Kosmos-2) spanning all three integration styles, confirming it is
+The tier ships seven distinct families (Qwen3-VL, LFM2-VL, SmolVLM2, InternVL3,
+Florence-2, Kosmos-2, LocateAnything) spanning all three integration styles,
+confirming it is
 genuinely model-agnostic. Detection *quality* varies a lot by model and size
 (Qwen3-VL, LFM2-VL, and Florence-2 are the strong ones); the framework is what is
 general, not every model's accuracy.
@@ -193,14 +197,20 @@ directory, matching LibreYOLO's existing `weights/` convention. Note that
 `FILENAME_PREFIX` here is a weights-directory prefix, not a LibreYOLO `.pt`
 checkpoint name: VLM families download Hugging Face repos rather than emitting
 `Libre<FAMILY><size>.pt` checkpoints, so the checkpoint-filename nomenclature
-does not apply and brand casing (`LibreQwen3VL`) is kept.
-Models under non-permissive licenses log a one-time license notice before the
-download (following the existing download-notice pattern in the repo); LFM2-VL
-(LFM Open License v1.0, with a revenue threshold) and InternVL3 (Qwen License, on
-its `-hf` weights) are the current examples.
+does not apply and upstream brand casing (`LibreQwen3VL`, `LocateAnything`) is
+kept.
+Models under non-permissive licenses log a one-time license notice before
+loading/downloading (following the existing download-notice pattern in the repo);
+LFM2-VL (LFM Open License v1.0, with a revenue threshold) and InternVL3 (Qwen
+License, on its `-hf` weights) are examples. LocateAnything-3B also logs a
+notice because its Hugging Face model repository is distributed under NVIDIA's
+non-commercial model license and must be loaded through HF remote code.
+Remote-code families additionally pin `HF_REVISIONS` to a commit SHA so runtime
+downloads do not execute mutable upstream code.
 
-LibreYOLO contributes no model source code: families load through the Apache-2.0
-`transformers` API and do not redistribute weights.
+LibreYOLO contributes only adapter code. It does not redistribute VLM weights or
+remote-code model repositories; those are downloaded at runtime under the
+upstream model repository's terms when a user chooses that model.
 
 ## Known limitations (v1)
 
@@ -216,6 +226,9 @@ These are deliberate v1 scoping choices, called out so behavior matches expectat
   `LibreVLM(...)` from Python. `predict`/`track` parity is at the API level.
 - **`chat()` and `prompt=`** apply to the chat-template families only; Florence-2
   and Kosmos-2 are task-token driven (`chat()` raises, `prompt=` is ignored).
+- **Point support is family-specific.** LocateAnything supports `task="point"`
+  and returns `Results.points`; point tracking, point validation, and exported
+  backend point decoding remain out of scope.
 
 ## Adding a new model: checklist
 

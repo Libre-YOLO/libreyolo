@@ -24,6 +24,7 @@ from .florence2 import LibreFlorence2
 from .internvl3 import LibreInternVL3
 from .kosmos2 import LibreKosmos2
 from .lfm2 import LibreLFM2VL
+from .locateanything import LibreLocateAnything
 from .qwen3vl import LibreQwen3VL
 from .smolvlm import LibreSmolVLM2
 
@@ -49,6 +50,10 @@ _ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
     "florence-2-large": (LibreFlorence2, "large"),
     "kosmos-2": (LibreKosmos2, "224"),
     "kosmos2": (LibreKosmos2, "224"),
+    "locate-anything": (LibreLocateAnything, "3b"),
+    "locateanything": (LibreLocateAnything, "3b"),
+    "locate-anything-3b": (LibreLocateAnything, "3b"),
+    "locateanything-3b": (LibreLocateAnything, "3b"),
 }
 
 _DEFAULT_MODEL = "qwen3-vl-4b"
@@ -87,4 +92,5 @@ __all__ = [
     "LibreInternVL3",
     "LibreFlorence2",
     "LibreKosmos2",
+    "LibreLocateAnything",
 ]
