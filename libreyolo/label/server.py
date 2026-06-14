@@ -227,15 +227,23 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(200, {"editable": True, "suggestions": sugg})
 
     def _handle_segment(self, idx: int) -> None:
-        payload = self._read_json()
-        box = payload.get("box") if isinstance(payload, dict) else None
+        payload = self._read_json() or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        box = payload.get("box")
+        points = payload.get("points")
         try:
             if box and len(box) == 4:
                 kw = {"box": [float(v) for v in box]}
+            elif points:
+                kw = {
+                    "points": [[float(p[0]), float(p[1])] for p in points],
+                    "labels": [int(v) for v in (payload.get("labels") or [1] * len(points))],
+                }
             else:
                 kw = {"point": (float(payload["x"]), float(payload["y"]))}
-        except (TypeError, ValueError, KeyError):
-            self._send(400, {"error": "point {x,y} or box [x1,y1,x2,y2] required"})
+        except (TypeError, ValueError, KeyError, IndexError):
+            self._send(400, {"error": "point {x,y}, points [[x,y],...], or box [x1,y1,x2,y2] required"})
             return
         try:
             poly = self.state.sam.segment(self.state.session.image_path(idx), **kw)

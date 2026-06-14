@@ -71,10 +71,9 @@ sam = [
     "transformers>=5.1.0",
 ]
 label = [
-    # SAM (Segment Anything) click-to-mask assist for `libreyolo label`.
-    # The labeller, and model-assisted auto-label, work without this; only the
-    # optional smart-segment tool needs transformers (SAM checkpoints Apache-2.0).
-    "transformers>=5.1.0",
+    # AI-assist for `libreyolo label`: SAM click-to-mask via the LibreSAM tier.
+    # The manual labeller and model-assisted box auto-label work without this.
+    "libreyolo[sam]",
 ]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
