@@ -263,8 +263,9 @@ let assist = null, assistModel = null, conf = 0.35;
 let ghosts = [];
 let polys = [];              // polygon annotations (image-px pts), from SAM or file
 let selPoly = -1;
-let tool = "box";            // "box" (draw/select) or "seg" (SAM click-to-mask)
+let tool = "box";            // "box" (draw/select) or "seg" (SAM click/box-to-mask)
 let segBusy = false;
+let segRect = null;          // box being dragged in segment mode (image px)
 let suggestedIds = new Set();
 let listFilter = "all";
 const HANDLES = ["nw","n","ne","e","se","s","sw","w"];
@@ -342,7 +343,7 @@ function setTool(t){
   const tb=$("#toolBox"), ts=$("#toolSeg");
   if(tb) tb.classList.toggle("on", t==="box");
   if(ts) ts.classList.toggle("on", t==="seg");
-  if(t==="seg") banner("Smart segment: click an object → SAM outlines it. Esc / B for box tool.");
+  if(t==="seg") banner("Smart segment: click an object — or drag a box around it — and SAM outlines it. B for box tool.");
   else $("#banner").style.display="none";
 }
 function toggleHelp(){ const h=$("#help"); h.style.display = h.style.display==="flex"?"none":"flex"; }
@@ -636,6 +637,26 @@ async function segmentAt(mx,my){
   }catch(e){ banner("Segment failed"); }
   finally{ segBusy=false; cv.style.cursor="crosshair"; }
 }
+async function segmentBox(r){
+  if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable) return;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  const x1=Math.max(0,Math.min(r.x0,r.x1)), y1=Math.max(0,Math.min(r.y0,r.y1));
+  const x2=Math.min(iw,Math.max(r.x0,r.x1)), y2=Math.min(ih,Math.max(r.y0,r.y1));
+  if(x2-x1<4 || y2-y1<4) return;
+  segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM box prompt)"); cv.style.cursor="wait";
+  try{
+    const rr = await fetch(`/api/assist/segment/${idx}`, {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({box:[x1/iw, y1/ih, x2/iw, y2/ih]})});
+    if(myGen!==loadSeq) return;
+    if(!rr.ok){ const e=await rr.json().catch(()=>({})); banner("Segment failed: "+(e.error||rr.status)); return; }
+    const d = await rr.json();
+    if(!d.polygon || d.polygon.length<6){ banner("No object found in that box"); return; }
+    pushUndo();
+    polys.push({cls:active, pts:d.polygon.map((v,k)=> k%2===0? v*iw : v*ih)});
+    selPoly=polys.length-1; sel=-1; markDirty(); $("#banner").style.display="none"; draw();
+  }catch(e){ banner("Segment failed"); }
+  finally{ segBusy=false; cv.style.cursor="crosshair"; }
+}
 function hitGhost(mx,my){
   const x=ix(mx), y=iy(my);
   for(let i=ghosts.length-1;i>=0;i--){ const g=ghosts[i];
@@ -781,6 +802,12 @@ function draw(){
     ctx.moveTo(0,cursor.y+0.5); ctx.lineTo(VW,cursor.y+0.5);
     ctx.stroke(); ctx.restore();
   }
+  if(mode==="segbox" && segRect){
+    const x=sx(Math.min(segRect.x0,segRect.x1)), y=sy(Math.min(segRect.y0,segRect.y1));
+    const w=Math.abs(segRect.x1-segRect.x0)*view.scale, h=Math.abs(segRect.y1-segRect.y0)*view.scale;
+    ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle="#a78bfa"; ctx.lineWidth=1.5; ctx.strokeRect(x,y,w,h);
+    ctx.fillStyle="rgba(167,139,250,.10)"; ctx.fillRect(x,y,w,h); ctx.restore();
+  }
   updateProgress();
 }
 function handlePts(b){
@@ -849,7 +876,7 @@ cv.addEventListener("pointerdown", e=>{
     if(g>=0){ if(e.altKey) rejectGhost(g); else acceptGhost(g); mode=null; drag=null; return; }
   }
   if(!editable || (DS && !DS.writable)) return;
-  if(tool==="seg"){ segmentAt(mx,my); return; }
+  if(tool==="seg"){ mode="segbox"; drag={mx, my, x0:ix(mx), y0:iy(my)}; segRect=null; return; }
   const x=ix(mx), y=iy(my);
   snapStart();
   boxes.push({cls:active, x, y, w:0, h:0});
@@ -867,6 +894,7 @@ cv.addEventListener("pointermove", e=>{
   if(mode==="movepoly"){ const dx=ix(mx)-ix(drag.mx), dy=iy(my)-iy(drag.my); const p=polys[selPoly];
     for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=drag.pts[k]+dx; p.pts[k+1]=drag.pts[k+1]+dy; } markDirty(); draw(); return; }
   if(mode==="vertex"){ const p=polys[selPoly]; p.pts[drag.vi*2]=ix(mx); p.pts[drag.vi*2+1]=iy(my); markDirty(); draw(); return; }
+  if(mode==="segbox"){ segRect={x0:drag.x0, y0:drag.y0, x1:ix(mx), y1:iy(my)}; draw(); return; }
   let hb=-1;
   if(imgOk && sel>=0 && hitHandle(boxes[sel],mx,my)){ cv.style.cursor="pointer"; }
   else { hb = imgOk?hitBox(mx,my):-1; cv.style.cursor = spaceDown?"grab":(hb>=0?"move":"crosshair"); }
@@ -875,6 +903,11 @@ cv.addEventListener("pointermove", e=>{
 });
 cv.addEventListener("pointerleave", ()=>{ cursor=null; hover=-1; draw(); });
 cv.addEventListener("pointerup", e=>{
+  if(mode==="segbox"){
+    const dmx=drag.mx, dmy=drag.my, r=segRect; segRect=null; mode=null; drag=null; draw();
+    if((Math.abs(e.offsetX-dmx)>5 || Math.abs(e.offsetY-dmy)>5) && r) segmentBox(r); else segmentAt(dmx, dmy);
+    return;
+  }
   if(mode==="new"){
     const b=boxes[sel];
     if(Math.abs(b.w)*view.scale<3 || Math.abs(b.h)*view.scale<3){ boxes.pop(); sel=-1; }

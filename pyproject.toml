@@ -61,6 +61,12 @@ vlm = [
     # SmolVLM2's processor requires num2words.
     "num2words>=0.5.0",
 ]
+label = [
+    # SAM (Segment Anything) click-to-mask assist for `libreyolo label`.
+    # The labeller, and model-assisted auto-label, work without this; only the
+    # optional smart-segment tool needs transformers (SAM checkpoints Apache-2.0).
+    "transformers>=5.1.0",
+]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
     # [[tool.uv.dependency-metadata]] blocks below.
@@ -112,6 +118,7 @@ all = [
     "libreyolo[gaze]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
+    "libreyolo[label]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
