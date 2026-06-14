@@ -248,6 +248,12 @@ class BaseExporter(ABC):
                 "output plus backend argmax parsing) before exporting semantic "
                 "models."
             )
+        if getattr(self.model, "task", "detect") == "depth":
+            raise NotImplementedError(
+                "Export for depth models is not implemented yet. "
+                "Add a depth-aware export/runtime contract (dense float "
+                "output plus backend parsing) before exporting depth models."
+            )
         half, int8 = self._validate(half, int8, data)
         self._preflight(half=half, int8=int8, data=data, **kwargs)
         data = self._resolve_calibration_data(int8, data)

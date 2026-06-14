@@ -32,7 +32,7 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
-  `classify`, `gaze`, `obb`, or `point`.
+  `classify`, `gaze`, `obb`, `point`, or `depth`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -47,6 +47,10 @@ Pose checkpoints additionally include:
   expose keypoints as `x,y,visibility`.
 - `oks_sigmas`: optional list of per-keypoint OKS sigmas. When omitted, loaders
   and validators use the task default for `num_keypoints`.
+
+Depth checkpoints use the task string `depth`, `nc: 1`, and
+`names: {0: "depth"}`. The single class-like slot exists only for checkpoint
+schema compatibility; depth predictions are dense float maps, not classes.
 
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and

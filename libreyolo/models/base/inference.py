@@ -31,6 +31,7 @@ from ...utils.drawing import (
     draw_keypoints,
     draw_masks,
     draw_obb,
+    draw_depth_map,
     draw_points,
     draw_semantic_mask,
     draw_tile_grid,
@@ -45,6 +46,7 @@ from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.predict_args import normalize_predict_kwargs
 from ...utils.results import (
     Boxes,
+    DepthMap,
     Keypoints,
     Masks,
     OBB,
@@ -525,6 +527,14 @@ class InferenceRunner:
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "depth_map", None) is not None:
+            depth_data = result.depth_map.data
+            if isinstance(depth_data, torch.Tensor):
+                depth_data = depth_data.cpu().numpy()
+            annotated_img = draw_depth_map(original_img, depth_data)
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "points", None) is not None:
             if len(result.points) > 0:
                 annotated_img = draw_points(
@@ -650,6 +660,23 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 semantic_mask=SemanticMask(semantic_t.long(), (orig_h, orig_w)),
+            )
+
+        # Depth: a dense relative inverse-depth map, no boxes.
+        depth_data = detections.get("depth")
+        if depth_data is not None:
+            orig_w, orig_h = original_size
+            depth_t = (
+                depth_data
+                if isinstance(depth_data, torch.Tensor)
+                else torch.as_tensor(depth_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
             )
 
         points_data = detections.get("points")
@@ -957,6 +984,11 @@ class InferenceRunner:
                 output_file_format=output_file_format,
                 save_stem=save_stem,
                 **kwargs,
+            )
+        if getattr(self.model, "task", "detect") == "depth":
+            raise ValueError(
+                "Tiled inference does not support depth maps yet. "
+                "Use non-tiled inference for depth models."
             )
 
         if getattr(self.model, "_is_segmentation", False):

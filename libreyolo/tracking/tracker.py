@@ -8,9 +8,9 @@ Implements the BYTE association method from:
 from __future__ import annotations
 
 import numpy as np
-import torch
 
 from ..utils.results import Results
+from ._helpers import _as_numpy, _make_track_ids
 from .config import TrackConfig
 from .kalman_filter import KalmanFilterXYAH
 from .matching import fuse_score, iou_distance, linear_assignment
@@ -266,21 +266,6 @@ class ByteTracker:
 # --------------------------------------------------------------------------
 # Module-level helpers
 # --------------------------------------------------------------------------
-
-
-def _as_numpy(data) -> np.ndarray:
-    """Convert a tensor-like result payload to a NumPy array."""
-    if isinstance(data, torch.Tensor):
-        return data.detach().cpu().numpy()
-    return np.asarray(data)
-
-
-def _make_track_ids(ids: list[int], results: Results):
-    """Create track IDs on the same tensor/array backend as the source boxes."""
-    boxes = results.boxes.xyxy
-    if isinstance(boxes, torch.Tensor):
-        return torch.tensor(ids, dtype=torch.int64, device=boxes.device)
-    return np.asarray(ids, dtype=np.int64)
 
 
 def _joint_stracks(a: list[STrack], b: list[STrack]) -> list[STrack]:

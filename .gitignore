@@ -59,3 +59,6 @@ sample_images*/
 # Catch-all so any current or future Libre* family snapshot dir (and the
 # *.bin / config / tokenizer files inside it) can never be committed.
 weights/Libre*/
+
+# OC-SORT parity oracle: vendored MIT reference + dev harness (test-only, not shipped)
+/parity_ref/

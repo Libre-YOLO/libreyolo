@@ -60,6 +60,15 @@ vlm = [
     "transformers>=5.1.0",
     # SmolVLM2's processor requires num2words.
     "num2words>=0.5.0",
+    # LocateAnything's HF remote-code processor/model imports these at load time.
+    "decord==0.6.0",
+    "lmdb>=1.7.0",
+    "peft>=0.12.0",
+]
+sam = [
+    # Promptable-segmentation families (SAM) load through transformers
+    # (SamModel/SamProcessor); huggingface_hub ships with it.
+    "transformers>=5.1.0",
 ]
 label = [
     # SAM (Segment Anything) click-to-mask assist for `libreyolo label`.
@@ -118,6 +127,7 @@ all = [
     "libreyolo[gaze]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
+    "libreyolo[sam]",
     "libreyolo[label]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
@@ -260,6 +270,7 @@ markers = [
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
+    "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",

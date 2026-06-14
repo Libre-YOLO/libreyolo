@@ -567,6 +567,203 @@ class RFDETRSemanticSegmenter(nn.Module):
         )
 
 
+class RFDETRDepthEstimator(nn.Module):
+    """Dense monocular-depth model: RF-DETR's DINOv2 backbone + decoder.
+
+    The model predicts relative inverse depth: higher values mean closer to
+    the camera. It keeps RF-DETR's DINOv2 encoder/projector and replaces the
+    query decoder with a dense top-down decoder. Training targets are plain
+    depth maps where ``0``/non-finite pixels are invalid.
+    """
+
+    _PATCH_SIZE = 14
+    _POS_ENC_SIZE = 37  # 37 * 14 == 518, DINOv2's pretrained image_size
+    _NUM_WINDOWS = 1
+
+    _TRIM_RATIO = 0.2
+    _GRAD_SCALES = 4
+    _GRAD_WEIGHT = 0.5
+
+    def __init__(
+        self,
+        config: str = "s",
+        device: str = "cpu",
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        if config not in RFDETR_CONFIGS:
+            raise ValueError(
+                f"Invalid RF-DETR size: {config}. Must be one of {sorted(RFDETR_CONFIGS)}"
+            )
+        cfg = RFDETR_CONFIGS[config]
+        self.config_name = config
+        self.hidden_dim = cfg.hidden_dim
+        self.patch_size = self._PATCH_SIZE
+        self.num_windows = self._NUM_WINDOWS
+        self.resolution = self._POS_ENC_SIZE * self._PATCH_SIZE
+
+        joiner = self._build_backbone(cfg, device)
+        self.backbone = joiner[0]
+
+        num_levels = len(cfg.projector_scale)
+        self.laterals = nn.ModuleList(
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, 1) for _ in range(num_levels)
+        )
+        self.refine = nn.ModuleList(
+            self._make_refine_block(self.hidden_dim) for _ in range(num_levels)
+        )
+        self.output_refine = nn.Sequential(
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
+            nn.GroupNorm(32, self.hidden_dim),
+            nn.GELU(),
+            nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
+            nn.GroupNorm(32, self.hidden_dim),
+            nn.GELU(),
+        )
+        self.drop = nn.Dropout2d(p=dropout)
+        self.depth_head = nn.Conv2d(self.hidden_dim, 1, 1)
+        self.depth_activation = nn.Softplus(beta=1.0, threshold=20.0)
+
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        self.register_buffer("pixel_mean", mean, persistent=False)
+        self.register_buffer("pixel_std", std, persistent=False)
+
+    @staticmethod
+    def _make_refine_block(channels: int) -> nn.Sequential:
+        return nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.GroupNorm(32, channels),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.GroupNorm(32, channels),
+            nn.GELU(),
+        )
+
+    def _build_backbone(self, cfg: RFDETRSizeConfig, device: str):
+        kwargs = dict(
+            encoder=cfg.encoder,
+            vit_encoder_num_layers=12,
+            pretrained_encoder=None,
+            window_block_indexes=None,
+            drop_path=0.0,
+            out_channels=cfg.hidden_dim,
+            out_feature_indexes=list(cfg.out_feature_indexes),
+            projector_scale=list(cfg.projector_scale),
+            use_cls_token=False,
+            hidden_dim=cfg.hidden_dim,
+            position_embedding="sine",
+            freeze_encoder=False,
+            layer_norm=True,
+            target_shape=(self.resolution, self.resolution),
+            rms_norm=False,
+            backbone_lora=False,
+            force_no_pretrain=False,
+            gradient_checkpointing=False,
+            patch_size=self._PATCH_SIZE,
+            num_windows=self._NUM_WINDOWS,
+            positional_encoding_size=self._POS_ENC_SIZE,
+        )
+        try:
+            return build_backbone(load_dinov2_weights=True, **kwargs)
+        except Exception as exc:  # pragma: no cover - offline / hub failure
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning(
+                "Could not load pretrained DINOv2 weights (%s); building the "
+                "depth backbone from random init.",
+                exc,
+            )
+            return build_backbone(load_dinov2_weights=False, **kwargs)
+
+    @staticmethod
+    def _normalize(values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        flat = values[valid]
+        shift = flat.median()
+        scale = (flat - shift).abs().mean().clamp_min(1e-6)
+        return (values - shift) / scale
+
+    def _ssi_loss_single(
+        self, pred: torch.Tensor, gt_depth: torch.Tensor
+    ) -> torch.Tensor | None:
+        valid = (gt_depth > 0) & torch.isfinite(gt_depth) & torch.isfinite(pred)
+        if int(valid.sum()) < 2:
+            return None
+
+        gt_inverse = torch.zeros_like(gt_depth)
+        gt_inverse[valid] = 1.0 / gt_depth[valid]
+        pred_n = self._normalize(pred, valid)
+        gt_n = self._normalize(gt_inverse, valid)
+
+        residuals = (pred_n - gt_n).abs()[valid]
+        keep = max(1, int(residuals.numel() * (1.0 - self._TRIM_RATIO)))
+        if keep < residuals.numel():
+            residuals, _ = torch.sort(residuals)
+            residuals = residuals[:keep]
+        data_term = residuals.mean()
+
+        residual_map = pred_n - gt_n
+        valid_map = valid
+        grad_term = pred.new_zeros(())
+        for _ in range(self._GRAD_SCALES):
+            grad_x = (residual_map[:, 1:] - residual_map[:, :-1]).abs()
+            mask_x = valid_map[:, 1:] & valid_map[:, :-1]
+            grad_y = (residual_map[1:, :] - residual_map[:-1, :]).abs()
+            mask_y = valid_map[1:, :] & valid_map[:-1, :]
+            denom = mask_x.sum() + mask_y.sum()
+            if int(denom) > 0:
+                grad_term = grad_term + (
+                    grad_x[mask_x].sum() + grad_y[mask_y].sum()
+                ) / denom.clamp_min(1)
+            if min(residual_map.shape) < 4:
+                break
+            residual_map = residual_map[::2, ::2]
+            valid_map = valid_map[::2, ::2]
+
+        return data_term + self._GRAD_WEIGHT * grad_term
+
+    def _decode_features(self, feats) -> torch.Tensor:
+        fused = self.laterals[-1](feats[-1].tensors)
+        fused = self.refine[-1](fused)
+        for idx in range(len(feats) - 2, -1, -1):
+            lateral = self.laterals[idx](feats[idx].tensors)
+            fused = F.interpolate(
+                fused, size=lateral.shape[-2:], mode="bilinear", align_corners=False
+            )
+            fused = self.refine[idx](fused + lateral)
+        return self.output_refine(fused)
+
+    def forward(self, x: torch.Tensor, targets=None):
+        b, _, h, w = x.shape
+        x = (x - self.pixel_mean) / self.pixel_std
+        mask = torch.zeros((b, h, w), dtype=torch.bool, device=x.device)
+        feats = self.backbone(NestedTensor(x, mask))
+
+        fused = self._decode_features(feats)
+        pred = self.depth_activation(self.depth_head(self.drop(fused)))
+
+        if self.training and targets is not None:
+            pred = F.interpolate(
+                pred, size=targets.shape[-2:], mode="bilinear", align_corners=False
+            )[:, 0]
+            losses = [
+                loss
+                for loss in (
+                    self._ssi_loss_single(pred[i], targets[i].float())
+                    for i in range(pred.shape[0])
+                )
+                if loss is not None
+            ]
+            if losses:
+                loss = torch.stack(losses).mean()
+            else:
+                loss = pred.sum() * 0.0
+            return {"total_loss": loss, "depth": loss}
+
+        return F.interpolate(
+            pred, size=(h, w), mode="bilinear", align_corners=False
+        )
+
+
 class LibreRFDETRModel(nn.Module):
     """RF-DETR model built from LibreYOLO-local RF-DETR modules."""
 
@@ -580,16 +777,21 @@ class LibreRFDETRModel(nn.Module):
         classification: bool = False,
         obb: bool = False,
         semantic: bool = False,
+        depth: bool = False,
         num_keypoints: int = 17,
         oks_sigmas=None,
     ):
         super().__init__()
 
-        if sum(bool(x) for x in (segmentation, pose, classification, obb, semantic)) > 1:
+        if (
+            sum(bool(x) for x in (segmentation, pose, classification, obb, semantic, depth))
+            > 1
+        ):
             raise ValueError("RF-DETR can enable only one task head at a time")
 
         self.classification = classification
         self.semantic = semantic
+        self.depth = depth
         if classification:
             # Backbone-only classification path: no detection decoder/criterion.
             self.config_name = config
@@ -620,6 +822,21 @@ class LibreRFDETRModel(nn.Module):
             self.hidden_dim = self.segmenter.hidden_dim
             self.patch_size = self.segmenter.patch_size
             self.num_windows = self.segmenter.num_windows
+            self.model = None
+            self.postprocess = None
+            return
+
+        if depth:
+            # Backbone-only dense path: no detection decoder/criterion.
+            self.config_name = config
+            self.config = RFDETR_CONFIGS[config]
+            self.nb_classes = 1
+            self.segmentation = False
+            self.depth_estimator = RFDETRDepthEstimator(config=config, device=device)
+            self.resolution = self.depth_estimator.resolution
+            self.hidden_dim = self.depth_estimator.hidden_dim
+            self.patch_size = self.depth_estimator.patch_size
+            self.num_windows = self.depth_estimator.num_windows
             self.model = None
             self.postprocess = None
             return
@@ -663,6 +880,8 @@ class LibreRFDETRModel(nn.Module):
             return self.classifier(x, targets=targets)
         if self.semantic:
             return self.segmenter(x, targets=targets)
+        if self.depth:
+            return self.depth_estimator(x, targets=targets)
         return self.model(x, targets=targets)
 
     def build_criterion_and_postprocess(self):
@@ -675,6 +894,10 @@ class LibreRFDETRModel(nn.Module):
             )
         if self.semantic:
             return self.segmenter.load_state_dict(
+                _unwrap_state_dict(state_dict), strict=strict
+            )
+        if self.depth:
+            return self.depth_estimator.load_state_dict(
                 _unwrap_state_dict(state_dict), strict=strict
             )
 
@@ -716,6 +939,8 @@ class LibreRFDETRModel(nn.Module):
             return self.classifier.state_dict(*args, **kwargs)
         if self.semantic:
             return self.segmenter.state_dict(*args, **kwargs)
+        if self.depth:
+            return self.depth_estimator.state_dict(*args, **kwargs)
         return self.model.state_dict(*args, **kwargs)
 
 
@@ -748,6 +973,7 @@ def create_rfdetr_model(
     segmentation: bool = False,
     pose: bool = False,
     obb: bool = False,
+    depth: bool = False,
     num_keypoints: int = 17,
     oks_sigmas=None,
 ) -> LibreRFDETRModel:
@@ -758,6 +984,7 @@ def create_rfdetr_model(
         segmentation=segmentation,
         pose=pose,
         obb=obb,
+        depth=depth,
         num_keypoints=num_keypoints,
         oks_sigmas=oks_sigmas,
     )
@@ -766,6 +993,7 @@ def create_rfdetr_model(
 __all__ = [
     "LibreRFDETRModel",
     "RFDETRClassifier",
+    "RFDETRDepthEstimator",
     "RFDETRSemanticSegmenter",
     "RFDETRExportWrapper",
     "RFDETR_CONFIGS",

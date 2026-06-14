@@ -77,7 +77,9 @@ class TestExtractDetections:
     def test_metadata_array_does_not_shadow_detections(self):
         # A dict-bearing but non-detection preamble array must not win.
         text = 'Classes: [{"id": 1}, {"id": 2}]. Detections: [{"label": "ship", "bbox": [0.1, 0.2, 0.3, 0.4]}]'
-        assert extract_detections(text) == [{"label": "ship", "bbox": [0.1, 0.2, 0.3, 0.4]}]
+        assert extract_detections(text) == [
+            {"label": "ship", "bbox": [0.1, 0.2, 0.3, 0.4]}
+        ]
 
     def test_schema_echo_does_not_lose_real_detection(self):
         # A restated schema example is also detection-shaped; collecting across
@@ -164,7 +166,10 @@ class TestBuildDetectionDict:
     def test_max_det_caps(self):
         # Distinct boxes so the cap (not dedup) is what limits the count.
         items = [
-            {"label": "person", "bbox": [i * 0.05, i * 0.05, i * 0.05 + 0.04, i * 0.05 + 0.04]}
+            {
+                "label": "person",
+                "bbox": [i * 0.05, i * 0.05, i * 0.05 + 0.04, i * 0.05 + 0.04],
+            }
             for i in range(10)
         ]
         det = build_detection_dict(items, NAME_TO_ID, (100, 100), max_det=3)
@@ -180,7 +185,9 @@ class TestBuildDetectionDict:
             {"label": "person", "bbox": [0.1, 0.1, 0.2, 0.2]},
             {"label": "ship", "bbox": [0.3, 0.3, 0.4, 0.4]},
         ]
-        det = build_detection_dict(items, NAME_TO_ID, (100, 100), max_det=1, classes=[8])
+        det = build_detection_dict(
+            items, NAME_TO_ID, (100, 100), max_det=1, classes=[8]
+        )
         assert det["num_detections"] == 1
         assert det["classes"] == [8]
 
@@ -197,6 +204,21 @@ class TestBuildDetectionDict:
         ]
         det = build_detection_dict(items, NAME_TO_ID, (100, 100))
         assert det["num_detections"] == 2
+
+    def test_iou_threshold_suppresses_jitter_same_class_only(self):
+        items = [
+            {"label": "person", "bbox": [0.1, 0.1, 0.3, 0.3]},
+            {"label": "person", "bbox": [0.105, 0.105, 0.305, 0.305]},
+            {"label": "ship", "bbox": [0.105, 0.105, 0.305, 0.305]},
+        ]
+
+        det = build_detection_dict(items, NAME_TO_ID, (100, 100), iou_thres=0.5)
+
+        assert det["classes"] == [0, 8]
+        assert det["boxes"] == [
+            [10.0, 10.0, 30.0, 30.0],
+            [10.5, 10.5, 30.5, 30.5],
+        ]
 
     def test_empty_items(self):
         det = build_detection_dict([], NAME_TO_ID, (100, 100))

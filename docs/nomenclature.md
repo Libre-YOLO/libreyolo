@@ -60,12 +60,13 @@ For these checkpoint-emitting detector families the casing rule is uniform:
 **every family prefix is all-caps after `Libre`**, with the only mixed-case
 fragment being the lowercase version suffix `DEIMv2`.
 
-The VLM tier is a separate category and does not follow this rule. Its families
-(`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`, `LibreInternVL3`,
-`LibreFlorence2`, `LibreKosmos2`) are not registered into the detector factory
-and do not emit `Libre<FAMILY><size>.pt` checkpoints. Their `FILENAME_PREFIX` is
-only a weights-directory prefix for a downloaded Hugging Face snapshot, so brand
-casing (CamelCase) is intentionally preserved. See
+The VLM tier is a separate category and does not follow this rule. Its
+weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`,
+`LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`, `LocateAnything`) are not
+registered into the detector factory and do not emit `Libre<FAMILY><size>.pt`
+checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
+downloaded Hugging Face snapshot, so upstream brand casing (CamelCase) is
+intentionally preserved. See
 [`librevlm_design.md`](librevlm_design.md).
 
 ## Size codes
@@ -110,6 +111,7 @@ From `libreyolo/tasks.py`:
 | `gaze`        | `-gaze` |
 | `obb`         | `-obb` |
 | `point`       | `-point` |
+| `depth`       | `-depth` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -125,6 +127,11 @@ pixel with no instance separation. `segment` remains the task for
 instance segmentation (per-object masks). Semantic models expose
 `Results.semantic_mask` and use per-pixel validation metrics (mIoU,
 pixel accuracy) instead of box/mask mAP.
+
+`depth` is the task for dense monocular depth estimation. Models expose
+`Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
+original image canvas. Higher values mean closer to the camera; no metric unit
+is implied without user-side calibration.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -142,7 +149,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
-| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb")` | detect | classify uses 224; semantic uses 518; seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb", "depth")` | detect | classify uses 224; semantic/depth use 518; seg uses smaller sizes; pose/OBB use detect sizes |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -193,13 +200,14 @@ LibreYOLO9t-pose.pt        # pose
 LibreYOLO9t-cls.pt         # classify
 LibreYOLO9t-obb.pt         # obb
 
-# rfdetr - detect + segment + semantic + pose + classify + obb
+# rfdetr - detect + segment + semantic + pose + classify + obb + depth
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
 LibreRFDETRn-sem.pt        # semantic
 LibreRFDETRn-pose.pt       # pose
 LibreRFDETRn-cls.pt        # classify
 LibreRFDETRn-obb.pt        # obb
+LibreRFDETRn-depth.pt      # depth
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

@@ -40,6 +40,14 @@ def test_point_task_has_no_aliases():
             normalize_task(alias)
 
 
+def test_normalize_depth_task_aliases():
+    assert normalize_task("depth") == "depth"
+    assert normalize_task("depth-estimation") == "depth"
+    assert normalize_task("depth_estimation") == "depth"
+    assert normalize_task("monodepth") == "depth"
+    assert normalize_task("monocular-depth") == "depth"
+
+
 def test_task_type_literal_is_public():
     assert set(TaskType.__args__) == {
         "detect",
@@ -50,6 +58,7 @@ def test_task_type_literal_is_public():
         "gaze",
         "obb",
         "point",
+        "depth",
     }
 
 
@@ -91,8 +100,10 @@ def test_task_suffix_helpers():
     assert suffix_to_task("-sem") == "semantic"
     assert suffix_to_task("-obb") == "obb"
     assert suffix_to_task("-point") == "point"
+    assert suffix_to_task("-depth") == "depth"
     assert task_to_suffix("obb") == "obb"
     assert task_to_suffix("point") == "point"
+    assert task_to_suffix("depth") == "depth"
     assert task_to_suffix("semantic") == "sem"
     assert suffix_to_task("-unknown") is None
 

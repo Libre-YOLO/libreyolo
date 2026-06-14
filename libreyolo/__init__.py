@@ -32,6 +32,7 @@ from .utils.results import (
     OBB,
     Gaze,
     SemanticMask,
+    DepthMap,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -83,9 +84,12 @@ def __getattr__(name):
         "SegmentationValidator": (".validation", "SegmentationValidator"),
         "PoseValidator": (".validation", "PoseValidator"),
         "SemanticValidator": (".validation", "SemanticValidator"),
+        "DepthValidator": (".validation", "DepthValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
         "TrackConfig": (".tracking", "TrackConfig"),
+        "OCSortTracker": (".tracking", "OCSortTracker"),
+        "OCSortConfig": (".tracking", "OCSortConfig"),
         "LibreVLM": (".models.vlm", "LibreVLM"),
         "LibreLFM2VL": (".models.vlm", "LibreLFM2VL"),
         "LibreQwen3VL": (".models.vlm", "LibreQwen3VL"),
@@ -93,6 +97,9 @@ def __getattr__(name):
         "LibreInternVL3": (".models.vlm", "LibreInternVL3"),
         "LibreFlorence2": (".models.vlm", "LibreFlorence2"),
         "LibreKosmos2": (".models.vlm", "LibreKosmos2"),
+        "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
+        "LibreSAM": (".models.sam", "LibreSAM"),
+        "LibreSAM1": (".models.sam", "LibreSAM1"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
@@ -138,6 +145,10 @@ __all__ = [
     "LibreInternVL3",
     "LibreFlorence2",
     "LibreKosmos2",
+    "LibreLocateAnything",
+    # Promptable-segmentation tier (optional, requires libreyolo[sam])
+    "LibreSAM",
+    "LibreSAM1",
     # Results
     "Results",
     "Boxes",
@@ -148,11 +159,14 @@ __all__ = [
     "OBB",
     "Gaze",
     "SemanticMask",
+    "DepthMap",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
     "ByteTracker",
     "TrackConfig",
+    "OCSortTracker",
+    "OCSortConfig",
     # Ensembling
     "LibreEnsemble",
     "ExternalDetector",
@@ -167,6 +181,7 @@ __all__ = [
     "SegmentationValidator",
     "PoseValidator",
     "SemanticValidator",
+    "DepthValidator",
     "ValidationConfig",
     "DATASETS_DIR",
     "load_data_config",
