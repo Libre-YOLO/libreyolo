@@ -325,12 +325,32 @@ class LibreSAMModel(BaseModel):
         img, image_path, cached_emb = self._resolve_image(source, color_format)
         conf_thres = 0.0 if conf is None else float(conf)
 
-        if _is_empty_prompt(points) and _is_empty_prompt(bboxes):
+        # An empty container means "this prompt type is absent", so a
+        # dynamically-built box-only / point-only call doesn't trip
+        # normalization (which would reject [] as nesting depth 0).
+        if _is_empty_prompt(points):
+            points = None
+        if _is_empty_prompt(bboxes):
+            bboxes = None
+
+        if points is None and bboxes is None:
+            if labels is not None:
+                raise ValueError(
+                    "labels were given without points. Pass points= for a "
+                    "prompted call, or omit labels to segment everything."
+                )
+            # Only None takes the default; an explicit (invalid) 0 must reach
+            # build_point_grid's validation rather than silently expanding.
+            grid = (
+                self.DEFAULT_POINTS_PER_SIDE
+                if points_per_side is None
+                else points_per_side
+            )
             amg_thresh = self.DEFAULT_PRED_IOU_THRESH if conf is None else conf_thres
             return self._segment_everything(
                 img,
                 image_path,
-                points_per_side=points_per_side or self.DEFAULT_POINTS_PER_SIDE,
+                points_per_side=grid,
                 pred_iou_thresh=amg_thresh,
                 max_det=max_det,
                 cached_emb=cached_emb,
@@ -372,7 +392,9 @@ class LibreSAMModel(BaseModel):
         Cached embeddings are moved to the new device rather than dropped, so an
         interactive session survives a device switch.
         """
-        dev = str(device).strip()
+        dev = str(device).strip().lower()
+        if dev in ("", "auto"):
+            return self  # sentinel: keep the currently selected device
         if dev.isdigit():
             dev = f"cuda:{dev}"
         target = torch.device(dev)

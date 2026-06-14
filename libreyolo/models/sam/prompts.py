@@ -71,6 +71,15 @@ def normalize_points(points) -> Optional[List[List[List[float]]]]:
         for p in obj:
             if len(p) != 2:
                 raise ValueError(f"each point must be [x, y]; got {p!r}.")
+    # SAM batches objects into one tensor, so every object must carry the same
+    # number of points; ragged counts otherwise fail deep in the processor with
+    # an opaque numpy "inhomogeneous shape" error. Reject them clearly.
+    if len({len(obj) for obj in canonical}) > 1:
+        raise ValueError(
+            "every object must have the same number of points; got per-object "
+            f"counts {[len(obj) for obj in canonical]}. Pad them to equal length "
+            "or prompt the objects in separate predict() calls."
+        )
     return canonical
 
 
@@ -92,8 +101,14 @@ def normalize_labels(
 
     lbls = _to_list(labels)
     d = _depth(lbls)
-    if d == 1:  # [l, ...] -> one label per object (one point each)
-        out = [[int(v)] for v in lbls]
+    if d == 1:
+        # Flat labels. With a single object, map them to that object's points —
+        # the natural positive/negative-click vector, e.g. labels=[1, 0] for
+        # points=[[[px, py], [nx, ny]]]. With several objects, one label each.
+        if len(canonical_points) == 1:
+            out = [[int(v) for v in lbls]]
+        else:
+            out = [[int(v)] for v in lbls]
     elif d == 2:  # [[l, ...], ...] -> labels per object, as given
         out = [[int(v) for v in obj] for obj in lbls]
     else:

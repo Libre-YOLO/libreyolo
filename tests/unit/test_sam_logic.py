@@ -109,6 +109,16 @@ class TestResolveDtype:
         assert m._resolve_dtype() == torch.float32
 
 
+class TestSetDevice:
+    def test_auto_and_empty_are_noop(self):
+        # 'auto'/'' are sentinels meaning "keep current device" — they must not
+        # be fed to torch.device() (which would raise), matching the runner.
+        m = object.__new__(LibreSAM1)
+        m.device = torch.device("cpu")
+        assert m._set_device("auto").device == torch.device("cpu")
+        assert m._set_device("").device == torch.device("cpu")
+
+
 class TestEmptyPromptDispatch:
     def test_none_is_empty(self):
         assert _is_empty_prompt(None) is True

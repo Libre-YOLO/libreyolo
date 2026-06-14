@@ -51,6 +51,12 @@ class TestNormalizePoints:
             [[900, 370]],
         ]
 
+    def test_ragged_point_counts_raise_clearly(self):
+        # One 1-click object + one 2-click object would fail deep in the
+        # processor with an opaque numpy error; reject it up front.
+        with pytest.raises(ValueError, match="same number of points"):
+            normalize_points([[[400, 370]], [[500, 370], [600, 370]]])
+
 
 class TestNormalizeLabels:
     def test_default_all_positive(self):
@@ -68,6 +74,12 @@ class TestNormalizeLabels:
     def test_explicit_grouped_labels(self):
         pts = normalize_points([[[400, 370], [900, 370]]])
         assert normalize_labels([[1, 0]], pts) == [[1, 0]]
+
+    def test_flat_labels_on_single_object_are_per_point(self):
+        # The natural positive/negative click on ONE object: points grouped,
+        # labels flat [1, 0] should map to that object's two points.
+        pts = normalize_points([[[400, 370], [900, 370]]])
+        assert normalize_labels([1, 0], pts) == [[1, 0]]
 
     def test_shape_mismatch_raises(self):
         pts = normalize_points([[400, 370], [900, 370]])
