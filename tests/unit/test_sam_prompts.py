@@ -81,6 +81,13 @@ class TestNormalizeLabels:
         pts = normalize_points([[[400, 370], [900, 370]]])
         assert normalize_labels([1, 0], pts) == [[1, 0]]
 
+    def test_mixed_nesting_labels_raise_value_error(self):
+        # [[1], 0] reports depth 2 but isn't uniformly nested — must be a clean
+        # ValueError, not a TypeError from flattening a scalar.
+        pts = normalize_points([[400, 370], [900, 370]])
+        with pytest.raises(ValueError, match="mixed nesting"):
+            normalize_labels([[1], 0], pts)
+
     def test_out_of_range_label_raises(self):
         # A typo'd label (2) would silently produce a wrong mask; reject it.
         pts = normalize_points([900, 370])

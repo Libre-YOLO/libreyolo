@@ -105,12 +105,18 @@ def normalize_labels(
         raise ValueError(
             f"labels must be [l, ...] or [[l, ...], ...]; got nesting depth {d}."
         )
+    # Mixed nesting like [[1], 0] reports depth 2 but is not uniformly nested;
+    # flattening it would raise TypeError, so reject it as a clear ValueError.
+    if d == 2 and any(not isinstance(obj, list) for obj in lbls):
+        raise ValueError(
+            "labels must be [l, ...] or [[l, ...], ...]; mixed nesting is invalid."
+        )
     # Validate raw values against the documented {0, 1} set before any int()
     # cast — otherwise a typo like 2, or a float that truncates (1.9 -> 1),
     # would slip through and produce a plausible-but-wrong mask.
     flat = lbls if d == 1 else [v for obj in lbls for v in obj]
     for v in flat:
-        if v != 0 and v != 1:
+        if v not in (0, 1):
             raise ValueError(
                 f"point labels must be 1 (positive) or 0 (negative); got {v!r}."
             )
