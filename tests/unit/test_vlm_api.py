@@ -75,12 +75,14 @@ class TestFactoryResolution:
     def test_known_aliases_map_to_family_and_size(self):
         from libreyolo.models.vlm import _ALIASES
         from libreyolo.models.vlm.lfm2 import LibreLFM2VL
+        from libreyolo.models.vlm.locateanything import LibreLocateAnything
         from libreyolo.models.vlm.qwen3vl import LibreQwen3VL
         from libreyolo.models.vlm.smolvlm import LibreSmolVLM2
 
         assert _ALIASES["qwen3-vl-8b"] == (LibreQwen3VL, "8b")
         assert _ALIASES["lfm2-vl-450m"] == (LibreLFM2VL, "450m")
         assert _ALIASES["smolvlm2"] == (LibreSmolVLM2, "2.2b")
+        assert _ALIASES["locate-anything"] == (LibreLocateAnything, "3b")
 
         from libreyolo.models.vlm.internvl3 import LibreInternVL3
 
@@ -108,8 +110,10 @@ class TestSnapshotComplete:
 
         return LibreVLMModel
 
-    def _mark_complete(self, path):
-        (path / ".libreyolo_snapshot_complete").write_text("{}")
+    def _mark_complete(self, path, marker=None):
+        import json
+
+        (path / ".libreyolo_snapshot_complete").write_text(json.dumps(marker or {}))
 
     def test_single_file_complete(self, tmp_path):
         (tmp_path / "config.json").write_text("{}")
@@ -149,6 +153,110 @@ class TestSnapshotComplete:
         (tmp_path / "s1.safetensors").write_text("x")
         (tmp_path / "s2.safetensors").write_text("x")
         assert self._base()._snapshot_complete(tmp_path) is True
+
+    def test_pinned_revision_marker_must_match(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(tmp_path, {"repo": "example/model", "revision": "abc123"})
+
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="abc123"
+            )
+            is True
+        )
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="def456"
+            )
+            is False
+        )
+
+    def test_pinned_repo_marker_must_match_and_be_present(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+
+        self._mark_complete(tmp_path, {"revision": "abc123"})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="abc123"
+            )
+            is False
+        )
+
+        self._mark_complete(tmp_path, {"repo": "other/model", "revision": "abc123"})
+        assert (
+            self._base()._snapshot_complete(
+                tmp_path, repo="example/model", revision="abc123"
+            )
+            is False
+        )
+
+    def test_remote_code_revision_must_be_commit_sha(self):
+        from libreyolo.models.vlm.base import LibreVLMModel
+
+        class MutableRevisionVLM(LibreVLMModel):
+            FAMILY = "mutable-revision-vlm"
+            FILENAME_PREFIX = "MutableRevisionVLM"
+            HF_REPOS = {"x": "example/mutable-revision-vlm"}
+            HF_REVISIONS = {"x": "main"}
+            INPUT_SIZES = {"x": 1}
+            TRUST_REMOTE_CODE = True
+
+        m = object.__new__(MutableRevisionVLM)
+        m.size = "x"
+
+        with pytest.raises(ValueError, match="40-char commit SHA"):
+            m._ensure_weights()
+
+    def test_license_notice_is_logged_for_cached_snapshot(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        import logging
+        from pathlib import Path
+
+        from libreyolo.models.vlm.base import LibreVLMModel
+
+        class NoticeVLM(LibreVLMModel):
+            FAMILY = "notice-vlm"
+            FILENAME_PREFIX = "NoticeVLM"
+            HF_REPOS = {"x": "example/notice-vlm"}
+            INPUT_SIZES = {"x": 1}
+            _LICENSE_NOTICE = "cached snapshot notice"
+            _LICENSE_NOTICE_SHOWN = False
+
+            def _init_model(self):
+                raise NotImplementedError
+
+            def _get_available_layers(self):
+                raise NotImplementedError
+
+            @staticmethod
+            def _get_preprocess_numpy():
+                raise NotImplementedError
+
+            def _preprocess(self, *args, **kwargs):
+                raise NotImplementedError
+
+            def _forward(self, *args, **kwargs):
+                raise NotImplementedError
+
+            def _postprocess(self, *args, **kwargs):
+                raise NotImplementedError
+
+        cached = tmp_path / "weights" / "NoticeVLMx"
+        cached.mkdir(parents=True)
+        (cached / "config.json").write_text("{}")
+        (cached / "model.safetensors").write_text("x")
+        self._mark_complete(cached, {"repo": "example/notice-vlm", "revision": None})
+
+        monkeypatch.chdir(tmp_path)
+        caplog.set_level(logging.WARNING, logger="libreyolo.models.vlm.base")
+        m = object.__new__(NoticeVLM)
+        m.size = "x"
+
+        assert Path(m._ensure_weights()).resolve() == cached.resolve()
+        assert "cached snapshot notice" in caplog.text
 
 
 class TestCastInputs:
@@ -206,7 +314,12 @@ class TestOverrideConfThreshold:
         m = object.__new__(LibreFlorence2)
         m._name_to_id = {"boat": 0}
         m.processor = _StubProc(
-            {LibreFlorence2.TASK: {"bboxes": [[0, 0, 10, 10]], "bboxes_labels": ["boat"]}}
+            {
+                LibreFlorence2.TASK: {
+                    "bboxes": [[0, 0, 10, 10]],
+                    "bboxes_labels": ["boat"],
+                }
+            }
         )
         return m
 
@@ -265,7 +378,9 @@ class TestInternVL3Flatten:
         return LibreInternVL3._flatten_nested(items)
 
     def test_nested_boxes_expand_to_one_item_each(self):
-        items = [{"label": "boat", "bbox": [[120, 400, 250, 550], [600, 100, 700, 200]]}]
+        items = [
+            {"label": "boat", "bbox": [[120, 400, 250, 550], [600, 100, 700, 200]]}
+        ]
         assert self._flat(items) == [
             {"label": "boat", "bbox": [120, 400, 250, 550]},
             {"label": "boat", "bbox": [600, 100, 700, 200]},

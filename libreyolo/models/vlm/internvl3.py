@@ -101,4 +101,5 @@ class LibreInternVL3(LibreVLMModel):
             bbox_key=self.BBOX_KEY,
             coord_divisor=self.COORD_DIVISOR,
             box_format=self.BOX_FORMAT,
+            iou_thres=iou_thres,
         )

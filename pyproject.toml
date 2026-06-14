@@ -60,6 +60,10 @@ vlm = [
     "transformers>=5.1.0",
     # SmolVLM2's processor requires num2words.
     "num2words>=0.5.0",
+    # LocateAnything's HF remote-code processor/model imports these at load time.
+    "decord==0.6.0",
+    "lmdb>=1.7.0",
+    "peft>=0.12.0",
 ]
 sam = [
     # Promptable-segmentation families (SAM) load through transformers
