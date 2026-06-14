@@ -957,6 +957,15 @@ class TestOutputPathGeneration:
             Path("weights") / "LibreRFDETRn-obb_fp16.onnx"
         )
 
+    def test_auto_path_rejects_unknown_task(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.task = "bad-task"
+        exporter = OnnxExporter(wrapper)
+
+        with pytest.raises(ValueError, match="Unsupported task for auto output naming"):
+            exporter._auto_output_path(half=False, int8=False)
+
     def test_explicit_path(self):
         wrapper = _make_wrapper()
         exporter = TorchScriptExporter(wrapper)

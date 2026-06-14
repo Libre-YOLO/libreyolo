@@ -487,8 +487,10 @@ class BaseExporter(ABC):
             task = "segment"
         try:
             suffix = task_to_suffix(task)
-        except ValueError:
-            return ""
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported task for auto output naming: {task!r}"
+            ) from exc
         return f"-{suffix}" if suffix else ""
 
     @contextmanager
