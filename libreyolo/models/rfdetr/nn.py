@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
+from ..semantic_loss import semantic_loss
 from .backbone import build_backbone
 from .lwdetr import (
     LWDETR,
@@ -471,6 +472,16 @@ class RFDETRSemanticSegmenter(nn.Module):
     _NUM_WINDOWS = 1
 
     IGNORE_INDEX = 255
+    # Weight on the Lovász-Softmax (IoU-surrogate) term added to cross entropy.
+    # 0.0 reproduces the original CE-only behavior.
+    lovasz_weight = 1.0
+    # Projector feature levels the dense decoder fuses. DINOv2 is a single-
+    # stride ViT; RF-DETR's projector resamples it to these strides (P4=stride
+    # 16). Override with e.g. ("P3", "P4", "P5") for multi-scale features.
+    semantic_projector_scale = ("P4",)
+    # Optional per-class CE weights (median-frequency balanced); set externally.
+    class_weights = None
+    label_smoothing = 0.0
 
     def __init__(
         self,
@@ -501,7 +512,7 @@ class RFDETRSemanticSegmenter(nn.Module):
         # only needs the Backbone (DINOv2 encoder + projector).
         self.backbone = joiner[0]
 
-        num_levels = len(cfg.projector_scale)
+        num_levels = len(self.semantic_projector_scale)
         self.laterals = nn.ModuleList(
             nn.Conv2d(self.hidden_dim, self.hidden_dim, 1) for _ in range(num_levels)
         )
@@ -534,7 +545,7 @@ class RFDETRSemanticSegmenter(nn.Module):
             drop_path=0.0,
             out_channels=cfg.hidden_dim,
             out_feature_indexes=list(cfg.out_feature_indexes),
-            projector_scale=list(cfg.projector_scale),
+            projector_scale=list(self.semantic_projector_scale),
             use_cls_token=False,
             hidden_dim=cfg.hidden_dim,
             position_embedding="sine",
@@ -580,16 +591,20 @@ class RFDETRSemanticSegmenter(nn.Module):
         logits = self.predict(self.drop(fused))
 
         if self.training and targets is not None:
-            logits = F.interpolate(
-                logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
+            # semantic_loss upsamples logits for CE and evaluates the Lovász
+            # IoU-surrogate at native logit resolution; it also handles the
+            # all-ignore batch with a graph-connected zero.
+            cw = self.class_weights
+            if cw is not None:
+                cw = cw.to(logits.device)
+            loss = semantic_loss(
+                logits,
+                targets,
+                ignore_index=self.IGNORE_INDEX,
+                lovasz_weight=self.lovasz_weight,
+                class_weights=cw,
+                label_smoothing=self.label_smoothing,
             )
-            targets = targets.long()
-            if bool((targets != self.IGNORE_INDEX).any()):
-                loss = F.cross_entropy(logits, targets, ignore_index=self.IGNORE_INDEX)
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit
-                # a graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
             return {"total_loss": loss, "sem": loss}
 
         return F.interpolate(logits, size=(h, w), mode="bilinear", align_corners=False)
