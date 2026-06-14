@@ -93,6 +93,8 @@ def __getattr__(name):
         "LibreInternVL3": (".models.vlm", "LibreInternVL3"),
         "LibreFlorence2": (".models.vlm", "LibreFlorence2"),
         "LibreKosmos2": (".models.vlm", "LibreKosmos2"),
+        "LibreSAM": (".models.sam", "LibreSAM"),
+        "LibreSAM1": (".models.sam", "LibreSAM1"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
@@ -138,6 +140,9 @@ __all__ = [
     "LibreInternVL3",
     "LibreFlorence2",
     "LibreKosmos2",
+    # Promptable-segmentation tier (optional, requires libreyolo[sam])
+    "LibreSAM",
+    "LibreSAM1",
     # Results
     "Results",
     "Boxes",
