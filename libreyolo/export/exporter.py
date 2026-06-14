@@ -538,7 +538,7 @@ class BaseExporter(ABC):
             nn_model = ECExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
-        elif family in {"rtdetr", "rtdetrv2"}:
+        elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True

@@ -434,24 +434,21 @@ class TestExporterFormats:
         assert [i.name for i in proto.graph.input] == ["input"]
         assert [o.name for o in proto.graph.output] == expected_outputs
 
-    @pytest.mark.parametrize("family", ["rtdetr", "rtdetrv2"])
+    @pytest.mark.parametrize("family", ["rtdetr", "rtdetrv2", "rtdetrv4"])
     def test_rtdetr_onnx_uses_detr_io_names(self, tmp_path, family):
         onnx = pytest.importorskip("onnx")
+        wrapper = _make_wrapper(model_name=family, input_size=32)
+        wrapper.model = _TinyRTDETRExport()
+        wrapper.task = "detect"
+        wrapper.SUPPORTED_TASKS = ("detect",)
+        wrapper.DEFAULT_TASK = "detect"
         output_path = tmp_path / f"{family}.onnx"
 
-        export_onnx(
-            _TinyRTDETRExport(),
-            torch.zeros(1, 3, 32, 32),
+        OnnxExporter(wrapper)(
             output_path=str(output_path),
-            opset=17,
             simplify=False,
             dynamic=False,
-            half=False,
-            metadata={
-                "model_family": family,
-                "task": "detect",
-                "segmentation": "false",
-            },
+            device="cpu",
         )
 
         proto = onnx.load(output_path)
