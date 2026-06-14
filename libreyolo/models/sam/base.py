@@ -83,7 +83,12 @@ class LibreSAMModel(BaseModel):
     AMG_NMS_IOU: ClassVar[float] = 0.7
 
     # Off by default: SAM families load through native transformers classes.
+    # The SAM repos publish both safetensors and a duplicate ``pytorch_model.bin``
+    # pickle (1.25-2.56 GB for large/huge); transformers prefers safetensors, so
+    # skip the .bin to avoid downloading a checkpoint that is never loaded.
     SNAPSHOT_IGNORE_PATTERNS: ClassVar[tuple[str, ...]] = (
+        "*.bin",
+        "*.bin.index.json",
         "*.onnx",
         "onnx/*",
         "*.tflite",
@@ -584,8 +589,12 @@ class LibreSAMModel(BaseModel):
         masks = torch.cat(all_masks, dim=0)
         conf = torch.cat(all_conf, dim=0)
 
-        keep = conf >= pred_iou_thresh
-        masks, conf = masks[keep], conf[keep]
+        # Only filter when a positive threshold is set — SAM's IoU head is
+        # unbounded, so a 0.0 threshold (keep all) must not drop negative
+        # scores, matching the prompted path's conf=0.0 behavior.
+        if pred_iou_thresh > 0:
+            keep = conf >= pred_iou_thresh
+            masks, conf = masks[keep], conf[keep]
         if masks.shape[0]:
             nonempty = masks.flatten(1).any(dim=1)
             masks, conf = masks[nonempty], conf[nonempty]

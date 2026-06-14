@@ -101,6 +101,19 @@ def normalize_labels(
 
     lbls = _to_list(labels)
     d = _depth(lbls)
+    if d not in (1, 2):
+        raise ValueError(
+            f"labels must be [l, ...] or [[l, ...], ...]; got nesting depth {d}."
+        )
+    # Validate raw values against the documented {0, 1} set before any int()
+    # cast — otherwise a typo like 2, or a float that truncates (1.9 -> 1),
+    # would slip through and produce a plausible-but-wrong mask.
+    flat = lbls if d == 1 else [v for obj in lbls for v in obj]
+    for v in flat:
+        if v != 0 and v != 1:
+            raise ValueError(
+                f"point labels must be 1 (positive) or 0 (negative); got {v!r}."
+            )
     if d == 1:
         # Flat labels. With a single object, map them to that object's points —
         # the natural positive/negative-click vector, e.g. labels=[1, 0] for
@@ -109,12 +122,8 @@ def normalize_labels(
             out = [[int(v) for v in lbls]]
         else:
             out = [[int(v)] for v in lbls]
-    elif d == 2:  # [[l, ...], ...] -> labels per object, as given
+    else:  # d == 2 -> [[l, ...], ...] labels per object, as given
         out = [[int(v) for v in obj] for obj in lbls]
-    else:
-        raise ValueError(
-            f"labels must be [l, ...] or [[l, ...], ...]; got nesting depth {d}."
-        )
 
     if len(out) != len(canonical_points):
         raise ValueError(

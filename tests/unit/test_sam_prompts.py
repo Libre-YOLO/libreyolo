@@ -81,6 +81,21 @@ class TestNormalizeLabels:
         pts = normalize_points([[[400, 370], [900, 370]]])
         assert normalize_labels([1, 0], pts) == [[1, 0]]
 
+    def test_out_of_range_label_raises(self):
+        # A typo'd label (2) would silently produce a wrong mask; reject it.
+        pts = normalize_points([900, 370])
+        with pytest.raises(ValueError, match="1 .positive. or 0 .negative."):
+            normalize_labels([2], pts)
+
+    def test_truncating_float_label_raises(self):
+        pts = normalize_points([900, 370])
+        with pytest.raises(ValueError, match="1 .positive. or 0 .negative."):
+            normalize_labels([1.9], pts)
+
+    def test_float_one_point_zero_is_accepted(self):
+        pts = normalize_points([900, 370])
+        assert normalize_labels([1.0], pts) == [[1]]
+
     def test_shape_mismatch_raises(self):
         pts = normalize_points([[400, 370], [900, 370]])
         with pytest.raises(ValueError):

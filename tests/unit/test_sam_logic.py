@@ -109,6 +109,13 @@ class TestResolveDtype:
         assert m._resolve_dtype() == torch.float32
 
 
+class TestSnapshotIgnore:
+    def test_bin_is_ignored(self):
+        # SAM repos ship a duplicate pytorch_model.bin next to safetensors;
+        # transformers prefers safetensors, so the pickle must not be fetched.
+        assert "*.bin" in LibreSAM1.SNAPSHOT_IGNORE_PATTERNS
+
+
 class TestSetDevice:
     def test_auto_and_empty_are_noop(self):
         # 'auto'/'' are sentinels meaning "keep current device" — they must not
