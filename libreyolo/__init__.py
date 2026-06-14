@@ -86,6 +86,8 @@ def __getattr__(name):
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
         "TrackConfig": (".tracking", "TrackConfig"),
+        "OCSortTracker": (".tracking", "OCSortTracker"),
+        "OCSortConfig": (".tracking", "OCSortConfig"),
         "LibreVLM": (".models.vlm", "LibreVLM"),
         "LibreLFM2VL": (".models.vlm", "LibreLFM2VL"),
         "LibreQwen3VL": (".models.vlm", "LibreQwen3VL"),
@@ -153,6 +155,8 @@ __all__ = [
     # Tracking
     "ByteTracker",
     "TrackConfig",
+    "OCSortTracker",
+    "OCSortConfig",
     # Ensembling
     "LibreEnsemble",
     "ExternalDetector",
