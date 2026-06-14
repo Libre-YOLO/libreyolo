@@ -13,6 +13,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: e2e-nightly-dev-modal-cache
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -61,7 +65,7 @@ jobs:
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 195
     steps:
       - name: Checkout dev
         uses: actions/checkout@v4

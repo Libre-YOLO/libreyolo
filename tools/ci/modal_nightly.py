@@ -25,6 +25,7 @@ REPO_URL = "https://github.com/LibreYOLO/libreyolo.git"
 WORKDIR = Path("/workspace/libreyolo")
 
 WEIGHT_SUFFIXES = {".pt", ".pth", ".safetensors"}
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 GPU_USD_PER_S = {
     "T4": 0.000164,
     "L4": 0.000222,
@@ -84,6 +85,10 @@ def is_weight_file(path: Path) -> bool:
     return path.is_file() and path.suffix in WEIGHT_SUFFIXES
 
 
+def is_image_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+
+
 def link_cached_weights() -> None:
     """Expose cached weight files without replacing tracked weights/ helpers."""
     cache_weights = Path("/cache/weights")
@@ -133,8 +138,8 @@ def prepare_marbles_dataset() -> None:
     dataset_root = Path.home() / ".cache" / "libreyolo" / "marbles"
     if dataset_root.exists():
         if (dataset_root / "data.yaml").exists():
-            sample = next(dataset_root.rglob("*.jpg"), None)
-            if sample is not None and not is_lfs_pointer(sample):
+            images = [path for path in dataset_root.rglob("*") if is_image_file(path)]
+            if images and not any(is_lfs_pointer(image) for image in images):
                 return
         shutil.rmtree(dataset_root)
 
@@ -267,10 +272,12 @@ def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
         cache_status = "skipped"
         step = time.monotonic()
         try:
-            if WORKDIR.exists():
+            if status == "passed" and WORKDIR.exists():
                 sync_downloaded_weights_to_cache()
                 cache.commit()
                 cache_status = "committed"
+            elif status != "passed":
+                cache_status = "skipped-failed-run"
             else:
                 cache_status = "workdir-missing"
         except Exception as exc:

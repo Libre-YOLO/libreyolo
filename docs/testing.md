@@ -109,10 +109,14 @@ SHA/version cache skips unchanged targets; manual `force=true` runs the selected
 target. The scheduled `dev` run starts at `04:00` UTC. Do not add a
 `pull_request` trigger.
 
-The Modal-backed `dev` run stores `modal-nightly.log` and
-`modal-nightly-result.json` as GitHub Actions artifacts and writes runtime, GPU,
-and estimated GPU cost to the step summary. Exact billing remains authoritative
-in Modal; the GitHub value is a GPU-runtime estimate.
+The Modal-backed `dev` run is serialized with a GitHub Actions concurrency group
+because it writes a shared Modal volume. The remote GPU function has a 180 minute
+timeout and the GitHub controller leaves timeout headroom so logs and result
+artifacts can still be parsed after a Modal-side timeout. It stores
+`modal-nightly.log` and `modal-nightly-result.json` as GitHub Actions artifacts
+and writes runtime, GPU, and estimated GPU cost to the step summary. Exact
+billing remains authoritative in Modal; the GitHub value is a GPU-runtime
+estimate.
 
 Commands:
 
