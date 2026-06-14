@@ -131,10 +131,11 @@ def is_lfs_pointer(path: Path) -> bool:
 def prepare_marbles_dataset() -> None:
     """Hydrate RF1's marbles dataset; older tests only checked existence."""
     dataset_root = Path.home() / ".cache" / "libreyolo" / "marbles"
-    if dataset_root.exists() and (dataset_root / "data.yaml").exists():
-        sample = next(dataset_root.rglob("*.jpg"), None)
-        if sample is not None and not is_lfs_pointer(sample):
-            return
+    if dataset_root.exists():
+        if (dataset_root / "data.yaml").exists():
+            sample = next(dataset_root.rglob("*.jpg"), None)
+            if sample is not None and not is_lfs_pointer(sample):
+                return
         shutil.rmtree(dataset_root)
 
     run(["git", "lfs", "install"])

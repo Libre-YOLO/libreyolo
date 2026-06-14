@@ -81,9 +81,9 @@ jobs:
             --ref "${{ needs.guard.outputs.target_sha }}" \
             --target test_nightly 2>&1 | tee modal-nightly.log
           modal_rc=${PIPESTATUS[0]}
-          set -e
 
-          python - <<'PY'
+          set +e
+          python3 - <<'PY'
           import json
           import os
           import re
@@ -119,9 +119,16 @@ jobs:
                   if "error" in result:
                       f.write(f"- Error: `{result['error']}`\n")
                   f.write("\n")
-          PY
 
-          exit "$modal_rc"
+          raise SystemExit(0 if result.get("status") == "passed" else 2)
+          PY
+          parse_rc=$?
+          set -e
+
+          if [ "$modal_rc" -ne 0 ]; then
+            exit "$modal_rc"
+          fi
+          exit "$parse_rc"
 
       - name: Upload Modal nightly result
         if: always()
