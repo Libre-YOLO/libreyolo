@@ -197,6 +197,20 @@ def to_xyxy(box, box_format: str = "xyxy"):
     return None
 
 
+def _iou_xyxy(a, b) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = inter_w * inter_h
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
 def build_detection_dict(
     items: List[dict],
     name_to_id: Dict[str, int],
@@ -208,6 +222,7 @@ def build_detection_dict(
     bbox_key: str = "bbox",
     coord_divisor: float = 1.0,
     box_format: str = "xyxy",
+    iou_thres: Optional[float] = None,
 ) -> dict:
     """Turn parsed items into the ``InferenceRunner`` detection dict.
 
@@ -232,6 +247,7 @@ def build_detection_dict(
 
     width, height = original_size
     boxes: List[List[float]] = []
+    norm_boxes: List[Tuple[float, float, float, float]] = []
     scores: List[float] = []
     class_ids: List[int] = []
     allowed_classes = set(classes) if classes is not None else None
@@ -261,8 +277,14 @@ def build_detection_dict(
         key = (class_id, *(round(v, 3) for v in box))
         if key in seen:
             continue
+        if iou_thres is not None and any(
+            class_id == kept_class and _iou_xyxy(box, kept_box) > iou_thres
+            for kept_box, kept_class in zip(norm_boxes, class_ids)
+        ):
+            continue
         seen.add(key)
         x1, y1, x2, y2 = box
+        norm_boxes.append(box)
         boxes.append([x1 * width, y1 * height, x2 * width, y2 * height])
         scores.append(default_score)
         class_ids.append(class_id)

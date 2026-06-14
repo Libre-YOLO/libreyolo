@@ -48,6 +48,9 @@ class LibreVLMModel(BaseModel):
     FAMILY: ClassVar[str] = ""
     FILENAME_PREFIX: ClassVar[str] = ""
     HF_REPOS: ClassVar[Dict[str, str]] = {}
+    # Optional pinned HF snapshot revisions by size. Required when a family opts
+    # into trust_remote_code, so LibreYOLO does not execute mutable upstream code.
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {}
     INPUT_SIZES: ClassVar[Dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
@@ -78,7 +81,7 @@ class LibreVLMModel(BaseModel):
     # single-forward predict path does not apply.
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
 
-    # Family-specific weight license, printed once before the first download.
+    # Family-specific upstream license, printed once before loading/downloading.
     _LICENSE_NOTICE: ClassVar[str] = ""
     _LICENSE_NOTICE_SHOWN: ClassVar[bool] = False
 
@@ -162,7 +165,7 @@ class LibreVLMModel(BaseModel):
         if isinstance(classes, str) or not isinstance(classes, (list, tuple)):
             raise TypeError(
                 "set_classes() expects a list/tuple of label strings, "
-                f"e.g. [\"boat\"], not {type(classes).__name__}."
+                f'e.g. ["boat"], not {type(classes).__name__}.'
             )
         if not classes:
             raise ValueError("set_classes() requires a non-empty list of labels.")
@@ -217,11 +220,16 @@ class LibreVLMModel(BaseModel):
         return self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0]
 
     # =========================================================================
-    # Weight acquisition (autodownload via Hugging Face, license-gated)
+    # Weight acquisition (autodownload via Hugging Face, license-noticed)
     # =========================================================================
 
     @staticmethod
-    def _snapshot_complete(local_dir: Path) -> bool:
+    def _snapshot_complete(
+        local_dir: Path,
+        *,
+        repo: str | None = None,
+        revision: str | None = None,
+    ) -> bool:
         """True only if config.json AND every weight file are present.
 
         config.json alone is not proof: an interrupted download can leave it
@@ -229,8 +237,18 @@ class LibreVLMModel(BaseModel):
         the index must exist, not just one, so a multi-shard download interrupted
         between shards is correctly seen as incomplete and resumed.
         """
-        if not (local_dir / _SNAPSHOT_COMPLETE_MARKER).exists():
+        marker_path = local_dir / _SNAPSHOT_COMPLETE_MARKER
+        if not marker_path.exists():
             return False
+        if repo is not None or revision is not None:
+            try:
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return False
+            if repo is not None and marker.get("repo") not in (None, repo):
+                return False
+            if revision is not None and marker.get("revision") != revision:
+                return False
         if not (local_dir / "config.json").exists():
             return False
         for index_name in (
@@ -240,9 +258,9 @@ class LibreVLMModel(BaseModel):
             index = local_dir / index_name
             if index.exists():
                 try:
-                    weight_map = json.loads(
-                        index.read_text(encoding="utf-8")
-                    ).get("weight_map", {})
+                    weight_map = json.loads(index.read_text(encoding="utf-8")).get(
+                        "weight_map", {}
+                    )
                 except (ValueError, OSError):
                     return False
                 shards = set(weight_map.values())
@@ -268,11 +286,18 @@ class LibreVLMModel(BaseModel):
         admin/Developer Mode on Windows.
         """
         repo = self.HF_REPOS[self.size]
+        revision = self.HF_REVISIONS.get(self.size)
+        if self.TRUST_REMOTE_CODE and not revision:
+            raise ValueError(
+                f"{type(self).__name__} enables trust_remote_code but has no "
+                f"pinned HF_REVISIONS entry for size {self.size!r}."
+            )
         local_dir = Path("weights") / f"{self.FILENAME_PREFIX}{self.size}"
+        self._notify_license_once()
         # Only short-circuit on a *complete* snapshot; otherwise (re)download.
         # snapshot_download skips complete files and resumes partial ones, so
         # re-calling it is safe and cheap.
-        if self._snapshot_complete(local_dir):
+        if self._snapshot_complete(local_dir, repo=repo, revision=revision):
             return str(local_dir)
         try:
             from huggingface_hub import snapshot_download
@@ -280,17 +305,26 @@ class LibreVLMModel(BaseModel):
         except ImportError as exc:  # ships with transformers
             raise ImportError(_INSTALL_HINT) from exc
         _ = transformers
-        self._notify_license_once()
-        logger.info("Downloading %s weights from %s -> %s ...", self.FAMILY, repo, local_dir)
+        source = f"{repo}@{revision}" if revision else repo
+        logger.info(
+            "Downloading %s weights from %s -> %s ...",
+            self.FAMILY,
+            source,
+            local_dir,
+        )
+        download_kwargs = {}
+        if revision is not None:
+            download_kwargs["revision"] = revision
         snapshot_download(
             repo,
             local_dir=str(local_dir),
             ignore_patterns=self.SNAPSHOT_IGNORE_PATTERNS,
+            **download_kwargs,
         )
         (local_dir / _SNAPSHOT_COMPLETE_MARKER).write_text(
-            json.dumps({"repo": repo}) + "\n", encoding="utf-8"
+            json.dumps({"repo": repo, "revision": revision}) + "\n", encoding="utf-8"
         )
-        if not self._snapshot_complete(local_dir):
+        if not self._snapshot_complete(local_dir, repo=repo, revision=revision):
             (local_dir / _SNAPSHOT_COMPLETE_MARKER).unlink(missing_ok=True)
             raise FileNotFoundError(
                 f"Downloaded snapshot for {repo} is missing config or safetensors files "
@@ -312,7 +346,9 @@ class LibreVLMModel(BaseModel):
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
         model = AutoModelForImageTextToText.from_pretrained(
-            snapshot_dir, dtype=self._resolve_dtype(), trust_remote_code=self.TRUST_REMOTE_CODE
+            snapshot_dir,
+            dtype=self._resolve_dtype(),
+            trust_remote_code=self.TRUST_REMOTE_CODE,
         )
         processor = AutoProcessor.from_pretrained(
             snapshot_dir, trust_remote_code=self.TRUST_REMOTE_CODE
@@ -343,6 +379,7 @@ class LibreVLMModel(BaseModel):
         dtype = getattr(self, "_model_dtype", None)
         if dtype is None:
             return inputs
+
         def cast(value: Any) -> Any:
             if isinstance(value, torch.Tensor):
                 return value.to(dtype=dtype) if value.is_floating_point() else value
@@ -378,7 +415,7 @@ class LibreVLMModel(BaseModel):
         scale; families whose output differs override this."""
         return (
             f"Detect all instances of: {labels}. "
-            'Response must be a JSON array: '
+            "Response must be a JSON array: "
             '[{"label": ..., "bbox": [x1, y1, x2, y2]}, ...]. '
             "Coordinates are normalized to [0,1]. "
             "Only include objects that are actually visible; if there are none, "
@@ -467,6 +504,7 @@ class LibreVLMModel(BaseModel):
             bbox_key=self.BBOX_KEY,
             coord_divisor=self.COORD_DIVISOR,
             box_format=self.BOX_FORMAT,
+            iou_thres=iou_thres,
         )
 
     # =========================================================================

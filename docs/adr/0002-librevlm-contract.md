@@ -88,12 +88,13 @@ To support a new model, subclass it and declare the adapter:
 | `FAMILY`          | family id (e.g. `qwen3vl`)                               |
 | `FILENAME_PREFIX` | `Libre`-prefixed display name and weights dir prefix     |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload                |
+| `HF_REVISIONS`    | `{size: commit_sha}`; required for remote-code families  |
 | `INPUT_SIZES`     | `{size: nominal_px}`; nominal, the processor owns resize |
 | `_detection_prompt()` | how to ask THIS model for boxes (override if needed)  |
 | `BBOX_KEY`        | JSON key holding the box (`bbox`, `bbox_2d`, ...)        |
 | `COORD_DIVISOR`   | scale of the coords (1.0 for [0,1], 1000.0 for 0-1000)  |
 | `BOX_FORMAT`      | box layout: `xyxy` (default), `xywh`, or `cxcywh`        |
-| `_LICENSE_NOTICE` | text logged once before the first download (if needed)   |
+| `_LICENSE_NOTICE` | text logged once before loading/downloading (if needed)  |
 
 The base implements the predict/track surface by satisfying the four hooks the
 shared `InferenceRunner` drives:
@@ -111,8 +112,8 @@ shared `InferenceRunner` drives:
 
 Parsing lives in `libreyolo/models/vlm/parsing.py` (pure, unit-tested offline):
 it tolerates markdown fences, prose, single quotes, and truncated arrays; clamps
-boxes and orders corners; dedupes identical boxes (a generative loop can repeat
-one box); and maps labels case-insensitively to class ids, dropping
+boxes and orders corners; dedupes identical/high-IoU boxes (a generative loop
+can repeat one box); and maps labels case-insensitively to class ids, dropping
 out-of-vocabulary labels. That label mapping is what makes an open-vocab
 generator behave as a closed-set detector against `set_classes`.
 
@@ -140,14 +141,22 @@ normally and `conf=` filtering still functions mechanically. Consequences:
 
 ## Licensing
 
-LibreYOLO ships no VLM source code: families load through the Apache-2.0
-`transformers` API and do not redistribute weights. The default model
-(Qwen3-VL-4B) is Apache-2.0, so it needs no notice. When a model's weights are
-under a non-permissive license (for example LFM2-VL under the LFM Open License
-v1.0 with a revenue threshold, or InternVL3 whose `-hf` weights carry the Qwen
-License), the download is gated behind a one-time logged license notice,
-following the existing download-notice pattern in `libreyolo/utils/download.py`
-and `libreyolo/models/l2cs/model.py`.
+LibreYOLO ships only its own VLM adapter code: families either load through the
+Apache-2.0 `transformers` API or, when a model genuinely requires Hugging Face
+remote code, download that upstream model-repository code at runtime under the
+upstream model repo's terms. LibreYOLO does not redistribute VLM weights.
+
+The default model (Qwen3-VL-4B) is Apache-2.0, so it needs no notice. When a
+model's weights or required model-repository code are under a non-permissive
+license (for example LFM2-VL under the LFM Open License v1.0 with a revenue
+threshold, InternVL3 whose `-hf` weights carry the Qwen License, or a remote-code
+model repository under its own terms), loading/downloading logs a one-time
+license notice. This follows the existing download-notice pattern in
+`libreyolo/utils/download.py` and `libreyolo/models/l2cs/model.py`.
+
+Any family that sets `TRUST_REMOTE_CODE = True` must also pin `HF_REVISIONS` to
+a commit SHA for every supported size. This keeps a LibreYOLO release from
+executing mutable upstream model-repository code under the same alias.
 
 ## Out Of Scope (v1)
 
