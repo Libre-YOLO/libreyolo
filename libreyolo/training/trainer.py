@@ -1475,6 +1475,19 @@ class BaseTrainer(ABC):
                 with autocast("cuda"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                # Skip a non-finite batch BEFORE it can poison weights via
+                # optimizer.step / EMA. A single inf/nan loss (rare activation
+                # overflow) otherwise corrupts the whole model permanently.
+                if not torch.isfinite(total_loss_raw.detach()):
+                    self.optimizer.zero_grad(set_to_none=True)
+                    self._nonfinite_skips = getattr(self, "_nonfinite_skips", 0) + 1
+                    if self._nonfinite_skips <= 5 or self._nonfinite_skips % 50 == 0:
+                        logger.warning(
+                            "Skipped non-finite loss batch (total skips: %d)",
+                            self._nonfinite_skips,
+                        )
+                    del outputs
+                    continue
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
@@ -1486,6 +1499,16 @@ class BaseTrainer(ABC):
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
                 total_loss_raw = outputs["total_loss"]
+                if not torch.isfinite(total_loss_raw.detach()):
+                    self.optimizer.zero_grad(set_to_none=True)
+                    self._nonfinite_skips = getattr(self, "_nonfinite_skips", 0) + 1
+                    if self._nonfinite_skips <= 5 or self._nonfinite_skips % 50 == 0:
+                        logger.warning(
+                            "Skipped non-finite loss batch (total skips: %d)",
+                            self._nonfinite_skips,
+                        )
+                    del outputs
+                    continue
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 loss.backward()
