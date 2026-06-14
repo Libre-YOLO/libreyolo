@@ -11,6 +11,7 @@ from PIL import Image
 from libreyolo.data.depth_dataset import (
     DepthDataset,
     depth_collate_fn,
+    img2depth_mask_paths,
     img2depth_paths,
     resolve_depth_data,
 )
@@ -75,6 +76,25 @@ class TestDepthPaths:
 
         paths = img2depth_paths([img], depths_dir="gt")
         assert paths[0] == target
+
+    def test_img2depth_paths_finds_depth_suffix_in_same_dir(self, tmp_path):
+        img = tmp_path / "val" / "indoors" / "a.png"
+        _write_image(img)
+        target = tmp_path / "val" / "indoors" / "a_depth.npy"
+        np.save(target, np.ones((30, 40), dtype=np.float32))
+
+        paths = img2depth_paths([img])
+        assert paths[0] == target
+
+    def test_img2depth_mask_paths_finds_depth_mask_suffix(self, tmp_path):
+        depth = tmp_path / "val" / "indoors" / "a_depth.npy"
+        depth.parent.mkdir(parents=True, exist_ok=True)
+        np.save(depth, np.ones((30, 40), dtype=np.float32))
+        mask = tmp_path / "val" / "indoors" / "a_depth_mask.npy"
+        np.save(mask, np.ones((30, 40), dtype=bool))
+
+        paths = img2depth_mask_paths([depth])
+        assert paths[0] == mask
 
 
 class TestDepthDataset:
@@ -156,6 +176,48 @@ class TestDepthDataset:
         _, depth, _, _ = ds[0]
         assert torch.isfinite(depth).all()
         assert float(depth.min()) >= 0.0
+
+    def test_applies_optional_depth_mask(self, tmp_path):
+        yaml_path = _make_dataset_root(tmp_path, depth_format="npy")
+        mask = np.ones((30, 40), dtype=np.uint8)
+        mask[:, :10] = 0
+        np.save(tmp_path / "depths" / "train" / "img0_mask.npy", mask)
+        config = resolve_depth_data(yaml_path)
+        ds = DepthDataset(config, split="train", imgsz=40, resize_mode="stretch")
+
+        _, depth, _, _ = ds[0]
+        assert float(depth[:, :10].sum()) == 0.0
+        assert float(depth[:, 10:].min()) > 0.0
+
+    def test_loads_diode_style_depth_and_mask(self, tmp_path):
+        root = tmp_path / "diode"
+        image = root / "val" / "indoors" / "scene_00001" / "scan_00001" / "00001.png"
+        _write_image(image)
+        depth = np.full((30, 40), 3.0, dtype=np.float32)
+        depth[0, 0] = 9.0
+        np.save(image.with_name("00001_depth.npy"), depth)
+        mask = np.ones((30, 40), dtype=np.uint8)
+        mask[0, 0] = 0
+        np.save(image.with_name("00001_depth_mask.npy"), mask)
+        yaml_path = root / "data.yaml"
+        yaml_path.write_text(
+            yaml.safe_dump(
+                {
+                    "path": str(root),
+                    "train": "val/indoors",
+                    "val": "val/indoors",
+                    "depth_stem_suffix": "_depth",
+                    "depth_mask_suffix": "_mask",
+                }
+            )
+        )
+
+        config = resolve_depth_data(yaml_path)
+        ds = DepthDataset(config, split="train", imgsz=40, resize_mode="stretch")
+
+        _, target, _, _ = ds[0]
+        assert float(target[0, 0]) == 0.0
+        assert float(target.max()) == pytest.approx(3.0)
 
     def test_invalid_resize_mode_rejected(self, tmp_path):
         yaml_path = _make_dataset_root(tmp_path)

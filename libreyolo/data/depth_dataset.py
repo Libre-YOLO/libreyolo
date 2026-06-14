@@ -15,6 +15,11 @@ The dataset YAML follows the common contract (``path``/``train``/``val``/
 
 - ``depths_dir``: depth directory name substituted for ``images`` in each
   image path (default ``depths``).
+- ``depth_stem_suffix``: optional suffix appended to the image stem before
+  searching for a depth extension. When omitted, both the same stem and the
+  common ``_depth`` suffix are tried.
+- ``depth_mask_suffix``: optional suffix appended to the resolved depth stem
+  to find a validity mask. Existing masks are applied automatically.
 - ``depth_scale``: divisor applied to integer-typed depth files (default
   ``256.0``, the common 16-bit PNG encoding where ``value / 256`` is the
   stored depth). Float files (``.npy``) are used as-is.
@@ -45,11 +50,27 @@ logger = logging.getLogger(__name__)
 _PAD_COLOR = 114
 
 DEPTH_FORMATS = (".png", ".npy", ".tif", ".tiff")
+DEPTH_STEM_SUFFIXES = ("", "_depth")
+DEPTH_MASK_SUFFIX = "_mask"
 
 DEFAULT_DEPTH_SCALE = 256.0
 
 
-def img2depth_paths(img_paths: List[Path], depths_dir: str = "depths") -> List[Path]:
+def _as_tuple(value: object, default: Tuple[str, ...]) -> Tuple[str, ...]:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+        return tuple(value)
+    raise TypeError("depth stem suffixes must be a string or a list of strings.")
+
+
+def img2depth_paths(
+    img_paths: List[Path],
+    depths_dir: str = "depths",
+    stem_suffixes: Tuple[str, ...] = DEPTH_STEM_SUFFIXES,
+) -> List[Path]:
     """Convert image paths to depth-map paths.
 
     Convention mirrors ``img2label_paths``: replace ``images`` with
@@ -63,15 +84,45 @@ def img2depth_paths(img_paths: List[Path], depths_dir: str = "depths") -> List[P
             path_str = path_str.replace(f"{sep}images{sep}", f"{sep}{depths_dir}{sep}")
             path_str = path_str.replace(f"{sep}images", f"{sep}{depths_dir}")
         base = Path(path_str)
-        for suffix in DEPTH_FORMATS:
-            candidate = base.with_suffix(suffix)
+        candidates = [
+            base.with_name(f"{base.stem}{stem_suffix}").with_suffix(suffix)
+            for stem_suffix in stem_suffixes
+            for suffix in DEPTH_FORMATS
+        ]
+        for candidate in candidates:
+            if candidate == img_path:
+                continue
             if candidate.exists():
                 base = candidate
                 break
         else:
-            base = base.with_suffix(".png")
+            first_suffix = stem_suffixes[0] if stem_suffixes else ""
+            base = base.with_name(f"{base.stem}{first_suffix}").with_suffix(".png")
         depth_paths.append(base)
     return depth_paths
+
+
+def img2depth_mask_paths(
+    depth_paths: List[Path],
+    mask_suffix: str = DEPTH_MASK_SUFFIX,
+) -> List[Path | None]:
+    """Resolve optional validity masks for depth files.
+
+    Existing masks are returned; missing masks are represented by ``None`` so
+    datasets without explicit masks keep using the depth values themselves for
+    validity.
+    """
+    mask_paths: List[Path | None] = []
+    for depth_path in depth_paths:
+        base = depth_path.with_name(f"{depth_path.stem}{mask_suffix}")
+        mask_path = None
+        for suffix in DEPTH_FORMATS:
+            candidate = base.with_suffix(suffix)
+            if candidate.exists():
+                mask_path = candidate
+                break
+        mask_paths.append(mask_path)
+    return mask_paths
 
 
 def _load_depth_file(depth_path: Path, depth_scale: float) -> np.ndarray:
@@ -106,6 +157,21 @@ def _load_depth_file(depth_path: Path, depth_scale: float) -> np.ndarray:
     depth[~np.isfinite(depth)] = 0.0
     depth[depth < 0] = 0.0
     return depth
+
+
+def _load_depth_mask_file(mask_path: Path) -> np.ndarray:
+    if mask_path.suffix.lower() == ".npy":
+        mask = np.load(mask_path)
+    else:
+        with Image.open(mask_path) as mask_img:
+            mask = np.asarray(mask_img)
+    if mask.ndim == 3 and mask.shape[-1] == 1:
+        mask = mask[..., 0]
+    if mask.ndim != 2:
+        raise ValueError(
+            f"Depth mask {mask_path} has shape {mask.shape}; expected (H, W)."
+        )
+    return np.isfinite(mask) & (mask > 0)
 
 
 def resolve_depth_data(data: str | Path, allow_scripts: bool = False) -> Dict:
@@ -162,7 +228,15 @@ class DepthDataset(Dataset):
             )
 
         self.depths_dir = str(data_config.get("depths_dir") or "depths")
-        self.depth_files = img2depth_paths(self.img_files, self.depths_dir)
+        stem_suffixes = _as_tuple(
+            data_config.get("depth_stem_suffix")
+            if "depth_stem_suffix" in data_config
+            else data_config.get("depth_stem_suffixes"),
+            DEPTH_STEM_SUFFIXES,
+        )
+        self.depth_files = img2depth_paths(
+            self.img_files, self.depths_dir, stem_suffixes=stem_suffixes
+        )
         missing = [str(p) for p in self.depth_files if not p.exists()]
         if missing:
             preview = ", ".join(missing[:3])
@@ -171,12 +245,27 @@ class DepthDataset(Dataset):
                 f"(e.g. {preview}). Expected depth maps under "
                 f"'{self.depths_dir}' mirroring the images tree."
             )
+        self.depth_mask_suffix = str(
+            data_config.get("depth_mask_suffix") or DEPTH_MASK_SUFFIX
+        )
+        self.depth_mask_files = img2depth_mask_paths(
+            self.depth_files, self.depth_mask_suffix
+        )
 
     def __len__(self) -> int:
         return len(self.img_files)
 
     def _load_target_depth(self, index: int, orig_shape: Tuple[int, int]) -> np.ndarray:
         depth = _load_depth_file(self.depth_files[index], self.depth_scale)
+        mask_path = self.depth_mask_files[index]
+        if mask_path is not None:
+            mask = _load_depth_mask_file(mask_path)
+            if mask.shape != depth.shape:
+                raise ValueError(
+                    f"Depth mask {mask_path} shape {mask.shape} does not match "
+                    f"depth map shape {depth.shape}."
+                )
+            depth[~mask] = 0.0
         if depth.shape != orig_shape:
             raise ValueError(
                 f"Depth map {self.depth_files[index]} shape {depth.shape} "

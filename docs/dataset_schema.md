@@ -110,6 +110,12 @@ YAML adds two optional keys on top of the common contract:
 
 - `depths_dir`: depth directory name substituted for `images` in each image
   path (default `depths`).
+- `depth_stem_suffix`: optional suffix appended to the image stem before
+  depth extension lookup. When omitted, both same-stem files and the common
+  `_depth` suffix are tried.
+- `depth_mask_suffix`: optional suffix appended to the resolved depth stem to
+  find a validity mask (default `_mask`). If the mask exists, mask values
+  `<= 0`, NaN, and inf invalidate the corresponding depth pixels.
 - `depth_scale`: divisor for integer-typed depth maps (default `256.0`, the
   common 16-bit PNG convention where stored value / 256 is the depth).
 
