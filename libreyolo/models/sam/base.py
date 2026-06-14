@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -188,7 +188,7 @@ class LibreSAMModel(BaseModel):
         """
         return torch.float32
 
-    def _load_pretrained(self, snapshot_dir: str):
+    def _load_pretrained(self, snapshot_dir: str) -> tuple:
         try:
             from transformers import SamModel, SamProcessor
         except ImportError as exc:
@@ -367,7 +367,11 @@ class LibreSAMModel(BaseModel):
         return self.predict(source, **kwargs)
 
     def _set_device(self, device: str) -> "LibreSAMModel":
-        """Move the model to ``device`` and drop any stale cached embeddings."""
+        """Move the model to ``device``, keeping any ``set_image()`` session.
+
+        Cached embeddings are moved to the new device rather than dropped, so an
+        interactive session survives a device switch.
+        """
         dev = str(device).strip()
         if dev.isdigit():
             dev = f"cuda:{dev}"
@@ -375,7 +379,8 @@ class LibreSAMModel(BaseModel):
         if target != self.device:
             self.device = target
             self.model.to(target)
-            self._clear_image_state()
+            if self._image_embeddings is not None:
+                self._image_embeddings = self._image_embeddings.to(target)
         return self
 
     # ---- prediction internals ------------------------------------------------
@@ -531,17 +536,21 @@ class LibreSAMModel(BaseModel):
         enc = self.processor(
             images=img,
             input_points=[[[p] for p in pixel_points]],  # 1 image, N points, 1 each
+            input_labels=[[[1] for _ in pixel_points]],  # all positive prompts
             return_tensors="pt",
         )
         full_points = enc["input_points"].to(self.device)  # (1, N, 1, 2)
+        full_labels = enc["input_labels"].to(self.device)  # (1, N, 1)
 
         all_masks: List[torch.Tensor] = []
         all_conf: List[torch.Tensor] = []
         for i in range(0, full_points.shape[1], self.GRID_CHUNK):
             chunk = full_points[:, i : i + self.GRID_CHUNK]
+            chunk_labels = full_labels[:, i : i + self.GRID_CHUNK]
             with torch.no_grad():
                 outputs = self.model(
                     input_points=chunk,
+                    input_labels=chunk_labels,
                     image_embeddings=cached_emb,
                     multimask_output=True,
                 )
