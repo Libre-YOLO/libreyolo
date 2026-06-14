@@ -106,6 +106,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, {"images": self.state.session.list_images()})
             elif path == "/api/stats":
                 self._send(200, self.state.session.stats())
+            elif path == "/api/insights":
+                self._send(200, self.state.session.insights())
             elif path.startswith("/api/image/"):
                 self._serve_image(int(path.rsplit("/", 1)[-1]))
             elif path.startswith("/api/thumb/"):

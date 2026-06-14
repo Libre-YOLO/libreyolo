@@ -165,6 +165,83 @@ class DatasetSession:
             "classes": top,
         }
 
+    def insights(self) -> dict:
+        """Dataset intelligence: dimension stats + perceptual-hash duplicates.
+
+        Decodes each image once (downscaled) to compute a dHash and read its
+        size. Cached for the session. Surfaces the data-quality issues that
+        matter most for YOLO training: duplicate images and, especially,
+        train/val *leakage* (the same image in two splits).
+        """
+        if getattr(self, "_insights_cache", None) is not None:
+            return self._insights_cache
+
+        from collections import Counter
+
+        from PIL import Image
+
+        dims: list = []          # (w, h, idx, split)
+        hashes: dict = {}        # dhash -> [idx, ...]
+        failed = 0
+        for i, (ip, _lp, split) in enumerate(self._items):
+            try:
+                with Image.open(ip) as im:
+                    w, h = im.size
+                    g = list(im.convert("L").resize((9, 8)).getdata())
+            except Exception:  # noqa: BLE001
+                failed += 1
+                continue
+            dims.append((w, h, i, split))
+            bits = 0
+            for row in range(8):
+                base = row * 9
+                for col in range(8):
+                    bits = (bits << 1) | (1 if g[base + col] > g[base + col + 1] else 0)
+            hashes.setdefault(bits, []).append(i)
+
+        def _stat(vals):
+            if not vals:
+                return {"min": 0, "max": 0, "mean": 0, "median": 0}
+            s = sorted(vals)
+            return {
+                "min": s[0], "max": s[-1],
+                "mean": round(sum(s) / len(s)),
+                "median": s[len(s) // 2],
+            }
+
+        ws = [d[0] for d in dims]
+        hs = [d[1] for d in dims]
+        mp = [round(w * h / 1e6, 2) for w, h, _i, _s in dims]
+        res_top = Counter((w, h) for w, h, _i, _s in dims).most_common(6)
+        name = lambda i: self._items[i][0].name  # noqa: E731
+        split_of = lambda i: self._items[i][2]    # noqa: E731
+
+        dup_groups = []
+        leak_groups = []
+        for ids in hashes.values():
+            if len(ids) < 2:
+                continue
+            grp = {"ids": ids, "names": [name(i) for i in ids],
+                   "splits": sorted({split_of(i) for i in ids})}
+            dup_groups.append(grp)
+            if len(grp["splits"]) > 1:
+                leak_groups.append(grp)
+        dup_groups.sort(key=lambda g: -len(g["ids"]))
+
+        self._insights_cache = {
+            "count": len(self._items),
+            "measured": len(dims),
+            "failed": failed,
+            "width": _stat(ws),
+            "height": _stat(hs),
+            "megapixels": _stat(mp) if mp else {"min": 0, "max": 0, "mean": 0, "median": 0},
+            "top_resolutions": [[w, h, c] for (w, h), c in res_top],
+            "duplicate_groups": dup_groups[:50],
+            "duplicate_image_count": sum(len(g["ids"]) for g in dup_groups),
+            "leakage_groups": leak_groups[:50],
+        }
+        return self._insights_cache
+
     def _check_index(self, idx: int) -> None:
         if not (0 <= idx < len(self._items)):
             raise IndexError(f"image id out of range: {idx}")

@@ -103,6 +103,35 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .statrow .bar{height:100%;border-radius:9px;transition:width .3s ease}
   .statrow .ct{font-size:11px;color:var(--tx3);font-variant-numeric:tabular-nums;width:30px;text-align:right;flex:none}
   .side-stats .none{color:var(--tx3);font-size:11.5px;text-align:center;padding:6px 0}
+  .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,9,12,.82);backdrop-filter:blur(4px);z-index:20}
+  .modal.show{display:flex}
+  .mcard{width:min(680px,92vw);max-height:84vh;display:flex;flex-direction:column;background:var(--s1);border:1px solid var(--line2);border-radius:16px;box-shadow:var(--sh);overflow:hidden}
+  .mhead{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .mhead h3{margin:0;font-size:15px}
+  .mx{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--s2);border:1px solid var(--line);color:var(--tx2);font-size:17px;line-height:1}
+  .mx:hover{background:var(--s3);color:var(--tx)}
+  .mbody{padding:18px 20px;overflow:auto}
+  .iload{color:var(--tx3);text-align:center;padding:24px}
+  .igrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin-bottom:18px}
+  .icard{background:var(--s2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .icard .ik{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+  .icard .iv{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+  .isec{margin-bottom:18px}
+  .isec .ititle{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+  .ibar{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12px}
+  .ibar .il{width:96px;color:var(--tx2);font-variant-numeric:tabular-nums}
+  .ibar .it{flex:1;height:8px;background:var(--s2);border-radius:9px;overflow:hidden}
+  .ibar .it span{display:block;height:100%;background:linear-gradient(90deg,var(--ac),var(--ai));border-radius:9px}
+  .ibar .ic{width:34px;text-align:right;color:var(--tx3);font-variant-numeric:tabular-nums}
+  .iok{display:flex;align-items:center;gap:8px;color:var(--ok);font-size:13px}
+  .iok .ic{width:16px;height:16px}
+  .iwarn{padding:10px 12px;border-radius:9px;background:var(--s2);border:1px solid var(--line);color:var(--tx2);font-size:12.5px;margin-bottom:12px}
+  .iwarn.leak{background:rgba(251,113,113,.09);border-color:rgba(251,113,113,.35);color:var(--danger);font-weight:560}
+  .idup{display:flex;align-items:center;gap:5px;margin-bottom:8px;flex-wrap:wrap}
+  .ithumb{width:46px;height:36px;object-fit:cover;border-radius:5px;background:var(--s3)}
+  .idsplit{margin-left:4px;font-size:11px;color:var(--tx3)}
+  .insbtn{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--tx2)}
+  .insbtn:hover{background:var(--s2);color:var(--tx);border-color:var(--line)}
   .traincta{display:none;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;
     border-top:1px solid var(--line);background:linear-gradient(180deg,rgba(45,212,167,.07),transparent)}
   .traincta .t-l{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ok);font-weight:560}
@@ -182,6 +211,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <select id="amodel" class="select"></select>
     </span>
     <span class="save" id="save"></span>
+    <button class="insbtn" id="insbtn" title="Dataset insights"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-6M21 20H3"/></svg></button>
     <button class="btn-icon" id="helpbtn" title="Shortcuts (?)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.4 2.4 0 1 1 3.4 2.2c-.9.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg></button>
   </header>
   <main>
@@ -241,6 +271,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div></div>
     </div>
   </main>
+  <div class="modal" id="insights"><div class="mcard">
+    <div class="mhead"><h3>Dataset insights</h3><button class="mx" id="insclose">&times;</button></div>
+    <div class="mbody" id="insbody"></div>
+  </div></div>
 </div>
 <script>
 "use strict";
@@ -326,6 +360,9 @@ function wireChrome(){
   $("#classchip").onclick = togglePicker;
   $("#psearch").oninput = e=> filterClasses(e.target.value);
   $("#helpbtn").onclick = toggleHelp;
+  $("#insbtn").onclick = openInsights;
+  $("#insclose").onclick = closeInsights;
+  $("#insights").onclick = (e)=>{ if(e.target.id==="insights") closeInsights(); };
   $("#toolBox").onclick = ()=> setTool("box");
   $("#toolSeg").onclick = ()=> setTool("seg");
   $("#toolAi").onclick = ()=> prelabelCurrent();
@@ -448,6 +485,42 @@ async function renderStats(){
         b.classList.add('copied'); setTimeout(()=>b.classList.remove('copied'),1200); };
     } else tc.style.display="none";
   }
+}
+
+// ---- dataset insights (dimensions + duplicates + leakage) ----
+async function openInsights(){
+  $("#insights").classList.add("show");
+  $("#insbody").innerHTML = `<div class="iload">Analyzing images…</div>`;
+  let d; try{ d = await jget("/api/insights"); }
+  catch(e){ $("#insbody").innerHTML = `<div class="iload">Could not compute insights.</div>`; return; }
+  renderInsights(d);
+}
+function closeInsights(){ $("#insights").classList.remove("show"); }
+function renderInsights(d){
+  const W=d.width, H=d.height, MP=d.megapixels;
+  const maxRes = d.top_resolutions.length ? d.top_resolutions[0][2] : 1;
+  const resBars = d.top_resolutions.map(r=>
+    `<div class="ibar"><span class="il">${r[0]}×${r[1]}</span><span class="it"><span style="width:${Math.round(100*r[2]/maxRes)}%"></span></span><span class="ic">${r[2]}</span></div>`).join("");
+  let dup;
+  if(d.duplicate_groups.length){
+    const leak=d.leakage_groups.length;
+    dup = (leak? `<div class="iwarn leak">${leak} duplicate group${leak>1?"s":""} leak across splits (train↔val) — this inflates your validation score.</div>`:"")
+      + `<div class="iwarn">${d.duplicate_groups.length} duplicate group${d.duplicate_groups.length>1?"s":""} · ${d.duplicate_image_count} images</div>`
+      + d.duplicate_groups.slice(0,8).map(g=>
+        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span></div>`).join("");
+  } else {
+    dup = `<div class="iok">${ICO_CHECK}No duplicate or near-duplicate images detected</div>`;
+  }
+  $("#insbody").innerHTML =
+    `<div class="igrid">`
+    + `<div class="icard"><div class="ik">Images</div><div class="iv">${d.measured}</div></div>`
+    + `<div class="icard"><div class="ik">Avg size</div><div class="iv">${W.mean}×${H.mean}</div></div>`
+    + `<div class="icard"><div class="ik">Width</div><div class="iv">${W.min}–${W.max}</div></div>`
+    + `<div class="icard"><div class="ik">Height</div><div class="iv">${H.min}–${H.max}</div></div>`
+    + `<div class="icard"><div class="ik">Megapixels</div><div class="iv">${MP.min}–${MP.max}</div></div>`
+    + `</div>`
+    + `<div class="isec"><div class="ititle">Most common resolutions</div>${resBars||'<div class="iload">—</div>'}</div>`
+    + `<div class="isec"><div class="ititle">Duplicates &amp; train/val leakage</div>${dup}</div>`;
 }
 
 // ---- undo ----
@@ -984,7 +1057,8 @@ window.addEventListener("keydown", e=>{
   if(e.key==="f"||e.key==="F"){ fit(); draw(); return; }
   if(e.key==="?"){ toggleHelp(); return; }
   if(e.key==="Escape"){
-    if($("#picker").classList.contains("show")){ closePicker(); }
+    if($("#insights").classList.contains("show")){ closeInsights(); }
+    else if($("#picker").classList.contains("show")){ closePicker(); }
     else if(ghosts.length){ clearGhosts(); }
     else if($("#help").style.display==="flex"){ $("#help").style.display="none"; }
     else if(mode==="new"){ boxes.pop(); sel=-1; mode=null; gestureSnap=null; draw(); }
