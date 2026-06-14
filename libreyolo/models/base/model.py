@@ -926,22 +926,28 @@ class BaseModel(ABC):
         show: bool = False,
         vid_stride: int = 1,
         output_path: Optional[str] = None,
+        tracker: str = "bytetrack",
         tracker_config=None,
         augment: bool = False,
         **tracker_kwargs,
     ) -> Generator[Results, None, None]:
         """Track objects across video frames.
 
-        Runs detection on each frame and associates detections across time
-        using the ByteTrack algorithm. Yields one Results per frame with
-        ``track_id`` set.
+        Runs detection on each frame and associates detections across time.
+        Two motion-based trackers are available via ``tracker``: ByteTrack
+        (default) and OC-SORT, which is more robust to occlusion and
+        non-linear motion. Yields one Results per frame with ``track_id`` set.
 
         Args:
             source: Path to a video file.
             track_conf: Confidence threshold for the tracker's first
-                association stage (``track_high_thresh``). The detector
-                runs at the lower ``track_low_thresh`` internally so
-                ByteTrack can use low-confidence detections for recovery.
+                association stage — ``track_high_thresh`` for ByteTrack,
+                ``det_thresh`` for OC-SORT. The detector runs at a lower
+                threshold internally so low-confidence detections remain
+                available for recovery. For ByteTrack it must be >=
+                ``track_low_thresh`` (default 0.1). Ignored when *tracker_config*
+                is given, or when the matching key is passed explicitly in
+                ``tracker_kwargs``.
             iou: IoU threshold for NMS during detection.
             imgsz: Override input image size.
             classes: Filter to specific class IDs.
@@ -951,9 +957,13 @@ class BaseModel(ABC):
             vid_stride: Process every N-th frame.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4``.
-            tracker_config: A ``TrackConfig`` instance, or None to build
-                one from **tracker_kwargs.
-            **tracker_kwargs: Forwarded to ``TrackConfig.from_kwargs``.
+            tracker: Which tracker to use: ``"bytetrack"`` or ``"ocsort"``.
+                Ignored when *tracker_config* is given (the config type
+                selects the tracker).
+            tracker_config: A ``TrackConfig`` (ByteTrack) or ``OCSortConfig``
+                (OC-SORT) instance, or None to build one from **tracker_kwargs.
+            **tracker_kwargs: Forwarded to the selected tracker's
+                ``from_kwargs`` (``TrackConfig`` or ``OCSortConfig``).
 
         Yields:
             Results with ``track_id`` attribute set as an (N,) int tensor.
@@ -979,20 +989,45 @@ class BaseModel(ABC):
                 "Use predict() for depth models."
             )
 
-        from ...tracking import ByteTracker, TrackConfig
+        from ...tracking import (
+            ByteTracker,
+            OCSortConfig,
+            OCSortTracker,
+            TrackConfig,
+        )
         from ...utils.drawing import draw_boxes, draw_masks
         from ...utils.video import run_video_inference
 
-        if tracker_config is None:
-            tracker_config = TrackConfig.from_kwargs(**tracker_kwargs)
+        # A provided config picks the tracker; otherwise honour the selector.
+        if isinstance(tracker_config, OCSortConfig):
+            tracker = "ocsort"
+        elif isinstance(tracker_config, TrackConfig):
+            tracker = "bytetrack"
+        tracker = (tracker or "bytetrack").lower()
+
+        if tracker == "ocsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("det_thresh", track_conf)
+                tracker_config = OCSortConfig.from_kwargs(**tracker_kwargs)
+            # OC-SORT consumes low-score detections (>0.1) for recovery.
+            effective_conf = min(0.1, tracker_config.det_thresh)
+            tracker_obj = OCSortTracker(config=tracker_config)
+        elif tracker == "bytetrack":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("track_high_thresh", track_conf)
+                tracker_config = TrackConfig.from_kwargs(**tracker_kwargs)
+            # ByteTrack needs to see low-confidence detections.
+            effective_conf = tracker_config.track_low_thresh
+            tracker_obj = ByteTracker(config=tracker_config)
+        else:
+            raise ValueError(
+                f"Unknown tracker {tracker!r}; choose 'bytetrack' or 'ocsort'."
+            )
 
         source = Path(source)
         if not source.exists():
             raise FileNotFoundError(f"Video file not found: {source}")
 
-        # ByteTrack needs to see low-confidence detections.
-        effective_conf = tracker_config.track_low_thresh
-        tracker = ByteTracker(config=tracker_config)
         model_names = self.names
 
         def predict_and_track(pil_img):
@@ -1005,7 +1040,7 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
-            return tracker.update(result)
+            return tracker_obj.update(result)
 
         def annotate_tracked(pil_img, result):
             if len(result) == 0:

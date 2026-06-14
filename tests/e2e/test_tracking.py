@@ -63,10 +63,10 @@ def video_path():
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _run_tracker(model, video, n_frames=30):
+def _run_tracker(model, video, n_frames=30, **track_kwargs):
     """Run model.track() and collect first *n_frames* results."""
     frames = []
-    for i, result in enumerate(model.track(video)):
+    for i, result in enumerate(model.track(video, **track_kwargs)):
         frames.append(result)
         if i + 1 >= n_frames:
             break
@@ -147,6 +147,21 @@ class TestTrackingYOLOX:
         for f in frames:
             all_ids |= _ids(f)
         assert len(all_ids) >= 10, f"Only {len(all_ids)} unique IDs across 10 frames"
+
+    def test_ocsort_tracker_end_to_end(self, model, video_path):
+        """The OC-SORT tracker also yields stable, unique per-frame IDs."""
+        frames = _run_tracker(model, video_path, n_frames=20, tracker="ocsort")
+        assert len(frames) == 20
+        stable = 0
+        for i, f in enumerate(frames):
+            ids = f.track_id.tolist() if f.track_id is not None else []
+            assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+            if i > 0:
+                prev = _ids(frames[i - 1])
+                curr = _ids(frames[i])
+                if prev and curr and len(prev & curr) / len(prev) >= 0.5:
+                    stable += 1
+        assert stable >= len(frames) // 2, "OC-SORT IDs not stable across frames"
 
     def test_save_creates_annotated_video(self, model, video_path, tmp_path):
         """save=True should write an annotated video to output_path."""
