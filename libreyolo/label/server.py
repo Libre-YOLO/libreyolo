@@ -312,9 +312,10 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._same_origin():
                 self._send(403, {"error": "cross-origin request blocked"})
                 return
-            if path in ("/api/projects/open", "/api/projects/forget") and not self._local_admin():
-                self._send(403, {"error": "Switching projects is only allowed from the host "
-                                          "machine on a shared server."})
+            if path in ("/api/projects/open", "/api/projects/forget",
+                        "/api/insights/fix") and not self._local_admin():
+                self._send(403, {"error": "This action (switch project / prune duplicates) is "
+                                          "only allowed from the host machine on a shared server."})
                 return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/forget"):
@@ -398,19 +399,24 @@ class _Handler(BaseHTTPRequestHandler):
         data = self.rfile.read(length) if length else b""
         return json.loads(data.decode("utf-8")) if data else {}
 
-    def _local_admin(self) -> bool:
-        """Whether this client may perform host-level admin (switching the project).
+    @staticmethod
+    def _is_loopback(addr: str) -> bool:
+        a = (addr or "").strip().lower()
+        return a in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1") or a.startswith("127.")
 
-        Opening/forgetting a project rebinds the *global* session for everyone, so on
-        a shared (``--share`` -> 0.0.0.0) server it must be limited to the host's own
-        loopback browser -- otherwise any LAN teammate could repoint the process at an
-        arbitrary local ``data.yaml`` (paths are even listed by /api/projects) and
-        read/write its labels. On a normal 127.0.0.1 bind every client is local already.
+    def _local_admin(self) -> bool:
+        """Whether this client may perform host-level admin (switch project, prune
+        duplicates) -- actions that rebind the global session or move/delete files.
+
+        Only a *loopback bind* (127.0.0.1/localhost) is inherently local-only; any
+        other bind -- 0.0.0.0/:: OR a concrete NIC address like 192.168.x.y -- is
+        LAN-reachable, so we require the *client* to be loopback. Otherwise a remote
+        teammate could repoint the process at an arbitrary local ``data.yaml`` (paths
+        are listed by /api/projects) or quarantine/purge dataset files.
         """
-        if self.state.host not in ("0.0.0.0", "::", ""):
-            return True
-        addr = (self.client_address[0] if self.client_address else "") or ""
-        return addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1") or addr.startswith("127.")
+        if self._is_loopback(self.state.host):
+            return True   # loopback bind -> every client is the host itself
+        return self._is_loopback(self.client_address[0] if self.client_address else "")
 
     def _same_origin(self) -> bool:
         """Block cross-origin state-changing requests (CSRF). A browser always sets

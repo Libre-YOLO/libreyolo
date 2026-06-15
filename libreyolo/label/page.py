@@ -1674,11 +1674,15 @@ async function runBoost(){
 }
 function pollBoost(){
   clearTimeout(boostTimer);
-  const myGen=loadSeq;
+  // Guard on the PROJECT generation (epoch), not loadSeq -- loadSeq bumps on every
+  // image navigation, which would kill the poll the moment the user moves images
+  // mid-boost. The epoch only changes on a project switch.
+  const myEpoch = DS && DS.epoch;
+  const live = ()=> DS && DS.epoch===myEpoch;
   boostTimer=setTimeout(async ()=>{
-    if(myGen!==loadSeq) return;        // project switched -> stop polling the old boost
-    let s; try{ s=await jget("/api/boost/status"); }catch(e){ if(myGen===loadSeq) pollBoost(); return; }
-    if(myGen!==loadSeq) return;
+    if(!live()) return;        // project switched -> stop polling the old boost
+    let s; try{ s=await jget("/api/boost/status"); }catch(e){ if(live()) pollBoost(); return; }
+    if(!live()) return;
     if(s.state==="running"){ setBoostChip("run", s.phase||"Boosting…"); pollBoost(); }
     else if(s.state==="done"){
       const a=Math.round((s.boosted_agreement||0)*100), b=Math.round((s.base_agreement||0)*100), dl=Math.round((s.delta||0)*100);
@@ -1799,6 +1803,7 @@ function showHome(){ $("#home").classList.add("show"); renderProjects(); }
 function hideHome(){ $("#home").classList.remove("show"); }
 async function backToHome(){
   if(dirty && idx>=0 && !(await save())){ banner("Save failed — fix it before leaving this image."); return; }
+  if(dirty){ banner("You edited while saving — press → to save before going home."); return; }   // in-flight edits: don't drop them on Home
   try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
   showHome();
 }

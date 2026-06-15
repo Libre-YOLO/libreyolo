@@ -559,3 +559,24 @@ def test_sanitize_rejects_non_finite_before_clamp():
     assert sanitize_annotations([poly], nc=2) == []
     # a finite, valid box still round-trips
     assert len(sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.3, "h": 0.3}], nc=2)) == 1
+
+
+def test_local_admin_requires_loopback_client_on_nic_bind():
+    # Codex round 8: a concrete NIC bind (host=192.168.x.y) is LAN-reachable, so
+    # host-admin actions must require a loopback CLIENT -- not be open to everyone.
+    from types import SimpleNamespace
+
+    from libreyolo.label.server import _Handler
+
+    assert _Handler._is_loopback("127.0.0.1") and _Handler._is_loopback("::1")
+    assert _Handler._is_loopback("localhost") and not _Handler._is_loopback("192.168.1.5")
+
+    h = _Handler.__new__(_Handler)   # bypass the socket-bound __init__
+    h.state = SimpleNamespace(host="192.168.1.5")
+    h.client_address = ("192.168.1.50", 5000)
+    assert h._local_admin() is False                 # remote client on a NIC bind -> denied
+    h.client_address = ("127.0.0.1", 5000)
+    assert h._local_admin() is True                  # loopback client -> allowed
+    h.state = SimpleNamespace(host="127.0.0.1")
+    h.client_address = ("192.168.1.50", 5000)
+    assert h._local_admin() is True                  # loopback bind -> all clients are the host
