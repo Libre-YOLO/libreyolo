@@ -47,6 +47,11 @@ class _DummyEvaluator:
         return dict(self.metrics)
 
 
+def _null_val_preprocessor(*, img_size):
+    assert img_size > 0
+    return None
+
+
 def create_mock_yolo_dataset(tmp_path):
     """Create a minimal mock YOLO dataset for testing."""
     # Create directory structure
@@ -206,7 +211,7 @@ def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
     )
     validator.model = SimpleNamespace(
         _get_input_size=lambda: 64,
-        _get_val_preprocessor=lambda img_size: None,
+        _get_val_preprocessor=_null_val_preprocessor,
     )
     validator.device = torch.device("cpu")
     validator.nc = 1
@@ -275,7 +280,7 @@ def test_detection_validator_accepts_txt_split_with_discovered_coco_json(tmp_pat
     )
     validator.model = SimpleNamespace(
         _get_input_size=lambda: 64,
-        _get_val_preprocessor=lambda img_size: None,
+        _get_val_preprocessor=_null_val_preprocessor,
     )
     validator.device = torch.device("cpu")
     validator.nc = 1
