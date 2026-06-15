@@ -198,8 +198,13 @@ class _Handler(BaseHTTPRequestHandler):
             if path in ("/", "/index.html"):
                 self._send(200, INDEX_HTML, "text/html; charset=utf-8")
             elif path == "/api/projects":
-                self._send(200, {"projects": projects.list_projects(),
-                                 "open": self.state._data})
+                # The registry holds host-local dataset paths; don't enumerate them
+                # for LAN teammates who can only label the already-open project.
+                if self._local_admin():
+                    self._send(200, {"projects": projects.list_projects(),
+                                     "open": self.state._data})
+                else:
+                    self._send(200, {"projects": [], "open": None})
             elif path == "/api/server":
                 ip = _lan_ip()
                 host = self.state.host
@@ -406,17 +411,21 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _local_admin(self) -> bool:
         """Whether this client may perform host-level admin (switch project, prune
-        duplicates) -- actions that rebind the global session or move/delete files.
+        duplicates, list the project registry) -- actions that rebind the global
+        session, move/delete files, or expose host-local paths.
 
-        Only a *loopback bind* (127.0.0.1/localhost) is inherently local-only; any
-        other bind -- 0.0.0.0/:: OR a concrete NIC address like 192.168.x.y -- is
-        LAN-reachable, so we require the *client* to be loopback. Otherwise a remote
-        teammate could repoint the process at an arbitrary local ``data.yaml`` (paths
-        are listed by /api/projects) or quarantine/purge dataset files.
+        Only a *wildcard* bind (0.0.0.0/:: -- what ``--share`` uses) is both
+        LAN-reachable AND still serves loopback, so there the host connects via
+        127.0.0.1 while teammates use the LAN IP: require a loopback CLIENT to gate
+        teammates out. A loopback bind is local-only, and a concrete NIC bind
+        (``host=192.168.x.y``) forces the host itself to connect via that address --
+        indistinguishable from a teammate by IP -- so admin is allowed there (it's an
+        explicit, advanced exposure, not the default share path).
         """
-        if self._is_loopback(self.state.host):
-            return True   # loopback bind -> every client is the host itself
-        return self._is_loopback(self.client_address[0] if self.client_address else "")
+        host = (self.state.host or "").strip().lower()
+        if host in ("0.0.0.0", "::", ""):
+            return self._is_loopback(self.client_address[0] if self.client_address else "")
+        return True
 
     def _same_origin(self) -> bool:
         """Block cross-origin state-changing requests (CSRF). A browser always sets

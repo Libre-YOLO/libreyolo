@@ -561,9 +561,10 @@ def test_sanitize_rejects_non_finite_before_clamp():
     assert len(sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.3, "h": 0.3}], nc=2)) == 1
 
 
-def test_local_admin_requires_loopback_client_on_nic_bind():
-    # Codex round 8: a concrete NIC bind (host=192.168.x.y) is LAN-reachable, so
-    # host-admin actions must require a loopback CLIENT -- not be open to everyone.
+def test_local_admin_gating_by_bind_and_client():
+    # Codex round 8+9: gate host-admin on a *wildcard* (--share -> 0.0.0.0) bind by
+    # requiring a loopback client; a loopback bind or an explicit NIC bind allow it
+    # (the host has to reach an advertised NIC by its own address).
     from types import SimpleNamespace
 
     from libreyolo.label.server import _Handler
@@ -572,11 +573,20 @@ def test_local_admin_requires_loopback_client_on_nic_bind():
     assert _Handler._is_loopback("localhost") and not _Handler._is_loopback("192.168.1.5")
 
     h = _Handler.__new__(_Handler)   # bypass the socket-bound __init__
-    h.state = SimpleNamespace(host="192.168.1.5")
+
+    # wildcard bind (--share): loopback client = host -> admin; LAN client -> denied
+    h.state = SimpleNamespace(host="0.0.0.0")
     h.client_address = ("192.168.1.50", 5000)
-    assert h._local_admin() is False                 # remote client on a NIC bind -> denied
+    assert h._local_admin() is False
     h.client_address = ("127.0.0.1", 5000)
-    assert h._local_admin() is True                  # loopback client -> allowed
+    assert h._local_admin() is True
+
+    # loopback bind: only reachable locally -> always admin
     h.state = SimpleNamespace(host="127.0.0.1")
     h.client_address = ("192.168.1.50", 5000)
-    assert h._local_admin() is True                  # loopback bind -> all clients are the host
+    assert h._local_admin() is True
+
+    # explicit NIC bind: the host must connect via that address -> admin allowed
+    h.state = SimpleNamespace(host="192.168.1.5")
+    h.client_address = ("192.168.1.5", 5000)
+    assert h._local_admin() is True

@@ -819,6 +819,11 @@ function qualitySection(q){
   return head+rows;
 }
 async function fixDuplicate(ids, btn){
+  // Fix operates on the on-disk labels and may quarantine/purge the current image,
+  // so persist its edits first -- otherwise the only labelled copy could be moved
+  // away before the user's edits are saved.
+  if(dirty && idx>=0 && !(await save())){ banner("Save the current image before fixing duplicates."); return; }
+  if(dirty){ banner("You have unsaved edits — save before fixing duplicates."); return; }
   btn.disabled=true; btn.textContent="…";
   try{
     const r=await fetch("/api/insights/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids, epoch:(DS&&DS.epoch)||0})});
@@ -975,7 +980,9 @@ async function carryForward(){
   const vis = visibleIds(), p = vis.indexOf(idx);
   const prevId = p>0 ? vis[p-1] : -1;
   if(prevId<0){ banner("No previous image to copy from."); return; }
+  const myGen = loadSeq, srcIdx = idx;
   let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
+  if(myGen!==loadSeq || idx!==srcIdx) return;   // navigated during the fetch -> don't paste onto the wrong image
   const anns = lab.annotations||[];
   if(!anns.length){ banner("The previous image has no labels to copy."); return; }
   const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
@@ -1557,7 +1564,7 @@ function renderRadarDeck(o){
   $("#radarbody").innerHTML=sum+rows;
   document.querySelectorAll("#radarbody .rrow").forEach(b=> b.onclick=()=>{ closeRadar(); reviewFinding(+b.dataset.id); });
 }
-async function reviewFinding(id){ await load(id); await loadRadarFindings(id); }
+async function reviewFinding(id){ await load(id); if(idx===id) await loadRadarFindings(id); }   // only overlay if load() actually landed on this image
 async function loadRadarFindings(id){
   const myGen=loadSeq;
   try{ const d=await jget(`/api/assist/radar/${id}`);
@@ -1664,6 +1671,7 @@ async function runBoost(){
   if(dirty && idx>=0 && !(await save())){
     banner("Save the current image first — Boost trains on your accepted labels."); return;
   }
+  if(dirty){ banner("You edited while saving — press → to save before boosting."); return; }   // in-flight edits: don't train on stale labels
   setBoostChip("run", "Boosting — warming up…");
   try{
     const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
