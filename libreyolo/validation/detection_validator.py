@@ -87,7 +87,13 @@ class DetectionValidator(BaseValidator):
 
         Supports directory-based datasets, .txt file format, and COCO JSON.
         """
-        from libreyolo.data import load_data_config, get_img_files, img2label_paths
+        from libreyolo.data import (
+            get_coco_annotation_file,
+            get_coco_image_dir,
+            get_img_files,
+            img2label_paths,
+            load_data_config,
+        )
         from libreyolo.data.dataset import YOLODataset, COCODataset
         from torch.utils.data import DataLoader
 
@@ -100,6 +106,7 @@ class DetectionValidator(BaseValidator):
         label_files = None
         split_name = self.config.split
         data_cfg = None
+        explicit_coco_annotation = None
 
         if self.config.data:
             data_cfg = load_data_config(
@@ -118,6 +125,10 @@ class DetectionValidator(BaseValidator):
             # Check for pre-resolved file lists (from .txt format)
             img_files_key = f"{self.config.split}_img_files"
             label_files_key = f"{self.config.split}_label_files"
+            explicit_coco_annotation = get_coco_annotation_file(
+                data_cfg,
+                self.config.split,
+            )
 
             if img_files_key in data_cfg:
                 img_files = data_cfg[img_files_key]
@@ -166,13 +177,29 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id = None
         self._yolo_coco_img_files = None
         self._yolo_coco_label_files = None
-        coco_annotation_file = self._find_coco_annotation_file(data_path)
+        coco_annotation_file = (
+            Path(explicit_coco_annotation)
+            if explicit_coco_annotation
+            else self._find_coco_annotation_file(data_path)
+        )
 
         if coco_annotation_file is not None:
             # Prefer official COCO JSON when it is present. This preserves
             # COCO image ids, category ids, crowd annotations, and area ranges.
-            json_file = coco_annotation_file.name
-            split_name = self._resolve_coco_image_dir(data_path, json_file)
+            json_file = (
+                str(coco_annotation_file)
+                if explicit_coco_annotation
+                else coco_annotation_file.name
+            )
+            split_name = (
+                get_coco_image_dir(
+                    data_cfg,
+                    self.config.split,
+                    self._resolve_coco_image_dir(data_path, coco_annotation_file.name),
+                )
+                if data_cfg is not None
+                else self._resolve_coco_image_dir(data_path, coco_annotation_file.name)
+            )
 
             dataset = COCODataset(
                 data_dir=str(data_path),

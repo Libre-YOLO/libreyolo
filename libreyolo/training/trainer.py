@@ -46,7 +46,13 @@ from .distributed import (
 from .ema import ModelEMA
 from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
-from ..data import load_data_config, get_img_files, img2label_paths
+from ..data import (
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+)
 from ..utils.serialization import (
     SCHEMA_VERSION,
     build_class_names,
@@ -447,12 +453,27 @@ class BaseTrainer(ABC):
             )
 
             ann_file = Path(data_dir) / "annotations" / "instances_train2017.json"
+            coco_ann_file = get_coco_annotation_file(data_cfg, "train")
 
             # Prefer pre-resolved file lists from load_data_config (.txt format)
             img_files = data_cfg.get("train_img_files")
             label_files = data_cfg.get("train_label_files")
 
-            if img_files:
+            if coco_ann_file:
+                if load_obb:
+                    raise ValueError(
+                        "YOLO9 OBB training expects YOLO OBB txt labels; "
+                        "COCO JSON OBB loading is not implemented."
+                    )
+                train_dataset = COCODataset(
+                    data_dir=data_dir,
+                    json_file=coco_ann_file,
+                    name=get_coco_image_dir(data_cfg, "train", "train2017"),
+                    img_size=img_size,
+                    preproc=preproc,
+                    load_segments=load_segments,
+                )
+            elif img_files:
                 train_dataset = YOLODataset(
                     img_files=img_files,
                     label_files=label_files,

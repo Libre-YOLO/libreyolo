@@ -530,7 +530,7 @@ class COCODataset(ImageCacheMixin, Dataset):
                 "Install with: pip install pycocotools"
             )
 
-        self.data_dir = data_dir
+        self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
         self.img_size = img_size
@@ -539,8 +539,8 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.load_segments = load_segments
 
         # Load COCO annotations
-        ann_file = os.path.join(data_dir, "annotations", json_file)
-        self.coco = COCO(ann_file)
+        ann_file = self._annotation_path()
+        self.coco = COCO(str(ann_file))
 
         # Remove useless info to save memory
         self._remove_useless_info()
@@ -553,6 +553,14 @@ class COCODataset(ImageCacheMixin, Dataset):
 
         # Pre-load annotations
         self.annotations = self._load_coco_annotations()
+
+    def _annotation_path(self) -> Path:
+        path = Path(self.json_file)
+        if path.is_absolute():
+            return path
+        if path.parent != Path("."):
+            return self.data_dir / path
+        return self.data_dir / "annotations" / path
 
     def _remove_useless_info(self):
         """Remove useless info from COCO to save memory."""
@@ -666,7 +674,10 @@ class COCODataset(ImageCacheMixin, Dataset):
     def _image_path(self, index: int) -> Path:
         """Source image path for given index (used for disk caching)."""
         file_name = self.annotations[index][3]
-        return Path(self.data_dir) / self.name / file_name
+        image_root = Path(self.name)
+        if image_root.is_absolute():
+            return image_root / file_name
+        return self.data_dir / image_root / file_name
 
     def _decode_image(self, index: int) -> np.ndarray:
         """Decode image from disk for given index."""
