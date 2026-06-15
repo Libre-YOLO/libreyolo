@@ -16,7 +16,8 @@ Applies to `detect`, `segment`, `pose`, and `obb`.
 - `names`: required list or integer-keyed class mapping.
 - `nc`: optional; must match `names` when present.
 - `download`: optional; Python download scripts require explicit opt-in.
-- `annotations`: optional mapping of split names to native COCO JSON files.
+- `annotations`: optional mapping of split names to native COCO JSON files for
+  detection and instance segmentation.
 
 `train`, `val`, and `test` may be image directories, image-list `.txt` files,
 or lists of those values. Label paths follow:
@@ -25,8 +26,8 @@ or lists of those values. Label paths follow:
 images/.../image.jpg -> labels/.../image.txt
 ```
 
-For native COCO JSON datasets, `annotations` maps a split to the JSON file and
-the split path gives the image root:
+For native COCO JSON detection/instance-segmentation datasets, `annotations`
+maps a split to the JSON file and the split path gives the image root:
 
 ```yaml
 path: dataset

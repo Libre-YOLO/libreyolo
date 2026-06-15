@@ -348,7 +348,7 @@ def get_coco_image_dir(config: Dict, split: str, default: str) -> str:
             "Native COCO JSON loading expects one image directory per split; "
             f"got a list for '{split}'."
         )
-    if str(split_path).endswith(".txt"):
+    if Path(str(split_path)).suffix.lower() == ".txt":
         raise ValueError(
             "Native COCO JSON loading expects an image directory, not an image "
             f"list file for '{split}'."

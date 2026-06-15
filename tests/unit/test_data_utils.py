@@ -166,7 +166,7 @@ def test_load_data_config_resolves_coco_annotation_paths(tmp_path):
     )
 
 
-@pytest.mark.parametrize("split_value", [["images/a", "images/b"], "train.txt"])
+@pytest.mark.parametrize("split_value", [["images/a", "images/b"], "train.txt", "TRAIN.TXT"])
 def test_coco_image_dir_requires_single_directory(split_value):
     with pytest.raises(ValueError, match="Native COCO JSON loading expects"):
         get_coco_image_dir({"train": split_value}, "train", "train2017")
