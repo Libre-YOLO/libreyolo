@@ -78,6 +78,7 @@ class AssistEngine:
         self.default_model = default_model
         self.enabled = enabled
         self._models: dict = {}
+        self._la = None                # LocateAnything (open-vocab), lazy
         self._lock = threading.Lock()  # serialize inference (models not thread-safe)
         self.pending: Dict[int, List[dict]] = {}  # idx -> suggestions (never written)
         self._pending_lock = threading.Lock()
@@ -101,7 +102,8 @@ class AssistEngine:
             if self.default_model in names
             else (names[0] if names else None)
         )
-        return {"available": bool(names) and self.enabled, "models": names, "default": default}
+        return {"available": bool(names) and self.enabled, "models": names,
+                "default": default, "locate": self.locate_available()}
 
     # -- pending suggestions (in-memory only) ------------------------------
     def set_pending(self, idx: int, suggestions: List[dict]) -> None:
@@ -148,11 +150,16 @@ class AssistEngine:
         are returned (not dropped) so the UI can show them for review.
         """
         model_name = model_name or self.default_model
-        resolve = build_class_map(names)
         single_class = len(names) == 1
         with self._lock:
             model = self._get_model(model_name)
             result = model(str(image_path), conf=conf)
+        return self._extract(result, image_path, names,
+                             single_class=single_class, map_all_to_zero=map_all_to_zero)
+
+    def _extract(self, result, image_path, names, *, single_class=False, map_all_to_zero=False):
+        """Turn a detector/VLM Results into normalised, name-mapped suggestions."""
+        resolve = build_class_map(names)
         r = result[0] if isinstance(result, list) else result
         boxes = getattr(r, "boxes", None)
         if boxes is None or len(boxes) == 0:
@@ -176,19 +183,41 @@ class AssistEngine:
             cid = int(c)
             mname = str(model_names.get(cid, cid))
             didx = 0 if (map_all_to_zero and single_class) else resolve(mname)
-            out.append(
-                {
-                    "cls": didx,
-                    "name": mname,
-                    "cx": float(cx),
-                    "cy": float(cy),
-                    "w": float(w),
-                    "h": float(h),
-                    "conf": float(p),
-                    "mapped": didx is not None,
-                }
-            )
+            out.append({"cls": didx, "name": mname, "cx": float(cx), "cy": float(cy),
+                        "w": float(w), "h": float(h), "conf": float(p), "mapped": didx is not None})
         return out
+
+    # -- LocateAnything (open-vocab text-prompt detection) -----------------
+    def locate_available(self) -> bool:
+        # Surface the option whenever transformers is present; the actual 3B model
+        # + its VLM deps download/load on use and error with a clear install hint.
+        if not self.enabled:
+            return False
+        try:
+            import importlib.util
+
+            return importlib.util.find_spec("transformers") is not None
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _get_la(self):
+        if self._la is None:
+            from libreyolo import LibreVLM
+
+            logger.info("LibreLabel loading LocateAnything (NVIDIA, non-commercial)")
+            self._la = LibreVLM("locate-anything", device=self.device)
+        return self._la
+
+    def predict_locate(self, image_path: Path, names: List[str], classes: List[str]) -> List[dict]:
+        """Open-vocabulary detection via LocateAnything. ``classes`` = label strings."""
+        clean = [c.strip() for c in classes if c and c.strip()]
+        if not clean:
+            return []
+        with self._lock:
+            m = self._get_la()
+            m.set_classes(clean)
+            result = m.predict(str(image_path))
+        return self._extract(result, image_path, names)
 
     def autolabel_dataset(
         self,
@@ -197,6 +226,8 @@ class AssistEngine:
         conf: float = 0.25,
         only_unlabeled: bool = True,
         progress: Optional[Callable[[dict], None]] = None,
+        engine: str = "yolo",
+        classes: Optional[List[str]] = None,
     ) -> dict:
         """Predict over every (unlabeled) image and PARK suggestions in ``pending``.
 
@@ -221,7 +252,10 @@ class AssistEngine:
                               "id": idx, "name": name, "count": 0, "skipped": True})
                 continue
             try:
-                sugg = self.predict_image(session.image_path(idx), names, model_name, conf)
+                if engine == "locate":
+                    sugg = self.predict_locate(session.image_path(idx), names, classes or [])
+                else:
+                    sugg = self.predict_image(session.image_path(idx), names, model_name, conf)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("auto-label failed on image %d", idx)
                 if progress:

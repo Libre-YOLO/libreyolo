@@ -217,10 +217,17 @@ class _Handler(BaseHTTPRequestHandler):
         if not editable:
             self._send(200, {"editable": False, "suggestions": []})
             return
+        engine = (qs.get("engine") or ["yolo"])[0]
         try:
-            sugg = self.state.engine.predict_image(
-                self.state.session.image_path(idx), self.state.session.names, model, conf
-            )
+            if engine == "locate":
+                classes = (qs.get("classes") or [""])[0].split(",")
+                sugg = self.state.engine.predict_locate(
+                    self.state.session.image_path(idx), self.state.session.names, classes
+                )
+            else:
+                sugg = self.state.engine.predict_image(
+                    self.state.session.image_path(idx), self.state.session.names, model, conf
+                )
         except Exception as exc:  # noqa: BLE001 - model load/inference problem
             logger.exception("prelabel failed")
             self._send(503, {"error": str(exc)})
@@ -263,6 +270,8 @@ class _Handler(BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
         model, conf = self._model_conf(qs)
+        engine = (qs.get("engine") or ["yolo"])[0]
+        classes = [c for c in (qs.get("classes") or [""])[0].split(",") if c.strip()]
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -284,7 +293,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             self.state.engine.clear_pending()  # fresh run replaces stale suggestions
             summary = self.state.engine.autolabel_dataset(
-                self.state.session, model_name=model, conf=conf, progress=emit
+                self.state.session, model_name=model, conf=conf, progress=emit,
+                engine=engine, classes=classes,
             )
             emit(summary)
         except Exception as exc:  # noqa: BLE001

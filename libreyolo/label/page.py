@@ -76,7 +76,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .ai input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
     background:var(--ai);cursor:pointer;box-shadow:0 0 0 3px rgba(34,211,238,.2)}
   .select{height:32px;border-radius:var(--r2);background:var(--s1);color:var(--tx2);
-    border:1px solid var(--line);padding:0 8px;font-size:12px;max-width:140px}
+    border:1px solid var(--line);padding:0 8px;font-size:12px;max-width:170px}
+  .laprompt{height:32px;width:210px;border-radius:var(--r2);background:var(--s1);color:var(--tx);
+    border:1px solid var(--line);padding:0 11px;font-size:12px;outline:none}
+  .laprompt:focus{border-color:var(--ac)}
   .save{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;
     border:1px solid var(--line);color:var(--tx3);font-size:12px;font-weight:540}
   .save::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
@@ -221,7 +224,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <span class="ai" id="assistbar" style="display:none">
       <button class="btn btn-primary" id="aautolabel"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Auto-label all</button>
       <button class="btn btn-ghost btn-sm" id="aprelabel" title="Auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M19 8h2M5 20l9-9M14 6l4 4"/></svg>R</button>
-      <span class="field"><span>conf</span><input type="range" id="aconf" min="0.05" max="0.9" step="0.05"><b id="aconfval">0.25</b></span>
+      <button class="btn btn-ghost btn-sm" id="asam" title="Smart-segment with SAM (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>SAM</button>
+      <input id="laprompt" class="laprompt" placeholder="objects to find — e.g. person, helmet" style="display:none">
+      <span class="field" id="aconffield"><span>conf</span><input type="range" id="aconf" min="0.05" max="0.9" step="0.05"><b id="aconfval">0.25</b></span>
       <select id="amodel" class="select"></select>
     </span>
     <span class="save" id="save"></span>
@@ -663,15 +668,31 @@ async function initAssist(){
   if(!assist || !assist.available){ if(bar) bar.style.display="none"; if(toolAi) toolAi.style.display="none"; return; }
   assistModel = assist.default;
   const sel = $("#amodel"); sel.innerHTML = "";
+  if(assist.locate){ const o=document.createElement("option"); o.value="__locate__"; o.textContent="Locate Anything (text)"; sel.appendChild(o); }
   assist.models.forEach(m=>{ const o=document.createElement("option");
     o.value=m; o.textContent=m; if(m===assistModel) o.selected=true; sel.appendChild(o); });
-  sel.onchange = ()=> assistModel = sel.value;
+  sel.onchange = ()=>{ assistModel = sel.value; updateEngineUI(); };
   const cs = $("#aconf"); cs.value = conf; $("#aconfval").textContent = conf.toFixed(2);
   cs.oninput = ()=>{ conf = parseFloat(cs.value); $("#aconfval").textContent = conf.toFixed(2); };
   $("#aprelabel").onclick = ()=> prelabelCurrent();
   $("#aautolabel").onclick = ()=> autolabelAll();
+  const asam = $("#asam");
+  if(assist.sam && asam){ asam.style.display="inline-flex"; asam.onclick = ()=> setTool("seg"); }
   bar.style.display = "flex";
   if(assist.sam){ const ts=$("#toolSeg"); if(ts) ts.style.display="grid"; }
+  updateEngineUI();
+}
+function updateEngineUI(){
+  const la = assistModel==="__locate__";
+  const lp=$("#laprompt"), cf=$("#aconffield");
+  if(lp) lp.style.display = la? "inline-block":"none";
+  if(cf) cf.style.display = la? "none":"inline-flex";
+  if(la){ banner("Locate Anything — NVIDIA non-commercial model (downloads a 3B model + runs remote code). Type the objects to find, then Auto-label."); if(lp) lp.focus(); }
+  else { $("#banner").style.display="none"; }
+}
+function laQuery(){
+  if(assistModel==="__locate__") return "engine=locate&classes="+encodeURIComponent(($("#laprompt").value||"").trim());
+  return "model="+encodeURIComponent(assistModel)+"&conf="+conf;
 }
 function restoreSave(){ setSave(dirty?"unsaved":(editable?"saved":"read-only")); }
 function ghostsFromNorm(list){
@@ -694,7 +715,7 @@ async function prelabelCurrent(){
   if(!editable){ banner("This image is read-only (polygon/OBB labels)."); return; }
   const myGen = loadSeq; setSave("running model…");
   try{
-    const r = await fetch(`/api/assist/prelabel/${idx}?model=${encodeURIComponent(assistModel)}&conf=${conf}`, {method:"POST"});
+    const r = await fetch(`/api/assist/prelabel/${idx}?${laQuery()}`, {method:"POST"});
     if(myGen!==loadSeq) return;
     if(!r.ok){ const e=await r.json().catch(()=>({})); banner("Auto-label failed: "+(e.error||r.status)); restoreSave(); return; }
     const data = await r.json();
@@ -791,7 +812,7 @@ async function autolabelAll(){
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[]; const t0=Date.now();
   try{
-    const r = await fetch(`/api/assist/autolabel?model=${encodeURIComponent(assistModel)}&conf=${conf}`, {method:"POST"});
+    const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});
     const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
     for(;;){
       const {value,done}=await reader.read(); if(done) break;
