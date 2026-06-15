@@ -5,6 +5,7 @@ Tests that COCO evaluator is properly integrated into the validation pipeline
 using mock data (no GPU or real datasets needed).
 """
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -44,6 +45,10 @@ class _DummyEvaluator:
     def compute(self, save_json=None):
         self.saved_paths.append(save_json)
         return dict(self.metrics)
+
+
+def _null_val_preprocessor(*, img_size: int) -> None:
+    assert img_size > 0
 
 
 def create_mock_yolo_dataset(tmp_path):
@@ -147,6 +152,145 @@ def test_coco_evaluator_integration(tmp_path):
     ]
     for key in expected_keys:
         assert key in metrics, f"Missing metric: {key}"
+
+
+@pytest.mark.unit
+def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    image_dir = tmp_path / "images" / "custom_val"
+    ann_dir = tmp_path / "custom_annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (64, 64), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 64, "height": 64}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [8, 8, 16, 16],
+                        "area": 256,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: images/custom_val\n"
+        "val: images/custom_val\n"
+        "annotations:\n"
+        "  val: custom_annotations/valid.json\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(
+        data=str(yaml_path),
+        data_dir=None,
+        split="val",
+        allow_download_scripts=False,
+        imgsz=64,
+        batch_size=1,
+        num_workers=0,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 64,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.json_file == str(ann_dir / "valid.json")
+    assert loader.dataset.name == str(image_dir)
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+
+
+@pytest.mark.unit
+def test_detection_validator_accepts_txt_split_with_discovered_coco_json(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    image_dir = tmp_path / "val2017"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir()
+    ann_dir.mkdir()
+    Image.new("RGB", (64, 64), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "instances_val2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 64, "height": 64}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [8, 8, 16, 16],
+                        "area": 256,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "val2017.txt").write_text("val2017/sample.jpg\n", encoding="utf-8")
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: val2017.txt\n"
+        "val: val2017.txt\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(
+        data=str(yaml_path),
+        data_dir=None,
+        split="val",
+        allow_download_scripts=False,
+        imgsz=64,
+        batch_size=1,
+        num_workers=0,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 64,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.json_file == "instances_val2017.json"
+    assert loader.dataset.name == "val2017"
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
 
 
 @pytest.mark.unit

@@ -6,6 +6,7 @@ Provides dataset auto-download, path resolution, and configuration loading.
 Supports YAML configs with:
 - Directory paths (e.g., val: images/val)
 - Text file paths (e.g., val: val2017.txt)
+- COCO JSON annotation paths (e.g., annotations: {val: annotations/val.json})
 - List paths (e.g., val: [path1, path2])
 - Python download scripts
 """
@@ -234,6 +235,7 @@ def load_data_config(
     Supports YAML formats:
     - Directory paths: train/val point to directories (e.g., "images/train")
     - File list paths: train/val can be .txt files (e.g., "train2017.txt")
+    - Native COCO JSON annotations via annotations: {train: "...", val: "..."}
 
     If the dataset doesn't exist locally and a download URL/script is specified
     in the YAML, it will be automatically downloaded.
@@ -251,6 +253,7 @@ def load_data_config(
         - train/val/test: Resolved paths (directory or .txt file)
         - {split}_img_files: List of resolved image paths (when discoverable)
         - {split}_label_files: List of resolved label paths (when discoverable)
+        - {split}_annotation_file: Resolved COCO JSON path (when configured)
         - names: Class names dict or list
         - nc: Number of classes
 
@@ -303,10 +306,54 @@ def load_data_config(
                 # Split path doesn't exist yet or contains no supported images.
                 pass
 
+    _resolve_coco_annotation_paths(config, dataset_path)
+
     # Keep 'root' for backward compatibility
     config["root"] = str(dataset_path)
 
     return config
+
+
+def _resolve_coco_annotation_paths(config: Dict, dataset_path: Path) -> None:
+    annotations = config.get("annotations")
+    if annotations is None:
+        return
+    if not isinstance(annotations, dict):
+        raise ValueError(
+            "Dataset 'annotations' must map split names to COCO JSON paths, "
+            "for example: annotations: {train: annotations/train.json}"
+        )
+
+    for split in ("train", "val", "test"):
+        annotation_path = annotations.get(split)
+        if not annotation_path:
+            continue
+        path = Path(annotation_path)
+        if not path.is_absolute():
+            path = dataset_path / path
+        config[f"{split}_annotation_file"] = str(path)
+
+
+def get_coco_annotation_file(config: Dict, split: str) -> Optional[str]:
+    """Return the resolved COCO JSON path for a split, if configured."""
+    annotation_file = config.get(f"{split}_annotation_file")
+    return str(annotation_file) if annotation_file else None
+
+
+def get_coco_image_dir(config: Dict, split: str, default: str) -> str:
+    """Return the resolved image root to pair with a configured COCO JSON file."""
+    split_path = config.get(split)
+    if isinstance(split_path, list):
+        raise ValueError(
+            "Native COCO JSON loading expects one image directory per split; "
+            f"got a list for '{split}'."
+        )
+    if Path(str(split_path)).suffix.lower() == ".txt":
+        raise ValueError(
+            "Native COCO JSON loading expects an image directory, not an image "
+            f"list file for '{split}'."
+        )
+    return str(split_path) if split_path else default
 
 
 def _resolve_dataset_path(config: Dict, yaml_path: Path) -> Path:

@@ -1,5 +1,7 @@
 """Unit tests for YOLOv9 layers."""
 
+import json
+
 import pytest
 import numpy as np
 import torch
@@ -723,6 +725,72 @@ def test_yolo9_trainer_disables_proxy_mosaic_for_obb(tmp_path):
     assert train_dataset.mixup_prob == 0.0
     assert train_dataset.preproc.vertical_flip_prob == 0.5
     assert train_dataset.dataset.num_classes == 1
+
+
+def test_yolo9_trainer_uses_explicit_coco_json_paths(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+
+    image_dir = tmp_path / "images" / "custom_train"
+    ann_dir = tmp_path / "custom_annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (64, 64), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "train.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 64, "height": 64}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [8, 8, 16, 16],
+                        "area": 256,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: images/custom_train\n"
+        "val: images/custom_train\n"
+        "annotations:\n"
+        "  train: custom_annotations/train.json\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    wrapper = type(
+        "Wrapper",
+        (),
+        {"task": "detect", "nb_classes": 1, "names": {0: "vehicle"}},
+    )()
+    trainer = YOLO9Trainer(
+        model=torch.nn.Conv2d(3, 3, 1),
+        wrapper_model=wrapper,
+        data=str(data_yaml),
+        epochs=1,
+        batch=1,
+        imgsz=64,
+        workers=0,
+        device="cpu",
+    )
+
+    train_dataset = trainer._setup_data()
+
+    assert isinstance(train_dataset.dataset, COCODataset)
+    assert train_dataset.dataset.json_file == str(ann_dir / "train.json")
+    assert train_dataset.dataset.name == str(image_dir)
+    assert train_dataset.dataset._image_path(0) == image_dir / "sample.jpg"
 
 
 def test_yolo9_trainer_checkpoint_uses_resolved_data_classes_for_obb(tmp_path):
