@@ -686,6 +686,11 @@ function markRow(){
   const cur = document.querySelector(`#list .card[data-id="${idx}"]`);
   if(cur) cur.scrollIntoView({block:"nearest"});
 }
+let _relistTimer = null;
+function scheduleRelist(){   // coalesce many status changes (e.g. a bulk run) into one re-render
+  if(_relistTimer) return;
+  _relistTimer = setTimeout(()=>{ _relistTimer=null; renderList(); }, 80);
+}
 function setRowStatus(id, status){
   IMAGES[id] && (IMAGES[id].status = status);
   const card = document.querySelector(`#list .card[data-id="${id}"]`);
@@ -693,6 +698,8 @@ function setRowStatus(id, status){
     const st = card.querySelector(".st");
     if(st) st.innerHTML = `<i class="dot ${status}"></i>${status}`;
     if(IMAGES[id] && !passFilter(IMAGES[id])) card.remove();
+  } else if(IMAGES[id] && passFilter(IMAGES[id])){
+    scheduleRelist();   // a hidden row now matches the active filter -> bring it into the sidebar
   }
   updateProgress();
 }
@@ -848,6 +855,9 @@ async function load(i){
     banner("Save failed — staying on this image so you don't lose work."); return;
   }
   if(myGen !== loadSeq) return;   // a newer load() started during the await -> bail before mutating idx
+  if(dirty){   // edits landed *during* the save (snap changed mid-POST) -> still unsaved; don't discard them
+    banner("You edited while saving — press → again to save those changes."); return;
+  }
   idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
   const lab = await jget(`/api/label/${i}`);
@@ -892,6 +902,7 @@ function polyToNorm(p){
 }
 async function save(){
   if(!imgOk || !editable || (DS && !DS.writable)){ return true; }
+  const totalShapes = boxes.length + polys.length;   // everything on the canvas
   const anns = boxes.map(pxToNorm).filter(b=>b.w>0&&b.h>0)
     .map(b=>({type:"box", cls:b.cls, cx:b.cx, cy:b.cy, w:b.w, h:b.h}));
   polys.forEach(p=>{ const pts=polyToNorm(p); if(pts.length>=6) anns.push({type:"poly", cls:p.cls, points:pts}); });
@@ -902,11 +913,14 @@ async function save(){
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
     const d = await r.json().catch(()=>({}));
     const saved = (d && typeof d.count==="number") ? d.count : anns.length;
-    const dropped = anns.length - saved;
+    // Compare against EVERY shape on the canvas, not just what we sent: a box clipped
+    // to zero area (or a <3-pt polygon) is filtered out client-side and would
+    // otherwise look like a clean save while silently vanishing on reload.
+    const dropped = totalShapes - saved;
     if(dropped > 0){
-      // The server sanitized away degenerate (zero-area / collinear) shapes. Keep
-      // the edit DIRTY/failed so close & navigation warn and the dropped shape can't
-      // silently vanish on the next load -- the user must fix or delete it.
+      // The shape didn't reach disk (client-filtered zero-area, or server-sanitized
+      // degenerate/collinear). Keep the edit DIRTY/failed so close & navigation warn
+      // and it can't silently vanish on the next load -- the user must fix or delete it.
       dirty = true; setSave("unsaved");
       suggestedIds.delete(cur); setRowStatus(cur, saved? "labeled":"empty"); scheduleStats();
       banner(`${dropped} invalid shape${dropped>1?"s":""} dropped (degenerate) — fix or delete it to save.`);
@@ -1156,7 +1170,7 @@ async function autolabelAll(){
   const ov=$("#progress"), bar=$("#pbar"), txt=$("#ptxt");
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows
-  suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[]; const t0=Date.now();
+  suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[], failed=null; const t0=Date.now();
   const myGen = loadSeq;
   try{
     const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});
@@ -1173,8 +1187,15 @@ async function autolabelAll(){
           txt.textContent = `${o.i} / ${o.total} — ${o.name}` + (o.count? `  (+${o.count})`:"");
           if(o.count>0){ suggestedIds.add(o.id); setRowStatus(o.id, "suggested"); }
         } else if(o.type==="done"){ suggested=o.suggested; totalBoxes=o.boxes; classes=o.classes||[]; }
-        else if(o.type==="error"){ banner("Auto-label failed: "+o.error); }
+        else if(o.type==="error"){ failed = o.error || "auto-label failed"; banner("Auto-label failed: "+failed); }
       }
+    }
+    if(failed){   // systemic failure (e.g. missing local weights) -> show it, don't claim a clean "Done"
+      $(".ptitle").textContent = "Auto-label failed";
+      txt.textContent = failed;
+      bar.style.width="0%";
+      setTimeout(()=>{ ov.style.display="none"; $(".ptitle").textContent="Auto-labeling with your model"; }, 3500);
+      return;
     }
     bar.style.width="100%";
     const secs = ((Date.now()-t0)/1000).toFixed(1);
@@ -1640,7 +1661,9 @@ function drawLoupe(){
 // ---- Boost: train-in-the-loop (background fine-tune + agreement delta) ----
 async function runBoost(){
   if(!assist || !assist.boost) return;
-  if(dirty && idx>=0) await save();
+  if(dirty && idx>=0 && !(await save())){
+    banner("Save the current image first — Boost trains on your accepted labels."); return;
+  }
   setBoostChip("run", "Boosting — warming up…");
   try{
     const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});

@@ -118,6 +118,12 @@ class EmbedEngine:
         """Embed every live image; return ``(ids, features)`` (an ``(N, D)`` array)."""
         import numpy as np
 
+        # Pre-flight the model once: a systemic load failure (missing local weights)
+        # must propagate so the Map surfaces the actionable error, not finish with an
+        # empty "done" and "no points" -- the same contract Radar/auto-label use.
+        with self._lock:
+            self._ensure()
+
         ids: List[int] = []
         rows: List = []
         total = len(session)

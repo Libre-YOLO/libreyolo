@@ -543,3 +543,19 @@ def test_autolabel_aborts_when_weights_missing(tmp_path):
     eng = AssistEngine(enabled=True, default_model="definitely-not-a-real-model-zzz")
     with pytest.raises(RuntimeError):
         eng.autolabel_dataset(ds)
+
+
+def test_sanitize_rejects_non_finite_before_clamp():
+    # Codex round 7: inf must be rejected on the RAW value, not clamped to 1.0
+    # (a finite edge) and then kept.
+    import math
+
+    from libreyolo.label.labelio import sanitize_annotations, sanitize_boxes
+
+    assert sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": math.inf, "h": 0.2}], nc=2) == []
+    assert sanitize_annotations(
+        [{"type": "box", "cls": 0, "cx": -math.inf, "cy": 0.5, "w": 0.2, "h": 0.2}], nc=2) == []
+    poly = {"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.4, math.inf, 0.4, 0.4, 0.1, 0.4]}
+    assert sanitize_annotations([poly], nc=2) == []
+    # a finite, valid box still round-trips
+    assert len(sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.3, "h": 0.3}], nc=2)) == 1

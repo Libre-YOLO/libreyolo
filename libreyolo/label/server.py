@@ -312,6 +312,10 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._same_origin():
                 self._send(403, {"error": "cross-origin request blocked"})
                 return
+            if path in ("/api/projects/open", "/api/projects/forget") and not self._local_admin():
+                self._send(403, {"error": "Switching projects is only allowed from the host "
+                                          "machine on a shared server."})
+                return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/forget"):
                 self._send(409, {"error": "no project open"})
@@ -393,6 +397,20 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         data = self.rfile.read(length) if length else b""
         return json.loads(data.decode("utf-8")) if data else {}
+
+    def _local_admin(self) -> bool:
+        """Whether this client may perform host-level admin (switching the project).
+
+        Opening/forgetting a project rebinds the *global* session for everyone, so on
+        a shared (``--share`` -> 0.0.0.0) server it must be limited to the host's own
+        loopback browser -- otherwise any LAN teammate could repoint the process at an
+        arbitrary local ``data.yaml`` (paths are even listed by /api/projects) and
+        read/write its labels. On a normal 127.0.0.1 bind every client is local already.
+        """
+        if self.state.host not in ("0.0.0.0", "::", ""):
+            return True
+        addr = (self.client_address[0] if self.client_address else "") or ""
+        return addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1") or addr.startswith("127.")
 
     def _same_origin(self) -> bool:
         """Block cross-origin state-changing requests (CSRF). A browser always sets

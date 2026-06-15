@@ -97,10 +97,13 @@ def sanitize_boxes(boxes: List[Box], nc: Optional[int] = None) -> List[Box]:
             continue
         if cls < 0 or (nc is not None and cls >= nc):
             continue
-        cx, cy = _clamp01(float(b["cx"])), _clamp01(float(b["cy"]))
-        w, h = _clamp01(float(b["w"])), _clamp01(float(b["h"]))
-        if w <= 0.0 or h <= 0.0 or not all(math.isfinite(v) for v in (cx, cy, w, h)):
-            continue   # nan/inf never reaches a label file
+        raw = (float(b["cx"]), float(b["cy"]), float(b["w"]), float(b["h"]))
+        if not all(math.isfinite(v) for v in raw):
+            continue   # reject nan/inf BEFORE clamp turns inf into an edge value
+        cx, cy = _clamp01(raw[0]), _clamp01(raw[1])
+        w, h = _clamp01(raw[2]), _clamp01(raw[3])
+        if w <= 0.0 or h <= 0.0:
+            continue
         out.append(Box(cls=cls, cx=cx, cy=cy, w=w, h=h))
     return out
 
@@ -200,11 +203,12 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
         if cls < 0 or (nc is not None and cls >= nc):
             continue
         if a.get("type") == "poly":
-            pts = [_clamp01(float(v)) for v in (a.get("points") or [])]
-            if len(pts) < 6 or len(pts) % 2 != 0:
+            raw_pts = [float(v) for v in (a.get("points") or [])]
+            if len(raw_pts) < 6 or len(raw_pts) % 2 != 0:
                 continue
-            if not all(math.isfinite(v) for v in pts):
-                continue   # nan/inf vertex -> drop (the area check below can't catch NaN)
+            if not all(math.isfinite(v) for v in raw_pts):
+                continue   # nan/inf vertex -> drop BEFORE clamp (inf would clamp to a finite edge)
+            pts = [_clamp01(v) for v in raw_pts]
             xs, ys = pts[0::2], pts[1::2]
             # Shoelace area: a width/height (bbox) check misses *diagonal* collinear
             # polygons -- e.g. (0,0),(0.5,0.5),(1,1) has positive bbox extents but
@@ -217,9 +221,12 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
                 continue
             out.append({"type": "poly", "cls": cls, "points": pts})
         else:
-            cx, cy = _clamp01(float(a["cx"])), _clamp01(float(a["cy"]))
-            w, h = _clamp01(float(a["w"])), _clamp01(float(a["h"]))
-            if w <= 0.0 or h <= 0.0 or not all(math.isfinite(v) for v in (cx, cy, w, h)):
+            raw = (float(a["cx"]), float(a["cy"]), float(a["w"]), float(a["h"]))
+            if not all(math.isfinite(v) for v in raw):
+                continue   # reject nan/inf before clamp
+            cx, cy = _clamp01(raw[0]), _clamp01(raw[1])
+            w, h = _clamp01(raw[2]), _clamp01(raw[3])
+            if w <= 0.0 or h <= 0.0:
                 continue
             out.append({"type": "box", "cls": cls, "cx": cx, "cy": cy, "w": w, "h": h})
     return out
