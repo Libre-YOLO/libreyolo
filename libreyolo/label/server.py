@@ -177,7 +177,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             sessionless = path in ("/", "/index.html", "/api/dataset", "/api/projects",
                                    "/api/server", "/api/assist/status", "/api/boost/status")
-            if self.state.session is None and not sessionless:
+            if self.state.session is None and path.startswith("/api/") and not sessionless:
                 self._send(409, {"error": "no project open"})
                 return
             if path in ("/", "/index.html"):
@@ -311,7 +311,13 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, meta)
                 except Exception as exc:  # noqa: BLE001 - bad dataset path/config
                     logger.exception("open project failed")
-                    self._send(400, {"error": str(exc)})
+                    if isinstance(exc, FileNotFoundError):
+                        msg = "No dataset YAML found at that path."
+                    elif isinstance(exc, UnicodeDecodeError):
+                        msg = "That file is not a dataset YAML (couldn't read it as text)."
+                    else:
+                        msg = str(exc).splitlines()[0][:140] or "Could not open that dataset."
+                    self._send(400, {"error": msg})
             elif path == "/api/projects/forget":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None

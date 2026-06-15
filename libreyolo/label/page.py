@@ -87,6 +87,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .save::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
   .save.dirty{color:var(--warn);border-color:rgba(245,177,61,.35);background:rgba(245,177,61,.08)}
   .save.saved{color:var(--ok);border-color:rgba(45,212,167,.35);background:rgba(45,212,167,.08)}
+  .save.fail{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:rgba(239,68,68,.08)}
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.14)}100%{transform:scale(1)}}
   .save.flash{animation:pop .42s ease-out}
   /* main */
@@ -422,7 +423,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="mhead"><h3>Embedding map</h3><button class="mx" id="mapclose">&times;</button></div>
     <div class="mapstage">
       <canvas id="mapcv"></canvas>
-      <div class="maplegend"><span><i style="background:#10b981"></i>labeled</span><span><i style="background:#64748b"></i>unlabeled</span></div>
+      <div class="maplegend"><span><i style="background:#10b981"></i>labeled</span><span><i style="background:#22d3ee"></i>to review</span><span><i style="background:#64748b"></i>unlabeled</span></div>
       <div class="maphint" id="maphint">Drag a lasso around a region → jump to those images</div>
     </div>
   </div></div>
@@ -457,6 +458,7 @@ let view = {scale:1, ox:0, oy:0};
 let VW = 1, VH = 1;
 let loadSeq = 0;
 let undoStack = [];
+let savedSnap = "";   // snapshot of the last saved/loaded state (undo-back-to-clean baseline)
 let gestureSnap = null;
 let cursor = null;
 let hover = -1;
@@ -674,7 +676,8 @@ function renderList(){
     r.onclick = ()=> load(im.id);
     el.appendChild(r);
   });
-  if(!shown) el.innerHTML = `<div class="empty">No ${listFilter==="all"?"":esc(listFilter)+" "}images</div>`;
+  if(!shown){ const lbl = listFilter==="todo"?"to-do ":listFilter==="review"?"review ":"";
+    el.innerHTML = `<div class="empty">No ${lbl}images${imgQuery?" match the filter":""}</div>`; }
 }
 function markRow(){
   document.querySelectorAll("#list .card").forEach(r=> r.classList.toggle("sel", +r.dataset.id===idx));
@@ -808,7 +811,7 @@ async function fixDuplicate(ids, btn){
     if(!r.ok){ btn.textContent=(d.error||"failed").slice(0,42); return; }
     if(d.removed && d.removed.length){
       d.removed.forEach(rm=>{ suggestedIds.delete(rm.id); if(IMAGES[rm.id]) IMAGES[rm.id].status="deleted"; });
-      IMAGES=(await jget("/api/images")).images; renderList(); scheduleStats();
+      IMAGES=(await jget("/api/images")).images; mapPoints=[]; mapFit=null; renderList(); scheduleStats();
       lastInsights = await jget("/api/insights");
       lastQuality = await jget("/api/quality").catch(()=>lastQuality);
       renderInsights(lastInsights, lastQuality);
@@ -831,6 +834,7 @@ function snapCommit(){
 // ---- load / save ----
 async function load(i){
   if(i<0||i>=IMAGES.length) return;
+  if(IMAGES[i] && IMAGES[i].status==="deleted") return;   // never open a quarantined image
   const myGen = ++loadSeq;
   if(dirty && idx>=0 && !(await save())){
     banner("Save failed — staying on this image so you don't lose work."); return;
@@ -850,7 +854,7 @@ async function load(i){
       cls:b.cls, x:(b.cx-b.w/2)*iw, y:(b.cy-b.h/2)*ih, w:b.w*iw, h:b.h*ih}));
     polys = anns.filter(a=>a.type==="poly").map(p=>({
       cls:p.cls, pts:p.points.map((v,k)=> k%2===0? v*iw : v*ih)}));
-    dirty = false; setSave(editable?"saved":"read-only");
+    dirty = false; savedSnap = snap(); setSave(editable?"saved":"read-only");
     stageMsg = ""; fit(); draw();
     if(assist && assist.available && editable && suggestedIds.has(i)){
       fetch(`/api/assist/pending/${i}`).then(r=>r.json()).then(d=>{
@@ -887,7 +891,7 @@ async function save(){
     const r = await fetch(`/api/label/${cur}?epoch=${(DS&&DS.epoch)||0}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
-    dirty = false; setSave("saved");
+    dirty = false; savedSnap = snap(); setSave("saved");
     const el=$('#save'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
     suggestedIds.delete(cur);
     setRowStatus(cur, anns.length? "labeled":"empty");
@@ -898,38 +902,52 @@ async function save(){
 function markDirty(){ dirty = true; setSave("unsaved"); }
 function setSave(t){
   const e = $("#save"); e.textContent = t;
-  e.className = "save" + (t==="unsaved"?" dirty": t==="saved"?" saved":"");
+  const fail = (t==="save failed" || t==="image error" || t==="no images");
+  e.className = "save" + (t==="unsaved"?" dirty": t==="saved"?" saved": fail?" fail":"");
 }
 function banner(msg){ const b=$("#banner"); b.textContent=msg; b.style.display="flex"; }
 function updateProgress(){
   if(idx<0 || !IMAGES[idx]) return;
-  const done = IMAGES.filter(im=>im.status!=='unlabeled').length;
+  const live = IMAGES.filter(im=>im.status!=='deleted');   // tombstones out of the count
+  const total = live.length;
+  const done = live.filter(im=>im.status==='labeled').length;  // only accepted labels, matches Dataset Health
   const n = boxes.length + polys.length;
-  const sig = done+"|"+IMAGES.length+"|"+suggestedIds.size+"|"+idx+"|"+n;
+  const sig = done+"|"+total+"|"+suggestedIds.size+"|"+idx+"|"+n;
   if(sig===progSig) return; progSig = sig;
   const rev = suggestedIds.size ? ` &middot; <b style="color:var(--ai)">${suggestedIds.size}</b> to review` : "";
-  $("#counter").innerHTML = `<b>${done}</b>/${IMAGES.length} labeled${rev}`;
+  $("#counter").innerHTML = `<b>${done}</b>/${total} labeled${rev}`;
   const hud = $("#hud");
-  if(hud) hud.innerHTML = `${idx+1} / ${IMAGES.length} &nbsp;&middot;&nbsp; ${n} box${n===1?'':'es'}`
+  if(hud) hud.innerHTML = `${idx+1} / ${total} &nbsp;&middot;&nbsp; ${n} box${n===1?'':'es'}`
     + ` &nbsp;&middot;&nbsp; <span style="color:var(--tx3)">${esc(IMAGES[idx].name)}</span>`;
 }
+function visibleIds(){ return IMAGES.filter(passFilter).map(im=>im.id); }  // ordered, filter-aware, excludes deleted
+function step(dir){
+  const vis = visibleIds(); const L=vis.length; if(!L) return;
+  const p = vis.indexOf(idx);
+  load(p<0 ? vis[dir>0?0:L-1] : vis[(p+dir+L)%L]);
+}
 function nextUnlabeled(dir){
-  const L=IMAGES.length;
-  for(let n=1;n<=L;n++){ const j=((idx+dir*n)%L+L)%L;
-    if(IMAGES[j].status==="unlabeled"){ load(j); return; } }
+  const vis = visibleIds(); const L=vis.length; if(!L) return;
+  let p = vis.indexOf(idx); if(p<0) p = dir>0 ? -1 : L;
+  for(let n=1;n<=L;n++){ const id=vis[((p+dir*n)%L+L)%L];
+    if(IMAGES[id] && IMAGES[id].status==="unlabeled"){ load(id); return; } }
   banner("No more unlabeled images");
 }
 async function carryForward(){
   if(!imgOk || !editable || (DS && !DS.writable)) return;
-  if(idx<=0){ banner("No previous image to copy from."); return; }
-  let lab; try{ lab = await jget(`/api/label/${idx-1}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
+  if(boxes.length + polys.length > 0){ banner("This image already has labels — carry-forward only fills an empty image."); return; }
+  const vis = visibleIds(), p = vis.indexOf(idx);
+  const prevId = p>0 ? vis[p-1] : -1;
+  if(prevId<0){ banner("No previous image to copy from."); return; }
+  let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
   const anns = lab.annotations||[];
   if(!anns.length){ banner("The previous image has no labels to copy."); return; }
   const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
   pushUndo();
   anns.forEach(a=>{
-    if(a.type==="box"){ boxes.push({cls:a.cls, x:(a.cx-a.w/2)*iw, y:(a.cy-a.h/2)*ih, w:a.w*iw, h:a.h*ih}); n++; }
-    else if(a.type==="poly"){ polys.push({cls:a.cls, pts:a.points.map((v,k)=> k%2===0? v*iw : v*ih)}); n++; }
+    if(a.type==="box"){ const b={cls:a.cls, x:(a.cx-a.w/2)*iw, y:(a.cy-a.h/2)*ih, w:a.w*iw, h:a.h*ih};
+      clipToImage(b); if(b.w>0 && b.h>0){ boxes.push(b); n++; } }
+    else if(a.type==="poly"){ const q={cls:a.cls, pts:a.points.map((v,k)=> k%2===0? v*iw : v*ih)}; clipPoly(q); polys.push(q); n++; }
   });
   if(!n){ undoStack.pop(); return; }
   markDirty(); draw();
@@ -1075,8 +1093,9 @@ function hitGhost(mx,my){
 }
 function acceptGhost(i){
   const g=ghosts[i]; if(!g) return;
+  if(g.cls==null){ banner("This suggestion has no matching dataset class — set one with a number key, then click."); return; }
   pushUndo();
-  boxes.push({cls:(g.cls!=null?g.cls:active), x:g.x, y:g.y, w:g.w, h:g.h});
+  boxes.push({cls:g.cls, x:g.x, y:g.y, w:g.w, h:g.h});
   ghosts.splice(i,1); markDirty(); draw();
   if(!ghosts.length) $("#banner").style.display="none";
 }
@@ -1169,7 +1188,7 @@ function draw(){
   boxes.forEach((b,i)=>{
     const c = color(b.cls);
     const x=sx(b.x), y=sy(b.y), w=b.w*view.scale, h=b.h*view.scale;
-    const dim = sel>=0 && i!==sel;          // dim the rest when one box is selected
+    const dim = (selPoly>=0) || (sel>=0 && i!==sel);   // dim others when any box/poly is selected
     const isHover = i===hover && mode===null;
     ctx.save();
     ctx.globalAlpha = dim ? 0.42 : 1;
@@ -1371,7 +1390,8 @@ window.addEventListener("keydown", e=>{
   if(e.key===" "){ spaceDown=true; cv.style.cursor="grab"; e.preventDefault(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); save(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="z"||e.key==="Z")){ e.preventDefault();
-    if(undoStack.length){ applyUndo(undoStack.pop()); sel=-1; selPoly=-1; markDirty(); draw(); } return; }
+    if(undoStack.length){ applyUndo(undoStack.pop()); sel=-1; selPoly=-1;
+      dirty = (snap()!==savedSnap); setSave(dirty?"unsaved":(editable?"saved":"read-only")); draw(); } return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="d"||e.key==="D")){ e.preventDefault(); duplicateSelected(); return; }
   if(e.key==="Enter"){
     if(ghosts.length){ e.preventDefault(); const adv=e.shiftKey; acceptAllGhosts();
@@ -1380,8 +1400,8 @@ window.addEventListener("keydown", e=>{
   }
   if(e.key>="0" && e.key<="9"){ const i = e.key==="0"?9:(+e.key-1); setActive(i); return; }
   if(e.key==="/"){ e.preventDefault(); togglePicker(); return; }
-  if(e.key==="d"||e.key==="D"||e.key==="ArrowRight"){ e.preventDefault(); load(idx+1); return; }
-  if(e.key==="a"||e.key==="A"||e.key==="ArrowLeft"){ e.preventDefault(); load(idx-1); return; }
+  if(e.key==="d"||e.key==="D"||e.key==="ArrowRight"){ e.preventDefault(); step(1); return; }
+  if(e.key==="a"||e.key==="A"||e.key==="ArrowLeft"){ e.preventDefault(); step(-1); return; }
   if(e.key==="e"||e.key==="E"){ e.preventDefault(); nextUnlabeled(e.shiftKey?-1:1); return; }
   if(e.key==="c"||e.key==="C"){ e.preventDefault(); carryForward(); return; }
   if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
@@ -1547,6 +1567,7 @@ function drawLoupe(){
   if(ly+R>VH) ly=cursor.y-pad-R;
   if(lx-R<0) lx=cursor.x+pad+R;
   if(ly-R<0) ly=cursor.y+pad+R;
+  lx=Math.max(R,Math.min(VW-R,lx)); ly=Math.max(R,Math.min(VH-R,ly));   // never clip off the stage
   const bx=ix(cursor.x), by=iy(cursor.y), eff=view.scale*zoom;
   ctx.save();
   ctx.beginPath(); ctx.arc(lx,ly,R,0,6.2832); ctx.closePath();
@@ -1650,7 +1671,8 @@ function drawMap(){
   const r=cv2.getBoundingClientRect(); c2.clearRect(0,0,r.width,r.height);
   mapPoints.forEach(p=>{
     const im=IMAGES[p.id], st=im?im.status:"unlabeled";
-    const col = st==="labeled"? "#10b981" : st==="suggested"? getCss("--ai") : st==="deleted"? "#475569" : "#64748b";
+    if(st==="deleted") return;   // skip points for quarantined images
+    const col = st==="labeled"? "#10b981" : st==="suggested"? getCss("--ai") : "#64748b";
     const q=mapProject(p, r.width, r.height);
     c2.beginPath(); c2.arc(q.x,q.y,p.id===idx?5:3.2,0,6.2832);
     c2.fillStyle=col; c2.globalAlpha=p.id===idx?1:.85; c2.fill();
@@ -1666,7 +1688,8 @@ function drawMap(){
 }
 function nearestMapPoint(x,y){
   const r=$("#mapcv").getBoundingClientRect(); let best=null,bd=225;
-  mapPoints.forEach(p=>{ const q=mapProject(p,r.width,r.height); const dd=(q.x-x)*(q.x-x)+(q.y-y)*(q.y-y); if(dd<bd){bd=dd;best=p.id;} });
+  mapPoints.forEach(p=>{ if(IMAGES[p.id] && IMAGES[p.id].status==="deleted") return;
+    const q=mapProject(p,r.width,r.height); const dd=(q.x-x)*(q.x-x)+(q.y-y)*(q.y-y); if(dd<bd){bd=dd;best=p.id;} });
   return best;
 }
 function wireMap(){
@@ -1676,7 +1699,8 @@ function wireMap(){
   cv2.addEventListener("pointerup", e=>{ if(!drawing) return; drawing=false; const L=mapLasso; mapLasso=null;
     if(!L || L.length<8){ const hit=nearestMapPoint(e.offsetX,e.offsetY); drawMap(); if(hit!=null){ closeMap(); load(hit); } return; }
     const r=cv2.getBoundingClientRect();
-    const ids=mapPoints.filter(p=>{ const q=mapProject(p,r.width,r.height); return pointInPoly(q.x,q.y,L); }).map(p=>p.id);
+    const ids=mapPoints.filter(p=>{ if(IMAGES[p.id] && IMAGES[p.id].status==="deleted") return false;
+      const q=mapProject(p,r.width,r.height); return pointInPoly(q.x,q.y,L); }).map(p=>p.id);
     drawMap(); mapSelect(ids);
   });
 }
@@ -1750,7 +1774,8 @@ function resetClientState(){
   imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";
   document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
   const bc=$("#boostchip"); if(bc) bc.className="chip";
-  ["#radar","#mapmodal","#insights","#sharepop"].forEach(s=>{ const m=$(s); if(m) m.classList.remove("show"); });
+  ["#radar","#mapmodal","#insights","#sharepop","#picker"].forEach(s=>{ const m=$(s); if(m) m.classList.remove("show"); });
+  const _help=$("#help"); if(_help) _help.style.display="none";
   const b=$("#banner"); if(b) b.style.display="none";
 }
 function relTime(epoch){
