@@ -338,16 +338,32 @@ class DatasetSession:
         if len(valid) < 2:
             return {"removed": [], "kept": valid[0] if valid else None,
                     "quarantine": None}
+        # Prefer a survivor that actually has labels (then train split, then lowest
+        # id): keeping an unlabelled train copy while quarantining the only labelled
+        # copy would silently turn a labelled image unlabelled after Fix.
+        def _labelled(i):
+            lp = self._items[i][1]
+            try:
+                return lp.exists() and lp.stat().st_size > 0
+            except OSError:
+                return False
+
         rank = {"train": 0, "val": 1, "test": 2}
-        keep = min(valid, key=lambda i: (rank.get(self._items[i][2], 3), i))
+        keep = min(valid, key=lambda i: (0 if _labelled(i) else 1,
+                                         rank.get(self._items[i][2], 3), i))
         redundant = [i for i in valid if i != keep]
+        # A split defined by an explicit file list (a .txt manifest OR an inline YAML
+        # list of image files) still references the file we'd move/delete, leaving a
+        # dangling entry on the next load -- refuse so the user fixes the list first.
+        _listed = (".txt", ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
         for i in redundant:
             src = self._split_sources.get(self._items[i][2])
             srcs = src if isinstance(src, list) else [src]
-            if any(str(x).lower().endswith(".txt") for x in srcs):
+            if any(str(x).lower().endswith(_listed) for x in srcs):
                 raise RuntimeError(
-                    "This split is defined by a .txt file list; remove the manifest "
-                    "line(s) before pruning so no dangling references are left.")
+                    "This split is defined by an explicit file list (a .txt manifest or "
+                    "an inline YAML image list); update the list before pruning so no "
+                    "dangling references are left.")
         qbase = Path(self.root) if self.root else Path(self.yaml_file).parent
         qroot = qbase / ".librelabel_quarantine"
         removed: List[dict] = []

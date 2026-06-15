@@ -141,6 +141,19 @@ class AssistEngine:
             self.pending.clear()
 
     # -- inference ---------------------------------------------------------
+    @staticmethod
+    def _weight_is_local(weight: str) -> bool:
+        """Whether an assist weight is already on disk (no download needed).
+
+        A passthrough path (``best.pt``, an absolute path) is checked directly; a
+        known weight filename resolves under the ``weights/`` dir, same convention
+        as the rest of LibreYOLO.
+        """
+        from pathlib import Path
+
+        p = Path(weight)
+        return p.is_file() or (Path("weights") / p.name).is_file()
+
     def _get_model(self, name: str):
         model = self._models.get(name)
         if model is None:
@@ -148,6 +161,14 @@ class AssistEngine:
             from libreyolo.cli.config import resolve_model_name
 
             weight = resolve_model_name(name)
+            # Offline by contract: a "fully local" labeller must not silently pull a
+            # checkpoint over the network on first prelabel/auto-label. Refuse with a
+            # clear hint instead of letting the factory auto-download.
+            if not self._weight_is_local(weight):
+                raise RuntimeError(
+                    f"Assist model '{name}' ({weight}) isn't present locally. LibreLabel "
+                    f"won't download weights automatically -- fetch it once (e.g. "
+                    f"`libreyolo predict model={name} source=...`), then retry.")
             logger.info("LibreLabel assist loading model %s (%s)", name, weight)
             model = LibreYOLO(weight, device=self.device)
             self._models[name] = model
@@ -217,7 +238,11 @@ class AssistEngine:
 
         if not self.enabled:
             return False
-        if not os.environ.get("LIBRELABEL_ENABLE_LOCATE"):
+        # Require an explicit affirmative value: a bare truthiness test would treat
+        # LIBRELABEL_ENABLE_LOCATE=0 / "false" as enabled (non-empty strings are
+        # truthy), accidentally exposing the non-commercial model.
+        if os.environ.get("LIBRELABEL_ENABLE_LOCATE", "").strip().lower() not in (
+                "1", "true", "yes", "on"):
             return False
         try:
             import importlib.util
@@ -241,6 +266,12 @@ class AssistEngine:
     def predict_locate(self, image_path: Path, names: List[str], classes: List[str]) -> List[dict]:
         """Open-vocabulary detection via LocateAnything. ``classes`` = label strings."""
         self._require_enabled()
+        # Fail closed: the hidden engine=locate path must honour the opt-in too, not
+        # just the /api/assist/status advertising.
+        if not self.locate_available():
+            raise RuntimeError(
+                "LocateAnything is a non-commercial model and is opt-in only: set "
+                "LIBRELABEL_ENABLE_LOCATE=1 (and install the VLM extra) to use it.")
         clean = [c.strip() for c in classes if c and c.strip()]
         if not clean:
             return []

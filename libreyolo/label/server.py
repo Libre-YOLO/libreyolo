@@ -125,8 +125,12 @@ class _LabelState:
                 raise RuntimeError("project changed; reload before saving")
             return self.session.write_label(idx, boxes)
 
-    def resolve_duplicates(self, ids, purge: bool = False) -> dict:
+    def resolve_duplicates(self, ids, purge: bool = False, epoch=None) -> dict:
         with self._lock:  # serialize against label writes on the same tree
+            # Same stale-guard as write_label: a Fix request carrying a since-switched
+            # project's epoch must not quarantine/purge same-id images in the new one.
+            if epoch is not None and epoch != self.epoch:
+                raise RuntimeError("project changed; reload before fixing duplicates")
             return self.session.resolve_duplicates(ids, purge=purge)
 
     def thumb(self, idx: int, path: Path) -> bytes:
@@ -353,7 +357,10 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 ids = payload.get("ids", []) if isinstance(payload, dict) else []
                 purge = bool(payload.get("purge")) if isinstance(payload, dict) else False
-                res = self.state.resolve_duplicates([int(i) for i in ids], purge=purge)
+                ep = payload.get("epoch") if isinstance(payload, dict) else None
+                res = self.state.resolve_duplicates(
+                    [int(i) for i in ids], purge=purge,
+                    epoch=int(ep) if ep is not None else None)
                 self._send(200, res)
             elif path == "/api/boost":
                 payload = self._read_json()
@@ -400,8 +407,12 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle_prelabel(self, idx: int, qs: dict) -> None:
         self._read_json()  # drain any body
         model, conf = self._model_conf(qs)
+        # Snapshot the session up front: the predict below is slow, and if the user
+        # switches projects mid-flight we must not store these suggestions into the
+        # shared pending map (keyed by numeric id) for the now-current project.
+        sess = self.state.session
         # Don't suggest on polygon/OBB-locked images (box-only mode can't accept).
-        _, editable = self.state.session.read_label(idx)
+        _, editable = sess.read_label(idx)
         if not editable:
             self._send(200, {"editable": False, "suggestions": []})
             return
@@ -410,15 +421,18 @@ class _Handler(BaseHTTPRequestHandler):
             if engine == "locate":
                 classes = (qs.get("classes") or [""])[0].split(",")
                 sugg = self.state.engine.predict_locate(
-                    self.state.session.image_path(idx), self.state.session.names, classes
+                    sess.image_path(idx), sess.names, classes
                 )
             else:
                 sugg = self.state.engine.predict_image(
-                    self.state.session.image_path(idx), self.state.session.names, model, conf
+                    sess.image_path(idx), sess.names, model, conf
                 )
         except Exception as exc:  # noqa: BLE001 - model load/inference problem
             logger.exception("prelabel failed")
             self._send(503, {"error": str(exc)})
+            return
+        if self.state.session is not sess:        # project switched during inference
+            self._send(409, {"error": "project changed; reopen and retry"})
             return
         self.state.engine.set_pending(idx, sugg)
         self._send(200, {"editable": True, "suggestions": sugg})

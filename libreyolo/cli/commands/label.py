@@ -102,6 +102,7 @@ def label_cmd(
                 "images": meta["count"],
                 "classes": meta["nc"],
                 "writable": meta["writable"],
+                "lan_url": lan_url,
                 "_human_text": (
                     f"LibreLabel running at {shown_url}\n"
                     f"  {meta['count']} images, {meta['nc']} classes. "

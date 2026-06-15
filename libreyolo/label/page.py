@@ -814,7 +814,7 @@ function qualitySection(q){
 async function fixDuplicate(ids, btn){
   btn.disabled=true; btn.textContent="…";
   try{
-    const r=await fetch("/api/insights/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids})});
+    const r=await fetch("/api/insights/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids, epoch:(DS&&DS.epoch)||0})});
     const d=await r.json();
     if(!r.ok){ btn.textContent=(d.error||"failed").slice(0,42); return; }
     if(d.removed && d.removed.length){
@@ -1122,13 +1122,15 @@ function clearReviewState(){   // a fully-dismissed image leaves the review queu
 function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length){ $("#banner").style.display="none"; clearReviewState(); } } }
 function acceptAllGhosts(){
   if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — suggestions can't be accepted."); return; }
-  const take = ghosts.filter(g=>g.cls!=null);
-  if(!take.length){ if(ghosts.length) banner("These suggestions have no matching dataset class — set one with a number key, or Esc to skip."); return; }
+  if(!ghosts.length) return;
+  // Matched ghosts keep their mapped class; unmatched ones take the active palette
+  // class (same fallback as acceptGhost), so keyboard accept-all works on
+  // open-vocab / custom-name datasets where no suggestion maps by name.
   pushUndo();
-  take.forEach(g=> boxes.push({cls:g.cls, x:g.x, y:g.y, w:g.w, h:g.h}));
-  ghosts = ghosts.filter(g=>g.cls==null);
+  ghosts.forEach(g=> boxes.push({cls:(g.cls==null?active:g.cls), x:g.x, y:g.y, w:g.w, h:g.h}));
+  ghosts = [];
   markDirty(); draw();
-  if(!ghosts.length) $("#banner").style.display="none";
+  $("#banner").style.display="none";
 }
 function clearGhosts(){ if(ghosts.length){ ghosts=[]; draw(); $("#banner").style.display="none"; clearReviewState(); } }
 async function autolabelAll(){

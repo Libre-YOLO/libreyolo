@@ -430,3 +430,59 @@ def test_obb_and_classify_datasets_are_view_only(tmp_path):
     for task in ("obb", "classify", "depth"):
         ds = DatasetSession(str(_make_task_dataset(tmp_path / task, task)))
         assert ds.writable is False, f"task={task} should be view-only"
+
+
+def test_parse_annotations_skips_fractional_class():
+    # Codex round 4: a "0.5" class must NOT be coerced to 0 and counted/trained;
+    # the row is skipped entirely (and the file is read-only via has_unsupported_rows).
+    from libreyolo.label.labelio import parse_annotations
+
+    anns = parse_annotations("0.5 0.5 0.5 0.2 0.2\n1 0.5 0.5 0.2 0.2\n")
+    assert [a["cls"] for a in anns] == [1]   # only the valid integer-class row
+
+
+def test_locate_optin_rejects_falsey_values(monkeypatch):
+    # Codex round 4: LIBRELABEL_ENABLE_LOCATE=0/false must keep LocateAnything off
+    # (a bare truthiness test would treat the non-empty "0" string as enabled).
+    from libreyolo.label.assist import AssistEngine
+
+    eng = AssistEngine(enabled=True)
+    for val in ("0", "false", "no", ""):
+        monkeypatch.setenv("LIBRELABEL_ENABLE_LOCATE", val)
+        assert eng.locate_available() is False
+
+
+def test_resolve_duplicates_keeps_labelled_survivor(tmp_path):
+    # Codex round 4: when only the non-train copy has labels, Fix must keep the
+    # labelled image, not silently turn it unlabelled.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path, leak=True)))
+    ds.write_label(1, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5,
+                        "w": 0.2, "h": 0.2}])   # only the val copy (id 1) is labelled
+    res = ds.resolve_duplicates([0, 1])
+    assert res["kept"] == 1 and res["removed"][0]["id"] == 0
+
+
+def test_resolve_duplicates_refuses_inline_image_list(tmp_path):
+    # Codex round 4: an inline YAML image-list split still references the file we'd
+    # move, so pruning must be refused (same as a .txt manifest).
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path, leak=True)))
+    ds._split_sources["val"] = ["images/val/a.jpg"]
+    with pytest.raises(RuntimeError):
+        ds.resolve_duplicates([0, 1])
+
+
+def test_insights_fix_epoch_guard(tmp_path):
+    # Codex round 4: a Fix request carrying a stale epoch must be rejected before
+    # touching files (same guard as label saves).
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path, leak=True)))
+    st = _LabelState(ds, assist=False)
+    with pytest.raises(RuntimeError):
+        st.resolve_duplicates([0, 1], epoch=99)   # stale epoch -> refused
+    assert ds.image_path(1).exists()              # nothing was moved

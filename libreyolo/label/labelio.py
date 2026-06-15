@@ -120,8 +120,8 @@ def parse_annotations(text: str) -> List[dict]:
             continue
         parts = line.split()
         try:
-            cls = int(float(parts[0]))
-        except (ValueError, IndexError):
+            cls = int(parts[0])   # integer class contract: never coerce "0.5" -> 0
+        except (ValueError, IndexError, OverflowError):
             continue
         nums = parts[1:]
         if len(nums) == 4:
