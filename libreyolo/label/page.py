@@ -29,7 +29,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     --bg:#fafbfd; --bg2:#f1f5f9;
     --s1:#ffffff; --s2:#f8fafc; --s3:#eef2f7;
     --line:#e2e8f0; --line2:#cbd5e1;
-    --tx:#1e293b; --tx2:#475569; --tx3:#94a3b8;
+    --tx:#1e293b; --tx2:#475569; --tx3:#64748b;
     --ac:#0891b2; --ac-ink:#ffffff; --ai:#0e7490;
     --ok:#059669; --warn:#d97706; --danger:#dc2626;
     --sh:0 10px 30px rgba(15,23,42,.12); --shs:0 2px 8px rgba(15,23,42,.08);
@@ -68,7 +68,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
     background:transparent;border:1px solid transparent;color:var(--tx2);transition:.15s}
   .btn-icon:hover{background:var(--s2);color:var(--tx);border-color:var(--line)}
   .ai{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:12px;
-    background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.22)}
+    background:rgba(6,182,212,.10);border:1px solid rgba(6,182,212,.26)}
+  :root.light .ai{background:rgba(8,145,178,.09);border-color:rgba(8,145,178,.32)}
+  .tgroup{display:inline-flex;align-items:center;gap:3px}
   .ai .field{display:flex;align-items:center;gap:8px;height:32px;padding:0 11px;border-radius:var(--r2);
     background:var(--s1);border:1px solid var(--line);color:var(--tx3);font-size:12px}
   .ai .field b{color:var(--tx);font-variant-numeric:tabular-nums;min-width:28px;text-align:right}
@@ -132,7 +134,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .igrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px;margin-bottom:18px}
   .icard{background:var(--s2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .icard .ik{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
-  .icard .iv{font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+  .icard .iv{font-size:21px;font-weight:680;font-variant-numeric:tabular-nums;letter-spacing:-.2px}
   .isec{margin-bottom:18px}
   .isec .ititle{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
   .ibar{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:12px}
@@ -211,6 +213,105 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .help td:first-child{white-space:nowrap;width:46%}
   .help kbd{display:inline-block;background:var(--s3);border:1px solid var(--line2);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font:11px ui-monospace,monospace;color:var(--tx)}
   :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+  /* --- data-quality + AI superpowers: Radar, Boost, Map, dup-fixer --- */
+  .chip{display:none;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;
+    font-size:11.5px;font-weight:560;border:1px solid var(--line2);background:var(--s2);color:var(--tx2);max-width:300px}
+  .chip.show{display:inline-flex}
+  .chip.good{color:var(--ok);border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.09)}
+  .chip.run{color:var(--ai);border-color:rgba(34,211,238,.35);background:rgba(34,211,238,.09)}
+  .chip.bad{color:var(--danger);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.09)}
+  .chip .ic{width:14px;height:14px}
+  .chip .x{margin-left:1px;opacity:.55;font-size:14px;line-height:1}
+  .chip .x:hover{opacity:1}
+  .spin{animation:spin 1s linear infinite;transform-origin:50% 50%}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .rsummary{margin-bottom:13px}
+  .rrow{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:10px;background:var(--s2);
+    border:1px solid var(--line);margin-bottom:7px;width:100%;text-align:left;transition:.12s}
+  .rrow:hover{border-color:var(--ac);background:var(--s3)}
+  .rrow .rthumb{width:62px;height:46px;object-fit:cover;border-radius:6px;background:var(--s3);flex:none}
+  .rrow .rmeta{flex:1;min-width:0}
+  .rrow .rfn{font-size:12.5px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rrow .rb{display:inline-flex;align-items:center;gap:5px;margin-top:5px;flex-wrap:wrap}
+  .rbadge{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:999px}
+  .rbadge.class{background:rgba(251,191,36,.16);color:var(--warn)}
+  .rbadge.miss{background:rgba(34,211,238,.16);color:var(--ai)}
+  .rbadge.phantom{background:rgba(239,68,68,.16);color:var(--danger)}
+  .rscore{font-size:11px;color:var(--tx3);font-variant-numeric:tabular-nums;flex:none;width:30px;text-align:right}
+  .rsev{width:44px;height:5px;background:var(--s3);border-radius:9px;overflow:hidden;flex:none}
+  .rsev span{display:block;height:100%;border-radius:9px}
+  .ifix{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:7px;margin-left:auto;
+    background:var(--ac);color:var(--ac-ink);border:0;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .ifix:hover{filter:brightness(1.08)} .ifix:disabled{opacity:.6}
+  .ifix.done{background:transparent;color:var(--ok);border:1px solid rgba(16,185,129,.4)}
+  .qrow{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;background:var(--s2);margin-bottom:6px;width:100%;text-align:left}
+  .qrow:hover{background:var(--s3)}
+  .qrow .qt{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:2px 6px;border-radius:5px;background:var(--s3);color:var(--tx2);flex:none}
+  .qrow .qt.tiny{color:var(--danger)} .qrow .qt.sliver{color:var(--warn)} .qrow .qt.fullframe{color:var(--ai)}
+  .qrow .qn{font-size:12px;color:var(--tx);flex:none;width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qrow .qm{font-size:11.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mapcard{width:min(880px,95vw);height:min(700px,92vh)}
+  .mapstage{position:relative;flex:1;min-height:0;background:radial-gradient(120% 120% at 50% 0%,var(--stage1),var(--stage2));overflow:hidden}
+  #mapcv{display:block;width:100%;height:100%;cursor:crosshair}
+  .maphint{position:absolute;left:14px;bottom:12px;font-size:11.5px;color:var(--tx2);background:var(--glass);padding:6px 10px;border-radius:8px;border:1px solid var(--line2)}
+  .maplegend{position:absolute;right:14px;top:12px;display:flex;gap:14px;font-size:11px;color:var(--tx2);background:var(--glass);padding:6px 11px;border-radius:8px;border:1px solid var(--line2)}
+  .maplegend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  /* --- project home --- */
+  .home{position:fixed;inset:0;z-index:40;display:none;overflow:auto;
+    background:radial-gradient(120% 90% at 50% -10%,var(--bg2),var(--bg))}
+  .home.show{display:block}
+  .home-theme{position:absolute;top:16px;right:18px}
+  .home-inner{max-width:880px;margin:0 auto;padding:62px 24px 48px}
+  .home-hero{text-align:center;margin-bottom:28px}
+  .home-brand{display:inline-flex;align-items:center;gap:11px;font-size:30px;font-weight:680;letter-spacing:.2px}
+  .home-brand .ic{width:34px;height:34px;color:var(--ac)}
+  .home-brand b{color:var(--ac)}
+  .home-tag{color:var(--tx2);font-size:14px;margin:12px auto 0;max-width:540px}
+  .home-open{display:flex;align-items:center;gap:11px;background:var(--s1);border:1px solid var(--line2);
+    border-radius:14px;padding:9px 9px 9px 16px;box-shadow:var(--sh);max-width:660px;margin:0 auto}
+  .home-open:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12),var(--sh)}
+  .home-open .ic{width:19px;height:19px;color:var(--tx3);flex:none}
+  .home-open input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:14px}
+  .home-open .btn{height:38px;padding:0 18px}
+  .home-err{max-width:660px;margin:9px auto 0;color:var(--danger);font-size:12.5px;text-align:center;min-height:16px}
+  .home-sec{max-width:840px;margin:32px auto 12px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
+  .home-grid{max-width:840px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:12px}
+  .prj{position:relative;text-align:left;background:var(--s1);border:1px solid var(--line2);border-radius:13px;padding:15px 15px 14px;transition:.14s;width:100%;box-shadow:var(--shs)}
+  .prj:hover{border-color:var(--ac);transform:translateY(-2px);box-shadow:var(--sh)}
+  .prj-name{font-size:15px;font-weight:640;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:18px;letter-spacing:-.1px}
+  .prj-path{font-size:11px;color:var(--tx3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prj-barwrap{height:7px;background:var(--s3);border-radius:9px;overflow:hidden;margin:14px 0 8px}
+  .prj-bar{height:100%;border-radius:9px;background:linear-gradient(90deg,var(--ac),var(--ai))}
+  .prj-meta{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--tx2);font-variant-numeric:tabular-nums}
+  .prj-forget{position:absolute;top:9px;right:9px;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+    background:var(--s2);border:1px solid var(--line);color:var(--tx3);font-size:14px;line-height:1;opacity:0;transition:.12s}
+  .prj:hover .prj-forget{opacity:1}
+  .prj-forget:hover{color:var(--danger);border-color:rgba(239,68,68,.4)}
+  .home-empty{grid-column:1/-1;text-align:center;color:var(--tx3);font-size:13px;padding:28px}
+  .rdy{margin-bottom:18px;padding:14px 15px;border-radius:11px;border:1px solid var(--line2);background:var(--s2)}
+  .rdy.go{border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.07)}
+  .rdy-h{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:670;margin-bottom:12px;letter-spacing:-.2px}
+  .rdy-h .ic{width:20px;height:20px} .rdy.go .rdy-h{color:var(--ok)}
+  .rdy-row{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--tx2);margin-bottom:7px}
+  .rdy-row .ic{width:15px;height:15px;flex:none}
+  .rdy-row.ok .ic{color:var(--ok)} .rdy-row.bad .ic{color:var(--danger)} .rdy-row.warn .ic{color:var(--warn)}
+  .rdy .t-cmd{margin-top:12px}
+  .sidesearch{display:flex;align-items:center;gap:8px;margin-top:8px;background:var(--s1);border:1px solid var(--line);border-radius:8px;padding:0 10px;height:30px}
+  .sidesearch:focus-within{border-color:var(--ac)}
+  .sidesearch .ic{width:14px;height:14px;color:var(--tx3);flex:none}
+  .sidesearch input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:12px}
+  /* share popover */
+  .pop{position:fixed;top:54px;right:14px;z-index:25;width:330px;display:none;
+    background:var(--s1);border:1px solid var(--line2);border-radius:13px;box-shadow:var(--sh);padding:15px 16px}
+  .pop.show{display:block}
+  .pop h4{margin:0 0 5px;font-size:13.5px}
+  .pop p{margin:0 0 12px;font-size:12px;color:var(--tx2);line-height:1.5}
+  .pop p code{background:var(--s3);border-radius:4px;padding:0 5px;font:11px ui-monospace,monospace}
+  .urlrow{display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+  .urlrow code{flex:1;font:12px ui-monospace,monospace;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .urlrow button{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--s3);border:1px solid var(--line2);color:var(--tx2)}
+  .urlrow button:hover{color:var(--tx)}
+  .urlrow button.copied{color:var(--ok);border-color:rgba(16,185,129,.4)}
 </style>
 </head>
 <body>
@@ -225,14 +326,29 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <button class="btn btn-primary" id="aautolabel"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Auto-label all</button>
       <button class="btn btn-ghost btn-sm" id="aprelabel" title="Auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M19 8h2M5 20l9-9M14 6l4 4"/></svg>R</button>
       <button class="btn btn-ghost btn-sm" id="asam" title="Smart-segment with SAM (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>SAM</button>
+      <button class="btn btn-ghost btn-sm" id="aradar" title="Label-Error Radar — audit your accepted labels (Y)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 1 0 21 12"/><path d="M12 12l6.5-4.5"/><circle cx="12" cy="12" r="3"/></svg>Radar</button>
       <input id="laprompt" class="laprompt" placeholder="objects to find — e.g. person, helmet" style="display:none">
       <span class="field" id="aconffield"><span>conf</span><input type="range" id="aconf" min="0.05" max="0.9" step="0.05"><b id="aconfval">0.25</b></span>
       <select id="amodel" class="select"></select>
     </span>
     <span class="save" id="save"></span>
-    <button class="insbtn" id="themebtn" title="Toggle light / dark"></button>
-    <button class="insbtn" id="insbtn" title="Dataset insights"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-6M21 20H3"/></svg></button>
-    <button class="btn-icon" id="helpbtn" title="Shortcuts (?)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.4 2.4 0 1 1 3.4 2.2c-.9.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg></button>
+    <span class="chip" id="boostchip"></span>
+    <span class="sep"></span>
+    <span class="tgroup">
+      <button class="insbtn" id="insbtn" title="Dataset insights &amp; readiness"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-6M21 20H3"/></svg></button>
+      <button class="insbtn" id="mapbtn" title="Embedding map — see your whole dataset (M)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="6" cy="7.5" r="1.7"/><circle cx="9.5" cy="15" r="1.7"/><circle cx="15" cy="9" r="1.7"/><circle cx="18" cy="16.5" r="1.7"/><circle cx="13" cy="18" r="1.5"/><circle cx="17.5" cy="6" r="1.4"/></svg></button>
+      <button class="insbtn" id="boostbtn" title="Boost — fine-tune the model on your labels" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg></button>
+    </span>
+    <span class="sep"></span>
+    <span class="tgroup">
+      <button class="insbtn" id="homebtn" title="Projects — back to the home screen"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button>
+      <button class="insbtn" id="sharebtn" title="Share — label together with teammates"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.4"/><circle cx="6" cy="12" r="2.4"/><circle cx="18" cy="19" r="2.4"/><path d="M8.1 10.9l7.8-4.8M8.1 13.1l7.8 4.8"/></svg></button>
+    </span>
+    <span class="sep"></span>
+    <span class="tgroup">
+      <button class="insbtn" id="themebtn" title="Toggle light / dark"></button>
+      <button class="btn-icon" id="helpbtn" title="Shortcuts (?)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.4 2.4 0 1 1 3.4 2.2c-.9.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg></button>
+    </span>
   </header>
   <main>
     <aside class="sidebar">
@@ -242,6 +358,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <button data-f="todo">To-do</button>
           <button data-f="review">Review</button>
         </div>
+        <div class="sidesearch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="imgsearch" placeholder="Filter by filename…" autocomplete="off"></div>
       </div>
       <div class="list" id="list"></div>
       <div class="side-stats" id="stats"></div>
@@ -283,9 +400,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <tr><td><kbd>R</kbd></td><td>AI auto-label this image</td></tr>
           <tr><td><kbd>S</kbd> / <kbd>B</kbd></td><td>smart-segment (SAM click-to-mask) / box tool</td></tr>
           <tr><td><kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>accept all AI suggestions / accept &amp; next</td></tr>
-          <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd></td><td>prev / next image &middot; next unlabeled</td></tr>
-          <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>delete selected &middot; undo</td></tr>
+          <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd> &middot; <kbd>C</kbd></td><td>prev / next image &middot; next unlabeled &middot; copy previous labels</td></tr>
+          <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected &middot; undo &middot; duplicate box</td></tr>
           <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
+          <tr><td><kbd>T</kbd> &middot; <kbd>L</kbd></td><td>tighten box to edges &middot; loupe magnifier</td></tr>
+          <tr><td><kbd>Y</kbd> &middot; <kbd>N</kbd> &middot; <kbd>M</kbd></td><td>Label-Error Radar &middot; next flagged &middot; embedding map</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> &middot; <kbd>Esc</kbd></td><td>save &middot; cancel / clear / close</td></tr>
         </table>
       </div></div>
@@ -295,6 +414,36 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="mhead"><h3>Dataset insights</h3><button class="mx" id="insclose">&times;</button></div>
     <div class="mbody" id="insbody"></div>
   </div></div>
+  <div class="modal" id="radar"><div class="mcard">
+    <div class="mhead"><h3>Label-Error Radar</h3><button class="mx" id="radarclose">&times;</button></div>
+    <div class="mbody" id="radarbody"></div>
+  </div></div>
+  <div class="modal" id="mapmodal"><div class="mcard mapcard">
+    <div class="mhead"><h3>Embedding map</h3><button class="mx" id="mapclose">&times;</button></div>
+    <div class="mapstage">
+      <canvas id="mapcv"></canvas>
+      <div class="maplegend"><span><i style="background:#10b981"></i>labeled</span><span><i style="background:#64748b"></i>unlabeled</span></div>
+      <div class="maphint" id="maphint">Drag a lasso around a region → jump to those images</div>
+    </div>
+  </div></div>
+  <div id="home" class="home">
+    <button class="insbtn home-theme" id="hometheme" title="Toggle light / dark"></button>
+    <div class="home-inner">
+      <div class="home-hero">
+        <span class="home-brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
+        <p class="home-tag">Open a labelling project — your datasets, your machine, YOLO-native labels.</p>
+      </div>
+      <div class="home-open">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v7A1.5 1.5 0 0 1 17.5 18h-13A1.5 1.5 0 0 1 3 16.5z"/></svg>
+        <input id="homepath" placeholder="Path to a data.yaml (or a folder containing one)…" spellcheck="false" autocomplete="off">
+        <button class="btn btn-primary" id="homeopen">Open</button>
+      </div>
+      <div class="home-err" id="homeerr"></div>
+      <div class="home-sec">Recent projects</div>
+      <div class="home-grid" id="homegrid"></div>
+    </div>
+  </div>
+  <div class="pop" id="sharepop"></div>
 </div>
 <script>
 "use strict";
@@ -322,18 +471,32 @@ let segBusy = false;
 let segRect = null;          // box being dragged in segment mode (image px)
 let suggestedIds = new Set();
 let listFilter = "all";
+let imgQuery = "";             // sidebar filename filter
+let selSet = null;             // ids selected from the embedding map (sidebar filter)
+let radarFindings = [];        // Radar disagreements overlaid on the current image
+let radarDeck = [];            // worst-first deck from the last Radar scan
+let loupeOn = false;           // pinned magnifier (L); auto-shows while drawing
+let gradData = null, gradW = 0, gradH = 0, gradScale = 1;  // edge map for Tighten/magnetic
+let mapPoints = [], mapFit = null, mapLasso = null;        // embedding scatter + lasso
+let boostTimer = null;
+let _cssCache = {};
 const HANDLES = ["nw","n","ne","e","se","s","sw","w"];
 const HR = 6;
 const color = i => { const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'%)'; };
+const colorA = (i,a) => { const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'% / '+a+')'; };
 const clamp01 = v => v<0?0:v>1?1:v;
 const ICO_CHECK = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 6"/></svg>';
 const ICO_COPY = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const ICO_X = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const ICO_WARN = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>';
 const ICO_SUN = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
 const ICO_MOON = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
 function applyTheme(t){
   document.documentElement.classList.toggle("light", t==="light");
+  _cssCache = {};   // theme changed -> re-read CSS vars used by canvas overlays
   try{ localStorage.setItem("ll-theme", t); }catch(e){}
   const b=document.querySelector("#themebtn"); if(b) b.innerHTML = (t==="light") ? ICO_MOON : ICO_SUN;
+  const h=document.querySelector("#hometheme"); if(h) h.innerHTML = (t==="light") ? ICO_MOON : ICO_SUN;
   if(typeof imgOk!=="undefined" && imgOk) draw();
 }
 function toggleTheme(){ applyTheme(document.documentElement.classList.contains("light") ? "dark" : "light"); }
@@ -349,6 +512,19 @@ const sy = y => view.oy + y*view.scale;
 const ix = px => (px - view.ox)/view.scale;
 const iy = py => (py - view.oy)/view.scale;
 function rr(x,y,w,h,r){ ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(x,y,w,h,r); else ctx.rect(x,y,w,h); ctx.fill(); }
+// A readable label tag: dark pill + class-color dot + light text (never neon text on the photo).
+function drawChip(x, y, text, ci){
+  ctx.font = "600 11.5px ui-sans-serif,system-ui,sans-serif";
+  const padL=18, padR=9, h=18, tw=ctx.measureText(text).width, w=padL+tw+padR;
+  let cy = y - h - 3; if(cy < 1) cy = y + 2;          // flip below if it'd clip the top edge
+  ctx.save();
+  ctx.shadowColor="rgba(2,6,23,.5)"; ctx.shadowBlur=5; ctx.shadowOffsetY=1;
+  ctx.fillStyle="rgba(13,17,28,.92)"; rr(x, cy, w, h, 5);
+  ctx.shadowColor="transparent"; ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+  ctx.fillStyle=color(ci); ctx.beginPath(); ctx.arc(x+9, cy+h/2, 3.4, 0, 6.2832); ctx.fill();
+  ctx.fillStyle="#e8edf6"; ctx.textBaseline="middle"; ctx.fillText(text, x+padL, cy+h/2+0.5);
+  ctx.restore();
+}
 
 function fit(){
   if(!imgOk) return;
@@ -377,17 +553,30 @@ function zoomBy(f){
 async function jget(u){ const r = await fetch(u); if(!r.ok) throw new Error((await r.json()).error||r.status); return r.json(); }
 
 async function init(){
-  DS = await jget("/api/dataset");
+  wireChrome();
+  wireHome();
+  const d = await jget("/api/dataset");
+  let atHome=false; try{ atHome = sessionStorage.getItem("ll-home")==="1"; }catch(e){}
+  if(!d.open || atHome){ showHome(); return; }
+  await enterLabeler(d);
+}
+async function enterLabeler(d){
+  const gen = loadSeq;                 // re-entrancy guard: a newer open supersedes this one
+  DS = d;
+  try{ sessionStorage.removeItem("ll-home"); }catch(e){}
+  if(active>=(DS.names||[]).length) active=0;        // stale class index from a prior project
   $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
   renderPalette();
-  IMAGES = (await jget("/api/images")).images;
+  const imgs = (await jget("/api/images")).images;
+  if(gen!==loadSeq) return;            // another project opened while we were fetching
+  IMAGES = imgs;
+  hideHome();                          // only leave home once images are actually in hand
   renderList();
   renderStats();
   resizeCanvas();
-  wireChrome();
   initAssist();
   if(IMAGES.length) load(0);
-  else { stageMsg = "No images found — check the data=… paths"; setSave("no images"); draw(); }
+  else { idx=-1; imgOk=false; stageMsg = "No images found — check the dataset paths"; setSave("no images"); draw(); }
 }
 function wireChrome(){
   $("#classchip").onclick = togglePicker;
@@ -398,6 +587,17 @@ function wireChrome(){
   $("#insbtn").onclick = openInsights;
   $("#insclose").onclick = closeInsights;
   $("#insights").onclick = (e)=>{ if(e.target.id==="insights") closeInsights(); };
+  $("#radarclose").onclick = closeRadar;
+  $("#radar").onclick = (e)=>{ if(e.target.id==="radar") closeRadar(); };
+  $("#mapclose").onclick = closeMap;
+  $("#mapmodal").onclick = (e)=>{ if(e.target.id==="mapmodal") closeMap(); };
+  $("#mapbtn").onclick = openMap;
+  $("#boostbtn").onclick = runBoost;
+  $("#homebtn").onclick = backToHome;
+  $("#sharebtn").onclick = toggleShare;
+  document.addEventListener("click", e=>{ const pop=$("#sharepop");
+    if(pop && pop.classList.contains("show") && !pop.contains(e.target) && !e.target.closest("#sharebtn")) pop.classList.remove("show"); });
+  wireMap();
   $("#toolBox").onclick = ()=> setTool("box");
   $("#toolSeg").onclick = ()=> setTool("seg");
   $("#toolAi").onclick = ()=> prelabelCurrent();
@@ -406,8 +606,9 @@ function wireChrome(){
   $("#toolZout").onclick = ()=> zoomBy(1/1.25);
   document.querySelectorAll("#filter button").forEach(b=> b.onclick = ()=>{
     document.querySelectorAll("#filter button").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); listFilter = b.dataset.f; renderList();
+    b.classList.add("on"); listFilter = b.dataset.f; selSet = null; renderList();
   });
+  const si=$("#imgsearch"); if(si) si.oninput = e=>{ imgQuery=(e.target.value||"").trim().toLowerCase(); renderList(); };
 }
 function setTool(t){
   if(t==="seg" && !(assist && assist.sam)) return;
@@ -454,6 +655,9 @@ function filterClasses(q){ q=(q||"").toLowerCase();
 
 // ---- sidebar list ----
 function passFilter(im){
+  if(im.status==="deleted") return false;
+  if(imgQuery && !(im.name||"").toLowerCase().includes(imgQuery)) return false;
+  if(selSet) return selSet.has(im.id);
   if(listFilter==="todo") return im.status==="unlabeled";
   if(listFilter==="review") return im.status==="suggested";
   return true;
@@ -522,16 +726,21 @@ async function renderStats(){
   }
 }
 
-// ---- dataset insights (dimensions + duplicates + leakage) ----
+// ---- dataset insights (dimensions + duplicates + leakage + geometry) ----
+let lastInsights = null, lastQuality = null, lastStats = null;
 async function openInsights(){
   $("#insights").classList.add("show");
   $("#insbody").innerHTML = `<div class="iload">Analyzing images…</div>`;
-  let d; try{ d = await jget("/api/insights"); }
+  let d, q, st;
+  try{ [d, q, st] = await Promise.all([jget("/api/insights"),
+        jget("/api/quality").catch(()=>null), jget("/api/stats").catch(()=>null)]); }
   catch(e){ $("#insbody").innerHTML = `<div class="iload">Could not compute insights.</div>`; return; }
-  renderInsights(d);
+  lastInsights = d; lastQuality = q; lastStats = st;
+  renderInsights(d, q);
 }
 function closeInsights(){ $("#insights").classList.remove("show"); }
-function renderInsights(d){
+function renderInsights(d, q){
+  if(q===undefined) q = lastQuality;
   const W=d.width, H=d.height, MP=d.megapixels;
   const maxRes = d.top_resolutions.length ? d.top_resolutions[0][2] : 1;
   const resBars = d.top_resolutions.map(r=>
@@ -540,14 +749,15 @@ function renderInsights(d){
   if(d.duplicate_groups.length){
     const leak=d.leakage_groups.length;
     dup = (leak? `<div class="iwarn leak">${leak} duplicate group${leak>1?"s":""} leak across splits (train↔val) — this inflates your validation score.</div>`:"")
-      + `<div class="iwarn">${d.duplicate_groups.length} duplicate group${d.duplicate_groups.length>1?"s":""} · ${d.duplicate_image_count} images</div>`
+      + `<div class="iwarn">${d.duplicate_groups.length} duplicate group${d.duplicate_groups.length>1?"s":""} · ${d.duplicate_image_count} images · Fix moves the extras to a reversible quarantine (keeps the train copy)</div>`
       + d.duplicate_groups.slice(0,8).map(g=>
-        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span></div>`).join("");
+        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join("");
   } else {
     dup = `<div class="iok">${ICO_CHECK}No duplicate or near-duplicate images detected</div>`;
   }
   $("#insbody").innerHTML =
-    `<div class="igrid">`
+    readinessSection(lastStats, d, q)
+    + `<div class="igrid">`
     + `<div class="icard"><div class="ik">Images</div><div class="iv">${d.measured}</div></div>`
     + `<div class="icard"><div class="ik">Avg size</div><div class="iv">${W.mean}×${H.mean}</div></div>`
     + `<div class="icard"><div class="ik">Width</div><div class="iv">${W.min}–${W.max}</div></div>`
@@ -555,7 +765,55 @@ function renderInsights(d){
     + `<div class="icard"><div class="ik">Megapixels</div><div class="iv">${MP.min}–${MP.max}</div></div>`
     + `</div>`
     + `<div class="isec"><div class="ititle">Most common resolutions</div>${resBars||'<div class="iload">—</div>'}</div>`
-    + `<div class="isec"><div class="ititle">Duplicates &amp; train/val leakage</div>${dup}</div>`;
+    + `<div class="isec"><div class="ititle">Duplicates &amp; train/val leakage</div>${dup}</div>`
+    + `<div class="isec"><div class="ititle">Label geometry</div>${qualitySection(q)}</div>`;
+  document.querySelectorAll("#insbody .ifix[data-ids]").forEach(b=> b.onclick=()=>fixDuplicate(JSON.parse(b.dataset.ids), b));
+  document.querySelectorAll("#insbody .qrow[data-id]").forEach(b=> b.onclick=()=>{ closeInsights(); load(+b.dataset.id); });
+  const rc=$("#rdycmd"); if(rc) rc.onclick=()=>{ try{ navigator.clipboard.writeText('libreyolo train data='+(DS&&DS.yaml||'')); }catch(e){}
+    rc.classList.add('copied'); setTimeout(()=>rc.classList.remove('copied'),1200); };
+}
+function readinessSection(st, d, q){
+  if(!st) return "";
+  const labeled=st.labeled||0, total=st.total||0;
+  const leak=(d.leakage_groups||[]).length, geo=(q&&q.issues)||0, cls=st.classes||[];
+  let imbalance=false;
+  if(cls.length>=2){ const mx=cls[0][1], mn=cls[cls.length-1][1]; if(mn===0 || (mn>0 && mx/mn>=20)) imbalance=true; }
+  const checks=[];
+  checks.push(labeled>0 ? {s:"ok", t:`${labeled} of ${total} images labeled`} : {s:"bad", t:"No labeled images yet — draw some boxes first"});
+  checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits — Fix below`} : {s:"ok", t:"No train/val leakage"});
+  checks.push(geo ? {s:"warn", t:`${geo} geometry issue${geo>1?"s":""} (tiny / sliver / full-frame) — see Label geometry`} : {s:"ok", t:"Box geometry is learnable"});
+  if(cls.length>=2) checks.push(imbalance ? {s:"warn", t:"Class balance is skewed — add examples of the rare classes"} : {s:"ok", t:"Classes are reasonably balanced"});
+  const go = labeled>0 && !leak;
+  const ico = s=> s==="ok"?ICO_CHECK : s==="bad"?ICO_X : ICO_WARN;
+  const rows = checks.map(c=>`<div class="rdy-row ${c.s}">${ico(c.s)}<span>${esc(c.t)}</span></div>`).join("");
+  const cmd = (DS&&DS.yaml) ? `<button class="t-cmd" id="rdycmd">${ICO_COPY}<code>libreyolo train data=${esc(DS.yaml)}</code></button>` : "";
+  return `<div class="rdy ${go?"go":""}"><div class="rdy-h">${go?ICO_CHECK:ICO_WARN}${go?"Ready to train":"Almost ready to train"}</div>${rows}${cmd}</div>`;
+}
+function qualitySection(q){
+  if(!q || !q.issues) return `<div class="iok">${ICO_CHECK}No geometry problems — every box is a learnable size.</div>`;
+  const c=q.counts||{};
+  const parts=[c.tiny?`${c.tiny} tiny`:"", c.sliver?`${c.sliver} sliver`:"", c.fullframe?`${c.fullframe} full-frame`:""].filter(Boolean).join(" · ");
+  const head=`<div class="iwarn">${q.issues} geometry issue${q.issues>1?"s":""} at imgsz ${q.imgsz}${parts?` · ${parts}`:""}</div>`;
+  const rows=(q.flagged||[]).slice(0,12).map(f=>{
+    const it=(f.issues&&f.issues[0])||{};
+    return `<button class="qrow" data-id="${f.id}"><span class="qt ${esc(it.type||"")}">${esc(it.type||"")}</span><span class="qn">${esc(f.name)}</span><span class="qm">${esc(it.msg||"")}${f.count>1?`  (+${f.count-1} more)`:""}</span></button>`;
+  }).join("");
+  return head+rows;
+}
+async function fixDuplicate(ids, btn){
+  btn.disabled=true; btn.textContent="…";
+  try{
+    const r=await fetch("/api/insights/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids})});
+    const d=await r.json();
+    if(!r.ok){ btn.textContent=(d.error||"failed").slice(0,42); return; }
+    if(d.removed && d.removed.length){
+      d.removed.forEach(rm=>{ suggestedIds.delete(rm.id); if(IMAGES[rm.id]) IMAGES[rm.id].status="deleted"; });
+      IMAGES=(await jget("/api/images")).images; renderList(); scheduleStats();
+      lastInsights = await jget("/api/insights");
+      lastQuality = await jget("/api/quality").catch(()=>lastQuality);
+      renderInsights(lastInsights, lastQuality);
+    } else { btn.textContent="no change"; }
+  }catch(e){ btn.textContent="failed"; btn.disabled=false; }
 }
 
 // ---- undo ----
@@ -578,6 +836,7 @@ async function load(i){
     banner("Save failed — staying on this image so you don't lose work."); return;
   }
   idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
+  radarFindings = []; gradData = null;
   const lab = await jget(`/api/label/${i}`);
   if(myGen !== loadSeq) return;
   editable = lab.editable;
@@ -625,7 +884,7 @@ async function save(){
   polys.forEach(p=>{ const pts=polyToNorm(p); if(pts.length>=6) anns.push({type:"poly", cls:p.cls, points:pts}); });
   const cur = idx;
   try{
-    const r = await fetch(`/api/label/${cur}`,{method:"POST",
+    const r = await fetch(`/api/label/${cur}?epoch=${(DS&&DS.epoch)||0}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
     dirty = false; setSave("saved");
@@ -660,6 +919,29 @@ function nextUnlabeled(dir){
     if(IMAGES[j].status==="unlabeled"){ load(j); return; } }
   banner("No more unlabeled images");
 }
+async function carryForward(){
+  if(!imgOk || !editable || (DS && !DS.writable)) return;
+  if(idx<=0){ banner("No previous image to copy from."); return; }
+  let lab; try{ lab = await jget(`/api/label/${idx-1}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
+  const anns = lab.annotations||[];
+  if(!anns.length){ banner("The previous image has no labels to copy."); return; }
+  const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
+  pushUndo();
+  anns.forEach(a=>{
+    if(a.type==="box"){ boxes.push({cls:a.cls, x:(a.cx-a.w/2)*iw, y:(a.cy-a.h/2)*ih, w:a.w*iw, h:a.h*ih}); n++; }
+    else if(a.type==="poly"){ polys.push({cls:a.cls, pts:a.points.map((v,k)=> k%2===0? v*iw : v*ih)}); n++; }
+  });
+  if(!n){ undoStack.pop(); return; }
+  markDirty(); draw();
+  banner(`Copied ${n} annotation${n===1?"":"s"} from the previous image — nudge them into place, then save.`);
+}
+function duplicateSelected(){
+  if(sel<0 || !imgOk || !editable || (DS && !DS.writable)) return;
+  const b=boxes[sel]; pushUndo();
+  const off=Math.max(6, Math.abs(b.w)*0.06);
+  boxes.push({cls:b.cls, x:b.x+off, y:b.y+off, w:b.w, h:b.h});
+  sel=boxes.length-1; selPoly=-1; clipToImage(boxes[sel]); markDirty(); draw();
+}
 
 // ---- AI auto-label (suggest -> review -> accept; nothing written unverified) ----
 async function initAssist(){
@@ -672,6 +954,7 @@ async function initAssist(){
   assist.models.forEach(m=>{ const o=document.createElement("option");
     o.value=m; o.textContent=m; if(m===assistModel) o.selected=true; sel.appendChild(o); });
   sel.onchange = ()=>{ assistModel = sel.value; updateEngineUI(); };
+  if(assist.boosted) addBoostedOption(false);
   const cs = $("#aconf"); cs.value = conf; $("#aconfval").textContent = conf.toFixed(2);
   cs.oninput = ()=>{ conf = parseFloat(cs.value); $("#aconfval").textContent = conf.toFixed(2); };
   $("#aprelabel").onclick = ()=> prelabelCurrent();
@@ -680,6 +963,9 @@ async function initAssist(){
   if(assist.sam && asam){ asam.style.display="inline-flex"; asam.onclick = ()=> setTool("seg"); }
   bar.style.display = "flex";
   if(assist.sam){ const ts=$("#toolSeg"); if(ts) ts.style.display="grid"; }
+  const ar=$("#aradar"); if(ar){ ar.style.display="inline-flex"; ar.onclick=()=>runRadar(); }
+  const mb=$("#mapbtn"); if(mb && assist.embed) mb.style.display="grid";
+  const bb=$("#boostbtn"); if(bb && assist.boost) bb.style.display="grid";
   updateEngineUI();
 }
 function updateEngineUI(){
@@ -860,6 +1146,8 @@ function draw(){
     return;
   }
   ctx.drawImage(img, view.ox, view.oy, img.naturalWidth*view.scale, img.naturalHeight*view.scale);
+  ctx.fillStyle="rgba(2,6,23,.08)";  // subtle scrim so annotations sit above the photo
+  ctx.fillRect(view.ox, view.oy, img.naturalWidth*view.scale, img.naturalHeight*view.scale);
   ctx.lineWidth = 2; ctx.font = "600 11.5px ui-sans-serif,system-ui,sans-serif"; ctx.textBaseline="bottom";
   // AI ghost suggestions (dashed/translucent, under real boxes)
   ghosts.forEach(g=>{
@@ -881,43 +1169,38 @@ function draw(){
   boxes.forEach((b,i)=>{
     const c = color(b.cls);
     const x=sx(b.x), y=sy(b.y), w=b.w*view.scale, h=b.h*view.scale;
-    if(i===sel){ ctx.fillStyle = "rgba(6,182,212,.10)"; ctx.fillRect(x,y,w,h); }
-    else if(i===hover && mode===null){ ctx.fillStyle = "rgba(255,255,255,.06)"; ctx.fillRect(x,y,w,h); }
+    const dim = sel>=0 && i!==sel;          // dim the rest when one box is selected
+    const isHover = i===hover && mode===null;
     ctx.save();
-    if(i===sel){ ctx.shadowColor=c; ctx.shadowBlur=11; }
-    else if(i===hover && mode===null){ ctx.shadowColor=c; ctx.shadowBlur=6; }
-    ctx.strokeStyle = c; ctx.lineWidth = (i===sel||(i===hover&&mode===null))?2.5:2; ctx.strokeRect(x,y,w,h);
-    ctx.restore();
+    ctx.globalAlpha = dim ? 0.42 : 1;
+    ctx.fillStyle = colorA(b.cls, i===sel?0.22:0.13); ctx.fillRect(x,y,w,h);
+    if(i===sel||isHover){ ctx.shadowColor=c; ctx.shadowBlur=i===sel?10:5; }
+    ctx.strokeStyle = c; ctx.lineWidth = i===sel?2.6:(isHover?2.2:1.8); ctx.strokeRect(x,y,w,h);
+    ctx.shadowColor="transparent"; ctx.shadowBlur=0;
     const nm = (DS.names&&DS.names[b.cls])!=null ? DS.names[b.cls] : b.cls;
-    const lab = String(nm);
-    const tw = ctx.measureText(lab).width+12;
-    const tx = Math.min(x, x+w), ty = Math.min(y, y+h);
-    ctx.save();
-    ctx.shadowColor="rgba(0,0,0,.4)"; ctx.shadowBlur=5; ctx.shadowOffsetY=1;
-    ctx.fillStyle = c; rr(tx, ty-17, tw, 16, 4);
+    drawChip(Math.min(x,x+w), Math.min(y,y+h), String(nm), b.cls);
     ctx.restore();
-    ctx.fillStyle = "#0a0b0e"; ctx.fillText(lab, tx+6, ty-3);
   });
   polys.forEach((p,i)=>{
     const c = color(p.cls), pts = p.pts;
+    const selP = i===selPoly, dim = (sel>=0) || (selPoly>=0 && !selP);
     ctx.save();
+    ctx.globalAlpha = dim ? 0.42 : 1;
     ctx.beginPath();
     for(let k=0;k<pts.length;k+=2){ const X=sx(pts[k]), Y=sy(pts[k+1]); if(k===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y); }
     ctx.closePath();
-    ctx.fillStyle = i===selPoly ? "rgba(6,182,212,.18)" : "rgba(6,182,212,.13)";
-    ctx.fill();
-    if(i===selPoly){ ctx.shadowColor=c; ctx.shadowBlur=10; }
-    ctx.lineWidth = i===selPoly?2.5:2; ctx.strokeStyle=c; ctx.stroke();
-    ctx.restore();
-    if(i===selPoly){ ctx.fillStyle="#fff"; ctx.strokeStyle="#06b6d4"; ctx.lineWidth=1.2;
+    ctx.fillStyle = colorA(p.cls, selP?0.22:0.14); ctx.fill();
+    if(selP){ ctx.shadowColor=c; ctx.shadowBlur=10; }
+    ctx.lineWidth = selP?2.6:1.8; ctx.strokeStyle=c; ctx.stroke();
+    ctx.shadowColor="transparent"; ctx.shadowBlur=0;
+    if(selP){ ctx.fillStyle="#fff"; ctx.strokeStyle="#06b6d4"; ctx.lineWidth=1.2;
       for(let k=0;k<pts.length;k+=2){ const X=sx(pts[k]),Y=sy(pts[k+1]); ctx.beginPath(); ctx.arc(X,Y,3,0,6.2832); ctx.fill(); ctx.stroke(); } }
     const nm = (DS.names&&DS.names[p.cls])!=null ? DS.names[p.cls] : p.cls;
     let mnx=1e9,mny=1e9; for(let k=0;k<pts.length;k+=2){ if(pts[k]<mnx)mnx=pts[k]; if(pts[k+1]<mny)mny=pts[k+1]; }
-    const lab=String(nm), tw=ctx.measureText(lab).width+12, tx=sx(mnx), ty=sy(mny);
-    ctx.save(); ctx.shadowColor="rgba(0,0,0,.4)"; ctx.shadowBlur=5; ctx.shadowOffsetY=1;
-    ctx.fillStyle=c; rr(tx,ty-17,tw,16,4); ctx.restore();
-    ctx.fillStyle="#0a0b0e"; ctx.fillText(lab,tx+6,ty-3);
+    drawChip(sx(mnx), sy(mny), String(nm), p.cls);
+    ctx.restore();
   });
+  drawRadarFindings();
   if(sel>=0) drawHandles(boxes[sel]);
   if(cursor && (mode===null||mode==='new')){
     ctx.save(); ctx.strokeStyle='rgba(6,182,212,.4)'; ctx.lineWidth=1;
@@ -932,6 +1215,7 @@ function draw(){
     ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle="#22d3ee"; ctx.lineWidth=1.5; ctx.strokeRect(x,y,w,h);
     ctx.fillStyle="rgba(34,211,238,.10)"; ctx.fillRect(x,y,w,h); ctx.restore();
   }
+  drawLoupe();
   updateProgress();
 }
 function handlePts(b){
@@ -1035,7 +1319,7 @@ cv.addEventListener("pointerup", e=>{
   if(mode==="new"){
     const b=boxes[sel];
     if(Math.abs(b.w)*view.scale<3 || Math.abs(b.h)*view.scale<3){ boxes.pop(); sel=-1; }
-    else { normalizeRect(b); clipToImage(b); markDirty(); }
+    else { normalizeRect(b); clipToImage(b); snapBox(b, 7); markDirty(); }  // magnetic edges
   } else if(mode==="resize"){ normalizeRect(drag.b); clipToImage(drag.b); }
   else if(mode==="move"){ clipToImage(boxes[sel]); }
   else if(mode==="movepoly"){ clipPoly(polys[selPoly]); }
@@ -1088,6 +1372,7 @@ window.addEventListener("keydown", e=>{
   if((e.ctrlKey||e.metaKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); save(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="z"||e.key==="Z")){ e.preventDefault();
     if(undoStack.length){ applyUndo(undoStack.pop()); sel=-1; selPoly=-1; markDirty(); draw(); } return; }
+  if((e.ctrlKey||e.metaKey) && (e.key==="d"||e.key==="D")){ e.preventDefault(); duplicateSelected(); return; }
   if(e.key==="Enter"){
     if(ghosts.length){ e.preventDefault(); const adv=e.shiftKey; acceptAllGhosts();
       if(adv){ save().then(()=> nextSuggested()); } }
@@ -1098,9 +1383,15 @@ window.addEventListener("keydown", e=>{
   if(e.key==="d"||e.key==="D"||e.key==="ArrowRight"){ e.preventDefault(); load(idx+1); return; }
   if(e.key==="a"||e.key==="A"||e.key==="ArrowLeft"){ e.preventDefault(); load(idx-1); return; }
   if(e.key==="e"||e.key==="E"){ e.preventDefault(); nextUnlabeled(e.shiftKey?-1:1); return; }
+  if(e.key==="c"||e.key==="C"){ e.preventDefault(); carryForward(); return; }
   if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
   if(e.key==="b"||e.key==="B"){ setTool("box"); return; }
   if((e.key==="s"||e.key==="S") && assist && assist.sam){ setTool("seg"); return; }
+  if(e.key==="t"||e.key==="T"){ e.preventDefault(); tightenSelected(); return; }
+  if(e.key==="l"||e.key==="L"){ loupeOn=!loupeOn; draw(); return; }
+  if(e.key==="y"||e.key==="Y"){ e.preventDefault(); runRadar(); return; }
+  if(e.key==="m"||e.key==="M"){ e.preventDefault(); openMap(); return; }
+  if(e.key==="n"||e.key==="N"){ e.preventDefault(); nextFlagged(); return; }
   if(e.key==="Delete"||e.key==="Backspace"){
     if(selPoly>=0){ pushUndo(); polys.splice(selPoly,1); selPoly=-1; markDirty(); draw(); }
     else if(sel>=0){ pushUndo(); boxes.splice(sel,1); sel=-1; markDirty(); draw(); }
@@ -1108,8 +1399,12 @@ window.addEventListener("keydown", e=>{
   if(e.key==="f"||e.key==="F"){ fit(); draw(); return; }
   if(e.key==="?"){ toggleHelp(); return; }
   if(e.key==="Escape"){
-    if($("#insights").classList.contains("show")){ closeInsights(); }
+    if($("#sharepop").classList.contains("show")){ $("#sharepop").classList.remove("show"); }
+    else if($("#radar").classList.contains("show")){ closeRadar(); }
+    else if($("#mapmodal").classList.contains("show")){ closeMap(); }
+    else if($("#insights").classList.contains("show")){ closeInsights(); }
     else if($("#picker").classList.contains("show")){ closePicker(); }
+    else if(radarFindings.length){ radarFindings=[]; $("#banner").style.display="none"; draw(); }
     else if(ghosts.length){ clearGhosts(); }
     else if($("#help").style.display==="flex"){ $("#help").style.display="none"; }
     else if(mode==="new"){ boxes.pop(); sel=-1; mode=null; gestureSnap=null; draw(); }
@@ -1117,8 +1412,375 @@ window.addEventListener("keydown", e=>{
   }
 });
 window.addEventListener("keyup", e=>{ if(e.key===" "){ spaceDown=false; cv.style.cursor="crosshair"; } });
-window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize", ()=>{ resizeCanvas(); if($("#mapmodal").classList.contains("show")) resizeMapCanvas(); });
 window.addEventListener("beforeunload", e=>{ if(dirty){ e.preventDefault(); e.returnValue=""; } });
+
+// ===== Data-quality + AI superpowers: Radar · Tighten · Loupe · Boost · Map =====
+const ICO_SPIN = '<svg class="ic spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>';
+function getCss(v){ if(_cssCache[v]!=null) return _cssCache[v]; const c=(getComputedStyle(document.documentElement).getPropertyValue(v)||"").trim()||"#06b6d4"; _cssCache[v]=c; return c; }
+function dsname(c){ return (DS && DS.names && DS.names[c]!=null) ? DS.names[c] : c; }
+
+// ---- Label-Error Radar: audit accepted labels with the model ----
+function radarQuery(){ const m=(assistModel==="__locate__")?(assist.default||""):assistModel; return "model="+encodeURIComponent(m||"")+"&conf="+conf; }
+function openRadar(){ $("#radar").classList.add("show"); }
+function closeRadar(){ $("#radar").classList.remove("show"); }
+async function runRadar(){
+  if(!assist || !assist.available) return;
+  if(dirty && idx>=0 && !(await save())){ banner("Save the current image first, then run Radar."); return; }
+  const myGen=loadSeq;
+  openRadar();
+  $("#radarbody").innerHTML = `<div class="iload">Auditing your accepted labels with your model…<div class="ptrack" style="width:240px;margin:14px auto 0"><div class="pbar" id="rbar"></div></div></div>`;
+  radarDeck = [];
+  try{
+    const r = await fetch(`/api/assist/radar?${radarQuery()}`, {method:"POST"});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); $("#radarbody").innerHTML=`<div class="iload">Radar unavailable: ${esc(e.error||r.status)}</div>`; return; }
+    const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
+    for(;;){ const {value,done}=await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true}); let nl;
+      while((nl=buf.indexOf("\n"))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+        if(!line) continue; let o; try{o=JSON.parse(line);}catch(e){ continue; }
+        if(o.type==="progress"){ const bar=$("#rbar"); if(bar) bar.style.width=Math.round(100*o.i/Math.max(1,o.total))+"%"; }
+        else if(o.type==="done"){ if(myGen!==loadSeq) return; radarDeck=o.deck||[]; renderRadarDeck(o); }
+        else if(o.type==="error"){ $("#radarbody").innerHTML=`<div class="iload">Radar failed: ${esc(o.error)}</div>`; }
+      }
+    }
+  }catch(e){ $("#radarbody").innerHTML=`<div class="iload">Radar failed.</div>`; }
+}
+function renderRadarDeck(o){
+  const deck=o.deck||[];
+  if(!o.scanned){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No labelled images to audit yet — accept some boxes, then run Radar to check them against your model.</div>`; return; }
+  if(!deck.length){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No disagreements — your model agrees with your labels across ${o.scanned} labelled image${o.scanned===1?"":"s"}.</div>`; return; }
+  const totalIssues=deck.reduce((a,d)=>a+d.issues,0);
+  const order={class:0,miss:1,phantom:2};
+  const sum=`<div class="rsummary"><div class="iwarn">${deck.length} image${deck.length>1?"s":""} · ${totalIssues} likely issue${totalIssues>1?"s":""} — worst first. Click one to review; nothing changes until you edit by hand.</div></div>`;
+  const maxS = deck[0] ? (deck[0].score||1) : 1;
+  const rows=deck.slice(0,80).map(d=>{
+    const badges=Object.entries(d.counts||{}).sort((a,b)=>(order[a[0]]||9)-(order[b[0]]||9))
+      .map(([t,c])=>`<span class="rbadge ${t}">${c} ${t==="class"?"class slip":t}</span>`).join("");
+    const ratio=Math.max(0.1,(d.score||0)/maxS);
+    const sevCol=ratio>0.66?"var(--danger)":ratio>0.33?"var(--warn)":"var(--ai)";
+    return `<button class="rrow" data-id="${d.id}"><img class="rthumb" loading="lazy" src="/api/thumb/${d.id}"><span class="rmeta"><span class="rfn">${esc(d.name)}</span><span class="rb">${badges}</span></span><span class="rsev"><span style="width:${Math.round(ratio*100)}%;background:${sevCol}"></span></span><span class="rscore">${d.score}</span></button>`;
+  }).join("");
+  $("#radarbody").innerHTML=sum+rows;
+  document.querySelectorAll("#radarbody .rrow").forEach(b=> b.onclick=()=>{ closeRadar(); reviewFinding(+b.dataset.id); });
+}
+async function reviewFinding(id){ await load(id); await loadRadarFindings(id); }
+async function loadRadarFindings(id){
+  const myGen=loadSeq;
+  try{ const d=await jget(`/api/assist/radar/${id}`);
+    if(myGen!==loadSeq) return;            // navigated away mid-fetch -> drop stale findings
+    radarFindings=d.findings||[]; draw();
+    if(radarFindings.length) banner(`Radar flagged ${radarFindings.length} here — fix by hand, then save. N: next flagged · Esc: clear.`);
+  }catch(e){ if(myGen===loadSeq) radarFindings=[]; }
+}
+function nextFlagged(){ if(!radarDeck.length) return; const ids=radarDeck.map(d=>d.id); const nxt=ids.find(j=>j>idx); reviewFinding(nxt!=null?nxt:ids[0]); }
+function drawRadarFindings(){
+  if(!radarFindings.length || !imgOk) return;
+  const iw=img.naturalWidth, ih=img.naturalHeight;
+  ctx.save(); ctx.lineWidth=2.5; ctx.font="600 11.5px ui-sans-serif,system-ui,sans-serif"; ctx.textBaseline="bottom";
+  radarFindings.forEach(f=>{
+    const col = f.type==="class"? getCss("--warn") : f.type==="miss"? getCss("--ai") : getCss("--danger");
+    const b=f.box, x=sx((b[0]-b[2]/2)*iw), y=sy((b[1]-b[3]/2)*ih), w=b[2]*iw*view.scale, h=b[3]*ih*view.scale;
+    ctx.save(); ctx.setLineDash([7,4]); ctx.strokeStyle=col; ctx.shadowColor=col; ctx.shadowBlur=8; ctx.strokeRect(x,y,w,h); ctx.restore();
+    const lab = f.type==="class"? `you: ${esc(String(dsname(f.label_cls)))} · model: ${esc(String(f.pred_name||dsname(f.pred_cls)))}`
+              : f.type==="miss"? `missed? ${esc(String(f.pred_name||dsname(f.pred_cls)))} ${Math.round((f.conf||0)*100)}%`
+              : `no object here? (${esc(String(dsname(f.label_cls)))})`;
+    const tw=ctx.measureText(lab).width+12;
+    ctx.save(); ctx.shadowColor="rgba(0,0,0,.4)"; ctx.shadowBlur=5; ctx.shadowOffsetY=1; ctx.globalAlpha=.95; ctx.fillStyle=col; rr(x,y-17,tw,16,4); ctx.restore();
+    ctx.fillStyle="#0a0b0e"; ctx.fillText(lab,x+6,y-3);
+  });
+  ctx.restore();
+}
+
+// ---- Magnetic edges + one-key Tighten (T): snap box edges to image gradients ----
+function ensureGrad(){
+  if(gradData || !imgOk) return gradData;
+  try{
+    const iw=img.naturalWidth, ih=img.naturalHeight, cap=1280;
+    const s=Math.min(1, cap/Math.max(iw,ih));
+    const w=Math.max(1,Math.round(iw*s)), h=Math.max(1,Math.round(ih*s));
+    const oc=document.createElement("canvas"); oc.width=w; oc.height=h;
+    const octx=oc.getContext("2d",{willReadFrequently:true});
+    octx.drawImage(img,0,0,w,h);
+    const d=octx.getImageData(0,0,w,h).data, lum=new Float32Array(w*h);
+    for(let i=0,p=0;i<w*h;i++,p+=4) lum[i]=0.299*d[p]+0.587*d[p+1]+0.114*d[p+2];
+    const g=new Float32Array(w*h);
+    for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=y*w+x; g[i]=Math.abs(lum[i+1]-lum[i-1])+Math.abs(lum[i+w]-lum[i-w]); }
+    gradData=g; gradW=w; gradH=h; gradScale=s;
+  }catch(e){ gradData=null; }   // cross-origin / oversize -> graceful no-op
+  return gradData;
+}
+function snapBox(b, m){
+  const g=ensureGrad(); if(!g) return false;
+  const s=gradScale, W=gradW, H=gradH;
+  normalizeRect(b); clipToImage(b);
+  let x1=Math.round(b.x*s), y1=Math.round(b.y*s), x2=Math.round((b.x+b.w)*s), y2=Math.round((b.y+b.h)*s);
+  x1=Math.max(1,Math.min(W-2,x1)); x2=Math.max(1,Math.min(W-2,x2));
+  y1=Math.max(1,Math.min(H-2,y1)); y2=Math.max(1,Math.min(H-2,y2));
+  if(x2-x1<3 || y2-y1<3) return false;
+  m=Math.max(2, Math.min(m, Math.floor(Math.min(x2-x1,y2-y1)/2)));
+  const colSum=(x,a,bb)=>{ let v=0; for(let y=a;y<=bb;y++) v+=g[y*W+x]; return v; };
+  const rowSum=(y,a,bb)=>{ let v=0; for(let x=a;x<=bb;x++) v+=g[y*W+x]; return v; };
+  const bestCol=(cx,a,bb)=>{ let bx=cx,bv=-1; for(let x=Math.max(1,cx-m);x<=Math.min(W-2,cx+m);x++){ const v=colSum(x,a,bb); if(v>bv){bv=v;bx=x;} } return bx; };
+  const bestRow=(cy,a,bb)=>{ let by=cy,bv=-1; for(let y=Math.max(1,cy-m);y<=Math.min(H-2,cy+m);y++){ const v=rowSum(y,a,bb); if(v>bv){bv=v;by=y;} } return by; };
+  const nx1=bestCol(x1,y1,y2), nx2=bestCol(x2,y1,y2), ny1=bestRow(y1,x1,x2), ny2=bestRow(y2,x1,x2);
+  const X1=Math.min(nx1,nx2)/s, X2=Math.max(nx1,nx2)/s, Y1=Math.min(ny1,ny2)/s, Y2=Math.max(ny1,ny2)/s;
+  if(X2-X1<2 || Y2-Y1<2) return false;
+  b.x=X1; b.y=Y1; b.w=X2-X1; b.h=Y2-Y1; return true;
+}
+function tightenSelected(){
+  if(sel<0 || !imgOk) return;
+  if(!ensureGrad()){ banner("Tighten needs the image pixels (unavailable for this image)."); return; }
+  const b=boxes[sel], m=Math.max(10, Math.round(Math.min(b.w,b.h)*gradScale*0.22));
+  gestureSnap=snap();
+  if(snapBox(b,m)){ snapCommit(); markDirty(); draw(); banner("Tightened to the nearest edges (T)"); }
+  else gestureSnap=null;
+}
+
+// ---- Loupe magnifier (L pins it; auto-shows while drawing/resizing) ----
+function drawLoupe(){
+  if(!imgOk || !cursor) return;
+  if(!(loupeOn || mode==="new" || mode==="resize")) return;
+  const R=64, zoom=3.4, pad=22;
+  let lx=cursor.x+pad+R, ly=cursor.y+pad+R;
+  if(lx+R>VW) lx=cursor.x-pad-R;
+  if(ly+R>VH) ly=cursor.y-pad-R;
+  if(lx-R<0) lx=cursor.x+pad+R;
+  if(ly-R<0) ly=cursor.y+pad+R;
+  const bx=ix(cursor.x), by=iy(cursor.y), eff=view.scale*zoom;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(lx,ly,R,0,6.2832); ctx.closePath();
+  ctx.fillStyle=getCss("--bg2"); ctx.fill();
+  ctx.save(); ctx.clip();
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(img, lx-bx*eff, ly-by*eff, img.naturalWidth*eff, img.naturalHeight*eff);
+  ctx.imageSmoothingEnabled=true;
+  ctx.strokeStyle="rgba(6,182,212,.85)"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(lx-R,ly); ctx.lineTo(lx+R,ly); ctx.moveTo(lx,ly-R); ctx.lineTo(lx,ly+R); ctx.stroke();
+  ctx.restore();
+  ctx.lineWidth=2.5; ctx.strokeStyle=getCss("--ac"); ctx.shadowColor="rgba(2,6,23,.5)"; ctx.shadowBlur=10;
+  ctx.beginPath(); ctx.arc(lx,ly,R,0,6.2832); ctx.stroke();
+  ctx.restore();
+}
+
+// ---- Boost: train-in-the-loop (background fine-tune + agreement delta) ----
+async function runBoost(){
+  if(!assist || !assist.boost) return;
+  if(dirty && idx>=0) await save();
+  setBoostChip("run", "Boosting — warming up…");
+  try{
+    const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json();
+    if(!d.started){ setBoostChip("bad", d.reason||"Couldn't start Boost"); return; }
+    pollBoost();
+  }catch(e){ setBoostChip("bad","Boost failed to start"); }
+}
+function pollBoost(){
+  clearTimeout(boostTimer);
+  const myGen=loadSeq;
+  boostTimer=setTimeout(async ()=>{
+    if(myGen!==loadSeq) return;        // project switched -> stop polling the old boost
+    let s; try{ s=await jget("/api/boost/status"); }catch(e){ if(myGen===loadSeq) pollBoost(); return; }
+    if(myGen!==loadSeq) return;
+    if(s.state==="running"){ setBoostChip("run", s.phase||"Boosting…"); pollBoost(); }
+    else if(s.state==="done"){
+      const a=Math.round((s.boosted_agreement||0)*100), b=Math.round((s.base_agreement||0)*100), dl=Math.round((s.delta||0)*100);
+      setBoostChip(dl<0?"bad":"good", `model agrees ${a}% (was ${b}% · ${dl>=0?"+":""}${dl}pts)`);
+      if(s.usable){ addBoostedOption(true); banner("Boosted model ready & selected — press R to auto-label with it, or use Auto-label all."); }
+    } else if(s.state==="error"){ setBoostChip("bad", s.error||"Boost failed"); }
+  }, 1600);
+}
+function setBoostChip(cls, txt){
+  const c=$("#boostchip"); if(!c) return;
+  const ic = cls==="run"? ICO_SPIN : cls==="good"? ICO_CHECK : "";
+  c.className="chip show "+(cls||"");
+  c.innerHTML=`${ic}<span>${esc(txt)}</span><span class="x" id="boostx" title="dismiss">×</span>`;
+  const x=$("#boostx"); if(x) x.onclick=()=>{ c.className="chip"; };
+}
+function addBoostedOption(select){
+  const sel=$("#amodel"); if(!sel) return;
+  if(!sel.querySelector('option[value="boosted"]')){
+    const o=document.createElement("option"); o.value="boosted"; o.textContent="✦ boosted (your labels)";
+    sel.insertBefore(o, sel.firstChild);
+  }
+  if(select){ sel.value="boosted"; assistModel="boosted"; updateEngineUI(); }
+}
+
+// ---- Embedding map: the whole dataset as a 2-D scatter you can lasso ----
+function openMap(){ if(!assist || !assist.embed) return; $("#mapmodal").classList.add("show"); resizeMapCanvas(); if(mapPoints.length){ drawMap(); } else { runEmbeddings(); } }
+function closeMap(){ $("#mapmodal").classList.remove("show"); mapLasso=null; }
+function resizeMapCanvas(){
+  const cv2=$("#mapcv"); if(!cv2) return;
+  const r=cv2.getBoundingClientRect(), dpr=Math.min(window.devicePixelRatio||1,2);
+  cv2.width=Math.max(1,Math.round(r.width*dpr)); cv2.height=Math.max(1,Math.round(r.height*dpr));
+  cv2.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
+  if(mapPoints.length) drawMap();
+}
+async function runEmbeddings(){
+  const myGen=loadSeq;
+  const hint=$("#maphint"); hint.textContent="Embedding your images… (first run loads a tiny model)";
+  try{
+    const r=await fetch("/api/embeddings",{method:"POST"});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); hint.textContent="Embedding unavailable: "+(e.error||r.status); return; }
+    const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
+    for(;;){ const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let nl;
+      while((nl=buf.indexOf("\n"))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+        if(!line) continue; let o; try{o=JSON.parse(line);}catch(e){ continue; }
+        if(o.type==="progress"){ hint.textContent=`Embedding ${o.i} / ${o.total}…`; }
+        else if(o.type==="done"){ if(myGen!==loadSeq) return; mapPoints=o.points||[]; fitMap(); drawMap(); hint.textContent=mapPoints.length? "Drag a lasso around a region → jump to those images" : "No images to embed."; }
+        else if(o.type==="error"){ hint.textContent="Embedding failed: "+o.error; }
+      }
+    }
+  }catch(e){ hint.textContent="Embedding failed."; }
+}
+function fitMap(){
+  if(!mapPoints.length){ mapFit=null; return; }
+  let a=1e18,b=-1e18,c=1e18,d=-1e18;
+  mapPoints.forEach(p=>{ if(p.x<a)a=p.x; if(p.x>b)b=p.x; if(p.y<c)c=p.y; if(p.y>d)d=p.y; });
+  mapFit={minx:a,maxx:b,miny:c,maxy:d};
+}
+function mapProject(p, W, H){
+  const pad=34, f=mapFit||{minx:0,maxx:1,miny:0,maxy:1};
+  const dx=(f.maxx-f.minx)||1, dy=(f.maxy-f.miny)||1;
+  return { x: pad + (p.x-f.minx)/dx*(W-2*pad), y: pad + (p.y-f.miny)/dy*(H-2*pad) };
+}
+function drawMap(){
+  const cv2=$("#mapcv"); if(!cv2) return; const c2=cv2.getContext("2d");
+  const r=cv2.getBoundingClientRect(); c2.clearRect(0,0,r.width,r.height);
+  mapPoints.forEach(p=>{
+    const im=IMAGES[p.id], st=im?im.status:"unlabeled";
+    const col = st==="labeled"? "#10b981" : st==="suggested"? getCss("--ai") : st==="deleted"? "#475569" : "#64748b";
+    const q=mapProject(p, r.width, r.height);
+    c2.beginPath(); c2.arc(q.x,q.y,p.id===idx?5:3.2,0,6.2832);
+    c2.fillStyle=col; c2.globalAlpha=p.id===idx?1:.85; c2.fill();
+    if(p.id===idx){ c2.globalAlpha=1; c2.lineWidth=2; c2.strokeStyle=getCss("--ac"); c2.stroke(); }
+  });
+  c2.globalAlpha=1;
+  if(mapLasso && mapLasso.length>3){
+    c2.beginPath(); c2.moveTo(mapLasso[0],mapLasso[1]);
+    for(let i=2;i<mapLasso.length;i+=2) c2.lineTo(mapLasso[i],mapLasso[i+1]);
+    c2.closePath(); c2.fillStyle="rgba(6,182,212,.12)"; c2.fill();
+    c2.lineWidth=1.5; c2.setLineDash([5,4]); c2.strokeStyle=getCss("--ac"); c2.stroke(); c2.setLineDash([]);
+  }
+}
+function nearestMapPoint(x,y){
+  const r=$("#mapcv").getBoundingClientRect(); let best=null,bd=225;
+  mapPoints.forEach(p=>{ const q=mapProject(p,r.width,r.height); const dd=(q.x-x)*(q.x-x)+(q.y-y)*(q.y-y); if(dd<bd){bd=dd;best=p.id;} });
+  return best;
+}
+function wireMap(){
+  const cv2=$("#mapcv"); if(!cv2) return; let drawing=false;
+  cv2.addEventListener("pointerdown", e=>{ if(!mapPoints.length) return; cv2.setPointerCapture(e.pointerId); drawing=true; mapLasso=[e.offsetX,e.offsetY]; });
+  cv2.addEventListener("pointermove", e=>{ if(!drawing || !mapLasso) return; const L=mapLasso; if(Math.hypot(e.offsetX-L[L.length-2], e.offsetY-L[L.length-1])>3){ L.push(e.offsetX,e.offsetY); drawMap(); } });
+  cv2.addEventListener("pointerup", e=>{ if(!drawing) return; drawing=false; const L=mapLasso; mapLasso=null;
+    if(!L || L.length<8){ const hit=nearestMapPoint(e.offsetX,e.offsetY); drawMap(); if(hit!=null){ closeMap(); load(hit); } return; }
+    const r=cv2.getBoundingClientRect();
+    const ids=mapPoints.filter(p=>{ const q=mapProject(p,r.width,r.height); return pointInPoly(q.x,q.y,L); }).map(p=>p.id);
+    drawMap(); mapSelect(ids);
+  });
+}
+function mapSelect(ids){
+  if(!ids.length){ $("#maphint").textContent="Nothing in the lasso — try again."; return; }
+  if(ids.length===1){ closeMap(); load(ids[0]); return; }
+  selSet=new Set(ids); listFilter="all";
+  document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
+  renderList(); closeMap();
+  banner(`${ids.length} images selected from the map — sidebar filtered to them. Click a filter tab to clear.`);
+}
+
+// ===== Project home: list projects, open/switch, reset per-project state =====
+function wireHome(){
+  $("#homeopen").onclick = ()=> openProject($("#homepath").value.trim());
+  $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); openProject($("#homepath").value.trim()); } });
+  $("#hometheme").onclick = toggleTheme;
+}
+function showHome(){ $("#home").classList.add("show"); renderProjects(); }
+function hideHome(){ $("#home").classList.remove("show"); }
+async function backToHome(){
+  if(dirty && idx>=0 && !(await save())){ banner("Save failed — fix it before leaving this image."); return; }
+  try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
+  showHome();
+}
+function homeError(msg){ const e=$("#homeerr"); if(e) e.textContent = msg||""; }
+async function renderProjects(){
+  const grid=$("#homegrid"); if(!grid) return;
+  grid.innerHTML = `<div class="home-empty">Loading…</div>`;
+  let d; try{ d = await jget("/api/projects"); }
+  catch(e){ grid.innerHTML = `<div class="home-empty">Could not load projects.</div>`; return; }
+  const list = d.projects||[];
+  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet — open a dataset above to start.</div>`; return; }
+  grid.innerHTML = list.map(p=>{
+    const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0;
+    return `<button class="prj" data-data="${esc(p.data)}">`
+      + `<span class="prj-forget" data-forget="${esc(p.data)}" title="Forget (does not delete files)">×</span>`
+      + `<div class="prj-name">${esc(p.name||"dataset")}</div>`
+      + `<div class="prj-path" title="${esc(p.data)}">${esc(p.data)}</div>`
+      + `<div class="prj-barwrap"><div class="prj-bar" style="width:${pct}%"></div></div>`
+      + `<div class="prj-meta"><span>${n} images · ${l} labeled</span><span>${esc(relTime(p.last_opened))}</span></div>`
+      + `</button>`;
+  }).join("");
+  grid.querySelectorAll(".prj").forEach(b=> b.onclick=(e)=>{ if(e.target.closest(".prj-forget")) return; openProject(b.dataset.data); });
+  grid.querySelectorAll(".prj-forget").forEach(b=> b.onclick=async (e)=>{ e.stopPropagation();
+    try{ await fetch("/api/projects/forget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:b.dataset.forget})}); }catch(_e){}
+    renderProjects();
+  });
+}
+async function openProject(data){
+  if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return; }
+  homeError("");
+  const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Opening…";
+  try{
+    const r = await fetch("/api/projects/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data})});
+    const d = await r.json();
+    if(!r.ok || !d.open){ homeError(d.error||"Could not open that dataset"); return; }
+    resetClientState();
+    await enterLabeler(d);
+    const hp=$("#homepath"); if(hp) hp.value="";
+  }catch(e){ showHome(); homeError("Could not open that dataset"); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+function resetClientState(){
+  loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project
+  clearTimeout(boostTimer); boostTimer=null;
+  idx=-1; sel=-1; selPoly=-1; hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
+  IMAGES=[]; suggestedIds=new Set(); selSet=null; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
+  undoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
+  setTool("box");
+  imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";
+  document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
+  const bc=$("#boostchip"); if(bc) bc.className="chip";
+  ["#radar","#mapmodal","#insights","#sharepop"].forEach(s=>{ const m=$(s); if(m) m.classList.remove("show"); });
+  const b=$("#banner"); if(b) b.style.display="none";
+}
+function relTime(epoch){
+  if(!epoch) return "";
+  const s = Math.max(0, (Date.now()/1000) - epoch);
+  if(s<60) return "just now";
+  if(s<3600) return Math.floor(s/60)+"m ago";
+  if(s<86400) return Math.floor(s/3600)+"h ago";
+  if(s<2592000) return Math.floor(s/86400)+"d ago";
+  return Math.floor(s/2592000)+"mo ago";
+}
+
+// ---- teammate share ----
+function urlRow(u){ return `<div class="urlrow"><code>${esc(u)}</code><button class="copybtn" data-u="${esc(u)}" title="Copy">${ICO_COPY}</button></div>`; }
+async function toggleShare(){
+  const pop=$("#sharepop"); if(!pop) return;
+  if(pop.classList.contains("show")){ pop.classList.remove("show"); return; }
+  pop.classList.add("show"); pop.innerHTML = `<p>Loading…</p>`;
+  let s; try{ s=await jget("/api/server"); }catch(e){ pop.innerHTML=`<p>Could not read server info.</p>`; return; }
+  if(s.shareable && s.lan_url){
+    pop.innerHTML = `<h4>Label together</h4><p>Send this link to teammates on your network — they open the same dataset and you split the images (each save writes its own file).</p>` + urlRow(s.lan_url);
+  } else {
+    pop.innerHTML = `<h4>Running locally</h4><p>Only this machine can reach it. To let teammates on your network join, restart with <code>--share</code>.</p>` + urlRow(s.local_url);
+  }
+  pop.querySelectorAll(".copybtn").forEach(b=> b.onclick=()=>{
+    try{ navigator.clipboard.writeText(b.dataset.u); }catch(e){}
+    b.classList.add("copied"); b.innerHTML=ICO_CHECK;
+    setTimeout(()=>{ b.classList.remove("copied"); b.innerHTML=ICO_COPY; }, 1200);
+  });
+}
 
 init().catch(err=>{ document.body.insertAdjacentHTML("afterbegin",
   `<div style="padding:14px;color:#f5b13d">LibreLabel failed to start: ${err.message}</div>`); });
