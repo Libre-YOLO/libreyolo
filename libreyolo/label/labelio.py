@@ -176,6 +176,30 @@ def has_unsupported_rows(text: str) -> bool:
     return False
 
 
+def has_out_of_range_rows(text: str, nc: Optional[int]) -> bool:
+    """True if any row's integer class is outside ``[0, nc)``.
+
+    Such a file must stay read-only: ``sanitize_annotations`` drops out-of-range
+    rows, so an unrelated edit/save would silently delete that annotation before
+    the user could recover it. (Malformed/non-integer rows are handled by
+    :func:`has_unsupported_rows`.)
+    """
+    if not nc or nc <= 0:
+        return False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            c = int(parts[0])
+        except (ValueError, IndexError, OverflowError):
+            continue
+        if c < 0 or c >= nc:
+            return True
+    return False
+
+
 def format_annotations(anns: List[dict]) -> str:
     """Serialize mixed box/polygon annotations to YOLO label text."""
     lines: List[str] = []

@@ -16,6 +16,7 @@ from libreyolo.data.utils import img2label_paths, load_data_config
 
 from .labelio import (
     format_annotations,
+    has_out_of_range_rows,
     has_unsupported_rows,
     parse_annotations,
     sanitize_annotations,
@@ -429,9 +430,11 @@ class DatasetSession:
         if not lp.exists():
             return [], True
         text = lp.read_text(encoding="utf-8")
-        # A file with keypoint/pose or malformed rows stays read-only so a save
-        # can't drop the fields we don't parse.
-        return parse_annotations(text), not has_unsupported_rows(text)
+        # A file with keypoint/pose or malformed rows -- or an integer class outside
+        # the dataset's nc -- stays read-only, so a save can't drop the fields we
+        # don't parse or sanitize an out-of-range class away.
+        editable = not (has_unsupported_rows(text) or has_out_of_range_rows(text, self.nc))
+        return parse_annotations(text), editable
 
     # -- mutation ----------------------------------------------------------
     def write_label(self, idx: int, annotations: List[dict]) -> int:
@@ -444,8 +447,12 @@ class DatasetSession:
         if not self.writable:
             raise RuntimeError(self.reason)
         lp = self._items[idx][1]
-        if lp.exists() and has_unsupported_rows(lp.read_text(encoding="utf-8")):
-            raise RuntimeError("This label file has keypoint/unsupported rows; it is read-only.")
+        if lp.exists():
+            existing = lp.read_text(encoding="utf-8")
+            if has_unsupported_rows(existing):
+                raise RuntimeError("This label file has keypoint/unsupported rows; it is read-only.")
+            if has_out_of_range_rows(existing, self.nc):
+                raise RuntimeError("This label file has class ids outside the dataset's nc; it is read-only.")
         clean = sanitize_annotations(annotations, self.nc)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))

@@ -222,6 +222,11 @@ class _Handler(BaseHTTPRequestHandler):
                     meta = self.state.session.meta()
                     meta["open"] = True
                     meta["epoch"] = self.state.epoch
+                    if not self._local_admin():
+                        # root/yaml are host-local filesystem paths; LAN teammates only
+                        # need names/count/writable to label the open dataset.
+                        meta.pop("root", None)
+                        meta.pop("yaml", None)
                     self._send(200, meta)
             elif path == "/api/images":
                 self._send(200, {"images": self.state.session.list_images()})

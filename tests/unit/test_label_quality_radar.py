@@ -590,3 +590,37 @@ def test_local_admin_gating_by_bind_and_client():
     h.state = SimpleNamespace(host="192.168.1.5")
     h.client_address = ("192.168.1.5", 5000)
     assert h._local_admin() is True
+
+
+def test_out_of_range_class_is_read_only(tmp_path):
+    # Codex round 10: a class id outside [0, nc) must keep the file read-only, or a
+    # save would sanitize that annotation away.
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.labelio import has_out_of_range_rows
+
+    assert has_out_of_range_rows("5 0.5 0.5 0.2 0.2\n", nc=2) is True
+    assert has_out_of_range_rows("1 0.5 0.5 0.2 0.2\n", nc=2) is False
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))   # nc=2
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("7 0.5 0.5 0.2 0.2\n")          # class 7, out of range
+    _anns, editable = ds.read_label(0)
+    assert editable is False
+    with pytest.raises(RuntimeError):
+        ds.write_label(0, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_boost_gather_skips_read_only_files(tmp_path):
+    # Codex round 10: a partial-view (keypoint/OBB/out-of-range) file must not be
+    # snapshotted/trained as if its unsupported rows didn't exist.
+    from libreyolo.label.boost import BoostEngine
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("0 " + " ".join(["0.5"] * 55) + "\n")   # pose row -> read-only
+    be = BoostEngine(ds, model_name="yolo9-t", enabled=False)
+    images, _labels, _accepted = be._gather(ds)
+    assert images == []

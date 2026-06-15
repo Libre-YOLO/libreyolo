@@ -434,6 +434,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <span class="home-brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
         <p class="home-tag">Open a labelling project — your datasets, your machine, YOLO-native labels.</p>
       </div>
+      <div class="home-resume" id="homeresume" style="display:none;margin:14px auto 0;text-align:center"><button class="btn btn-primary" id="homeresumebtn">← Resume current project</button></div>
       <div class="home-open">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v7A1.5 1.5 0 0 1 17.5 18h-13A1.5 1.5 0 0 1 3 16.5z"/></svg>
         <input id="homepath" placeholder="Path to a data.yaml (or a folder containing one)…" spellcheck="false" autocomplete="off">
@@ -559,7 +560,7 @@ async function init(){
   wireHome();
   const d = await jget("/api/dataset");
   let atHome=false; try{ atHome = sessionStorage.getItem("ll-home")==="1"; }catch(e){}
-  if(!d.open || atHome){ showHome(); return; }
+  if(!d.open || atHome){ showHome(d); return; }
   await enterLabeler(d);
 }
 async function enterLabeler(d){
@@ -830,8 +831,18 @@ async function fixDuplicate(ids, btn){
     const d=await r.json();
     if(!r.ok){ btn.textContent=(d.error||"failed").slice(0,42); return; }
     if(d.removed && d.removed.length){
+      const removedIds = new Set(d.removed.map(rm=>rm.id));
       d.removed.forEach(rm=>{ suggestedIds.delete(rm.id); if(IMAGES[rm.id]) IMAGES[rm.id].status="deleted"; });
       IMAGES=(await jget("/api/images")).images; mapPoints=[]; mapFit=null; renderList(); scheduleStats();
+      if(removedIds.has(idx)){
+        // The currently open image was quarantined/purged: its id is now tombstoned,
+        // so any further save would be rejected. Drop the dirty flag and move to the
+        // survivor (or any live image) instead of stranding the user on a dead canvas.
+        dirty = false;
+        let dest = (d.kept!=null && IMAGES[d.kept] && IMAGES[d.kept].status!=="deleted") ? d.kept : null;
+        if(dest==null){ const live = IMAGES.find(im=> im && im.status!=="deleted"); dest = live? live.id : null; }
+        if(dest!=null) await load(dest);
+      }
       lastInsights = await jget("/api/insights");
       lastQuality = await jget("/api/quality").catch(()=>lastQuality);
       renderInsights(lastInsights, lastQuality);
@@ -983,6 +994,7 @@ async function carryForward(){
   const myGen = loadSeq, srcIdx = idx;
   let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
   if(myGen!==loadSeq || idx!==srcIdx) return;   // navigated during the fetch -> don't paste onto the wrong image
+  if(boxes.length + polys.length > 0){ banner("This image already has labels — carry-forward only fills an empty image."); return; }   // drawn during the fetch -> don't merge stale labels
   const anns = lab.annotations||[];
   if(!anns.length){ banner("The previous image has no labels to copy."); return; }
   const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
@@ -1527,6 +1539,7 @@ function closeRadar(){ $("#radar").classList.remove("show"); }
 async function runRadar(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image first, then run Radar."); return; }
+  if(dirty){ banner("You edited while saving — press → to save before running Radar."); return; }   // in-flight edits: don't audit stale on-disk labels
   const myGen=loadSeq;
   openRadar();
   $("#radarbody").innerHTML = `<div class="iload">Auditing your accepted labels with your model…<div class="ptrack" style="width:240px;margin:14px auto 0"><div class="pbar" id="rbar"></div></div></div>`;
@@ -1807,13 +1820,26 @@ function wireHome(){
   $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); openProject($("#homepath").value.trim()); } });
   $("#hometheme").onclick = toggleTheme;
 }
-function showHome(){ $("#home").classList.add("show"); renderProjects(); }
+function showHome(openMeta){
+  $("#home").classList.add("show");
+  // Offer a way back into the already-open session. Crucial on a --share server,
+  // where a LAN teammate can't open a project (admin-only) and would otherwise be
+  // stranded on Home once ll-home is set; resume needs no admin -- just the live session.
+  const rz=$("#homeresume"), btn=$("#homeresumebtn");
+  if(rz && btn){
+    if(openMeta && openMeta.open){
+      rz.style.display="";
+      btn.onclick = async ()=>{ try{ sessionStorage.removeItem("ll-home"); }catch(e){} hideHome(); await enterLabeler(openMeta); };
+    } else { rz.style.display="none"; }
+  }
+  renderProjects();
+}
 function hideHome(){ $("#home").classList.remove("show"); }
 async function backToHome(){
   if(dirty && idx>=0 && !(await save())){ banner("Save failed — fix it before leaving this image."); return; }
   if(dirty){ banner("You edited while saving — press → to save before going home."); return; }   // in-flight edits: don't drop them on Home
   try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
-  showHome();
+  showHome(DS);   // pass the open session so "Resume current project" is offered
 }
 function homeError(msg){ const e=$("#homeerr"); if(e) e.textContent = msg||""; }
 async function renderProjects(){

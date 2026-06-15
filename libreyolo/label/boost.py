@@ -103,7 +103,10 @@ class BoostEngine:
         for idx in range(len(session)):
             if idx in deleted:
                 continue
-            anns, _editable = session.read_label(idx)
+            anns, editable = session.read_label(idx)
+            if not editable:
+                continue   # keypoint/OBB/out-of-range file: parsed boxes are only a
+                           # partial view -> training on the subset skews the metric
             boxes = [b for b in (_ann_to_box(a) for a in anns) if b is not None]
             if not boxes:
                 continue
