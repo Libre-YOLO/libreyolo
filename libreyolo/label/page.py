@@ -711,7 +711,9 @@ let statsTimer = null;
 function scheduleStats(){ clearTimeout(statsTimer); statsTimer = setTimeout(renderStats, 500); }
 async function renderStats(){
   const el = $("#stats"), tc = $("#traincta"); if(!el) return;
+  const myEpoch = DS && DS.epoch;   // debounced from save()/fixDuplicate(): a late result must not render into a since-switched project
   let s; try{ s = await jget("/api/stats"); }catch(e){ return; }
+  if(!DS || DS.epoch!==myEpoch) return;   // project switched mid-fetch -> drop stale histogram/counts/train CTA
   if(!s.boxes){
     el.innerHTML = `<div class="sh"><span>Dataset health</span></div>`+
       `<div class="none">No labels yet — Auto-label, then accept</div>`;
@@ -829,11 +831,13 @@ async function fixDuplicate(ids, btn){
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image before fixing duplicates."); return; }
   if(dirty){ banner("You have unsaved edits — save before fixing duplicates."); return; }
   btn.disabled=true; btn.textContent="…";
+  const myEpoch = DS && DS.epoch;   // the post-fix re-fetches below must not land in a since-switched project
   try{
     const r=await fetch("/api/insights/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids, epoch:(DS&&DS.epoch)||0})});
     const d=await r.json();
     if(!r.ok){ btn.textContent=(d.error||"failed").slice(0,42); return; }
     if(d.removed && d.removed.length){
+      if(!DS || DS.epoch!==myEpoch) return;   // switched projects after the fix POST -> don't mutate the new project's IMAGES/insights
       const removedIds = new Set(d.removed.map(rm=>rm.id));
       d.removed.forEach(rm=>{ suggestedIds.delete(rm.id); if(IMAGES[rm.id]) IMAGES[rm.id].status="deleted"; });
       IMAGES=(await jget("/api/images")).images; mapPoints=[]; mapFit=null; renderList(); scheduleStats();
@@ -846,8 +850,10 @@ async function fixDuplicate(ids, btn){
         if(dest==null){ const live = IMAGES.find(im=> im && im.status!=="deleted"); dest = live? live.id : null; }
         if(dest!=null) await load(dest);
       }
-      lastInsights = await jget("/api/insights");
-      lastQuality = await jget("/api/quality").catch(()=>lastQuality);
+      const ins = await jget("/api/insights");
+      const ql = await jget("/api/quality").catch(()=>lastQuality);
+      if(!DS || DS.epoch!==myEpoch) return;   // switched mid-refresh -> don't render stale duplicate ids whose Fix buttons would target the new project
+      lastInsights = ins; lastQuality = ql;
       renderInsights(lastInsights, lastQuality);
     } else { btn.textContent="no change"; }
   }catch(e){ btn.textContent="failed"; btn.disabled=false; }
@@ -1176,7 +1182,10 @@ function acceptGhost(i){
 function clearReviewState(){   // a fully-dismissed image leaves the review queue (no phantom 'suggested' row)
   if(idx>=0 && suggestedIds.has(idx)){
     suggestedIds.delete(idx);
-    setRowStatus(idx, (boxes.length + polys.length) ? "labeled" : "unlabeled");
+    // A present-but-empty label file (rev != "0") is a reviewed *background* -> keep it
+    // 'empty' (done), don't bounce it back into To-do as 'unlabeled'.
+    const fileExists = curRev!=null && String(curRev)!=="0";
+    setRowStatus(idx, (boxes.length + polys.length) ? "labeled" : (fileExists ? "empty" : "unlabeled"));
   }
 }
 function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length){ $("#banner").style.display="none"; clearReviewState(); } } }
@@ -1201,13 +1210,13 @@ async function autolabelAll(){
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows
   suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[], failed=null; const t0=Date.now();
-  const myGen = loadSeq;
+  const myEpoch = DS && DS.epoch;   // project-scoped: A/D image navigation must NOT abort a dataset-wide run
   try{
     const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});
     const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
     for(;;){
       const {value,done}=await reader.read(); if(done) break;
-      if(myGen!==loadSeq){ ov.style.display="none"; return; }   // project switched -> stop
+      if(!DS || DS.epoch!==myEpoch){ ov.style.display="none"; return; }   // project switched -> stop
       buf += dec.decode(value,{stream:true}); let nl;
       while((nl=buf.indexOf("\n"))>=0){
         const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
@@ -1551,7 +1560,7 @@ async function runRadar(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image first, then run Radar."); return; }
   if(dirty){ banner("You edited while saving — press → to save before running Radar."); return; }   // in-flight edits: don't audit stale on-disk labels
-  const myGen=loadSeq;
+  const myEpoch = DS && DS.epoch;   // project-scoped: image navigation must not abort the dataset-wide scan
   openRadar();
   $("#radarbody").innerHTML = `<div class="iload">Auditing your accepted labels with your model…<div class="ptrack" style="width:240px;margin:14px auto 0"><div class="pbar" id="rbar"></div></div></div>`;
   radarDeck = [];
@@ -1564,7 +1573,7 @@ async function runRadar(){
       while((nl=buf.indexOf("\n"))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
         if(!line) continue; let o; try{o=JSON.parse(line);}catch(e){ continue; }
         if(o.type==="progress"){ const bar=$("#rbar"); if(bar) bar.style.width=Math.round(100*o.i/Math.max(1,o.total))+"%"; }
-        else if(o.type==="done"){ if(myGen!==loadSeq) return; radarDeck=o.deck||[]; renderRadarDeck(o); }
+        else if(o.type==="done"){ if(!DS || DS.epoch!==myEpoch) return; radarDeck=o.deck||[]; renderRadarDeck(o); }
         else if(o.type==="error"){ $("#radarbody").innerHTML=`<div class="iload">Radar failed: ${esc(o.error)}</div>`; }
       }
     }
@@ -1750,7 +1759,7 @@ function resizeMapCanvas(){
   if(mapPoints.length) drawMap();
 }
 async function runEmbeddings(){
-  const myGen=loadSeq;
+  const myEpoch = DS && DS.epoch;   // project-scoped: image navigation must not abort the dataset-wide embed
   const hint=$("#maphint"); hint.textContent="Embedding your images… (first run loads a tiny model)";
   try{
     const r=await fetch("/api/embeddings",{method:"POST"});
@@ -1761,7 +1770,7 @@ async function runEmbeddings(){
       while((nl=buf.indexOf("\n"))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
         if(!line) continue; let o; try{o=JSON.parse(line);}catch(e){ continue; }
         if(o.type==="progress"){ hint.textContent=`Embedding ${o.i} / ${o.total}…`; }
-        else if(o.type==="done"){ if(myGen!==loadSeq) return; mapPoints=o.points||[]; fitMap(); drawMap(); hint.textContent=mapPoints.length? "Drag a lasso around a region → jump to those images" : "No images to embed."; }
+        else if(o.type==="done"){ if(!DS || DS.epoch!==myEpoch) return; mapPoints=o.points||[]; fitMap(); drawMap(); hint.textContent=mapPoints.length? "Drag a lasso around a region → jump to those images" : "No images to embed."; }
         else if(o.type==="error"){ hint.textContent="Embedding failed: "+o.error; }
       }
     }
@@ -1878,6 +1887,11 @@ async function renderProjects(){
 }
 async function openProject(data){
   if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return; }
+  // Persist the open image's edits before swapping projects: resetClientState()
+  // zeroes `dirty` and clears boxes/polys, so without this the work is lost silently
+  // (not even the beforeunload warning fires). Same guard as backToHome/fixDuplicate.
+  if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
+  if(dirty){ homeError("You edited while saving — save before switching projects."); return; }
   homeError("");
   const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Opening…";
   try{

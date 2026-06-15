@@ -647,6 +647,56 @@ def test_write_label_revision_conflict(tmp_path):
     ds.write_label(0, box, expected_rev=rev)           # matching rev -> allowed
 
 
+def test_degenerate_polygon_file_is_read_only(tmp_path):
+    # Audit: a zero-area (collinear) polygon already on disk would be silently dropped
+    # by a save's sanitizer, so the file must be read-only.
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.labelio import has_degenerate_polygon
+
+    assert has_degenerate_polygon("0 0.2 0.2 0.5 0.5 0.8 0.8\n") is True    # collinear 3-pt
+    assert has_degenerate_polygon("0 0.1 0.1 0.4 0.1 0.4 0.4\n") is False   # real triangle
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("0 0.2 0.2 0.5 0.5 0.8 0.8\n")
+    _anns, editable = ds.read_label(0)
+    assert editable is False
+
+
+def test_obb_shaped_rows_read_only_unless_segment(tmp_path):
+    # Codex round 12: a 4-point (8-coord) row is OBB-or-polygon ambiguous without an
+    # explicit task: segment, so it stays read-only to avoid corrupting OBB labels.
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.labelio import has_obb_shaped_rows
+
+    quad = "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n"
+    assert has_obb_shaped_rows(quad) is True
+    assert has_obb_shaped_rows("0 0.5 0.5 0.2 0.2\n") is False   # a box, not a quad
+
+    taskless = DatasetSession(str(_make_split_dataset(tmp_path / "plain")))   # no task key
+    lp = tmp_path / "plain" / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text(quad)
+    assert taskless.read_label(0)[1] is False                   # ambiguous -> read-only
+
+    seg = DatasetSession(str(_make_task_dataset(tmp_path / "seg", "segment")))
+    slp = tmp_path / "seg" / "labels" / "train"
+    slp.mkdir(parents=True, exist_ok=True)
+    (slp / "a.txt").write_text(quad)
+    assert seg.read_label(0)[1] is True                         # task: segment -> a real 4-pt polygon, editable
+
+
+def test_unlabeled_image_inert_in_view_only_session(tmp_path):
+    # Codex round 12: a read-only (dense-task) session must report editable=False even
+    # for images with no label file, so prelabel/autolabel don't queue unsavable work.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_task_dataset(tmp_path / "pose", "pose")))   # view-only
+    _anns, editable = ds.read_label(0)   # the image has no .txt
+    assert editable is False
+
+
 def test_boost_gather_skips_read_only_files(tmp_path):
     # Codex round 10: a partial-view (keypoint/OBB/out-of-range) file must not be
     # snapshotted/trained as if its unsupported rows didn't exist.

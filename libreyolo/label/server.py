@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +41,14 @@ from .radar import scan_dataset
 from .sam import SamEngine
 
 logger = logging.getLogger(__name__)
+
+# Absolute filesystem paths (Windows ``C:\...`` or POSIX ``/...``) we must not leak
+# to LAN clients in error strings on a shared server.
+_ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
+
+
+def _redact_paths(msg: str) -> str:
+    return _ABS_PATH_RE.sub("<path>", str(msg))
 
 
 def _lan_ip() -> str:
@@ -146,8 +155,12 @@ class _LabelState:
             return self.session.resolve_duplicates(ids, purge=purge)
 
     def thumb(self, idx: int, path: Path) -> bytes:
+        # Key by the absolute image path, not the numeric id: after a project switch
+        # (open_project clears _thumbs) an old in-flight request could otherwise store
+        # bytes under a reused id like 0 and show the previous dataset's thumbnail.
+        key = str(path)
         with self._thumb_lock:
-            cached = self._thumbs.get(idx)
+            cached = self._thumbs.get(key)
         if cached is not None:
             return cached
         import io
@@ -161,7 +174,7 @@ class _LabelState:
             im.save(buf, "JPEG", quality=82)
         data = buf.getvalue()
         with self._thumb_lock:
-            self._thumbs[idx] = data
+            self._thumbs[key] = data
         return data
 
 
@@ -224,10 +237,12 @@ class _Handler(BaseHTTPRequestHandler):
                     meta["open"] = True
                     meta["epoch"] = self.state.epoch
                     if not self._local_admin():
-                        # root/yaml are host-local filesystem paths; LAN teammates only
-                        # need names/count/writable to label the open dataset.
+                        # root/yaml are host-local paths; `reason` can also embed an
+                        # absolute path ("Could not derive a label path for <abs>").
+                        # LAN teammates only need names/count/writable to label.
                         meta.pop("root", None)
                         meta.pop("yaml", None)
+                        meta.pop("reason", None)
                     self._send(200, meta)
             elif path == "/api/images":
                 self._send(200, {"images": self.state.session.list_images()})
@@ -248,8 +263,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 annotations, editable = self.state.session.read_label(idx)
+                # rev as a STRING: nanosecond mtimes (~1e18) exceed JS Number.MAX_SAFE_INTEGER,
+                # so a numeric token would be rounded by the browser and every save would 409.
                 self._send(200, {"annotations": annotations, "editable": editable,
-                                 "rev": self.state.session.label_rev(idx)})
+                                 "rev": str(self.state.session.label_rev(idx))})
             elif path == "/api/assist/status":
                 st = self.state.engine.status()
                 st["sam"] = self.state.sam.available()
@@ -273,7 +290,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
             logger.exception("label GET failed: %s", path)
-            self._send(500, {"error": str(exc)})
+            # Exception messages can embed absolute host paths (e.g. OSError on a
+            # label file); the host still sees detail via the log above.
+            self._send(500, {"error": str(exc) if self._local_admin() else "internal error"})
 
     def _serve_image(self, idx: int) -> None:
         p: Path = self.state.session.image_path(idx)
@@ -324,9 +343,15 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._same_origin():
                 self._send(403, {"error": "cross-origin request blocked"})
                 return
-            if path in ("/api/projects/open", "/api/projects/forget",
-                        "/api/insights/fix") and not self._local_admin():
-                self._send(403, {"error": "This action (switch project / prune duplicates) is "
+            # Host-admin only: switching the project, pruning duplicates, and the
+            # heavy full-dataset compute streams all rebind/clobber server-global
+            # state (session, files, the shared pending/findings/embed maps, a host
+            # CPU training job) for every teammate -- gate them to the loopback host.
+            if path in ("/api/projects/open", "/api/projects/forget", "/api/insights/fix",
+                        "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
+                        "/api/embeddings") and not self._local_admin():
+                self._send(403, {"error": "This action (switch project / prune duplicates / "
+                                          "full-dataset auto-label, Radar, embeddings, Boost) is "
                                           "only allowed from the host machine on a shared server."})
                 return
             if self.state.session is None and path not in (
@@ -373,7 +398,7 @@ class _Handler(BaseHTTPRequestHandler):
                 count, new_rev = self.state.write_label(
                     idx, anns, epoch=int(ep) if ep is not None else None,
                     expected_rev=int(rev) if rev is not None else None)
-                self._send(200, {"ok": True, "count": count, "rev": new_rev})
+                self._send(200, {"ok": True, "count": count, "rev": str(new_rev)})
             elif path.startswith("/api/assist/prelabel/"):
                 self._handle_prelabel(int(path.rsplit("/", 1)[-1]), parse_qs(parsed.query))
             elif path.startswith("/api/assist/segment/"):
@@ -404,10 +429,13 @@ class _Handler(BaseHTTPRequestHandler):
         except (IndexError, ValueError) as exc:
             self._send(400, {"error": str(exc)})
         except RuntimeError as exc:  # read-only / non-box file -> 409
-            self._send(409, {"error": str(exc)})
+            # 409 reasons are mostly path-free (read-only/conflict), but one can carry
+            # an absolute path; scrub it for non-admin LAN clients.
+            msg = str(exc) if self._local_admin() else _redact_paths(str(exc))
+            self._send(409, {"error": msg})
         except Exception as exc:  # noqa: BLE001
             logger.exception("label POST failed: %s", path)
-            self._send(500, {"error": str(exc)})
+            self._send(500, {"error": str(exc) if self._local_admin() else "internal error"})
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0) or 0)

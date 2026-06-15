@@ -315,6 +315,8 @@ class AssistEngine:
                 raise RuntimeError(
                     "LocateAnything is opt-in only: set LIBRELABEL_ENABLE_LOCATE=1 "
                     "(and install the VLM extra) to use it.")
+            with self._lock:
+                self._get_la()   # eagerly build the VLM so a systemic load failure aborts here
         else:
             with self._lock:
                 self._get_model(model_name or self.default_model)

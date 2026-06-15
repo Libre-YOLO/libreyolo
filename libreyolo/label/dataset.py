@@ -16,6 +16,8 @@ from libreyolo.data.utils import img2label_paths, load_data_config
 
 from .labelio import (
     format_annotations,
+    has_degenerate_polygon,
+    has_obb_shaped_rows,
     has_out_of_bounds_coords,
     has_out_of_range_rows,
     has_unsupported_rows,
@@ -98,6 +100,7 @@ class DatasetSession:
         # an OBB yaml's 9-field rows are oriented rectangles we'd corrupt if saved as
         # arbitrary polygons -- so treat those tasks as view-only on the task key too.
         task = str(cfg.get("task") or "").strip().lower()
+        self._task = task   # used to disambiguate 4-point (OBB-vs-polygon) rows on read/write
         dense = (cfg.get("kpt_shape") or cfg.get("masks_dir")
                  or cfg.get("depths_dir") or cfg.get("depth")
                  or task in ("depth", "classify", "pose", "obb"))
@@ -303,10 +306,9 @@ class DatasetSession:
         for i, (ip, lp, _split) in enumerate(self._items):
             if i in self._deleted or not lp.exists():
                 continue
-            try:
-                anns = parse_annotations(lp.read_text(encoding="utf-8"))
-            except OSError:
-                continue
+            anns, editable = self.read_label(i)
+            if not editable:
+                continue   # view-only/dense (e.g. OBB) labels: don't lint a partial polygon view
             if not anns:
                 continue
             issues = lint_annotations(anns, imgsz=imgsz)
@@ -429,7 +431,7 @@ class DatasetSession:
         self._check_index(idx)
         lp = self._items[idx][1]
         if not lp.exists():
-            return [], True
+            return [], self.writable   # a read-only session stays inert even for unlabeled images
         text = lp.read_text(encoding="utf-8")
         # A file is editable only if the whole dataset is writable (a dense/pose/OBB
         # dataset's box-shaped rows are a partial view we must never round-trip) AND
@@ -438,7 +440,10 @@ class DatasetSession:
         editable = self.writable and not (
             has_unsupported_rows(text)
             or has_out_of_range_rows(text, self.nc)
-            or has_out_of_bounds_coords(text))
+            or has_out_of_bounds_coords(text)
+            or has_degenerate_polygon(text)
+            # 4-point rows are OBB-or-polygon-ambiguous unless the dataset says segment
+            or (self._task != "segment" and has_obb_shaped_rows(text)))
         return parse_annotations(text), editable
 
     def label_rev(self, idx: int) -> int:
@@ -478,6 +483,11 @@ class DatasetSession:
                 raise RuntimeError("This label file has class ids outside the dataset's nc; it is read-only.")
             if has_out_of_bounds_coords(existing):
                 raise RuntimeError("This label file has coordinates outside [0, 1]; it is read-only.")
+            if has_degenerate_polygon(existing):
+                raise RuntimeError("This label file has a zero-area (collinear/collapsed) polygon; it is read-only.")
+            if self._task != "segment" and has_obb_shaped_rows(existing):
+                raise RuntimeError("This label file has 4-point (OBB/quad) rows; without task: segment "
+                                   "they're treated as oriented boxes and kept read-only.")
         clean = sanitize_annotations(annotations, self.nc)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))

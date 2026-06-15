@@ -163,7 +163,8 @@ class BoostEngine:
         from .assist import build_class_map
 
         resolve = build_class_map(names)
-        hits = total = 0
+        hits = total = ok = 0
+        last_exc = None
         for img in images:
             want = accepted_cls.get(img)
             if want is None:
@@ -171,8 +172,11 @@ class BoostEngine:
             total += 1
             try:
                 r = model(img)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.exception("boost agreement inference failed on %s", img)
                 continue
+            ok += 1
             r = r[0] if isinstance(r, list) else r
             boxes = getattr(r, "boxes", None)
             if boxes is None or len(boxes) == 0:
@@ -182,6 +186,13 @@ class BoostEngine:
             rnames = getattr(r, "names", {}) or {}
             didx = resolve(str(rnames.get(top_idx, top_idx)))
             hits += int(didx == want)
+        # Systemic failure: the model couldn't run a forward on ANY image. Don't
+        # publish a fabricated 0.0 agreement as a 'done' metric -- re-raise so _run's
+        # handler surfaces the real error (CUDA/OOM/incompatible checkpoint). A model
+        # that runs but predicts nothing still returns a real low score.
+        if total and ok == 0:
+            raise last_exc if last_exc is not None else RuntimeError(
+                "boost agreement: the model produced no successful inference on any image")
         return hits / total if total else 0.0
 
     # -- background worker -------------------------------------------------

@@ -200,6 +200,61 @@ def has_out_of_bounds_coords(text: str) -> bool:
     return False
 
 
+def has_obb_shaped_rows(text: str) -> bool:
+    """True if any row is exactly ``cls + 8 coords`` (a 4-point quad).
+
+    Per ``docs/dataset_schema.md`` a 9-field row is an oriented box in ``obb`` mode
+    but a 4-vertex polygon in ``segment`` mode -- byte-identical, so when the dataset
+    declares no task we can't tell them apart and must keep them read-only rather than
+    risk rewriting an OBB as an arbitrary polygon. (Real segmentation masks use many
+    vertices, so the cost of protecting genuine quad polygons is small.)
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            int(parts[0])
+            nums = [float(p) for p in parts[1:]]
+        except (ValueError, IndexError, OverflowError):
+            continue
+        if len(nums) == 8:
+            return True
+    return False
+
+
+def has_degenerate_polygon(text: str) -> bool:
+    """True if any polygon row has ~zero clamped shoelace area (``area2 <= 1e-8``).
+
+    ``sanitize_annotations`` silently *drops* such collinear/collapsed polygons, so a
+    file containing one must stay read-only -- otherwise an unrelated edit/save would
+    delete that row before the user could recover its vertices. Mirrors the
+    sanitizer's clamp-then-area sequence exactly so read/write stay in lockstep.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            int(parts[0])
+            nums = [float(p) for p in parts[1:]]
+        except (ValueError, IndexError, OverflowError):
+            continue   # malformed -> has_unsupported_rows
+        if not (len(nums) >= 6 and len(nums) % 2 == 0):
+            continue   # only polygon rows are area-checked
+        if not all(math.isfinite(v) for v in nums):
+            continue   # nan/inf -> has_unsupported_rows
+        pts = [_clamp01(v) for v in nums]   # clamp BEFORE the area, exactly like sanitize
+        xs, ys = pts[0::2], pts[1::2]
+        n = len(xs)
+        area2 = abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n)))
+        if area2 <= 1e-8:
+            return True
+    return False
+
+
 def has_out_of_range_rows(text: str, nc: Optional[int]) -> bool:
     """True if any row's integer class is outside ``[0, nc)``.
 
