@@ -697,6 +697,35 @@ def test_unlabeled_image_inert_in_view_only_session(tmp_path):
     assert editable is False
 
 
+def test_zero_area_box_is_read_only(tmp_path):
+    # Codex round 13: a zero-width/height box would be dropped by a save's sanitizer,
+    # so the file stays read-only (same as degenerate polygons).
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.labelio import has_zero_area_box
+
+    assert has_zero_area_box("0 0.5 0.5 0.0 0.2\n") is True    # w == 0
+    assert has_zero_area_box("0 0.5 0.5 0.2 0.0\n") is True    # h == 0
+    assert has_zero_area_box("0 0.5 0.5 0.2 0.2\n") is False
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("0 0.5 0.5 0.0 0.2\n")
+    assert ds.read_label(0)[1] is False
+
+
+def test_resolve_duplicates_refuses_recursive_split(tmp_path):
+    # Codex round 13: a recursive split (train: .) would rglob-rediscover quarantined
+    # files, so pruning it via quarantine is refused.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path, leak=True)))
+    ds._split_sources["val"] = [str(tmp_path)]   # val split = the whole dataset root
+    with pytest.raises(RuntimeError):
+        ds.resolve_duplicates([0, 1])
+    assert ds.image_path(1).exists()             # nothing was moved
+
+
 def test_boost_gather_skips_read_only_files(tmp_path):
     # Codex round 10: a partial-view (keypoint/OBB/out-of-range) file must not be
     # snapshotted/trained as if its unsupported rows didn't exist.

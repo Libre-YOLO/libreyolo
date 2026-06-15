@@ -128,6 +128,14 @@ class _LabelState:
         self.register_current(data)
         return session.meta()
 
+    def read_label_with_rev(self, idx: int) -> tuple:
+        """Read annotations + revision under the save lock, so a save can't land
+        between the two and hand a stale client old annotations with a NEW rev
+        (which its next save would then use to pass the conflict check)."""
+        with self._lock:
+            anns, editable = self.session.read_label(idx)
+            return anns, editable, self.session.label_rev(idx)
+
     def write_label(self, idx: int, boxes, epoch=None, expected_rev=None) -> tuple:
         with self._lock:  # serialize concurrent saves to the same tree (check+write atomic)
             if epoch is not None and epoch != self.epoch:
@@ -262,11 +270,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_thumb(int(path.rsplit("/", 1)[-1]))
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
-                annotations, editable = self.state.session.read_label(idx)
+                annotations, editable, rev = self.state.read_label_with_rev(idx)
                 # rev as a STRING: nanosecond mtimes (~1e18) exceed JS Number.MAX_SAFE_INTEGER,
                 # so a numeric token would be rounded by the browser and every save would 409.
-                self._send(200, {"annotations": annotations, "editable": editable,
-                                 "rev": str(self.state.session.label_rev(idx))})
+                self._send(200, {"annotations": annotations, "editable": editable, "rev": str(rev)})
             elif path == "/api/assist/status":
                 st = self.state.engine.status()
                 st["sam"] = self.state.sam.available()
@@ -323,7 +330,8 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             data = self.state.thumb(idx, p)
         except Exception as exc:  # noqa: BLE001 - unreadable/odd image; let client fall back
-            self._send(415, {"error": str(exc)})
+            # PIL errors usually embed the absolute filename; redact for LAN clients.
+            self._send(415, {"error": str(exc) if self._local_admin() else "unreadable image"})
             return
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")

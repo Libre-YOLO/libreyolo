@@ -674,7 +674,7 @@ function renderList(){
     if(!passFilter(im)) return; shown++;
     const r = document.createElement("button");
     r.className = "card" + (im.id===idx?" sel":""); r.dataset.id = im.id;
-    r.innerHTML = `<img class="thumb" loading="lazy" src="/api/thumb/${im.id}" alt="">`+
+    r.innerHTML = `<img class="thumb" loading="lazy" src="/api/thumb/${im.id}?e=${(DS&&DS.epoch)||0}" alt="">`+
       `<span class="meta"><span class="fn">${esc(im.name)}</span>`+
       `<span class="st"><i class="dot ${im.status}"></i>${im.status}</span></span>`;
     r.onclick = ()=> load(im.id);
@@ -771,7 +771,7 @@ function renderInsights(d, q){
     if(_dups){
       _p.push(`<div class="iwarn">${_dups} duplicate group${_dups>1?"s":""} · ${d.duplicate_image_count} images · Fix moves the extras to a reversible quarantine (keeps the train copy)</div>`);
       _p.push(d.duplicate_groups.slice(0,8).map(g=>
-        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join(""));
+        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}?e=${(DS&&DS.epoch)||0}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join(""));
     } else {
       _p.push(`<div class="iwarn">An identical image path is listed in more than one split — remove the overlap in your data.yaml.</div>`);
     }
@@ -1213,6 +1213,7 @@ async function autolabelAll(){
   const myEpoch = DS && DS.epoch;   // project-scoped: A/D image navigation must NOT abort a dataset-wide run
   try{
     const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); ov.style.display="none"; banner("Auto-label unavailable: "+(e.error||r.status)); return; }   // e.g. admin-only 403 on a shared server -> don't stream a JSON error as NDJSON
     const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
     for(;;){
       const {value,done}=await reader.read(); if(done) break;
@@ -1592,7 +1593,7 @@ function renderRadarDeck(o){
       .map(([t,c])=>`<span class="rbadge ${t}">${c} ${t==="class"?"class slip":t}</span>`).join("");
     const ratio=Math.max(0.1,(d.score||0)/maxS);
     const sevCol=ratio>0.66?"var(--danger)":ratio>0.33?"var(--warn)":"var(--ai)";
-    return `<button class="rrow" data-id="${d.id}"><img class="rthumb" loading="lazy" src="/api/thumb/${d.id}"><span class="rmeta"><span class="rfn">${esc(d.name)}</span><span class="rb">${badges}</span></span><span class="rsev"><span style="width:${Math.round(ratio*100)}%;background:${sevCol}"></span></span><span class="rscore">${d.score}</span></button>`;
+    return `<button class="rrow" data-id="${d.id}"><img class="rthumb" loading="lazy" src="/api/thumb/${d.id}?e=${(DS&&DS.epoch)||0}"><span class="rmeta"><span class="rfn">${esc(d.name)}</span><span class="rb">${badges}</span></span><span class="rsev"><span style="width:${Math.round(ratio*100)}%;background:${sevCol}"></span></span><span class="rscore">${d.score}</span></button>`;
   }).join("");
   $("#radarbody").innerHTML=sum+rows;
   document.querySelectorAll("#radarbody .rrow").forEach(b=> b.onclick=()=>{ closeRadar(); reviewFinding(+b.dataset.id); });

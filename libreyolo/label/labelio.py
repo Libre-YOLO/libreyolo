@@ -224,6 +224,27 @@ def has_obb_shaped_rows(text: str) -> bool:
     return False
 
 
+def has_zero_area_box(text: str) -> bool:
+    """True if any box row (``cls cx cy w h``) has ``w <= 0`` or ``h <= 0``.
+
+    ``sanitize_boxes``/``sanitize_annotations`` drop such zero-area boxes, so a file
+    containing one would lose that row on any save -- keep it read-only instead.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            int(parts[0])
+            nums = [float(p) for p in parts[1:]]
+        except (ValueError, IndexError, OverflowError):
+            continue
+        if len(nums) == 4 and (nums[2] <= 0.0 or nums[3] <= 0.0):
+            return True
+    return False
+
+
 def has_degenerate_polygon(text: str) -> bool:
     """True if any polygon row has ~zero clamped shoelace area (``area2 <= 1e-8``).
 

@@ -21,6 +21,7 @@ from .labelio import (
     has_out_of_bounds_coords,
     has_out_of_range_rows,
     has_unsupported_rows,
+    has_zero_area_box,
     parse_annotations,
     sanitize_annotations,
 )
@@ -370,19 +371,47 @@ class DatasetSession:
                     "dangling references are left.")
         qbase = Path(self.root) if self.root else Path(self.yaml_file).parent
         qroot = qbase / ".librelabel_quarantine"
+        # A broad/recursive split (e.g. ``train: .``) rglob-scans the whole tree, so a
+        # quarantine dir INSIDE it would be rediscovered on the next load/train and the
+        # cleanup wouldn't stick. Refuse pruning such a split rather than silently
+        # un-quarantining. (Purge has no quarantine dir, so it's unaffected.)
+        if not purge:
+            try:
+                qres = qroot.resolve()
+            except OSError:
+                qres = qroot
+            for i in redundant:
+                src = self._split_sources.get(self._items[i][2])
+                for s in (src if isinstance(src, list) else [src]):
+                    if not s:
+                        continue
+                    try:
+                        d = Path(s).resolve()
+                    except OSError:
+                        continue
+                    if d.is_dir() and (qres == d or d in qres.parents):
+                        raise RuntimeError(
+                            "This split is a recursive directory that would re-scan the "
+                            "quarantine folder; prune with purge, or point the split at a "
+                            "narrower images/ subdirectory.")
         removed: List[dict] = []
         for i in redundant:
             ip, lp, split = self._items[i]
             try:
                 if purge:
-                    # Remove the label first: the worst partial state is then an
-                    # unlabeled (still-present) image -- recoverable -- never a
-                    # label orphaned from a deleted image. If the image unlink
-                    # fails we skip the tombstone so the surviving image stays live.
-                    if lp.exists():
-                        lp.unlink()
+                    # Delete the IMAGE first: if that fails (lock/permission) the
+                    # OSError below skips the tombstone with the labelled pair fully
+                    # intact -- we never delete a label whose image survives (which
+                    # would silently turn a labelled image unlabelled). Once the image
+                    # is gone, the label cleanup is best-effort (an orphaned label is
+                    # ignored by the loader, which iterates images).
                     if ip.exists():
                         ip.unlink()
+                    try:
+                        if lp.exists():
+                            lp.unlink()
+                    except OSError:
+                        pass
                 else:
                     dst_img = qroot / "images" / split / f"{i}_{ip.name}"   # id prefix: never collide
                     dst_lbl = qroot / "labels" / split / f"{i}_{lp.name}"
@@ -442,6 +471,7 @@ class DatasetSession:
             or has_out_of_range_rows(text, self.nc)
             or has_out_of_bounds_coords(text)
             or has_degenerate_polygon(text)
+            or has_zero_area_box(text)
             # 4-point rows are OBB-or-polygon-ambiguous unless the dataset says segment
             or (self._task != "segment" and has_obb_shaped_rows(text)))
         return parse_annotations(text), editable
@@ -485,6 +515,8 @@ class DatasetSession:
                 raise RuntimeError("This label file has coordinates outside [0, 1]; it is read-only.")
             if has_degenerate_polygon(existing):
                 raise RuntimeError("This label file has a zero-area (collinear/collapsed) polygon; it is read-only.")
+            if has_zero_area_box(existing):
+                raise RuntimeError("This label file has a zero-width/height box; it is read-only.")
             if self._task != "segment" and has_obb_shaped_rows(existing):
                 raise RuntimeError("This label file has 4-point (OBB/quad) rows; without task: segment "
                                    "they're treated as oriented boxes and kept read-only.")
