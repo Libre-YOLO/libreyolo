@@ -119,11 +119,12 @@ class _LabelState:
         self.register_current(data)
         return session.meta()
 
-    def write_label(self, idx: int, boxes, epoch=None) -> int:
-        with self._lock:  # serialize concurrent saves to the same tree
+    def write_label(self, idx: int, boxes, epoch=None, expected_rev=None) -> tuple:
+        with self._lock:  # serialize concurrent saves to the same tree (check+write atomic)
             if epoch is not None and epoch != self.epoch:
                 raise RuntimeError("project changed; reload before saving")
-            return self.session.write_label(idx, boxes)
+            count = self.session.write_label(idx, boxes, expected_rev=expected_rev)
+            return count, self.session.label_rev(idx)
 
     def store_pending(self, idx: int, sugg, sess) -> bool:
         """Store prelabel suggestions iff still on ``sess`` -- atomically with the
@@ -247,7 +248,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 annotations, editable = self.state.session.read_label(idx)
-                self._send(200, {"annotations": annotations, "editable": editable})
+                self._send(200, {"annotations": annotations, "editable": editable,
+                                 "rev": self.state.session.label_rev(idx)})
             elif path == "/api/assist/status":
                 st = self.state.engine.status()
                 st["sam"] = self.state.sam.available()
@@ -365,10 +367,13 @@ class _Handler(BaseHTTPRequestHandler):
                 idx = int(path.rsplit("/", 1)[-1])
                 payload = self._read_json()
                 anns = payload.get("annotations", []) if isinstance(payload, dict) else []
-                ep = (parse_qs(parsed.query).get("epoch") or [None])[0]
-                count = self.state.write_label(
-                    idx, anns, epoch=int(ep) if ep is not None else None)
-                self._send(200, {"ok": True, "count": count})
+                qs = parse_qs(parsed.query)
+                ep = (qs.get("epoch") or [None])[0]
+                rev = (qs.get("rev") or [None])[0]
+                count, new_rev = self.state.write_label(
+                    idx, anns, epoch=int(ep) if ep is not None else None,
+                    expected_rev=int(rev) if rev is not None else None)
+                self._send(200, {"ok": True, "count": count, "rev": new_rev})
             elif path.startswith("/api/assist/prelabel/"):
                 self._handle_prelabel(int(path.rsplit("/", 1)[-1]), parse_qs(parsed.query))
             elif path.startswith("/api/assist/segment/"):

@@ -176,6 +176,30 @@ def has_unsupported_rows(text: str) -> bool:
     return False
 
 
+def has_out_of_bounds_coords(text: str) -> bool:
+    """True if any normalized coordinate is outside ``[0, 1]`` (beyond float-format
+    tolerance) or non-finite.
+
+    Such rows would be silently clamped into range and rewritten by the sanitizers
+    on any unrelated save, so the file must stay read-only to preserve them verbatim.
+    """
+    tol = 1e-6
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            nums = [float(p) for p in parts[1:]]
+        except (ValueError, IndexError):
+            continue   # malformed numbers handled by has_unsupported_rows
+        if not (len(nums) == 4 or (len(nums) >= 6 and len(nums) % 2 == 0)):
+            continue
+        if any((not math.isfinite(n)) or n < -tol or n > 1.0 + tol for n in nums):
+            return True
+    return False
+
+
 def has_out_of_range_rows(text: str, nc: Optional[int]) -> bool:
     """True if any row's integer class is outside ``[0, nc)``.
 

@@ -472,6 +472,7 @@ let selPoly = -1;
 let tool = "box";            // "box" (draw/select) or "seg" (SAM click/box-to-mask)
 let segBusy = false;
 let segRect = null;          // box being dragged in segment mode (image px)
+let curRev = null;           // the loaded label file's revision (mtime), for stale-save conflict detection
 let suggestedIds = new Set();
 let listFilter = "all";
 let imgQuery = "";             // sidebar filename filter
@@ -744,10 +745,12 @@ let lastInsights = null, lastQuality = null, lastStats = null;
 async function openInsights(){
   $("#insights").classList.add("show");
   $("#insbody").innerHTML = `<div class="iload">Analyzing images…</div>`;
+  const myEpoch = DS && DS.epoch;   // bind to the project: late results from a since-switched project would render stale ids
   let d, q, st;
   try{ [d, q, st] = await Promise.all([jget("/api/insights"),
         jget("/api/quality").catch(()=>null), jget("/api/stats").catch(()=>null)]); }
   catch(e){ $("#insbody").innerHTML = `<div class="iload">Could not compute insights.</div>`; return; }
+  if(!DS || DS.epoch!==myEpoch) return;   // project switched mid-analysis -> drop stale results (Fix would target wrong files)
   lastInsights = d; lastQuality = q; lastStats = st;
   renderInsights(d, q);
 }
@@ -876,10 +879,14 @@ async function load(i){
   }
   idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
-  const lab = await jget(`/api/label/${i}`);
+  imgOk = false; editable = false; curRev = null;   // canvas stays inert until metadata loads; a failed fetch must not leave it editable on the previous image
+  let lab;
+  try{ lab = await jget(`/api/label/${i}`); }
+  catch(e){ if(myGen!==loadSeq) return; stageMsg = "Couldn't load this image's labels — pick another image."; draw(); return; }
   if(myGen !== loadSeq) return;
   editable = lab.editable;
-  imgOk = false; stageMsg = "Loading…"; draw();
+  curRev = (lab.rev!=null) ? lab.rev : null;
+  stageMsg = "Loading…"; draw();
   img = new Image();
   img.onload = ()=>{
     if(myGen !== loadSeq) return;
@@ -924,10 +931,12 @@ async function save(){
   polys.forEach(p=>{ const pts=polyToNorm(p); if(pts.length>=6) anns.push({type:"poly", cls:p.cls, points:pts}); });
   const cur = idx, sent = snap();   // snapshot of exactly what we're sending
   try{
-    const r = await fetch(`/api/label/${cur}?epoch=${(DS&&DS.epoch)||0}`,{method:"POST",
+    const q = `epoch=${(DS&&DS.epoch)||0}` + (curRev!=null ? `&rev=${encodeURIComponent(curRev)}` : "");
+    const r = await fetch(`/api/label/${cur}?${q}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
     const d = await r.json().catch(()=>({}));
+    if(d && d.rev!=null) curRev = d.rev;   // adopt the new revision so our own next save doesn't self-conflict
     const saved = (d && typeof d.count==="number") ? d.count : anns.length;
     // Compare against EVERY shape on the canvas, not just what we sent: a box clipped
     // to zero area (or a <3-pt polygon) is filtered out client-side and would
@@ -995,6 +1004,7 @@ async function carryForward(){
   let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
   if(myGen!==loadSeq || idx!==srcIdx) return;   // navigated during the fetch -> don't paste onto the wrong image
   if(boxes.length + polys.length > 0){ banner("This image already has labels — carry-forward only fills an empty image."); return; }   // drawn during the fetch -> don't merge stale labels
+  if(lab.editable===false){ banner("The previous image's labels are read-only (keypoints/unsupported) — can't carry them forward."); return; }   // partial view: don't drop the unparsed rows
   const anns = lab.annotations||[];
   if(!anns.length){ banner("The previous image has no labels to copy."); return; }
   const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
@@ -1108,7 +1118,7 @@ function hitVertex(p, mx, my){
   return -1;
 }
 async function segmentAt(mx,my){
-  if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable) return;
+  if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable || (DS && !DS.writable)) return;   // view-only dataset: no canvas mutation
   const iw=img.naturalWidth, ih=img.naturalHeight, X=ix(mx), Y=iy(my);
   if(X<0||Y<0||X>iw||Y>ih) return;
   segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM, on your machine)"); cv.style.cursor="wait";
@@ -1186,6 +1196,7 @@ function clearGhosts(){ if(ghosts.length){ ghosts=[]; draw(); $("#banner").style
 async function autolabelAll(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Couldn't save the current image; fix that first."); return; }
+  if(dirty){ banner("You edited while saving — press → to save before auto-labeling all."); return; }   // in-flight edits: don't queue suggestions against stale labels
   const ov=$("#progress"), bar=$("#pbar"), txt=$("#ptxt");
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows

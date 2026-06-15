@@ -142,8 +142,11 @@ def scan_dataset(predict: Callable, session, *, model_name: Optional[str] = None
     for idx in range(total):
         if idx in deleted:
             continue   # quarantined/removed image -> nothing on disk to audit
-        anns, _editable = session.read_label(idx)
+        anns, editable = session.read_label(idx)
         name = session.image_path(idx).name
+        if not editable:
+            continue   # keypoint/OBB/out-of-range file: parsed boxes are a partial view,
+                       # so auditing them would surface false misses the user can't fix
         labels = [b for b in (_ann_to_box(a) for a in anns) if b is not None]
         if not labels:
             if progress:

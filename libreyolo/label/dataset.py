@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from libreyolo.data.utils import img2label_paths, load_data_config
 
 from .labelio import (
     format_annotations,
+    has_out_of_bounds_coords,
     has_out_of_range_rows,
     has_unsupported_rows,
     parse_annotations,
@@ -430,15 +431,34 @@ class DatasetSession:
         if not lp.exists():
             return [], True
         text = lp.read_text(encoding="utf-8")
-        # A file with keypoint/pose or malformed rows -- or an integer class outside
-        # the dataset's nc -- stays read-only, so a save can't drop the fields we
-        # don't parse or sanitize an out-of-range class away.
-        editable = not (has_unsupported_rows(text) or has_out_of_range_rows(text, self.nc))
+        # A file is editable only if the whole dataset is writable (a dense/pose/OBB
+        # dataset's box-shaped rows are a partial view we must never round-trip) AND
+        # the file has no rows a save would silently alter: keypoint/malformed rows,
+        # an out-of-[0,nc) class, or out-of-[0,1] coordinates the sanitizers clamp.
+        editable = self.writable and not (
+            has_unsupported_rows(text)
+            or has_out_of_range_rows(text, self.nc)
+            or has_out_of_bounds_coords(text))
         return parse_annotations(text), editable
 
+    def label_rev(self, idx: int) -> int:
+        """A monotonic revision token for the label file (its mtime in ns, 0 if
+        absent), so a save can detect that another teammate rewrote it meanwhile."""
+        self._check_index(idx)
+        lp = self._items[idx][1]
+        try:
+            return lp.stat().st_mtime_ns if lp.exists() else 0
+        except OSError:
+            return 0
+
     # -- mutation ----------------------------------------------------------
-    def write_label(self, idx: int, annotations: List[dict]) -> int:
-        """Write annotations (boxes and/or polygons) atomically. Returns count."""
+    def write_label(self, idx: int, annotations: List[dict], expected_rev: Optional[int] = None) -> int:
+        """Write annotations (boxes and/or polygons) atomically. Returns count.
+
+        ``expected_rev`` (a :meth:`label_rev` token) enables optimistic concurrency:
+        if the file was rewritten since the caller loaded it (another teammate saved),
+        the write is refused so collaborative edits don't clobber each other.
+        """
         self._check_index(idx)
         if idx in self._deleted:
             # Tombstoned by duplicate/leakage cleanup: a stale client must not be
@@ -447,12 +467,17 @@ class DatasetSession:
         if not self.writable:
             raise RuntimeError(self.reason)
         lp = self._items[idx][1]
+        if expected_rev is not None and self.label_rev(idx) != expected_rev:
+            raise RuntimeError("This image was changed by someone else since you opened it; "
+                               "reload it before saving so their labels aren't overwritten.")
         if lp.exists():
             existing = lp.read_text(encoding="utf-8")
             if has_unsupported_rows(existing):
                 raise RuntimeError("This label file has keypoint/unsupported rows; it is read-only.")
             if has_out_of_range_rows(existing, self.nc):
                 raise RuntimeError("This label file has class ids outside the dataset's nc; it is read-only.")
+            if has_out_of_bounds_coords(existing):
+                raise RuntimeError("This label file has coordinates outside [0, 1]; it is read-only.")
         clean = sanitize_annotations(annotations, self.nc)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))

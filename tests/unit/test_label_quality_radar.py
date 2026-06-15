@@ -354,10 +354,11 @@ def test_write_label_epoch_guard_rejects_stale_save(tmp_path):
     ds = DatasetSession(str(_make_split_dataset(tmp_path)))
     st = _LabelState(ds, assist=False)
     box = [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}]
-    assert st.write_label(0, box, epoch=0) == 1   # matches the current epoch
-    assert st.write_label(0, box) == 1            # no epoch -> always allowed (back-compat)
+    count, rev = st.write_label(0, box, epoch=0)   # matches the current epoch -> (count, rev)
+    assert count == 1 and rev > 0
+    assert st.write_label(0, box)[0] == 1          # no epoch -> always allowed (back-compat)
     with pytest.raises(RuntimeError):
-        st.write_label(0, box, epoch=5)           # stale epoch -> rejected
+        st.write_label(0, box, epoch=5)            # stale epoch -> rejected
 
 
 def test_fractional_class_id_is_unsupported():
@@ -609,6 +610,41 @@ def test_out_of_range_class_is_read_only(tmp_path):
     assert editable is False
     with pytest.raises(RuntimeError):
         ds.write_label(0, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_out_of_bounds_coords_read_only(tmp_path):
+    # Codex round 11: coordinates outside [0,1] would be clamped & rewritten by a
+    # save, so the file must stay read-only.
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.labelio import has_out_of_bounds_coords
+
+    assert has_out_of_bounds_coords("0 1.20 0.5 0.2 0.2\n") is True    # cx > 1
+    assert has_out_of_bounds_coords("0 0.5 -0.1 0.2 0.2\n") is True    # cy < 0
+    assert has_out_of_bounds_coords("0 0.5 0.5 0.2 0.2\n") is False
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("0 1.20 0.50 0.20 0.20\n")
+    _anns, editable = ds.read_label(0)
+    assert editable is False
+    with pytest.raises(RuntimeError):
+        ds.write_label(0, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_write_label_revision_conflict(tmp_path):
+    # Codex round 11: an optimistic-concurrency guard so two LAN teammates editing
+    # the same image don't silently clobber each other.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    box = [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}]
+    ds.write_label(0, box)
+    rev = ds.label_rev(0)
+    assert rev > 0
+    with pytest.raises(RuntimeError):
+        ds.write_label(0, box, expected_rev=rev - 1)   # stale rev -> refused
+    ds.write_label(0, box, expected_rev=rev)           # matching rev -> allowed
 
 
 def test_boost_gather_skips_read_only_files(tmp_path):
