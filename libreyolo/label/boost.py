@@ -65,8 +65,9 @@ class BoostEngine:
 
     def start(self, *, epochs: int = 2, imgsz: int = 512, batch: int = 4) -> dict:
         with self._lock:
-            if self.session is None:
-                return {"started": False, "reason": "No project open."}
+            session = self.session   # one snapshot for the whole start: a concurrent
+            if session is None:      # on_project_switch() can't mix images from one
+                return {"started": False, "reason": "No project open."}  # project with names from another
             if self.state.get("state") == "running" or self._running():
                 return {"started": False, "reason": "A boost is already running."}
             if not self.enabled:
@@ -74,14 +75,14 @@ class BoostEngine:
             epochs = max(1, min(int(epochs), 10))    # bound local CPU/temp-disk use
             imgsz = max(64, min(int(imgsz), 1280))
             batch = max(1, min(int(batch), 64))
-            images, labels, accepted_cls = self._gather()
+            images, labels, accepted_cls = self._gather(session)
             if len(images) < MIN_IMAGES:
                 msg = (f"Boost needs at least {MIN_IMAGES} labelled images "
                        f"(you have {len(images)}). Accept a few more, then try again.")
                 self.state = {"state": "error", "error": msg}
                 return {"started": False, "reason": msg}
-            names = list(self.session.names)   # frozen now: a mid-boost switch can't skew it
-            started_session = self.session     # only publish the result if still on this project
+            names = list(session.names)   # frozen now: a mid-boost switch can't skew it
+            started_session = session     # only publish the result if still on this project
             self.state = {"state": "running", "phase": "starting", "n": len(images)}
             self._thread = threading.Thread(
                 target=self._run, name="librelabel-boost", daemon=True,
@@ -90,7 +91,7 @@ class BoostEngine:
             return {"started": True, "n": len(images)}
 
     # -- gather accepted labels (read-only) --------------------------------
-    def _gather(self):
+    def _gather(self, session):
         from collections import Counter
 
         from .radar import _ann_to_box
@@ -98,15 +99,15 @@ class BoostEngine:
         images: List[str] = []
         labels: Dict[str, list] = {}
         accepted_cls: Dict[str, int] = {}
-        deleted = getattr(self.session, "_deleted", set())
-        for idx in range(len(self.session)):
+        deleted = getattr(session, "_deleted", set())
+        for idx in range(len(session)):
             if idx in deleted:
                 continue
-            anns, _editable = self.session.read_label(idx)
+            anns, _editable = session.read_label(idx)
             boxes = [b for b in (_ann_to_box(a) for a in anns) if b is not None]
             if not boxes:
                 continue
-            p = str(self.session.image_path(idx))
+            p = str(session.image_path(idx))
             images.append(p)
             labels[p] = [(int(c), cx, cy, w, h) for (c, cx, cy, w, h) in boxes]
             # the metric is class-top-1; the image's dominant class is the target
@@ -115,6 +116,7 @@ class BoostEngine:
 
     # -- throwaway snapshot dataset (writes only to temp) ------------------
     def _snapshot(self, root: str, images, labels, class_names) -> str:
+        import json
         import shutil
 
         base = Path(root) / "boost_ds"
@@ -133,10 +135,13 @@ class BoostEngine:
                      for (c, cx, cy, w, h) in labels.get(img, [])]
             (base / "labels" / "train" / f"{stem}.txt").write_text(
                 ("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
-        names = "\n".join(f"  {i}: {n}" for i, n in enumerate(class_names))
+        # JSON-encode each scalar: a JSON string is valid YAML and survives class
+        # names / paths containing YAML-significant chars (':', '#', quotes, ...),
+        # so boost trains on the same schema the source dataset declares.
+        names = "\n".join(f"  {i}: {json.dumps(str(n))}" for i, n in enumerate(class_names))
         data_yaml = base / "data.yaml"
         data_yaml.write_text(
-            f"path: {base.as_posix()}\ntrain: images/train\nval: images/train\n"
+            f"path: {json.dumps(base.as_posix())}\ntrain: images/train\nval: images/train\n"
             f"nc: {len(class_names)}\nnames:\n{names}\n", encoding="utf-8")
         return str(data_yaml)
 
@@ -182,13 +187,17 @@ class BoostEngine:
         import tempfile
 
         tmp = None    # thread-local: each worker owns + cleans only its own temp tree
+        torch_mod = None
+        prev_threads = None
         try:
             import torch
 
+            torch_mod = torch
             try:
-                torch.set_num_threads(max(1, (torch.get_num_threads() or 4) - 1))
+                prev_threads = torch.get_num_threads()
+                torch.set_num_threads(max(1, (prev_threads or 4) - 1))
             except Exception:  # noqa: BLE001
-                pass
+                prev_threads = None  # don't try to restore a value we never read
             from libreyolo import LibreYOLO
             from libreyolo.cli.config import resolve_model_name
 
@@ -242,5 +251,13 @@ class BoostEngine:
             logger.exception("boost failed")
             self.state = {"state": "error", "error": str(exc)}
         finally:
+            # Restore the process-wide thread count: set_num_threads() is global,
+            # so without this each boost run permanently shrinks the pool for later
+            # inference/training until it bottoms out at one thread.
+            if torch_mod is not None and prev_threads is not None:
+                try:
+                    torch_mod.set_num_threads(prev_threads)
+                except Exception:  # noqa: BLE001
+                    logger.exception("could not restore torch thread count")
             if tmp:
                 shutil.rmtree(tmp, ignore_errors=True)

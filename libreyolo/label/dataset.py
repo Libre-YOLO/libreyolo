@@ -90,13 +90,20 @@ class DatasetSession:
         }
         self.writable, self.reason = self._check_writable()
         # Pose (kpt_shape), semantic-seg (masks_dir) and depth datasets store dense
-        # labels LibreLabel can't edit; writing YOLO boxes would pollute them.
+        # labels LibreLabel can't edit; writing YOLO boxes would pollute them. The
+        # `task:` key alone is enough to know -- a depth yaml may omit depths_dir
+        # (the loader defaults it), a classify yaml uses no .txt labels at all, and
+        # an OBB yaml's 9-field rows are oriented rectangles we'd corrupt if saved as
+        # arbitrary polygons -- so treat those tasks as view-only on the task key too.
+        task = str(cfg.get("task") or "").strip().lower()
         dense = (cfg.get("kpt_shape") or cfg.get("masks_dir")
-                 or cfg.get("depths_dir") or cfg.get("depth"))
+                 or cfg.get("depths_dir") or cfg.get("depth")
+                 or task in ("depth", "classify", "pose", "obb"))
         if self.writable and dense:
             self.writable = False
-            self.reason = ("Keypoint / mask / depth dataset: view-only in LibreLabel — it "
-                           "edits boxes and polygons, and saving would drop the dense labels.")
+            self.reason = ("Keypoint / OBB / mask / depth / classify dataset: view-only in "
+                           "LibreLabel — it edits boxes and polygons, and saving would drop "
+                           "or corrupt the dense / task-specific labels.")
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
     # -- safety ------------------------------------------------------------
@@ -109,10 +116,11 @@ class DatasetSession:
         Detect the ambiguity up front and make the session read-only.
         """
         for ip, lp, _ in self._items:
-            # img2label_paths replaces the substring "/images", so any ancestor that
-            # merely *contains* "images" (e.g. "images_2026") mis-derives the label
-            # path too -- not just exact duplicate "images" segments.
-            risky = [p for p in ip.parts if "images" in p]
+            # img2label_paths rewrites every "<sep>images" prefix, so a component that
+            # *starts with* "images" (e.g. "images_2026" -> "labels_2026") mis-derives
+            # the label path. A component that merely *contains* "images" but doesn't
+            # start with it (e.g. "my_images") is NOT rewritten -> still writable.
+            risky = [p for p in ip.parts if p.startswith("images")]
             if len(risky) > 1 or (len(risky) == 1 and risky[0] != "images"):
                 return (
                     False,
@@ -347,10 +355,14 @@ class DatasetSession:
             ip, lp, split = self._items[i]
             try:
                 if purge:
-                    if ip.exists():
-                        ip.unlink()
+                    # Remove the label first: the worst partial state is then an
+                    # unlabeled (still-present) image -- recoverable -- never a
+                    # label orphaned from a deleted image. If the image unlink
+                    # fails we skip the tombstone so the surviving image stays live.
                     if lp.exists():
                         lp.unlink()
+                    if ip.exists():
+                        ip.unlink()
                 else:
                     dst_img = qroot / "images" / split / f"{i}_{ip.name}"   # id prefix: never collide
                     dst_lbl = qroot / "labels" / split / f"{i}_{lp.name}"
@@ -409,6 +421,10 @@ class DatasetSession:
     def write_label(self, idx: int, annotations: List[dict]) -> int:
         """Write annotations (boxes and/or polygons) atomically. Returns count."""
         self._check_index(idx)
+        if idx in self._deleted:
+            # Tombstoned by duplicate/leakage cleanup: a stale client must not be
+            # able to recreate a label file for a removed image.
+            raise RuntimeError("This image was removed during duplicate cleanup; it is no longer editable.")
         if not self.writable:
             raise RuntimeError(self.reason)
         lp = self._items[idx][1]

@@ -45,43 +45,49 @@ class SamEngine:
 
     @staticmethod
     def _sam_cached() -> bool:
-        """True only if transformers is installed AND a SAM model is already in the
-        HF cache -- so we never advertise Smart-segment when using it would download."""
+        """True only if transformers is installed AND the LibreSAM *base* snapshot
+        is already on disk -- so we never advertise Smart-segment when using it
+        would download.
+
+        ``LibreSAMModel._ensure_weights`` stores the snapshot under
+        ``weights/LibreSAM<size>/`` (NOT the HF hub cache) and marks completion
+        with ``.libreyolo_snapshot_complete``. We mirror that exact, size-specific
+        check here (cheaply, without importing the torch-heavy model module) so a
+        *different* SAM variant cached elsewhere can't make us claim availability.
+        """
         import importlib.util
-        import os
         from pathlib import Path
 
         if importlib.util.find_spec("transformers") is None:
             return False
-        cache = os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE")
-        if cache:
-            hub = Path(cache)
-        elif os.environ.get("HF_HOME"):
-            hub = Path(os.environ["HF_HOME"]) / "hub"
-        else:
-            hub = Path.home() / ".cache" / "huggingface" / "hub"
+        # Kept in lockstep with libreyolo.models.sam.{model.FILENAME_PREFIX,
+        # base._SNAPSHOT_COMPLETE_MARKER}; cheap on purpose (runs on status()).
+        local_dir = Path("weights") / ("LibreSAM" + SAM_SIZE)
+        if not (local_dir / ".libreyolo_snapshot_complete").exists():
+            return False
+        if not (local_dir / "config.json").exists():
+            return False
         try:
-            return any(p.name.startswith("models--") and "sam" in p.name.lower()
-                       for p in hub.iterdir())
+            return any(local_dir.glob("*.safetensors")) or any(local_dir.glob("*.bin"))
         except OSError:
             return False
 
     def _ensure(self):
         if self._model is None:
-            import os
-
             from libreyolo import LibreSAM
 
+            # Offline-only by contract: LibreLabel never triggers a multi-hundred-MB
+            # download on demand. Rather than mutate the process-wide HF_HUB_OFFLINE
+            # env (unsafe in a threaded server), we refuse up front when the base
+            # snapshot isn't already on disk; with a complete local snapshot,
+            # LibreSAM loads straight from the weights/ dir and never hits the network.
+            if not self._sam_cached():
+                raise RuntimeError(
+                    "SAM weights are not present locally. LibreLabel never downloads "
+                    "them on demand -- run the LibreSAM model once (e.g. via the "
+                    "`sam` command) to fetch them, then reopen Smart-segment.")
             logger.info("LibreLabel loading LibreSAM(%s) on %s", SAM_SIZE, self._device)
-            prev = os.environ.get("HF_HUB_OFFLINE")
-            os.environ["HF_HUB_OFFLINE"] = "1"   # SAM is offline-only; never reach the network
-            try:
-                self._model = LibreSAM(SAM_SIZE, device=self._device)
-            finally:
-                if prev is None:
-                    os.environ.pop("HF_HUB_OFFLINE", None)
-                else:
-                    os.environ["HF_HUB_OFFLINE"] = prev
+            self._model = LibreSAM(SAM_SIZE, device=self._device)
         return self._model
 
     def _size(self, image_path: Path):

@@ -71,10 +71,13 @@ def label_cmd(
             suggestion="Pass a different port=.",
         )
 
-    shown_url = "http://127.0.0.1:%d" % candidate if share else url
+    # Use the actually-bound port (with port=0 the OS assigns it), not the
+    # requested `candidate`, so the printed/JSON URLs are reachable.
+    bound = httpd.server_address[1]
+    shown_url = "http://127.0.0.1:%d" % bound if share else url
+    lan_url = "http://%s:%d" % (_lan_ip(), bound) if share else None
     share_line = (
-        "\n  Teammates on your network: http://%s:%d" % (_lan_ip(), candidate)
-        if share else ""
+        "\n  Teammates on your network: %s" % lan_url if lan_url else ""
     )
 
     if session is None:
@@ -82,7 +85,7 @@ def label_cmd(
             {
                 "url": shown_url,
                 "home": True,
-                "lan_url": share_line.strip() or None,
+                "lan_url": lan_url,
                 "_human_text": (
                     f"LibreLabel running at {shown_url}\n"
                     "  Project home: open a dataset from the browser, or pass "

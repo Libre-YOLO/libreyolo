@@ -114,6 +114,16 @@ class AssistEngine:
         with self._lock:
             return name in self._models
 
+    def _require_enabled(self) -> None:
+        """Hard gate: ``--no-assist`` must block *inference*, not just the listing.
+
+        ``model_names()``/``locate_available()`` already honor ``enabled``; this
+        ensures ``predict_*``/``autolabel_*`` can't load or run a model when the
+        engine was constructed disabled, closing the bypass.
+        """
+        if not self.enabled:
+            raise RuntimeError("AI assist is disabled (--no-assist).")
+
     # -- pending suggestions (in-memory only) ------------------------------
     def set_pending(self, idx: int, suggestions: List[dict]) -> None:
         with self._pending_lock:
@@ -158,6 +168,7 @@ class AssistEngine:
         dataset) and coordinates are normalised ``[0, 1]``. Unmapped suggestions
         are returned (not dropped) so the UI can show them for review.
         """
+        self._require_enabled()
         model_name = model_name or self.default_model
         single_class = len(names) == 1
         with self._lock:
@@ -198,9 +209,15 @@ class AssistEngine:
 
     # -- LocateAnything (open-vocab text-prompt detection) -----------------
     def locate_available(self) -> bool:
-        # Surface the option whenever transformers is present; the actual 3B model
-        # + its VLM deps download/load on use and error with a clear install hint.
+        # LocateAnything is a *non-commercial* (research-only) model, so unlike the
+        # MIT/Apache assist path it is OFF by default and never advertised unless the
+        # user explicitly opts in via LIBRELABEL_ENABLE_LOCATE=1 -- an informed,
+        # deliberate acknowledgement of its license. Even then it needs the VLM extra.
+        import os
+
         if not self.enabled:
+            return False
+        if not os.environ.get("LIBRELABEL_ENABLE_LOCATE"):
             return False
         try:
             import importlib.util
@@ -223,6 +240,7 @@ class AssistEngine:
 
     def predict_locate(self, image_path: Path, names: List[str], classes: List[str]) -> List[dict]:
         """Open-vocabulary detection via LocateAnything. ``classes`` = label strings."""
+        self._require_enabled()
         clean = [c.strip() for c in classes if c and c.strip()]
         if not clean:
             return []
@@ -250,19 +268,25 @@ class AssistEngine:
         """
         from collections import Counter
 
+        self._require_enabled()
         names = session.names
         total = len(session)
         suggested_images = 0
         suggested_boxes = 0
         skipped = 0
         cls_counts: Counter = Counter()
+        deleted = getattr(session, "_deleted", set())
         for idx in range(total):
             if current is not None and not current():
                 break   # project switched away -> stop populating pending for a stale session
+            if idx in deleted:
+                continue   # quarantined/removed image: no file on disk to label
             _existing, editable = session.read_label(idx)
             name = session.image_path(idx).name
-            # A label file that exists (even empty = reviewed background) is "done".
-            if only_unlabeled and (session.has_label_file(idx) or not editable):
+            # Read-only files (pose/keypoint/unsupported rows) are view-only and must
+            # never collect suggestions, regardless of only_unlabeled. Beyond that, a
+            # label file that exists (even empty = reviewed background) is "done".
+            if not editable or (only_unlabeled and session.has_label_file(idx)):
                 skipped += 1
                 if progress:
                     progress({"type": "progress", "i": idx + 1, "total": total,
@@ -279,6 +303,9 @@ class AssistEngine:
                     progress({"type": "progress", "i": idx + 1, "total": total,
                               "id": idx, "name": name, "count": 0, "error": str(exc)})
                 continue
+            if current is not None and not current():
+                break   # switched projects *during* the slow predict: don't write stale
+                        # suggestions into the pending map open_project() just cleared
             self.set_pending(idx, sugg)
             for s in sugg:
                 if s.get("mapped") and s.get("name"):

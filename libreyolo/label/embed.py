@@ -83,6 +83,12 @@ class EmbedEngine:
         import torch
 
         with self._lock:
+            # Re-check under the lock: a concurrent request for the same image
+            # may have filled the cache while we waited, so we don't redo the
+            # expensive forward pass.
+            cached = self._cache.get(key)
+            if cached is not None:
+                return cached
             model = self._ensure()
             with torch.inference_mode():
                 tensor = model._preprocess(key)[0]
@@ -95,7 +101,7 @@ class EmbedEngine:
                     vec = self._hooked(model, tensor)
                 vec = torch.nn.functional.normalize(vec, dim=1)
                 arr = vec.squeeze(0).cpu().numpy().astype("float32")
-        self._cache[key] = arr
+            self._cache[key] = arr   # publish under the lock so the re-check above sees it
         return arr
 
     def embed_dataset(self, session,

@@ -152,9 +152,9 @@ def has_unsupported_rows(text: str) -> bool:
             continue
         parts = line.split()
         try:
-            int(float(parts[0]))
+            int(parts[0])   # class must be an integer token; "0.5" is unsupported
             nums = [float(p) for p in parts[1:]]
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, OverflowError):
             return True
         if not (len(nums) == 4 or (len(nums) >= 6 and len(nums) % 2 == 0)):
             return True
@@ -192,8 +192,15 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
             if len(pts) < 6 or len(pts) % 2 != 0:
                 continue
             xs, ys = pts[0::2], pts[1::2]
-            if (max(xs) - min(xs)) <= 1e-4 or (max(ys) - min(ys)) <= 1e-4:
-                continue  # degenerate (collinear / collapsed) polygon -> drop
+            # Shoelace area: a width/height (bbox) check misses *diagonal* collinear
+            # polygons -- e.g. (0,0),(0.5,0.5),(1,1) has positive bbox extents but
+            # zero area. Drop any polygon whose actual area is ~0 so we never write a
+            # degenerate segment that breaks training after vertex edits.
+            n = len(xs)
+            area2 = abs(sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i]
+                            for i in range(n)))
+            if area2 <= 1e-8:   # 2*area in normalised coords; ~0 -> collinear/collapsed
+                continue
             out.append({"type": "poly", "cls": cls, "points": pts})
         else:
             cx, cy = _clamp01(float(a["cx"])), _clamp01(float(a["cy"]))

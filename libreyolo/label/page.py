@@ -749,7 +749,7 @@ function renderInsights(d, q){
   const W=d.width, H=d.height, MP=d.megapixels;
   const maxRes = d.top_resolutions.length ? d.top_resolutions[0][2] : 1;
   const resBars = d.top_resolutions.map(r=>
-    `<div class="ibar"><span class="il">${r[0]}×${r[1]}</span><span class="it"><span style="width:${Math.round(100*r[2]/maxRes)}%"></span></span><span class="ic">${r[2]}</span></div>`).join("");
+    `<div class="ibar"><span class="il">${r[0]}&times;${r[1]}</span><span class="it"><span style="width:${Math.round(100*r[2]/maxRes)}%"></span></span><span class="ic">${r[2]}</span></div>`).join("");
   const _leak=d.leakage_groups.length, _dups=d.duplicate_groups.length;
   let dup;
   if(_dups || _leak){
@@ -770,10 +770,10 @@ function renderInsights(d, q){
     readinessSection(lastStats, d, q)
     + `<div class="igrid">`
     + `<div class="icard"><div class="ik">Images</div><div class="iv">${d.measured}</div></div>`
-    + `<div class="icard"><div class="ik">Avg size</div><div class="iv">${W.mean}×${H.mean}</div></div>`
-    + `<div class="icard"><div class="ik">Width</div><div class="iv">${W.min}–${W.max}</div></div>`
-    + `<div class="icard"><div class="ik">Height</div><div class="iv">${H.min}–${H.max}</div></div>`
-    + `<div class="icard"><div class="ik">Megapixels</div><div class="iv">${MP.min}–${MP.max}</div></div>`
+    + `<div class="icard"><div class="ik">Avg size</div><div class="iv">${W.mean}&times;${H.mean}</div></div>`
+    + `<div class="icard"><div class="ik">Width</div><div class="iv">${W.min}&ndash;${W.max}</div></div>`
+    + `<div class="icard"><div class="ik">Height</div><div class="iv">${H.min}&ndash;${H.max}</div></div>`
+    + `<div class="icard"><div class="ik">Megapixels</div><div class="iv">${MP.min}&ndash;${MP.max}</div></div>`
     + `</div>`
     + `<div class="isec"><div class="ititle">Most common resolutions</div>${resBars||'<div class="iload">—</div>'}</div>`
     + `<div class="isec"><div class="ititle">Duplicates &amp; train/val leakage</div>${dup}</div>`
@@ -1103,9 +1103,13 @@ function hitGhost(mx,my){
 }
 function acceptGhost(i){
   const g=ghosts[i]; if(!g) return;
-  if(g.cls==null){ banner("This suggestion has no matching dataset class — set one with a number key, then click."); return; }
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — suggestions can't be accepted."); return; }
+  // Unmatched suggestion (no dataset class): honour the UI's promise and apply the
+  // active palette class the user selected, so open-vocab / custom-name detections
+  // are acceptable instead of impossible to take without redrawing.
+  const cls = (g.cls==null) ? active : g.cls;
   pushUndo();
-  boxes.push({cls:g.cls, x:g.x, y:g.y, w:g.w, h:g.h});
+  boxes.push({cls:cls, x:g.x, y:g.y, w:g.w, h:g.h});
   ghosts.splice(i,1); markDirty(); draw();
   if(!ghosts.length) $("#banner").style.display="none";
 }
@@ -1117,6 +1121,7 @@ function clearReviewState(){   // a fully-dismissed image leaves the review queu
 }
 function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length){ $("#banner").style.display="none"; clearReviewState(); } } }
 function acceptAllGhosts(){
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — suggestions can't be accepted."); return; }
   const take = ghosts.filter(g=>g.cls!=null);
   if(!take.length){ if(ghosts.length) banner("These suggestions have no matching dataset class — set one with a number key, or Esc to skip."); return; }
   pushUndo();
@@ -1374,6 +1379,7 @@ cv.addEventListener("pointerup", e=>{
 });
 cv.addEventListener("dblclick", e=>{
   if(selPoly<0 || !imgOk) return;
+  if(!editable || (DS && !DS.writable)) return;   // view-only: select to inspect, never insert a vertex
   const mx=e.offsetX, my=e.offsetY, p=polys[selPoly], X=ix(mx), Y=iy(my), n=p.pts.length/2;
   let best=-1, bestD=1e18, bx=0, by=0;
   for(let i=0;i<n;i++){ const a=2*i, b=2*((i+1)%n);
@@ -1577,6 +1583,7 @@ function snapBox(b, m){
 }
 function tightenSelected(){
   if(sel<0 || !imgOk) return;
+  if(!editable || (DS && !DS.writable)) return;   // view-only: never reshape a protected box
   if(!ensureGrad()){ banner("Tighten needs the image pixels (unavailable for this image)."); return; }
   const b=boxes[sel], m=Math.max(10, Math.round(Math.min(b.w,b.h)*gradScale*0.22));
   gestureSnap=snap();
@@ -1642,7 +1649,7 @@ function setBoostChip(cls, txt){
   const c=$("#boostchip"); if(!c) return;
   const ic = cls==="run"? ICO_SPIN : cls==="good"? ICO_CHECK : "";
   c.className="chip show "+(cls||"");
-  c.innerHTML=`${ic}<span>${esc(txt)}</span><span class="x" id="boostx" title="dismiss">×</span>`;
+  c.innerHTML=`${ic}<span>${esc(txt)}</span><span class="x" id="boostx" title="dismiss">&times;</span>`;
   const x=$("#boostx"); if(x) x.onclick=()=>{ c.className="chip"; };
 }
 function addBoostedOption(select){
@@ -1764,7 +1771,7 @@ async function renderProjects(){
   grid.innerHTML = list.map(p=>{
     const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0;
     return `<button class="prj" data-data="${esc(p.data)}">`
-      + `<span class="prj-forget" data-forget="${esc(p.data)}" title="Forget (does not delete files)">×</span>`
+      + `<span class="prj-forget" data-forget="${esc(p.data)}" title="Forget (does not delete files)">&times;</span>`
       + `<div class="prj-name">${esc(p.name||"dataset")}</div>`
       + `<div class="prj-path" title="${esc(p.data)}">${esc(p.data)}</div>`
       + `<div class="prj-barwrap"><div class="prj-bar" style="width:${pct}%"></div></div>`

@@ -2,11 +2,9 @@
 
 All pure-logic / filesystem-only -- no model weights, no network. The model
 forward pass is stubbed so the matching/classification logic is exercised in
-isolation (and so the trust contract -- "Radar writes nothing" -- can be checked
-by source inspection).
+isolation (and so the trust contract -- "Radar writes nothing" -- can be proven
+behaviorally with a session double that refuses writes).
 """
-
-import inspect
 
 import pytest
 
@@ -103,8 +101,40 @@ def test_lint_passes_a_normal_box():
 
 
 # --- trust contract ---------------------------------------------------------
-def test_radar_module_never_writes_labels():
-    assert "write_label" not in inspect.getsource(radar)
+def test_radar_scan_never_calls_write_label():
+    """Behavioral proof of the trust contract: a scan must read, never mutate.
+
+    Stronger than grepping the source -- it runs ``scan_dataset`` end to end over
+    a session double whose ``write_label`` blows up if touched, so any future
+    write path (not just a literal ``write_label`` string) trips the test.
+    """
+    from pathlib import Path
+
+    class _NoWriteSession:
+        names = ["cat", "dog"]
+        _deleted: set = set()
+
+        def __len__(self):
+            return 2
+
+        def image_path(self, i):
+            return Path(f"img{i}.jpg")
+
+        def read_label(self, i):
+            return ([{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5,
+                      "w": 0.2, "h": 0.2}], True)
+
+        def write_label(self, *a, **k):
+            raise AssertionError("Radar must never write labels")
+
+    def predict(path, names, model_name, conf):
+        # a confident class slip (label says 'cat', model says 'dog') -> a finding
+        return [{"cls": 1, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2,
+                 "conf": 0.9, "name": "dog", "mapped": True}]
+
+    out = radar.scan_dataset(predict, _NoWriteSession())
+    assert out["type"] == "done" and out["scanned"] == 2
+    assert out["flagged"] == 2   # both images surfaced the slip; nothing was written
 
 
 # --- dataset integration (filesystem only) ----------------------------------
@@ -328,3 +358,75 @@ def test_write_label_epoch_guard_rejects_stale_save(tmp_path):
     assert st.write_label(0, box) == 1            # no epoch -> always allowed (back-compat)
     with pytest.raises(RuntimeError):
         st.write_label(0, box, epoch=5)           # stale epoch -> rejected
+
+
+def test_fractional_class_id_is_unsupported():
+    # Codex/CodeRabbit: a "0.5" class token must NOT be coerced to 0 and saved;
+    # the file is marked read-only instead.
+    from libreyolo.label.labelio import has_unsupported_rows
+
+    assert has_unsupported_rows("0.5 0.5 0.5 0.2 0.2\n") is True
+    assert has_unsupported_rows("0 0.5 0.5 0.2 0.2\n") is False
+
+
+def test_my_images_ancestor_stays_writable(tmp_path):
+    # Codex round 3: a "my_images" ancestor doesn't start with "images", so
+    # img2label_paths leaves it alone -> the dataset must stay writable.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path / "my_images" / "proj")))
+    assert ds.writable is True
+
+
+def test_diagonal_collinear_polygon_dropped():
+    # Codex round 3: a diagonal collinear polygon has positive bbox extents but
+    # zero area -- the area check must still drop it.
+    from libreyolo.label.labelio import sanitize_annotations
+
+    diag = {"type": "poly", "cls": 0, "points": [0.0, 0.0, 0.5, 0.5, 1.0, 1.0]}
+    assert sanitize_annotations([diag], nc=2) == []
+
+
+def test_class_slip_requires_confidence():
+    # radar.py: a class slip below miss_conf is consumed silently (no finding) so
+    # the deck isn't flooded with weak disagreements.
+    labels = [(0, 0.5, 0.5, 0.2, 0.2)]
+    weak, _ = radar.classify(labels, [_pred(1, 0.5, 0.5, 0.2, 0.2, 0.30, name="dog")],
+                             miss_conf=0.55)
+    strong, _ = radar.classify(labels, [_pred(1, 0.5, 0.5, 0.2, 0.2, 0.80, name="dog")],
+                               miss_conf=0.55)
+    assert not any(f["type"] == "class" for f in weak)
+    assert any(f["type"] == "class" for f in strong)
+
+
+def test_write_label_rejects_tombstoned_id(tmp_path):
+    # Codex round 3: a stale tab must not recreate a label for a quarantined image.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path, leak=True)))
+    res = ds.resolve_duplicates([0, 1])              # collapse the leak pair
+    removed = res["removed"][0]["id"]
+    with pytest.raises(RuntimeError):
+        ds.write_label(removed, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5,
+                                  "w": 0.2, "h": 0.2}])
+
+
+def _make_task_dataset(root, task):
+    from PIL import Image
+
+    (root / "images" / "train").mkdir(parents=True)
+    Image.new("RGB", (20, 10)).save(root / "images" / "train" / "a.jpg")
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\ntask: {task}\n"
+        "nc: 1\nnames:\n  0: thing\n", encoding="utf-8")
+    return root / "data.yaml"
+
+
+def test_obb_and_classify_datasets_are_view_only(tmp_path):
+    # Codex round 3: task-only OBB/classify/depth yamls must be view-only even
+    # without an explicit dense-label dir.
+    from libreyolo.label.dataset import DatasetSession
+
+    for task in ("obb", "classify", "depth"):
+        ds = DatasetSession(str(_make_task_dataset(tmp_path / task, task)))
+        assert ds.writable is False, f"task={task} should be view-only"

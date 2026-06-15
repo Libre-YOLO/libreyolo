@@ -89,14 +89,18 @@ def classify(labels, preds, *, iou_thr: float = 0.45, miss_conf: float = 0.55,
         lab_used.add(li)
         pred_used.add(pi)
         lb, pr = labels[li], preds[pi]
-        if int(pr["cls"]) != int(lb[0]):
+        # Radar surfaces *confident* disagreements: only a class slip the model is
+        # at least as sure about as a "miss" counts, so weak overlapping guesses
+        # don't flood the deck with low-signal class findings.
+        conf = float(pr.get("conf", 0.0))
+        if int(pr["cls"]) != int(lb[0]) and conf >= miss_conf:
             findings.append({
                 "type": "class", "iou": round(ov, 3),
                 "label_cls": int(lb[0]), "pred_cls": int(pr["cls"]),
-                "pred_name": pr.get("name"), "conf": float(pr.get("conf", 0.0)),
+                "pred_name": pr.get("name"), "conf": conf,
                 "box": [lb[1], lb[2], lb[3], lb[4]],
             })
-            score += float(pr.get("conf", 0.5))
+            score += conf
 
     for li, lb in enumerate(labels):
         if li in lab_used:
@@ -134,7 +138,10 @@ def scan_dataset(predict: Callable, session, *, model_name: Optional[str] = None
     deck: List[dict] = []
     findings_map: Dict[int, list] = {}
     scanned = flagged = 0
+    deleted = getattr(session, "_deleted", set())
     for idx in range(total):
+        if idx in deleted:
+            continue   # quarantined/removed image -> nothing on disk to audit
         anns, _editable = session.read_label(idx)
         name = session.image_path(idx).name
         labels = [b for b in (_ann_to_box(a) for a in anns) if b is not None]

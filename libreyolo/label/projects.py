@@ -73,9 +73,21 @@ def _save(projects: List[dict]) -> None:
         pass  # the registry is a convenience; never crash labelling over it
 
 
+def _last_opened(entry: dict) -> float:
+    """``last_opened`` as a float, tolerant of malformed registry entries.
+
+    The registry is convenience data a user (or a stale writer) could corrupt;
+    a string/None timestamp must not raise ``TypeError`` and break the listing.
+    """
+    try:
+        return float(entry.get("last_opened", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def list_projects() -> List[dict]:
     projects = load()
-    projects.sort(key=lambda e: e.get("last_opened", 0), reverse=True)
+    projects.sort(key=_last_opened, reverse=True)
     return projects
 
 

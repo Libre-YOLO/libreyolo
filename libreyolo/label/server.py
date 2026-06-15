@@ -575,15 +575,18 @@ def serve(
     session = DatasetSession(data) if data else None
     state = _LabelState(session, device=device, assist=assist)
     state.host = host
-    state.port = port
-    if session is not None:
-        state.register_current(data)
     handler = type("BoundLabelHandler", (_Handler,), {"state": state})
     httpd = ThreadingHTTPServer((host, port), handler)
-    url = "http://%s:%d" % (host, port)
+    # Publish the *actual* bound port: with port=0 the OS assigns one, so the
+    # requested value would yield unusable ":0" URLs and poison /api/server.
+    bound_port = httpd.server_address[1]
+    state.port = bound_port
+    if session is not None:
+        state.register_current(data)
+    url = "http://%s:%d" % (host, bound_port)
     if open_browser:
         import webbrowser
 
-        browse = "http://127.0.0.1:%d" % port if host in ("0.0.0.0", "::", "") else url
+        browse = "http://127.0.0.1:%d" % bound_port if host in ("0.0.0.0", "::", "") else url
         threading.Timer(0.7, lambda: webbrowser.open(browse)).start()
     return httpd, url, session
