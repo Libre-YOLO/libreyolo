@@ -10,7 +10,8 @@ from ..output import OutputHandler
 
 def label_cmd(
     data: str = typer.Option(
-        ..., help="Dataset YAML (or a folder containing one) to label"
+        None,
+        help="Dataset YAML (or folder) to open directly; omit to start on the project home",
     ),
     host: str = typer.Option("127.0.0.1", help="Host/interface to bind"),
     port: int = typer.Option(8000, help="Port to bind (auto-bumps if taken)"),
@@ -20,6 +21,9 @@ def label_cmd(
     ),
     no_browser: bool = typer.Option(
         False, "--no-browser", help="Do not auto-open the browser"
+    ),
+    share: bool = typer.Option(
+        False, "--share", help="Bind on your network (0.0.0.0) so LAN teammates can join"
     ),
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
@@ -33,8 +37,9 @@ def label_cmd(
     """
     out = OutputHandler(json_mode=json_output, quiet=quiet)
 
-    from libreyolo.label.server import serve
+    from libreyolo.label.server import _lan_ip, serve
 
+    bind_host = "0.0.0.0" if share else host
     httpd = None
     url = ""
     session = None
@@ -42,7 +47,7 @@ def label_cmd(
         try:
             httpd, url, session = serve(
                 data=data,
-                host=host,
+                host=bind_host,
                 port=candidate,
                 open_browser=not no_browser,
                 device=device,
@@ -56,7 +61,7 @@ def label_cmd(
         except Exception as exc:  # noqa: BLE001 - dataset/config problems
             exit_with_error(out, "io_error", f"Failed to open dataset: {exc}")
 
-    if httpd is None or session is None:
+    if httpd is None:
         exit_with_error(
             out,
             "io_error",
@@ -64,22 +69,43 @@ def label_cmd(
             suggestion="Pass a different port=.",
         )
 
-    meta = session.meta()
-    warn = "" if meta["writable"] else f"\n  WARNING (read-only): {meta['reason']}"
-    out.result(
-        {
-            "url": url,
-            "images": meta["count"],
-            "classes": meta["nc"],
-            "writable": meta["writable"],
-            "_human_text": (
-                f"LibreLabel running at {url}\n"
-                f"  {meta['count']} images, {meta['nc']} classes. "
-                "Drag to draw a box, number keys set the class, A/D move between "
-                "images (auto-saves). Press ? for shortcuts, Ctrl+C to stop." + warn
-            ),
-        }
+    shown_url = "http://127.0.0.1:%d" % candidate if share else url
+    share_line = (
+        "\n  Teammates on your network: http://%s:%d" % (_lan_ip(), candidate)
+        if share else ""
     )
+
+    if session is None:
+        out.result(
+            {
+                "url": shown_url,
+                "home": True,
+                "lan_url": share_line.strip() or None,
+                "_human_text": (
+                    f"LibreLabel running at {shown_url}\n"
+                    "  Project home: open a dataset from the browser, or pass "
+                    "data=path/to/data.yaml. Press Ctrl+C to stop." + share_line
+                ),
+            }
+        )
+    else:
+        meta = session.meta()
+        warn = "" if meta["writable"] else f"\n  WARNING (read-only): {meta['reason']}"
+        out.result(
+            {
+                "url": shown_url,
+                "images": meta["count"],
+                "classes": meta["nc"],
+                "writable": meta["writable"],
+                "_human_text": (
+                    f"LibreLabel running at {shown_url}\n"
+                    f"  {meta['count']} images, {meta['nc']} classes. "
+                    "Drag to draw a box, number keys set the class, A/D move between "
+                    "images (auto-saves). Press ? for shortcuts, Ctrl+C to stop."
+                    + warn + share_line
+                ),
+            }
+        )
 
     try:
         httpd.serve_forever()

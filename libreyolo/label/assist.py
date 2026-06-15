@@ -105,6 +105,11 @@ class AssistEngine:
         return {"available": bool(names) and self.enabled, "models": names,
                 "default": default, "locate": self.locate_available()}
 
+    def has_model(self, name: str) -> bool:
+        """Whether a model is loaded under ``name`` (e.g. the boosted model), locked."""
+        with self._lock:
+            return name in self._models
+
     # -- pending suggestions (in-memory only) ------------------------------
     def set_pending(self, idx: int, suggestions: List[dict]) -> None:
         with self._pending_lock:

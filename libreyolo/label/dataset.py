@@ -75,7 +75,13 @@ class DatasetSession:
                 seen.add(key)
                 self._items.append((Path(ip), Path(lp), split))
 
+        # Raw split sources (resolved paths/lists) so the duplicate fixer can
+        # refuse .txt-manifest splits, where deleting a file leaves a dangling row.
+        self._split_sources = {
+            s: cfg.get(s) for s in ("train", "val", "test") if cfg.get(s)
+        }
         self.writable, self.reason = self._check_writable()
+        self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
     # -- safety ------------------------------------------------------------
     def _check_writable(self) -> Tuple[bool, str]:
@@ -125,9 +131,8 @@ class DatasetSession:
     def list_images(self) -> List[dict]:
         rows = []
         for i, (ip, lp, split) in enumerate(self._items):
-            rows.append(
-                {"id": i, "name": ip.name, "split": split, "status": self._status(lp)}
-            )
+            status = "deleted" if i in self._deleted else self._status(lp)
+            rows.append({"id": i, "name": ip.name, "split": split, "status": status})
         return rows
 
     def stats(self) -> dict:
@@ -136,8 +141,8 @@ class DatasetSession:
 
         counts: Counter = Counter()
         labeled = empty = total_boxes = 0
-        for _ip, lp, _split in self._items:
-            if not lp.exists():
+        for i, (_ip, lp, _split) in enumerate(self._items):
+            if i in self._deleted or not lp.exists():
                 continue
             try:
                 text = lp.read_text(encoding="utf-8")
@@ -156,11 +161,12 @@ class DatasetSession:
             [self.names[c] if 0 <= c < n else str(c), cnt]
             for c, cnt in counts.most_common(12)
         ]
+        live = len(self._items) - len(self._deleted)
         return {
-            "total": len(self._items),
+            "total": live,
             "labeled": labeled,
             "empty": empty,
-            "unlabeled": len(self._items) - labeled - empty,
+            "unlabeled": live - labeled - empty,
             "boxes": total_boxes,
             "classes": top,
         }
@@ -184,6 +190,8 @@ class DatasetSession:
         hashes: dict = {}        # dhash -> [idx, ...]
         failed = 0
         for i, (ip, _lp, split) in enumerate(self._items):
+            if i in self._deleted:
+                continue
             try:
                 with Image.open(ip) as im:
                     w, h = im.size
@@ -229,7 +237,7 @@ class DatasetSession:
         dup_groups.sort(key=lambda g: -len(g["ids"]))
 
         self._insights_cache = {
-            "count": len(self._items),
+            "count": len(self._items) - len(self._deleted),
             "measured": len(dims),
             "failed": failed,
             "width": _stat(ws),
@@ -241,6 +249,105 @@ class DatasetSession:
             "leakage_groups": leak_groups[:50],
         }
         return self._insights_cache
+
+    def quality(self, imgsz: int = 640) -> dict:
+        """Geometry-lint accepted labels: tiny / sliver / full-frame boxes.
+
+        Surfaces annotations a detector physically can't learn from at ``imgsz``
+        (a few-pixel box), plus absurd aspect ratios and whole-frame boxes that
+        are almost always slips. Reports only -- never edits a label.
+        """
+        from .quality import lint_annotations
+
+        flagged: List[dict] = []
+        counts = {"tiny": 0, "sliver": 0, "fullframe": 0}
+        total_issues = 0
+        for i, (ip, lp, _split) in enumerate(self._items):
+            if i in self._deleted or not lp.exists():
+                continue
+            try:
+                anns = parse_annotations(lp.read_text(encoding="utf-8"))
+            except OSError:
+                continue
+            if not anns:
+                continue
+            issues = lint_annotations(anns, imgsz=imgsz)
+            if issues:
+                total_issues += len(issues)
+                for it in issues:
+                    counts[it["type"]] = counts.get(it["type"], 0) + 1
+                flagged.append({"id": i, "name": ip.name, "count": len(issues),
+                                "issues": issues})
+        flagged.sort(key=lambda d: -d["count"])
+        return {"imgsz": imgsz, "issues": total_issues, "counts": counts,
+                "flagged": flagged[:100]}
+
+    def resolve_duplicates(self, ids: List[int], *, purge: bool = False) -> dict:
+        """Collapse a duplicate/leakage group to one survivor (reversible default).
+
+        Keeps exactly one copy -- preferring the ``train`` copy so train/val
+        leakage is eliminated -- and MOVES the rest (image + its label, together)
+        into ``<root>/.librelabel_quarantine/`` so a probabilistic perceptual-hash
+        match is never destructive. ``purge=True`` hard-deletes instead. Removed
+        ids are tombstoned so open image ids stay stable for the UI. No-op +
+        raises when the session is read-only; refuses ``.txt``-manifest splits
+        (deleting a file there would leave a dangling manifest line).
+        """
+        import shutil
+
+        if not self.writable:
+            raise RuntimeError(self.reason)
+        valid = [i for i in dict.fromkeys(ids)
+                 if 0 <= i < len(self._items) and i not in self._deleted]
+        if len(valid) < 2:
+            return {"removed": [], "kept": valid[0] if valid else None,
+                    "quarantine": None}
+        rank = {"train": 0, "val": 1, "test": 2}
+        keep = min(valid, key=lambda i: (rank.get(self._items[i][2], 3), i))
+        redundant = [i for i in valid if i != keep]
+        for i in redundant:
+            src = self._split_sources.get(self._items[i][2])
+            srcs = src if isinstance(src, list) else [src]
+            if any(str(x).lower().endswith(".txt") for x in srcs):
+                raise RuntimeError(
+                    "This split is defined by a .txt file list; remove the manifest "
+                    "line(s) before pruning so no dangling references are left.")
+        qbase = Path(self.root) if self.root else Path(self.yaml_file).parent
+        qroot = qbase / ".librelabel_quarantine"
+        removed: List[dict] = []
+        for i in redundant:
+            ip, lp, split = self._items[i]
+            try:
+                if purge:
+                    if ip.exists():
+                        ip.unlink()
+                    if lp.exists():
+                        lp.unlink()
+                else:
+                    dst_img = qroot / "images" / split / ip.name
+                    dst_lbl = qroot / "labels" / split / lp.name
+                    dst_img.parent.mkdir(parents=True, exist_ok=True)
+                    dst_lbl.parent.mkdir(parents=True, exist_ok=True)
+                    moved_img = False
+                    if ip.exists():
+                        shutil.move(str(ip), str(dst_img))
+                        moved_img = True
+                    try:
+                        if lp.exists():
+                            shutil.move(str(lp), str(dst_lbl))
+                    except OSError:
+                        if moved_img:  # roll back so the item stays consistent
+                            shutil.move(str(dst_img), str(ip))
+                        raise
+            except OSError:
+                continue
+            self._deleted.add(i)
+            removed.append({"id": i, "name": ip.name, "split": split})
+        self._insights_cache = None  # dimensions / dup groups changed
+        return {"removed": removed, "kept": keep,
+                "kept_name": self._items[keep][0].name,
+                "mode": "purge" if purge else "quarantine",
+                "quarantine": None if purge else str(qroot)}
 
     def _check_index(self, idx: int) -> None:
         if not (0 <= idx < len(self._items)):

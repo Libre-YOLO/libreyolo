@@ -27,30 +27,107 @@ import mimetypes
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
+from . import projects
 from .assist import AssistEngine
+from .boost import BoostEngine
 from .dataset import DatasetSession
+from .embed import EmbedEngine
 from .page import INDEX_HTML
+from .radar import scan_dataset
 from .sam import SamEngine
 
 logger = logging.getLogger(__name__)
 
 
+def _lan_ip() -> str:
+    """Best-effort primary LAN IP (for the teammate share URL). Sends no packets."""
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))   # just selects the routable interface
+        return s.getsockname()[0]
+    except OSError:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except OSError:
+            return "127.0.0.1"
+    finally:
+        s.close()
+
+
 class _LabelState:
     """Per-server state: the open dataset, a write lock, and the assist engine."""
 
-    def __init__(self, session: DatasetSession, device: str = "auto", assist: bool = True):
-        self.session = session
+    def __init__(self, session, device: str = "auto", assist: bool = True):
+        self.session = session                # may be None -> project home screen
+        self._data = None                     # path of the open project (for the registry)
+        self.host = "127.0.0.1"               # bind address (for the teammate share URL)
+        self.port = 0
+        self.epoch = 0                        # bumps on every project switch (stale-save guard)
         self._lock = threading.Lock()
         self.engine = AssistEngine(device=device, enabled=assist)
         self.sam = SamEngine(enabled=assist, device=device)
+        self.embed = EmbedEngine(device=device, enabled=assist)
+        self.boost = BoostEngine(session, model_name=self.engine.default_model,
+                                 enabled=assist, engine=self.engine)
         self._thumbs: dict = {}
         self._thumb_lock = threading.Lock()
+        self.radar_findings: dict = {}        # idx -> [finding, ...] from the last scan
+        self._radar_lock = threading.Lock()
+        self.embed_points = None              # cached 2-D embedding scatter
 
-    def write_label(self, idx: int, boxes) -> int:
+    def register_current(self, data) -> None:
+        """Record the open dataset in the registry. The ``labeled`` count needs a
+        full label scan, so it runs on a background thread -- never blocking the
+        open/switch action (which would be seconds of dead UI on big datasets)."""
+        if self.session is None:
+            return
+        self._data = str(data)
+        session = self.session
+
+        def _work():
+            try:
+                projects.register(data, root=session.root or None,
+                                  count=session.meta().get("count"),
+                                  labeled=session.stats().get("labeled"))
+            except Exception:  # noqa: BLE001 - registry is a convenience, never fatal
+                logger.exception("project registry update failed")
+
+        threading.Thread(target=_work, name="librelabel-registry", daemon=True).start()
+
+    def open_project(self, data) -> dict:
+        """Switch the live session to ``data`` (a data.yaml/dir), resetting all
+        per-project state the engines hold. Raises on a bad dataset path."""
+        session = DatasetSession(data)        # validate before mutating anything
+        with self._lock:
+            self.session = session
+            self.epoch += 1                   # invalidate in-flight saves from the old project
+            self.engine.clear_pending()
+            self.radar_findings = {}
+            self.embed_points = None
+            self.embed._cache.clear()
+            self.sam._cur = None
+            with self.engine._lock:                     # mutually exclusive with the boost write
+                self.engine._models.pop("boosted", None)   # boosted model is per-project
+            self.boost.on_project_switch(session)       # keeps a running boost intact
+            with self._thumb_lock:
+                self._thumbs.clear()
+        self.register_current(data)
+        return session.meta()
+
+    def write_label(self, idx: int, boxes, epoch=None) -> int:
         with self._lock:  # serialize concurrent saves to the same tree
+            if epoch is not None and epoch != self.epoch:
+                raise RuntimeError("project changed; reload before saving")
             return self.session.write_label(idx, boxes)
+
+    def resolve_duplicates(self, ids, purge: bool = False) -> dict:
+        with self._lock:  # serialize against label writes on the same tree
+            return self.session.resolve_duplicates(ids, purge=purge)
 
     def thumb(self, idx: int, path: Path) -> bytes:
         with self._thumb_lock:
@@ -98,16 +175,46 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
+            sessionless = path in ("/", "/index.html", "/api/dataset", "/api/projects",
+                                   "/api/server", "/api/assist/status", "/api/boost/status")
+            if self.state.session is None and not sessionless:
+                self._send(409, {"error": "no project open"})
+                return
             if path in ("/", "/index.html"):
                 self._send(200, INDEX_HTML, "text/html; charset=utf-8")
+            elif path == "/api/projects":
+                self._send(200, {"projects": projects.list_projects(),
+                                 "open": self.state._data})
+            elif path == "/api/server":
+                ip = _lan_ip()
+                host = self.state.host
+                shareable = host in ("0.0.0.0", "::", "") or host == ip
+                self._send(200, {
+                    "host": host, "port": self.state.port,
+                    "local_url": "http://127.0.0.1:%d" % self.state.port,
+                    "lan_url": ("http://%s:%d" % (ip, self.state.port)) if shareable else None,
+                    "shareable": shareable,
+                })
             elif path == "/api/dataset":
-                self._send(200, self.state.session.meta())
+                if self.state.session is None:
+                    self._send(200, {"open": False})
+                else:
+                    meta = self.state.session.meta()
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    self._send(200, meta)
             elif path == "/api/images":
                 self._send(200, {"images": self.state.session.list_images()})
             elif path == "/api/stats":
                 self._send(200, self.state.session.stats())
             elif path == "/api/insights":
                 self._send(200, self.state.session.insights())
+            elif path == "/api/quality":
+                try:
+                    imgsz = int((parse_qs(parsed.query).get("imgsz") or ["640"])[0])
+                except (TypeError, ValueError):
+                    imgsz = 640
+                self._send(200, self.state.session.quality(imgsz))
             elif path.startswith("/api/image/"):
                 self._serve_image(int(path.rsplit("/", 1)[-1]))
             elif path.startswith("/api/thumb/"):
@@ -119,10 +226,20 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/assist/status":
                 st = self.state.engine.status()
                 st["sam"] = self.state.sam.available()
+                st["embed"] = self.state.embed.available()
+                st["boost"] = bool(st.get("available"))
+                st["boosted"] = self.state.engine.has_model("boosted")
                 self._send(200, st)
             elif path.startswith("/api/assist/pending/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 self._send(200, {"suggestions": self.state.engine.get_pending(idx)})
+            elif path.startswith("/api/assist/radar/"):
+                idx = int(path.rsplit("/", 1)[-1])
+                with self.state._radar_lock:
+                    findings = self.state.radar_findings.get(idx, [])
+                self._send(200, {"findings": findings})
+            elif path == "/api/boost/status":
+                self._send(200, self.state.boost.status())
             else:
                 self._send(404, {"error": "not found"})
         except (IndexError, ValueError) as exc:
@@ -137,7 +254,11 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "image missing"})
             return
         ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        data = p.read_bytes()
+        try:  # TOCTOU: a concurrent dup-fix may remove the file after exists()
+            data = p.read_bytes()
+        except OSError:
+            self._send(404, {"error": "image missing"})
+            return
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -173,11 +294,37 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
-            if path.startswith("/api/label/"):
+            if self.state.session is None and path not in (
+                    "/api/projects/open", "/api/projects/forget"):
+                self._send(409, {"error": "no project open"})
+                return
+            if path == "/api/projects/open":
+                payload = self._read_json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                if not data:
+                    self._send(400, {"error": "data path required"})
+                    return
+                try:
+                    meta = self.state.open_project(str(data))
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    self._send(200, meta)
+                except Exception as exc:  # noqa: BLE001 - bad dataset path/config
+                    logger.exception("open project failed")
+                    self._send(400, {"error": str(exc)})
+            elif path == "/api/projects/forget":
+                payload = self._read_json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                if data:
+                    projects.forget(str(data))
+                self._send(200, {"ok": True})
+            elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 payload = self._read_json()
                 anns = payload.get("annotations", []) if isinstance(payload, dict) else []
-                count = self.state.write_label(idx, anns)
+                ep = (parse_qs(parsed.query).get("epoch") or [None])[0]
+                count = self.state.write_label(
+                    idx, anns, epoch=int(ep) if ep is not None else None)
                 self._send(200, {"ok": True, "count": count})
             elif path.startswith("/api/assist/prelabel/"):
                 self._handle_prelabel(int(path.rsplit("/", 1)[-1]), parse_qs(parsed.query))
@@ -185,6 +332,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._handle_segment(int(path.rsplit("/", 1)[-1]))
             elif path == "/api/assist/autolabel":
                 self._handle_autolabel_stream(parse_qs(parsed.query))
+            elif path == "/api/assist/radar":
+                self._handle_radar_stream(parse_qs(parsed.query))
+            elif path == "/api/embeddings":
+                self._handle_embeddings_stream()
+            elif path == "/api/insights/fix":
+                payload = self._read_json()
+                ids = payload.get("ids", []) if isinstance(payload, dict) else []
+                purge = bool(payload.get("purge")) if isinstance(payload, dict) else False
+                res = self.state.resolve_duplicates([int(i) for i in ids], purge=purge)
+                self._send(200, res)
+            elif path == "/api/boost":
+                payload = self._read_json()
+                kw = payload if isinstance(payload, dict) else {}
+                self._send(200, self.state.boost.start(
+                    epochs=int(kw.get("epochs", 2)), imgsz=int(kw.get("imgsz", 512)),
+                    batch=int(kw.get("batch", 4))))
             else:
                 self._send(404, {"error": "not found"})
         except (IndexError, ValueError) as exc:
@@ -301,28 +464,99 @@ class _Handler(BaseHTTPRequestHandler):
             logger.exception("auto-label failed")
             emit({"type": "error", "error": str(exc)})
 
+    def _ndjson_begin(self):
+        """Open a streaming NDJSON response and return a thread-safe ``emit``."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        write_lock = threading.Lock()
+
+        def emit(obj: dict) -> None:
+            line = (json.dumps(obj) + "\n").encode("utf-8")
+            with write_lock:
+                try:
+                    self.wfile.write(line)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+
+        return emit
+
+    def _handle_radar_stream(self, qs: dict) -> None:
+        """Audit accepted labels with the model; stream per-image progress then a
+        sorted ``deck`` of disagreements. Per-image findings are parked in state
+        for the UI to overlay (``GET /api/assist/radar/<id>``)."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length:
+            self.rfile.read(length)
+        model, conf = self._model_conf(qs)
+        if not self.state.engine.status().get("available"):
+            self._send(503, {"error": "No model available for Radar "
+                                      "(assist disabled or no weights)."})
+            return
+        sess = self.state.session
+        emit = self._ndjson_begin()
+        try:
+            result = scan_dataset(self.state.engine.predict_image, sess,
+                                  model_name=model, conf=conf, progress=emit)
+            with self.state._radar_lock:
+                if self.state.session is sess:   # drop results if the project changed mid-scan
+                    self.state.radar_findings = result.pop("findings", {})
+            emit(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("radar scan failed")
+            emit({"type": "error", "error": str(exc)})
+
+    def _handle_embeddings_stream(self) -> None:
+        """Embed every image and stream the 2-D PCA scatter (``{id,x,y}``)."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length:
+            self.rfile.read(length)
+        if not self.state.embed.available():
+            self._send(503, {"error": "Embeddings unavailable (assist disabled)."})
+            return
+        sess = self.state.session
+        emit = self._ndjson_begin()
+        try:
+            points = self.state.embed.scatter(sess, progress=emit)
+            if self.state.session is sess:       # drop if the project changed mid-embed
+                self.state.embed_points = points
+            emit({"type": "done", "points": points})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("embeddings failed")
+            emit({"type": "error", "error": str(exc)})
+
 
 def serve(
-    data: str,
+    data: Optional[str] = None,
     host: str = "127.0.0.1",
     port: int = 8000,
     open_browser: bool = True,
     device: str = "auto",
     assist: bool = True,
-) -> tuple[ThreadingHTTPServer, str, DatasetSession]:
-    """Open ``data`` and bind the annotator server.
+) -> tuple:
+    """Bind the annotator server.
 
-    The dataset is loaded eagerly (so a bad path raises here) and the port is
-    bound eagerly (so an in-use port raises ``OSError`` for the caller to retry).
-    Returns ``(httpd, url, session)``; the caller runs ``serve_forever()``.
+    With ``data`` set, the dataset is loaded eagerly (a bad path raises here) and
+    registered as a project. With ``data=None`` the server starts on the project
+    home screen, where any dataset can be opened from the browser. The port is
+    bound eagerly (an in-use port raises ``OSError`` to retry). Returns
+    ``(httpd, url, session)`` (``session`` is ``None`` in home mode).
     """
-    session = DatasetSession(data)
+    session = DatasetSession(data) if data else None
     state = _LabelState(session, device=device, assist=assist)
+    state.host = host
+    state.port = port
+    if session is not None:
+        state.register_current(data)
     handler = type("BoundLabelHandler", (_Handler,), {"state": state})
     httpd = ThreadingHTTPServer((host, port), handler)
     url = "http://%s:%d" % (host, port)
     if open_browser:
         import webbrowser
 
-        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+        browse = "http://127.0.0.1:%d" % port if host in ("0.0.0.0", "::", "") else url
+        threading.Timer(0.7, lambda: webbrowser.open(browse)).start()
     return httpd, url, session
