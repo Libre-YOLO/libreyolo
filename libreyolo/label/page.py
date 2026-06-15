@@ -900,11 +900,16 @@ async function save(){
     const r = await fetch(`/api/label/${cur}?epoch=${(DS&&DS.epoch)||0}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
+    const d = await r.json().catch(()=>({}));
+    const saved = (d && typeof d.count==="number") ? d.count : anns.length;
     savedSnap = sent; dirty = (snap()!==sent);   // edits made during the POST keep it unsaved
     setSave(dirty?"unsaved":"saved");
     const el=$('#save'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
     suggestedIds.delete(cur);
-    setRowStatus(cur, anns.length? "labeled":"empty");
+    setRowStatus(cur, saved? "labeled":"empty");
+    // The server drops degenerate shapes (zero-area / collinear); if it wrote fewer
+    // than we sent, say so rather than letting them silently vanish on next load.
+    if(saved < anns.length){ const n=anns.length-saved; banner(`${n} invalid shape${n>1?"s":""} dropped (degenerate) — not saved.`); }
     scheduleStats();
     return true;
   }catch(e){ setSave("save failed"); return false; }
@@ -1034,7 +1039,10 @@ async function prelabelCurrent(){
     if(!r.ok){ const e=await r.json().catch(()=>({})); banner("Auto-label failed: "+(e.error||r.status)); restoreSave(); return; }
     const data = await r.json();
     showGhosts(data.suggestions||[]);
-    if((data.suggestions||[]).length){ suggestedIds.add(idx); }
+    if((data.suggestions||[]).length){
+      suggestedIds.add(idx);
+      setRowStatus(idx, "suggested");   // make manual prelabels findable via the Review filter, like bulk autolabel
+    }
   }catch(e){ banner("Auto-label failed"); }
   restoreSave();
 }

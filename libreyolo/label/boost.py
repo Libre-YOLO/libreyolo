@@ -201,7 +201,16 @@ class BoostEngine:
             from libreyolo import LibreYOLO
             from libreyolo.cli.config import resolve_model_name
 
+            from .assist import weight_is_local
+
             weight = resolve_model_name(self.model_name)
+            # Offline contract: Boost must not silently download the base checkpoint
+            # before measuring/training -- fail closed with the same hint as assist.
+            if not weight_is_local(weight):
+                raise RuntimeError(
+                    f"Boost base model ({weight}) isn't present locally. LibreLabel won't "
+                    f"download weights automatically -- fetch it once (e.g. "
+                    f"`libreyolo predict model={self.model_name} source=...`), then try Boost again.")
 
             self._set(phase="measuring your model's current agreement")
             base = LibreYOLO(weight, device="cpu")

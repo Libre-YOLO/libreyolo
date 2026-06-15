@@ -486,3 +486,37 @@ def test_insights_fix_epoch_guard(tmp_path):
     with pytest.raises(RuntimeError):
         st.resolve_duplicates([0, 1], epoch=99)   # stale epoch -> refused
     assert ds.image_path(1).exists()              # nothing was moved
+
+
+def test_box_parser_rejects_fractional_class():
+    # Codex round 5: the box-only parser (the format oracle) must use the same
+    # integer-class contract -> a "0.5" row is non-box, not silently class 0.
+    from libreyolo.label.labelio import parse_label_text
+
+    boxes, has_non_box = parse_label_text("0.5 0.5 0.5 0.2 0.2\n")
+    assert boxes == [] and has_non_box is True
+    boxes2, nb2 = parse_label_text("0 0.5 0.5 0.2 0.2\n")
+    assert len(boxes2) == 1 and nb2 is False
+
+
+def test_weight_is_local(tmp_path):
+    # Codex round 5: the offline weight guard shared by assist/embed/boost.
+    from libreyolo.label.assist import weight_is_local
+
+    w = tmp_path / "best.pt"
+    w.write_bytes(b"x")
+    assert weight_is_local(str(w)) is True
+    assert weight_is_local(str(tmp_path / "definitely-absent-zzzz.pt")) is False
+
+
+def test_store_pending_refuses_after_switch(tmp_path):
+    # Codex round 5: the prelabel pending write is atomic with the project switch.
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    st = _LabelState(ds, assist=False)
+    sugg = [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2, "mapped": True}]
+    assert st.store_pending(0, sugg, ds) is True        # same session -> stored
+    assert st.engine.get_pending(0) == sugg
+    assert st.store_pending(0, sugg, object()) is False  # switched-away identity -> refused

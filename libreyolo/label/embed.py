@@ -46,7 +46,16 @@ class EmbedEngine:
             from libreyolo import LibreYOLO
             from libreyolo.cli.config import resolve_model_name
 
+            from .assist import weight_is_local
+
             weight = resolve_model_name(self.model_name)
+            # Same offline contract as assist: opening the Map must not trigger a
+            # silent weight download on a fresh install.
+            if not weight_is_local(weight):
+                raise RuntimeError(
+                    f"Embedding model ({weight}) isn't present locally. LibreLabel won't "
+                    f"download weights automatically -- fetch it once (e.g. "
+                    f"`libreyolo predict model={self.model_name} source=...`), then reopen the Map.")
             logger.info("LibreLabel embeddings loading %s (%s)", self.model_name, weight)
             self._model = LibreYOLO(weight, device=self.device)
         return self._model

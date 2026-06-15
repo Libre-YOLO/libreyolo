@@ -1,4 +1,4 @@
-# 0006 — LibreLabel provenance & clean-room policy
+# 0007 — LibreLabel provenance & clean-room policy
 
 Status: accepted
 Date: 2026-06-15

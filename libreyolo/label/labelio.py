@@ -48,10 +48,12 @@ def parse_label_text(text: str) -> Tuple[List[Box], bool]:
             has_non_box = True
             continue
         try:
-            # Accept "0" or "0.0"; our own writer always emits a bare int.
-            cls = int(float(parts[0]))
+            # Integer-class contract (matches parse_annotations + the training
+            # loader): a fractional token like "0.5" is non-box/unsupported, never
+            # coerced to 0.
+            cls = int(parts[0])
             cx, cy, w, h = (float(p) for p in parts[1:5])
-        except ValueError:
+        except (ValueError, OverflowError):
             has_non_box = True
             continue
         boxes.append(Box(cls=cls, cx=cx, cy=cy, w=w, h=h))

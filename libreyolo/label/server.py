@@ -125,6 +125,17 @@ class _LabelState:
                 raise RuntimeError("project changed; reload before saving")
             return self.session.write_label(idx, boxes)
 
+    def store_pending(self, idx: int, sugg, sess) -> bool:
+        """Store prelabel suggestions iff still on ``sess`` -- atomically with the
+        project switch. open_project() clears pending + rebinds the session under
+        the same ``_lock``, so this check-then-write can't interleave with it and
+        leave stale suggestions under a new project's numeric id."""
+        with self._lock:
+            if self.session is not sess:
+                return False
+            self.engine.set_pending(idx, sugg)
+            return True
+
     def resolve_duplicates(self, ids, purge: bool = False, epoch=None) -> dict:
         with self._lock:  # serialize against label writes on the same tree
             # Same stale-guard as write_label: a Fix request carrying a since-switched
@@ -431,10 +442,9 @@ class _Handler(BaseHTTPRequestHandler):
             logger.exception("prelabel failed")
             self._send(503, {"error": str(exc)})
             return
-        if self.state.session is not sess:        # project switched during inference
+        if not self.state.store_pending(idx, sugg, sess):   # atomic with project switch
             self._send(409, {"error": "project changed; reopen and retry"})
             return
-        self.state.engine.set_pending(idx, sugg)
         self._send(200, {"editable": True, "suggestions": sugg})
 
     def _handle_segment(self, idx: int) -> None:

@@ -56,6 +56,22 @@ def _canon(s) -> str:
     return _SYNONYMS.get(n, n)
 
 
+def weight_is_local(weight: str) -> bool:
+    """Whether a model weight is already on disk (no download needed).
+
+    The offline contract for *every* model-backed LibreLabel action (assist
+    prelabel/auto-label, the embedding Map, Boost): a "fully local" labeller must
+    not silently pull a checkpoint over the network. A passthrough path
+    (``best.pt`` / an absolute path) is checked directly; a known weight filename
+    resolves under the ``weights/`` dir, the same convention as the rest of
+    LibreYOLO.
+    """
+    from pathlib import Path
+
+    p = Path(weight)
+    return p.is_file() or (Path("weights") / p.name).is_file()
+
+
 def build_class_map(ds_names: List[str]) -> Callable[[str], Optional[int]]:
     """Return ``resolve(model_class_name) -> dataset_index | None`` (by name)."""
     table: Dict[str, int] = {}
@@ -141,19 +157,6 @@ class AssistEngine:
             self.pending.clear()
 
     # -- inference ---------------------------------------------------------
-    @staticmethod
-    def _weight_is_local(weight: str) -> bool:
-        """Whether an assist weight is already on disk (no download needed).
-
-        A passthrough path (``best.pt``, an absolute path) is checked directly; a
-        known weight filename resolves under the ``weights/`` dir, same convention
-        as the rest of LibreYOLO.
-        """
-        from pathlib import Path
-
-        p = Path(weight)
-        return p.is_file() or (Path("weights") / p.name).is_file()
-
     def _get_model(self, name: str):
         model = self._models.get(name)
         if model is None:
@@ -164,7 +167,7 @@ class AssistEngine:
             # Offline by contract: a "fully local" labeller must not silently pull a
             # checkpoint over the network on first prelabel/auto-label. Refuse with a
             # clear hint instead of letting the factory auto-download.
-            if not self._weight_is_local(weight):
+            if not weight_is_local(weight):
                 raise RuntimeError(
                     f"Assist model '{name}' ({weight}) isn't present locally. LibreLabel "
                     f"won't download weights automatically -- fetch it once (e.g. "
