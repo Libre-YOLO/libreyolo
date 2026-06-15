@@ -28,7 +28,8 @@ class SamEngine:
 
     def __init__(self, enabled: bool = True, device: str = "auto"):
         self.enabled = enabled
-        self._device = device
+        s = str(device).strip()
+        self._device = ("cuda:" + s) if s.isdigit() else s   # `device=0` -> cuda:0, like the detector path
         self._model = None
         self._cur: Optional[str] = None       # path currently encoded via set_image
         self._dims: dict = {}                  # path -> (w, h)
@@ -39,20 +40,48 @@ class SamEngine:
         if not self.enabled:
             return False
         if self._checked is None:
-            try:
-                import importlib.util
-
-                self._checked = importlib.util.find_spec("transformers") is not None
-            except Exception:  # noqa: BLE001
-                self._checked = False
+            self._checked = self._sam_cached()
         return self._checked
+
+    @staticmethod
+    def _sam_cached() -> bool:
+        """True only if transformers is installed AND a SAM model is already in the
+        HF cache -- so we never advertise Smart-segment when using it would download."""
+        import importlib.util
+        import os
+        from pathlib import Path
+
+        if importlib.util.find_spec("transformers") is None:
+            return False
+        cache = os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        if cache:
+            hub = Path(cache)
+        elif os.environ.get("HF_HOME"):
+            hub = Path(os.environ["HF_HOME"]) / "hub"
+        else:
+            hub = Path.home() / ".cache" / "huggingface" / "hub"
+        try:
+            return any(p.name.startswith("models--") and "sam" in p.name.lower()
+                       for p in hub.iterdir())
+        except OSError:
+            return False
 
     def _ensure(self):
         if self._model is None:
+            import os
+
             from libreyolo import LibreSAM
 
             logger.info("LibreLabel loading LibreSAM(%s) on %s", SAM_SIZE, self._device)
-            self._model = LibreSAM(SAM_SIZE, device=self._device)
+            prev = os.environ.get("HF_HUB_OFFLINE")
+            os.environ["HF_HUB_OFFLINE"] = "1"   # SAM is offline-only; never reach the network
+            try:
+                self._model = LibreSAM(SAM_SIZE, device=self._device)
+            finally:
+                if prev is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = prev
         return self._model
 
     def _size(self, image_path: Path):
@@ -93,6 +122,8 @@ class SamEngine:
                 r = model.predict(bboxes=[float(x1) * w_img, float(y1) * h_img,
                                           float(x2) * w_img, float(y2) * h_img])
             else:
+                if points is None and point is None:
+                    raise ValueError("a point, points, or box prompt is required")
                 pts = points if points is not None else [point]
                 px = [[float(p[0]) * w_img, float(p[1]) * h_img] for p in pts]
                 lbls = list(labels) if labels is not None else [1] * len(px)

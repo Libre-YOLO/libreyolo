@@ -647,6 +647,7 @@ function setActive(i){
   if(i<0||i>=(DS.names||[]).length) return;
   active = i; markPalette();
   if(sel>=0 && boxes[sel].cls!==i){ pushUndo(); boxes[sel].cls = i; markDirty(); draw(); }
+  else if(selPoly>=0 && polys[selPoly] && polys[selPoly].cls!==i){ pushUndo(); polys[selPoly].cls = i; markDirty(); draw(); }
 }
 function openPicker(){ $("#picker").classList.add("show"); const s=$("#psearch"); s.value=""; filterClasses(""); s.focus(); }
 function closePicker(){ $("#picker").classList.remove("show"); }
@@ -886,12 +887,13 @@ async function save(){
   const anns = boxes.map(pxToNorm).filter(b=>b.w>0&&b.h>0)
     .map(b=>({type:"box", cls:b.cls, cx:b.cx, cy:b.cy, w:b.w, h:b.h}));
   polys.forEach(p=>{ const pts=polyToNorm(p); if(pts.length>=6) anns.push({type:"poly", cls:p.cls, points:pts}); });
-  const cur = idx;
+  const cur = idx, sent = snap();   // snapshot of exactly what we're sending
   try{
     const r = await fetch(`/api/label/${cur}?epoch=${(DS&&DS.epoch)||0}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
-    dirty = false; savedSnap = snap(); setSave("saved");
+    savedSnap = sent; dirty = (snap()!==sent);   // edits made during the POST keep it unsaved
+    setSave(dirty?"unsaved":"saved");
     const el=$('#save'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
     suggestedIds.delete(cur);
     setRowStatus(cur, anns.length? "labeled":"empty");
@@ -1099,7 +1101,13 @@ function acceptGhost(i){
   ghosts.splice(i,1); markDirty(); draw();
   if(!ghosts.length) $("#banner").style.display="none";
 }
-function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length) $("#banner").style.display="none"; } }
+function clearReviewState(){   // a fully-dismissed image leaves the review queue (no phantom 'suggested' row)
+  if(idx>=0 && suggestedIds.has(idx)){
+    suggestedIds.delete(idx);
+    setRowStatus(idx, (boxes.length + polys.length) ? "labeled" : "unlabeled");
+  }
+}
+function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length){ $("#banner").style.display="none"; clearReviewState(); } } }
 function acceptAllGhosts(){
   const take = ghosts.filter(g=>g.cls!=null);
   if(!take.length){ if(ghosts.length) banner("These suggestions have no matching dataset class — set one with a number key, or Esc to skip."); return; }
@@ -1109,12 +1117,13 @@ function acceptAllGhosts(){
   markDirty(); draw();
   if(!ghosts.length) $("#banner").style.display="none";
 }
-function clearGhosts(){ if(ghosts.length){ ghosts=[]; draw(); $("#banner").style.display="none"; } }
+function clearGhosts(){ if(ghosts.length){ ghosts=[]; draw(); $("#banner").style.display="none"; clearReviewState(); } }
 async function autolabelAll(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Couldn't save the current image; fix that first."); return; }
   const ov=$("#progress"), bar=$("#pbar"), txt=$("#ptxt");
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
+  IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows
   suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[]; const t0=Date.now();
   try{
     const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});

@@ -27,6 +27,8 @@ def label_cmd(
     ),
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
+    # `quiet`/`verbose` look unused here but are consumed globally by the CLI's
+    # logging setup before this command runs; kept for --help and arg parsing.
     verbose: bool = typer.Option(False, "--verbose", help="Verbose stderr output"),
 ) -> None:
     """Launch a local web tool to draw bounding boxes and save YOLO labels.

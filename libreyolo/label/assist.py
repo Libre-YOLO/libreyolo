@@ -84,13 +84,17 @@ class AssistEngine:
         self._pending_lock = threading.Lock()
 
     # -- availability ------------------------------------------------------
+    # Task aliases that don't return Results.boxes -> useless as box auto-labelers.
+    _NON_BOX = ("-cls", "-sem", "-depth", "l2cs")
+
     def model_names(self) -> List[str]:
         if not self.enabled:
             return []
         try:
             from libreyolo.cli.config import get_all_cli_names
 
-            return sorted(get_all_cli_names())
+            names = get_all_cli_names()
+            return sorted(n for n in names if not any(s in n for s in self._NON_BOX))
         except Exception:  # noqa: BLE001
             logger.exception("could not list assist models")
             return []
@@ -184,7 +188,7 @@ class AssistEngine:
         cls_arr, conf_arr = bn.cls, bn.conf
         model_names = getattr(r, "names", {}) or {}
         out: List[dict] = []
-        for (cx, cy, w, h), c, p in zip(xywhn, cls_arr, conf_arr):
+        for (cx, cy, w, h), c, p in zip(xywhn, cls_arr, conf_arr, strict=True):
             cid = int(c)
             mname = str(model_names.get(cid, cid))
             didx = 0 if (map_all_to_zero and single_class) else resolve(mname)
@@ -201,7 +205,11 @@ class AssistEngine:
         try:
             import importlib.util
 
-            return importlib.util.find_spec("transformers") is not None
+            # LocateAnything needs the VLM extra (its remote-code deps), not just
+            # transformers; decord is the distinctive one. Gate on it so the option
+            # isn't advertised in plain `label`/`sam` installs where it fails to load.
+            return all(importlib.util.find_spec(m) is not None
+                       for m in ("transformers", "decord"))
         except Exception:  # noqa: BLE001
             return False
 
@@ -248,9 +256,10 @@ class AssistEngine:
         skipped = 0
         cls_counts: Counter = Counter()
         for idx in range(total):
-            existing, editable = session.read_label(idx)
+            _existing, editable = session.read_label(idx)
             name = session.image_path(idx).name
-            if only_unlabeled and (existing or not editable):
+            # A label file that exists (even empty = reviewed background) is "done".
+            if only_unlabeled and (session.has_label_file(idx) or not editable):
                 skipped += 1
                 if progress:
                     progress({"type": "progress", "i": idx + 1, "total": total,

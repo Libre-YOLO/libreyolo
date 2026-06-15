@@ -294,9 +294,16 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
+            if not self._same_origin():
+                self._send(403, {"error": "cross-origin request blocked"})
+                return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/forget"):
                 self._send(409, {"error": "no project open"})
+                return
+            if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
+                    and not self.state.engine.enabled:
+                self._send(403, {"error": "AI assist is disabled (started with --no-assist)."})
                 return
             if path == "/api/projects/open":
                 payload = self._read_json()
@@ -368,6 +375,18 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         data = self.rfile.read(length) if length else b""
         return json.loads(data.decode("utf-8")) if data else {}
+
+    def _same_origin(self) -> bool:
+        """Block cross-origin state-changing requests (CSRF). A browser always sets
+        ``Origin`` on POST; a foreign site's Origin won't match our Host, so we
+        reject it before any write. Non-browser tools (no Origin) are allowed."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            return urlparse(origin).netloc == (self.headers.get("Host") or "")
+        except Exception:  # noqa: BLE001
+            return False
 
     @staticmethod
     def _model_conf(qs: dict) -> tuple:

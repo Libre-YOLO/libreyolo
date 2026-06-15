@@ -14,7 +14,12 @@ from typing import List, Tuple
 
 from libreyolo.data.utils import img2label_paths, load_data_config
 
-from .labelio import format_annotations, parse_annotations, sanitize_annotations
+from .labelio import (
+    format_annotations,
+    has_unsupported_rows,
+    parse_annotations,
+    sanitize_annotations,
+)
 
 
 def _names_to_list(names) -> List[str]:
@@ -61,15 +66,18 @@ class DatasetSession:
 
         self._items: List[Tuple[Path, Path, str]] = []
         seen: set = set()
+        self._path_splits: dict = {}   # normalized label path -> {splits it appears in}
         for split in ("train", "val", "test"):
             imgs = cfg.get(f"{split}_img_files") or []
             labels = cfg.get(f"{split}_label_files") or img2label_paths(
                 [Path(i) for i in imgs]
             )
-            for ip, lp in zip(imgs, labels):
+            for ip, lp in zip(imgs, labels, strict=True):
                 # A yaml may reuse a folder across splits; expose each label file
-                # once so a single image can't be saved twice under two ids.
+                # once so a single image can't be saved twice under two ids -- but
+                # remember every split it was in, for exact-overlap leakage detection.
                 key = os.path.normcase(os.path.normpath(str(lp)))
+                self._path_splits.setdefault(key, set()).add(split)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -81,6 +89,10 @@ class DatasetSession:
             s: cfg.get(s) for s in ("train", "val", "test") if cfg.get(s)
         }
         self.writable, self.reason = self._check_writable()
+        if self.writable and cfg.get("kpt_shape"):   # pose/keypoint dataset -> view-only
+            self.writable = False
+            self.reason = ("Keypoint/pose dataset: view-only in LibreLabel — it edits "
+                           "boxes and polygons, and saving would drop the keypoints.")
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
     # -- safety ------------------------------------------------------------
@@ -235,6 +247,15 @@ class DatasetSession:
             if len(grp["splits"]) > 1:
                 leak_groups.append(grp)
         dup_groups.sort(key=lambda g: -len(g["ids"]))
+        # Exact same label-path listed in >1 split (deduped out of _items, so the
+        # dHash pass above can't see it) -- still real train/val leakage.
+        kidx = {os.path.normcase(os.path.normpath(str(self._items[i][1]))): i
+                for i in range(len(self._items)) if i not in self._deleted}
+        for key, splits in self._path_splits.items():
+            if len(splits) > 1 and key in kidx:
+                i = kidx[key]
+                leak_groups.append({"ids": [i], "names": [name(i)],
+                                    "splits": sorted(splits), "exact": True})
 
         self._insights_cache = {
             "count": len(self._items) - len(self._deleted),
@@ -357,16 +378,25 @@ class DatasetSession:
         self._check_index(idx)
         return self._items[idx][0]
 
+    def has_label_file(self, idx: int) -> bool:
+        """Whether a label ``.txt`` exists on disk (an empty file = reviewed background)."""
+        self._check_index(idx)
+        return self._items[idx][1].exists()
+
     def read_label(self, idx: int) -> Tuple[List[dict], bool]:
         """Return ``(annotations, editable)`` — mixed box/polygon annotations.
 
-        Editable is always True now: boxes and polygons both round-trip.
+        ``editable`` is ``False`` for files holding keypoint/pose or malformed rows
+        (which we don't parse), so a save never silently drops those fields.
         """
         self._check_index(idx)
         lp = self._items[idx][1]
         if not lp.exists():
             return [], True
-        return parse_annotations(lp.read_text(encoding="utf-8")), True
+        text = lp.read_text(encoding="utf-8")
+        # A file with keypoint/pose or malformed rows stays read-only so a save
+        # can't drop the fields we don't parse.
+        return parse_annotations(text), not has_unsupported_rows(text)
 
     # -- mutation ----------------------------------------------------------
     def write_label(self, idx: int, annotations: List[dict]) -> int:

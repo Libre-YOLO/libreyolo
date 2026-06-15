@@ -246,6 +246,39 @@ def test_radar_scan_end_to_end_with_stub_model(tmp_path):
     assert out["findings"][0][0]["type"] == "class"
 
 
+def test_has_unsupported_rows_flags_keypoints():
+    # Codex P1: keypoint/pose rows must be detected so their files stay read-only.
+    from libreyolo.label.labelio import has_unsupported_rows
+
+    assert has_unsupported_rows("0 0.5 0.5 0.2 0.2\n") is False            # box
+    assert has_unsupported_rows("1 0.1 0.1 0.4 0.1 0.25 0.48\n") is False  # polygon
+    assert has_unsupported_rows("0 " + " ".join(["0.5"] * 55) + "\n") is True  # pose (cls+bbox+17*3)
+
+
+def test_pose_dataset_is_view_only(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+
+    (tmp_path / "images" / "train").mkdir(parents=True)
+    Image.new("RGB", (20, 10)).save(tmp_path / "images" / "train" / "a.jpg")
+    (tmp_path / "data.yaml").write_text(
+        f"path: {tmp_path.as_posix()}\ntrain: images/train\n"
+        "kpt_shape: [17, 3]\nnc: 1\nnames:\n  0: person\n", encoding="utf-8")
+    ds = DatasetSession(str(tmp_path / "data.yaml"))
+    assert ds.writable is False and "keypoint" in ds.reason.lower()
+
+
+def test_degenerate_polygon_dropped():
+    # Codex P2: a collapsed (collinear) polygon would yield a zero-area box -> drop it.
+    from libreyolo.label.labelio import sanitize_annotations
+
+    flat = {"type": "poly", "cls": 0, "points": [0.1, 0.5, 0.5, 0.5, 0.9, 0.5, 0.5, 0.5]}
+    assert sanitize_annotations([flat], nc=2) == []
+    good = {"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.4, 0.1, 0.4, 0.4, 0.1, 0.4]}
+    assert len(sanitize_annotations([good], nc=2)) == 1
+
+
 def test_write_label_epoch_guard_rejects_stale_save(tmp_path):
     # H1 regression: a save carrying an epoch from a since-switched project is
     # rejected, so an in-flight save can never land in the wrong dataset.

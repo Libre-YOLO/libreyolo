@@ -139,6 +139,28 @@ def parse_annotations(text: str) -> List[dict]:
     return anns
 
 
+def has_unsupported_rows(text: str) -> bool:
+    """True if any non-empty line is not a 5-field box or a valid polygon row.
+
+    Keypoint/pose rows (``cls bbox kpt...``) and malformed rows fall here. A file
+    with such rows must stay **read-only** so saving (which keeps only the parsed
+    boxes/polygons) can't silently drop the unparsed fields.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        try:
+            int(float(parts[0]))
+            nums = [float(p) for p in parts[1:]]
+        except (ValueError, IndexError):
+            return True
+        if not (len(nums) == 4 or (len(nums) >= 6 and len(nums) % 2 == 0)):
+            return True
+    return False
+
+
 def format_annotations(anns: List[dict]) -> str:
     """Serialize mixed box/polygon annotations to YOLO label text."""
     lines: List[str] = []
@@ -169,6 +191,9 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
             pts = [_clamp01(float(v)) for v in (a.get("points") or [])]
             if len(pts) < 6 or len(pts) % 2 != 0:
                 continue
+            xs, ys = pts[0::2], pts[1::2]
+            if (max(xs) - min(xs)) <= 1e-4 or (max(ys) - min(ys)) <= 1e-4:
+                continue  # degenerate (collinear / collapsed) polygon -> drop
             out.append({"type": "poly", "cls": cls, "points": pts})
         else:
             cx, cy = _clamp01(float(a["cx"])), _clamp01(float(a["cy"]))
