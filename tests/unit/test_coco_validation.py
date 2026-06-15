@@ -47,9 +47,8 @@ class _DummyEvaluator:
         return dict(self.metrics)
 
 
-def _null_val_preprocessor(*, img_size):
+def _null_val_preprocessor(*, img_size: int) -> None:
     assert img_size > 0
-    return None
 
 
 def create_mock_yolo_dataset(tmp_path):
