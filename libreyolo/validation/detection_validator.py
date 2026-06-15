@@ -191,15 +191,17 @@ class DetectionValidator(BaseValidator):
                 if explicit_coco_annotation
                 else coco_annotation_file.name
             )
-            split_name = (
-                get_coco_image_dir(
+            if explicit_coco_annotation and data_cfg is not None:
+                split_name = get_coco_image_dir(
                     data_cfg,
                     self.config.split,
                     self._resolve_coco_image_dir(data_path, coco_annotation_file.name),
                 )
-                if data_cfg is not None
-                else self._resolve_coco_image_dir(data_path, coco_annotation_file.name)
-            )
+            else:
+                split_name = self._resolve_coco_image_dir(
+                    data_path,
+                    coco_annotation_file.name,
+                )
 
             dataset = COCODataset(
                 data_dir=str(data_path),
