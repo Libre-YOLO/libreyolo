@@ -902,14 +902,21 @@ async function save(){
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
     const d = await r.json().catch(()=>({}));
     const saved = (d && typeof d.count==="number") ? d.count : anns.length;
+    const dropped = anns.length - saved;
+    if(dropped > 0){
+      // The server sanitized away degenerate (zero-area / collinear) shapes. Keep
+      // the edit DIRTY/failed so close & navigation warn and the dropped shape can't
+      // silently vanish on the next load -- the user must fix or delete it.
+      dirty = true; setSave("unsaved");
+      suggestedIds.delete(cur); setRowStatus(cur, saved? "labeled":"empty"); scheduleStats();
+      banner(`${dropped} invalid shape${dropped>1?"s":""} dropped (degenerate) — fix or delete it to save.`);
+      return false;
+    }
     savedSnap = sent; dirty = (snap()!==sent);   // edits made during the POST keep it unsaved
     setSave(dirty?"unsaved":"saved");
     const el=$('#save'); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
     suggestedIds.delete(cur);
     setRowStatus(cur, saved? "labeled":"empty");
-    // The server drops degenerate shapes (zero-area / collinear); if it wrote fewer
-    // than we sent, say so rather than letting them silently vanish on next load.
-    if(saved < anns.length){ const n=anns.length-saved; banner(`${n} invalid shape${n>1?"s":""} dropped (degenerate) — not saved.`); }
     scheduleStats();
     return true;
   }catch(e){ setSave("save failed"); return false; }
@@ -1042,6 +1049,8 @@ async function prelabelCurrent(){
     if((data.suggestions||[]).length){
       suggestedIds.add(idx);
       setRowStatus(idx, "suggested");   // make manual prelabels findable via the Review filter, like bulk autolabel
+    } else {
+      clearReviewState();   // no ghosts -> don't leave a phantom 'suggested' row in the Review filter
     }
   }catch(e){ banner("Auto-label failed"); }
   restoreSave();
@@ -1812,7 +1821,7 @@ function resetClientState(){
   loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project
   clearTimeout(boostTimer); boostTimer=null;
   idx=-1; sel=-1; selPoly=-1; hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
-  IMAGES=[]; suggestedIds=new Set(); selSet=null; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
+  IMAGES=[]; suggestedIds=new Set(); selSet=null; listFilter="all"; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
   undoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
   setTool("box");
   imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";

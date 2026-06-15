@@ -152,7 +152,12 @@ def scan_dataset(predict: Callable, session, *, model_name: Optional[str] = None
             continue
         try:
             preds = predict(session.image_path(idx), names, model_name, conf)
-        except Exception as exc:  # noqa: BLE001 - model load/inference problem
+        except RuntimeError:
+            # Systemic: the model can't run at all (missing local weights, assist
+            # disabled, opt-in not set). Abort so the caller surfaces the real error
+            # instead of finishing with scanned==0 ("no labelled images to audit").
+            raise
+        except Exception as exc:  # noqa: BLE001 - per-image inference problem
             if progress:
                 progress({"type": "progress", "i": idx + 1, "total": total,
                           "id": idx, "name": name, "issues": 0, "error": str(exc)})

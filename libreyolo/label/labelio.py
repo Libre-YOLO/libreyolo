@@ -17,6 +17,7 @@ can refuse to overwrite them in box-only mode rather than silently destroy them.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional, Tuple, TypedDict
 
 
@@ -55,6 +56,9 @@ def parse_label_text(text: str) -> Tuple[List[Box], bool]:
             cx, cy, w, h = (float(p) for p in parts[1:5])
         except (ValueError, OverflowError):
             has_non_box = True
+            continue
+        if not all(math.isfinite(v) for v in (cx, cy, w, h)):
+            has_non_box = True   # nan/inf coords aren't a valid box -> don't overwrite
             continue
         boxes.append(Box(cls=cls, cx=cx, cy=cy, w=w, h=h))
     return boxes, has_non_box
@@ -95,8 +99,8 @@ def sanitize_boxes(boxes: List[Box], nc: Optional[int] = None) -> List[Box]:
             continue
         cx, cy = _clamp01(float(b["cx"])), _clamp01(float(b["cy"]))
         w, h = _clamp01(float(b["w"])), _clamp01(float(b["h"]))
-        if w <= 0.0 or h <= 0.0:
-            continue
+        if w <= 0.0 or h <= 0.0 or not all(math.isfinite(v) for v in (cx, cy, w, h)):
+            continue   # nan/inf never reaches a label file
         out.append(Box(cls=cls, cx=cx, cy=cy, w=w, h=h))
     return out
 
@@ -131,11 +135,15 @@ def parse_annotations(text: str) -> List[dict]:
                 cx, cy, w, h = (float(p) for p in nums)
             except ValueError:
                 continue
+            if not all(math.isfinite(v) for v in (cx, cy, w, h)):
+                continue   # nan/inf -> skip so NaN never reaches stats/Radar/JSON
             anns.append({"type": "box", "cls": cls, "cx": cx, "cy": cy, "w": w, "h": h})
         elif len(nums) >= 6 and len(nums) % 2 == 0:
             try:
                 pts = [float(p) for p in nums]
             except ValueError:
+                continue
+            if not all(math.isfinite(v) for v in pts):
                 continue
             anns.append({"type": "poly", "cls": cls, "points": pts})
     return anns
@@ -160,6 +168,8 @@ def has_unsupported_rows(text: str) -> bool:
             return True
         if not (len(nums) == 4 or (len(nums) >= 6 and len(nums) % 2 == 0)):
             return True
+        if not all(math.isfinite(n) for n in nums):
+            return True   # nan/inf coords -> malformed; keep the file read-only
     return False
 
 
@@ -193,6 +203,8 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
             pts = [_clamp01(float(v)) for v in (a.get("points") or [])]
             if len(pts) < 6 or len(pts) % 2 != 0:
                 continue
+            if not all(math.isfinite(v) for v in pts):
+                continue   # nan/inf vertex -> drop (the area check below can't catch NaN)
             xs, ys = pts[0::2], pts[1::2]
             # Shoelace area: a width/height (bbox) check misses *diagonal* collinear
             # polygons -- e.g. (0,0),(0.5,0.5),(1,1) has positive bbox extents but
@@ -207,7 +219,7 @@ def sanitize_annotations(anns: List[dict], nc: Optional[int] = None) -> List[dic
         else:
             cx, cy = _clamp01(float(a["cx"])), _clamp01(float(a["cy"]))
             w, h = _clamp01(float(a["w"])), _clamp01(float(a["h"]))
-            if w <= 0.0 or h <= 0.0:
+            if w <= 0.0 or h <= 0.0 or not all(math.isfinite(v) for v in (cx, cy, w, h)):
                 continue
             out.append({"type": "box", "cls": cls, "cx": cx, "cy": cy, "w": w, "h": h})
     return out

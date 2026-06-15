@@ -520,3 +520,26 @@ def test_store_pending_refuses_after_switch(tmp_path):
     assert st.store_pending(0, sugg, ds) is True        # same session -> stored
     assert st.engine.get_pending(0) == sugg
     assert st.store_pending(0, sugg, object()) is False  # switched-away identity -> refused
+
+
+def test_non_finite_coords_are_unsupported():
+    # Codex round 6: nan/inf coords must mark the file read-only and never reach
+    # parse output (where they'd become invalid JSON / "nan" labels).
+    from libreyolo.label.labelio import has_unsupported_rows, parse_annotations
+
+    assert has_unsupported_rows("0 nan 0.5 0.2 0.2\n") is True
+    assert has_unsupported_rows("0 inf 0.5 0.2 0.2\n") is True
+    out = parse_annotations("0 nan 0.5 0.2 0.2\n1 0.5 0.5 0.2 0.2\n")
+    assert out == [{"type": "box", "cls": 1, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}]
+
+
+def test_autolabel_aborts_when_weights_missing(tmp_path):
+    # Codex round 6: a systemic model-load failure must propagate (so the stream
+    # surfaces it) instead of being swallowed per-image into a "0 boxes" finish.
+    from libreyolo.label.assist import AssistEngine
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    eng = AssistEngine(enabled=True, default_model="definitely-not-a-real-model-zzz")
+    with pytest.raises(RuntimeError):
+        eng.autolabel_dataset(ds)

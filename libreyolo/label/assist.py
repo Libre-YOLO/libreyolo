@@ -294,15 +294,30 @@ class AssistEngine:
         engine: str = "yolo",
         classes: Optional[List[str]] = None,
         current: Optional[Callable[[], bool]] = None,
+        store: Optional[Callable[[int, list], bool]] = None,
     ) -> dict:
         """Predict over every (unlabeled) image and PARK suggestions in ``pending``.
 
         Writes nothing to disk. Skips images that already have labels or hold
         polygon/OBB rows (not box-editable). Calls ``progress(event)`` per image.
+        ``store(idx, sugg) -> bool`` (when given) publishes suggestions atomically
+        with the project switch; a ``False`` return means the project changed and
+        the run stops.
         """
         from collections import Counter
 
         self._require_enabled()
+        # Pre-flight the model once so a systemic load failure (missing weights, the
+        # locate opt-in, a disabled engine) aborts the whole run with an actionable
+        # error -- not swallowed per-image into a misleading "0 boxes" finish.
+        if engine == "locate":
+            if not self.locate_available():
+                raise RuntimeError(
+                    "LocateAnything is opt-in only: set LIBRELABEL_ENABLE_LOCATE=1 "
+                    "(and install the VLM extra) to use it.")
+        else:
+            with self._lock:
+                self._get_model(model_name or self.default_model)
         names = session.names
         total = len(session)
         suggested_images = 0
@@ -340,7 +355,11 @@ class AssistEngine:
             if current is not None and not current():
                 break   # switched projects *during* the slow predict: don't write stale
                         # suggestions into the pending map open_project() just cleared
-            self.set_pending(idx, sugg)
+            if store is not None:
+                if not store(idx, sugg):
+                    break   # atomic store refused -> project switched, stop the run
+            else:
+                self.set_pending(idx, sugg)
             for s in sugg:
                 if s.get("mapped") and s.get("name"):
                     cls_counts[str(s["name"])] += 1

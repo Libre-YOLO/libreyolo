@@ -509,6 +509,8 @@ class _Handler(BaseHTTPRequestHandler):
                 sess, model_name=model, conf=conf, progress=emit,
                 engine=engine, classes=classes,
                 current=lambda: self.state.session is sess,  # stop if the project switches
+                # publish each image's suggestions atomically with the project switch
+                store=lambda i, s: self.state.store_pending(i, s, sess),
             )
             emit(summary)
         except Exception as exc:  # noqa: BLE001
