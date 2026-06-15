@@ -478,11 +478,13 @@ class _Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
 
+        sess = self.state.session
         try:
             self.state.engine.clear_pending()  # fresh run replaces stale suggestions
             summary = self.state.engine.autolabel_dataset(
-                self.state.session, model_name=model, conf=conf, progress=emit,
+                sess, model_name=model, conf=conf, progress=emit,
                 engine=engine, classes=classes,
+                current=lambda: self.state.session is sess,  # stop if the project switches
             )
             emit(summary)
         except Exception as exc:  # noqa: BLE001

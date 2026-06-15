@@ -646,6 +646,7 @@ function markPalette(){
 function setActive(i){
   if(i<0||i>=(DS.names||[]).length) return;
   active = i; markPalette();
+  if(!editable || (DS && !DS.writable)) return;   // view-only: don't reclassify
   if(sel>=0 && boxes[sel].cls!==i){ pushUndo(); boxes[sel].cls = i; markDirty(); draw(); }
   else if(selPoly>=0 && polys[selPoly] && polys[selPoly].cls!==i){ pushUndo(); polys[selPoly].cls = i; markDirty(); draw(); }
 }
@@ -749,13 +750,19 @@ function renderInsights(d, q){
   const maxRes = d.top_resolutions.length ? d.top_resolutions[0][2] : 1;
   const resBars = d.top_resolutions.map(r=>
     `<div class="ibar"><span class="il">${r[0]}×${r[1]}</span><span class="it"><span style="width:${Math.round(100*r[2]/maxRes)}%"></span></span><span class="ic">${r[2]}</span></div>`).join("");
+  const _leak=d.leakage_groups.length, _dups=d.duplicate_groups.length;
   let dup;
-  if(d.duplicate_groups.length){
-    const leak=d.leakage_groups.length;
-    dup = (leak? `<div class="iwarn leak">${leak} duplicate group${leak>1?"s":""} leak across splits (train↔val) — this inflates your validation score.</div>`:"")
-      + `<div class="iwarn">${d.duplicate_groups.length} duplicate group${d.duplicate_groups.length>1?"s":""} · ${d.duplicate_image_count} images · Fix moves the extras to a reversible quarantine (keeps the train copy)</div>`
-      + d.duplicate_groups.slice(0,8).map(g=>
-        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join("");
+  if(_dups || _leak){
+    const _p=[];
+    if(_leak) _p.push(`<div class="iwarn leak">${_leak} group${_leak>1?"s":""} leak across splits (train↔val) — this inflates your validation score.</div>`);
+    if(_dups){
+      _p.push(`<div class="iwarn">${_dups} duplicate group${_dups>1?"s":""} · ${d.duplicate_image_count} images · Fix moves the extras to a reversible quarantine (keeps the train copy)</div>`);
+      _p.push(d.duplicate_groups.slice(0,8).map(g=>
+        `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join(""));
+    } else {
+      _p.push(`<div class="iwarn">An identical image path is listed in more than one split — remove the overlap in your data.yaml.</div>`);
+    }
+    dup = _p.join("");
   } else {
     dup = `<div class="iok">${ICO_CHECK}No duplicate or near-duplicate images detected</div>`;
   }
@@ -840,6 +847,7 @@ async function load(i){
   if(dirty && idx>=0 && !(await save())){
     banner("Save failed — staying on this image so you don't lose work."); return;
   }
+  if(myGen !== loadSeq) return;   // a newer load() started during the await -> bail before mutating idx
   idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
   const lab = await jget(`/api/label/${i}`);
@@ -1018,7 +1026,7 @@ function showGhosts(list){
 }
 async function prelabelCurrent(){
   if(!assist || !assist.available || idx<0 || !imgOk) return;
-  if(!editable){ banner("This image is read-only (polygon/OBB labels)."); return; }
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — auto-label is disabled."); return; }
   const myGen = loadSeq; setSave("running model…");
   try{
     const r = await fetch(`/api/assist/prelabel/${idx}?${laQuery()}`, {method:"POST"});
@@ -1125,11 +1133,13 @@ async function autolabelAll(){
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows
   suggestedIds = new Set(); let suggested=0, totalBoxes=0, classes=[]; const t0=Date.now();
+  const myGen = loadSeq;
   try{
     const r = await fetch(`/api/assist/autolabel?${laQuery()}`, {method:"POST"});
     const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
     for(;;){
       const {value,done}=await reader.read(); if(done) break;
+      if(myGen!==loadSeq){ ov.style.display="none"; return; }   // project switched -> stop
       buf += dec.decode(value,{stream:true}); let nl;
       while((nl=buf.indexOf("\n"))>=0){
         const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
@@ -1284,6 +1294,13 @@ cv.addEventListener("pointerdown", e=>{
   const mx=e.offsetX, my=e.offsetY;
   if(spaceDown || e.button===1){ mode="pan"; drag={mx,my,ox:view.ox,oy:view.oy}; return; }
   if(!imgOk) return;
+  if(!editable || (DS && !DS.writable)){   // view-only: select to inspect, never mutate
+    const hb=hitBox(mx,my);
+    if(hb>=0){ sel=hb; selPoly=-1; active=boxes[hb].cls; markPalette(); draw(); return; }
+    const hp=hitPoly(mx,my);
+    if(hp>=0){ selPoly=hp; sel=-1; active=polys[hp].cls; markPalette(); draw(); return; }
+    sel=-1; selPoly=-1; draw(); return;
+  }
   if(sel>=0){
     const k = hitHandle(boxes[sel], mx, my);
     if(k){ snapStart(); mode="resize"; drag={k, b:boxes[sel]}; return; }
@@ -1422,6 +1439,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="m"||e.key==="M"){ e.preventDefault(); openMap(); return; }
   if(e.key==="n"||e.key==="N"){ e.preventDefault(); nextFlagged(); return; }
   if(e.key==="Delete"||e.key==="Backspace"){
+    if(!editable || (DS && !DS.writable)) return;
     if(selPoly>=0){ pushUndo(); polys.splice(selPoly,1); selPoly=-1; markDirty(); draw(); }
     else if(sel>=0){ pushUndo(); boxes.splice(sel,1); sel=-1; markDirty(); draw(); }
     return; }

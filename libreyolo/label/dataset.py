@@ -89,10 +89,14 @@ class DatasetSession:
             s: cfg.get(s) for s in ("train", "val", "test") if cfg.get(s)
         }
         self.writable, self.reason = self._check_writable()
-        if self.writable and cfg.get("kpt_shape"):   # pose/keypoint dataset -> view-only
+        # Pose (kpt_shape), semantic-seg (masks_dir) and depth datasets store dense
+        # labels LibreLabel can't edit; writing YOLO boxes would pollute them.
+        dense = (cfg.get("kpt_shape") or cfg.get("masks_dir")
+                 or cfg.get("depths_dir") or cfg.get("depth"))
+        if self.writable and dense:
             self.writable = False
-            self.reason = ("Keypoint/pose dataset: view-only in LibreLabel — it edits "
-                           "boxes and polygons, and saving would drop the keypoints.")
+            self.reason = ("Keypoint / mask / depth dataset: view-only in LibreLabel — it "
+                           "edits boxes and polygons, and saving would drop the dense labels.")
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
     # -- safety ------------------------------------------------------------
@@ -105,13 +109,16 @@ class DatasetSession:
         Detect the ambiguity up front and make the session read-only.
         """
         for ip, lp, _ in self._items:
-            if sum(1 for part in ip.parts if part == "images") > 1:
+            # img2label_paths replaces the substring "/images", so any ancestor that
+            # merely *contains* "images" (e.g. "images_2026") mis-derives the label
+            # path too -- not just exact duplicate "images" segments.
+            risky = [p for p in ip.parts if "images" in p]
+            if len(risky) > 1 or (len(risky) == 1 and risky[0] != "images"):
                 return (
                     False,
-                    "Ambiguous dataset layout: a path contains the segment "
-                    "'images' more than once, so label paths cannot be derived "
-                    "safely. Rename the ancestor folder (e.g. to 'imgs/') and "
-                    "reopen.",
+                    "Ambiguous dataset layout: a path segment contains 'images' in a "
+                    "way that makes the label path ambiguous, so saving could write "
+                    "outside the dataset. Rename the ancestor (e.g. to 'imgs/') and reopen.",
                 )
             if lp == ip:
                 return False, f"Could not derive a label path for {ip}."
@@ -345,8 +352,8 @@ class DatasetSession:
                     if lp.exists():
                         lp.unlink()
                 else:
-                    dst_img = qroot / "images" / split / ip.name
-                    dst_lbl = qroot / "labels" / split / lp.name
+                    dst_img = qroot / "images" / split / f"{i}_{ip.name}"   # id prefix: never collide
+                    dst_lbl = qroot / "labels" / split / f"{i}_{lp.name}"
                     dst_img.parent.mkdir(parents=True, exist_ok=True)
                     dst_lbl.parent.mkdir(parents=True, exist_ok=True)
                     moved_img = False
@@ -405,6 +412,8 @@ class DatasetSession:
         if not self.writable:
             raise RuntimeError(self.reason)
         lp = self._items[idx][1]
+        if lp.exists() and has_unsupported_rows(lp.read_text(encoding="utf-8")):
+            raise RuntimeError("This label file has keypoint/unsupported rows; it is read-only.")
         clean = sanitize_annotations(annotations, self.nc)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))

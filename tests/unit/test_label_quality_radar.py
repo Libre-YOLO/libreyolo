@@ -269,6 +269,42 @@ def test_pose_dataset_is_view_only(tmp_path):
     assert ds.writable is False and "keypoint" in ds.reason.lower()
 
 
+def test_write_label_rejects_unsupported_file(tmp_path):
+    # Codex round 2: the write path must re-check the read-only contract.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    lp = tmp_path / "labels" / "train"
+    lp.mkdir(parents=True, exist_ok=True)
+    (lp / "a.txt").write_text("0 " + " ".join(["0.5"] * 55) + "\n")  # pose row
+    _anns, editable = ds.read_label(0)
+    assert editable is False
+    with pytest.raises(RuntimeError):
+        ds.write_label(0, [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_images_substring_ancestor_is_read_only(tmp_path):
+    # Codex round 2: an ancestor like "images_2026" mis-derives the label path.
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path / "images_2026" / "proj")))
+    assert ds.writable is False
+
+
+def test_mask_dataset_is_view_only(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+
+    (tmp_path / "images" / "train").mkdir(parents=True)
+    Image.new("RGB", (20, 10)).save(tmp_path / "images" / "train" / "a.jpg")
+    (tmp_path / "data.yaml").write_text(
+        f"path: {tmp_path.as_posix()}\ntrain: images/train\n"
+        "masks_dir: masks\nnc: 1\nnames:\n  0: road\n", encoding="utf-8")
+    ds = DatasetSession(str(tmp_path / "data.yaml"))
+    assert ds.writable is False
+
+
 def test_degenerate_polygon_dropped():
     # Codex P2: a collapsed (collinear) polygon would yield a zero-area box -> drop it.
     from libreyolo.label.labelio import sanitize_annotations

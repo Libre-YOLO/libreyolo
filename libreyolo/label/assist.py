@@ -241,6 +241,7 @@ class AssistEngine:
         progress: Optional[Callable[[dict], None]] = None,
         engine: str = "yolo",
         classes: Optional[List[str]] = None,
+        current: Optional[Callable[[], bool]] = None,
     ) -> dict:
         """Predict over every (unlabeled) image and PARK suggestions in ``pending``.
 
@@ -256,6 +257,8 @@ class AssistEngine:
         skipped = 0
         cls_counts: Counter = Counter()
         for idx in range(total):
+            if current is not None and not current():
+                break   # project switched away -> stop populating pending for a stale session
             _existing, editable = session.read_label(idx)
             name = session.image_path(idx).name
             # A label file that exists (even empty = reviewed background) is "done".
