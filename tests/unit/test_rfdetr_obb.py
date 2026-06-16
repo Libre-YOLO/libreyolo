@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 from types import SimpleNamespace
 
 pytestmark = pytest.mark.unit
@@ -267,3 +270,70 @@ def test_rfdetr_trainer_derives_classes_from_names_without_nc(tmp_path):
         4: "taxi",
         5: "truck",
     }
+
+
+def test_rfdetr_trainer_uses_explicit_coco_json_paths_for_obb(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
+
+    image_dir = tmp_path / "images" / "custom_train"
+    ann_dir = tmp_path / "custom_annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "train.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": [10, 20, 50, 20, 50, 40, 10, 40],
+                        "area": 800,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: images/custom_train\n"
+        "val: images/custom_train\n"
+        "annotations:\n"
+        "  train: custom_annotations/train.json\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    trainer = RFDETRTrainer(
+        model=torch.nn.Linear(1, 1),
+        wrapper_model=SimpleNamespace(task="obb"),
+        size="n",
+        num_classes=80,
+        data=str(data_yaml),
+        epochs=1,
+        batch=1,
+        imgsz=384,
+        workers=0,
+        device="cpu",
+        amp=False,
+        ema=False,
+        eval_interval=-1,
+    )
+
+    train_dataset = trainer._setup_data()
+
+    assert isinstance(train_dataset.dataset, COCODataset)
+    assert train_dataset.dataset.load_obb is True
+    assert train_dataset.dataset.json_file == str(ann_dir / "train.json")

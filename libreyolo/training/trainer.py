@@ -460,11 +460,6 @@ class BaseTrainer(ABC):
             label_files = data_cfg.get("train_label_files")
 
             if coco_ann_file:
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file=coco_ann_file,
@@ -472,6 +467,9 @@ class BaseTrainer(ABC):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -484,11 +482,6 @@ class BaseTrainer(ABC):
                     num_classes=self.num_classes if load_obb else None,
                 )
             elif ann_file.exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
@@ -496,6 +489,9 @@ class BaseTrainer(ABC):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -527,11 +523,6 @@ class BaseTrainer(ABC):
             self.num_classes = self.config.num_classes
 
             if (Path(data_dir) / "annotations").exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
@@ -539,6 +530,8 @@ class BaseTrainer(ABC):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
                 )
             else:
                 train_dataset = YOLODataset(

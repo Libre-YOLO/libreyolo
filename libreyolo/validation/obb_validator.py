@@ -11,8 +11,14 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from libreyolo.data import get_img_files, img2label_paths, load_data_config
-from libreyolo.data.dataset import YOLODataset
+from libreyolo.data import (
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+)
+from libreyolo.data.dataset import COCODataset, YOLODataset
 from libreyolo.data.obb import (
     corners_to_xywhr,
     parse_yolo_obb_label_line,
@@ -82,6 +88,7 @@ class OBBValidator(BaseValidator):
 
         img_files: List[Path] | None = None
         label_files: List[Path] | None = None
+        dataset = None
 
         if self.config.data:
             data_cfg = load_data_config(
@@ -111,44 +118,83 @@ class OBBValidator(BaseValidator):
                 ]
 
             split = self.config.split
-            img_files = data_cfg.get(f"{split}_img_files")
-            label_files = data_cfg.get(f"{split}_label_files")
-            if img_files is None:
+            coco_annotation = get_coco_annotation_file(data_cfg, split)
+            if coco_annotation:
+                self.val_preproc = _OBBValPreprocessor(
+                    self.model._get_val_preprocessor(img_size=actual_imgsz)
+                )
+                dataset = COCODataset(
+                    data_dir=data_cfg["root"],
+                    json_file=coco_annotation,
+                    name=get_coco_image_dir(data_cfg, split, f"{split}2017"),
+                    img_size=img_size,
+                    preproc=self.val_preproc,
+                    load_obb=True,
+                    num_classes=self.nc,
+                    names=data_cfg.get("names"),
+                )
+                self._gt_by_image = self._load_coco_ground_truths(dataset)
+            else:
+                img_files = data_cfg.get(f"{split}_img_files")
+                label_files = data_cfg.get(f"{split}_label_files")
+            if dataset is None and img_files is None:
                 split_path = Path(data_cfg.get(split, Path(data_cfg["path"]) / "images" / split))
                 img_files = get_img_files(split_path)
                 label_files = img2label_paths(img_files)
         elif self.config.data_dir:
             data_path = Path(self.config.data_dir)
-            split_path = data_path / "images" / self.config.split
-            img_files = get_img_files(split_path)
-            label_files = img2label_paths(img_files)
+            coco_annotation = self._find_default_coco_annotation_file(data_path)
+            if coco_annotation is not None:
+                self.val_preproc = _OBBValPreprocessor(
+                    self.model._get_val_preprocessor(img_size=actual_imgsz)
+                )
+                split_name = (
+                    f"{self.config.split}2017"
+                    if (data_path / f"{self.config.split}2017").exists()
+                    else self.config.split
+                )
+                dataset = COCODataset(
+                    data_dir=str(data_path),
+                    json_file=coco_annotation.name,
+                    name=split_name,
+                    img_size=img_size,
+                    preproc=self.val_preproc,
+                    load_obb=True,
+                    num_classes=self.nc,
+                )
+                self._gt_by_image = self._load_coco_ground_truths(dataset)
+            else:
+                split_path = data_path / "images" / self.config.split
+                img_files = get_img_files(split_path)
+                label_files = img2label_paths(img_files)
         else:
             raise RuntimeError("OBB validation requires config.data or config.data_dir")
 
-        if not img_files:
+        if dataset is None and not img_files:
             raise RuntimeError(
                 f"No {self.config.split} images found for OBB validation."
             )
 
-        img_files = [Path(p) for p in img_files]
-        label_files = [Path(p) for p in (label_files or img2label_paths(img_files))]
-        self.val_preproc = _OBBValPreprocessor(
-            self.model._get_val_preprocessor(img_size=actual_imgsz)
-        )
+        if dataset is None:
+            img_files = [Path(p) for p in img_files]
+            label_files = [Path(p) for p in (label_files or img2label_paths(img_files))]
+            self.val_preproc = _OBBValPreprocessor(
+                self.model._get_val_preprocessor(img_size=actual_imgsz)
+            )
 
-        dataset = YOLODataset(
-            img_files=img_files,
-            label_files=label_files,
-            img_size=img_size,
-            preproc=self.val_preproc,
-            load_obb=True,
-            num_classes=self.nc,
-        )
-        self._gt_by_image = self._load_ground_truths(
-            img_files,
-            label_files,
-            warn_invalid=False,
-        )
+            dataset = YOLODataset(
+                img_files=img_files,
+                label_files=label_files,
+                img_size=img_size,
+                preproc=self.val_preproc,
+                load_obb=True,
+                num_classes=self.nc,
+            )
+            self._gt_by_image = self._load_ground_truths(
+                img_files,
+                label_files,
+                warn_invalid=False,
+            )
 
         use_cuda = torch.cuda.is_available() and self.device.type == "cuda"
         nw = self.config.num_workers
@@ -163,6 +209,46 @@ class OBBValidator(BaseValidator):
             collate_fn=val_collate_fn,
             drop_last=False,
         )
+
+    def _find_default_coco_annotation_file(self, data_path: Path) -> Path | None:
+        annotations_dir = data_path / "annotations"
+        if not annotations_dir.exists():
+            return None
+        for candidate in (
+            annotations_dir / f"instances_{self.config.split}2017.json",
+            annotations_dir / f"instances_{self.config.split}.json",
+        ):
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _load_coco_ground_truths(
+        self,
+        dataset: COCODataset,
+    ) -> Dict[int, List[tuple[int, np.ndarray]]]:
+        gt_by_image: Dict[int, List[tuple[int, np.ndarray]]] = {}
+        for image_id, annotation in zip(dataset.ids, dataset.annotations):
+            labels, img_info, _resized_info, _file_name = annotation
+            orig_h, orig_w = img_info
+            r = min(dataset.img_size[0] / orig_h, dataset.img_size[1] / orig_w)
+            rows: List[tuple[int, np.ndarray]] = []
+            for row in labels:
+                box = row[:4].astype(np.float32, copy=True)
+                if r > 0.0:
+                    box /= float(r)
+                xywhr = np.array(
+                    [
+                        (box[0] + box[2]) * 0.5,
+                        (box[1] + box[3]) * 0.5,
+                        box[2] - box[0],
+                        box[3] - box[1],
+                        row[5],
+                    ],
+                    dtype=np.float32,
+                )
+                rows.append((int(row[4]), xywhr))
+            gt_by_image[int(image_id)] = rows
+        return gt_by_image
 
     def _load_ground_truths(
         self,

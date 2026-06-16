@@ -114,7 +114,7 @@ class DetectionValidator(BaseValidator):
                 allow_scripts=self.config.allow_download_scripts,
             )
             data_dir = data_cfg["root"]
-            self.nc = data_cfg.get("nc", self.nc)
+            self.nc = int(data_cfg.get("nc", self.nc))
 
             names = data_cfg.get("names", None)
             if isinstance(names, dict):
@@ -209,13 +209,14 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
             self._coco_annotation_file = coco_annotation_file
-            self._coco_label_to_category_id = {
-                label: category_id
-                for label, category_id in enumerate(dataset.class_ids)
-            }
+            self._coco_label_to_category_id = dict(
+                getattr(dataset, "label_to_category_id", {})
+            )
         elif img_files is not None:
             # File list mode (.txt format)
             dataset = YOLODataset(
@@ -223,6 +224,7 @@ class DetectionValidator(BaseValidator):
                 label_files=label_files,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
                 **dataset_kwargs,
             )
         elif (data_path / "annotations").exists():
@@ -243,6 +245,8 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
         else:
