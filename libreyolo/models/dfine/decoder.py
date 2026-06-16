@@ -725,7 +725,10 @@ class DFINETransformer(nn.Module):
             -1, keepdim=True
         )
         anchors = torch.log(anchors / (1 - anchors))
-        anchors = torch.where(valid_mask, anchors, torch.inf)
+        # Invalid anchors are pushed out of range; native uses +inf, but TRT mishandles inf
+        # (and it overflows in fp16), collapsing accuracy. A large finite sentinel gives the
+        # same effect (downstream sigmoid saturates these to degenerate boxes that get filtered).
+        anchors = torch.where(valid_mask, anchors, torch.full_like(anchors, 1e4))
 
         return anchors, valid_mask
 
