@@ -656,17 +656,30 @@ class BaseBackend(ABC):
         original image.
         """
         outputs = all_outputs[0][0]  # (N, 4+nc)
-        boxes = outputs[:, :4]
+        boxes_all = outputs[:, :4]
         scores = outputs[:, 4:]
 
-        max_scores = np.max(scores, axis=1)
-        class_ids = np.argmax(scores, axis=1)
+        # Multi-label per anchor (every (anchor, class) pair above conf), matching the native
+        # postprocess (postprocess/picodet.py). argmax kept only the best class per anchor and
+        # dropped secondary-class detections, costing ~0.7 mAP vs native.
+        valid = scores > conf
+        if not valid.any():
+            return (np.empty((0, 4), dtype=boxes_all.dtype),
+                    np.empty((0,), dtype=scores.dtype),
+                    np.empty((0,), dtype=np.int64))
 
-        mask = max_scores > conf
-        boxes, max_scores, class_ids = boxes[mask], max_scores[mask], class_ids[mask]
+        box_indices, class_ids = np.nonzero(valid)
+        max_scores = scores[box_indices, class_ids]
 
-        if len(boxes) == 0:
-            return boxes, max_scores, class_ids
+        # Cap candidates by score before NMS (native uses per-level top-1000 via nms_pre).
+        # The uncapped multi-label flood at conf=0.001 made numpy NMS ~1.6-12 s/img; the
+        # surviving max_det detections come from the highest-scoring candidates anyway.
+        nms_pre = 1000
+        if max_scores.shape[0] > nms_pre:
+            top = np.argpartition(max_scores, -nms_pre)[-nms_pre:]
+            box_indices, class_ids, max_scores = box_indices[top], class_ids[top], max_scores[top]
+
+        boxes = boxes_all[box_indices].copy()
 
         scale_x = orig_w / effective_imgsz
         scale_y = orig_h / effective_imgsz
@@ -1210,10 +1223,10 @@ class BaseBackend(ABC):
             # ONNX models with graph-embedded NMS still pass through this after
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
-            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e"):
-                keep = _batched_nms_numpy(boxes, max_scores, class_ids, iou)
-            else:
-                keep = _nms_numpy(boxes, max_scores, iou)
+            # Class-aware NMS matches every family's native postprocess: a box and an
+            # overlapping box of a DIFFERENT class must not suppress each other. The old
+            # class-agnostic fallback (_nms_numpy) cost YOLOX/PicoDet/RTMDet ~1 mAP vs native.
+            keep = _batched_nms_numpy(boxes, max_scores, class_ids, iou)
             boxes, max_scores, class_ids = (
                 boxes[keep],
                 max_scores[keep],
