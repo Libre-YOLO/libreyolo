@@ -35,7 +35,7 @@ def _boxes_xyxy_to_grid(
         gy = int((cy / input_size) * grid_size)
         gx = min(max(gx, 0), grid_size - 1)
         gy = min(max(gy, 0), grid_size - 1)
-        grid[gy, gx] = int(cls) + 1  # +1 because 0 = background
+        grid[gy, gx] = int(cls) + 1
     return grid
 
 
@@ -112,7 +112,7 @@ def _boxes_cxcy_to_grid(
         gy = int((cy / input_size) * grid_size)
         gx = min(max(gx, 0), grid_size - 1)
         gy = min(max(gy, 0), grid_size - 1)
-        grid[gy, gx] = int(cls) + 1  # +1 because 0 = background
+        grid[gy, gx] = int(cls) + 1
     return grid
 
 

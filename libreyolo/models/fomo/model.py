@@ -32,7 +32,6 @@ class LibreFOMO(BaseModel):
     FILENAME_PREFIX = "LibreFOMO"
     WEIGHT_EXT = ".pt"
 
-    # Input sizes keyed by variant code (matches nn.CONFIGS)
     INPUT_SIZES: ClassVar[Dict[str, int]] = {k: int(v["imgsz"]) for k, v in CONFIGS.items()}
 
     SUPPORTED_TASKS = ("point",)
@@ -40,10 +39,8 @@ class LibreFOMO(BaseModel):
     TRAIN_CONFIG = FOMOConfig
     val_preprocessor_class = FOMOValPreprocessor
 
-    # TTA is not meaningful for heatmap point models
     TTA_ENABLED = False
 
-    # HuggingFace weights repo for future weight releases
     _HF_REPO = "LibreYOLO/LibreFOMO"
     _LICENSE_NOTICE_SHOWN = False
     _WEIGHTS_REPO = "fomo-edge-ai/FOMO"
@@ -68,7 +65,6 @@ class LibreFOMO(BaseModel):
         weight = weights_dict.get("head.weight")
         if weight is None:
             return None
-        # head output channels = nc + 1 (background channel)
         return max(int(weight.shape[0]) - 1, 1)
 
     @classmethod
@@ -76,7 +72,6 @@ class LibreFOMO(BaseModel):
         size = cls.detect_size_from_filename(filename)
         if size is None:
             return None
-        # Map LibreFOMO{size}.pt to FOMO{size}.pt for the external repository
         fomo_filename = f"FOMO{size}.pt"
         return f"https://huggingface.co/{cls._WEIGHTS_REPO}/resolve/main/weights/{fomo_filename}"
 

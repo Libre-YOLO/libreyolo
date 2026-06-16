@@ -1,4 +1,4 @@
-"""Native PyTorch FOMO (Feature-map Output for Mobile Objects) architecture."""
+"""Native PyTorch FOMO (Faster Objects, More Objects) architecture."""
 
 from __future__ import annotations
 
