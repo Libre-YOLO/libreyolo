@@ -52,6 +52,63 @@ def get_activation(act, inpace: bool = True):
     return m
 
 
+def _grid_sample_bilinear_manual(feat, grid, padding_mode="zeros", align_corners=False):
+    """ONNX/TRT-safe bilinear grid_sample: gather-based, emits NO GridSample op.
+
+    Numerically matches F.grid_sample(mode='bilinear'); sidesteps the TensorRT
+    GridSample kernel that miscomputes boundary samples for deformable attention.
+    Batch is kept symbolic (expand(-1)/unflatten) so dynamic-batch exports trace
+    correctly.
+    """
+    _, channels, height, width = feat.shape
+    grid_h, grid_w = grid.shape[1], grid.shape[2]
+    if align_corners:
+        ix = (grid[..., 0] + 1) * (width - 1) / 2
+        iy = (grid[..., 1] + 1) * (height - 1) / 2
+    else:
+        ix = (grid[..., 0] + 1) * width / 2 - 0.5
+        iy = (grid[..., 1] + 1) * height / 2 - 0.5
+    ix0 = ix.floor().long()
+    iy0 = iy.floor().long()
+    ix1 = ix0 + 1
+    iy1 = iy0 + 1
+    wx1 = (ix - ix0.float()).to(feat.dtype).unsqueeze(1)
+    wy1 = (iy - iy0.float()).to(feat.dtype).unsqueeze(1)
+    one = wx1.new_tensor(1.0)
+    wx0 = one - wx1
+    wy0 = one - wy1
+    if padding_mode == "border":
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
+    else:
+        in_x0 = (ix0 >= 0) & (ix0 < width)
+        in_x1 = (ix1 >= 0) & (ix1 < width)
+        in_y0 = (iy0 >= 0) & (iy0 < height)
+        in_y1 = (iy1 >= 0) & (iy1 < height)
+        ix0 = ix0.clamp(0, width - 1)
+        iy0 = iy0.clamp(0, height - 1)
+        ix1 = ix1.clamp(0, width - 1)
+        iy1 = iy1.clamp(0, height - 1)
+    flat = feat.flatten(2)
+
+    def _gather(iy_, ix_):
+        idx = (iy_ * width + ix_).flatten(1).unsqueeze(1).expand(-1, channels, -1)
+        return flat.gather(2, idx).unflatten(2, (grid_h, grid_w))
+
+    v00 = _gather(iy0, ix0)
+    v10 = _gather(iy0, ix1)
+    v01 = _gather(iy1, ix0)
+    v11 = _gather(iy1, ix1)
+    if padding_mode == "zeros":
+        v00 = v00 * (in_x0 & in_y0).unsqueeze(1)
+        v10 = v10 * (in_x1 & in_y0).unsqueeze(1)
+        v01 = v01 * (in_x0 & in_y1).unsqueeze(1)
+        v11 = v11 * (in_x1 & in_y1).unsqueeze(1)
+    return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
+
+
 def deformable_attention_core_func_v2(
     value: torch.Tensor,
     value_spatial_shapes,
@@ -91,13 +148,18 @@ def deformable_attention_core_func_v2(
         sampling_grid_l = sampling_locations_list[level]
 
         if method == "default":
-            sampling_value_l = F.grid_sample(
-                value_l,
-                sampling_grid_l,
-                mode="bilinear",
-                padding_mode="zeros",
-                align_corners=False,
-            )
+            if torch.onnx.is_in_onnx_export():
+                sampling_value_l = _grid_sample_bilinear_manual(
+                    value_l, sampling_grid_l, padding_mode="zeros", align_corners=False
+                )
+            else:
+                sampling_value_l = F.grid_sample(
+                    value_l,
+                    sampling_grid_l,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=False,
+                )
         else:  # discrete
             sampling_coord = (
                 sampling_grid_l * torch.tensor([[w, h]], device=value_l.device) + 0.5

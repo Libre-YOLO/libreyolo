@@ -656,17 +656,46 @@ class BaseBackend(ABC):
         original image.
         """
         outputs = all_outputs[0][0]  # (N, 4+nc)
-        boxes = outputs[:, :4]
+        boxes_all = outputs[:, :4]
         scores = outputs[:, 4:]
 
-        max_scores = np.max(scores, axis=1)
-        class_ids = np.argmax(scores, axis=1)
+        # Multi-label per anchor (every (anchor, class) pair above conf), matching the native
+        # postprocess (postprocess/picodet.py). argmax kept only the best class per anchor and
+        # dropped secondary-class detections, costing ~0.7 mAP vs native.
+        valid = scores > conf
+        if not valid.any():
+            return (np.empty((0, 4), dtype=boxes_all.dtype),
+                    np.empty((0,), dtype=scores.dtype),
+                    np.empty((0,), dtype=np.int64))
 
-        mask = max_scores > conf
-        boxes, max_scores, class_ids = boxes[mask], max_scores[mask], class_ids[mask]
+        box_indices, class_ids = np.nonzero(valid)
+        max_scores = scores[box_indices, class_ids]
 
-        if len(boxes) == 0:
-            return boxes, max_scores, class_ids
+        # Per-level top-k (nms_pre), matching native postprocess/picodet.py: each FPN level is
+        # capped separately so a busy level can't crowd out detections from other levels. The
+        # exported output concatenates the 4 PicoDet levels (strides 8/16/32/64) in order, so we
+        # map each candidate's anchor index to its level via the cumulative grid sizes. Falls back
+        # to a single global cap if the layout doesn't match (unexpected stride/imgsz). The cap
+        # also keeps numpy NMS fast (the uncapped multi-label flood at conf=0.001 was ~1.6-12 s/img).
+        nms_pre = 1000
+        # Ceil division: feature maps from stride-2 convs round up, so e.g. PicoDet-m (416) has a
+        # 7x7 stride-64 P6 (416//64=6 would mismatch N and silently fall back to the global cap).
+        level_sizes = [((effective_imgsz + s - 1) // s) ** 2 for s in (8, 16, 32, 64)]
+        if sum(level_sizes) == scores.shape[0]:
+            bounds = np.cumsum([0] + level_sizes)
+            keep = []
+            for lo, hi in zip(bounds[:-1], bounds[1:]):
+                idx = np.nonzero((box_indices >= lo) & (box_indices < hi))[0]
+                if idx.size > nms_pre:
+                    idx = idx[np.argpartition(max_scores[idx], -nms_pre)[-nms_pre:]]
+                keep.append(idx)
+            keep = np.concatenate(keep) if keep else np.empty(0, dtype=np.int64)
+            box_indices, class_ids, max_scores = box_indices[keep], class_ids[keep], max_scores[keep]
+        elif max_scores.shape[0] > nms_pre:
+            top = np.argpartition(max_scores, -nms_pre)[-nms_pre:]
+            box_indices, class_ids, max_scores = box_indices[top], class_ids[top], max_scores[top]
+
+        boxes = boxes_all[box_indices].copy()
 
         scale_x = orig_w / effective_imgsz
         scale_y = orig_h / effective_imgsz
@@ -699,6 +728,15 @@ class BaseBackend(ABC):
         box_indices, class_ids = np.nonzero(valid)
         boxes = boxes[box_indices].copy()
         max_scores = scores[box_indices, class_ids]
+
+        # DAMO's multi-label expansion floods NMS at low conf (~115k-670k (anchor,class) pairs);
+        # the shared 30k cap still left the pure-Python O(n^2) numpy NMS at ~0.5-5 s/img. Cap to
+        # top-1000 by score: numpy NMS drops to ~16 ms with exact parity, since NMS only
+        # suppresses lower-scored boxes and max_det (300) << 1000 (verified top-300 identical).
+        nms_pre = 1000
+        if max_scores.shape[0] > nms_pre:
+            keep = np.argpartition(-max_scores, nms_pre - 1)[:nms_pre]
+            boxes, max_scores, class_ids = boxes[keep], max_scores[keep], class_ids[keep]
 
         scale_x = orig_w / effective_imgsz
         scale_y = orig_h / effective_imgsz
@@ -1210,7 +1248,7 @@ class BaseBackend(ABC):
             # ONNX models with graph-embedded NMS still pass through this after
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
-            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e"):
+            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e", "yolox", "picodet"):
                 keep = _batched_nms_numpy(boxes, max_scores, class_ids, iou)
             else:
                 keep = _nms_numpy(boxes, max_scores, iou)
