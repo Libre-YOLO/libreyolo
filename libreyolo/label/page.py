@@ -427,6 +427,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <tr><td><kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>accept all AI suggestions / accept &amp; next</td></tr>
           <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd> &middot; <kbd>C</kbd></td><td>prev / next image &middot; next unlabeled &middot; copy previous labels</td></tr>
           <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected &middot; undo / redo &middot; duplicate box</td></tr>
+          <tr><td><kbd>Shift</kbd>+click &middot; <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>add / remove box from selection &middot; select all — then a number reclassifies, or <kbd>Del</kbd> deletes them together</td></tr>
           <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
           <tr><td><kbd>T</kbd> &middot; <kbd>L</kbd></td><td>tighten box to edges &middot; loupe magnifier</td></tr>
           <tr><td><kbd>Y</kbd> &middot; <kbd>N</kbd> &middot; <kbd>M</kbd></td><td>Label-Error Radar &middot; next flagged &middot; embedding map</td></tr>
@@ -512,6 +513,7 @@ let assist = null, assistModel = null, conf = 0.35;
 let ghosts = [];
 let polys = [];              // polygon annotations (image-px pts), from SAM or file
 let selPoly = -1;
+let selBoxes = new Set();   // multi-selection of box indices (shift-click / Ctrl+A); always cleared on image/project change so indices never go stale
 let tool = "box";            // "box" (draw/select) or "seg" (SAM click/box-to-mask)
 let segBusy = false;
 let segRect = null;          // box being dragged in segment mode (image px)
@@ -706,8 +708,19 @@ function setActive(i){
   if(i<0||i>=(DS.names||[]).length) return;
   active = i; markPalette();
   if(!editable || (DS && !DS.writable)) return;   // view-only: don't reclassify
-  if(sel>=0 && boxes[sel].cls!==i){ pushUndo(); boxes[sel].cls = i; markDirty(); draw(); }
+  if(selBoxes.size){   // reclassify the whole multi-selection in one undo step
+    const targets=[...selBoxes].filter(bi=>boxes[bi] && boxes[bi].cls!==i);
+    if(targets.length){ pushUndo(); targets.forEach(bi=>boxes[bi].cls=i); markDirty(); draw(); }
+  }
+  else if(sel>=0 && boxes[sel] && boxes[sel].cls!==i){ pushUndo(); boxes[sel].cls = i; markDirty(); draw(); }
   else if(selPoly>=0 && polys[selPoly] && polys[selPoly].cls!==i){ pushUndo(); polys[selPoly].cls = i; markDirty(); draw(); }
+}
+function selectAllBoxes(){
+  if(!editable || (DS && !DS.writable) || !boxes.length) return;
+  selBoxes = new Set(boxes.map((_,i)=>i));
+  sel = boxes.length===1 ? 0 : -1; selPoly = -1;
+  banner(`${boxes.length} box${boxes.length>1?"es":""} selected — press a number to reclassify, or Del to delete.`);
+  draw();
 }
 function openPicker(){ $("#picker").classList.add("show"); const s=$("#psearch"); s.value=""; filterClasses(""); s.focus(); }
 function closePicker(){ $("#picker").classList.remove("show"); }
@@ -997,7 +1010,7 @@ async function load(i){
   if(dirty){   // edits landed *during* the save (snap changed mid-POST) -> still unsaved; don't discard them
     banner("You edited while saving — press → again to save those changes."); return;
   }
-  idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; redoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
+  idx = i; sel = -1; selPoly = -1; selBoxes.clear(); hover = -1; undoStack = []; redoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
   imgOk = false; editable = false; curRev = null;   // canvas stays inert until metadata loads; a failed fetch must not leave it editable on the previous image
   let lab;
@@ -1156,7 +1169,7 @@ function duplicateSelected(){
   const b=boxes[sel]; pushUndo();
   const off=Math.max(6, Math.abs(b.w)*0.06);
   boxes.push({cls:b.cls, x:b.x+off, y:b.y+off, w:b.w, h:b.h});
-  sel=boxes.length-1; selPoly=-1; clipToImage(boxes[sel]); markDirty(); draw();
+  selBoxes=new Set([boxes.length-1]); sel=boxes.length-1; selPoly=-1; clipToImage(boxes[sel]); markDirty(); draw();
 }
 
 // ---- AI auto-label (suggest -> review -> accept; nothing written unverified) ----
@@ -1419,13 +1432,14 @@ function draw(){
   boxes.forEach((b,i)=>{
     const c = color(b.cls);
     const x=sx(b.x), y=sy(b.y), w=b.w*view.scale, h=b.h*view.scale;
-    const dim = (selPoly>=0) || (sel>=0 && i!==sel);   // dim others when any box/poly is selected
+    const isSel = (i===sel) || selBoxes.has(i);
+    const dim = (selPoly>=0) || ((sel>=0 || selBoxes.size>0) && !isSel);   // dim others when anything is selected
     const isHover = i===hover && mode===null;
     ctx.save();
     ctx.globalAlpha = dim ? 0.42 : 1;
-    ctx.fillStyle = colorA(b.cls, i===sel?0.22:0.13); ctx.fillRect(x,y,w,h);
-    if(i===sel||isHover){ ctx.shadowColor=c; ctx.shadowBlur=i===sel?10:5; }
-    ctx.strokeStyle = c; ctx.lineWidth = i===sel?2.6:(isHover?2.2:1.8); ctx.strokeRect(x,y,w,h);
+    ctx.fillStyle = colorA(b.cls, isSel?0.22:0.13); ctx.fillRect(x,y,w,h);
+    if(isSel||isHover){ ctx.shadowColor=c; ctx.shadowBlur=isSel?10:5; }
+    ctx.strokeStyle = c; ctx.lineWidth = isSel?2.6:(isHover?2.2:1.8); ctx.strokeRect(x,y,w,h);
     ctx.shadowColor="transparent"; ctx.shadowBlur=0;
     const nm = (DS.names&&DS.names[b.cls])!=null ? DS.names[b.cls] : b.cls;
     drawChip(Math.min(x,x+w), Math.min(y,y+h), String(nm), b.cls);
@@ -1526,13 +1540,19 @@ cv.addEventListener("pointerdown", e=>{
   }
   const hit = hitBox(mx,my);
   if(hit>=0){
-    snapStart(); sel=hit; selPoly=-1; mode="move";
-    drag={mx, my, x:boxes[sel].x, y:boxes[sel].y};
-    setActive(boxes[sel].cls); draw(); return;
+    if(e.shiftKey){   // toggle this box in/out of the multi-selection (no move)
+      selBoxes.has(hit) ? selBoxes.delete(hit) : selBoxes.add(hit);
+      sel = selBoxes.size===1 ? [...selBoxes][0] : -1; selPoly=-1;
+      if(selBoxes.size) banner(`${selBoxes.size} box${selBoxes.size>1?"es":""} selected`);
+      draw(); return;
+    }
+    snapStart(); selBoxes = new Set([hit]); sel=hit; selPoly=-1; mode="move";
+    drag={mx, my, x:boxes[hit].x, y:boxes[hit].y};
+    setActive(boxes[hit].cls); draw(); return;
   }
   const ph = hitPoly(mx,my);
   if(ph>=0){
-    snapStart(); selPoly=ph; sel=-1; mode="movepoly";
+    snapStart(); selBoxes.clear(); selPoly=ph; sel=-1; mode="movepoly";
     drag={mx, my, pts:polys[ph].pts.slice()};
     setActive(polys[ph].cls); draw(); return;
   }
@@ -1546,7 +1566,7 @@ cv.addEventListener("pointerdown", e=>{
   const x=ix(mx), y=iy(my);
   snapStart();
   boxes.push({cls:active, x, y, w:0, h:0});
-  sel=boxes.length-1; selPoly=-1; mode="new"; drag={};
+  selBoxes.clear(); sel=boxes.length-1; selPoly=-1; mode="new"; drag={};
   draw();
 });
 cv.addEventListener("pointermove", e=>{
@@ -1626,12 +1646,13 @@ cv.addEventListener("wheel", e=>{
 // ---- keyboard ----
 window.addEventListener("keydown", e=>{
   const t=(e.target&&e.target.tagName)||"";
-  if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); } return; }
+  if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); if($("#classedit").classList.contains("show")) closeClassEdit(); } return; }
   if(e.key===" "){ spaceDown=true; cv.style.cursor="grab"; e.preventDefault(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); save(); return; }
   if((e.ctrlKey||e.metaKey) && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); applyHistory(undoStack, redoStack); return; }
   if((e.ctrlKey||e.metaKey) && ((e.key==="y"||e.key==="Y") || (e.shiftKey && (e.key==="z"||e.key==="Z")))){ e.preventDefault(); applyHistory(redoStack, undoStack); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="d"||e.key==="D")){ e.preventDefault(); duplicateSelected(); return; }
+  if((e.ctrlKey||e.metaKey) && (e.key==="a"||e.key==="A")){ e.preventDefault(); selectAllBoxes(); return; }
   if(e.key==="Enter"){
     if(ghosts.length){ e.preventDefault(); const adv=e.shiftKey; acceptAllGhosts();
       if(adv){ save().then(()=> nextSuggested()); } }
@@ -1653,7 +1674,10 @@ window.addEventListener("keydown", e=>{
   if(e.key==="n"||e.key==="N"){ e.preventDefault(); nextFlagged(); return; }
   if(e.key==="Delete"||e.key==="Backspace"){
     if(!editable || (DS && !DS.writable)) return;
-    if(selPoly>=0){ pushUndo(); polys.splice(selPoly,1); selPoly=-1; markDirty(); draw(); }
+    if(selBoxes.size){   // bulk delete: splice high indices first so the rest stay valid
+      pushUndo(); [...selBoxes].sort((a,b)=>b-a).forEach(bi=>boxes.splice(bi,1));
+      selBoxes.clear(); sel=-1; markDirty(); draw(); }
+    else if(selPoly>=0){ pushUndo(); polys.splice(selPoly,1); selPoly=-1; markDirty(); draw(); }
     else if(sel>=0){ pushUndo(); boxes.splice(sel,1); sel=-1; markDirty(); draw(); }
     return; }
   if(e.key==="f"||e.key==="F"){ fit(); draw(); return; }
@@ -1663,12 +1687,13 @@ window.addEventListener("keydown", e=>{
     else if($("#radar").classList.contains("show")){ closeRadar(); }
     else if($("#mapmodal").classList.contains("show")){ closeMap(); }
     else if($("#insights").classList.contains("show")){ closeInsights(); }
+    else if($("#classedit").classList.contains("show")){ closeClassEdit(); }
     else if($("#picker").classList.contains("show")){ closePicker(); }
     else if(radarFindings.length){ radarFindings=[]; $("#banner").style.display="none"; draw(); }
     else if(ghosts.length){ clearGhosts(); }
     else if($("#help").style.display==="flex"){ $("#help").style.display="none"; }
     else if(mode==="new"){ boxes.pop(); sel=-1; mode=null; gestureSnap=null; draw(); }
-    else { sel=-1; selPoly=-1; draw(); }
+    else { selBoxes.clear(); sel=-1; selPoly=-1; draw(); }
   }
 });
 window.addEventListener("keyup", e=>{ if(e.key===" "){ spaceDown=false; cv.style.cursor="crosshair"; } });
@@ -2089,7 +2114,7 @@ function resetClientState(){
   loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project
   clearTimeout(boostTimer); boostTimer=null;
   clearTimeout(autosaveTimer); autosaveTimer=null;
-  idx=-1; sel=-1; selPoly=-1; hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
+  idx=-1; sel=-1; selPoly=-1; selBoxes.clear(); hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
   IMAGES=[]; suggestedIds=new Set(); selSet=null; listFilter="all"; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
   undoStack=[]; redoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
   setTool("box");
