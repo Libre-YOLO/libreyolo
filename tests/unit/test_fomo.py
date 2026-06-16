@@ -476,9 +476,6 @@ class TestLibreFOMOEndToEnd:
             w, h = original_size
             return {
                 "points": torch.tensor([[w / 2.0, h / 2.0, 0.0, 0.9]], dtype=torch.float32),
-                "scores": torch.tensor([0.9], dtype=torch.float32),
-                "classes": torch.tensor([0.0], dtype=torch.float32),
-                "num_detections": 1,
             }
 
         model._postprocess = _fixed_postprocess
