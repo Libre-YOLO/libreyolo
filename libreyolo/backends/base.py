@@ -700,6 +700,10 @@ class BaseBackend(ABC):
         boxes = boxes[box_indices].copy()
         max_scores = scores[box_indices, class_ids]
 
+        if max_scores.shape[0] > _YOLO9_MAX_NMS_CANDIDATES:
+            keep = np.argpartition(-max_scores, _YOLO9_MAX_NMS_CANDIDATES - 1)[:_YOLO9_MAX_NMS_CANDIDATES]
+            boxes, max_scores, class_ids = boxes[keep], max_scores[keep], class_ids[keep]
+
         scale_x = orig_w / effective_imgsz
         scale_y = orig_h / effective_imgsz
         boxes[:, [0, 2]] *= scale_x
@@ -1210,7 +1214,7 @@ class BaseBackend(ABC):
             # ONNX models with graph-embedded NMS still pass through this after
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
-            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e"):
+            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e", "yolox", "picodet"):
                 keep = _batched_nms_numpy(boxes, max_scores, class_ids, iou)
             else:
                 keep = _nms_numpy(boxes, max_scores, iou)
