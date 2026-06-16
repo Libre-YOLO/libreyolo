@@ -1,7 +1,10 @@
 """ONNX export implementation."""
 
 import importlib.util
+import platform
+import re
 import warnings
+from importlib import metadata as importlib_metadata
 
 import torch
 
@@ -51,6 +54,32 @@ def _set_metadata(model_proto, metadata: dict) -> None:
         entry.value = value
 
 
+def _package_version(name: str) -> tuple[int, int, int] | None:
+    try:
+        raw_version = importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", raw_version)
+    return tuple(int(part or 0) for part in match.groups()) if match else None
+
+
+def _should_skip_onnx_simplify() -> bool:
+    """Avoid the known onnxsim macOS-arm crash before it can abort Python."""
+    if platform.system() != "Darwin" or platform.machine().lower() not in {
+        "arm64",
+        "aarch64",
+    }:
+        return False
+    onnx_version = _package_version("onnx")
+    onnxsim_version = _package_version("onnxsim")
+    return (
+        onnx_version is not None
+        and onnx_version >= (1, 22, 0)
+        and onnxsim_version is not None
+        and onnxsim_version <= (0, 6, 5)
+    )
+
+
 def _postprocess_onnx(
     path: str,
     *,
@@ -66,6 +95,15 @@ def _postprocess_onnx(
         return
 
     model_proto = onnx.load(path)
+
+    if simplify and _should_skip_onnx_simplify():
+        warnings.warn(
+            "Skipping ONNX simplification: onnx>=1.22 with onnxsim<=0.6.5 "
+            "can crash Python on macOS arm64.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        simplify = False
 
     if simplify:
         try:
