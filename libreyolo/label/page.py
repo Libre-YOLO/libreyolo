@@ -341,7 +341,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <body>
 <div id="app">
   <header class="topbar">
-    <span class="brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
+    <span class="brand" id="brandhome" title="Projects — back to the home screen" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
     <span class="sep"></span>
     <span class="ds" id="dsname"></span>
     <span class="counter" id="counter"></span>
@@ -650,6 +650,7 @@ function wireChrome(){
   $("#mapbtn").onclick = openMap;
   $("#boostbtn").onclick = runBoost;
   $("#homebtn").onclick = backToHome;
+  $("#brandhome").onclick = backToHome;   // clicking the logo also returns to Projects (the conventional escape hatch)
   $("#sharebtn").onclick = toggleShare;
   document.addEventListener("click", e=>{ const pop=$("#sharepop");
     if(pop && pop.classList.contains("show") && !pop.contains(e.target) && !e.target.closest("#sharebtn")) pop.classList.remove("show"); });
@@ -1597,7 +1598,7 @@ cv.addEventListener("pointerup", e=>{
   if(mode==="new"){
     const b=boxes[sel];
     if(Math.abs(b.w)*view.scale<3 || Math.abs(b.h)*view.scale<3){ boxes.pop(); sel=-1; }
-    else { normalizeRect(b); clipToImage(b); snapBox(b, 7); markDirty(); }  // magnetic edges
+    else { normalizeRect(b); clipToImage(b); markDirty(); }  // WYSIWYG: keep the box exactly where drawn; press T to magnet-tighten on demand
   } else if(mode==="resize"){ normalizeRect(drag.b); clipToImage(drag.b); }
   else if(mode==="move"){ clipToImage(boxes[sel]); }
   else if(mode==="movepoly"){ clipPoly(polys[selPoly]); }
