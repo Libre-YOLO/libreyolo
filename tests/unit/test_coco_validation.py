@@ -336,6 +336,69 @@ def test_obb_validator_uses_explicit_coco_json_paths(tmp_path):
 
 
 @pytest.mark.unit
+def test_obb_validator_uses_default_coco_images_layout_with_data_dir(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.obb_validator import OBBValidator
+
+    image_dir = tmp_path / "images" / "val2017"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "instances_val2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 1,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": [10, 20, 50, 20, 50, 40, 10, 40],
+                        "area": 800,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 1, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    validator = OBBValidator.__new__(OBBValidator)
+    validator.config = SimpleNamespace(
+        data=None,
+        data_dir=str(tmp_path),
+        split="val",
+        allow_download_scripts=False,
+        imgsz=100,
+        batch_size=1,
+        num_workers=0,
+        save_json=False,
+        save_plots=False,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 100,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.load_obb is True
+    assert loader.dataset.json_file == "instances_val2017.json"
+    assert loader.dataset.name == "images/val2017"
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+    assert set(validator._gt_by_image) == {10}
+
+
+@pytest.mark.unit
 def test_detection_validator_accepts_txt_split_with_discovered_coco_json(tmp_path):
     pytest.importorskip("pycocotools")
     from libreyolo.data.dataset import COCODataset

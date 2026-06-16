@@ -52,6 +52,7 @@ from ..data import (
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from ..utils.serialization import (
     SCHEMA_VERSION,
@@ -460,10 +461,15 @@ class BaseTrainer(ABC):
             label_files = data_cfg.get("train_label_files")
 
             if coco_ann_file:
+                default_image_dir = resolve_default_coco_image_dir(
+                    data_dir,
+                    "train",
+                    coco_ann_file,
+                )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file=coco_ann_file,
-                    name=get_coco_image_dir(data_cfg, "train", "train2017"),
+                    name=get_coco_image_dir(data_cfg, "train", default_image_dir),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
@@ -485,7 +491,11 @@ class BaseTrainer(ABC):
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
@@ -526,7 +536,11 @@ class BaseTrainer(ABC):
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,

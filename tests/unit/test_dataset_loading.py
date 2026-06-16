@@ -243,12 +243,14 @@ def test_coco_dataset_loads_obb_from_segmentation_and_bbox_fallback(tmp_path):
     ann_dir.mkdir()
     Image.new("RGB", (100, 100), color="white").save(image_dir / "seg.jpg")
     Image.new("RGB", (100, 100), color="white").save(image_dir / "bbox.jpg")
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "bad_obb.jpg")
     (ann_dir / "custom_train.json").write_text(
         json.dumps(
             {
                 "images": [
                     {"id": 10, "file_name": "seg.jpg", "width": 100, "height": 100},
                     {"id": 11, "file_name": "bbox.jpg", "width": 100, "height": 100},
+                    {"id": 12, "file_name": "bad_obb.jpg", "width": 100, "height": 100},
                 ],
                 "annotations": [
                     {
@@ -266,6 +268,15 @@ def test_coco_dataset_loads_obb_from_segmentation_and_bbox_fallback(tmp_path):
                         "category_id": 42,
                         "bbox": [20, 10, 30, 40],
                         "area": 1200,
+                        "iscrowd": 0,
+                    },
+                    {
+                        "id": 3,
+                        "image_id": 12,
+                        "category_id": 42,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": [1, 2, 3],
+                        "area": 800,
                         "iscrowd": 0,
                     },
                 ],
@@ -290,8 +301,14 @@ def test_coco_dataset_loads_obb_from_segmentation_and_bbox_fallback(tmp_path):
         [15, 15, 55, 45],
         atol=1e-5,
     )
+    np.testing.assert_allclose(
+        by_name["bad_obb.jpg"][0, :4],
+        [10, 20, 50, 40],
+        atol=1e-5,
+    )
     assert by_name["seg.jpg"][0, 5] == pytest.approx(0.0, abs=1e-6)
     assert by_name["bbox.jpg"][0, 5] == pytest.approx(-math.pi / 2, abs=1e-6)
+    assert by_name["bad_obb.jpg"][0, 5] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_coco_dataset_validates_yaml_category_names(tmp_path):

@@ -295,14 +295,9 @@ class DetectionValidator(BaseValidator):
         return None
 
     def _resolve_coco_image_dir(self, data_path: Path, json_file: str) -> str:
-        split_name = (
-            f"{self.config.split}2017"
-            if f"{self.config.split}2017" in json_file
-            else self.config.split
-        )
-        if (data_path / "images" / split_name).exists():
-            return f"images/{split_name}"
-        return split_name
+        from libreyolo.data import resolve_default_coco_image_dir
+
+        return resolve_default_coco_image_dir(data_path, self.config.split, json_file)
 
     def _init_metrics(self) -> None:
         from libreyolo.data import load_data_config

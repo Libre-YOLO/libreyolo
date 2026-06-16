@@ -171,21 +171,21 @@ def _coco_obb_to_xywhr(obj: dict, width: int, height: int) -> np.ndarray | None:
     if isinstance(obb, dict):
         obb = obb.get("corners", obb.get("xywhr"))
     if obb is not None:
-        values = np.asarray(obb, dtype=np.float32).reshape(-1)
-        if not np.isfinite(values).all():
-            return None
-        if values.size == 8:
-            corners = _clip_points_to_image(values.reshape(4, 2), width, height)
-            try:
-                return corners_to_xywhr(corners)
-            except ValueError:
-                return None
-        if values.size == 5:
-            cx, cy, box_w, box_h, angle = map(float, values)
-            if box_w <= 0.0 or box_h <= 0.0:
-                return None
-            return canonicalize_xywhr((cx, cy, box_w, box_h, angle))
-        return None
+        try:
+            values = np.asarray(obb, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            values = None
+        if values is not None and np.isfinite(values).all():
+            if values.size == 8:
+                corners = _clip_points_to_image(values.reshape(4, 2), width, height)
+                try:
+                    return corners_to_xywhr(corners)
+                except ValueError:
+                    pass
+            elif values.size == 5:
+                cx, cy, box_w, box_h, angle = map(float, values)
+                if box_w > 0.0 and box_h > 0.0:
+                    return canonicalize_xywhr((cx, cy, box_w, box_h, angle))
 
     segmentation = obj.get("segmentation")
     if segmentation:
@@ -796,7 +796,7 @@ class COCODataset(ImageCacheMixin, Dataset):
             y1 = max(0, obj["bbox"][1])
             x2 = min(width, x1 + max(0, obj["bbox"][2]))
             y2 = min(height, y1 + max(0, obj["bbox"][3]))
-            if x2 >= x1 and y2 >= y1:
+            if x2 > x1 and y2 > y1:
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 objs.append(obj)
                 if self.load_segments:

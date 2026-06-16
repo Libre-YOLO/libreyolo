@@ -863,6 +863,63 @@ def test_yolo9_trainer_uses_explicit_coco_json_paths_for_obb(tmp_path):
     assert labels[0, 4] == 0
 
 
+def test_yolo9_trainer_uses_default_coco_images_layout_for_obb_data_dir(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+
+    image_dir = tmp_path / "images" / "train2017"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "instances_train2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 1,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": [10, 20, 50, 20, 50, 40, 10, 40],
+                        "area": 800,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 1, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    wrapper = type(
+        "Wrapper",
+        (),
+        {"task": "obb", "nb_classes": 1, "names": {0: "vehicle"}},
+    )()
+    trainer = YOLO9Trainer(
+        model=torch.nn.Conv2d(3, 3, 1),
+        wrapper_model=wrapper,
+        data_dir=str(tmp_path),
+        num_classes=1,
+        epochs=1,
+        batch=1,
+        imgsz=100,
+        workers=0,
+        device="cpu",
+    )
+
+    train_dataset = trainer._setup_data()
+
+    assert isinstance(train_dataset.dataset, COCODataset)
+    assert train_dataset.dataset.load_obb is True
+    assert train_dataset.dataset.json_file == "instances_train2017.json"
+    assert train_dataset.dataset.name == "images/train2017"
+    assert train_dataset.dataset._image_path(0) == image_dir / "sample.jpg"
+
+
 def test_yolo9_trainer_checkpoint_uses_resolved_data_classes_for_obb(tmp_path):
     from libreyolo.utils.serialization import load_trusted_torch_file
 

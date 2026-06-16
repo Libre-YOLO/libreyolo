@@ -17,6 +17,7 @@ from libreyolo.data import (
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from libreyolo.data.dataset import COCODataset, YOLODataset
 from libreyolo.data.obb import (
@@ -148,10 +149,10 @@ class OBBValidator(BaseValidator):
                 self.val_preproc = _OBBValPreprocessor(
                     self.model._get_val_preprocessor(img_size=actual_imgsz)
                 )
-                split_name = (
-                    f"{self.config.split}2017"
-                    if (data_path / f"{self.config.split}2017").exists()
-                    else self.config.split
+                split_name = resolve_default_coco_image_dir(
+                    data_path,
+                    self.config.split,
+                    coco_annotation.name,
                 )
                 dataset = COCODataset(
                     data_dir=str(data_path),
