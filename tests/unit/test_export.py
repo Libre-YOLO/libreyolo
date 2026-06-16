@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 
 import libreyolo.export.exporter as exporter_module
+import libreyolo.export.onnx as onnx_module
 from libreyolo.export.exporter import (
     BaseExporter,
     CoreMLExporter,
@@ -43,6 +44,23 @@ class _TinyModel(nn.Module):
         x = self.pool(x)
         x = x.view(x.size(0), -1)
         return self.fc(x)
+
+
+def test_onnx_simplify_skip_targets_known_macos_arm64_combo(monkeypatch):
+    versions = {"onnx": "1.22.0", "onnxsim": "0.6.5"}
+    monkeypatch.setattr(onnx_module.importlib_metadata, "version", versions.__getitem__)
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(onnx_module.platform, "machine", lambda: "arm64")
+    assert onnx_module._should_skip_onnx_simplify()
+
+    versions["onnxsim"] = "0.6.6"
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    versions.update(onnx="1.21.0", onnxsim="0.6.5")
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Linux")
+    assert not onnx_module._should_skip_onnx_simplify()
 
 
 class _TinyRFDETRExport(nn.Module):
