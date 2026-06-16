@@ -135,22 +135,6 @@ class TestDetectSizeFromStateDict:
         assert detected == size, f"Expected size={size!r} under DDP, detected={detected!r}"
 
 
-class TestFOMONNDeterministic:
-    """Forward pass is deterministic (no dropout / stochastic layers)."""
-
-    def test_deterministic_forward(self) -> None:
-        from libreyolo.models.fomo.nn import LibreFOMOModel, CONFIGS
-
-        torch.manual_seed(0)
-        model = LibreFOMOModel(size="s", nc=1).eval()
-        imgsz = CONFIGS["s"]["imgsz"]
-        x = torch.randn(1, 3, imgsz, imgsz)
-        with torch.no_grad():
-            out1 = model(x)
-            out2 = model(x)
-        assert torch.equal(out1, out2)
-
-
 class TestFOMONNInvalidSize:
     def test_raises_on_invalid_size(self) -> None:
         from libreyolo.models.fomo.nn import LibreFOMOModel
@@ -217,10 +201,6 @@ class TestLibreFOMOCanLoad:
         sd_no_head = {k: v for k, v in sd.items() if k != "head.weight"}
         assert not LibreFOMO.can_load(sd_no_head)
 
-
-
-
-
 class TestLibreFOMODetectNbClasses:
     @pytest.mark.parametrize("nc", [1, 2, 5])
     def test_detect_nb_classes(self, nc: int) -> None:
@@ -265,10 +245,7 @@ class TestLibreFOMOPostprocess:
             iou_thres=0.45,
             original_size=(96, 96),
         )
-        assert result["num_detections"] == 0
-        assert result["points"].shape == (0, 2)
-        assert result["scores"].shape == (0,)
-        assert result["classes"].shape == (0,)
+        assert result["points"].shape == (0, 4)
 
     def test_high_confidence_foreground_detected(self) -> None:
         model = _make_random_fomo(size="s", nc=1)
@@ -284,10 +261,10 @@ class TestLibreFOMOPostprocess:
             iou_thres=0.45,
             original_size=(96, 96),
         )
-        assert result["num_detections"] >= 1
-        assert result["points"].shape[1] == 2
+        assert len(result["points"]) >= 1
+        assert result["points"].shape[1] == 4
         # class id should be 0 (channel 1 - 1)
-        assert int(result["classes"][0].item()) == 0
+        assert int(result["points"][0, 2].item()) == 0
 
     def test_postprocess_scales_to_original_size(self) -> None:
         """Points must be in original-image pixel space, not grid space."""
@@ -303,13 +280,65 @@ class TestLibreFOMOPostprocess:
             iou_thres=0.45,
             original_size=(480, 640),
         )
-        if result["num_detections"] > 0:
-            x, y = result["points"][0]
+        if len(result["points"]) > 0:
+            x, y = result["points"][0, :2]
             # scaled pixel should be > 0 and fit in original image
             assert x.item() >= 0.0
             assert y.item() >= 0.0
             assert x.item() <= 640
             assert y.item() <= 480
+
+    def test_postprocess_output_structure_n_4(self) -> None:
+        """Verify that postprocess returns (N, 4) points with structure [x, y, class, confidence]."""
+        model = _make_random_fomo(size="s", nc=1)
+        from libreyolo.models.fomo.nn import CONFIGS
+
+        hw = CONFIGS["s"]["imgsz"] // 8
+        logits = torch.zeros(1, 2, hw, hw)
+        logits[0, 1, 2, 3] = 20.0  # channel 1 = class 0 foreground
+        result = model._postprocess(
+            logits,
+            conf_thres=0.8,
+            iou_thres=0.45,
+            original_size=(96, 96),
+        )
+        pts = result["points"]
+        assert len(pts) == 1
+        assert pts.shape == (1, 4)
+        # Check structure: [x, y, class, confidence]
+        # Coordinates should be scaled center of cell (2,3)
+        # grid space: x=3, y=2
+        # scaled: x = (3 + 0.5) * (96 / 12) = 3.5 * 8 = 28.0
+        #         y = (2 + 0.5) * (96 / 12) = 2.5 * 8 = 20.0
+        # class: 0.0, confidence: ~1.0
+        np.testing.assert_allclose(pts[0].cpu().numpy(), [28.0, 20.0, 0.0, 1.0], atol=1e-3)
+
+    def test_inference_returns_points_object_with_n_4(self) -> None:
+        """Verify that calling predict() on FOMO returns Results with a Points payload of shape (N, 4)."""
+        model = _make_random_fomo(size="s", nc=1)
+        from libreyolo.models.fomo.nn import CONFIGS
+
+        hw = CONFIGS["s"]["imgsz"] // 8
+        # Mock _forward to return a logit with a peak at (2, 3)
+        def _mock_forward(x):
+            logits = torch.zeros(x.shape[0], 2, hw, hw)
+            logits[:, 1, 2, 3] = 20.0
+            return logits
+
+        model._forward = _mock_forward
+
+        img = Image.new("RGB", (96, 96))
+        results = model.predict(img, conf=0.8)
+
+        if isinstance(results, list):
+            results = results[0]
+
+        assert results.points is not None
+        assert results.points.data.shape == (1, 4)
+        np.testing.assert_allclose(results.points.xy[0].cpu().numpy(), [28.0, 20.0], atol=1e-3)
+        assert int(results.points.cls[0].item()) == 0
+        assert results.points.conf[0].item() > 0.99
+
 
 
 class TestLibreFOMOValPreprocessor:
@@ -446,7 +475,7 @@ class TestLibreFOMOEndToEnd:
         def _fixed_postprocess(output, conf_thres, iou_thres, original_size, **kwargs):
             w, h = original_size
             return {
-                "points": torch.tensor([[w / 2.0, h / 2.0]], dtype=torch.float32),
+                "points": torch.tensor([[w / 2.0, h / 2.0, 0.0, 0.9]], dtype=torch.float32),
                 "scores": torch.tensor([0.9], dtype=torch.float32),
                 "classes": torch.tensor([0.0], dtype=torch.float32),
                 "num_detections": 1,

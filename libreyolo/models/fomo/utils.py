@@ -87,22 +87,20 @@ def postprocess(
     points = decode_points_from_logits(output, conf_threshold=conf_thres, nms_radius=nms_radius, max_points=max_det)[0]
     if points.numel() == 0:
         return {
-            "points": torch.zeros((0, 2), dtype=torch.float32),
-            "scores": torch.zeros((0,), dtype=torch.float32),
-            "classes": torch.zeros((0,), dtype=torch.float32),
-            "num_detections": 0,
+            "points": torch.zeros((0, 4), dtype=torch.float32, device=output.device),
         }
 
     grid_h, grid_w = output.shape[-2:]
     orig_w, orig_h = original_size
     scale_x = orig_w / grid_w
     scale_y = orig_h / grid_h
-    xy = points[:, :2].clone()
-    xy[:, 0] = (xy[:, 0] + 0.5) * scale_x
-    xy[:, 1] = (xy[:, 1] + 0.5) * scale_y
+
+    scaled_points = torch.empty((points.shape[0], 4), dtype=torch.float32, device=points.device)
+    scaled_points[:, 0] = (points[:, 0] + 0.5) * scale_x
+    scaled_points[:, 1] = (points[:, 1] + 0.5) * scale_y
+    scaled_points[:, 2] = points[:, 2] - 1.0
+    scaled_points[:, 3] = points[:, 3]
+
     return {
-        "points": xy.float(),
-        "scores": points[:, 3].float(),
-        "classes": (points[:, 2] - 1).float(),
-        "num_detections": int(points.shape[0]),
+        "points": scaled_points,
     }
