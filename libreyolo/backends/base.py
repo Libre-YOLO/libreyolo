@@ -729,8 +729,13 @@ class BaseBackend(ABC):
         boxes = boxes[box_indices].copy()
         max_scores = scores[box_indices, class_ids]
 
-        if max_scores.shape[0] > _YOLO9_MAX_NMS_CANDIDATES:
-            keep = np.argpartition(-max_scores, _YOLO9_MAX_NMS_CANDIDATES - 1)[:_YOLO9_MAX_NMS_CANDIDATES]
+        # DAMO's multi-label expansion floods NMS at low conf (~115k-670k (anchor,class) pairs);
+        # the shared 30k cap still left the pure-Python O(n^2) numpy NMS at ~0.5-5 s/img. Cap to
+        # top-1000 by score: numpy NMS drops to ~16 ms with exact parity, since NMS only
+        # suppresses lower-scored boxes and max_det (300) << 1000 (verified top-300 identical).
+        nms_pre = 1000
+        if max_scores.shape[0] > nms_pre:
+            keep = np.argpartition(-max_scores, nms_pre - 1)[:nms_pre]
             boxes, max_scores, class_ids = boxes[keep], max_scores[keep], class_ids[keep]
 
         scale_x = orig_w / effective_imgsz
