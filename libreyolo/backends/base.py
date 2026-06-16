@@ -678,7 +678,9 @@ class BaseBackend(ABC):
         # to a single global cap if the layout doesn't match (unexpected stride/imgsz). The cap
         # also keeps numpy NMS fast (the uncapped multi-label flood at conf=0.001 was ~1.6-12 s/img).
         nms_pre = 1000
-        level_sizes = [(effective_imgsz // s) ** 2 for s in (8, 16, 32, 64)]
+        # Ceil division: feature maps from stride-2 convs round up, so e.g. PicoDet-m (416) has a
+        # 7x7 stride-64 P6 (416//64=6 would mismatch N and silently fall back to the global cap).
+        level_sizes = [((effective_imgsz + s - 1) // s) ** 2 for s in (8, 16, 32, 64)]
         if sum(level_sizes) == scores.shape[0]:
             bounds = np.cumsum([0] + level_sizes)
             keep = []
