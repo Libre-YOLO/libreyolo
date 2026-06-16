@@ -671,11 +671,25 @@ class BaseBackend(ABC):
         box_indices, class_ids = np.nonzero(valid)
         max_scores = scores[box_indices, class_ids]
 
-        # Cap candidates by score before NMS (native uses per-level top-1000 via nms_pre).
-        # The uncapped multi-label flood at conf=0.001 made numpy NMS ~1.6-12 s/img; the
-        # surviving max_det detections come from the highest-scoring candidates anyway.
+        # Per-level top-k (nms_pre), matching native postprocess/picodet.py: each FPN level is
+        # capped separately so a busy level can't crowd out detections from other levels. The
+        # exported output concatenates the 4 PicoDet levels (strides 8/16/32/64) in order, so we
+        # map each candidate's anchor index to its level via the cumulative grid sizes. Falls back
+        # to a single global cap if the layout doesn't match (unexpected stride/imgsz). The cap
+        # also keeps numpy NMS fast (the uncapped multi-label flood at conf=0.001 was ~1.6-12 s/img).
         nms_pre = 1000
-        if max_scores.shape[0] > nms_pre:
+        level_sizes = [(effective_imgsz // s) ** 2 for s in (8, 16, 32, 64)]
+        if sum(level_sizes) == scores.shape[0]:
+            bounds = np.cumsum([0] + level_sizes)
+            keep = []
+            for lo, hi in zip(bounds[:-1], bounds[1:]):
+                idx = np.nonzero((box_indices >= lo) & (box_indices < hi))[0]
+                if idx.size > nms_pre:
+                    idx = idx[np.argpartition(max_scores[idx], -nms_pre)[-nms_pre:]]
+                keep.append(idx)
+            keep = np.concatenate(keep) if keep else np.empty(0, dtype=np.int64)
+            box_indices, class_ids, max_scores = box_indices[keep], class_ids[keep], max_scores[keep]
+        elif max_scores.shape[0] > nms_pre:
             top = np.argpartition(max_scores, -nms_pre)[-nms_pre:]
             box_indices, class_ids, max_scores = box_indices[top], class_ids[top], max_scores[top]
 
