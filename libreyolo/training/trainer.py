@@ -52,6 +52,7 @@ from ..data import (
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from ..utils.serialization import (
     SCHEMA_VERSION,
@@ -460,18 +461,21 @@ class BaseTrainer(ABC):
             label_files = data_cfg.get("train_label_files")
 
             if coco_ann_file:
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
+                default_image_dir = resolve_default_coco_image_dir(
+                    data_dir,
+                    "train",
+                    coco_ann_file,
+                )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file=coco_ann_file,
-                    name=get_coco_image_dir(data_cfg, "train", "train2017"),
+                    name=get_coco_image_dir(data_cfg, "train", default_image_dir),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -484,18 +488,20 @@ class BaseTrainer(ABC):
                     num_classes=self.num_classes if load_obb else None,
                 )
             elif ann_file.exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -527,18 +533,19 @@ class BaseTrainer(ABC):
             self.num_classes = self.config.num_classes
 
             if (Path(data_dir) / "annotations").exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
                 )
             else:
                 train_dataset = YOLODataset(

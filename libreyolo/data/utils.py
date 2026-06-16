@@ -356,6 +356,15 @@ def get_coco_image_dir(config: Dict, split: str, default: str) -> str:
     return str(split_path) if split_path else default
 
 
+def resolve_default_coco_image_dir(data_path: Path | str, split: str, json_file: str) -> str:
+    """Return the default COCO image directory for a split and JSON filename."""
+    data_path = Path(data_path)
+    split_name = f"{split}2017" if f"{split}2017" in Path(json_file).name else split
+    if (data_path / "images" / split_name).exists():
+        return f"images/{split_name}"
+    return split_name
+
+
 def _resolve_dataset_path(config: Dict, yaml_path: Path) -> Path:
     """Resolve the dataset root path from config."""
     if "path" in config:
