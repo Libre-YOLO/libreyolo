@@ -749,7 +749,11 @@ class ECTransformer(nn.Module):
             -1, keepdim=True
         )
         anchors = torch.log(anchors / (1 - anchors))
-        return torch.where(valid_mask, anchors, torch.inf), valid_mask
+        # Invalid anchors are pushed out of range; native uses +inf, but TRT mishandles inf
+        # (and it overflows in fp16), collapsing ec accuracy. A large finite sentinel gives the
+        # same effect (downstream sigmoid saturates these to degenerate boxes that get filtered).
+        invalid_fill = torch.full_like(anchors, 1e4)
+        return torch.where(valid_mask, anchors, invalid_fill), valid_mask
 
     def _get_decoder_input(
         self, memory, spatial_shapes, denoising_logits=None, denoising_bbox_unact=None
