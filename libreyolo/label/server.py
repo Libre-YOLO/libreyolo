@@ -34,7 +34,13 @@ from urllib.parse import parse_qs, urlparse
 from . import projects
 from .assist import AssistEngine
 from .boost import BoostEngine
-from .dataset import DatasetSession
+from .dataset import (
+    DatasetSession,
+    count_images,
+    folder_yaml,
+    scaffold_data_yaml,
+    update_class_names,
+)
 from .embed import EmbedEngine
 from .page import INDEX_HTML
 from .radar import scan_dataset
@@ -127,6 +133,26 @@ class _LabelState:
                 self._thumbs.clear()
         self.register_current(data)
         return session.meta()
+
+    def set_class_names(self, names) -> dict:
+        """Rename and/or append dataset classes -- never delete or reorder, so
+        existing label class ids keep their meaning -- rewriting the YAML and
+        patching the live session in place. No epoch bump: ids are preserved, so
+        in-flight saves from this project stay valid."""
+        with self._lock:
+            if self.session is None:
+                raise RuntimeError("no project open")
+            cleaned = [str(n).strip() for n in names]
+            if any(not n for n in cleaned):
+                raise ValueError("class names can't be empty")
+            if len({n.lower() for n in cleaned}) != len(cleaned):
+                raise ValueError("class names must be unique")
+            if len(cleaned) < self.session.nc:
+                raise ValueError("classes can be renamed or added here, not removed")
+            update_class_names(self.session.yaml_file, cleaned)
+            self.session.names = cleaned
+            self.session.nc = len(cleaned)
+            return self.session.meta()
 
     def read_label_with_rev(self, idx: int) -> tuple:
         """Read annotations + revision under the save lock, so a save can't land
@@ -355,15 +381,18 @@ class _Handler(BaseHTTPRequestHandler):
             # heavy full-dataset compute streams all rebind/clobber server-global
             # state (session, files, the shared pending/findings/embed maps, a host
             # CPU training job) for every teammate -- gate them to the loopback host.
-            if path in ("/api/projects/open", "/api/projects/forget", "/api/insights/fix",
+            if path in ("/api/projects/open", "/api/projects/create", "/api/projects/inspect",
+                        "/api/projects/forget", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
-                self._send(403, {"error": "This action (switch project / prune duplicates / "
-                                          "full-dataset auto-label, Radar, embeddings, Boost) is "
-                                          "only allowed from the host machine on a shared server."})
+                self._send(403, {"error": "This action (create / switch project, edit classes, "
+                                          "prune duplicates, full-dataset auto-label, Radar, "
+                                          "embeddings, Boost) is only allowed from the host "
+                                          "machine on a shared server."})
                 return
             if self.state.session is None and path not in (
-                    "/api/projects/open", "/api/projects/forget"):
+                    "/api/projects/open", "/api/projects/create",
+                    "/api/projects/inspect", "/api/projects/forget"):
                 self._send(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
@@ -390,6 +419,53 @@ class _Handler(BaseHTTPRequestHandler):
                     else:
                         msg = str(exc).splitlines()[0][:140] or "Could not open that dataset."
                     self._send(400, {"error": msg})
+            elif path == "/api/projects/inspect":
+                # Report what's at a host path so the home screen can route: open an
+                # existing yaml, or offer to create a project from a bare image folder.
+                payload = self._read_json()
+                folder = payload.get("folder") if isinstance(payload, dict) else None
+                if not folder:
+                    self._send(400, {"error": "folder path required"})
+                    return
+                yp = folder_yaml(str(folder))
+                self._send(200, {"folder": str(folder), "is_dir": Path(folder).is_dir(),
+                                 "images": count_images(str(folder)),
+                                 "yaml": yp, "has_yaml": yp is not None})
+            elif path == "/api/projects/create":
+                # The keystone of the cold start: a folder of images becomes a project.
+                # scaffold_data_yaml writes a minimal data.yaml beside the images (the
+                # exact layout the trainer reads), then we open it like any other.
+                payload = self._read_json()
+                folder = payload.get("folder") if isinstance(payload, dict) else None
+                classes = payload.get("classes") if isinstance(payload, dict) else None
+                if not folder:
+                    self._send(400, {"error": "folder path required"})
+                    return
+                try:
+                    existing = folder_yaml(str(folder))   # don't clobber a real dataset
+                    target = existing or scaffold_data_yaml(str(folder), classes or [])
+                    meta = self.state.open_project(target)
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    meta["created"] = existing is None
+                    self._send(200, meta)
+                except FileNotFoundError as exc:
+                    self._send(400, {"error": str(exc).splitlines()[0][:140]
+                                     or "No images found in that folder."})
+                except Exception as exc:  # noqa: BLE001 - bad folder / unwritable path
+                    logger.exception("create project failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:140]
+                                     or "Could not create that project."})
+            elif path == "/api/classes":
+                payload = self._read_json()
+                names = payload.get("names") if isinstance(payload, dict) else None
+                if not isinstance(names, list):
+                    self._send(400, {"error": "names list required"})
+                    return
+                meta = self.state.set_class_names(names)
+                meta["open"] = True
+                meta["epoch"] = self.state.epoch
+                self._send(200, meta)
             elif path == "/api/projects/forget":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None

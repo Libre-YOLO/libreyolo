@@ -313,6 +313,29 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .urlrow button{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--s3);border:1px solid var(--line2);color:var(--tx2)}
   .urlrow button:hover{color:var(--tx)}
   .urlrow button.copied{color:var(--ok);border-color:rgba(16,185,129,.4)}
+  .home-hint{max-width:660px;margin:10px auto 0;color:var(--tx3);font-size:12.5px;text-align:center}
+  .home-create{max-width:660px;margin:14px auto 0;background:var(--s1);border:1px solid var(--line2);border-radius:14px;padding:16px 18px;box-shadow:var(--sh);text-align:left}
+  .hc-head{color:var(--tx2);font-size:13px;margin-bottom:12px}
+  .hc-head b{color:var(--tx)}
+  .hc-head code{background:var(--s3);border-radius:6px;padding:1px 6px;color:var(--tx);font:12px ui-monospace,monospace;word-break:break-all}
+  .hc-lbl{display:block;color:var(--tx);font-size:13px;font-weight:600;margin-bottom:6px}
+  .hc-lbl .hc-hint{color:var(--tx3);font-weight:400}
+  #hcclasses{width:100%;box-sizing:border-box;resize:vertical;min-height:84px;background:var(--s2);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;color:var(--tx);font:13px ui-monospace,monospace;outline:none}
+  #hcclasses:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12)}
+  .hc-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
+  .cecard{width:min(460px,92vw)}
+  .ce-note{color:var(--tx2);font-size:12.5px;line-height:1.5;margin:0 0 14px}
+  .ce-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .ce-row .sw{width:14px;height:14px;border-radius:4px;flex:none}
+  .ce-in{flex:1;background:var(--s2);border:1px solid var(--line2);border-radius:9px;padding:8px 11px;color:var(--tx);font-size:13px;outline:none}
+  .ce-in:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12)}
+  .ce-rm{flex:none;width:28px;height:28px;border-radius:8px;background:var(--s2);border:1px solid var(--line2);color:var(--tx2);font-size:16px;line-height:1;cursor:pointer}
+  .ce-rm:hover{color:var(--danger);border-color:var(--danger)}
+  .ce-fixed{flex:none;width:34px;text-align:center;color:var(--tx3);font:11px ui-monospace,monospace}
+  .ce-add{margin-top:4px}
+  .ce-err{color:var(--danger);font-size:12.5px;min-height:16px;margin-top:10px}
+  .ce-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
+  .classchip.empty{border-style:dashed;color:var(--tx2)}
 </style>
 </head>
 <body>
@@ -322,6 +345,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <span class="sep"></span>
     <span class="ds" id="dsname"></span>
     <span class="counter" id="counter"></span>
+    <button class="insbtn" id="classesbtn" title="Edit classes — rename or add" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12.2V5a2 2 0 0 1 2-2h7.2a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
     <span class="grow"></span>
     <span class="ai" id="assistbar" style="display:none">
       <button class="btn btn-primary" id="aautolabel"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Auto-label all</button>
@@ -402,7 +426,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <tr><td><kbd>S</kbd> / <kbd>B</kbd></td><td>smart-segment (SAM click-to-mask) / box tool</td></tr>
           <tr><td><kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>accept all AI suggestions / accept &amp; next</td></tr>
           <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd> &middot; <kbd>C</kbd></td><td>prev / next image &middot; next unlabeled &middot; copy previous labels</td></tr>
-          <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected &middot; undo &middot; duplicate box</td></tr>
+          <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected &middot; undo / redo &middot; duplicate box</td></tr>
           <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
           <tr><td><kbd>T</kbd> &middot; <kbd>L</kbd></td><td>tighten box to edges &middot; loupe magnifier</td></tr>
           <tr><td><kbd>Y</kbd> &middot; <kbd>N</kbd> &middot; <kbd>M</kbd></td><td>Label-Error Radar &middot; next flagged &middot; embedding map</td></tr>
@@ -427,21 +451,38 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="maphint" id="maphint">Drag a lasso around a region → jump to those images</div>
     </div>
   </div></div>
+  <div class="modal" id="classedit"><div class="mcard cecard">
+    <div class="mhead"><h3>Classes</h3><button class="mx" id="ceclose">&times;</button></div>
+    <div class="mbody">
+      <p class="ce-note">Rename a class, or add new ones. Existing classes keep their slot — you can't delete or reorder here (that would relabel boxes you've already drawn).</p>
+      <div id="celist"></div>
+      <button class="btn btn-ghost ce-add" id="ceadd">+ Add class</button>
+      <div class="ce-err" id="ceerr"></div>
+      <div class="ce-actions"><button class="btn btn-ghost" id="cecancel">Cancel</button><button class="btn btn-primary" id="cesave">Save</button></div>
+    </div>
+  </div></div>
   <div id="home" class="home">
     <button class="insbtn home-theme" id="hometheme" title="Toggle light / dark"></button>
     <div class="home-inner">
       <div class="home-hero">
         <span class="home-brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
-        <p class="home-tag">Open a labelling project — your datasets, your machine, YOLO-native labels.</p>
+        <p class="home-tag">Label your images and train LibreYOLO on them — your data, your machine, nothing uploaded.</p>
       </div>
       <div class="home-resume" id="homeresume" style="display:none;margin:14px auto 0;text-align:center"><button class="btn btn-primary" id="homeresumebtn">← Resume current project</button></div>
       <div class="home-open">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v7A1.5 1.5 0 0 1 17.5 18h-13A1.5 1.5 0 0 1 3 16.5z"/></svg>
-        <input id="homepath" placeholder="Path to a data.yaml (or a folder containing one)…" spellcheck="false" autocomplete="off">
+        <input id="homepath" placeholder="Paste a folder of images — or an existing data.yaml…" spellcheck="false" autocomplete="off">
         <button class="btn btn-primary" id="homeopen">Open</button>
       </div>
+      <div class="home-hint" id="homehint">A folder of images is all you need — LibreLabel writes the dataset config for you.</div>
       <div class="home-err" id="homeerr"></div>
-      <div class="home-sec">Recent projects</div>
+      <div class="home-create" id="homecreate" style="display:none">
+        <div class="hc-head">New project · <b id="hccount">0</b> images in <code id="hcfolder"></code></div>
+        <label class="hc-lbl">Class names <span class="hc-hint">— one per line. Leave it empty and add them while you label.</span></label>
+        <textarea id="hcclasses" rows="4" placeholder="person&#10;helmet&#10;vest" spellcheck="false"></textarea>
+        <div class="hc-actions"><button class="btn btn-ghost" id="hccancel">Cancel</button><button class="btn btn-primary" id="hccreate">Create project</button></div>
+      </div>
+      <div class="home-sec">Projects</div>
       <div class="home-grid" id="homegrid"></div>
     </div>
   </div>
@@ -452,13 +493,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
 const $ = s => document.querySelector(s);
 const cv = $("#cv"), ctx = cv.getContext("2d");
 let DS = null, IMAGES = [], idx = -1;
+let pendingFolder = null, ceRows = [];   // home create-flow folder + class-editor working rows
+let autosaveTimer = null, saveInFlight = false;   // crash-proof periodic flush of the manual loop
 let img = new Image(), imgOk = false;
 let boxes = [], editable = true, dirty = false;
 let active = 0, sel = -1;
 let view = {scale:1, ox:0, oy:0};
 let VW = 1, VH = 1;
 let loadSeq = 0;
-let undoStack = [];
+let undoStack = [], redoStack = [];
 let savedSnap = "";   // snapshot of the last saved/loaded state (undo-back-to-clean baseline)
 let gestureSnap = null;
 let cursor = null;
@@ -570,6 +613,7 @@ async function enterLabeler(d){
   try{ sessionStorage.removeItem("ll-home"); }catch(e){}
   if(active>=(DS.names||[]).length) active=0;        // stale class index from a prior project
   $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
+  const cb=$("#classesbtn"); if(cb) cb.style.display = (DS.writable!==false) ? "" : "none";
   renderPalette();
   const imgs = (await jget("/api/images")).images;
   if(gen!==loadSeq) return;            // another project opened while we were fetching
@@ -584,6 +628,12 @@ async function enterLabeler(d){
 }
 function wireChrome(){
   $("#classchip").onclick = togglePicker;
+  $("#classesbtn").onclick = openClassEdit;
+  $("#ceclose").onclick = closeClassEdit;
+  $("#cecancel").onclick = closeClassEdit;
+  $("#cesave").onclick = saveClassEdit;
+  $("#ceadd").onclick = addClassRow;
+  $("#classedit").onclick = (e)=>{ if(e.target.id==="classedit") closeClassEdit(); };
   $("#psearch").oninput = e=> filterClasses(e.target.value);
   $("#helpbtn").onclick = toggleHelp;
   $("#themebtn").onclick = toggleTheme;
@@ -640,8 +690,15 @@ function renderPalette(){
   markPalette();
 }
 function markPalette(){
+  const chip=$("#classchip");
+  if(!(DS.names||[]).length){   // no classes yet: invite the user to add the first one
+    chip.classList.add("empty");
+    chip.innerHTML = `<span class="sw" style="background:#6a7280"></span><span>Add a class</span><span class="cc-h">start</span>`;
+    return;
+  }
+  chip.classList.remove("empty");
   const nm = (DS.names&&DS.names[active]!=null)?DS.names[active]:active;
-  $("#classchip").innerHTML = `<span class="sw" style="background:${color(active)}"></span>`+
+  chip.innerHTML = `<span class="sw" style="background:${color(active)}"></span>`+
     `<span>${esc(nm)}</span><span class="cc-h">class</span>`;
   document.querySelectorAll("#pal .pclass").forEach(c=> c.classList.toggle("on", +c.dataset.i===active));
 }
@@ -654,10 +711,58 @@ function setActive(i){
 }
 function openPicker(){ $("#picker").classList.add("show"); const s=$("#psearch"); s.value=""; filterClasses(""); s.focus(); }
 function closePicker(){ $("#picker").classList.remove("show"); }
-function togglePicker(){ $("#picker").classList.contains("show")?closePicker():openPicker(); }
+function togglePicker(){
+  if(!(DS.names||[]).length){ openClassEdit(); return; }   // nothing to pick yet -> add classes
+  $("#picker").classList.contains("show")?closePicker():openPicker();
+}
 function filterClasses(q){ q=(q||"").toLowerCase();
   document.querySelectorAll("#pal .pclass").forEach(c=>{
     const nm=(DS.names[+c.dataset.i]||"").toLowerCase(); c.style.display = nm.includes(q)?"":"none"; }); }
+
+// ---- class editor (rename existing + append new; never delete/reorder) ----
+function openClassEdit(){
+  ceRows = (DS.names||[]).map(n=>({name:n, isNew:false}));
+  if(!ceRows.length) ceRows.push({name:"", isNew:true});
+  $("#ceerr").textContent="";
+  renderClassEdit();
+  $("#classedit").classList.add("show");
+  const first=$("#celist .ce-in"); if(first) first.focus();
+}
+function closeClassEdit(){ $("#classedit").classList.remove("show"); $("#ceerr").textContent=""; }
+function renderClassEdit(){
+  const wrap=$("#celist"); wrap.innerHTML="";
+  ceRows.forEach((row,i)=>{
+    const div=document.createElement("div"); div.className="ce-row";
+    div.innerHTML = `<span class="sw" style="background:${color(i)}"></span>`+
+      `<input class="ce-in" data-i="${i}" value="${esc(row.name)}" placeholder="class name" spellcheck="false">`+
+      (row.isNew ? `<button class="ce-rm" data-i="${i}" title="Remove">&times;</button>`
+                 : `<span class="ce-fixed" title="Existing class — rename only">#${i}</span>`);
+    wrap.appendChild(div);
+  });
+  wrap.querySelectorAll(".ce-in").forEach(inp=> inp.oninput = e=>{ ceRows[+e.target.dataset.i].name = e.target.value; });
+  wrap.querySelectorAll(".ce-rm").forEach(b=> b.onclick = ()=>{ ceRows.splice(+b.dataset.i,1); renderClassEdit(); });
+}
+function addClassRow(){ ceRows.push({name:"", isNew:true}); renderClassEdit();
+  const all=document.querySelectorAll("#celist .ce-in"); if(all.length) all[all.length-1].focus(); }
+async function saveClassEdit(){
+  const names = ceRows.map(r=>r.name.trim());
+  const err=$("#ceerr");
+  if(names.some(n=>!n)){ err.textContent="Class names can't be empty."; return; }
+  if(new Set(names.map(n=>n.toLowerCase())).size !== names.length){ err.textContent="Class names must be unique."; return; }
+  if(names.length < (DS.nc||0)){ err.textContent="You can't remove existing classes here."; return; }
+  const btn=$("#cesave"), t=btn.textContent; btn.disabled=true; btn.textContent="Saving…";
+  try{
+    const r=await fetch("/api/classes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({names})});
+    const d=await r.json();
+    if(!r.ok){ err.textContent=d.error||"Could not save classes."; return; }
+    DS.names=d.names; DS.nc=d.nc;
+    if(active>=DS.names.length) active=0;
+    renderPalette();
+    if(imgOk) draw();        // box labels may now read a renamed class
+    closeClassEdit();
+  }catch(e){ err.textContent="Could not save classes."; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
 
 // ---- sidebar list ----
 function passFilter(im){
@@ -862,13 +967,22 @@ async function fixDuplicate(ids, btn){
 // ---- undo ----
 function snap(){ return JSON.stringify({b:boxes, p:polys}); }
 function applyUndo(s){ const o=JSON.parse(s); boxes=o.b||[]; polys=o.p||[]; }
-function pushUndo(){ undoStack.push(snap()); if(undoStack.length>50) undoStack.shift(); }
+function pushUndo(){ undoStack.push(snap()); if(undoStack.length>50) undoStack.shift(); redoStack = []; }
 function snapStart(){ gestureSnap = snap(); }
 function snapCommit(){
   if(gestureSnap!==null && gestureSnap!==snap()){
-    undoStack.push(gestureSnap); if(undoStack.length>50) undoStack.shift();
+    undoStack.push(gestureSnap); if(undoStack.length>50) undoStack.shift(); redoStack = [];
   }
   gestureSnap = null;
+}
+// Undo/redo move one snapshot between the two stacks; both reschedule autosave so a
+// restored state is just as crash-safe as a freshly drawn one.
+function applyHistory(fromStack, toStack){
+  if(!fromStack.length) return;
+  toStack.push(snap()); applyUndo(fromStack.pop()); sel=-1; selPoly=-1;
+  dirty = (snap()!==savedSnap); setSave(dirty?"unsaved":(editable?"saved":"read-only"));
+  if(dirty) scheduleAutosave();
+  draw();
 }
 
 // ---- load / save ----
@@ -883,7 +997,7 @@ async function load(i){
   if(dirty){   // edits landed *during* the save (snap changed mid-POST) -> still unsaved; don't discard them
     banner("You edited while saving — press → again to save those changes."); return;
   }
-  idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
+  idx = i; sel = -1; selPoly = -1; hover = -1; undoStack = []; redoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
   imgOk = false; editable = false; curRev = null;   // canvas stays inert until metadata loads; a failed fetch must not leave it editable on the previous image
   let lab;
@@ -930,6 +1044,7 @@ function polyToNorm(p){
   return out;
 }
 async function save(){
+  clearTimeout(autosaveTimer); autosaveTimer = null;   // a real save supersedes any pending autosave
   if(!imgOk || !editable || (DS && !DS.writable)){ return true; }
   const totalShapes = boxes.length + polys.length;   // everything on the canvas
   const anns = boxes.map(pxToNorm).filter(b=>b.w>0&&b.h>0)
@@ -966,7 +1081,19 @@ async function save(){
     return true;
   }catch(e){ setSave("save failed"); return false; }
 }
-function markDirty(){ dirty = true; setSave("unsaved"); }
+function markDirty(){ dirty = true; setSave("unsaved"); scheduleAutosave(); }
+// Crash-proof the manual loop: flush dirty edits to disk on a steady cadence so a
+// browser/tab/server crash can't lose work drawn since the last navigation. Reuses
+// the proven save() path; never fires mid-gesture or while a save is already on the wire.
+function scheduleAutosave(){ if(!autosaveTimer) autosaveTimer = setTimeout(autosaveTick, 1500); }
+async function autosaveTick(){
+  autosaveTimer = null;
+  if(mode){ scheduleAutosave(); return; }                       // a drag/resize is in progress
+  if(!dirty || saveInFlight || !imgOk || !editable || (DS && !DS.writable)) return;
+  saveInFlight = true;
+  try{ await save(); } finally{ saveInFlight = false; }
+  if(dirty) scheduleAutosave();                                 // edits made during the save -> flush again
+}
 function setSave(t){
   const e = $("#save"); e.textContent = t;
   const fail = (t==="save failed" || t==="image error" || t==="no images");
@@ -1414,6 +1541,7 @@ cv.addEventListener("pointerdown", e=>{
     if(g>=0){ if(e.altKey) rejectGhost(g); else acceptGhost(g); mode=null; drag=null; return; }
   }
   if(!editable || (DS && !DS.writable)) return;
+  if(!(DS.names||[]).length){ banner("Add a class before drawing — every box needs one."); openClassEdit(); return; }
   if(tool==="seg"){ mode="segbox"; drag={mx, my, x0:ix(mx), y0:iy(my)}; segRect=null; return; }
   const x=ix(mx), y=iy(my);
   snapStart();
@@ -1501,9 +1629,8 @@ window.addEventListener("keydown", e=>{
   if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); } return; }
   if(e.key===" "){ spaceDown=true; cv.style.cursor="grab"; e.preventDefault(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); save(); return; }
-  if((e.ctrlKey||e.metaKey) && (e.key==="z"||e.key==="Z")){ e.preventDefault();
-    if(undoStack.length){ applyUndo(undoStack.pop()); sel=-1; selPoly=-1;
-      dirty = (snap()!==savedSnap); setSave(dirty?"unsaved":(editable?"saved":"read-only")); draw(); } return; }
+  if((e.ctrlKey||e.metaKey) && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); applyHistory(undoStack, redoStack); return; }
+  if((e.ctrlKey||e.metaKey) && ((e.key==="y"||e.key==="Y") || (e.shiftKey && (e.key==="z"||e.key==="Z")))){ e.preventDefault(); applyHistory(redoStack, undoStack); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="d"||e.key==="D")){ e.preventDefault(); duplicateSelected(); return; }
   if(e.key==="Enter"){
     if(ghosts.length){ e.preventDefault(); const adv=e.shiftKey; acceptAllGhosts();
@@ -1837,12 +1964,65 @@ function mapSelect(ids){
 
 // ===== Project home: list projects, open/switch, reset per-project state =====
 function wireHome(){
-  $("#homeopen").onclick = ()=> openProject($("#homepath").value.trim());
-  $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); openProject($("#homepath").value.trim()); } });
+  $("#homeopen").onclick = ()=> smartOpen($("#homepath").value.trim());
+  $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen($("#homepath").value.trim()); } });
+  $("#homepath").addEventListener("input", ()=>{ homeError(""); hideCreate(); });
   $("#hometheme").onclick = toggleTheme;
+  $("#hccancel").onclick = hideCreate;
+  $("#hccreate").onclick = doCreate;
+}
+function looksLikeYaml(s){ return /\.ya?ml$/i.test(s); }
+// One smart input: a data.yaml opens directly; any other path is inspected so we
+// can open an existing dataset, or offer to *create* one from a bare image folder.
+async function smartOpen(p){
+  if(!p){ homeError("Paste a folder of images, or a data.yaml."); return; }
+  if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
+  if(dirty){ homeError("You edited while saving — save before switching projects."); return; }
+  homeError(""); hideCreate();
+  if(looksLikeYaml(p)) return openProject(p);
+  const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Checking…";
+  let info;
+  try{
+    const r=await fetch("/api/projects/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:p})});
+    info=await r.json(); if(!r.ok) throw new Error(info.error||"inspect failed");
+  }catch(e){ homeError("Couldn't read that path."); return; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+  if(info.has_yaml) return openProject(info.yaml||p);
+  if(!info.is_dir){ homeError("That path isn't a folder or a data.yaml."); return; }
+  if(info.images>0){ showCreate(p, info.images); return; }
+  homeError("No images found in that folder.");
+}
+function showCreate(folder, n){
+  pendingFolder = folder;
+  $("#hcfolder").textContent = folder;
+  $("#hccount").textContent = n;
+  $("#hcclasses").value = "";
+  $("#homecreate").style.display = "";
+  $("#hcclasses").focus();
+}
+function hideCreate(){ const c=$("#homecreate"); if(c) c.style.display="none"; pendingFolder=null; }
+async function doCreate(){
+  const folder = pendingFolder; if(!folder) return;
+  const seen=new Set(), classes=[];
+  for(const raw of $("#hcclasses").value.split(/\r?\n/)){
+    const c=raw.trim(); if(!c) continue;
+    const k=c.toLowerCase(); if(seen.has(k)){ homeError("Class names must be unique."); return; }
+    seen.add(k); classes.push(c);
+  }
+  homeError("");
+  const btn=$("#hccreate"), t=btn.textContent; btn.disabled=true; btn.textContent="Creating…";
+  try{
+    const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder, classes})});
+    const d=await r.json();
+    if(!r.ok || !d.open){ homeError(d.error||"Could not create that project."); return; }
+    hideCreate(); resetClientState(); await enterLabeler(d);
+    const hp=$("#homepath"); if(hp) hp.value="";
+  }catch(e){ homeError("Could not create that project."); }
+  finally{ btn.disabled=false; btn.textContent=t; }
 }
 function showHome(openMeta){
   $("#home").classList.add("show");
+  hideCreate(); homeError("");
   // Offer a way back into the already-open session. Crucial on a --share server,
   // where a LAN teammate can't open a project (admin-only) and would otherwise be
   // stranded on Home once ll-home is set; resume needs no admin -- just the live session.
@@ -1869,7 +2049,7 @@ async function renderProjects(){
   let d; try{ d = await jget("/api/projects"); }
   catch(e){ grid.innerHTML = `<div class="home-empty">Could not load projects.</div>`; return; }
   const list = d.projects||[];
-  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet — open a dataset above to start.</div>`; return; }
+  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet — paste a folder of images above and LibreLabel sets up the rest.</div>`; return; }
   grid.innerHTML = list.map(p=>{
     const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0;
     return `<button class="prj" data-data="${esc(p.data)}">`
@@ -1908,9 +2088,10 @@ async function openProject(data){
 function resetClientState(){
   loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project
   clearTimeout(boostTimer); boostTimer=null;
+  clearTimeout(autosaveTimer); autosaveTimer=null;
   idx=-1; sel=-1; selPoly=-1; hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
   IMAGES=[]; suggestedIds=new Set(); selSet=null; listFilter="all"; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
-  undoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
+  undoStack=[]; redoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
   setTool("box");
   imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";
   document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));

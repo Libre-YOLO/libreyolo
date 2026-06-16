@@ -12,7 +12,9 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from libreyolo.data.utils import img2label_paths, load_data_config
+import yaml
+
+from libreyolo.data.utils import get_img_files, img2label_paths, load_data_config
 
 from .labelio import (
     format_annotations,
@@ -55,6 +57,81 @@ def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def folder_yaml(folder: str) -> Optional[str]:
+    """Return an existing dataset YAML inside ``folder`` (``data.yaml`` /
+    ``dataset.yaml``, else the first ``*.yaml`` / ``*.yml``), or ``None``."""
+    p = Path(folder)
+    if not p.is_dir():
+        return None
+    for cand in ("data.yaml", "dataset.yaml"):
+        if (p / cand).exists():
+            return str(p / cand)
+    ys = sorted(p.glob("*.yaml")) + sorted(p.glob("*.yml"))
+    return str(ys[0]) if ys else None
+
+
+def count_images(folder: str) -> int:
+    """How many supported images live under ``folder`` (recursive); 0 if none."""
+    p = Path(folder)
+    if not p.is_dir():
+        return 0
+    try:
+        return len(get_img_files(p))
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def scaffold_data_yaml(folder: str, names: Optional[List[str]] = None) -> str:
+    """Write a minimal LibreYOLO ``data.yaml`` for a bare folder of images.
+
+    The folder of images *is* the dataset: the YAML is written beside the images
+    (the exact layout ``libreyolo train`` reads) with a single ``train`` split
+    pointing at the folder, so labels round-trip alongside the images and flow
+    straight into training -- no export, no copy, nothing moved. The recursive
+    scan means this works for a flat folder *and* an ``images/`` sub-tree (where
+    the ``images``->``labels`` convention puts labels in a parallel ``labels/``).
+
+    Returns the path to the written YAML. Raises ``FileNotFoundError`` if the
+    folder is missing or holds no supported images, and ``FileExistsError`` if a
+    dataset YAML is already there (open that instead of overwriting it).
+    """
+    p = Path(folder)
+    if not p.is_dir():
+        raise FileNotFoundError(f"Not a folder: {folder}")
+    existing = folder_yaml(folder)
+    if existing:
+        raise FileExistsError(existing)
+    if not get_img_files(p):
+        raise FileNotFoundError(f"No images found in {folder}")
+    classes = [str(n).strip() for n in (names or []) if str(n).strip()]
+    cfg = {
+        "path": p.resolve().as_posix(),   # forward slashes: unambiguous in YAML on every OS
+        "train": ".",
+        "names": classes,
+        "nc": len(classes),
+    }
+    text = (
+        "# LibreLabel project -- created from a folder of images.\n"
+        "# Labels are written next to the images, where `libreyolo train` reads them.\n"
+        "# Add a `val:` split (a held-out set) before training for real.\n\n"
+        + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+    )
+    out = p / "data.yaml"
+    _atomic_write_text(out, text)
+    return str(out)
+
+
+def update_class_names(yaml_file: str, names: List[str]) -> None:
+    """Rewrite a dataset YAML's ``names`` / ``nc`` in place, preserving every
+    other key. Callers must only rename or append (never delete or reorder) so
+    existing label class ids keep their meaning."""
+    p = Path(yaml_file)
+    cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    cfg["names"] = list(names)
+    cfg["nc"] = len(names)
+    _atomic_write_text(p, yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
 
 
 class DatasetSession:
