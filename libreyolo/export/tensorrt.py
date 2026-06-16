@@ -369,8 +369,14 @@ def export_tensorrt(
                         _npin += 1
                     except Exception:
                         continue
-                precision_str = "FP16 (FP32 ViT backbone)"
-                logger.info("ViT backbone: pinned %d float layers to FP32", _npin)
+                if _npin > 0:
+                    precision_str = "FP16 (FP32 ViT backbone)"
+                    logger.info("ViT backbone: pinned %d float layers to FP32", _npin)
+                else:
+                    logger.warning(
+                        "ViT backbone detected in ONNX but no matching TRT layers found; "
+                        "FP32 pinning skipped"
+                    )
         else:
             warnings.warn("GPU does not support fast FP16. Falling back to FP32.")
 
