@@ -589,7 +589,11 @@ class DEIMTransformer(nn.Module):
             -1, keepdim=True
         )
         anchors = torch.log(anchors / (1 - anchors))
-        anchors = torch.where(valid_mask, anchors, torch.inf)
+        # TRT mishandles inf (and it overflows in fp16), collapsing accuracy; a large
+        # finite sentinel saturates the downstream sigmoid the same way (DEIM/DEIMv2,
+        # mirrors the ec decoder fix).
+        invalid_fill = torch.full_like(anchors, 1e4)
+        anchors = torch.where(valid_mask, anchors, invalid_fill)
 
         return anchors, valid_mask
 
