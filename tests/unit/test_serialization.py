@@ -158,7 +158,7 @@ def test_validate_checkpoint_metadata_accepts_string_name_keys_without_mutation(
 def test_validate_checkpoint_metadata_accepts_point_task():
     checkpoint = serialization.wrap_libreyolo_checkpoint(
         {"layer.weight": object()},
-        model_family="librefomo",
+        model_family="fomo",
         size="s",
         task="point",
         nc=1,

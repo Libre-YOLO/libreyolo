@@ -891,3 +891,42 @@ class RTMDetConfig(TrainConfig):
     epochs: int = 300
     amp: bool = True
     name: str = "rtmdet_exp"
+
+
+@dataclass(kw_only=True)
+class FOMOConfig(TrainConfig):
+    """FOMO point-localizer training defaults."""
+
+    optimizer: str = "adam"
+    lr0: float = 3e-4
+    weight_decay: float = 0.0
+
+    fg_weight: float = 100.0
+
+    scheduler: str = "cos"
+    warmup_epochs: int = 0
+    warmup_lr_start: float = 0.0
+    no_aug_epochs: int = 0
+    min_lr_ratio: float = 0.05
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
+    flip_prob: float = 0.0
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+
+    ema: bool = False
+    amp: bool = False
+
+    epochs: int = 40
+    batch: int = 32
+    eval_interval: int = 1
+
+    conf_thresholds: Tuple[float, ...] = (0.25, 0.35, 0.50, 0.65, 0.80, 0.90)
+    nms_radii: Tuple[int, ...] = (1, 2)
+    distance_tolerance: float = 1.5
+
+    name: str = "fomo_exp"
+
