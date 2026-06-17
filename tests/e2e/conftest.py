@@ -500,7 +500,6 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("damoyolo", "t", "LibreDAMOYOLOt.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
-    ("fomo", "s", "LibreFOMOs.pt"),
 ]
 
 # Derived lists (no manual maintenance)
