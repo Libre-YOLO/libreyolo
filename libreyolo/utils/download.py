@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import requests
 
 _YOLONAS_LICENSE_NOTICE_SHOWN = False
+_FOMO_LICENSE_NOTICE_SHOWN = False
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +39,24 @@ def _notify_yolonas_license_once() -> None:
         "without a separate agreement). By downloading, you accept those\n"
         "terms. Full license text:\n"
         "  https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md\n"
+        "─────────────────────────────────────────────────────────────────────\n"
+    )
+
+
+def _notify_fomo_license_once() -> None:
+    """Print the FOMO weights license notice once per process before download."""
+    global _FOMO_LICENSE_NOTICE_SHOWN
+    if _FOMO_LICENSE_NOTICE_SHOWN:
+        return
+    _FOMO_LICENSE_NOTICE_SHOWN = True
+    print(
+        "\n"
+        "─────────────────────────────────────────────────────────────────────\n"
+        "LibreFOMO weights are hosted externally at huggingface.co/fomo-edge-ai/FOMO\n"
+        "under cc-by-nc-4.0 (non-commercial use only).\n"
+        "They are treated as externally hosted, ImageNet-derived weights and\n"
+        "are not redistributed by LibreYOLO. By downloading them you accept\n"
+        "the Hugging Face repository license terms.\n"
         "─────────────────────────────────────────────────────────────────────\n"
     )
 
@@ -100,6 +119,8 @@ def download_weights(model_path: str, size: str):
 
     if "cloudfront.net" in host or host.endswith("deci.ai"):
         _notify_yolonas_license_once()
+    elif "fomo-edge-ai" in url:
+        _notify_fomo_license_once()
 
     headers = {}
     token = _get_hf_token()

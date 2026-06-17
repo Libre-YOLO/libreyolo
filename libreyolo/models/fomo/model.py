@@ -42,7 +42,6 @@ class LibreFOMO(BaseModel):
     TTA_ENABLED = False
 
     _HF_REPO = "LibreYOLO/LibreFOMO"
-    _LICENSE_NOTICE_SHOWN = False
     _WEIGHTS_REPO = "fomo-edge-ai/FOMO"
 
     # -------------------------------------------------------------------------
@@ -75,23 +74,6 @@ class LibreFOMO(BaseModel):
         fomo_filename = f"FOMO{size}.pt"
         return f"https://huggingface.co/{cls._WEIGHTS_REPO}/resolve/main/weights/{fomo_filename}"
 
-    @classmethod
-    def _notify_license_once(cls) -> None:
-        """Print the FOMO weights license notice once."""
-        if cls._LICENSE_NOTICE_SHOWN:
-            return
-        cls._LICENSE_NOTICE_SHOWN = True
-        print(
-            "\n"
-            "----------------------------------------------------------------\n"
-            f"LibreFOMO weights are hosted externally at huggingface.co/{cls._WEIGHTS_REPO}\n"
-            "under cc-by-nc-4.0.\n"
-            "They are treated as externally hosted, ImageNet-derived weights and\n"
-            "are not redistributed by LibreYOLO. By downloading them you accept\n"
-            "the Hugging Face repository license terms.\n"
-            "----------------------------------------------------------------\n"
-        )
-
     # -------------------------------------------------------------------------
     # Construction
     # -------------------------------------------------------------------------
@@ -115,10 +97,6 @@ class LibreFOMO(BaseModel):
         )
         if isinstance(model_path, (str, Path)):
             self._load_weights(str(model_path))
-
-    def _load_weights(self, model_path: str) -> None:
-        self._notify_license_once()
-        super()._load_weights(model_path)
 
     # -------------------------------------------------------------------------
     # BaseModel abstract surface
