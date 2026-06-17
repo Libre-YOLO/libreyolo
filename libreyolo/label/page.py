@@ -288,7 +288,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .home-open input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:14px}
   .home-open .btn{height:38px;padding:0 18px}
   .home-err{max-width:660px;margin:9px auto 0;color:var(--danger);font-size:12.5px;text-align:center;min-height:16px}
-  .home-alt{text-align:center;margin-top:12px}
+  .home-alt{max-width:660px;margin:14px auto 0;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 14px;border-radius:12px;border:1px dashed var(--line2);background:var(--s1)}
+  .home-alt .ha-l{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx2);text-align:left}
+  .home-alt .ha-l .ic{width:19px;height:19px;color:var(--ac);flex:none}
+  .home-alt .ha-l b{color:var(--tx)}
+  .home-alt .btn{flex:none}
   .home-sec{max-width:840px;margin:32px auto 12px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
   .home-grid{max-width:840px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:12px}
   .prj{position:relative;text-align:left;background:var(--s1);border:1px solid var(--line2);border-radius:13px;padding:15px 15px 14px;transition:.14s;width:100%;box-shadow:var(--shs)}
@@ -522,7 +526,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <button class="btn btn-primary" id="homeopen">Open</button>
       </div>
       <div class="home-hint" id="homehint">A folder of images is all you need — LibreLabel writes the dataset config for you.</div>
-      <div class="home-alt"><button class="btn btn-ghost" id="homeexample"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>Open the example project · 128 demo images</button></div>
+      <div class="home-alt">
+        <span class="ha-l"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-5 5"/></svg><span>Just testing? Load a ready-made <b>128-image</b> sample dataset (CC0) and start labelling in one click.</span></span>
+        <button class="btn btn-primary" id="homeexample">Try the example</button>
+      </div>
       <div class="home-err" id="homeerr"></div>
       <div class="home-create" id="homecreate" style="display:none">
         <div class="hc-head">New project · <b id="hccount">0</b> images in <code id="hcfolder"></code></div>
