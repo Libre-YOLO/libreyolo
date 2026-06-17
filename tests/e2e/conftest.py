@@ -471,9 +471,6 @@ MODEL_CATALOG = [
     ("damoyolo", "t", "LibreDAMOYOLOt.pt"),
     ("damoyolo", "s", "LibreDAMOYOLOs.pt"),
     ("damoyolo", "m", "LibreDAMOYOLOm.pt"),
-    ("fomo", "s", "LibreFOMOs.pt"),
-    ("fomo", "m", "LibreFOMOm.pt"),
-    ("fomo", "l", "LibreFOMOl.pt"),
 ]
 
 FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
@@ -521,7 +518,7 @@ RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
 DAMOYOLO_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "damoyolo"]
-FOMO_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "fomo"]
+FOMO_SIZES = ["s", "m", "l"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
