@@ -571,7 +571,7 @@ class FOMOTrainer(BaseTrainer):
             import traceback
             logger.error(f"FOMO training validation failed: {exc}")
             logger.debug(traceback.format_exc())
-            return None
+            raise
 
     def _checkpoint_extra_metadata(self) -> Dict[str, Any]:
         return {
