@@ -11,6 +11,7 @@ from libreyolo import LibreYOLO
 pytestmark = [pytest.mark.e2e, pytest.mark.fomo]
 
 
+@pytest.mark.network
 @pytest.mark.parametrize("size", ["s", "m", "l"])
 def test_load_cloud_checkpoint(size: str) -> None:
     """Download and load the cloud weights, check metadata, and run a forward pass."""
