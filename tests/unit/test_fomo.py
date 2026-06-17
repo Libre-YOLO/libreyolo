@@ -673,6 +673,55 @@ class TestLibreFOMOEndToEnd:
         assert val_ds.label_files is not None
         assert len(val_ds.label_files) == 1
 
+    def test_trainer_class_count_mismatch_fails_fast(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Verify that _build_yolo_datasets raises a ValueError if dataset nc != model nc and wrapper_model is None."""
+        from libreyolo.models.fomo.trainer import FOMOTrainer
+        
+        # Mock load_data_config
+        def mock_load_data_config(*args, **kwargs):
+            return {
+                "root": str(tmp_path),
+                "train_img_files": [tmp_path / "images" / "train" / "img1.jpg"],
+                "train_label_files": None,
+                "val_img_files": [tmp_path / "images" / "val" / "img2.jpg"],
+                "val_label_files": None,
+                "nc": 2,  # Mismatch with model nc=1
+                "names": {0: "class1", 1: "class2"},
+            }
+            
+        img1 = tmp_path / "images" / "train" / "img1.jpg"
+        img2 = tmp_path / "images" / "val" / "img2.jpg"
+        img1.parent.mkdir(parents=True, exist_ok=True)
+        img2.parent.mkdir(parents=True, exist_ok=True)
+        img1.touch()
+        img2.touch()
+        
+        lbl1 = tmp_path / "labels" / "train" / "img1.txt"
+        lbl2 = tmp_path / "labels" / "val" / "img2.txt"
+        lbl1.parent.mkdir(parents=True, exist_ok=True)
+        lbl2.parent.mkdir(parents=True, exist_ok=True)
+        lbl1.touch()
+        lbl2.touch()
+        
+        import libreyolo.data as data_mod
+        monkeypatch.setattr(data_mod, "load_data_config", mock_load_data_config)
+        
+        model = _make_random_fomo(size="s", nc=1)
+        trainer = FOMOTrainer(
+            model=model.model,
+            wrapper_model=None,  # None to trigger the error path
+            data="dummy.yaml",
+            epochs=1,
+            batch=2,
+            imgsz=96,
+            device="cpu",
+            project=str(tmp_path / "runs"),
+            workers=0,
+        )
+        
+        with pytest.raises(ValueError, match="wrapper_model is None — cannot rebuild head safely"):
+            trainer._build_yolo_datasets(input_size=96, grid_size=12)
+
     def test_val_dispatch_uses_point_validator(self) -> None:
         """BaseModel.val() must route task='point' to PointValidator."""
         from libreyolo.models.base.model import BaseModel

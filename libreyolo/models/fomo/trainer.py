@@ -309,10 +309,9 @@ class FOMOTrainer(BaseTrainer):
                 self.wrapper_model._rebuild_for_new_classes(dataset_nc)
                 self.model = self.wrapper_model.model
             else:
-                logger.warning(
-                    "wrapper_model is None — cannot rebuild head for nc=%d. "
-                    "Training will continue with the original head.",
-                    dataset_nc,
+                raise ValueError(
+                    f"Dataset nc={dataset_nc} differs from model nc={getattr(self.model, 'nc', self.config.num_classes)}, "
+                    "but wrapper_model is None — cannot rebuild head safely."
                 )
         self.config.num_classes = dataset_nc
 
