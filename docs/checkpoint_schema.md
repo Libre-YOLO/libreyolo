@@ -138,13 +138,20 @@ When metadata is missing or incomplete:
 Upstream RF-DETR checkpoints expose a 91-output `class_embed` head
 (`raw_nc = 90`, COCO's 90 classes + background). Auto-conversion normalizes a
 *COCO* RF-DETR to LibreYOLO's COCO-80 convention (`nc = 80`, with the COCO
-remap applied at post-process). A checkpoint is treated as COCO when it carries
-80 names, a `coco` dataset hint, **or** no class/dataset metadata at all — a
-bare upstream state-dict is the canonical Roboflow COCO-pretrained checkpoint
-(the only metadata-less 91-output RF-DETR in distribution). A genuine custom
-90-class RF-DETR is preserved as `nc = 90`: it is identified by either a
-`names`/`class_names` list or a non-COCO dataset hint (e.g.
-`args.dataset_file`), so the bare-checkpoint COCO fallback does not fire for it.
+remap applied at post-process). A checkpoint is treated as COCO when it:
+
+- carries exactly 80 names, **or**
+- declares an explicit class count of 80 (`nc` / `args.num_classes`), **or**
+- has a `coco` dataset hint, **or**
+- has **no** class or dataset metadata at all — a bare upstream state-dict is
+  the canonical Roboflow COCO-pretrained checkpoint (the only metadata-less
+  91-output RF-DETR in distribution).
+
+A genuine custom 90-class RF-DETR is preserved as `nc = 90`. It is identified
+by a `names`/`class_names` list, an explicit non-80 class count, or a non-COCO
+dataset hint (e.g. `args.dataset_file`), so the bare-checkpoint COCO fallback
+does not fire for it. Empty placeholders (`""`, `{}`, `[]`) are ignored when
+deciding whether a dataset hint is present.
 
 Schema helpers live in `libreyolo/utils/serialization.py`:
 

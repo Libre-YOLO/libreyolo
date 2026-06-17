@@ -530,6 +530,21 @@ def _wrap_claim(
 # ---------------------------------------------------------------------------
 
 
+def _has_metadata_value(value: Any) -> bool:
+    """True when ``value`` is a non-empty metadata hint of any type.
+
+    Empty placeholders (``""``, ``{}``, ``[]``) are treated as absent so they
+    do not count as a dataset hint.
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple, set)):
+        return len(value) > 0
+    return True
+
+
 def _is_coco_rfdetr_checkpoint(loaded: Any) -> bool:
     """Return True only when metadata supports RF-DETR COCO remapping."""
     names = _checkpoint_names(loaded)
@@ -537,35 +552,41 @@ def _is_coco_rfdetr_checkpoint(loaded: Any) -> bool:
     if name_count == 80:
         return True
 
-    # Any non-empty value under a dataset field is a hint that the checkpoint
+    # An explicit class count is the checkpoint declaring its own class space:
+    # 80 is COCO; any other value (including RF-DETR's 90 arch count) means the
+    # checkpoint carries class metadata and is not a bare upstream state_dict.
+    declared_nc = None
+    for field in ("nc", "num_classes"):
+        value = _metadata_value(loaded, field)
+        if value is None:
+            continue
+        try:
+            declared_nc = int(value)
+        except (TypeError, ValueError):
+            declared_nc = -1  # present but unparseable -> still "declared"
+        break
+    if declared_nc == 80:
+        return True
+
+    # A non-empty value under a dataset field is a hint that the checkpoint
     # declared its own dataset; only a string can positively identify COCO.
     has_dataset_hint = False
     for field in ("dataset", "dataset_file", "dataset_name", "data"):
         value = _metadata_value(loaded, field)
-        if value is None:
+        if not _has_metadata_value(value):
             continue
-        if isinstance(value, str):
-            if not value.strip():
-                continue
-            if "coco" in value.lower():
-                return True
+        if isinstance(value, str) and "coco" in value.lower():
+            return True
         has_dataset_hint = True
 
-    # Explicit class-count metadata (top-level nc, or args.num_classes/nc)
-    # means the checkpoint declared its own class space, so it is not a bare
-    # upstream state_dict even when it omits names.
-    has_class_count = any(
-        _metadata_value(loaded, field) is not None for field in ("nc", "num_classes")
-    )
-
     # A bare upstream RF-DETR state_dict carries NO class metadata at all -- no
-    # names, no dataset hint of any kind, and no explicit class count. The only
+    # names, no explicit class count, and no dataset hint of any kind. The only
     # such 91-output RF-DETR in distribution is Roboflow's COCO-pretrained
     # checkpoint, so treat it as COCO: its 90-class arch head then normalizes
     # to LibreYOLO's COCO-80, identical to the published LibreYOLO weights. A
-    # genuine custom 90-class model carries names, a (non-COCO) dataset hint,
-    # or an explicit class count and is left untouched (returns False).
-    if name_count is None and not has_dataset_hint and not has_class_count:
+    # genuine custom 90-class model carries names, an explicit class count, or
+    # a (non-COCO) dataset hint and is left untouched (returns False).
+    if name_count is None and declared_nc is None and not has_dataset_hint:
         return True
 
     return False

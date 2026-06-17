@@ -299,6 +299,16 @@ class TestAutoconvertOrchestration:
             90,
         )[0] == 90
 
+    def test_rfdetr_90_class_with_empty_dataset_container_is_bare_coco(self):
+        # Empty placeholders ({} / []) are not real dataset hints, so an
+        # otherwise-bare checkpoint still normalizes to COCO-80.
+        assert autoconvert_module._rfdetr_class_metadata({"data": {}}, 90)[0] == 80
+        assert autoconvert_module._rfdetr_class_metadata({"data": []}, 90)[0] == 80
+
+    def test_rfdetr_explicit_nc80_is_honored_as_coco(self):
+        # A checkpoint that explicitly declares 80 classes is COCO.
+        assert autoconvert_module._rfdetr_class_metadata({"nc": 80}, 90)[0] == 80
+
     def test_returns_none_for_non_upstream_file(self, tmp_path):
         src = tmp_path / "random.pt"
         torch.save({"some.random.tensor": torch.zeros(4)}, src)
