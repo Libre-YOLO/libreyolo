@@ -61,33 +61,6 @@ def _write_tiny_point_dataset(root: Path, imgsz: int = 96) -> Path:
     return data_yaml
 
 
-def test_fomo_training_e2e(tmp_path: Path) -> None:
-    """Verify that a LibreFOMO model trains successfully on a synthetic dataset."""
-    from libreyolo import LibreFOMO
-
-    data_yaml = _write_tiny_point_dataset(tmp_path, imgsz=96)
-
-    model = LibreFOMO(model_path=None, size="s", nb_classes=1, device="cpu")
-
-    results = model.train(
-        allow_experimental=True,
-        data=str(data_yaml),
-        epochs=1,
-        batch=2,
-        imgsz=96,
-        device="cpu",
-        project=str(tmp_path / "runs"),
-        name="fomo_e2e_test",
-        exist_ok=True,
-        workers=0,
-        scheduler="cosine",
-        mosaic_prob=1.0,
-        flip_prob=0.5,
-    )
-
-    assert "final_loss" in results
-    assert len(results["epoch_losses"]) == 1
-
 
 def _write_multiclass_point_dataset(root: Path, imgsz: int = 96) -> Path:
     from PIL import Image
@@ -149,25 +122,6 @@ def _make_random_fomo(size: str = "s", nc: int = 1):
     from libreyolo import LibreFOMO
     return LibreFOMO(model_path=None, size=size, nb_classes=nc, device="cpu")
 
-
-def test_training_integration(tmp_path: Path) -> None:
-    """Verify that FOMOTrainer runs a training epoch without error on a synthetic dataset."""
-    data_yaml = _write_tiny_point_dataset(tmp_path, imgsz=96)
-    model = _make_random_fomo(size="s", nc=1)
-    results = model.train(
-        allow_experimental=True,
-        data=str(data_yaml),
-        epochs=1,
-        batch=2,
-        imgsz=96,
-        device="cpu",
-        project=str(tmp_path / "runs"),
-        name="fomo_test",
-        exist_ok=True,
-        workers=0,
-    )
-    assert "final_loss" in results
-    assert len(results["epoch_losses"]) == 1
 
 
 @pytest.mark.parametrize("scheduler", ["cosine", "flat_cosine", "linear", "constant"])

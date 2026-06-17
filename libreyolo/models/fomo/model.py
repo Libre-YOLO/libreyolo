@@ -199,6 +199,13 @@ class LibreFOMO(BaseModel):
 
         if "imgsz" not in kwargs:
             kwargs["imgsz"] = self._get_input_size()
+        else:
+            native_size = self._get_input_size()
+            if int(kwargs["imgsz"]) != native_size:
+                raise ValueError(
+                    f"LibreFOMO size '{self.size}' only supports imgsz={native_size}. "
+                    f"Got imgsz={kwargs['imgsz']}."
+                )
         if "size" not in kwargs:
             kwargs["size"] = self.size
         if "num_classes" not in kwargs:

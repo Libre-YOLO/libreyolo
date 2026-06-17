@@ -249,3 +249,146 @@ class FOMOTrainTransform:
         padded_labels = np.ascontiguousarray(padded_labels, dtype=np.float32)
         return image_chw, padded_labels
 
+
+def build_fomo_datasets(
+    config: Any,
+    model: Any,
+    wrapper_model: Any,
+    device: torch.device,
+    input_size: int,
+    grid_size: int,
+) -> Tuple[Dataset, Dataset, Any, Any]:
+    from ...data import load_data_config, get_img_files, img2label_paths
+    from .loss import FOMOLoss
+    from ...training.distributed import is_main_process
+    import logging
+    logger = logging.getLogger("libreyolo.models.fomo.dataset")
+
+    data_cfg = load_data_config(
+        config.data,
+        allow_scripts=config.allow_download_scripts,
+    )
+    data_dir = data_cfg["root"]
+
+    train_img_files = data_cfg.get("train_img_files")
+    train_label_files = data_cfg.get("train_label_files")
+    if not train_img_files:
+        train_path = data_cfg.get("train", "images/train")
+        train_img_files = get_img_files(train_path, prefix=data_dir)
+        train_label_files = img2label_paths(train_img_files)
+    elif train_label_files is None:
+        train_label_files = img2label_paths(train_img_files)
+
+    val_img_files = data_cfg.get("val_img_files")
+    val_label_files = data_cfg.get("val_label_files")
+    if not val_img_files:
+        val_path = data_cfg.get("val", "images/val")
+        try:
+            val_img_files = get_img_files(val_path, prefix=data_dir)
+            val_label_files = img2label_paths(val_img_files)
+        except (FileNotFoundError, ValueError):
+            val_img_files, val_label_files = [], []
+    elif val_label_files is None:
+        val_label_files = img2label_paths(val_img_files)
+
+    dataset_nc = data_cfg.get("nc")
+    if dataset_nc is None and data_cfg.get("names") is not None:
+        dataset_nc = len(data_cfg["names"])
+    dataset_nc = int(dataset_nc) if dataset_nc is not None else config.num_classes
+
+    if dataset_nc != getattr(model, "nc", config.num_classes):
+        logger.info(
+            "Dataset nc=%d differs from model nc=%d — rebuilding head.",
+            dataset_nc,
+            getattr(model, "nc", config.num_classes),
+        )
+        if wrapper_model is not None:
+            wrapper_model._rebuild_for_new_classes(dataset_nc)
+            model = wrapper_model.model
+        else:
+            raise ValueError(
+                f"Dataset nc={dataset_nc} differs from model nc={getattr(model, 'nc', config.num_classes)}, "
+                "but wrapper_model is None — cannot rebuild head safely."
+            )
+    config.num_classes = dataset_nc
+
+    fg_weight = getattr(config, "fg_weight", 100.0)
+    loss_fn = FOMOLoss(
+        num_classes=dataset_nc,
+        fg_weight=fg_weight,
+        device=device,
+    ).to(device)
+    if is_main_process():
+        logger.info(
+            "FOMOLoss rebuilt with resolved dataset nc=%d", dataset_nc
+        )
+
+    raw_names = data_cfg.get("names")
+    if raw_names is not None and wrapper_model is not None:
+        from ..base import BaseModel
+        wrapper_model.names = BaseModel._sanitize_names(
+            raw_names if isinstance(raw_names, dict)
+            else {i: n for i, n in enumerate(raw_names)},
+            dataset_nc,
+        )
+
+    any_aug = (
+        config.mosaic_prob > 0
+        or config.mixup_prob > 0
+        or config.hsv_prob > 0
+        or config.flip_prob > 0
+        or config.degrees > 0
+        or config.translate > 0
+        or config.shear > 0
+    )
+
+    if any_aug:
+        from ...data.dataset import YOLODataset
+        from ...training.augment import MosaicMixupDataset
+
+        if is_main_process():
+            logger.info("FOMO Training: Data augmentation enabled.")
+            logger.info(f"  mosaic_prob: {config.mosaic_prob}")
+            logger.info(f"  mixup_prob: {config.mixup_prob}")
+            logger.info(f"  flip_prob: {config.flip_prob}")
+            logger.info(f"  hsv_prob: {config.hsv_prob}")
+
+        base_train_ds = YOLODataset(
+            img_files=train_img_files,
+            label_files=train_label_files,
+            img_size=(input_size, input_size),
+            preproc=None,
+        )
+
+        preproc = FOMOTrainTransform(
+            max_labels=50,
+            flip_prob=config.flip_prob,
+            hsv_prob=config.hsv_prob,
+        )
+
+        augmented_train_ds = MosaicMixupDataset(
+            dataset=base_train_ds,
+            img_size=(input_size, input_size),
+            mosaic=config.mosaic_prob > 0,
+            preproc=preproc,
+            degrees=config.degrees,
+            translate=config.translate,
+            mosaic_scale=config.mosaic_scale,
+            mixup_scale=config.mixup_scale,
+            shear=config.shear,
+            enable_mixup=config.mixup_prob > 0,
+            mosaic_prob=config.mosaic_prob,
+            mixup_prob=config.mixup_prob,
+        )
+
+        train_ds = FOMOAugmentedDataset(
+            augmented_dataset=augmented_train_ds,
+            input_size=input_size,
+            grid_size=grid_size,
+        )
+    else:
+        train_ds = FOMOYOLODataset(train_img_files, train_label_files, input_size, grid_size)
+
+    val_ds = FOMOYOLODataset(val_img_files or [], val_label_files or [], input_size, grid_size)
+    return train_ds, val_ds, model, loss_fn
+
