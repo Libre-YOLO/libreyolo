@@ -92,6 +92,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .save.flash{animation:pop .42s ease-out}
   /* main */
   main{display:grid;grid-template-columns:300px 1fr;min-height:0}
+  main.has-regions{grid-template-columns:300px 1fr 234px}
+  .regions{display:none;flex-direction:column;min-height:0;background:var(--bg2);border-left:1px solid var(--line)}
+  main.has-regions .regions{display:flex}
+  .rp-head{padding:13px 13px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--tx2);display:flex;gap:7px;align-items:center}
+  .rp-head b{color:var(--tx);font-variant-numeric:tabular-nums}
+  .rp-list{flex:1;overflow-y:auto;padding:8px}
+  .rprow{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;border:1px solid transparent;cursor:pointer;transition:.1s}
+  .rprow:hover{background:var(--s2);border-color:var(--line)}
+  .rprow.on{background:var(--s3);border-color:var(--ac)}
+  .rprow .sw{width:12px;height:12px;border-radius:3px;flex:none}
+  .rprow .rpn{flex:1;font-size:12.5px;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rprow .rpi{font-size:11px;color:var(--tx3);font-variant-numeric:tabular-nums}
+  .rprow .rpx{opacity:0;color:var(--tx3);font-size:16px;line-height:1;padding:0 3px;border-radius:5px}
+  .rprow:hover .rpx{opacity:.55} .rprow .rpx:hover{opacity:1;color:var(--danger);background:var(--s1)}
+  .rp-empty{padding:18px 12px;color:var(--tx3);font-size:12px;text-align:center}
   .sidebar{display:flex;flex-direction:column;min-height:0;background:var(--bg2);border-right:1px solid var(--line)}
   .side-head{padding:12px 12px 10px;border-bottom:1px solid var(--line)}
   .seg{display:flex;gap:2px;padding:3px;background:var(--s1);border:1px solid var(--line);border-radius:var(--r2)}
@@ -455,6 +470,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
         </table>
       </div></div>
     </div>
+    <aside class="regions" id="regionspanel">
+      <div class="rp-head">Regions <b id="rpcount">0</b></div>
+      <div class="rp-list" id="rplist"></div>
+    </aside>
   </main>
   <div class="modal" id="insights"><div class="mcard">
     <div class="mhead"><h3>Dataset insights</h3><button class="mx" id="insclose">&times;</button></div>
@@ -788,6 +807,49 @@ async function submitImage(){
   const vis=visibleIds();
   const hasUnlabeled = vis.some(id=> id!==here && IMAGES[id] && IMAGES[id].status==="unlabeled");
   if(hasUnlabeled) nextUnlabeled(1); else step(1);
+}
+// ---- Regions panel (Outliner): every annotation on this image, select/hover/delete ----
+let regionsSig="";
+function renderRegions(){
+  const list=$("#rplist"), mn=document.querySelector("main"); if(!list||!mn) return;
+  const n=boxes.length+polys.length;
+  const sig=n+"|"+boxes.map(b=>b.cls).join(",")+"|P"+polys.map(p=>p.cls).join(",")
+    +"|s"+sel+"|"+[...selBoxes].sort((a,b)=>a-b).join(",")+"|p"+selPoly
+    +"|e"+(editable?1:0)+"|w"+((DS&&DS.writable)?1:0);
+  if(sig===regionsSig) return; regionsSig=sig;
+  mn.classList.toggle("has-regions", n>0);
+  const cnt=$("#rpcount"); if(cnt) cnt.textContent=n;
+  if(!n){ list.innerHTML=`<div class="rp-empty">No labels yet — draw a box.</div>`; return; }
+  const canEdit = editable && !(DS && !DS.writable);
+  list.innerHTML="";
+  boxes.forEach((b,i)=>{
+    const nm=(DS.names&&DS.names[b.cls]!=null)?DS.names[b.cls]:b.cls;
+    const row=document.createElement("div");
+    row.className="rprow"+((i===sel||selBoxes.has(i))?" on":"");
+    row.innerHTML=`<span class="sw" style="background:${color(b.cls)}"></span>`+
+      `<span class="rpn">${esc(String(nm))}</span><span class="rpi">#${i+1}</span>`+
+      (canEdit?`<span class="rpx" title="Delete">&times;</span>`:"");
+    row.onclick=(e)=>{ if(e.target.classList.contains("rpx")) return;
+      selBoxes=new Set([i]); sel=i; selPoly=-1; setActive(b.cls); draw(); };
+    row.onmouseenter=()=>{ if(hover!==i){ hover=i; draw(); } };
+    row.onmouseleave=()=>{ if(hover===i){ hover=-1; draw(); } };
+    const x=row.querySelector(".rpx");
+    if(x) x.onclick=(e)=>{ e.stopPropagation(); pushUndo(); boxes.splice(i,1); sel=-1; selBoxes.clear(); markDirty(); draw(); };
+    list.appendChild(row);
+  });
+  polys.forEach((p,i)=>{
+    const nm=(DS.names&&DS.names[p.cls]!=null)?DS.names[p.cls]:p.cls;
+    const row=document.createElement("div");
+    row.className="rprow"+((i===selPoly)?" on":"");
+    row.innerHTML=`<span class="sw" style="background:${color(p.cls)}"></span>`+
+      `<span class="rpn">${esc(String(nm))} · polygon</span><span class="rpi">#${i+1}</span>`+
+      (canEdit?`<span class="rpx" title="Delete">&times;</span>`:"");
+    row.onclick=(e)=>{ if(e.target.classList.contains("rpx")) return;
+      selPoly=i; sel=-1; selBoxes.clear(); setActive(p.cls); draw(); };
+    const x=row.querySelector(".rpx");
+    if(x) x.onclick=(e)=>{ e.stopPropagation(); pushUndo(); polys.splice(i,1); selPoly=-1; markDirty(); draw(); };
+    list.appendChild(row);
+  });
 }
 
 // ---- class editor (rename existing + append new; never delete/reorder) ----
@@ -1539,6 +1601,7 @@ function draw(){
   }
   drawLoupe();
   updateProgress();
+  renderRegions();
 }
 function handlePts(b){
   const x=b.x,y=b.y,w=b.w,h=b.h;
