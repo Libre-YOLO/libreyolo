@@ -202,6 +202,12 @@ class DatasetSession:
         derives a wrong label path and would silently corrupt the dataset.
         Detect the ambiguity up front and make the session read-only.
         """
+        root = None
+        if self.root:
+            try:
+                root = Path(self.root).resolve()
+            except Exception:  # noqa: BLE001
+                root = None
         for ip, lp, _ in self._items:
             # img2label_paths rewrites every "<sep>images" prefix, so a component that
             # *starts with* "images" (e.g. "images_2026" -> "labels_2026") mis-derives
@@ -217,6 +223,25 @@ class DatasetSession:
                 )
             if lp == ip:
                 return False, f"Could not derive a label path for {ip}."
+            # A single 'images' segment is fine *inside* the dataset (the conventional
+            # images/->labels/ sibling layout), but if it sits ABOVE the root -- e.g. a
+            # flat folder /home/me/images/cats opened as `train: .` -- the rewrite still
+            # fires and sends labels OUTSIDE the dataset. Require the label path to stay
+            # within the root for any image that is itself under the root.
+            if root is not None:
+                try:
+                    ip.resolve().relative_to(root)
+                except ValueError:
+                    continue   # image not under the dataset root (unusual) -> don't second-guess
+                try:
+                    lp.resolve().relative_to(root)
+                except ValueError:
+                    return (
+                        False,
+                        "Saving would write labels outside the dataset folder: an ancestor "
+                        "path segment named 'images' gets rewritten to 'labels'. Move the "
+                        "images into an 'images/' subfolder (or rename the ancestor) and reopen.",
+                    )
         return True, ""
 
     # -- queries -----------------------------------------------------------
