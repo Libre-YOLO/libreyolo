@@ -177,6 +177,17 @@ def _make_args(
     obb: bool = False,
     num_keypoints: int = 17,
     oks_sigmas=None,
+    dual_projector: bool = False,
+    dual_projector_kp_only: bool = False,
+    # GroupPose keypoint construction flags ported from RF-DETR v1.8.0 (keypoint
+    # preview). Defaults disable keypoints so detection/seg/obb namespaces are
+    # unchanged; the keypoint path passes use_grouppose_keypoints=True and a
+    # concrete num_keypoints_per_class schema (e.g. [0, 17]).
+    use_grouppose_keypoints: bool = False,
+    num_keypoints_per_class: "list[int] | None" = None,
+    grouppose_keypoint_dim_downscale: int = 1,
+    keypoint_cross_attn: bool = True,
+    inter_instance_kp_attn: bool = False,
 ) -> SimpleNamespace:
     cfg_values = {
         f.name: list(getattr(cfg, f.name)) if isinstance(getattr(cfg, f.name), tuple) else getattr(cfg, f.name)
@@ -196,6 +207,17 @@ def _make_args(
         bbox_reparam=True,
         cls_loss_coef=5.0 if segmentation else 1.0,
         decoder_norm="LN",
+        # Dual-projector flags ported from RF-DETR v1.8.0 (keypoint preview).
+        # Default False so detection/seg/obb args namespaces are unchanged; the
+        # keypoint path passes dual_projector=True / dual_projector_kp_only=True.
+        dual_projector=dual_projector,
+        dual_projector_kp_only=dual_projector_kp_only,
+        # GroupPose keypoint flags ported from RF-DETR v1.8.0 (keypoint preview).
+        use_grouppose_keypoints=use_grouppose_keypoints,
+        num_keypoints_per_class=list(num_keypoints_per_class) if num_keypoints_per_class else [],
+        grouppose_keypoint_dim_downscale=grouppose_keypoint_dim_downscale,
+        keypoint_cross_attn=keypoint_cross_attn,
+        inter_instance_kp_attn=inter_instance_kp_attn,
         dim_feedforward=2048,
         drop_path=0.0,
         dropout=0.0,
@@ -780,6 +802,7 @@ class LibreRFDETRModel(nn.Module):
         depth: bool = False,
         num_keypoints: int = 17,
         oks_sigmas=None,
+        num_keypoints_per_class: "list[int] | None" = None,
     ):
         super().__init__()
 
@@ -854,6 +877,30 @@ class LibreRFDETRModel(nn.Module):
         self.pose = pose
         self.obb = obb
         self.num_keypoints = int(num_keypoints)
+
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # The released rf-detr-keypoint-preview checkpoint uses the GroupPose head
+        # with a 2-class schema [0, num_keypoints] (class 0 has no keypoints, the
+        # "person" class has ``num_keypoints``), dual_projector + kp-only routing,
+        # and a detection head with num_classes == len(schema) (so pred_logits is
+        # (B, Q, 2)). Detection/seg/obb builds leave all keypoint flags off.
+        self.num_keypoints_per_class = (
+            list(num_keypoints_per_class)
+            if num_keypoints_per_class
+            else ([0, int(num_keypoints)] if pose else [])
+        )
+        kp_kwargs = {}
+        if pose:
+            kp_kwargs = dict(
+                use_grouppose_keypoints=True,
+                num_keypoints_per_class=self.num_keypoints_per_class,
+                grouppose_keypoint_dim_downscale=1,
+                keypoint_cross_attn=True,
+                inter_instance_kp_attn=False,
+                dual_projector=True,
+                dual_projector_kp_only=True,
+            )
+
         self.args = _make_args(
             self.config,
             nb_classes=nb_classes,
@@ -863,6 +910,7 @@ class LibreRFDETRModel(nn.Module):
             obb=obb,
             num_keypoints=num_keypoints,
             oks_sigmas=oks_sigmas,
+            **kp_kwargs,
         )
 
         self.resolution = self.config.resolution
@@ -914,13 +962,16 @@ class LibreRFDETRModel(nn.Module):
             else:
                 self.nb_classes = out_features - 1
                 self.args.num_classes = self.nb_classes
-        keypoint_weight = state_dict.get("keypoint_head.layers.2.weight")
-        if keypoint_weight is not None and self.model.keypoint_head is not None:
-            ckpt_k = int(keypoint_weight.shape[0]) // 3
-            if ckpt_k != self.num_keypoints:
-                self.model.reinitialize_keypoint_head(ckpt_k)
-                self.num_keypoints = ckpt_k
-                self.args.num_keypoints = ckpt_k
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # The GroupPose head's keypoint schema lives in the ``_kp_active_mask``
+        # buffer (shape (num_classes_kp, max_K)); reinitialize schema-dependent
+        # state to match the checkpoint when it differs from the built schema.
+        if getattr(self.model, "use_grouppose_keypoints", False):
+            ckpt_schema = self.model.get_num_keypoints_per_class_from_checkpoint(state_dict)
+            if ckpt_schema is not None and ckpt_schema != self.model.get_num_keypoints_per_class():
+                self.model.reinitialize_keypoint_head(ckpt_schema)
+                self.num_keypoints_per_class = ckpt_schema
+                self.args.num_keypoints_per_class = ckpt_schema
 
         for key in ("refpoint_embed.weight", "query_feat.weight"):
             if key in state_dict:
@@ -976,6 +1027,7 @@ def create_rfdetr_model(
     depth: bool = False,
     num_keypoints: int = 17,
     oks_sigmas=None,
+    num_keypoints_per_class: "list[int] | None" = None,
 ) -> LibreRFDETRModel:
     return LibreRFDETRModel(
         config=config,
@@ -987,6 +1039,7 @@ def create_rfdetr_model(
         depth=depth,
         num_keypoints=num_keypoints,
         oks_sigmas=oks_sigmas,
+        num_keypoints_per_class=num_keypoints_per_class,
     )
 
 
