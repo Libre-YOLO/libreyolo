@@ -336,6 +336,22 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .ce-err{color:var(--danger);font-size:12.5px;min-height:16px;margin-top:10px}
   .ce-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
   .classchip.empty{border-style:dashed;color:var(--tx2)}
+  .classbar{display:none}   /* class selection now lives in the bottom label bar */
+  .bottombar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;gap:10px;padding:12px 14px;z-index:5;pointer-events:none}
+  .bottombar>*{pointer-events:auto}
+  .labelbar{display:flex;align-items:center;gap:7px;flex:1;min-width:0;overflow-x:auto;padding:3px;scrollbar-width:thin}
+  .lchip{display:inline-flex;align-items:center;gap:7px;height:33px;padding:0 11px;border-radius:9px;flex:none;background:var(--s1);border:1px solid var(--line2);color:var(--tx2);font-size:12.5px;font-weight:540;white-space:nowrap;box-shadow:var(--sh);transition:.1s}
+  .lchip:hover{border-color:var(--ac);color:var(--tx)}
+  .lchip.on{border-color:var(--ac);background:var(--s3);color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset,var(--sh)}
+  .lchip .sw{width:12px;height:12px;border-radius:3px;flex:none}
+  .lchip .ln{overflow:hidden;text-overflow:ellipsis;max-width:160px}
+  .lchip .lk{font:11px ui-monospace,monospace;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px;font-variant-numeric:tabular-nums}
+  .lchip.add{color:var(--tx3);border-style:dashed;box-shadow:none}
+  .submitbtn{display:inline-flex;align-items:center;gap:8px;height:39px;padding:0 18px;border-radius:10px;flex:none;background:var(--ac);color:#fff;font-size:13px;font-weight:650;border:1px solid var(--ac);box-shadow:var(--sh);transition:.12s}
+  .submitbtn:hover{filter:brightness(1.08)}
+  .submitbtn:disabled{opacity:.45;cursor:default;filter:none}
+  .submitbtn .ic{width:16px;height:16px}
+  .submitbtn kbd{background:rgba(255,255,255,.22);border-radius:5px;padding:1px 6px;font:11px ui-monospace,monospace}
 </style>
 </head>
 <body>
@@ -408,6 +424,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="picker" id="picker">
         <div class="psearch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="psearch" placeholder="Search classes…" autocomplete="off"></div>
         <div id="pal"></div>
+      </div>
+      <div class="bottombar" id="bottombar">
+        <div class="labelbar" id="labelbar"></div>
+        <button class="submitbtn" id="submitbtn" title="Submit & go to next image (Enter)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg><span>Submit</span><kbd>&#9166;</kbd></button>
       </div>
       <div class="banner" id="banner"></div>
       <div class="progress" id="progress"><div class="pcard">
@@ -524,7 +544,7 @@ let imgQuery = "";             // sidebar filename filter
 let selSet = null;             // ids selected from the embedding map (sidebar filter)
 let radarFindings = [];        // Radar disagreements overlaid on the current image
 let radarDeck = [];            // worst-first deck from the last Radar scan
-let loupeOn = false;           // pinned magnifier (L); auto-shows while drawing
+let loupeOn = false;           // magnifier toggled with L (opt-in; no auto-show while drawing)
 let gradData = null, gradW = 0, gradH = 0, gradScale = 1;  // edge map for Tighten/magnetic
 let mapPoints = [], mapFit = null, mapLasso = null;        // embedding scatter + lasso
 let boostTimer = null;
@@ -630,6 +650,7 @@ async function enterLabeler(d){
 }
 function wireChrome(){
   $("#classchip").onclick = togglePicker;
+  $("#submitbtn").onclick = submitImage;
   $("#classesbtn").onclick = openClassEdit;
   $("#ceclose").onclick = closeClassEdit;
   $("#cecancel").onclick = closeClassEdit;
@@ -691,6 +712,7 @@ function renderPalette(){
     pal.appendChild(c);
   });
   markPalette();
+  renderLabelBar();
 }
 function markPalette(){
   const chip=$("#classchip");
@@ -704,6 +726,7 @@ function markPalette(){
   chip.innerHTML = `<span class="sw" style="background:${color(active)}"></span>`+
     `<span>${esc(nm)}</span><span class="cc-h">class</span>`;
   document.querySelectorAll("#pal .pclass").forEach(c=> c.classList.toggle("on", +c.dataset.i===active));
+  document.querySelectorAll("#labelbar .lchip").forEach(c=> c.classList.toggle("on", c.dataset.i!=null && +c.dataset.i===active));
 }
 function setActive(i){
   if(i<0||i>=(DS.names||[]).length) return;
@@ -732,6 +755,40 @@ function togglePicker(){
 function filterClasses(q){ q=(q||"").toLowerCase();
   document.querySelectorAll("#pal .pclass").forEach(c=>{
     const nm=(DS.names[+c.dataset.i]||"").toLowerCase(); c.style.display = nm.includes(q)?"":"none"; }); }
+
+// ---- bottom label bar (always-visible class picker with hotkey numbers) ----
+function renderLabelBar(){
+  const bar=$("#labelbar"); if(!bar) return;
+  const names=(DS&&DS.names)||[];
+  bar.innerHTML="";
+  if(!names.length){
+    const b=document.createElement("button"); b.className="lchip add";
+    b.textContent="+ Add a class"; b.onclick=openClassEdit; bar.appendChild(b); return;
+  }
+  names.forEach((nm,i)=>{
+    const k = i<9 ? (i+1) : (i===9 ? 0 : "");
+    const c=document.createElement("button");
+    c.className="lchip"+(i===active?" on":""); c.dataset.i=i;
+    c.innerHTML=`<span class="sw" style="background:${color(i)}"></span>`+
+      `<span class="ln">${esc(nm)}</span>`+(k!==""?`<span class="lk">${k}</span>`:"");
+    c.onclick=()=>{ setActive(i); };   // sets the active class; reclasses a selected box too
+    bar.appendChild(c);
+  });
+  const add=document.createElement("button");
+  add.className="lchip add"; add.title="Add or rename classes"; add.textContent="+";
+  add.onclick=openClassEdit; bar.appendChild(add);
+}
+// ---- Submit: save this image, then jump to the next unlabeled one ----
+async function submitImage(){
+  if(!imgOk) return;
+  if((DS && !DS.writable) || !editable){ banner("This image/dataset is read-only — nothing to submit."); return; }
+  const here=idx;
+  if(await save()===false) return;   // save() already surfaced why (degenerate shape, conflict, ...)
+  setRowStatus(here, (boxes.length+polys.length)?"labeled":"empty");
+  const vis=visibleIds();
+  const hasUnlabeled = vis.some(id=> id!==here && IMAGES[id] && IMAGES[id].status==="unlabeled");
+  if(hasUnlabeled) nextUnlabeled(1); else step(1);
+}
 
 // ---- class editor (rename existing + append new; never delete/reorder) ----
 function openClassEdit(){
@@ -1466,7 +1523,7 @@ function draw(){
     ctx.restore();
   });
   drawRadarFindings();
-  if(sel>=0) drawHandles(boxes[sel]);
+  if(sel>=0){ drawHandles(boxes[sel]); if(editable && !(DS && !DS.writable)) drawDelBadge(boxes[sel]); }
   if(cursor && (mode===null||mode==='new')){
     ctx.save(); ctx.strokeStyle='rgba(6,182,212,.4)'; ctx.lineWidth=1;
     ctx.beginPath();
@@ -1495,6 +1552,19 @@ function drawHandles(b){
     const [hx,hy]=pts[k]; const px=sx(hx), py=sy(hy);
     ctx.beginPath(); ctx.rect(px-4,py-4,8,8); ctx.fill(); ctx.stroke();
   });
+}
+// A red "x" badge just outside the top-right corner of the selected box -> click to delete.
+function delBadgePos(b){ return {x: sx(Math.max(b.x,b.x+b.w))+11, y: sy(Math.min(b.y,b.y+b.h))-11}; }
+function drawDelBadge(b){
+  const p=delBadgePos(b);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(p.x,p.y,9,0,6.2832);
+  ctx.shadowColor="rgba(2,6,23,.5)"; ctx.shadowBlur=5; ctx.fillStyle="#ef4444"; ctx.fill();
+  ctx.shadowColor="transparent"; ctx.strokeStyle="#fff"; ctx.lineWidth=1.8;
+  ctx.beginPath();
+  ctx.moveTo(p.x-3.4,p.y-3.4); ctx.lineTo(p.x+3.4,p.y+3.4);
+  ctx.moveTo(p.x+3.4,p.y-3.4); ctx.lineTo(p.x-3.4,p.y+3.4); ctx.stroke();
+  ctx.restore();
 }
 function hitHandle(b, mx, my){
   const pts = handlePts(b);
@@ -1527,6 +1597,10 @@ cv.addEventListener("pointerdown", e=>{
     const hp=hitPoly(mx,my);
     if(hp>=0){ selPoly=hp; sel=-1; active=polys[hp].cls; markPalette(); draw(); return; }
     sel=-1; selPoly=-1; draw(); return;
+  }
+  if(sel>=0 && boxes[sel]){   // click the red x badge on the selected box to delete it
+    const bp=delBadgePos(boxes[sel]);
+    if(Math.hypot(mx-bp.x, my-bp.y)<=11){ pushUndo(); boxes.splice(sel,1); sel=-1; selBoxes.clear(); markDirty(); draw(); return; }
   }
   if(sel>=0){
     const k = hitHandle(boxes[sel], mx, my);
@@ -1597,7 +1671,7 @@ cv.addEventListener("pointerup", e=>{
   }
   if(mode==="new"){
     const b=boxes[sel];
-    if(Math.abs(b.w)*view.scale<3 || Math.abs(b.h)*view.scale<3){ boxes.pop(); sel=-1; }
+    if(Math.abs(b.w)*view.scale<6 || Math.abs(b.h)*view.scale<6){ boxes.pop(); sel=-1; }   // ignore tiny accidental drags (a click shouldn't spawn a box)
     else { normalizeRect(b); clipToImage(b); markDirty(); }  // WYSIWYG: keep the box exactly where drawn; press T to magnet-tighten on demand
   } else if(mode==="resize"){ normalizeRect(drag.b); clipToImage(drag.b); }
   else if(mode==="move"){ clipToImage(boxes[sel]); }
@@ -1655,8 +1729,10 @@ window.addEventListener("keydown", e=>{
   if((e.ctrlKey||e.metaKey) && (e.key==="d"||e.key==="D")){ e.preventDefault(); duplicateSelected(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="a"||e.key==="A")){ e.preventDefault(); selectAllBoxes(); return; }
   if(e.key==="Enter"){
-    if(ghosts.length){ e.preventDefault(); const adv=e.shiftKey; acceptAllGhosts();
-      if(adv){ save().then(()=> nextSuggested()); } }
+    e.preventDefault();
+    if(ghosts.length){ const adv=e.shiftKey; acceptAllGhosts();
+      if(adv){ save().then(()=> nextSuggested()); } return; }
+    submitImage();   // Enter / Ctrl+Enter: save this image and advance to the next unlabeled one
     return;
   }
   if(e.key>="0" && e.key<="9"){ const i = e.key==="0"?9:(+e.key-1); setActive(i); return; }
@@ -1828,7 +1904,7 @@ function tightenSelected(){
 // ---- Loupe magnifier (L pins it; auto-shows while drawing/resizing) ----
 function drawLoupe(){
   if(!imgOk || !cursor) return;
-  if(!(loupeOn || mode==="new" || mode==="resize")) return;
+  if(!loupeOn) return;   // opt-in only (press L); no auto-zoom-on-background while drawing
   const R=64, zoom=3.4, pad=22;
   let lx=cursor.x+pad+R, ly=cursor.y+pad+R;
   if(lx+R>VW) lx=cursor.x-pad-R;
