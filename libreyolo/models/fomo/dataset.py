@@ -86,8 +86,8 @@ class FOMOYOLODataset(Dataset):
         img_path = self.img_files[idx]
         try:
             pil_img = Image.open(img_path)
-        except Exception:
-            pil_img = Image.fromarray(np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8))
+        except (FileNotFoundError, OSError) as e:
+            raise FileNotFoundError(f"Cannot read image: {img_path}") from e
 
         img_tensor = _transform_image(pil_img, self.input_size)
 

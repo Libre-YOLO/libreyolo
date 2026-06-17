@@ -621,6 +621,58 @@ class TestLibreFOMOEndToEnd:
         results = model.train(allow_experimental=True)
         assert loaded_path == str(dummy_ckpt)
 
+    def test_trainer_build_yolo_datasets_omitted_label_files(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Verify that _build_yolo_datasets correctly resolves label files when image files are pre-resolved but label files are None/omitted."""
+        from libreyolo.models.fomo.trainer import FOMOTrainer
+        
+        # Mock load_data_config
+        def mock_load_data_config(*args, **kwargs):
+            return {
+                "root": str(tmp_path),
+                "train_img_files": [tmp_path / "images" / "train" / "img1.jpg"],
+                "train_label_files": None,
+                "val_img_files": [tmp_path / "images" / "val" / "img2.jpg"],
+                "val_label_files": None,
+                "nc": 1,
+                "names": {0: "object"},
+            }
+        
+        img1 = tmp_path / "images" / "train" / "img1.jpg"
+        img2 = tmp_path / "images" / "val" / "img2.jpg"
+        img1.parent.mkdir(parents=True, exist_ok=True)
+        img2.parent.mkdir(parents=True, exist_ok=True)
+        img1.touch()
+        img2.touch()
+        
+        lbl1 = tmp_path / "labels" / "train" / "img1.txt"
+        lbl2 = tmp_path / "labels" / "val" / "img2.txt"
+        lbl1.parent.mkdir(parents=True, exist_ok=True)
+        lbl2.parent.mkdir(parents=True, exist_ok=True)
+        lbl1.touch()
+        lbl2.touch()
+        
+        import libreyolo.data as data_mod
+        monkeypatch.setattr(data_mod, "load_data_config", mock_load_data_config)
+        
+        model = _make_random_fomo(size="s", nc=1)
+        trainer = FOMOTrainer(
+            model=model.model,
+            wrapper_model=model,
+            data="dummy.yaml",
+            epochs=1,
+            batch=2,
+            imgsz=96,
+            device="cpu",
+            project=str(tmp_path / "runs"),
+            workers=0,
+        )
+        
+        train_ds, val_ds = trainer._build_yolo_datasets(input_size=96, grid_size=12)
+        assert train_ds.label_files is not None
+        assert len(train_ds.label_files) == 1
+        assert val_ds.label_files is not None
+        assert len(val_ds.label_files) == 1
+
     def test_val_dispatch_uses_point_validator(self) -> None:
         """BaseModel.val() must route task='point' to PointValidator."""
         from libreyolo.models.base.model import BaseModel

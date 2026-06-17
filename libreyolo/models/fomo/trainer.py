@@ -283,6 +283,8 @@ class FOMOTrainer(BaseTrainer):
             train_path = data_cfg.get("train", "images/train")
             train_img_files = get_img_files(train_path, prefix=data_dir)
             train_label_files = img2label_paths(train_img_files)
+        elif train_label_files is None:
+            train_label_files = img2label_paths(train_img_files)
 
         val_img_files = data_cfg.get("val_img_files")
         val_label_files = data_cfg.get("val_label_files")
@@ -293,6 +295,8 @@ class FOMOTrainer(BaseTrainer):
                 val_label_files = img2label_paths(val_img_files)
             except (FileNotFoundError, ValueError):
                 val_img_files, val_label_files = [], []
+        elif val_label_files is None:
+            val_label_files = img2label_paths(val_img_files)
 
         dataset_nc = data_cfg.get("nc", self.config.num_classes)
         if dataset_nc != getattr(self.model, "nc", self.config.num_classes):
