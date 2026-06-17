@@ -1405,6 +1405,7 @@ function hitVertex(p, mx, my){
 }
 async function segmentAt(mx,my){
   if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable || (DS && !DS.writable)) return;   // view-only dataset: no canvas mutation
+  if(!(DS.names||[]).length){ banner("Add a class before segmenting — every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
   const iw=img.naturalWidth, ih=img.naturalHeight, X=ix(mx), Y=iy(my);
   if(X<0||Y<0||X>iw||Y>ih) return;
   segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM, on your machine)"); cv.style.cursor="wait";
@@ -1423,6 +1424,7 @@ async function segmentAt(mx,my){
 }
 async function segmentBox(r){
   if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable) return;
+  if(!(DS.names||[]).length){ banner("Add a class before segmenting — every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
   const iw=img.naturalWidth, ih=img.naturalHeight;
   const x1=Math.max(0,Math.min(r.x0,r.x1)), y1=Math.max(0,Math.min(r.y0,r.y1));
   const x2=Math.min(iw,Math.max(r.x0,r.x1)), y2=Math.min(ih,Math.max(r.y0,r.y1));

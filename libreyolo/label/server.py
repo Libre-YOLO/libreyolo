@@ -378,6 +378,9 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._same_origin():
                 self._send(403, {"error": "cross-origin request blocked"})
                 return
+            if not self._host_allowed():
+                self._send(403, {"error": "host not allowed"})
+                return
             # Host-admin only: switching the project, pruning duplicates, and the
             # heavy full-dataset compute streams all rebind/clobber server-global
             # state (session, files, the shared pending/findings/embed maps, a host
@@ -596,6 +599,21 @@ class _Handler(BaseHTTPRequestHandler):
             return urlparse(origin).netloc == (self.headers.get("Host") or "")
         except Exception:  # noqa: BLE001
             return False
+
+    def _host_allowed(self) -> bool:
+        """Defend against DNS rebinding: ``_same_origin`` passes when a malicious page
+        rebinds its own hostname to 127.0.0.1 (both Origin and Host read
+        ``attacker.example``). On a loopback bind the only legitimate Host is a
+        loopback name, so reject anything else. Wildcard / NIC binds are explicit
+        exposures and keep their LAN Host."""
+        bind = (self.state.host or "").strip().lower()
+        if bind not in ("127.0.0.1", "::1", "localhost", ""):
+            return True   # wildcard / concrete-NIC bind: a LAN Host is legitimate
+        host_hdr = (self.headers.get("Host") or "").strip().lower()
+        if not host_hdr:
+            return True   # non-browser client without a Host header
+        name = host_hdr.rsplit(":", 1)[0].strip("[]") if not host_hdr.endswith("]") else host_hdr.strip("[]")
+        return self._is_loopback(name)
 
     @staticmethod
     def _model_conf(qs: dict) -> tuple:

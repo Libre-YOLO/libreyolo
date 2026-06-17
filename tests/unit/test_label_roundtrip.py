@@ -53,7 +53,7 @@ def test_sanitize_clamps_and_drops():
     assert out[0]["cx"] == 1.0 and out[0]["cy"] == 0.0
 
 
-def _make_dataset(root, with_images_in_root=False):
+def _make_dataset(root, with_images_in_root=False, task=None):
     """Create a minimal YOLO dataset under ``root``; return the data.yaml path."""
     from PIL import Image
 
@@ -67,7 +67,8 @@ def _make_dataset(root, with_images_in_root=False):
         "train: images/train\n"
         "val: images/val\n"  # absent split -> skipped (keeps the fixture at 1 image)
         "nc: 2\n"
-        "names:\n  0: cat\n  1: dog\n",
+        + (f"task: {task}\n" if task else "")
+        + "names:\n  0: cat\n  1: dog\n",
         encoding="utf-8",
     )
     return yaml_path
@@ -150,7 +151,9 @@ def test_annotation_parse_format_roundtrip():
 def test_polygon_roundtrip(tmp_path):
     from libreyolo.label.dataset import DatasetSession
 
-    ds = DatasetSession(str(_make_dataset(tmp_path)))
+    # 9-field rows are oriented-box/polygon ambiguous; the dataset must declare
+    # task: segment for read_label to treat them as editable polygons.
+    ds = DatasetSession(str(_make_dataset(tmp_path, task="segment")))
     ds.write_label(0, [
         {"type": "poly", "cls": 1, "points": [0.1, 0.1, 0.4, 0.1, 0.4, 0.4, 0.1, 0.4]},
         {"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2},
