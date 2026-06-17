@@ -537,6 +537,7 @@ class TestLibreFOMOEndToEnd:
             imgsz=96,
             num_workers=0,
             verbose=False,
+            device="cpu",
             save_dir=str(tmp_path / "val_out"),
         )
         validator = PointValidator(model, config)
