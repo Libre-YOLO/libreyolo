@@ -537,18 +537,23 @@ def _is_coco_rfdetr_checkpoint(loaded: Any) -> bool:
     if name_count == 80:
         return True
 
+    has_dataset_hint = False
     for field in ("dataset", "dataset_file", "dataset_name", "data"):
         value = _metadata_value(loaded, field)
-        if isinstance(value, str) and "coco" in value.lower():
-            return True
+        if isinstance(value, str) and value.strip():
+            has_dataset_hint = True
+            if "coco" in value.lower():
+                return True
 
-    # A bare upstream RF-DETR state_dict carries no class metadata at all
-    # (no names, no dataset hint). The only metadata-less 91-output RF-DETR
-    # in distribution is Roboflow's COCO-pretrained checkpoint, so treat it
-    # as COCO: its 90-class arch head then normalizes to LibreYOLO's COCO-80,
-    # identical to the published LibreYOLO weights. A genuine custom 90-class
-    # model is saved with names/metadata and is left untouched (returns False).
-    if name_count is None:
+    # A bare upstream RF-DETR state_dict carries no class metadata at all --
+    # no names AND no dataset hint of any kind. The only metadata-less
+    # 91-output RF-DETR in distribution is Roboflow's COCO-pretrained
+    # checkpoint, so treat it as COCO: its 90-class arch head then normalizes
+    # to LibreYOLO's COCO-80, identical to the published LibreYOLO weights. A
+    # genuine custom 90-class model carries names or a (non-COCO) dataset hint
+    # and is left untouched (returns False) -- guarding the fallback on the
+    # absence of BOTH avoids mislabeling such a model as COCO.
+    if name_count is None and not has_dataset_hint:
         return True
 
     return False
