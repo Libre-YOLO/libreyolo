@@ -201,6 +201,15 @@ class TestLibreFOMOCanLoad:
         sd_no_head = {k: v for k, v in sd.items() if k != "head.weight"}
         assert not LibreFOMO.can_load(sd_no_head)
 
+    def test_can_load_ddp_state_dict(self) -> None:
+        from libreyolo.models.fomo.model import LibreFOMO
+        from libreyolo.models.fomo.nn import LibreFOMOModel
+
+        sd = LibreFOMOModel(size="s", nc=1).state_dict()
+        sd_ddp = {f"module.{k}": v for k, v in sd.items()}
+        assert LibreFOMO.can_load(sd_ddp)
+
+
 class TestLibreFOMODetectNbClasses:
     @pytest.mark.parametrize("nc", [1, 2, 5])
     def test_detect_nb_classes(self, nc: int) -> None:
@@ -209,6 +218,14 @@ class TestLibreFOMODetectNbClasses:
 
         sd = LibreFOMOModel(size="s", nc=nc).state_dict()
         assert LibreFOMO.detect_nb_classes(sd) == nc
+
+    def test_detect_nb_classes_ddp(self) -> None:
+        from libreyolo.models.fomo.model import LibreFOMO
+        from libreyolo.models.fomo.nn import LibreFOMOModel
+
+        sd = LibreFOMOModel(size="s", nc=3).state_dict()
+        sd_ddp = {f"module.{k}": v for k, v in sd.items()}
+        assert LibreFOMO.detect_nb_classes(sd_ddp) == 3
 
 
 class TestLibreFOMORandomInit:

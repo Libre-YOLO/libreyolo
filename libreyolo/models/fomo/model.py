@@ -48,8 +48,13 @@ class LibreFOMO(BaseModel):
     # Registry / can_load interface
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_state_dict_keys(weights_dict: dict) -> dict:
+        return {k.removeprefix("module."): v for k, v in weights_dict.items()}
+
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
+        weights_dict = cls._normalize_state_dict_keys(weights_dict)
         return (
             "head.weight" in weights_dict
             and any(k.startswith("backbone.block_6_expand") for k in weights_dict)
@@ -61,6 +66,7 @@ class LibreFOMO(BaseModel):
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
+        weights_dict = cls._normalize_state_dict_keys(weights_dict)
         weight = weights_dict.get("head.weight")
         if weight is None:
             return None
