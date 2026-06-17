@@ -537,23 +537,35 @@ def _is_coco_rfdetr_checkpoint(loaded: Any) -> bool:
     if name_count == 80:
         return True
 
+    # Any non-empty value under a dataset field is a hint that the checkpoint
+    # declared its own dataset; only a string can positively identify COCO.
     has_dataset_hint = False
     for field in ("dataset", "dataset_file", "dataset_name", "data"):
         value = _metadata_value(loaded, field)
-        if isinstance(value, str) and value.strip():
-            has_dataset_hint = True
+        if value is None:
+            continue
+        if isinstance(value, str):
+            if not value.strip():
+                continue
             if "coco" in value.lower():
                 return True
+        has_dataset_hint = True
 
-    # A bare upstream RF-DETR state_dict carries no class metadata at all --
-    # no names AND no dataset hint of any kind. The only metadata-less
-    # 91-output RF-DETR in distribution is Roboflow's COCO-pretrained
+    # Explicit class-count metadata (top-level nc, or args.num_classes/nc)
+    # means the checkpoint declared its own class space, so it is not a bare
+    # upstream state_dict even when it omits names.
+    has_class_count = any(
+        _metadata_value(loaded, field) is not None for field in ("nc", "num_classes")
+    )
+
+    # A bare upstream RF-DETR state_dict carries NO class metadata at all -- no
+    # names, no dataset hint of any kind, and no explicit class count. The only
+    # such 91-output RF-DETR in distribution is Roboflow's COCO-pretrained
     # checkpoint, so treat it as COCO: its 90-class arch head then normalizes
     # to LibreYOLO's COCO-80, identical to the published LibreYOLO weights. A
-    # genuine custom 90-class model carries names or a (non-COCO) dataset hint
-    # and is left untouched (returns False) -- guarding the fallback on the
-    # absence of BOTH avoids mislabeling such a model as COCO.
-    if name_count is None and not has_dataset_hint:
+    # genuine custom 90-class model carries names, a (non-COCO) dataset hint,
+    # or an explicit class count and is left untouched (returns False).
+    if name_count is None and not has_dataset_hint and not has_class_count:
         return True
 
     return False

@@ -283,6 +283,22 @@ class TestAutoconvertOrchestration:
             90,
         )[0] == 90
 
+    def test_rfdetr_90_class_with_non_string_dataset_hint_not_coerced(self):
+        # A non-string dataset hint (e.g. a data-config dict) is still a hint;
+        # the bare-checkpoint COCO fallback must NOT fire.
+        assert autoconvert_module._rfdetr_class_metadata(
+            {"data": {"path": "/datasets/custom90"}},
+            90,
+        )[0] == 90
+
+    def test_rfdetr_90_class_with_explicit_num_classes_not_coerced(self):
+        # Explicit class-count metadata marks the class space as declared, so
+        # even without names it is not a bare checkpoint -> stays nc=90.
+        assert autoconvert_module._rfdetr_class_metadata(
+            {"args": argparse.Namespace(num_classes=90)},
+            90,
+        )[0] == 90
+
     def test_returns_none_for_non_upstream_file(self, tmp_path):
         src = tmp_path / "random.pt"
         torch.save({"some.random.tensor": torch.zeros(4)}, src)
