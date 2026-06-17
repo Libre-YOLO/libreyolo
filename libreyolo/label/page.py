@@ -512,6 +512,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="home-open">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v7A1.5 1.5 0 0 1 17.5 18h-13A1.5 1.5 0 0 1 3 16.5z"/></svg>
         <input id="homepath" placeholder="Paste a folder of images — or an existing data.yaml…" spellcheck="false" autocomplete="off">
+        <button class="btn btn-ghost" id="homebrowse" title="Choose a folder…"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Browse</button>
         <button class="btn btn-primary" id="homeopen">Open</button>
       </div>
       <div class="home-hint" id="homehint">A folder of images is all you need — LibreLabel writes the dataset config for you.</div>
@@ -2130,6 +2131,7 @@ function mapSelect(ids){
 // ===== Project home: list projects, open/switch, reset per-project state =====
 function wireHome(){
   $("#homeopen").onclick = ()=> smartOpen($("#homepath").value.trim());
+  { const hb=$("#homebrowse"); if(hb) hb.onclick = browseFolder; }
   $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen($("#homepath").value.trim()); } });
   $("#homepath").addEventListener("input", ()=>{ homeError(""); hideCreate(); });
   $("#hometheme").onclick = toggleTheme;
@@ -2139,6 +2141,19 @@ function wireHome(){
 function looksLikeYaml(s){ return /\.ya?ml$/i.test(s); }
 // One smart input: a data.yaml opens directly; any other path is inspected so we
 // can open an existing dataset, or offer to *create* one from a bare image folder.
+// Native "choose folder" dialog (pops on the host via the server's tkinter) so you
+// don't have to paste a path. Falls back to the text input if no GUI is available.
+async function browseFolder(){
+  const btn=$("#homebrowse"); if(btn) btn.disabled=true;
+  try{
+    const r=await fetch("/api/pick-folder",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ homeError(d.error||"Couldn't open the folder dialog — paste the path instead."); return; }
+    if(d.unavailable){ homeError("No folder dialog available on this machine — paste the path instead."); return; }
+    if(d.folder){ const hp=$("#homepath"); if(hp) hp.value=d.folder; smartOpen(d.folder); }
+  }catch(e){ homeError("Couldn't open the folder dialog — paste the path instead."); }
+  finally{ if(btn) btn.disabled=false; }
+}
 async function smartOpen(p){
   if(!p){ homeError("Paste a folder of images, or a data.yaml."); return; }
   if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }

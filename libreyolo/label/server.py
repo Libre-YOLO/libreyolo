@@ -382,7 +382,7 @@ class _Handler(BaseHTTPRequestHandler):
             # state (session, files, the shared pending/findings/embed maps, a host
             # CPU training job) for every teammate -- gate them to the loopback host.
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/inspect",
-                        "/api/projects/forget", "/api/classes", "/api/insights/fix",
+                        "/api/projects/forget", "/api/pick-folder", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
                 self._send(403, {"error": "This action (create / switch project, edit classes, "
@@ -392,7 +392,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/create",
-                    "/api/projects/inspect", "/api/projects/forget"):
+                    "/api/projects/inspect", "/api/projects/forget", "/api/pick-folder"):
                 self._send(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
@@ -466,6 +466,19 @@ class _Handler(BaseHTTPRequestHandler):
                 meta["open"] = True
                 meta["epoch"] = self.state.epoch
                 self._send(200, meta)
+            elif path == "/api/pick-folder":
+                # Pop a NATIVE OS "choose folder" dialog on the host and return the
+                # absolute path. Works because the server runs on the user's machine;
+                # gated to host-admin (a dialog on the host is meaningless to LAN peers).
+                # tkinter is stdlib and imported lazily so plain installs never load it.
+                self._read_json()
+                try:
+                    folder = _native_pick_folder()
+                except Exception as exc:  # noqa: BLE001 - headless / no display / Tk missing
+                    logger.info("native folder dialog unavailable: %s", exc)
+                    self._send(200, {"folder": None, "unavailable": True})
+                else:
+                    self._send(200, {"folder": folder or None})
             elif path == "/api/projects/forget":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None
@@ -735,6 +748,26 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             logger.exception("embeddings failed")
             emit({"type": "error", "error": str(exc)})
+
+
+def _native_pick_folder() -> str:
+    """Open a native OS 'choose folder' dialog on the host and return the chosen
+    absolute path ('' if cancelled). Local-first convenience for the home screen;
+    raises if there is no GUI/display (caller falls back to the text input)."""
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:  # noqa: BLE001 - cosmetic only
+        pass
+    try:
+        path = filedialog.askdirectory(title="Choose an image folder for LibreLabel")
+    finally:
+        root.destroy()
+    return path or ""
 
 
 def serve(
