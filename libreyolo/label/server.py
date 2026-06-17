@@ -438,12 +438,15 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 folder = payload.get("folder") if isinstance(payload, dict) else None
                 classes = payload.get("classes") if isinstance(payload, dict) else None
+                task = payload.get("task") if isinstance(payload, dict) else None
+                if task not in ("detect", "segment", "obb", "classify"):
+                    task = None   # ignore anything unexpected -> default detection
                 if not folder:
                     self._send(400, {"error": "folder path required"})
                     return
                 try:
                     existing = folder_yaml(str(folder))   # don't clobber a real dataset
-                    target = existing or scaffold_data_yaml(str(folder), classes or [])
+                    target = existing or scaffold_data_yaml(str(folder), classes or [], task=task)
                     meta = self.state.open_project(target)
                     meta["open"] = True
                     meta["epoch"] = self.state.epoch

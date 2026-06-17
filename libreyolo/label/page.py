@@ -367,6 +367,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .submitbtn:disabled{opacity:.45;cursor:default;filter:none}
   .submitbtn .ic{width:16px;height:16px}
   .submitbtn kbd{background:rgba(255,255,255,.22);border-radius:5px;padding:1px 6px;font:11px ui-monospace,monospace}
+  .tasksel{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 14px}
+  .taskopt{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:9px;background:var(--s1);border:1px solid var(--line2);color:var(--tx2);font-size:12.5px;font-weight:560;transition:.1s}
+  .taskopt:hover:not([disabled]){border-color:var(--ac);color:var(--tx)}
+  .taskopt.on{border-color:var(--ac);background:var(--s3);color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset}
+  .taskopt[disabled]{opacity:.5;cursor:default}
+  .taskopt .soon{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
 </style>
 </head>
 <body>
@@ -520,6 +526,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="home-err" id="homeerr"></div>
       <div class="home-create" id="homecreate" style="display:none">
         <div class="hc-head">New project · <b id="hccount">0</b> images in <code id="hcfolder"></code></div>
+        <label class="hc-lbl">Task type</label>
+        <div class="tasksel" id="tasksel">
+          <button class="taskopt on" data-task="detect">Detection</button>
+          <button class="taskopt" data-task="segment">Segmentation</button>
+          <button class="taskopt" data-task="obb" disabled>Oriented boxes <span class="soon">soon</span></button>
+          <button class="taskopt" data-task="classify" disabled>Classification <span class="soon">soon</span></button>
+        </div>
         <label class="hc-lbl">Class names <span class="hc-hint">— one per line. Leave it empty and add them while you label.</span></label>
         <textarea id="hcclasses" rows="4" placeholder="person&#10;helmet&#10;vest" spellcheck="false"></textarea>
         <div class="hc-actions"><button class="btn btn-ghost" id="hccancel">Cancel</button><button class="btn btn-primary" id="hccreate">Create project</button></div>
@@ -659,6 +672,7 @@ async function enterLabeler(d){
   $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
   const cb=$("#classesbtn"); if(cb) cb.style.display = (DS.writable!==false) ? "" : "none";
   renderPalette();
+  setTool(DS.task==="segment" ? "poly" : "box");   // segment projects open with the polygon tool
   const imgs = (await jget("/api/images")).images;
   if(gen!==loadSeq) return;            // another project opened while we were fetching
   IMAGES = imgs;
@@ -2171,6 +2185,11 @@ function mapSelect(ids){
 function wireHome(){
   $("#homeopen").onclick = ()=> smartOpen($("#homepath").value.trim());
   { const hb=$("#homebrowse"); if(hb) hb.onclick = browseFolder; }
+  document.querySelectorAll("#tasksel .taskopt").forEach(b=> b.onclick=()=>{
+    if(b.disabled) return;
+    document.querySelectorAll("#tasksel .taskopt").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+  });
   $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen($("#homepath").value.trim()); } });
   $("#homepath").addEventListener("input", ()=>{ homeError(""); hideCreate(); });
   $("#hometheme").onclick = toggleTheme;
@@ -2216,6 +2235,7 @@ function showCreate(folder, n){
   $("#hcfolder").textContent = folder;
   $("#hccount").textContent = n;
   $("#hcclasses").value = "";
+  document.querySelectorAll("#tasksel .taskopt").forEach(x=>x.classList.toggle("on", x.dataset.task==="detect"));
   $("#homecreate").style.display = "";
   $("#hcclasses").focus();
 }
@@ -2229,9 +2249,11 @@ async function doCreate(){
     seen.add(k); classes.push(c);
   }
   homeError("");
+  const taskEl=document.querySelector("#tasksel .taskopt.on");
+  const task=(taskEl&&taskEl.dataset.task)||"detect";
   const btn=$("#hccreate"), t=btn.textContent; btn.disabled=true; btn.textContent="Creating…";
   try{
-    const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder, classes})});
+    const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder, classes, task})});
     const d=await r.json();
     if(!r.ok || !d.open){ homeError(d.error||"Could not create that project."); return; }
     hideCreate(); resetClientState(); await enterLabeler(d);

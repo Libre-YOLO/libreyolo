@@ -83,7 +83,8 @@ def count_images(folder: str) -> int:
         return 0
 
 
-def scaffold_data_yaml(folder: str, names: Optional[List[str]] = None) -> str:
+def scaffold_data_yaml(folder: str, names: Optional[List[str]] = None,
+                       task: Optional[str] = None) -> str:
     """Write a minimal LibreYOLO ``data.yaml`` for a bare folder of images.
 
     The folder of images *is* the dataset: the YAML is written beside the images
@@ -112,6 +113,9 @@ def scaffold_data_yaml(folder: str, names: Optional[List[str]] = None) -> str:
         "names": classes,
         "nc": len(classes),
     }
+    t = str(task or "").strip().lower()
+    if t and t != "detect":               # detect is the default; only stamp non-default tasks
+        cfg["task"] = t
     text = (
         "# LibreLabel project -- created from a folder of images.\n"
         "# Labels are written next to the images, where `libreyolo train` reads them.\n"
@@ -228,6 +232,7 @@ class DatasetSession:
             "count": len(self._items),
             "writable": self.writable,
             "reason": self.reason,
+            "task": self._task or "detect",
         }
 
     def _status(self, lp: Path) -> str:
