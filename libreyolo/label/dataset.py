@@ -487,8 +487,9 @@ class DatasetSession:
                 qres = qroot.resolve()
             except OSError:
                 qres = qroot
-            for i in redundant:
-                src = self._split_sources.get(self._items[i][2])
+            # Check EVERY split, not just the redundant ids' own: a broad split
+            # elsewhere (e.g. `test: .`) would still rglob the quarantine dir back in.
+            for src in self._split_sources.values():
                 for s in (src if isinstance(src, list) else [src]):
                     if not s:
                         continue
@@ -498,7 +499,7 @@ class DatasetSession:
                         continue
                     if d.is_dir() and (qres == d or d in qres.parents):
                         raise RuntimeError(
-                            "This split is a recursive directory that would re-scan the "
+                            "A split is a recursive directory that would re-scan the "
                             "quarantine folder; prune with purge, or point the split at a "
                             "narrower images/ subdirectory.")
         removed: List[dict] = []
