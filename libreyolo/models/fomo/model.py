@@ -201,10 +201,14 @@ class LibreFOMO(BaseModel):
         trainer = FOMOTrainer(model=self.model, wrapper_model=self, **kwargs)
         results = trainer.train()
 
-        best_ckpt = results.get("best_checkpoint", "")
-        last_ckpt = results.get("last_checkpoint", "")
-        reload_path = best_ckpt if Path(best_ckpt).exists() else last_ckpt
-        if reload_path and Path(reload_path).exists():
+        reload_path = None
+        for key in ("best_checkpoint", "last_checkpoint"):
+            path = results.get(key)
+            if path and Path(path).exists():
+                reload_path = str(path)
+                break
+
+        if reload_path:
             self._load_weights(reload_path)
 
         return results

@@ -582,6 +582,45 @@ class TestLibreFOMOEndToEnd:
         assert "final_loss" in results
         assert len(results["epoch_losses"]) == 1
 
+    def test_training_checkpoint_reload_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Verify that train() correctly falls back to last_checkpoint if best_checkpoint is missing/empty."""
+        from libreyolo.models.fomo.model import LibreFOMO
+        
+        dummy_ckpt = tmp_path / "last.pt"
+        model = _make_random_fomo(size="s", nc=1)
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+        ckpt_dict = wrap_libreyolo_checkpoint(
+            model.model.state_dict(),
+            model_family="fomo",
+            size="s",
+            task="point",
+            nc=1,
+        )
+        torch.save(ckpt_dict, dummy_ckpt)
+        
+        class DummyTrainer:
+            def __init__(self, *args, **kwargs):
+                pass
+            def train(self):
+                return {
+                    "epoch_losses": [0.5],
+                    "final_loss": 0.5,
+                    "best_checkpoint": "",
+                    "last_checkpoint": str(dummy_ckpt),
+                }
+                
+        monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
+        
+        loaded_path = None
+        def mock_load_weights(path):
+            nonlocal loaded_path
+            loaded_path = path
+            
+        monkeypatch.setattr(model, "_load_weights", mock_load_weights)
+        
+        results = model.train(allow_experimental=True)
+        assert loaded_path == str(dummy_ckpt)
+
     def test_val_dispatch_uses_point_validator(self) -> None:
         """BaseModel.val() must route task='point' to PointValidator."""
         from libreyolo.models.base.model import BaseModel
