@@ -425,6 +425,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="hud glass" id="hud"></div>
       <div class="toolbar glass">
         <button class="tool on" id="toolBox" title="Box / select (B)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+        <button class="tool" id="toolPoly" title="Polygon (P)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 6-3 9H7L4 9z"/></svg></button>
         <button class="tool" id="toolSeg" title="Smart segment — SAM click-to-mask (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><path d="M12 20a8 8 0 0 1-8-8" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg></button>
         <div class="tdiv"></div>
         <button class="tool ai" id="toolAi" title="AI auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
@@ -557,6 +558,7 @@ let selBoxes = new Set();   // multi-selection of box indices (shift-click / Ctr
 let tool = "box";            // "box" (draw/select) or "seg" (SAM click/box-to-mask)
 let segBusy = false;
 let segRect = null;          // box being dragged in segment mode (image px)
+let polyDraft = null;        // in-progress manual polygon: flat [x1,y1,x2,y2,...] image px
 let curRev = null;           // the loaded label file's revision (mtime), for stale-save conflict detection
 let suggestedIds = new Set();
 let listFilter = "all";
@@ -698,6 +700,7 @@ function wireChrome(){
   wireMap();
   $("#toolBox").onclick = ()=> setTool("box");
   $("#toolSeg").onclick = ()=> setTool("seg");
+  $("#toolPoly").onclick = ()=> setTool("poly");
   $("#toolAi").onclick = ()=> prelabelCurrent();
   $("#toolFit").onclick = ()=>{ fit(); draw(); };
   $("#toolZin").onclick = ()=> zoomBy(1.25);
@@ -710,11 +713,14 @@ function wireChrome(){
 }
 function setTool(t){
   if(t==="seg" && !(assist && assist.sam)) return;
+  if(tool==="poly" && t!=="poly" && polyDraft) cancelPolyDraft();
   tool = t;
-  const tb=$("#toolBox"), ts=$("#toolSeg");
+  const tb=$("#toolBox"), ts=$("#toolSeg"), tp=$("#toolPoly");
   if(tb) tb.classList.toggle("on", t==="box");
   if(ts) ts.classList.toggle("on", t==="seg");
+  if(tp) tp.classList.toggle("on", t==="poly");
   if(t==="seg") banner("Smart segment: click an object — or drag a box around it — and SAM outlines it. B for box tool.");
+  else if(t==="poly") banner("Polygon: click to add points; click the first point or press Enter to close. Esc cancels, Backspace removes the last point.");
   else $("#banner").style.display="none";
 }
 function toggleHelp(){ const h=$("#help"); h.style.display = h.style.display==="flex"?"none":"flex"; }
@@ -1585,6 +1591,20 @@ function draw(){
     drawChip(sx(mnx), sy(mny), String(nm), p.cls);
     ctx.restore();
   });
+  if(polyDraft && polyDraft.length){
+    ctx.save();
+    ctx.strokeStyle=color(active); ctx.lineWidth=2; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(sx(polyDraft[0]), sy(polyDraft[1]));
+    for(let k=2;k<polyDraft.length;k+=2) ctx.lineTo(sx(polyDraft[k]), sy(polyDraft[k+1]));
+    if(cursor) ctx.lineTo(cursor.x, cursor.y);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="#fff"; ctx.strokeStyle=color(active); ctx.lineWidth=1.4;
+    for(let k=0;k<polyDraft.length;k+=2){ ctx.beginPath(); ctx.arc(sx(polyDraft[k]),sy(polyDraft[k+1]),4,0,6.2832); ctx.fill(); ctx.stroke(); }
+    if(polyDraft.length>=6 && cursor && Math.hypot(sx(polyDraft[0])-cursor.x, sy(polyDraft[1])-cursor.y)<12){
+      ctx.beginPath(); ctx.arc(sx(polyDraft[0]),sy(polyDraft[1]),7,0,6.2832); ctx.strokeStyle="#06b6d4"; ctx.lineWidth=2.5; ctx.stroke();
+    }
+    ctx.restore();
+  }
   drawRadarFindings();
   if(sel>=0){ drawHandles(boxes[sel]); if(editable && !(DS && !DS.writable)) drawDelBadge(boxes[sel]); }
   if(cursor && (mode===null||mode==='new')){
@@ -1647,6 +1667,15 @@ function hitBox(mx, my){
   }
   return -1;
 }
+// ---- manual polygon creation (no SAM needed): click vertices, close to commit ----
+function commitPolyDraft(){
+  if(polyDraft && polyDraft.length>=6){   // >=3 points
+    pushUndo(); polys.push({cls:active, pts:polyDraft.slice()});
+    selPoly=polys.length-1; sel=-1; selBoxes.clear(); markDirty();
+  }
+  polyDraft=null; draw();
+}
+function cancelPolyDraft(){ polyDraft=null; draw(); }
 
 // ---- mouse ----
 let mode=null, drag=null, spaceDown=false;
@@ -1661,6 +1690,12 @@ cv.addEventListener("pointerdown", e=>{
     const hp=hitPoly(mx,my);
     if(hp>=0){ selPoly=hp; sel=-1; active=polys[hp].cls; markPalette(); draw(); return; }
     sel=-1; selPoly=-1; draw(); return;
+  }
+  if(tool==="poly"){   // manual polygon: each click drops a vertex; click the first to close
+    if(!(DS.names||[]).length){ banner("Add a class before drawing — every annotation needs one."); openClassEdit(); return; }
+    if(polyDraft && polyDraft.length>=6 && Math.hypot(sx(polyDraft[0])-mx, sy(polyDraft[1])-my)<12){ commitPolyDraft(); return; }
+    if(!polyDraft) polyDraft=[];
+    polyDraft.push(ix(mx), iy(my)); draw(); return;
   }
   if(sel>=0 && boxes[sel]){   // click the red x badge on the selected box to delete it
     const bp=delBadgePos(boxes[sel]);
@@ -1794,6 +1829,7 @@ window.addEventListener("keydown", e=>{
   if((e.ctrlKey||e.metaKey) && (e.key==="a"||e.key==="A")){ e.preventDefault(); selectAllBoxes(); return; }
   if(e.key==="Enter"){
     e.preventDefault();
+    if(polyDraft){ commitPolyDraft(); return; }   // close the in-progress polygon
     if(ghosts.length){ const adv=e.shiftKey; acceptAllGhosts();
       if(adv){ save().then(()=> nextSuggested()); } return; }
     submitImage();   // Enter / Ctrl+Enter: save this image and advance to the next unlabeled one
@@ -1807,6 +1843,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="c"||e.key==="C"){ e.preventDefault(); carryForward(); return; }
   if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
   if(e.key==="b"||e.key==="B"){ setTool("box"); return; }
+  if(e.key==="p"||e.key==="P"){ setTool("poly"); return; }
   if((e.key==="s"||e.key==="S") && assist && assist.sam){ setTool("seg"); return; }
   if(e.key==="t"||e.key==="T"){ e.preventDefault(); tightenSelected(); return; }
   if(e.key==="l"||e.key==="L"){ loupeOn=!loupeOn; draw(); return; }
@@ -1815,6 +1852,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="n"||e.key==="N"){ e.preventDefault(); nextFlagged(); return; }
   if(e.key==="Delete"||e.key==="Backspace"){
     if(!editable || (DS && !DS.writable)) return;
+    if(polyDraft){ if(polyDraft.length>=2) polyDraft.splice(-2,2); draw(); return; }   // undo last vertex
     if(selBoxes.size){   // bulk delete: splice high indices first so the rest stay valid
       pushUndo(); [...selBoxes].sort((a,b)=>b-a).forEach(bi=>boxes.splice(bi,1));
       selBoxes.clear(); sel=-1; markDirty(); draw(); }
@@ -1824,6 +1862,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="f"||e.key==="F"){ fit(); draw(); return; }
   if(e.key==="?"){ toggleHelp(); return; }
   if(e.key==="Escape"){
+    if(polyDraft){ cancelPolyDraft(); return; }
     if($("#sharepop").classList.contains("show")){ $("#sharepop").classList.remove("show"); }
     else if($("#radar").classList.contains("show")){ closeRadar(); }
     else if($("#mapmodal").classList.contains("show")){ closeMap(); }
