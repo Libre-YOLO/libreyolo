@@ -465,12 +465,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
           <tr><td><kbd>click</kbd> / drag handle</td><td>select &middot; move &middot; resize</td></tr>
           <tr><td><kbd>1</kbd>..<kbd>9</kbd> <kbd>0</kbd> / <kbd>/</kbd></td><td>set class &middot; open class search</td></tr>
           <tr><td><kbd>R</kbd></td><td>AI auto-label this image</td></tr>
-          <tr><td><kbd>S</kbd> / <kbd>B</kbd></td><td>smart-segment (SAM click-to-mask) / box tool</td></tr>
-          <tr><td><kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>accept all AI suggestions / accept &amp; next</td></tr>
+          <tr><td><kbd>B</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>box &middot; polygon &middot; smart-segment (SAM, if available)</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Submit &amp; go to the next unlabeled image (accepts AI suggestions if any are shown)</td></tr>
           <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd> &middot; <kbd>C</kbd></td><td>prev / next image &middot; next unlabeled &middot; copy previous labels</td></tr>
-          <tr><td><kbd>Del</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected &middot; undo / redo &middot; duplicate box</td></tr>
+          <tr><td><kbd>Del</kbd> / the red <b>×</b> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected (or click the × on the box) &middot; undo / redo &middot; duplicate box</td></tr>
           <tr><td><kbd>Shift</kbd>+click &middot; <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>add / remove box from selection &middot; select all — then a number reclassifies, or <kbd>Del</kbd> deletes them together</td></tr>
-          <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
+          <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> / <kbd>+</kbd> <kbd>−</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
           <tr><td><kbd>T</kbd> &middot; <kbd>L</kbd></td><td>tighten box to edges &middot; loupe magnifier</td></tr>
           <tr><td><kbd>Y</kbd> &middot; <kbd>N</kbd> &middot; <kbd>M</kbd></td><td>Label-Error Radar &middot; next flagged &middot; embedding map</td></tr>
           <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> &middot; <kbd>Esc</kbd></td><td>save &middot; cancel / clear / close</td></tr>
@@ -1873,6 +1873,8 @@ window.addEventListener("keydown", e=>{
     else if(selPoly>=0){ pushUndo(); polys.splice(selPoly,1); selPoly=-1; markDirty(); draw(); }
     else if(sel>=0){ pushUndo(); boxes.splice(sel,1); sel=-1; markDirty(); draw(); }
     return; }
+  if(e.key==="+"||e.key==="="){ e.preventDefault(); zoomBy(1.25); return; }
+  if(e.key==="-"||e.key==="_"){ e.preventDefault(); zoomBy(1/1.25); return; }
   if(e.key==="f"||e.key==="F"){ fit(); draw(); return; }
   if(e.key==="?"){ toggleHelp(); return; }
   if(e.key==="Escape"){
