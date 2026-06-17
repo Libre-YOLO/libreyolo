@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -382,7 +383,7 @@ class _Handler(BaseHTTPRequestHandler):
             # state (session, files, the shared pending/findings/embed maps, a host
             # CPU training job) for every teammate -- gate them to the loopback host.
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/inspect",
-                        "/api/projects/forget", "/api/pick-folder", "/api/classes", "/api/insights/fix",
+                        "/api/projects/forget", "/api/pick-folder", "/api/example", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
                 self._send(403, {"error": "This action (create / switch project, edit classes, "
@@ -392,7 +393,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/create",
-                    "/api/projects/inspect", "/api/projects/forget", "/api/pick-folder"):
+                    "/api/projects/inspect", "/api/projects/forget", "/api/pick-folder", "/api/example"):
                 self._send(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
@@ -482,6 +483,25 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, {"folder": None, "unavailable": True})
                 else:
                     self._send(200, {"folder": folder or None})
+            elif path == "/api/example":
+                # Open the bundled example project (128 CC0 demo images), fetching it
+                # from Hugging Face on first use. Host-admin only (it writes to a local
+                # cache + opens a project); allowed before any project is open.
+                self._read_json()
+                try:
+                    folder = _example_dir()
+                    existing = folder_yaml(folder)
+                    target = existing or scaffold_data_yaml(
+                        folder, ["person", "dog", "cat", "car", "bicycle"])
+                    meta = self.state.open_project(target)
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    meta["created"] = existing is None
+                    self._send(200, meta)
+                except Exception as exc:  # noqa: BLE001 - no network / hf missing / bad cache
+                    logger.exception("open example failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:160]
+                                     or "Could not open the example project."})
             elif path == "/api/projects/forget":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None
@@ -751,6 +771,41 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             logger.exception("embeddings failed")
             emit({"type": "error", "error": str(exc)})
+
+
+def _example_dir() -> str:
+    """Return a writable local folder of the LibreLabel example images, fetching it
+    on first use. Resolution order: an existing local cache (so labels drawn in the
+    example persist) -> a folder named by LIBRELABEL_EXAMPLE_DIR (dev / pre-upload)
+    -> a Hugging Face dataset download. Raises if none can be obtained."""
+    import shutil
+
+    name = "tutorial-128"
+    cache = Path.home() / ".librelabel" / "examples" / name
+    if cache.is_dir() and any(cache.glob("*.jpg")):
+        return str(cache)                       # already fetched -> reuse (keeps any labels)
+    cache.mkdir(parents=True, exist_ok=True)
+
+    src = os.environ.get("LIBRELABEL_EXAMPLE_DIR")
+    if src and Path(src).is_dir():
+        for f in Path(src).iterdir():
+            if f.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                shutil.copy2(f, cache / f.name)
+        if any(cache.glob("*.jpg")) or any(cache.glob("*.png")):
+            return str(cache)
+
+    repo = os.environ.get("LIBRELABEL_EXAMPLE_REPO", "LibreYOLO/librelabel-tutorial-128")
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError("huggingface_hub is required to download the example "
+                           "dataset; install it or set LIBRELABEL_EXAMPLE_DIR.") from exc
+    logger.info("Downloading example dataset %s -> %s ...", repo, cache)
+    snapshot_download(repo, repo_type="dataset", local_dir=str(cache),
+                      allow_patterns=["*.jpg", "*.jpeg", "*.png"])
+    if not (any(cache.glob("*.jpg")) or any(cache.glob("*.png"))):
+        raise FileNotFoundError(f"Example dataset {repo} has no images.")
+    return str(cache)
 
 
 def _native_pick_folder() -> str:

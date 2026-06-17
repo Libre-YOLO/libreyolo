@@ -91,10 +91,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.14)}100%{transform:scale(1)}}
   .save.flash{animation:pop .42s ease-out}
   /* main */
-  main{display:grid;grid-template-columns:300px 1fr;min-height:0}
-  main.has-regions{grid-template-columns:300px 1fr 234px}
-  .regions{display:none;flex-direction:column;min-height:0;background:var(--bg2);border-left:1px solid var(--line)}
-  main.has-regions .regions{display:flex}
+  main{display:grid;grid-template-columns:300px 1fr 234px;min-height:0}   /* regions column always reserved: adding/removing a label never reflows or deforms the canvas */
+  .regions{display:flex;flex-direction:column;min-height:0;background:var(--bg2);border-left:1px solid var(--line)}
   .rp-head{padding:13px 13px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--tx2);display:flex;gap:7px;align-items:center}
   .rp-head b{color:var(--tx);font-variant-numeric:tabular-nums}
   .rp-list{flex:1;overflow-y:auto;padding:8px}
@@ -290,6 +288,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .home-open input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:14px}
   .home-open .btn{height:38px;padding:0 18px}
   .home-err{max-width:660px;margin:9px auto 0;color:var(--danger);font-size:12.5px;text-align:center;min-height:16px}
+  .home-alt{text-align:center;margin-top:12px}
   .home-sec{max-width:840px;margin:32px auto 12px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
   .home-grid{max-width:840px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:12px}
   .prj{position:relative;text-align:left;background:var(--s1);border:1px solid var(--line2);border-radius:13px;padding:15px 15px 14px;transition:.14s;width:100%;box-shadow:var(--shs)}
@@ -523,6 +522,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <button class="btn btn-primary" id="homeopen">Open</button>
       </div>
       <div class="home-hint" id="homehint">A folder of images is all you need — LibreLabel writes the dataset config for you.</div>
+      <div class="home-alt"><button class="btn btn-ghost" id="homeexample"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>Open the example project · 128 demo images</button></div>
       <div class="home-err" id="homeerr"></div>
       <div class="home-create" id="homecreate" style="display:none">
         <div class="hc-head">New project · <b id="hccount">0</b> images in <code id="hcfolder"></code></div>
@@ -838,7 +838,6 @@ function renderRegions(){
     +"|s"+sel+"|"+[...selBoxes].sort((a,b)=>a-b).join(",")+"|p"+selPoly
     +"|e"+(editable?1:0)+"|w"+((DS&&DS.writable)?1:0);
   if(sig===regionsSig) return; regionsSig=sig;
-  mn.classList.toggle("has-regions", n>0);
   const cnt=$("#rpcount"); if(cnt) cnt.textContent=n;
   if(!n){ list.innerHTML=`<div class="rp-empty">No labels yet — draw a box.</div>`; return; }
   const canEdit = editable && !(DS && !DS.writable);
@@ -2192,6 +2191,7 @@ function wireHome(){
     document.querySelectorAll("#tasksel .taskopt").forEach(x=>x.classList.remove("on"));
     b.classList.add("on");
   });
+  { const he=$("#homeexample"); if(he) he.onclick = openExample; }
   $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen($("#homepath").value.trim()); } });
   $("#homepath").addEventListener("input", ()=>{ homeError(""); hideCreate(); });
   $("#hometheme").onclick = toggleTheme;
@@ -2242,6 +2242,19 @@ function showCreate(folder, n){
   $("#hcclasses").focus();
 }
 function hideCreate(){ const c=$("#homecreate"); if(c) c.style.display="none"; pendingFolder=null; }
+async function openExample(){
+  homeError(""); hideCreate();
+  const btn=$("#homeexample"), t=btn?btn.textContent:"";
+  if(btn){ btn.disabled=true; btn.textContent="Fetching example…"; }
+  try{
+    const r=await fetch("/api/example",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json();
+    if(!r.ok || !d.open){ homeError(d.error||"Could not open the example project."); return; }
+    resetClientState(); await enterLabeler(d);
+    const hp=$("#homepath"); if(hp) hp.value="";
+  }catch(e){ homeError("Could not open the example project."); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=t; } }
+}
 async function doCreate(){
   const folder = pendingFolder; if(!folder) return;
   const seen=new Set(), classes=[];
