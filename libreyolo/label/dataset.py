@@ -258,6 +258,7 @@ class DatasetSession:
             "writable": self.writable,
             "reason": self.reason,
             "task": self._task or "detect",
+            "has_val": any(s in ("val", "test") for _, _, s in self._items),
         }
 
     def _status(self, lp: Path) -> str:

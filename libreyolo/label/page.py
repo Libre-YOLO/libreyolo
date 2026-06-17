@@ -1001,7 +1001,7 @@ async function renderStats(){
       tc.innerHTML = `<span class="t-l">${ICO_CHECK}<span>${s.labeled} images ready</span></span>`+
         `<button class="t-cmd" id="traincmd">${ICO_COPY}<code>libreyolo train</code></button>`;
       const b=$("#traincmd");
-      if(b) b.onclick=()=>{ try{ navigator.clipboard.writeText('libreyolo train data='+DS.yaml); }catch(e){}
+      if(b) b.onclick=()=>{ try{ navigator.clipboard.writeText(trainCmd()); }catch(e){}
         b.classList.add('copied'); setTimeout(()=>b.classList.remove('copied'),1200); };
     } else tc.style.display="none";
   }
@@ -1058,8 +1058,14 @@ function renderInsights(d, q){
     + `<div class="isec"><div class="ititle">Label geometry</div>${qualitySection(q)}</div>`;
   document.querySelectorAll("#insbody .ifix[data-ids]").forEach(b=> b.onclick=()=>fixDuplicate(JSON.parse(b.dataset.ids), b));
   document.querySelectorAll("#insbody .qrow[data-id]").forEach(b=> b.onclick=()=>{ closeInsights(); load(+b.dataset.id); });
-  const rc=$("#rdycmd"); if(rc) rc.onclick=()=>{ try{ navigator.clipboard.writeText('libreyolo train data='+(DS&&DS.yaml||'')); }catch(e){}
+  const rc=$("#rdycmd"); if(rc) rc.onclick=()=>{ try{ navigator.clipboard.writeText(trainCmd()); }catch(e){}
     rc.classList.add('copied'); setTimeout(()=>rc.classList.remove('copied'),1200); };
+}
+function trainCmd(){
+  // A scaffolded folder has only `train: .` (no val split); the detection validator
+  // errors on a missing val set, so suggest val=False there -> the command runs.
+  return 'libreyolo train data='+((DS&&DS.yaml)||'')
+    + ((DS && DS.has_val===false) ? ' val=False' : '');
 }
 function readinessSection(st, d, q){
   if(!st) return "";
@@ -1072,10 +1078,11 @@ function readinessSection(st, d, q){
   checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits — Fix below`} : {s:"ok", t:"No train/val leakage"});
   checks.push(geo ? {s:"warn", t:`${geo} geometry issue${geo>1?"s":""} (tiny / sliver / full-frame) — see Label geometry`} : {s:"ok", t:"Box geometry is learnable"});
   if(cls.length>=2) checks.push(imbalance ? {s:"warn", t:"Class balance is skewed — add examples of the rare classes"} : {s:"ok", t:"Classes are reasonably balanced"});
+  if(DS && DS.has_val===false) checks.push({s:"warn", t:"No val split — the command uses val=False; add a val: split for held-out metrics."});
   const go = labeled>0 && !leak;
   const ico = s=> s==="ok"?ICO_CHECK : s==="bad"?ICO_X : ICO_WARN;
   const rows = checks.map(c=>`<div class="rdy-row ${c.s}">${ico(c.s)}<span>${esc(c.t)}</span></div>`).join("");
-  const cmd = (DS&&DS.yaml) ? `<button class="t-cmd" id="rdycmd">${ICO_COPY}<code>libreyolo train data=${esc(DS.yaml)}</code></button>` : "";
+  const cmd = (DS&&DS.yaml) ? `<button class="t-cmd" id="rdycmd">${ICO_COPY}<code>${esc(trainCmd())}</code></button>` : "";
   return `<div class="rdy ${go?"go":""}"><div class="rdy-h">${go?ICO_CHECK:ICO_WARN}${go?"Ready to train":"Almost ready to train"}</div>${rows}${cmd}</div>`;
 }
 function qualitySection(q){
