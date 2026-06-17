@@ -912,7 +912,7 @@ async function saveClassEdit(){
   if(names.length < (DS.nc||0)){ err.textContent="You can't remove existing classes here."; return; }
   const btn=$("#cesave"), t=btn.textContent; btn.disabled=true; btn.textContent="Saving…";
   try{
-    const r=await fetch("/api/classes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({names})});
+    const r=await fetch("/api/classes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({names, epoch:(DS&&DS.epoch)||0})});
     const d=await r.json();
     if(!r.ok){ err.textContent=d.error||"Could not save classes."; return; }
     DS.names=d.names; DS.nc=d.nc;
@@ -1353,8 +1353,9 @@ function updateEngineUI(){
   else { $("#banner").style.display="none"; }
 }
 function laQuery(){
-  if(assistModel==="__locate__") return "engine=locate&classes="+encodeURIComponent(($("#laprompt").value||"").trim());
-  return "model="+encodeURIComponent(assistModel)+"&conf="+conf;
+  const ep = "&epoch="+((DS&&DS.epoch)||0);   // let the server reject a stale tab's run after a project switch
+  if(assistModel==="__locate__") return "engine=locate&classes="+encodeURIComponent(($("#laprompt").value||"").trim())+ep;
+  return "model="+encodeURIComponent(assistModel)+"&conf="+conf+ep;
 }
 function restoreSave(){ setSave(dirty?"unsaved":(editable?"saved":"read-only")); }
 function ghostsFromNorm(list){

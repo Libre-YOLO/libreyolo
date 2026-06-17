@@ -466,8 +466,12 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/classes":
                 payload = self._read_json()
                 names = payload.get("names") if isinstance(payload, dict) else None
+                ep = payload.get("epoch") if isinstance(payload, dict) else None
                 if not isinstance(names, list):
                     self._send(400, {"error": "names list required"})
+                    return
+                if ep is not None and int(ep) != self.state.epoch:
+                    self._send(409, {"error": "project changed — reopen it before editing classes"})
                     return
                 meta = self.state.set_class_names(names)
                 meta["open"] = True
@@ -693,6 +697,12 @@ class _Handler(BaseHTTPRequestHandler):
         model, conf = self._model_conf(qs)
         engine = (qs.get("engine") or ["yolo"])[0]
         classes = [c for c in (qs.get("classes") or [""])[0].split(",") if c.strip()]
+        ep = (qs.get("epoch") or [None])[0]
+        if ep is not None and int(ep) != self.state.epoch:
+            # a stale tab (project switched in another tab) must not populate the
+            # current project's pending suggestions with the old dataset's run
+            self._send(409, {"error": "project changed — reload before auto-labeling"})
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
