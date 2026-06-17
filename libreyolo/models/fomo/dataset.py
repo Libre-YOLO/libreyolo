@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import random
 from typing import Tuple
 
+import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
 
 from .utils import MEAN, STD
+from ...training.augment import augment_hsv, mirror, xyxy2cxcywh
+from ...data.utils import polygon_to_cxcywh
 
 
 def _transform_image(pil_image: Image.Image, input_size: int) -> torch.Tensor:
@@ -71,7 +75,11 @@ class FOMOYOLODataset(Dataset):
             if len(parts) < 5:
                 continue
             cls = int(parts[0])
-            cx, cy, w, h = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+            if len(parts) > 5:
+                coords = [float(p) for p in parts[1:]]
+                cx, cy, w, h = polygon_to_cxcywh(coords)
+            else:
+                cx, cy, w, h = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
             x1 = (cx - w / 2) * self.input_size
             y1 = (cy - h / 2) * self.input_size
             x2 = (cx + w / 2) * self.input_size
@@ -85,11 +93,10 @@ class FOMOYOLODataset(Dataset):
     def __getitem__(self, idx: int):
         img_path = self.img_files[idx]
         try:
-            pil_img = Image.open(img_path)
+            with Image.open(img_path) as pil_img:
+                img_tensor = _transform_image(pil_img, self.input_size)
         except (FileNotFoundError, OSError) as e:
             raise FileNotFoundError(f"Cannot read image: {img_path}") from e
-
-        img_tensor = _transform_image(pil_img, self.input_size)
 
         label_path = self.label_files[idx] if idx < len(self.label_files) else ""
         boxes_xyxy, classes = self._load_labels(label_path)
@@ -154,3 +161,91 @@ class FOMOAugmentedDataset(Dataset):
     def close_mosaic(self) -> None:
         if hasattr(self.dataset, "close_mosaic"):
             self.dataset.close_mosaic()
+
+
+class FOMOTrainTransform:
+    """Transform for FOMO training data using direct stretch-resizing."""
+
+    def __init__(self, max_labels: int = 50, flip_prob: float = 0.5, hsv_prob: float = 1.0) -> None:
+        self.max_labels = max_labels
+        self.flip_prob = flip_prob
+        self.hsv_prob = hsv_prob
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, image: np.ndarray, targets: np.ndarray, input_dim: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        boxes = targets[:, :4].copy()
+        labels = targets[:, 4].copy()
+
+        if len(boxes) == 0:
+            targets_t = np.zeros((self.max_labels, 5), dtype=np.float32)
+            image_resized = cv2.resize(
+                image,
+                (input_dim[1], input_dim[0]),
+                interpolation=cv2.INTER_LINEAR,
+            )
+            image_chw = image_resized.transpose((2, 0, 1))
+            image_chw = np.ascontiguousarray(image_chw, dtype=np.float32)
+            return image_chw, targets_t
+
+        image_o = image.copy()
+        targets_o = targets.copy()
+        height_o, width_o, _ = image_o.shape
+        boxes_o = targets_o[:, :4].copy()
+        labels_o = targets_o[:, 4].copy()
+
+        if random.random() < self.hsv_prob:
+            augment_hsv(image)
+        image_t, boxes = mirror(image, boxes, self.flip_prob)
+        height, width, _ = image_t.shape
+
+        image_resized = cv2.resize(
+            image_t,
+            (input_dim[1], input_dim[0]),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        image_chw = image_resized.transpose((2, 0, 1))
+        image_chw = np.ascontiguousarray(image_chw, dtype=np.float32)
+
+        scale_x = input_dim[1] / width
+        scale_y = input_dim[0] / height
+
+        boxes = xyxy2cxcywh(boxes)
+        boxes[:, 0::2] *= scale_x
+        boxes[:, 1::2] *= scale_y
+
+        mask_b = np.minimum(boxes[:, 2], boxes[:, 3]) > 1
+        boxes_t = boxes[mask_b]
+        labels_t = labels[mask_b]
+
+        if len(boxes_t) == 0:
+            image_resized = cv2.resize(
+                image_o,
+                (input_dim[1], input_dim[0]),
+                interpolation=cv2.INTER_LINEAR,
+            )
+            image_chw = image_resized.transpose((2, 0, 1))
+            image_chw = np.ascontiguousarray(image_chw, dtype=np.float32)
+
+            scale_x_o = input_dim[1] / width_o
+            scale_y_o = input_dim[0] / height_o
+            boxes_o = xyxy2cxcywh(boxes_o)
+            boxes_o[:, 0::2] *= scale_x_o
+            boxes_o[:, 1::2] *= scale_y_o
+            boxes_t = boxes_o
+            labels_t = labels_o
+
+        labels_t = np.expand_dims(labels_t, 1)
+
+        targets_t = np.hstack((labels_t, boxes_t))
+        padded_labels = np.zeros((self.max_labels, 5))
+        padded_labels[range(len(targets_t))[: self.max_labels]] = targets_t[
+            : self.max_labels
+        ]
+        padded_labels = np.ascontiguousarray(padded_labels, dtype=np.float32)
+        return image_chw, padded_labels
+

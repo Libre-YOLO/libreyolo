@@ -346,9 +346,9 @@ class FOMOTrainer(BaseTrainer):
         )
 
         if any_aug:
-            from .dataset import FOMOAugmentedDataset
+            from .dataset import FOMOAugmentedDataset, FOMOTrainTransform
             from ...data.dataset import YOLODataset
-            from ...training.augment import TrainTransform, MosaicMixupDataset
+            from ...training.augment import MosaicMixupDataset
 
             if is_main_process():
                 logger.info("FOMO Training: Data augmentation enabled.")
@@ -364,7 +364,7 @@ class FOMOTrainer(BaseTrainer):
                 preproc=None,
             )
 
-            preproc = TrainTransform(
+            preproc = FOMOTrainTransform(
                 max_labels=50,
                 flip_prob=self.config.flip_prob,
                 hsv_prob=self.config.hsv_prob,

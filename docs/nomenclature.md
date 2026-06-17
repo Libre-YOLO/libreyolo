@@ -39,6 +39,7 @@ separate category, covered in the note below):
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
+| `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
 
 Casing rules observed in the table:
 
@@ -88,6 +89,7 @@ ships:
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
+| `fomo`      | `s`, `m`, `l` |
 
 Notes:
 
@@ -153,11 +155,11 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
+| `fomo`      | `("point",)`                        | point  | point-only localizer model |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
-No in-tree model family ships `point` weights yet; point-localization families
-must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
+LibreFOMO supports and ships `point` weights natively, using `SUPPORTED_TASKS = ("point",)`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
 
 ## Examples by family + task
 
@@ -219,6 +221,12 @@ LibreECs-seg.pt         # segment
 
 ```text
 LibreL2CSr50.pt           # L2CS gaze estimation (ResNet-50, Gaze360 weights)
+```
+
+### Point (object-localizer)
+
+```text
+LibreFOMOs-point.pt       # FOMO point-localizer (size s, point task)
 ```
 
 `gaze` is L2CS's only task, so — like `detect` for the detection families —

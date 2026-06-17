@@ -181,7 +181,13 @@ class LibreFOMO(BaseModel):
     # -------------------------------------------------------------------------
 
     @ddp_aware(experimental_key="allow_experimental")
-    def train(self, allow_experimental: bool = False, **kwargs: Any) -> Dict:
+    def train(
+        self,
+        data: str,
+        *,
+        allow_experimental: bool = False,
+        **kwargs: Any,
+    ) -> Dict:
         """Train LibreFOMO."""
         if not allow_experimental:
             raise NotImplementedError(
@@ -198,7 +204,34 @@ class LibreFOMO(BaseModel):
         if "num_classes" not in kwargs:
             kwargs["num_classes"] = self.nb_classes
 
-        trainer = FOMOTrainer(model=self.model, wrapper_model=self, **kwargs)
+        seed = kwargs.get("seed", 0)
+        device = kwargs.get("device", "")
+        if seed >= 0:
+            import random
+
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        trainer = FOMOTrainer(
+            model=self.model,
+            wrapper_model=self,
+            data=data,
+            **kwargs,
+        )
+        if kwargs.get("resume"):
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreFOMO('path/to/last.pt'); model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
+
         results = trainer.train()
 
         reload_path = None

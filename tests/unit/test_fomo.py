@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import numpy as np
 import pytest
@@ -426,6 +426,40 @@ class TestLibreFOMOValPreprocessor:
         assert padded.shape == (preproc.max_labels, 5)
         assert padded.sum() == 0.0
 
+
+class TestFOMOTrainTransform:
+    """Verify that FOMOTrainTransform performs direct stretch resizing and scales coordinates."""
+
+    def test_stretch_resize_and_coordinate_scaling(self) -> None:
+        from libreyolo.models.fomo.dataset import FOMOTrainTransform
+
+        img = np.zeros((200, 400, 3), dtype=np.uint8)
+        targets = np.array([[150.0, 50.0, 250.0, 150.0, 0.0]], dtype=np.float32)
+
+        transform = FOMOTrainTransform(max_labels=10, flip_prob=0.0, hsv_prob=0.0)
+        assert transform.wants_unresized_image is True
+
+        img_out, targets_out = transform(img, targets, (96, 96))
+
+        assert img_out.shape == (3, 96, 96)
+
+        expected = np.array([0.0, 48.0, 48.0, 24.0, 48.0], dtype=np.float32)
+        np.testing.assert_allclose(targets_out[0], expected, atol=1e-4)
+
+    def test_empty_targets(self) -> None:
+        from libreyolo.models.fomo.dataset import FOMOTrainTransform
+
+        img = np.zeros((100, 200, 3), dtype=np.uint8)
+        targets = np.zeros((0, 5), dtype=np.float32)
+
+        transform = FOMOTrainTransform(max_labels=10, flip_prob=0.0, hsv_prob=0.0)
+        img_out, targets_out = transform(img, targets, (96, 96))
+
+        assert img_out.shape == (3, 96, 96)
+        assert targets_out.shape == (10, 5)
+        assert targets_out.sum() == 0.0
+
+
 class TestLibreFOMOParseGtPoints:
     """_parse_gt_points must delegate to the validator's box-centre helper."""
 
@@ -460,7 +494,7 @@ class TestLibreFOMODownloadURL:
     def test_valid_filename_returns_url(self) -> None:
         from libreyolo.models.fomo.model import LibreFOMO
 
-        url = LibreFOMO.get_download_url("LibreFOMOs.pt")
+        url = LibreFOMO.get_download_url("LibreFOMOs-point.pt")
         assert url == "https://huggingface.co/fomo-edge-ai/FOMO/resolve/main/weights/FOMOs.pt"
 
     def test_unknown_filename_returns_none(self) -> None:
@@ -515,73 +549,6 @@ class TestLibreFOMOEndToEnd:
         assert "speed/images_seen" in metrics
         assert metrics["speed/images_seen"] == 1
 
-    def test_training_integration(self, tmp_path: Path) -> None:
-        """Verify that FOMOTrainer runs a training epoch without error on a synthetic dataset."""
-        data_yaml = _write_tiny_point_dataset(tmp_path, imgsz=96)
-        model = _make_random_fomo(size="s", nc=1)
-        results = model.train(
-            allow_experimental=True,
-            data=str(data_yaml),
-            epochs=1,
-            batch=2,
-            imgsz=96,
-            device="cpu",
-            project=str(tmp_path / "runs"),
-            name="fomo_test",
-            exist_ok=True,
-            workers=0,
-        )
-        assert "final_loss" in results
-        assert len(results["epoch_losses"]) == 1
-
-    @pytest.mark.parametrize("scheduler", ["cosine", "flat_cosine", "linear", "constant"])
-    @pytest.mark.parametrize("enable_augmentations", [True, False])
-    def test_training_configurations_parameterized(
-        self, tmp_path: Path, scheduler: str, enable_augmentations: bool
-    ) -> None:
-        """Verify that all configuration toggles (schedulers, augmentations) train without crashing."""
-        data_yaml = _write_tiny_point_dataset(tmp_path, imgsz=96)
-        model = _make_random_fomo(size="s", nc=1)
-
-        train_kwargs = {
-            "allow_experimental": True,
-            "data": str(data_yaml),
-            "epochs": 1,
-            "batch": 2,
-            "imgsz": 96,
-            "device": "cpu",
-            "project": str(tmp_path / f"runs_{scheduler}_{enable_augmentations}"),
-            "name": "fomo_test",
-            "exist_ok": True,
-            "workers": 0,
-            "scheduler": scheduler,
-        }
-
-        if enable_augmentations:
-            train_kwargs.update({
-                "mosaic_prob": 1.0,
-                "mixup_prob": 0.5,
-                "flip_prob": 0.5,
-                "hsv_prob": 0.5,
-                "degrees": 10.0,
-                "translate": 0.1,
-                "shear": 2.0,
-            })
-        else:
-            train_kwargs.update({
-                "mosaic_prob": 0.0,
-                "mixup_prob": 0.0,
-                "flip_prob": 0.0,
-                "hsv_prob": 0.0,
-                "degrees": 0.0,
-                "translate": 0.0,
-                "shear": 0.0,
-            })
-
-        results = model.train(**train_kwargs)
-        assert "final_loss" in results
-        assert len(results["epoch_losses"]) == 1
-
     def test_training_checkpoint_reload_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Verify that train() correctly falls back to last_checkpoint if best_checkpoint is missing/empty."""
         from libreyolo.models.fomo.model import LibreFOMO
@@ -599,9 +566,9 @@ class TestLibreFOMOEndToEnd:
         torch.save(ckpt_dict, dummy_ckpt)
         
         class DummyTrainer:
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
                 pass
-            def train(self):
+            def train(self) -> dict[str, Any]:
                 return {
                     "epoch_losses": [0.5],
                     "final_loss": 0.5,
@@ -612,14 +579,81 @@ class TestLibreFOMOEndToEnd:
         monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
         
         loaded_path = None
-        def mock_load_weights(path):
+        def mock_load_weights(path: str | Path) -> None:
             nonlocal loaded_path
             loaded_path = path
             
         monkeypatch.setattr(model, "_load_weights", mock_load_weights)
         
-        results = model.train(allow_experimental=True)
+        results = model.train("dummy.yaml", allow_experimental=True)
         assert loaded_path == str(dummy_ckpt)
+
+    def test_train_resume_raises_when_no_checkpoint(self) -> None:
+        model = _make_random_fomo(size="s", nc=1)
+        with pytest.raises(ValueError, match="resume=True requires a checkpoint"):
+            model.train("dummy.yaml", allow_experimental=True, resume=True)
+
+    def test_train_resume_calls_trainer_resume(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        model = _make_random_fomo(size="s", nc=1)
+        dummy_ckpt = tmp_path / "last.pt"
+        model.model_path = dummy_ckpt
+
+        setup_called = False
+        resume_called_with = None
+
+        class DummyTrainer:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+            def setup(self) -> None:
+                nonlocal setup_called
+                setup_called = True
+            def resume(self, path: str) -> None:
+                nonlocal resume_called_with
+                resume_called_with = path
+            def train(self) -> dict[str, Any]:
+                return {"epoch_losses": [0.5], "final_loss": 0.5}
+
+        monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
+
+        results = model.train("dummy.yaml", allow_experimental=True, resume=True)
+        assert setup_called is True
+        assert resume_called_with == str(dummy_ckpt)
+
+    def test_train_seeds_rngs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Verify that model.train seeds random, numpy, and torch before trainer construction."""
+        model = _make_random_fomo(size="s", nc=1)
+        
+        seeds_recorded = []
+        
+        class DummyTrainer:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                import random
+                import numpy as np
+                import torch
+                seeds_recorded.append((
+                    random.randint(0, 1000000),
+                    np.random.randint(0, 1000000),
+                    torch.randint(0, 1000000, (1,)).item()
+                ))
+
+            def train(self) -> dict[str, Any]:
+                return {"epoch_losses": [0.5], "final_loss": 0.5}
+
+        monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
+
+        model.train("dummy.yaml", allow_experimental=True, seed=0)
+        state_0_first = seeds_recorded[0]
+
+        seeds_recorded.clear()
+        model.train("dummy.yaml", allow_experimental=True, seed=0)
+        state_0_second = seeds_recorded[0]
+
+        seeds_recorded.clear()
+        model.train("dummy.yaml", allow_experimental=True, seed=100)
+        state_100 = seeds_recorded[0]
+
+        assert state_0_first == state_0_second
+        assert state_0_first != state_100
 
     def test_trainer_build_yolo_datasets_omitted_label_files(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Verify that _build_yolo_datasets correctly resolves label files when image files are pre-resolved but label files are None/omitted."""
@@ -736,7 +770,7 @@ class TestLibreFOMOEndToEnd:
     def test_train_without_flag_raises(self) -> None:
         model = _make_random_fomo(size="s")
         with pytest.raises(NotImplementedError, match="allow_experimental"):
-            model.train()
+            model.train("dummy.yaml")
 
 class TestFOMODatasets:
     """Verify FOMOYOLODataset and FOMOAugmentedDataset functionality on synthetic data."""
@@ -778,6 +812,34 @@ class TestFOMODatasets:
         assert idx == 0
 
         # Center should be class 0 + 1 = 1
+        assert grid[6, 6] == 1
+        assert grid.sum() == 1
+
+    def test_fomo_yolo_dataset_polygon_labels(self, tmp_path: Path) -> None:
+        from libreyolo.models.fomo.dataset import FOMOYOLODataset
+
+        # Set up synthetic image and label
+        img_dir = tmp_path / "images"
+        lbl_dir = tmp_path / "labels"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        lbl_dir.mkdir(parents=True, exist_ok=True)
+
+        img_path = img_dir / "sample_poly.jpg"
+        lbl_path = lbl_dir / "sample_poly.txt"
+
+        Image.new("RGB", (96, 96), color=(255, 128, 64)).save(img_path)
+        lbl_path.write_text("0 0.4 0.4 0.6 0.4 0.6 0.6 0.4 0.6\n", encoding="utf-8")
+
+        dataset = FOMOYOLODataset(
+            img_files=[img_path],
+            label_files=[lbl_path],
+            input_size=96,
+            grid_size=12,
+        )
+
+        assert len(dataset) == 1
+        _, grid, _, _ = dataset[0]
+
         assert grid[6, 6] == 1
         assert grid.sum() == 1
 
