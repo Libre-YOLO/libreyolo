@@ -136,6 +136,34 @@ RFDETR_SEG_CONFIGS: dict[str, RFDETRSizeConfig] = {
 }
 
 
+# Keypoint/pose size configs (adapted from RF-DETR v1.8.0). The released
+# ``rf-detr-keypoint-preview`` checkpoint is an xlarge-encoder GroupPose model
+# with its own patch grid (12) / windowing (2) / positional grid (48) and a
+# 100-query decoder — none of the detection or segmentation presets match it,
+# so pose selects from this dedicated table. Detection/seg/obb presets above
+# are left untouched.
+RFDETR_POSE_CONFIGS: dict[str, RFDETRSizeConfig] = {
+    "keypoint-preview": RFDETRSizeConfig(
+        encoder="dinov2_windowed_small",
+        hidden_dim=256,
+        patch_size=12,
+        num_windows=2,
+        dec_layers=4,
+        sa_nheads=8,
+        ca_nheads=16,
+        dec_n_points=2,
+        num_queries=100,
+        num_select=100,
+        projector_scale=("P4",),
+        out_feature_indexes=(3, 6, 9, 12),
+        resolution=576,
+        positional_encoding_size=48,
+        pretrain_weights="rf-detr-keypoint-preview-xlarge.pth",
+        segmentation_head=False,
+    ),
+}
+
+
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 
@@ -865,14 +893,16 @@ class LibreRFDETRModel(nn.Module):
             return
 
         configs = RFDETR_SEG_CONFIGS if segmentation else RFDETR_CONFIGS
-        if pose or obb:
+        if obb:
             configs = RFDETR_CONFIGS
+        if pose:
+            # Pose selects from the dedicated GroupPose table (adapted from
+            # RF-DETR v1.8.0); its presets differ from every detection size.
+            configs = RFDETR_POSE_CONFIGS
         if config not in configs:
             raise ValueError(f"Invalid RF-DETR size: {config}. Must be one of {sorted(configs)}")
 
         self.config_name = config
-        self.config = configs[config]
-        self.nb_classes = nb_classes
         self.segmentation = segmentation
         self.pose = pose
         self.obb = obb
@@ -882,13 +912,23 @@ class LibreRFDETRModel(nn.Module):
         # The released rf-detr-keypoint-preview checkpoint uses the GroupPose head
         # with a 2-class schema [0, num_keypoints] (class 0 has no keypoints, the
         # "person" class has ``num_keypoints``), dual_projector + kp-only routing,
-        # and a detection head with num_classes == len(schema) (so pred_logits is
-        # (B, Q, 2)). Detection/seg/obb builds leave all keypoint flags off.
+        # and a detection head whose ``out_features == len(schema)`` (so
+        # pred_logits is (B, Q, 2)). Detection/seg/obb builds leave all keypoint
+        # flags off.
         self.num_keypoints_per_class = (
             list(num_keypoints_per_class)
             if num_keypoints_per_class
             else ([0, int(num_keypoints)] if pose else [])
         )
+        # The GroupPose detection head must keep one logit column per keypoint
+        # class (``class_embed.out_features == len(schema)``); ``_make_args``
+        # builds ``out_features == nb_classes`` for pose, so widen ``nb_classes``
+        # to the schema length when callers derive a narrower count from the
+        # checkpoint's contiguous-class interface (e.g. nc=1 for person-only).
+        if pose and self.num_keypoints_per_class:
+            nb_classes = max(int(nb_classes), len(self.num_keypoints_per_class))
+        self.config = configs[config]
+        self.nb_classes = nb_classes
         kp_kwargs = {}
         if pose:
             kp_kwargs = dict(
@@ -1051,6 +1091,7 @@ __all__ = [
     "RFDETRExportWrapper",
     "RFDETR_CONFIGS",
     "RFDETR_SEG_CONFIGS",
+    "RFDETR_POSE_CONFIGS",
     "RFDETRSizeConfig",
     "LWDETR",
     "MLP",

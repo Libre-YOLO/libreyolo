@@ -516,7 +516,11 @@ def LibreYOLO(
     if checkpoint_task is None and matched_cls.FAMILY == "rfdetr":
         if any(k.startswith("segmentation_head") for k in weights_dict):
             checkpoint_task = "segment"
-        elif any(k.startswith("keypoint_head") for k in weights_dict):
+        elif any(k.startswith("keypoint_head") for k in weights_dict) or any(
+            "keypoint" in k for k in weights_dict if k.startswith("transformer.")
+        ):
+            # Legacy clean-room keypoint_head.* weights or the GroupPose
+            # transformer keypoint markers ported from RF-DETR v1.8.0.
             checkpoint_task = "pose"
     if checkpoint_task is None and matched_cls.FAMILY == "yolonas":
         if "heads.head1.pose_pred.weight" in weights_dict:
