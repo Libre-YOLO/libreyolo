@@ -20,7 +20,7 @@ Usage::
 
     python weights/convert_rfdetr_keypoint_weights.py \
         downloads/rf-detr-keypoint-preview-xlarge.pth \
-        downloads/librerfdetr-keypoint-preview.pt
+        downloads/LibreRFDETRx-pose.pt
 
 Add ``--verify`` to load the converted weights through the normal LibreYOLO
 API and run a smoke inference, confirming round-trip integrity.
@@ -58,7 +58,7 @@ def convert_weights(
     input_path: str,
     output_path: str,
     *,
-    size: str = "keypoint-preview",
+    size: str = "x",
     num_keypoints: int = 17,
 ) -> dict:
     print(f"Loading upstream RF-DETR keypoint weights from {input_path}")
@@ -132,8 +132,8 @@ if __name__ == "__main__":
     parser.add_argument("output", help="Output LibreYOLO checkpoint (.pt)")
     parser.add_argument(
         "--size",
-        default="keypoint-preview",
-        help="RF-DETR pose size config key (default: keypoint-preview)",
+        default="x",
+        help="RF-DETR pose size config key (default: x)",
     )
     parser.add_argument(
         "--num-keypoints",

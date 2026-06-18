@@ -143,7 +143,7 @@ RFDETR_SEG_CONFIGS: dict[str, RFDETRSizeConfig] = {
 # so pose selects from this dedicated table. Detection/seg/obb presets above
 # are left untouched.
 RFDETR_POSE_CONFIGS: dict[str, RFDETRSizeConfig] = {
-    "keypoint-preview": RFDETRSizeConfig(
+    "x": RFDETRSizeConfig(
         encoder="dinov2_windowed_small",
         hidden_dim=256,
         patch_size=12,

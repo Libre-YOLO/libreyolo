@@ -178,7 +178,7 @@ class LibreRFDETR(BaseModel):
     SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
     # Pose uses the dedicated GroupPose preset (adapted from RF-DETR v1.8.0);
     # the keypoint preview runs the encoder at a 576 square.
-    POSE_INPUT_SIZES = {"keypoint-preview": 576}
+    POSE_INPUT_SIZES = {"x": 576}
     # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
     CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
     # Semantic runs the DINOv2 backbone at its native pretrained 518 square
@@ -389,7 +389,7 @@ class LibreRFDETR(BaseModel):
         ):
             # Pose has a single GroupPose preset (adapted from RF-DETR v1.8.0);
             # detection/seg/etc. fall back to the small default.
-            size = "keypoint-preview" if normalize_task(resolved_task) == "pose" else "s"
+            size = "x" if normalize_task(resolved_task) == "pose" else "s"
 
         if isinstance(model_path, dict) and not model_path:
             weight_source = None
