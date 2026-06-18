@@ -435,6 +435,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="toolbar glass">
         <button class="tool on" id="toolBox" title="Box / select (B)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
         <button class="tool" id="toolPoly" title="Polygon (P)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 6-3 9H7L4 9z"/></svg></button>
+        <button class="tool" id="toolObb" title="Oriented box (O)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="1.5" transform="rotate(20 12 12)"/></svg></button>
         <button class="tool" id="toolSeg" title="Smart segment — SAM click-to-mask (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><path d="M12 20a8 8 0 0 1-8-8" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg></button>
         <div class="tdiv"></div>
         <button class="tool ai" id="toolAi" title="AI auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
@@ -537,7 +538,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <div class="tasksel" id="tasksel">
           <button class="taskopt on" data-task="detect">Detection</button>
           <button class="taskopt" data-task="segment">Segmentation</button>
-          <button class="taskopt" data-task="obb" disabled>Oriented boxes <span class="soon">soon</span></button>
+          <button class="taskopt" data-task="obb">Oriented boxes</button>
           <button class="taskopt" data-task="classify" disabled>Classification <span class="soon">soon</span></button>
         </div>
         <label class="hc-lbl">Class names <span class="hc-hint">— one per line. Leave it empty and add them while you label.</span></label>
@@ -579,6 +580,7 @@ let tool = "box";            // "box" (draw/select) or "seg" (SAM click/box-to-m
 let segBusy = false;
 let segRect = null;          // box being dragged in segment mode (image px)
 let polyDraft = null;        // in-progress manual polygon: flat [x1,y1,x2,y2,...] image px
+let obbRect = null;          // in-progress oriented-box drag (image px)
 let curRev = null;           // the loaded label file's revision (mtime), for stale-save conflict detection
 let suggestedIds = new Set();
 let listFilter = "all";
@@ -679,7 +681,11 @@ async function enterLabeler(d){
   $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
   const cb=$("#classesbtn"); if(cb) cb.style.display = (DS.writable!==false) ? "" : "none";
   renderPalette();
-  setTool(DS.task==="segment" ? "poly" : "box");   // segment projects open with the polygon tool
+  const isObb = DS.task==="obb";   // OBB projects: only the oriented-box tool makes valid rows
+  { const tO=$("#toolObb"); if(tO) tO.style.display=isObb?"":"none";
+    const tb=$("#toolBox"); if(tb) tb.style.display=isObb?"none":"";
+    const tp=$("#toolPoly"); if(tp) tp.style.display=isObb?"none":""; }
+  setTool(isObb ? "obb" : (DS.task==="segment" ? "poly" : "box"));
   const imgs = (await jget("/api/images")).images;
   if(gen!==loadSeq) return;            // another project opened while we were fetching
   IMAGES = imgs;
@@ -722,6 +728,7 @@ function wireChrome(){
   $("#toolBox").onclick = ()=> setTool("box");
   $("#toolSeg").onclick = ()=> setTool("seg");
   $("#toolPoly").onclick = ()=> setTool("poly");
+  $("#toolObb").onclick = ()=> setTool("obb");
   $("#toolAi").onclick = ()=> prelabelCurrent();
   $("#toolFit").onclick = ()=>{ fit(); draw(); };
   $("#toolZin").onclick = ()=> zoomBy(1.25);
@@ -736,12 +743,14 @@ function setTool(t){
   if(t==="seg" && !(assist && assist.sam)) return;
   if(tool==="poly" && t!=="poly" && polyDraft) cancelPolyDraft();
   tool = t;
-  const tb=$("#toolBox"), ts=$("#toolSeg"), tp=$("#toolPoly");
+  const tb=$("#toolBox"), ts=$("#toolSeg"), tp=$("#toolPoly"), tO=$("#toolObb");
   if(tb) tb.classList.toggle("on", t==="box");
   if(ts) ts.classList.toggle("on", t==="seg");
   if(tp) tp.classList.toggle("on", t==="poly");
+  if(tO) tO.classList.toggle("on", t==="obb");
   if(t==="seg") banner("Smart segment: click an object — or drag a box around it — and SAM outlines it. B for box tool.");
   else if(t==="poly") banner("Polygon: click to add points; click the first point or press Enter to close. Esc cancels, Backspace removes the last point.");
+  else if(t==="obb") banner("Oriented box: drag to draw, then drag the round handle above it to rotate (hold Shift to snap to 15°).");
   else $("#banner").style.display="none";
 }
 function toggleHelp(){ const h=$("#help"); h.style.display = h.style.display==="flex"?"none":"flex"; }
@@ -869,7 +878,7 @@ function renderRegions(){
     const row=document.createElement("div");
     row.className="rprow"+((i===selPoly)?" on":"");
     row.innerHTML=`<span class="sw" style="background:${color(p.cls)}"></span>`+
-      `<span class="rpn">${esc(String(nm))} · polygon</span><span class="rpi">#${i+1}</span>`+
+      `<span class="rpn">${esc(String(nm))} · ${(DS&&DS.task==="obb")?"obb":"polygon"}</span><span class="rpi">#${i+1}</span>`+
       (canEdit?`<span class="rpx" title="Delete">&times;</span>`:"");
     row.onclick=(e)=>{ if(e.target.classList.contains("rpx")) return;
       selPoly=i; sel=-1; selBoxes.clear(); setActive(p.cls); draw(); };
@@ -1637,6 +1646,13 @@ function draw(){
   }
   drawRadarFindings();
   if(sel>=0){ drawHandles(boxes[sel]); if(editable && !(DS && !DS.writable)) drawDelBadge(boxes[sel]); }
+  if(selPoly>=0 && polys[selPoly] && editable && !(DS && !DS.writable)) drawRotHandle(polys[selPoly]);
+  if(mode==="obbnew" && obbRect){
+    const x=sx(Math.min(obbRect.x0,obbRect.x1)), y=sy(Math.min(obbRect.y0,obbRect.y1));
+    const w=Math.abs(obbRect.x1-obbRect.x0)*view.scale, h=Math.abs(obbRect.y1-obbRect.y0)*view.scale;
+    ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle=color(active); ctx.lineWidth=2; ctx.strokeRect(x,y,w,h);
+    ctx.fillStyle=colorA(active,.12); ctx.fillRect(x,y,w,h); ctx.restore();
+  }
   if(cursor && (mode===null||mode==='new')){
     ctx.save(); ctx.strokeStyle='rgba(6,182,212,.4)'; ctx.lineWidth=1;
     ctx.beginPath();
@@ -1706,6 +1722,22 @@ function commitPolyDraft(){
   polyDraft=null; draw();
 }
 function cancelPolyDraft(){ polyDraft=null; draw(); }
+// ---- oriented boxes: a 4-corner quad (stored as a 4-vertex polygon) + a rotate handle ----
+function polyCentroid(pts){ let cx=0,cy=0; const n=pts.length/2||1; for(let k=0;k<pts.length;k+=2){cx+=pts[k];cy+=pts[k+1];} return [cx/n, cy/n]; }
+function rotHandleScreen(p){
+  let mnx=1e9,mxx=-1e9,mny=1e9;
+  for(let k=0;k<p.pts.length;k+=2){ if(p.pts[k]<mnx)mnx=p.pts[k]; if(p.pts[k]>mxx)mxx=p.pts[k]; if(p.pts[k+1]<mny)mny=p.pts[k+1]; }
+  return {x:sx((mnx+mxx)/2), y:sy(mny)-22};
+}
+function drawRotHandle(p){
+  const h=rotHandleScreen(p);
+  ctx.save();
+  ctx.strokeStyle="#06b6d4"; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(h.x, h.y+6); ctx.lineTo(h.x, h.y+16); ctx.stroke();
+  ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(h.x,h.y,6,0,6.2832); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle="#06b6d4"; ctx.lineWidth=1.4; ctx.beginPath(); ctx.arc(h.x,h.y,3.2,0.5,5.6); ctx.stroke();
+  ctx.restore();
+}
 
 // ---- mouse ----
 let mode=null, drag=null, spaceDown=false;
@@ -1735,10 +1767,19 @@ cv.addEventListener("pointerdown", e=>{
     const k = hitHandle(boxes[sel], mx, my);
     if(k){ snapStart(); mode="resize"; drag={k, b:boxes[sel]}; return; }
   }
+  if(selPoly>=0 && polys[selPoly]){   // grab the round handle above a selected polygon/OBB to rotate it
+    const rh=rotHandleScreen(polys[selPoly]);
+    if(Math.hypot(mx-rh.x, my-rh.y)<=9){
+      snapStart(); mode="rotpoly";
+      const c=polyCentroid(polys[selPoly].pts);
+      drag={cx:c[0], cy:c[1], start:Math.atan2(iy(my)-c[1], ix(mx)-c[0]), pts:polys[selPoly].pts.slice()};
+      return;
+    }
+  }
   if(selPoly>=0){
     const vi = hitVertex(polys[selPoly], mx, my);
     if(vi>=0){
-      if(e.altKey){ if(polys[selPoly].pts.length>6){ pushUndo(); polys[selPoly].pts.splice(vi*2,2); markDirty(); draw(); } return; }
+      if(e.altKey){ if(!(DS&&DS.task==="obb") && polys[selPoly].pts.length>6){ pushUndo(); polys[selPoly].pts.splice(vi*2,2); markDirty(); draw(); } return; }
       snapStart(); mode="vertex"; drag={vi}; return;
     }
   }
@@ -1767,6 +1808,8 @@ cv.addEventListener("pointerdown", e=>{
   if(!editable || (DS && !DS.writable)) return;
   if(!(DS.names||[]).length){ banner("Add a class before drawing — every box needs one."); openClassEdit(); return; }
   if(tool==="seg"){ mode="segbox"; drag={mx, my, x0:ix(mx), y0:iy(my)}; segRect=null; return; }
+  if(tool==="obb"){ snapStart(); mode="obbnew"; drag={}; obbRect={x0:ix(mx), y0:iy(my), x1:ix(mx), y1:iy(my)}; draw(); return; }
+  if(tool!=="box") return;   // poly/seg/obb were handled above; only the box tool free-draws on empty
   const x=ix(mx), y=iy(my);
   snapStart();
   boxes.push({cls:active, x, y, w:0, h:0});
@@ -1785,6 +1828,15 @@ cv.addEventListener("pointermove", e=>{
     for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=drag.pts[k]+dx; p.pts[k+1]=drag.pts[k+1]+dy; } markDirty(); draw(); return; }
   if(mode==="vertex"){ const p=polys[selPoly]; p.pts[drag.vi*2]=ix(mx); p.pts[drag.vi*2+1]=iy(my); markDirty(); draw(); return; }
   if(mode==="segbox"){ segRect={x0:drag.x0, y0:drag.y0, x1:ix(mx), y1:iy(my)}; draw(); return; }
+  if(mode==="obbnew"){ obbRect.x1=ix(mx); obbRect.y1=iy(my); draw(); return; }
+  if(mode==="rotpoly"){
+    let ang=Math.atan2(iy(my)-drag.cy, ix(mx)-drag.cx) - drag.start;
+    if(e.shiftKey) ang=Math.round(ang/(Math.PI/12))*(Math.PI/12);   // snap to 15°
+    const ca=Math.cos(ang), sa=Math.sin(ang), p=polys[selPoly];
+    for(let k=0;k<drag.pts.length;k+=2){ const dx=drag.pts[k]-drag.cx, dy=drag.pts[k+1]-drag.cy;
+      p.pts[k]=drag.cx+dx*ca-dy*sa; p.pts[k+1]=drag.cy+dx*sa+dy*ca; }
+    markDirty(); draw(); return;
+  }
   let hb=-1;
   if(imgOk && sel>=0 && hitHandle(boxes[sel],mx,my)){ cv.style.cursor="pointer"; }
   else { hb = imgOk?hitBox(mx,my):-1; cv.style.cursor = spaceDown?"grab":(hb>=0?"move":"crosshair"); }
@@ -1806,12 +1858,20 @@ cv.addEventListener("pointerup", e=>{
   else if(mode==="move"){ clipToImage(boxes[sel]); }
   else if(mode==="movepoly"){ clipPoly(polys[selPoly]); }
   else if(mode==="vertex"){ clipPoly(polys[selPoly]); }
+  else if(mode==="obbnew"){
+    const r=obbRect; obbRect=null;
+    if(r){ const x1=Math.min(r.x0,r.x1), y1=Math.min(r.y0,r.y1), x2=Math.max(r.x0,r.x1), y2=Math.max(r.y0,r.y1);
+      if((x2-x1)*view.scale>=6 && (y2-y1)*view.scale>=6){
+        polys.push({cls:active, pts:[x1,y1, x2,y1, x2,y2, x1,y2]}); selPoly=polys.length-1; sel=-1; selBoxes.clear(); markDirty(); } }
+  }
+  else if(mode==="rotpoly"){ clipPoly(polys[selPoly]); }
   snapCommit();
   mode=null; drag=null; draw();
 });
 cv.addEventListener("dblclick", e=>{
   if(selPoly<0 || !imgOk) return;
   if(!editable || (DS && !DS.writable)) return;   // view-only: select to inspect, never insert a vertex
+  if(DS && DS.task==="obb") return;   // oriented boxes stay 4-corner: no vertex insert
   const mx=e.offsetX, my=e.offsetY, p=polys[selPoly], X=ix(mx), Y=iy(my), n=p.pts.length/2;
   let best=-1, bestD=1e18, bx=0, by=0;
   for(let i=0;i<n;i++){ const a=2*i, b=2*((i+1)%n);
@@ -1874,6 +1934,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
   if(e.key==="b"||e.key==="B"){ setTool("box"); return; }
   if(e.key==="p"||e.key==="P"){ setTool("poly"); return; }
+  if(e.key==="o"||e.key==="O"){ setTool("obb"); return; }
   if((e.key==="s"||e.key==="S") && assist && assist.sam){ setTool("seg"); return; }
   if(e.key==="t"||e.key==="T"){ e.preventDefault(); tightenSelected(); return; }
   if(e.key==="l"||e.key==="L"){ loupeOn=!loupeOn; draw(); return; }

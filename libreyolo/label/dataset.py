@@ -183,12 +183,15 @@ class DatasetSession:
         # arbitrary polygons -- so treat those tasks as view-only on the task key too.
         task = str(cfg.get("task") or "").strip().lower()
         self._task = task   # used to disambiguate 4-point (OBB-vs-polygon) rows on read/write
+        # obb is editable: its 9-field rows are 4-corner quads that round-trip
+        # byte-identically as 4-vertex polygons (see labelio), so LibreLabel can
+        # author oriented boxes without corrupting them.
         dense = (cfg.get("kpt_shape") or cfg.get("masks_dir")
                  or cfg.get("depths_dir") or cfg.get("depth")
-                 or task in ("depth", "classify", "pose", "obb"))
+                 or task in ("depth", "classify", "pose"))
         if self.writable and dense:
             self.writable = False
-            self.reason = ("Keypoint / OBB / mask / depth / classify dataset: view-only in "
+            self.reason = ("Keypoint / mask / depth / classify dataset: view-only in "
                            "LibreLabel — it edits boxes and polygons, and saving would drop "
                            "or corrupt the dense / task-specific labels.")
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
@@ -581,8 +584,9 @@ class DatasetSession:
             or has_out_of_bounds_coords(text)
             or has_degenerate_polygon(text)
             or has_zero_area_box(text)
-            # 4-point rows are OBB-or-polygon-ambiguous unless the dataset says segment
-            or (self._task != "segment" and has_obb_shaped_rows(text)))
+            # 4-point rows are OBB-or-polygon-ambiguous only when the dataset declares
+            # no task; segment (free polygons) and obb (oriented boxes) both edit them
+            or (self._task not in ("segment", "obb") and has_obb_shaped_rows(text)))
         return parse_annotations(text), editable
 
     def label_rev(self, idx: int) -> int:
@@ -626,9 +630,9 @@ class DatasetSession:
                 raise RuntimeError("This label file has a zero-area (collinear/collapsed) polygon; it is read-only.")
             if has_zero_area_box(existing):
                 raise RuntimeError("This label file has a zero-width/height box; it is read-only.")
-            if self._task != "segment" and has_obb_shaped_rows(existing):
+            if self._task not in ("segment", "obb") and has_obb_shaped_rows(existing):
                 raise RuntimeError("This label file has 4-point (OBB/quad) rows; without task: segment "
-                                   "they're treated as oriented boxes and kept read-only.")
+                                   "or task: obb they're ambiguous and kept read-only.")
         clean = sanitize_annotations(annotations, self.nc)
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))

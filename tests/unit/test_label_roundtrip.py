@@ -167,3 +167,18 @@ def test_polygon_roundtrip(tmp_path):
     lines = (tmp_path / "labels" / "train" / "a.txt").read_text().strip().splitlines()
     assert any(len(ln.split()) == 9 for ln in lines)  # polygon line (cls + 8 coords)
     assert any(len(ln.split()) == 5 for ln in lines)  # box line
+
+
+def test_obb_roundtrip(tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+
+    # task: obb makes 9-field rows editable too — an oriented box is a 4-corner quad,
+    # stored/loaded as a 4-vertex polygon byte-identically (no corruption).
+    ds = DatasetSession(str(_make_dataset(tmp_path, task="obb")))
+    quad = [0.2, 0.1, 0.5, 0.2, 0.4, 0.5, 0.1, 0.4]   # a rotated rectangle's 4 corners
+    ds.write_label(0, [{"type": "poly", "cls": 1, "points": quad}])
+    anns, editable = ds.read_label(0)
+    assert editable is True and len(anns) == 1
+    assert anns[0]["type"] == "poly" and len(anns[0]["points"]) == 8
+    lines = (tmp_path / "labels" / "train" / "a.txt").read_text().strip().splitlines()
+    assert len(lines) == 1 and len(lines[0].split()) == 9  # cls + 8 coords (oriented box)
