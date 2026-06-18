@@ -1,0 +1,79 @@
+# Kasu — AI PR reviewer (GLM-5.2) piloted on LibreYOLO.
+# Harness code: EHxuban11/kasu (a pinned fork of The-PR-Agent/pr-agent, Apache-2.0).
+# Posts as the branded "kasubot[bot]" GitHub App. Diff-only; ignores other bots' comments.
+#
+# Install path: this file -> LibreYOLO/libreyolo/.github/workflows/kasu.yml
+# Already configured on the libreyolo repo:
+#   var    KASU_APP_ID            -> Kasu GitHub App ID (4089951)
+#   secret KASU_APP_PRIVATE_KEY   -> Kasu GitHub App private key
+#   secret GLM_API_KEY            -> GLM-5.2 key (OpenCode Go key for the pilot)
+
+name: kasu
+
+on:
+  # pull_request_target runs in the BASE repo context, so secrets ARE available
+  # even for fork PRs. We never check out or execute fork code (diff-only) -> safe.
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]   # lets you re-trigger with a "/review" comment
+
+permissions:
+  contents: read
+
+# One review per PR at a time; cancel a superseded run on rapid pushes so parallel
+# runs don't duplicate GLM calls or race on the persistent review comment.
+concurrency:
+  group: kasu-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  kasu:
+    # Run on PR events; for issue_comment, only on a PR thread AND only for an explicit
+    # "/review" command. Never react to bot senders -> no loops, no cross-contamination.
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (
+        github.event_name == 'pull_request_target' ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null &&
+          contains(github.event.comment.body, '/review') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        )
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint Kasu app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3
+        with:
+          app-id: ${{ vars.KASU_APP_ID }}
+          private-key: ${{ secrets.KASU_APP_PRIVATE_KEY }}
+
+      - name: Kasu review (GLM-5.2)
+        uses: EHxuban11/kasu@e639d10a4df023b90668ec35796c2457c5f5db8d  # pinned fork (main @ 2026-06-19)
+        env:
+          # Post as kasubot[bot] (the App token), NOT github-actions[bot]
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+          # --- Model: GLM-5.2 via the OpenAI-compatible OpenCode Go endpoint ---
+          OPENAI_KEY: ${{ secrets.GLM_API_KEY }}
+          OPENAI.API_BASE: https://opencode.ai/zen/go/v1
+          config.model: "openai/glm-5.2"
+          config.fallback_models: '["openai/kimi-k2.7-code"]'
+          config.custom_model_max_tokens: "128000"   # required for non-built-in models
+
+          # --- Behavior: auto review + inline suggestions on every PR event ---
+          # Include "synchronize" so new pushes to an open PR get re-reviewed
+          # (PR-Agent's default pr_actions omits it).
+          github_action_config.pr_actions: '["opened","reopened","ready_for_review","synchronize"]'
+          github_action_config.auto_review: "true"
+          github_action_config.auto_improve: "true"     # CodeRabbit-style inline suggestions
+          github_action_config.auto_describe: "false"   # don't rewrite PR descriptions
+
+          # --- Diff-only / high-signal / no cross-contamination ---
+          config.publish_output: "true"
+          github.ignore_bot_pr: "true"           # skip PRs opened by other bots
+          pr_reviewer.persistent_comment: "true" # edit its own comment in place, don't stack
+          pr_reviewer.final_update_message: "false"
