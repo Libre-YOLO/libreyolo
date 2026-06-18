@@ -618,7 +618,10 @@ class Transformer(nn.Module):
             tgt_keypoints = None
             if self.use_grouppose_keypoints:
                 if not hasattr(self, "keypoint_query_initializer"):
-                    raise ValueError("use_grouppose_keypoints=True requires keypoint initializers")
+                    raise ValueError(
+                        "use_grouppose_keypoints=True requires keypoint initializers "
+                        "(ensure two_stage=True and num_keypoints_per_class is set)"
+                    )
                 tgt_keypoints = self.keypoint_query_initializer(tgt)
 
             # Route memories: kp_only mode keeps main features for detection and
@@ -818,7 +821,8 @@ class TransformerDecoder(nn.Module):
         intermediate_keypoints = []
 
         if self.enable_keypoint_processing:
-            assert self.lite_refpoint_refine, "Keypoint processing requires lite_refpoint_refine"
+            if not self.lite_refpoint_refine:
+                raise ValueError("Keypoint processing requires lite_refpoint_refine=True")
             if tgt_keypoints is None:
                 raise ValueError("Keypoint processing is enabled but tgt_keypoints was not provided")
             if init_kp_ref_xy is None:
@@ -1136,7 +1140,7 @@ class TransformerDecoderLayer(nn.Module):
             tgt_for_kp_pos = self.inst_pos_in_proj(query_pos)
 
             # ========== Begin of Keypoint-Instance Self-Attention =============
-            _, n_queries, num_kp, kp_dim = keypoint_tgt.shape
+            _, _n_queries, num_kp, kp_dim = keypoint_tgt.shape
 
             tgt_expanded = tgt_for_kp.unsqueeze(2)  # [B, N, 1, C]
             query_expanded = torch.zeros_like(tgt_for_kp).unsqueeze(2)  # [B, N, 1, C]

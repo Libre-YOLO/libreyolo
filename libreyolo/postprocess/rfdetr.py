@@ -15,7 +15,8 @@ Licensed under the Apache License, Version 2.0.
 
 import torch
 import torch.nn.functional as F
-from typing import List, Dict, Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 from ..data.obb import scale_xywhr
 from ..utils.general import cxcywh_to_xyxy
@@ -144,12 +145,12 @@ def _postprocess_grouppose_keypoints(
 
 
 def postprocess(
-    outputs: Dict[str, torch.Tensor],
+    outputs: dict[str, torch.Tensor],
     target_sizes: torch.Tensor,
     num_select: int = 300,
     num_keypoints_per_class: Optional[Sequence[int]] = None,
     trace_alpha: float = 0.2,
-) -> List[Dict[str, torch.Tensor]]:
+) -> list[dict[str, torch.Tensor]]:
     """
     Postprocess RF-DETR outputs to get final detections.
 

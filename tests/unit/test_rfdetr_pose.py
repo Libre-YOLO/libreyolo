@@ -53,7 +53,7 @@ def _small_pose_config() -> RFDETRSizeConfig:
     )
 
 
-def _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2):
+def _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2) -> torch.nn.Module:
     """Build a GroupPose keypoint LWDETR with random weights on CPU."""
     cfg = _small_pose_config()
     args = _make_args(
@@ -72,7 +72,7 @@ def _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2):
     return model
 
 
-def _build_detect_model(nb_classes=3):
+def _build_detect_model(nb_classes=3) -> torch.nn.Module:
     """Build a plain detection LWDETR (no pose / keypoint flags)."""
     cfg = _small_pose_config()
     args = _make_args(
@@ -87,7 +87,7 @@ def _build_detect_model(nb_classes=3):
     return model
 
 
-def _random_nested_tensor(batch=1):
+def _random_nested_tensor(batch: int = 1) -> NestedTensor:
     images = torch.rand(batch, 3, _RES, _RES)
     mask = torch.zeros(batch, _RES, _RES, dtype=torch.bool)
     return NestedTensor(images, mask)

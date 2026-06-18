@@ -32,9 +32,7 @@ pytestmark = [
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GOLDEN = _REPO_ROOT / "tests" / "data" / "rfdetr_keypoint_parkour_golden.json"
 _PARKOUR = _REPO_ROOT / "libreyolo" / "assets" / "parkour.jpg"
-_DEFAULT_CKPT = Path(
-    r"C:\Users\Usuario\Documents\github\libreyolo\downloads\LibreRFDETRx-pose.pt"
-)
+_DEFAULT_CKPT = _REPO_ROOT / "downloads" / "LibreRFDETRx-pose.pt"
 
 # Tolerances. The oracle and LibreYOLO run the same weights, so agreement is
 # sub-pixel in practice; keep generous-but-meaningful bounds.
@@ -84,7 +82,7 @@ def test_rfdetr_keypoint_parity_matches_oracle():
     from libreyolo import LibreYOLO
 
     model = LibreYOLO(str(checkpoint))
-    results = model.predict(str(_PARKOUR), conf=golden["conf"])
+    results = model.predict(str(_PARKOUR), conf=golden["conf"], device="cpu")
     result = results[0] if isinstance(results, (list, tuple)) else results
 
     pred_boxes = np.asarray(result.boxes.xyxy, dtype=np.float64)
