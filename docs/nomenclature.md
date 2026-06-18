@@ -204,7 +204,7 @@ LibreYOLO9t-obb.pt         # obb
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
 LibreRFDETRn-sem.pt        # semantic
-LibreRFDETRn-pose.pt       # pose
+LibreRFDETRx-pose.pt       # pose (preview; only size x ships)
 LibreRFDETRn-cls.pt        # classify
 LibreRFDETRn-obb.pt        # obb
 LibreRFDETRn-depth.pt      # depth

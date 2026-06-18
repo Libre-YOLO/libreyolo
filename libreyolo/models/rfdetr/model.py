@@ -211,7 +211,7 @@ class LibreRFDETR(BaseModel):
     # (patch_size 14 x num_windows 1) used by the semantic backbone.
     semantic_imgsz_divisor = 14
     depth_imgsz_divisor = 14
-    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrn-pose.pt"})
+    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrx-pose.pt"})
     TRAIN_CONFIG = RFDETRConfig
     val_preprocessor_class = RFDETRValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
