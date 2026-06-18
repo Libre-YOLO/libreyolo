@@ -23,8 +23,11 @@ permissions:
 
 # One review per PR at a time; cancel a superseded run on rapid pushes so parallel
 # runs don't duplicate GLM calls or race on the persistent review comment.
+# Scope per PR AND per event type: rapid pushes (pull_request_target) still cancel an
+# in-progress review, but other bots' comment events (issue_comment) form a separate
+# group and can't cancel the real review run.
 concurrency:
-  group: kasu-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: kasu-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
