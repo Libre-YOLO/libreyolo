@@ -422,13 +422,24 @@ class LWDETR(nn.Module):
             return None
         return [int(num_keypoints) for num_keypoints in active_mask.sum(dim=1).tolist()]
 
-    def reinitialize_keypoint_head(self, num_keypoints_per_class: "list[int] | None") -> None:
+    def reinitialize_keypoint_head(self, num_keypoints_per_class: "int | list[int] | None") -> None:
         """Resize schema-dependent GroupPose state to match ``num_keypoints_per_class``.
+
+        Accepts either a full per-class schema (e.g. ``[0, 17]``) or a single int
+        ``K`` keypoint count. An int is mapped onto the current schema by replacing
+        every nonzero per-class count with ``K`` (so ``[0, 17] -> [0, K]``); if no
+        schema exists yet it becomes ``[K]``. This keeps the trainer/loader fine-tune
+        call sites (which carry a scalar keypoint count) working.
 
         Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
         """
         if not self.use_grouppose_keypoints or not num_keypoints_per_class:
             return
+
+        if isinstance(num_keypoints_per_class, int):
+            k = int(num_keypoints_per_class)
+            current = list(self.num_keypoints_per_class) if self.num_keypoints_per_class else []
+            num_keypoints_per_class = [k if count > 0 else 0 for count in current] or [k]
 
         schema = list(num_keypoints_per_class)
         total_keypoints = sum(schema)
@@ -1066,8 +1077,9 @@ def build_criterion_and_postprocessors(args: Any):
     has_keypoints = getattr(args, "use_grouppose_keypoints", False)
     if has_keypoints:
         weight_dict["loss_keypoints_l1"] = args.keypoint_l1_loss_coef
-        weight_dict["loss_keypoints_oks"] = args.keypoint_oks_loss_coef
-        weight_dict["loss_keypoints_vis"] = args.keypoint_vis_loss_coef
+        weight_dict["loss_keypoints_findable"] = args.keypoint_findable_loss_coef
+        weight_dict["loss_keypoints_visible"] = args.keypoint_visible_loss_coef
+        weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -1099,8 +1111,8 @@ def build_criterion_and_postprocessors(args: Any):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
-            num_keypoints=getattr(args, "num_keypoints", 17),
-            oks_sigmas=getattr(args, "oks_sigmas", None),
+            use_grouppose_keypoints=has_keypoints,
+            num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
         criterion = SetCriterion(
@@ -1114,8 +1126,8 @@ def build_criterion_and_postprocessors(args: Any):
             use_varifocal_loss=args.use_varifocal_loss,
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
-            num_keypoints=getattr(args, "num_keypoints", 17),
-            oks_sigmas=getattr(args, "oks_sigmas", None),
+            use_grouppose_keypoints=has_keypoints,
+            num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)

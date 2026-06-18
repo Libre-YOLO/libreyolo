@@ -266,9 +266,15 @@ def _make_args(
         mask_ce_loss_coef=5.0,
         mask_dice_loss_coef=5.0,
         mask_point_sample_ratio=16,
-        keypoint_l1_loss_coef=10.0,
-        keypoint_oks_loss_coef=4.0,
-        keypoint_vis_loss_coef=1.0,
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # GroupPose keypoint loss coefficients per KeypointTrainConfig (all 1.0).
+        # They feed both the criterion weight_dict and the matcher cost. They stay
+        # 0.0 on the non-keypoint path so the detection/seg/obb matcher cost matrix
+        # is byte-identical when keypoints are off.
+        keypoint_l1_loss_coef=1.0 if use_grouppose_keypoints else 0.0,
+        keypoint_findable_loss_coef=1.0 if use_grouppose_keypoints else 0.0,
+        keypoint_visible_loss_coef=1.0 if use_grouppose_keypoints else 0.0,
+        keypoint_nll_loss_coef=1.0 if use_grouppose_keypoints else 0.0,
         num_keypoints=int(num_keypoints),
         oks_sigmas=oks_sigmas,
         num_channels=3,

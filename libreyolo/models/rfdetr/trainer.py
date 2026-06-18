@@ -612,9 +612,11 @@ class RFDETRTrainer(BaseTrainer):
                 self.model.num_keypoints = self.config.num_keypoints
             self.model.args.num_keypoints = self.config.num_keypoints
             self.model.args.oks_sigmas = self._resolve_oks_sigmas()
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
             self.model.args.keypoint_l1_loss_coef = self.config.keypoint_l1_loss_coef
-            self.model.args.keypoint_oks_loss_coef = self.config.keypoint_oks_loss_coef
-            self.model.args.keypoint_vis_loss_coef = self.config.keypoint_vis_loss_coef
+            self.model.args.keypoint_findable_loss_coef = self.config.keypoint_findable_loss_coef
+            self.model.args.keypoint_visible_loss_coef = self.config.keypoint_visible_loss_coef
+            self.model.args.keypoint_nll_loss_coef = self.config.keypoint_nll_loss_coef
 
         if getattr(self.config, "lora", False):
             from ...training.lora import apply_lora_to_rfdetr
@@ -906,9 +908,11 @@ class RFDETRTrainer(BaseTrainer):
             components["mask_ce"] = _sum_with_prefix("loss_mask_ce")
             components["mask_dice"] = _sum_with_prefix("loss_mask_dice")
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") == "pose":
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
             components["keypoints_l1"] = _sum_with_prefix("loss_keypoints_l1")
-            components["keypoints_oks"] = _sum_with_prefix("loss_keypoints_oks")
-            components["keypoints_vis"] = _sum_with_prefix("loss_keypoints_vis")
+            components["keypoints_findable"] = _sum_with_prefix("loss_keypoints_findable")
+            components["keypoints_visible"] = _sum_with_prefix("loss_keypoints_visible")
+            components["keypoints_nll"] = _sum_with_prefix("loss_keypoints_nll")
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") == "obb":
             components["angle"] = _sum_with_prefix("loss_angle")
         return components
