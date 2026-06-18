@@ -46,14 +46,6 @@ from _conversion_utils import (
 # (0-missing / 0-unexpected) into the ported architecture.
 _VESTIGIAL_PREFIX = "keypoint_head.keypoint_proj."
 
-# COCO-17 keypoint OKS sigmas (standard person keypoint constants, adapted
-# from RF-DETR v1.8.0 / COCO keypoint evaluation).
-_COCO17_OKS_SIGMAS = [
-    0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
-    0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
-]
-
-
 def convert_weights(
     input_path: str,
     output_path: str,
@@ -80,9 +72,8 @@ def convert_weights(
     # (num_keypoints, keypoint_dim, oks_sigmas, num_keypoints_per_class) flow
     # through ``**extra_metadata`` into the checkpoint.
     add_repo_root_to_path()
-    from libreyolo.utils.serialization import (
-        wrap_libreyolo_checkpoint as wrap_libreyolo_checkpoint,
-    )
+    from libreyolo.data import default_oks_sigmas
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
     libreyolo_ckpt = wrap_libreyolo_checkpoint(
         state_dict,
@@ -94,7 +85,7 @@ def convert_weights(
         imgsz=576,
         num_keypoints=int(num_keypoints),
         keypoint_dim=3,
-        oks_sigmas=_COCO17_OKS_SIGMAS,
+        oks_sigmas=list(default_oks_sigmas(int(num_keypoints))),
         num_keypoints_per_class=num_keypoints_per_class,
     )
 
@@ -120,7 +111,7 @@ def verify_conversion(converted_path: str) -> bool:
         keys = sorted(out.keys())
     else:
         keys = [type(out).__name__]
-    print(f"  forward pass OK — output keys/type: {keys}")
+    print(f"  forward pass OK - output keys/type: {keys}")
     return True
 
 

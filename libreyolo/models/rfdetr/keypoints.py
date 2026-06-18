@@ -35,6 +35,44 @@ logger = logging.getLogger(__name__)
 KEYPOINT_PRED_DIM: int = 8
 
 
+def map_labels_to_keypoint_schema(
+    target_classes: torch.Tensor,
+    num_keypoints_per_class: Sequence[int],
+) -> torch.Tensor:
+    """Map LibreYOLO contiguous pose labels to GroupPose internal schema classes.
+
+    LibreYOLO uses a contiguous pose-class convention (person = 0; nc=1), but the
+    GroupPose schema ``num_keypoints_per_class`` (e.g. ``[0, 17]``) places the
+    keypoint-bearing classes at their schema indices (person = internal index 1).
+    The criterion/matcher index ``num_keypoints_per_class`` by the target class,
+    so the incoming contiguous label must be lifted to the schema index before it
+    reaches :func:`compute_l1_keypoint_loss` / :func:`compute_keypoint_matching_cost`.
+
+    The keypoint-bearing classes are ``[i for i, c in enumerate(schema) if c > 0]``;
+    a contiguous label ``j`` maps to ``kp_classes[j]``. Labels outside that range
+    are passed through unchanged (the helpers already guard out-of-range classes
+    with a zero-loss fallback), so training degrades gracefully rather than
+    crashing on an unexpected label. This is a boundary remap only -- it does not
+    alter the helpers' internal logic.
+
+    Args:
+        target_classes: Incoming target class ids with shape ``(N,)``.
+        num_keypoints_per_class: GroupPose per-class keypoint schema.
+
+    Returns:
+        Tensor of schema-space class ids with the same shape/dtype/device as
+        ``target_classes``.
+    """
+    kp_classes = [i for i, count in enumerate(num_keypoints_per_class) if count > 0]
+    if not kp_classes or target_classes.numel() == 0:
+        return target_classes
+    mapping = target_classes.new_tensor(kp_classes)
+    in_range = (target_classes >= 0) & (target_classes < mapping.numel())
+    mapped = target_classes.clone()
+    mapped[in_range] = mapping[target_classes[in_range]]
+    return mapped
+
+
 def modulate(features: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
     """Apply AdaLN modulation: ``(scale + 1) * features + shift``."""
     return (scale + 1.0) * features + shift
@@ -369,5 +407,6 @@ __all__ = [
     "ConditionalQueryInitializer",
     "compute_keypoint_matching_cost",
     "compute_l1_keypoint_loss",
+    "map_labels_to_keypoint_schema",
     "modulate",
 ]

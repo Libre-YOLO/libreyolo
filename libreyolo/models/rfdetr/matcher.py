@@ -18,7 +18,7 @@ import torch.nn.functional as F  # noqa: N812
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-from .keypoints import compute_keypoint_matching_cost
+from .keypoints import compute_keypoint_matching_cost, map_labels_to_keypoint_schema
 from .segmentation import point_sample
 from .box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 import logging
@@ -233,10 +233,20 @@ class HungarianMatcher(nn.Module):
         # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
         if keypoints_present and tgt_keypoints is not None:
             target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
+            # Class-index remap at the matcher boundary: lift the LibreYOLO
+            # contiguous pose label (person = 0) to the GroupPose internal schema
+            # class (person = 1 for ``[0, 17]``) so it indexes
+            # ``num_keypoints_per_class`` at the keypoint-bearing slot. Label 0
+            # would otherwise select the empty slot (0 keypoints) and the keypoint
+            # matching cost would collapse to zero. ``tgt_ids`` itself is left
+            # unchanged for the classification cost above (out of scope here).
+            kp_target_classes = map_labels_to_keypoint_schema(
+                tgt_ids, self.num_keypoints_per_class
+            )
             cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
                 all_pred_keypoints=outputs["pred_keypoints"],
                 target_keypoints=tgt_keypoints,
-                target_classes=tgt_ids,
+                target_classes=kp_target_classes,
                 target_areas=target_areas,
                 num_keypoints_per_class=self.num_keypoints_per_class,
             )

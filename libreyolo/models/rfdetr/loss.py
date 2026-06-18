@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
-from .keypoints import compute_l1_keypoint_loss
+from .keypoints import compute_l1_keypoint_loss, map_labels_to_keypoint_schema
 from .segmentation import (
     calculate_uncertainty,
     get_uncertain_point_coords_with_randomness,
@@ -532,10 +532,20 @@ class SetCriterion(nn.Module):
         target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
         target_areas = target_boxes[:, 2] * target_boxes[:, 3]
 
+        # Class-index remap at the criterion boundary: lift the LibreYOLO
+        # contiguous pose label (person = 0) to the GroupPose internal schema
+        # class (person = 1 for ``[0, 17]``) before it indexes
+        # ``num_keypoints_per_class`` inside ``compute_l1_keypoint_loss``. Without
+        # this, label 0 selects the empty schema slot (0 keypoints) and the
+        # keypoint loss collapses to zero, so the head never trains.
+        target_classes = map_labels_to_keypoint_schema(
+            target_classes.to(src_keypoints.device), self.num_keypoints_per_class
+        )
+
         loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
             all_pred_keypoints=src_keypoints,
             target_keypoints=target_keypoints.to(src_keypoints.device),
-            target_classes=target_classes.to(src_keypoints.device),
+            target_classes=target_classes,
             target_areas=target_areas.to(src_keypoints.device),
             num_keypoints_per_class=self.num_keypoints_per_class,
         )

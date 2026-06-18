@@ -5,6 +5,12 @@ weights load and produce numerically equivalent detections.
 
 Moved verbatim from ``libreyolo/models/rfdetr/utils.py``, which re-exports it
 for backward compatibility.
+
+The GroupPose keypoint postprocess (``_keypoint_log_mean_trace`` /
+``_postprocess_grouppose_keypoints`` and the keypoint branch of ``postprocess``)
+is ported from RF-DETR v1.8.0 (https://github.com/roboflow/rf-detr).
+Copyright (c) 2025 Roboflow, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0.
 """
 
 import torch
@@ -268,6 +274,9 @@ def postprocess(
             # keypoints are (Q, num_classes * max_K, D); the predicted-class slot
             # is gathered per query, xy scaled to original pixels, confidence =
             # findable.sigmoid(), and trace fusion adjusts the object scores.
+            # NOTE: the slot select uses ``labels[i]`` (the model's INTERNAL
+            # GroupPose class index) so keypoint xy/conf stay byte-identical to
+            # upstream; the emitted detection label is remapped below.
             scores_i, keypoints_i, precision_i = _postprocess_grouppose_keypoints(
                 out_keypoints[i],
                 topk_boxes[i],
@@ -277,11 +286,50 @@ def postprocess(
                 num_keypoints_per_class or [],
                 trace_alpha,
             )
+
+            # Class-index remap (LibreYOLO contiguous pose convention).
+            #
+            # The GroupPose schema ``num_keypoints_per_class`` (e.g. ``[0, 17]``)
+            # makes the keypoint-bearing "person" class the INTERNAL index 1, so
+            # the model emits detection label 1. LibreYOLO's person-only pose
+            # convention is contiguous index 0 (nc=1, names={0: "person"}). Map
+            # the internal predicted class to its position among the
+            # keypoint-bearing classes (``kp_classes.index(internal)``), so
+            # person -> 0. Detections whose predicted class is NOT a
+            # keypoint-bearing class (e.g. internal class 0, the empty slot) are
+            # not valid pose detections and are dropped -- upstream returns only
+            # the person class. Keypoints/scores/boxes for the kept detections are
+            # left byte-identical (they are only re-indexed, not recomputed).
+            kp_classes = [
+                cls_idx
+                for cls_idx, count in enumerate(num_keypoints_per_class or [])
+                if count > 0
+            ]
+            labels_i = labels[i]
+            if kp_classes:
+                kp_class_tensor = torch.as_tensor(
+                    kp_classes, dtype=labels_i.dtype, device=labels_i.device
+                )
+                # remap[internal] = contiguous index, or -1 when not keypoint-bearing.
+                remap = labels_i.new_full((num_classes,), -1)
+                remap[kp_class_tensor] = torch.arange(
+                    len(kp_classes), dtype=labels_i.dtype, device=labels_i.device
+                )
+                contiguous_labels = remap[labels_i]
+                keep_kp = contiguous_labels >= 0
+            else:
+                # No keypoint-bearing class in the schema: nothing is a valid
+                # pose detection. Keep the (empty-mask) filter consistent.
+                contiguous_labels = labels_i
+                keep_kp = labels_i.new_zeros(labels_i.shape, dtype=torch.bool)
+
+            res_i["labels"] = contiguous_labels[keep_kp]
+            res_i["boxes"] = boxes[i][keep_kp]
             # Trace fusion may rescale scores; keep boxes/scores/keypoints in
             # lockstep so the downstream confidence threshold filters all heads.
-            res_i["scores"] = scores_i
-            res_i["keypoints"] = keypoints_i
-            res_i["keypoint_precision_cholesky"] = precision_i
+            res_i["scores"] = scores_i[keep_kp]
+            res_i["keypoints"] = keypoints_i[keep_kp]
+            res_i["keypoint_precision_cholesky"] = precision_i[keep_kp]
 
         results.append(res_i)
 

@@ -193,7 +193,7 @@ def test_grouppose_postprocess_emits_keypoints_with_normalized_visibility():
 
     num_queries, num_classes = 5, 2
     logits = torch.full((1, num_queries, num_classes), -5.0)
-    logits[0, 0, 1] = 5.0  # query 0 -> person (class 1), high score
+    logits[0, 0, 1] = 5.0  # query 0 -> person (internal class 1), high score
     logits[0, 1, 1] = 4.0  # query 1 -> person, slightly lower
 
     boxes = torch.rand(1, num_queries, 4) * 0.2 + 0.4  # cxcywh in [0, 1]
@@ -213,11 +213,22 @@ def test_grouppose_postprocess_emits_keypoints_with_normalized_visibility():
     )[0]
 
     keypoints_out = result["keypoints"]
-    assert tuple(keypoints_out.shape) == (4, 17, 3)
+    labels_out = result["labels"]
     vis = keypoints_out[..., 2]
     assert float(vis.min()) >= 0.0
     assert float(vis.max()) <= 1.0
-    # A person detection lands its keypoints at (x*width, y*height) = (100, 50).
+
+    # Class-index remap: the keypoint-bearing internal class 1 ("person") is
+    # emitted as the LibreYOLO contiguous pose label 0, and detections whose
+    # predicted class is NOT keypoint-bearing (internal class 0) are dropped.
+    assert labels_out.numel() >= 2  # both explicit person queries survive
+    assert torch.all(labels_out == 0)
+    # The surviving detections (person) and their keypoints stay in lockstep.
+    assert keypoints_out.shape[0] == labels_out.numel()
+    assert tuple(keypoints_out.shape[1:]) == (17, 3)
+    assert result["boxes"].shape[0] == labels_out.numel()
+    assert result["scores"].shape[0] == labels_out.numel()
+    # The top person detection lands its keypoints at (x*width, y*height) = (100, 50).
     person_xy = keypoints_out[0, 0, :2]
     assert person_xy.tolist() == pytest.approx([100.0, 50.0])
 
@@ -234,3 +245,114 @@ def test_detection_model_has_no_keypoint_modules():
     assert model._kp_active_mask.numel() == 0
     module_names = {name for name, _ in model.named_modules()}
     assert not any("keypoint" in name for name in module_names)
+
+
+# ---------------------------------------------------------------------------
+# 8. Class-index convention: postprocess remaps to contiguous 0
+# ---------------------------------------------------------------------------
+def test_grouppose_postprocess_remaps_keypoint_class_to_contiguous_zero():
+    """The keypoint-bearing internal class (1 for ``[0, 17]``) is emitted as 0.
+
+    The GroupPose schema places "person" at internal index 1, so the model emits
+    detection label 1. LibreYOLO's person-only pose convention is contiguous
+    index 0, so the postprocess must remap 1 -> 0 and drop non-keypoint-bearing
+    detections (internal class 0), without disturbing keypoint xy/conf.
+    """
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    num_queries, num_classes = 4, 2
+    # Make every selected detection a confident person (internal class 1) so we
+    # can assert the full set survives and is relabeled.
+    logits = torch.full((1, num_queries, num_classes), -10.0)
+    logits[0, :, 1] = 6.0  # all queries -> person (internal class 1)
+
+    boxes = torch.rand(1, num_queries, 4) * 0.2 + 0.4  # cxcywh in [0, 1]
+    keypoints = torch.zeros(1, num_queries, 34, 8)
+    keypoints[..., 0] = 0.25  # x normalized
+    keypoints[..., 1] = 0.75  # y normalized
+    keypoints[..., 2] = 2.0   # findable logit
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes, "pred_keypoints": keypoints},
+        torch.tensor([[80.0, 120.0]]),  # (height, width)
+        num_select=4,
+        num_keypoints_per_class=[0, 17],
+        trace_alpha=0.0,
+    )[0]
+
+    labels = result["labels"]
+    # Every kept detection is the keypoint-bearing class, remapped to contiguous 0.
+    assert labels.numel() == num_queries
+    assert torch.all(labels == 0)
+    # The internal class 1 never leaks through.
+    assert int(labels.max()) == 0
+    # Keypoint xy still scale to (x*width, y*height) = (30, 60); the remap only
+    # touches the integer label, not the decoded keypoints.
+    assert result["keypoints"][0, 0, :2].tolist() == pytest.approx([30.0, 60.0])
+
+
+# ---------------------------------------------------------------------------
+# 9. Class-index convention: person-only target trains a nonzero keypoint loss
+# ---------------------------------------------------------------------------
+def test_grouppose_person_only_target_trains_nonzero_keypoint_loss():
+    """A LibreYOLO person target (label 0) must produce a finite, positive loss.
+
+    Without the schema remap the contiguous label 0 selects the empty slot
+    (``num_keypoints_per_class[0] == 0``) and every keypoint loss term collapses
+    to zero, so the keypoint head never trains. The criterion-boundary remap
+    lifts label 0 -> internal class 1 so the loss is finite and strictly > 0.
+    """
+    from libreyolo.models.rfdetr.keypoints import map_labels_to_keypoint_schema
+    from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    torch.manual_seed(0)
+    schema = [0, 17]
+    k_total = len(schema) * max(schema)  # 2 * 17 = 34
+
+    # The remap helper itself lifts the contiguous person label to schema class 1.
+    assert map_labels_to_keypoint_schema(torch.tensor([0]), schema).tolist() == [1]
+
+    matcher = HungarianMatcher(
+        num_keypoints_per_class=schema,
+        keypoint_l1_loss_coef=1.0,
+        keypoint_findable_loss_coef=1.0,
+        keypoint_visible_loss_coef=1.0,
+        keypoint_nll_loss_coef=1.0,
+    )
+    criterion = SetCriterion(
+        num_classes=2,
+        matcher=matcher,
+        weight_dict={},
+        focal_alpha=0.25,
+        losses=["keypoints"],
+        group_detr=1,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=schema,
+    )
+
+    num_queries = 5
+    outputs = {"pred_keypoints": torch.randn(1, num_queries, k_total, 8)}
+    target_keypoints = torch.rand(1, max(schema), 3)
+    target_keypoints[..., 2] = 2.0  # all keypoints fully visible
+    targets = [
+        {
+            "labels": torch.tensor([0]),  # LibreYOLO contiguous "person"
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),  # cxcywh
+            "keypoints": target_keypoints,
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]  # query 0 <-> target 0
+
+    losses = criterion.loss_keypoints(outputs, targets, indices, num_boxes=1.0)
+
+    for value in losses.values():
+        assert torch.isfinite(value)
+    # The location/findable/visible terms are strictly positive once the person
+    # target reaches the populated schema slot.
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) > 0.0
+    total = sum(losses.values())
+    assert torch.isfinite(total)
+    assert float(total) > 0.0

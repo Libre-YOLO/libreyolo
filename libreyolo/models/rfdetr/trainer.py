@@ -611,6 +611,15 @@ class RFDETRTrainer(BaseTrainer):
                 self.model.model.reinitialize_keypoint_head(self.config.num_keypoints)
                 self.model.num_keypoints = self.config.num_keypoints
             self.model.args.num_keypoints = self.config.num_keypoints
+            # reinitialize_keypoint_head updates the model's GroupPose schema, but
+            # the criterion/matcher are built below from ``self.model.args``. Sync
+            # the args schema to the model's live schema so the keypoint loss/cost
+            # index ``num_keypoints_per_class`` correctly (otherwise a stale
+            # schema makes the keypoint head never train).
+            if getattr(self.model.model, "use_grouppose_keypoints", False):
+                self.model.args.num_keypoints_per_class = (
+                    self.model.model.get_num_keypoints_per_class()
+                )
             self.model.args.oks_sigmas = self._resolve_oks_sigmas()
             # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
             self.model.args.keypoint_l1_loss_coef = self.config.keypoint_l1_loss_coef
