@@ -856,9 +856,21 @@ class LibreRFDETR(BaseModel):
         # When present, the postprocessor selects the predicted-class keypoint
         # slot, so logits must keep all class columns and topk runs over every
         # (query x class) pair exactly like the official PostProcess.
-        num_keypoints_per_class = list(
-            getattr(self.model, "num_keypoints_per_class", []) or []
-        )
+        #
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # Derive the schema from the inner LWDETR's live ``_kp_active_mask``
+        # (the single source of truth, always kept current by
+        # ``reinitialize_keypoint_head``) so a post-resize schema (e.g. a non-17
+        # keypoint count from a fine-tune) cannot diverge from the 2*K keypoint
+        # slots the model emits. Fall back to the wrapper attribute when the inner
+        # model is unavailable.
+        inner_model = getattr(self.model, "model", None)
+        if inner_model is not None and getattr(inner_model, "use_grouppose_keypoints", False):
+            num_keypoints_per_class = list(inner_model.get_num_keypoints_per_class())
+        else:
+            num_keypoints_per_class = list(
+                getattr(self.model, "num_keypoints_per_class", []) or []
+            )
         is_grouppose = self._is_pose and len(num_keypoints_per_class) > 0
 
         logits = output["pred_logits"]
@@ -1444,6 +1456,16 @@ class LibreRFDETR(BaseModel):
                 self.model.model.reinitialize_keypoint_head(num_keypoints)
                 self.model.num_keypoints = num_keypoints
                 self.model.args.num_keypoints = num_keypoints
+                # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+                # reinitialize_keypoint_head resizes the inner model's GroupPose
+                # schema (e.g. [0, 17] -> [0, K]); propagate the resized schema to
+                # the wrapper and args so the grouppose postprocess (which reads
+                # the schema) and the criterion build (from args) match the new
+                # 2*K keypoint slots instead of the stale [0, 17].
+                if getattr(self.model.model, "use_grouppose_keypoints", False):
+                    resized_schema = list(self.model.model.get_num_keypoints_per_class())
+                    self.model.num_keypoints_per_class = resized_schema
+                    self.model.args.num_keypoints_per_class = resized_schema
             self.num_keypoints = num_keypoints
             self.keypoint_dim = keypoint_dim
             self.nb_classes = 1

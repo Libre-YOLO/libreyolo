@@ -223,6 +223,20 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
 
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head carries one logit column per keypoint-schema
+        # class, and the per-keypoint class-logit boost is added to the
+        # keypoint-bearing column (internal index 1 for ``[0, 17]``). A person-only
+        # dataset labels people as contiguous class 0, which would supervise the
+        # empty schema slot (column 0) instead of the boosted column. Lift the
+        # contiguous label to its schema index so the classification target column
+        # matches where the boost lives. Gated on ``use_grouppose_keypoints`` so
+        # detection/seg/obb are byte-identical (no remap applied).
+        if self.use_grouppose_keypoints:
+            target_classes_o = map_labels_to_keypoint_schema(
+                target_classes_o, self.num_keypoints_per_class
+            )
+
         if self.ia_bce_loss:
             alpha = self.focal_alpha
             gamma = 2

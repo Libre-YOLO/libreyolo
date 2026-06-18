@@ -593,7 +593,28 @@ class RFDETRTrainer(BaseTrainer):
             )
         if task in ("classify", "semantic", "depth"):
             return
-        if self.model.nb_classes != self.config.num_classes:
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head must keep one logit column per keypoint
+        # class (``out_features == len(num_keypoints_per_class)``, e.g. 2 for
+        # ``[0, 17]``). LibreRFDETRModel widens ``nb_classes`` to that schema
+        # length, but ``config.num_classes`` is the contiguous person-only count
+        # (1). Collapsing the head to ``config.num_classes`` would drop the
+        # keypoint class-logit-boost column, so size the pose head from the
+        # schema and only reinit when the live head width actually differs.
+        is_grouppose = bool(getattr(self.model.model, "use_grouppose_keypoints", False))
+        if task == "pose" and is_grouppose:
+            schema = list(self.model.model.get_num_keypoints_per_class())
+            schema_width = len(schema)
+            current_width = int(self.model.model.class_embed.out_features)
+            if current_width != schema_width:
+                self.model.model.reinitialize_detection_head(schema_width)
+            # Keep the wrapper/args consistent with the 2-logit schema head:
+            # ``nb_classes`` is the head width, ``args.num_classes`` the
+            # head-width-minus-one count ``build_criterion_and_postprocessors``
+            # adds back (``num_classes + 1``) so SetCriterion sees the full width.
+            self.model.nb_classes = schema_width
+            self.model.args.num_classes = max(0, schema_width - 1)
+        elif self.model.nb_classes != self.config.num_classes:
             head_outputs = (
                 self.config.num_classes
                 if task == "pose"
@@ -1058,7 +1079,7 @@ class RFDETRTrainer(BaseTrainer):
 
 def train_rfdetr(
     data: str,
-    size: str = "s",
+    size: str | None = None,
     epochs: int = 100,
     batch_size: int = 4,
     lr: float = 1e-4,
@@ -1072,9 +1093,21 @@ def train_rfdetr(
     """Compatibility helper around :class:`LibreRFDETR.train`."""
     from .model import LibreRFDETR
 
+    # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+    # Pose has a single GroupPose preset ('x'); 's'/'m'/'l' are not in
+    # RFDETR_POSE_CONFIGS, so resolve any requested pose size to 'x' (the only
+    # valid option) instead of failing with "Invalid RF-DETR size: s".
+    # Detection/seg keep the historical default: None -> LibreRFDETR resolves to
+    # its own small default ('s'), byte-identical to the prior behavior.
+    resolved_size = size
+    if pose:
+        resolved_size = "x"
+    elif resolved_size is None:
+        resolved_size = "s"
+
     model = LibreRFDETR(
         model_path=pretrain_weights,
-        size=size,
+        size=resolved_size,
         device=kwargs.pop("device", "auto"),
         segmentation=segmentation,
         task="pose" if pose else None,

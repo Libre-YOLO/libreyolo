@@ -182,7 +182,20 @@ class HungarianMatcher(nn.Module):
         # we refactor these with logsigmoid for numerical stability
         neg_cost_class = (1 - alpha) * (out_prob**gamma) * (-F.logsigmoid(-flat_pred_logits))
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
-        cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head has one logit column per keypoint-schema
+        # class, and the per-keypoint class-logit boost is added to the
+        # keypoint-bearing column (internal index 1 for ``[0, 17]``). A
+        # person-only dataset labels people as contiguous class 0, which would
+        # index the empty schema slot (column 0), so the classification cost must
+        # supervise the same internal column that the boost targets. Lift the
+        # contiguous label to its schema index before indexing the cost columns.
+        # Detection/seg/obb leave ``num_keypoints_per_class`` empty and so are
+        # byte-identical (``cls_tgt_ids is tgt_ids``).
+        cls_tgt_ids = tgt_ids
+        if self.num_keypoints_per_class:
+            cls_tgt_ids = map_labels_to_keypoint_schema(tgt_ids, self.num_keypoints_per_class)
+        cost_class = pos_cost_class[:, cls_tgt_ids] - neg_cost_class[:, cls_tgt_ids]
 
         # Compute the L1 cost between boxes
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
@@ -238,8 +251,8 @@ class HungarianMatcher(nn.Module):
             # class (person = 1 for ``[0, 17]``) so it indexes
             # ``num_keypoints_per_class`` at the keypoint-bearing slot. Label 0
             # would otherwise select the empty slot (0 keypoints) and the keypoint
-            # matching cost would collapse to zero. ``tgt_ids`` itself is left
-            # unchanged for the classification cost above (out of scope here).
+            # matching cost would collapse to zero. The classification cost above
+            # uses the same schema-space ids (``cls_tgt_ids``); reuse them here.
             kp_target_classes = map_labels_to_keypoint_schema(
                 tgt_ids, self.num_keypoints_per_class
             )
