@@ -21,10 +21,26 @@ on:
 permissions:
   contents: read
 
+# One review per PR at a time; cancel a superseded run on rapid pushes so parallel
+# runs don't duplicate GLM calls or race on the persistent review comment.
+concurrency:
+  group: kasu-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   kasu:
-    # Don't react to our own (or other bots') comments -> no loops, no cross-contamination.
-    if: ${{ github.event.sender.type != 'Bot' }}
+    # Run on PR events; for issue_comment, only on a PR thread AND only for an explicit
+    # "/review" command. Never react to bot senders -> no loops, no cross-contamination.
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (
+        github.event_name == 'pull_request_target' ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null &&
+          contains(github.event.comment.body, '/review')
+        )
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Mint Kasu app token
