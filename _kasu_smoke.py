@@ -12,3 +12,6 @@ def average_price(items):
 def last_item(items):
     """Return the last line item."""
     return items[len(items)]  # bug: off-by-one, IndexError; should be len(items) - 1
+
+
+# retrigger kasu after concurrency fix
