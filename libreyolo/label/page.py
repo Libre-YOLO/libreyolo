@@ -105,6 +105,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .rprow .rpx{opacity:0;color:var(--tx3);font-size:16px;line-height:1;padding:0 3px;border-radius:5px}
   .rprow:hover .rpx{opacity:.55} .rprow .rpx:hover{opacity:1;color:var(--danger);background:var(--s1)}
   .rp-empty{padding:18px 12px;color:var(--tx3);font-size:12px;text-align:center}
+  /* Responsive: the canvas keeps priority — side panels shrink as the window narrows,
+     and the regions panel yields below ~820px so the image never becomes a sliver. */
+  @media (max-width:1180px){ main{grid-template-columns:232px 1fr 200px} }
+  @media (max-width:980px){ main{grid-template-columns:200px 1fr 184px} }
+  @media (max-width:820px){ main{grid-template-columns:172px 1fr} .regions{display:none} }
   .sidebar{display:flex;flex-direction:column;min-height:0;background:var(--bg2);border-right:1px solid var(--line)}
   .side-head{padding:12px 12px 10px;border-bottom:1px solid var(--line)}
   .seg{display:flex;gap:2px;padding:3px;background:var(--s1);border:1px solid var(--line);border-radius:var(--r2)}
