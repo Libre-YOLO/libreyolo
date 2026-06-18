@@ -18,6 +18,7 @@ import torch.nn.functional as F  # noqa: N812
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
+from .keypoints import compute_keypoint_matching_cost, map_labels_to_keypoint_schema
 from .segmentation import point_sample
 from .box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
 import logging
@@ -45,6 +46,14 @@ class HungarianMatcher(nn.Module):
         cost_mask_ce: float = 1,
         cost_mask_dice: float = 1,
         cost_angle: float = 0,
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # Zero defaults disable keypoint matching terms so the detection/seg/obb
+        # cost matrix is byte-identical when keypoints are off.
+        num_keypoints_per_class=None,
+        keypoint_l1_loss_coef: float = 0.0,
+        keypoint_findable_loss_coef: float = 0.0,
+        keypoint_visible_loss_coef: float = 0.0,
+        keypoint_nll_loss_coef: float = 0.0,
     ):
         """Creates the matcher.
 
@@ -69,6 +78,12 @@ class HungarianMatcher(nn.Module):
         self.cost_mask_ce = cost_mask_ce
         self.cost_mask_dice = cost_mask_dice
         self.cost_angle = cost_angle
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        self.num_keypoints_per_class = list(num_keypoints_per_class) if num_keypoints_per_class else []
+        self.keypoint_l1_loss_coef = keypoint_l1_loss_coef
+        self.keypoint_findable_loss_coef = keypoint_findable_loss_coef
+        self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
+        self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
         self._warned_non_finite_costs = False
 
     @staticmethod
@@ -147,6 +162,12 @@ class HungarianMatcher(nn.Module):
         tgt_angles = torch.cat([v["angles"] for v in targets]) if out_angles is not None and "angles" in targets[0] else None
 
         masks_present = "masks" in targets[0]
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # Gate keypoint matching cost on both the prediction tensor and target key.
+        keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
+        tgt_keypoints = None
+        if keypoints_present:
+            tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
         # Compute the giou cost between boxes
         giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
@@ -161,7 +182,20 @@ class HungarianMatcher(nn.Module):
         # we refactor these with logsigmoid for numerical stability
         neg_cost_class = (1 - alpha) * (out_prob**gamma) * (-F.logsigmoid(-flat_pred_logits))
         pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-F.logsigmoid(flat_pred_logits))
-        cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head has one logit column per keypoint-schema
+        # class, and the per-keypoint class-logit boost is added to the
+        # keypoint-bearing column (internal index 1 for ``[0, 17]``). A
+        # person-only dataset labels people as contiguous class 0, which would
+        # index the empty schema slot (column 0), so the classification cost must
+        # supervise the same internal column that the boost targets. Lift the
+        # contiguous label to its schema index before indexing the cost columns.
+        # Detection/seg/obb leave ``num_keypoints_per_class`` empty and so are
+        # byte-identical (``cls_tgt_ids is tgt_ids``).
+        cls_tgt_ids = tgt_ids
+        if self.num_keypoints_per_class:
+            cls_tgt_ids = map_labels_to_keypoint_schema(tgt_ids, self.num_keypoints_per_class)
+        cost_class = pos_cost_class[:, cls_tgt_ids] - neg_cost_class[:, cls_tgt_ids]
 
         # Compute the L1 cost between boxes
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
@@ -209,6 +243,31 @@ class HungarianMatcher(nn.Module):
             # Dice loss cost (1 - dice coefficient)
             cost_mask_dice = batch_dice_loss(pred_masks_logits, tgt_masks_flat)
 
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        if keypoints_present and tgt_keypoints is not None:
+            target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
+            # Class-index remap at the matcher boundary: lift the LibreYOLO
+            # contiguous pose label (person = 0) to the GroupPose internal schema
+            # class (person = 1 for ``[0, 17]``) so it indexes
+            # ``num_keypoints_per_class`` at the keypoint-bearing slot. Label 0
+            # would otherwise select the empty slot (0 keypoints) and the keypoint
+            # matching cost would collapse to zero. The classification cost above
+            # uses the same schema-space ids (``cls_tgt_ids``); reuse them here.
+            kp_target_classes = map_labels_to_keypoint_schema(
+                tgt_ids, self.num_keypoints_per_class
+            )
+            cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
+                all_pred_keypoints=outputs["pred_keypoints"],
+                target_keypoints=tgt_keypoints,
+                target_classes=kp_target_classes,
+                target_areas=target_areas,
+                num_keypoints_per_class=self.num_keypoints_per_class,
+            )
+            cost_l1 = cost_l1.flatten(0, 1)
+            cost_findable = cost_findable.flatten(0, 1)
+            cost_visible = cost_visible.flatten(0, 1)
+            cost_nll = cost_nll.flatten(0, 1)
+
         # Final cost matrix
         cost_matrix = (
             self.cost_bbox * cost_bbox
@@ -218,6 +277,15 @@ class HungarianMatcher(nn.Module):
         )
         if masks_present:
             cost_matrix = cost_matrix + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        if keypoints_present and tgt_keypoints is not None:
+            cost_matrix = (
+                cost_matrix
+                + self.keypoint_l1_loss_coef * cost_l1
+                + self.keypoint_findable_loss_coef * cost_findable
+                + self.keypoint_visible_loss_coef * cost_visible
+                + self.keypoint_nll_loss_coef * cost_nll
+            )
         cost_matrix = (
             cost_matrix.view(bs, num_queries, -1).float().cpu()
         )  # convert to float because bfloat16 doesn't play nicely with CPU
@@ -256,22 +324,26 @@ class HungarianMatcher(nn.Module):
 
 
 def build_matcher(args):
+    # Detection-only matcher args may omit keypoint costs; zero defaults disable
+    # keypoint matching terms. --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+    common_kwargs = {
+        "cost_class": args.set_cost_class,
+        "cost_bbox": args.set_cost_bbox,
+        "cost_giou": args.set_cost_giou,
+        "focal_alpha": args.focal_alpha,
+        "cost_angle": getattr(args, "set_cost_angle", 0.0),
+        "num_keypoints_per_class": getattr(args, "num_keypoints_per_class", []),
+        "keypoint_l1_loss_coef": getattr(args, "keypoint_l1_loss_coef", 0.0),
+        "keypoint_findable_loss_coef": getattr(args, "keypoint_findable_loss_coef", 0.0),
+        "keypoint_visible_loss_coef": getattr(args, "keypoint_visible_loss_coef", 0.0),
+        "keypoint_nll_loss_coef": getattr(args, "keypoint_nll_loss_coef", 0.0),
+    }
     if args.segmentation_head:
         return HungarianMatcher(
-            cost_class=args.set_cost_class,
-            cost_bbox=args.set_cost_bbox,
-            cost_giou=args.set_cost_giou,
-            focal_alpha=args.focal_alpha,
-            cost_angle=getattr(args, "set_cost_angle", 0.0),
+            **common_kwargs,
             cost_mask_ce=args.mask_ce_loss_coef,
             cost_mask_dice=args.mask_dice_loss_coef,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
         )
     else:
-        return HungarianMatcher(
-            cost_class=args.set_cost_class,
-            cost_bbox=args.set_cost_bbox,
-            cost_giou=args.set_cost_giou,
-            focal_alpha=args.focal_alpha,
-            cost_angle=getattr(args, "set_cost_angle", 0.0),
-        )
+        return HungarianMatcher(**common_kwargs)

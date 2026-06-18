@@ -14,10 +14,15 @@ from ...data import load_data_config
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
-from .nn import LibreRFDETRModel, RFDETR_CONFIGS, RFDETR_SEG_CONFIGS
+from .nn import (
+    LibreRFDETRModel,
+    RFDETR_CONFIGS,
+    RFDETR_SEG_CONFIGS,
+    RFDETR_POSE_CONFIGS,
+)
 from .config import RFDETRConfig
 from ...postprocess.rfdetr import postprocess
-from .utils import preprocess_numpy
+from .utils import IMAGENET_MEAN, IMAGENET_STD, preprocess_numpy
 from .trainer import RFDETRTrainer
 from ...validation.preprocessors import RFDETRValPreprocessor
 
@@ -171,6 +176,9 @@ class LibreRFDETR(BaseModel):
     FILENAME_PREFIX = "LibreRFDETR"
     INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704}
     SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
+    # Pose uses the dedicated GroupPose preset (adapted from RF-DETR v1.8.0);
+    # the keypoint preview runs the encoder at a 576 square.
+    POSE_INPUT_SIZES = {"x": 576}
     # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
     CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
     # Semantic runs the DINOv2 backbone at its native pretrained 518 square
@@ -191,7 +199,7 @@ class LibreRFDETR(BaseModel):
         "detect": INPUT_SIZES,
         "segment": SEG_INPUT_SIZES,
         "semantic": SEM_INPUT_SIZES,
-        "pose": INPUT_SIZES,
+        "pose": POSE_INPUT_SIZES,
         "classify": CLS_INPUT_SIZES,
         "obb": INPUT_SIZES,
         "depth": DEPTH_INPUT_SIZES,
@@ -203,7 +211,7 @@ class LibreRFDETR(BaseModel):
     # (patch_size 14 x num_windows 1) used by the semantic backbone.
     semantic_imgsz_divisor = 14
     depth_imgsz_divisor = 14
-    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrn-pose.pt"})
+    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrx-pose.pt"})
     TRAIN_CONFIG = RFDETRConfig
     val_preprocessor_class = RFDETRValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
@@ -379,7 +387,9 @@ class LibreRFDETR(BaseModel):
         if size is None and (
             model_path is None or (isinstance(model_path, dict) and not model_path)
         ):
-            size = "s"
+            # Pose has a single GroupPose preset (adapted from RF-DETR v1.8.0);
+            # detection/seg/etc. fall back to the small default.
+            size = "x" if normalize_task(resolved_task) == "pose" else "s"
 
         if isinstance(model_path, dict) and not model_path:
             weight_source = None
@@ -575,7 +585,11 @@ class LibreRFDETR(BaseModel):
             return "semantic"
         if any(k.startswith("segmentation_head") for k in state):
             return "segment"
-        if any(k.startswith("keypoint_head") for k in state):
+        # Pose: legacy clean-room keypoint_head.* weights, or the GroupPose
+        # transformer keypoint markers ported from RF-DETR v1.8.0.
+        if any(k.startswith("keypoint_head") for k in state) or any(
+            "keypoint" in k for k in state if k.startswith("transformer.")
+        ):
             return "pose"
         return None
 
@@ -613,7 +627,9 @@ class LibreRFDETR(BaseModel):
             if isinstance(ckpt, dict) and ckpt.get("task") is not None:
                 return normalize_task(ckpt.get("task")) == "pose"
             state = _checkpoint_model_state(ckpt)
-            return any(k.startswith("keypoint_head") for k in state)
+            return any(k.startswith("keypoint_head") for k in state) or any(
+                "keypoint" in k for k in state if k.startswith("transformer.")
+            )
         except Exception:
             return False
 
@@ -750,6 +766,32 @@ class LibreRFDETR(BaseModel):
             img_tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
             return img_tensor, img, orig_size, 1.0
 
+        if self._is_pose:
+            # GroupPose keypoint preprocess (adapted from RF-DETR v1.8.0). The
+            # official keypoint pipeline is ``Compose([ToTensor, Resize((R, R),
+            # bilinear, antialias=True), Normalize(ImageNet)])`` — it resizes the
+            # float tensor with antialiasing, which differs from the PIL
+            # bilinear (no antialias) resize used by the detection path. The
+            # difference is sub-pixel but enough to flip a borderline detection
+            # at threshold; align the pose path so keypoint pixel coordinates and
+            # scores are bit-exact with the official outputs. Detection/seg/obb
+            # preprocess is intentionally left on ``preprocess_numpy``.
+            import torch.nn.functional as F  # local import; hot path only
+
+            arr = np.asarray(img, dtype=np.float32) / 255.0
+            chw = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            chw = F.interpolate(
+                chw,
+                size=(effective_res, effective_res),
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            mean = torch.tensor(IMAGENET_MEAN, dtype=torch.float32).view(1, 3, 1, 1)
+            std = torch.tensor(IMAGENET_STD, dtype=torch.float32).view(1, 3, 1, 1)
+            img_tensor = (chw - mean) / std
+            return img_tensor, img, orig_size, 1.0
+
         img_chw, _ = preprocess_numpy(np.array(img), effective_res)
         img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
 
@@ -810,8 +852,29 @@ class LibreRFDETR(BaseModel):
                 else:
                     output["pred_masks"] = tuple_output[2]
 
+        # GroupPose keypoint schema (e.g. [0, 17]) ported from RF-DETR v1.8.0.
+        # When present, the postprocessor selects the predicted-class keypoint
+        # slot, so logits must keep all class columns and topk runs over every
+        # (query x class) pair exactly like the official PostProcess.
+        #
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # Derive the schema from the inner LWDETR's live ``_kp_active_mask``
+        # (the single source of truth, always kept current by
+        # ``reinitialize_keypoint_head``) so a post-resize schema (e.g. a non-17
+        # keypoint count from a fine-tune) cannot diverge from the 2*K keypoint
+        # slots the model emits. Fall back to the wrapper attribute when the inner
+        # model is unavailable.
+        inner_model = getattr(self.model, "model", None)
+        if inner_model is not None and getattr(inner_model, "use_grouppose_keypoints", False):
+            num_keypoints_per_class = list(inner_model.get_num_keypoints_per_class())
+        else:
+            num_keypoints_per_class = list(
+                getattr(self.model, "num_keypoints_per_class", []) or []
+            )
+        is_grouppose = self._is_pose and len(num_keypoints_per_class) > 0
+
         logits = output["pred_logits"]
-        if self._is_pose and logits.shape[-1] > self.nb_classes:
+        if self._is_pose and not is_grouppose and logits.shape[-1] > self.nb_classes:
             output = dict(output)
             output["pred_logits"] = logits[..., : self.nb_classes]
             logits = output["pred_logits"]
@@ -826,7 +889,15 @@ class LibreRFDETR(BaseModel):
         orig_w, orig_h = original_size
         target_sizes = torch.tensor([(orig_h, orig_w)], device=self.device)
 
-        results = postprocess(output, target_sizes, num_select=num_select)
+        # trace_alpha defaults to RF-DETR's 0.2; allow override via the model.
+        trace_alpha = float(getattr(self.model, "postprocess_trace_alpha", 0.2))
+        results = postprocess(
+            output,
+            target_sizes,
+            num_select=num_select,
+            num_keypoints_per_class=num_keypoints_per_class if is_grouppose else None,
+            trace_alpha=trace_alpha,
+        )
 
         result = results[0]
         scores = result["scores"]
@@ -834,6 +905,7 @@ class LibreRFDETR(BaseModel):
         boxes = result["boxes"]
         masks = result.get("masks")  # (K, H, W) bool or None
         keypoints = result.get("keypoints")
+        keypoint_precision = result.get("keypoint_precision_cholesky")
         obb = result.get("obb")
 
         keep = scores > conf_thres
@@ -844,6 +916,8 @@ class LibreRFDETR(BaseModel):
             masks = masks[keep]
         if keypoints is not None:
             keypoints = keypoints[keep]
+        if keypoint_precision is not None:
+            keypoint_precision = keypoint_precision[keep]
         if obb is not None:
             obb = obb[keep]
 
@@ -863,6 +937,8 @@ class LibreRFDETR(BaseModel):
                 masks = masks[valid]
             if keypoints is not None:
                 keypoints = keypoints[valid]
+            if keypoint_precision is not None:
+                keypoint_precision = keypoint_precision[valid]
             if obb is not None:
                 obb = obb[valid]
                 obb[:, 5] = scores
@@ -878,6 +954,8 @@ class LibreRFDETR(BaseModel):
             det["masks"] = masks.cpu()
         if keypoints is not None:
             det["keypoints"] = keypoints.cpu()
+        if keypoint_precision is not None:
+            det["keypoint_precision_cholesky"] = keypoint_precision.cpu()
         if obb is not None:
             det["obb"] = obb.cpu().tolist()
         return det
@@ -1113,7 +1191,18 @@ class LibreRFDETR(BaseModel):
             )
 
             loaded_state = _checkpoint_model_state(loaded)
-            pose_checkpoint = any(k.startswith("keypoint_head.") for k in loaded_state)
+            # A pose checkpoint is recognised either by the legacy clean-room
+            # ``keypoint_head.*`` weights or by the GroupPose markers ported from
+            # RF-DETR v1.8.0 (the released keypoint preview carries its keypoint
+            # parameters under ``transformer.*keypoint*`` and drops the vestigial
+            # ``keypoint_head.keypoint_proj.*`` keys at conversion time).
+            pose_checkpoint = any(
+                k.startswith("keypoint_head.") for k in loaded_state
+            ) or any(
+                "keypoint" in k
+                for k in loaded_state
+                if k.startswith("transformer.")
+            ) or bool(loaded.get("num_keypoints_per_class"))
             detect_pose_transfer = (
                 self._is_pose
                 and normalized_ckpt_task == "detect"
@@ -1367,6 +1456,16 @@ class LibreRFDETR(BaseModel):
                 self.model.model.reinitialize_keypoint_head(num_keypoints)
                 self.model.num_keypoints = num_keypoints
                 self.model.args.num_keypoints = num_keypoints
+                # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+                # reinitialize_keypoint_head resizes the inner model's GroupPose
+                # schema (e.g. [0, 17] -> [0, K]); propagate the resized schema to
+                # the wrapper and args so the grouppose postprocess (which reads
+                # the schema) and the criterion build (from args) match the new
+                # 2*K keypoint slots instead of the stale [0, 17].
+                if getattr(self.model.model, "use_grouppose_keypoints", False):
+                    resized_schema = list(self.model.model.get_num_keypoints_per_class())
+                    self.model.num_keypoints_per_class = resized_schema
+                    self.model.args.num_keypoints_per_class = resized_schema
             self.num_keypoints = num_keypoints
             self.keypoint_dim = keypoint_dim
             self.nb_classes = 1

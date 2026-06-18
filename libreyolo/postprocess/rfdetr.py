@@ -5,19 +5,152 @@ weights load and produce numerically equivalent detections.
 
 Moved verbatim from ``libreyolo/models/rfdetr/utils.py``, which re-exports it
 for backward compatibility.
+
+The GroupPose keypoint postprocess (``_keypoint_log_mean_trace`` /
+``_postprocess_grouppose_keypoints`` and the keypoint branch of ``postprocess``)
+is ported from RF-DETR v1.8.0 (https://github.com/roboflow/rf-detr).
+Copyright (c) 2025 Roboflow, Inc. All Rights Reserved.
+Licensed under the Apache License, Version 2.0.
 """
 
 import torch
 import torch.nn.functional as F
-from typing import List, Dict
+from collections.abc import Sequence
+from typing import Optional
 
 from ..data.obb import scale_xywhr
 from ..utils.general import cxcywh_to_xyxy
 
 
+def _keypoint_log_mean_trace(active_keypoints: torch.Tensor) -> torch.Tensor:
+    """Compute the log findability-weighted mean covariance trace.
+
+    Ported from RF-DETR v1.8.0 (``PostProcess._keypoint_log_mean_trace``,
+    https://github.com/roboflow/rf-detr, Apache-2.0). Columns ``4:7`` of
+    ``active_keypoints`` are the ``(log_l11, l21, log_l22)`` precision-Cholesky
+    parameters and column ``2`` is the findable logit. The computation stays in
+    log space for numerical stability. Supports a leading batch dimension so it
+    can be called once per keypoint class group.
+    """
+    log_l11 = active_keypoints[..., 4]
+    l21 = active_keypoints[..., 5]
+    log_l22 = active_keypoints[..., 6]
+    w_find = active_keypoints[..., 2].sigmoid()
+    log_t1 = -2.0 * log_l11
+    log_t2 = -2.0 * log_l22
+    log_t3 = 2.0 * torch.log(l21.abs().clamp(min=1e-12)) + log_t1 + log_t2
+    log_trace_sigma = torch.logsumexp(torch.stack([log_t1, log_t2, log_t3], dim=-1), dim=-1)
+    log_w_find = torch.log(w_find.clamp(min=1e-12))
+    return torch.logsumexp(log_trace_sigma + log_w_find, dim=-1) - torch.logsumexp(log_w_find, dim=-1)
+
+
+def _postprocess_grouppose_keypoints(
+    out_keypoints_i: torch.Tensor,
+    topk_boxes_i: torch.Tensor,
+    labels_i: torch.Tensor,
+    scores_i: torch.Tensor,
+    target_size: torch.Tensor,
+    num_keypoints_per_class: Sequence[int],
+    trace_alpha: float,
+):
+    """Decode GroupPose keypoints for one image into pixel-space outputs.
+
+    Ported faithfully from RF-DETR v1.8.0
+    (``PostProcess._postprocess_keypoints`` / ``_decode_keypoints_for_image`` /
+    ``_apply_keypoint_trace_fusion``, https://github.com/roboflow/rf-detr,
+    Apache-2.0).
+
+    The raw keypoint tensor for one image has shape
+    ``(Q, num_classes * max_K, D)`` where ``D >= 7``. Channels are
+    ``[x, y, findable_logit, visible_logit, log_l11, l21, log_l22, ...]`` with
+    ``x``/``y`` normalized to ``[0, 1]``. For each selected query the predicted
+    class slot is gathered, xy is scaled to original-image pixels, confidence is
+    ``findable.sigmoid()``, and (when ``trace_alpha > 0``) object scores are
+    multiplied by ``exp(-trace_alpha * log_mean_trace)``.
+
+    Returns ``(scores_i, output_keypoints, output_keypoint_precision)`` where
+    ``output_keypoints`` is ``(K, max_K, 3)`` ``(x_px, y_px, vis)`` and
+    ``output_keypoint_precision`` is ``(K, max_K, 3)`` raw Cholesky params.
+    """
+    max_num_keypoints = max(num_keypoints_per_class, default=0)
+    num_keypoint_classes = len(num_keypoints_per_class)
+
+    keypoints_i = torch.gather(
+        out_keypoints_i,
+        0,
+        topk_boxes_i.unsqueeze(-1).unsqueeze(-1).repeat(
+            1, out_keypoints_i.shape[-2], out_keypoints_i.shape[-1]
+        ),
+    )
+
+    output_keypoints = keypoints_i.new_zeros((keypoints_i.shape[0], max_num_keypoints, 3))
+    output_keypoint_precision = keypoints_i.new_full(
+        (keypoints_i.shape[0], max_num_keypoints, 3), float("nan")
+    )
+
+    if num_keypoint_classes == 0 or max_num_keypoints == 0:
+        return scores_i, output_keypoints, output_keypoint_precision
+
+    total_padded_keypoint_slots = keypoints_i.shape[1]
+    if total_padded_keypoint_slots != num_keypoint_classes * max_num_keypoints:
+        raise ValueError(
+            f"keypoints padded slot dimension ({total_padded_keypoint_slots}) must equal "
+            f"num_keypoint_classes ({num_keypoint_classes}) * max_num_keypoints ({max_num_keypoints})."
+        )
+
+    reshaped = keypoints_i.view(
+        keypoints_i.shape[0], num_keypoint_classes, max_num_keypoints, keypoints_i.shape[-1]
+    )
+    valid_class_mask = labels_i < num_keypoint_classes
+    if not valid_class_mask.any():
+        return scores_i, output_keypoints, output_keypoint_precision
+
+    valid_indices = valid_class_mask.nonzero(as_tuple=True)[0]
+    selected_labels = labels_i[valid_indices]
+    selected_keypoints = reshaped[valid_indices, selected_labels]
+    has_precision = selected_keypoints.shape[-1] >= 7
+
+    if trace_alpha > 0 and has_precision:
+        log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
+        for class_idx in range(num_keypoint_classes):
+            class_mask = selected_labels == class_idx
+            if not class_mask.any():
+                continue
+            num_active = num_keypoints_per_class[class_idx]
+            if num_active <= 0:
+                continue
+            log_mean_traces[class_mask] = _keypoint_log_mean_trace(
+                selected_keypoints[class_mask, :num_active]
+            )
+        scores_i = scores_i.clone()
+        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-trace_alpha * log_mean_traces)
+
+    img_h, img_w = target_size
+    for class_idx in range(num_keypoint_classes):
+        class_mask = selected_labels == class_idx
+        if not class_mask.any():
+            continue
+        num_active = num_keypoints_per_class[class_idx]
+        if num_active <= 0:
+            continue
+        out_idx = valid_indices[class_mask]
+        active_keypoints = selected_keypoints[class_mask, :num_active]
+        output_keypoints[out_idx, :num_active, 0] = active_keypoints[..., 0] * img_w
+        output_keypoints[out_idx, :num_active, 1] = active_keypoints[..., 1] * img_h
+        output_keypoints[out_idx, :num_active, 2] = active_keypoints[..., 2].sigmoid()
+        if has_precision:
+            output_keypoint_precision[out_idx, :num_active] = active_keypoints[..., 4:7]
+
+    return scores_i, output_keypoints, output_keypoint_precision
+
+
 def postprocess(
-    outputs: Dict[str, torch.Tensor], target_sizes: torch.Tensor, num_select: int = 300
-) -> List[Dict[str, torch.Tensor]]:
+    outputs: dict[str, torch.Tensor],
+    target_sizes: torch.Tensor,
+    num_select: int = 300,
+    num_keypoints_per_class: Optional[Sequence[int]] = None,
+    trace_alpha: float = 0.2,
+) -> list[dict[str, torch.Tensor]]:
     """
     Postprocess RF-DETR outputs to get final detections.
 
@@ -33,6 +166,12 @@ def postprocess(
         outputs: Model output dictionary with 'pred_logits' and 'pred_boxes'
         target_sizes: Tensor of shape (batch_size, 2) with (height, width) for each image
         num_select: Number of top detections to select (default: 300)
+        num_keypoints_per_class: GroupPose keypoint schema (e.g. ``[0, 17]``); when
+            given, ``pred_keypoints`` is decoded with the RF-DETR GroupPose path
+            (predicted-class slot gather + pixel scaling + findable.sigmoid()
+            confidence + trace-fusion scoring). Ignored for non-keypoint outputs.
+        trace_alpha: Keypoint uncertainty fusion weight (default 0.2, matching
+            RF-DETR). ``0`` disables fusion. Only used for GroupPose keypoints.
 
     Returns:
         List of dictionaries, one per image, each containing:
@@ -132,13 +271,66 @@ def postprocess(
             res_i["masks"] = (masks_i[:, 0] > 0.0).bool()  # (K, H, W)
 
         if out_keypoints is not None:
-            k_idx = topk_boxes[i]
-            keypoints_i = out_keypoints[i][k_idx].clone()
-            h, w = target_sizes[i].tolist()
-            keypoints_i[..., 0] = keypoints_i[..., 0] * float(w)
-            keypoints_i[..., 1] = keypoints_i[..., 1] * float(h)
-            keypoints_i[..., 2] = keypoints_i[..., 2].sigmoid()
-            res_i["keypoints"] = keypoints_i
+            # GroupPose keypoint decode (ported from RF-DETR v1.8.0). The raw
+            # keypoints are (Q, num_classes * max_K, D); the predicted-class slot
+            # is gathered per query, xy scaled to original pixels, confidence =
+            # findable.sigmoid(), and trace fusion adjusts the object scores.
+            # NOTE: the slot select uses ``labels[i]`` (the model's INTERNAL
+            # GroupPose class index) so keypoint xy/conf stay byte-identical to
+            # upstream; the emitted detection label is remapped below.
+            scores_i, keypoints_i, precision_i = _postprocess_grouppose_keypoints(
+                out_keypoints[i],
+                topk_boxes[i],
+                labels[i],
+                scores[i],
+                target_sizes[i],
+                num_keypoints_per_class or [],
+                trace_alpha,
+            )
+
+            # Class-index remap (LibreYOLO contiguous pose convention).
+            #
+            # The GroupPose schema ``num_keypoints_per_class`` (e.g. ``[0, 17]``)
+            # makes the keypoint-bearing "person" class the INTERNAL index 1, so
+            # the model emits detection label 1. LibreYOLO's person-only pose
+            # convention is contiguous index 0 (nc=1, names={0: "person"}). Map
+            # the internal predicted class to its position among the
+            # keypoint-bearing classes (``kp_classes.index(internal)``), so
+            # person -> 0. Detections whose predicted class is NOT a
+            # keypoint-bearing class (e.g. internal class 0, the empty slot) are
+            # not valid pose detections and are dropped -- upstream returns only
+            # the person class. Keypoints/scores/boxes for the kept detections are
+            # left byte-identical (they are only re-indexed, not recomputed).
+            kp_classes = [
+                cls_idx
+                for cls_idx, count in enumerate(num_keypoints_per_class or [])
+                if count > 0
+            ]
+            labels_i = labels[i]
+            if kp_classes:
+                kp_class_tensor = torch.as_tensor(
+                    kp_classes, dtype=labels_i.dtype, device=labels_i.device
+                )
+                # remap[internal] = contiguous index, or -1 when not keypoint-bearing.
+                remap = labels_i.new_full((num_classes,), -1)
+                remap[kp_class_tensor] = torch.arange(
+                    len(kp_classes), dtype=labels_i.dtype, device=labels_i.device
+                )
+                contiguous_labels = remap[labels_i]
+                keep_kp = contiguous_labels >= 0
+            else:
+                # No keypoint-bearing class in the schema: nothing is a valid
+                # pose detection. Keep the (empty-mask) filter consistent.
+                contiguous_labels = labels_i
+                keep_kp = labels_i.new_zeros(labels_i.shape, dtype=torch.bool)
+
+            res_i["labels"] = contiguous_labels[keep_kp]
+            res_i["boxes"] = boxes[i][keep_kp]
+            # Trace fusion may rescale scores; keep boxes/scores/keypoints in
+            # lockstep so the downstream confidence threshold filters all heads.
+            res_i["scores"] = scores_i[keep_kp]
+            res_i["keypoints"] = keypoints_i[keep_kp]
+            res_i["keypoint_precision_cholesky"] = precision_i[keep_kp]
 
         results.append(res_i)
 

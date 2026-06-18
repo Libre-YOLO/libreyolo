@@ -638,6 +638,7 @@ class Backbone(BackboneBase):
         patch_size: int = 14,
         num_windows: int = 4,
         positional_encoding_size: int = 0,
+        dual_projector: bool = False,
     ):
         super().__init__()
         # Encoder names look like "dinov2_base" or "dinov2_registers_windowed_base":
@@ -688,6 +689,24 @@ class Backbone(BackboneBase):
             layer_norm=layer_norm,
             rms_norm=rms_norm,
         )
+        # Dual-projector addition ported from RF-DETR v1.8.0 (keypoint preview).
+        # A second, structurally identical MultiScaleProjector named
+        # ``cross_attn_projector`` whose features feed the keypoint
+        # cross-attention branch. Gated on ``dual_projector`` (default False) so
+        # detection models are byte-identical: the module is only built — and the
+        # forward only produces its features — when explicitly requested.
+        self.dual_projector = dual_projector
+        self.cross_attn_projector = (
+            MultiScaleProjector(
+                in_channels=self.encoder._out_feature_channels,
+                out_channels=out_channels,
+                scale_factors=scale_factors,
+                layer_norm=layer_norm,
+                rms_norm=rms_norm,
+            )
+            if dual_projector
+            else None
+        )
 
         self._export = False
 
@@ -713,26 +732,49 @@ class Backbone(BackboneBase):
             self.encoder = self.encoder.merge_and_unload()
 
     def forward(self, tensor_list: NestedTensor):
-        feats = self.encoder(tensor_list.tensors)
-        feats = self.projector(feats)
+        # Keep the encoder output (``raw_feats``) so the optional cross-attention
+        # projector can consume the same features as the primary projector.
+        raw_feats = self.encoder(tensor_list.tensors)
+        feats = self.projector(raw_feats)
         out = []
         for feat in feats:
             m = tensor_list.mask
             assert m is not None
             mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
             out.append(NestedTensor(feat, mask))
-        return out
+
+        # Dual-projector addition ported from RF-DETR v1.8.0. When the second
+        # projector is absent (default) the forward returns the plain detection
+        # list as before — byte-identical. When present, it additionally runs the
+        # cross-attention projector over the SAME ``raw_feats`` and returns the
+        # ``(out, cross_attn_out)`` tuple consumed by the keypoint branch.
+        if self.cross_attn_projector is None:
+            return out
+        cross_attn_out = []
+        cross_attn_feats = self.cross_attn_projector(raw_feats)
+        for feat in cross_attn_feats:
+            m = tensor_list.mask
+            assert m is not None
+            mask = F.interpolate(m[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+            cross_attn_out.append(NestedTensor(feat, mask))
+        return out, cross_attn_out
 
     def forward_export(self, tensors: torch.Tensor):
-        feats = self.encoder(tensors)
-        feats = self.projector(feats)
+        raw_feats = self.encoder(tensors)
+        feats = self.projector(raw_feats)
         out_feats = []
         out_masks = []
         for feat in feats:
             b, _, h, w = feat.shape
             out_masks.append(torch.zeros((b, h, w), dtype=torch.bool, device=feat.device))
             out_feats.append(feat)
-        return out_feats, out_masks
+        # Dual-projector addition ported from RF-DETR v1.8.0: emit the second
+        # projector's feature maps for export only when it exists, leaving the
+        # 2-tuple export contract unchanged for detection models.
+        if self.cross_attn_projector is None:
+            return out_feats, out_masks
+        cross_attn_feats = list(self.cross_attn_projector(raw_feats))
+        return out_feats, out_masks, cross_attn_feats
 
     def get_named_param_lr_pairs(self, args, prefix: str = "backbone.0"):
         num_layers = args.out_feature_indexes[-1] + 1
@@ -789,11 +831,22 @@ class Joiner(nn.Sequential):
         self._export = False
 
     def forward(self, tensor_list: NestedTensor):
-        x = self[0](tensor_list)
+        # Dual-projector addition ported from RF-DETR v1.8.0: the backbone returns
+        # a plain list for detection (byte-identical, 2-value return) and an
+        # ``(x, cross_attn_x)`` tuple when the second projector is enabled, in
+        # which case we additionally surface ``cross_attn_x`` for the keypoint
+        # branch (3-value return).
+        result = self[0](tensor_list)
+        if isinstance(result, tuple):
+            x, cross_attn_x = result
+        else:
+            x, cross_attn_x = result, None
         pos = []
         for x_ in x:
             pos.append(self[1](x_, align_dim_orders=False).to(x_.tensors.dtype))
-        return x, pos
+        if cross_attn_x is None:
+            return x, pos
+        return x, pos, cross_attn_x
 
     def export(self):
         self._export = True
@@ -804,11 +857,21 @@ class Joiner(nn.Sequential):
                 m.export()
 
     def forward_export(self, inputs: torch.Tensor):
-        feats, masks = self[0](inputs)
+        # Dual-projector addition ported from RF-DETR v1.8.0: the backbone export
+        # returns a 2-tuple ``(feats, masks)`` for detection and a 3-tuple
+        # ``(feats, masks, cross_attn_feats)`` when the second projector exists.
+        result = self[0](inputs)
+        if len(result) == 3:
+            feats, masks, cross_attn_feats = result
+        else:
+            feats, masks = result
+            cross_attn_feats = None
         poss = []
         for feat, mask in zip(feats, masks):
             poss.append(self[1](mask, align_dim_orders=False).to(feat.dtype))
-        return feats, None, poss
+        if cross_attn_feats is None:
+            return feats, None, poss
+        return feats, None, poss, cross_attn_feats
 
 
 def build_backbone(
@@ -834,6 +897,7 @@ def build_backbone(
     patch_size,
     num_windows,
     positional_encoding_size,
+    dual_projector: bool = False,
 ):
     del vit_encoder_num_layers, force_no_pretrain
     position_embedding = build_position_encoding(hidden_dim, position_embedding)
@@ -856,5 +920,7 @@ def build_backbone(
         patch_size=patch_size,
         num_windows=num_windows,
         positional_encoding_size=positional_encoding_size,
+        # Dual-projector addition ported from RF-DETR v1.8.0.
+        dual_projector=dual_projector,
     )
     return Joiner(backbone, position_embedding)

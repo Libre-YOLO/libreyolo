@@ -13,6 +13,7 @@ Copyright (c) 2020 SenseTime. All Rights Reserved.
 """
 
 import copy
+import logging
 import math
 from typing import Any, Callable, Optional
 
@@ -38,6 +39,8 @@ from .segmentation import SegmentationHead
 from .matcher import build_matcher
 from .transformer import build_transformer
 from .tensors import NestedTensor, nested_tensor_from_tensor_list
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +173,47 @@ def _resize_linear(linear: nn.Linear, num_classes: int) -> nn.Linear:
     return new_linear
 
 
+# ---------------------------------------------------------------------------
+# GroupPose keypoint helpers (ported from RF-DETR v1.8.0 keypoint preview).
+# ---------------------------------------------------------------------------
+
+
+def _resize_parameter_rows(parameter: nn.Parameter, num_rows: int) -> nn.Parameter:
+    """Return a parameter with the first dimension resized by tiling or truncating rows.
+
+    Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+    """
+    current_rows = parameter.shape[0]
+    if current_rows == num_rows:
+        return parameter
+
+    if current_rows == 0:
+        new_data = parameter.detach().new_zeros((num_rows, *parameter.shape[1:]))
+    else:
+        repeats = [int(math.ceil(num_rows / current_rows)), *([1] * (parameter.dim() - 1))]
+        new_data = parameter.detach().repeat(*repeats)[:num_rows]
+    return nn.Parameter(new_data.clone(), requires_grad=parameter.requires_grad)
+
+
+def _reset_keypoint_gaussian_output_rows(module: nn.Module) -> None:
+    """Reset keypoint precision-Cholesky output rows to unit Gaussian values.
+
+    Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+    """
+    layers = getattr(module, "layers", None)
+    if layers is None or len(layers) == 0:
+        return
+
+    final_layer = layers[-1]
+    if not isinstance(final_layer, nn.Linear) or final_layer.out_features <= 6:
+        return
+
+    with torch.no_grad():
+        final_layer.weight[4:7].zero_()
+        if final_layer.bias is not None:
+            final_layer.bias[4:7].zero_()
+
+
 class LWDETR(nn.Module):
     """This is the Group DETR v3 module that performs object detection"""
 
@@ -178,16 +222,20 @@ class LWDETR(nn.Module):
         backbone,
         transformer,
         segmentation_head,
-        keypoint_head,
         num_classes,
         num_queries,
-        num_keypoints=17,
         aux_loss=False,
         group_detr=1,
         two_stage=False,
         lite_refpoint_refine=False,
         bbox_reparam=False,
         obb=False,
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # All keypoint flags default to off so the detection/seg/obb construction
+        # path remains byte-identical to the original.
+        use_grouppose_keypoints=False,
+        num_keypoints_per_class: "list[int] | None" = None,
+        grouppose_keypoint_dim_downscale: int = 1,
     ):
         """Initializes the model.
         Parameters:
@@ -208,8 +256,6 @@ class LWDETR(nn.Module):
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.angle_embed = MLP(hidden_dim, hidden_dim, 1, 3) if obb else None
         self.segmentation_head = segmentation_head
-        self.keypoint_head = keypoint_head
-        self.num_keypoints = int(num_keypoints)
         self.obb = obb
 
         query_dim = 4
@@ -230,6 +276,38 @@ class LWDETR(nn.Module):
 
         self.bbox_reparam = bbox_reparam
 
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # GroupPose keypoint heads (group_detr style) — only built when the
+        # GroupPose keypoint mode is active. The detection/seg path never touches
+        # any of this and so stays unchanged.
+        self.use_grouppose_keypoints = use_grouppose_keypoints
+        self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.grouppose_keypoint_dim_downscale = grouppose_keypoint_dim_downscale
+        if self.use_grouppose_keypoints and len(self.num_keypoints_per_class) > num_classes:
+            raise ValueError(
+                f"num_keypoints_per_class has {len(self.num_keypoints_per_class)} entries but the detection head "
+                f"only has {num_classes} classes. Class-logit boosts for keypoint classes with id >= {num_classes} "
+                "would be silently truncated. Increase num_classes or shorten num_keypoints_per_class."
+            )
+        # Flag to ensure the zero-pad warning in ``_aggregate_keypoint_class_logits`` is emitted at most once.
+        self._kp_zero_pad_warned = False
+        if self.use_grouppose_keypoints:
+            # MLP(hidden_dim // downscale, hidden_dim // downscale, KEYPOINT_PRED_DIM=8, 3);
+            # downscale=1 => (256, 256, 8, 3) matching the rf-detr-keypoint-preview checkpoint.
+            self.keypoint_embed = MLP(
+                hidden_dim // self.grouppose_keypoint_dim_downscale,
+                hidden_dim // self.grouppose_keypoint_dim_downscale,
+                8,
+                3,
+            )
+            # Initialize keypoint head to near-identity behavior around zero delta.
+            nn.init.constant_(self.keypoint_embed.layers[-1].weight.data, 0)
+            nn.init.constant_(self.keypoint_embed.layers[-1].bias.data, 0)
+        else:
+            self.keypoint_embed = None
+
+        self.register_buffer("_kp_active_mask", self._create_kp_active_mask(self.num_keypoints_per_class))
+
         # init prior_prob setting for focal loss
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -238,9 +316,6 @@ class LWDETR(nn.Module):
         # init bbox_mebed
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
-        if self.keypoint_head is not None:
-            nn.init.constant_(self.keypoint_head.layers[-1].weight.data, 0)
-            nn.init.constant_(self.keypoint_head.layers[-1].bias.data, 0)
         if self.angle_embed is not None:
             nn.init.constant_(self.angle_embed.layers[-1].weight.data, 0)
             nn.init.constant_(self.angle_embed.layers[-1].bias.data, 0)
@@ -254,6 +329,16 @@ class LWDETR(nn.Module):
             self.transformer.enc_out_class_embed = nn.ModuleList(
                 [copy.deepcopy(self.class_embed) for _ in range(group_detr)]
             )
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+            # The transformer already built ``enc_out_keypoint_embed`` as a
+            # ModuleList of MLP(256, 256, 8, 3) (checkpoint-faithful shapes/keys).
+            # Replicate the official LWDETR behavior of overwriting it with
+            # deep-copies of ``keypoint_embed`` — the shapes/keys are identical so
+            # strict checkpoint loading is unaffected either way.
+            if self.use_grouppose_keypoints and self.keypoint_embed is not None:
+                self.transformer.enc_out_keypoint_embed = nn.ModuleList(
+                    [copy.deepcopy(self.keypoint_embed) for _ in range(group_detr)]
+                )
 
         self._export = False
 
@@ -278,19 +363,130 @@ class LWDETR(nn.Module):
                 [_resize_linear(m, num_classes) for m in self.transformer.enc_out_class_embed]
             )
 
-    def reinitialize_keypoint_head(self, num_keypoints: int) -> None:
-        """Resize the keypoint MLP output to ``num_keypoints * 3`` channels."""
-        if self.keypoint_head is None:
+    @staticmethod
+    def _create_kp_active_mask(num_keypoints_per_class: "list[int]") -> torch.Tensor:
+        """Create a compact class-by-keypoint active mask for a keypoint schema.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        if not num_keypoints_per_class:
+            return torch.zeros(0, 0, dtype=torch.bool)
+
+        max_kp = max(num_keypoints_per_class)
+        kp_active = torch.zeros(len(num_keypoints_per_class), max_kp, dtype=torch.bool)
+        for class_idx, num_keypoints in enumerate(num_keypoints_per_class):
+            kp_active[class_idx, :num_keypoints] = True
+        return kp_active
+
+    @staticmethod
+    def _create_keypoint_class_mask(num_keypoints_per_class: "list[int]") -> torch.Tensor:
+        """Create an attention mask that blocks cross-class keypoint interactions.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        if not num_keypoints_per_class:
+            return torch.zeros(1, 1, dtype=torch.bool)
+
+        total_keypoints = sum(num_keypoints_per_class)
+        mask = torch.zeros(1 + total_keypoints, 1 + total_keypoints, dtype=torch.bool)
+        for class_idx_i, num_keypoints_i in enumerate(num_keypoints_per_class):
+            if num_keypoints_i == 0:
+                continue
+            start_i = 1 + sum(num_keypoints_per_class[:class_idx_i])
+            end_i = start_i + num_keypoints_i
+            for class_idx_j, num_keypoints_j in enumerate(num_keypoints_per_class):
+                if num_keypoints_j == 0 or class_idx_i == class_idx_j:
+                    continue
+                start_j = 1 + sum(num_keypoints_per_class[:class_idx_j])
+                end_j = start_j + num_keypoints_j
+                mask[start_i:end_i, start_j:end_j] = True
+        return mask
+
+    def get_num_keypoints_per_class(self) -> "list[int]":
+        """Return the current keypoint schema inferred from the active-keypoint mask.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        return [int(num_keypoints) for num_keypoints in self._kp_active_mask.sum(dim=1).tolist()]
+
+    @staticmethod
+    def get_num_keypoints_per_class_from_checkpoint(
+        state_dict: "dict[str, torch.Tensor]",
+    ) -> "list[int] | None":
+        """Infer the keypoint schema stored in a checkpoint state dict.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        active_mask = state_dict.get("_kp_active_mask")
+        if not isinstance(active_mask, torch.Tensor) or active_mask.ndim != 2:
+            return None
+        return [int(num_keypoints) for num_keypoints in active_mask.sum(dim=1).tolist()]
+
+    def reinitialize_keypoint_head(self, num_keypoints_per_class: "int | list[int] | None") -> None:
+        """Resize schema-dependent GroupPose state to match ``num_keypoints_per_class``.
+
+        Accepts either a full per-class schema (e.g. ``[0, 17]``) or a single int
+        ``K`` keypoint count. An int is mapped onto the current schema by replacing
+        every nonzero per-class count with ``K`` (so ``[0, 17] -> [0, K]``); if no
+        schema exists yet it becomes ``[K]``. This keeps the trainer/loader fine-tune
+        call sites (which carry a scalar keypoint count) working.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        if not self.use_grouppose_keypoints or not num_keypoints_per_class:
             return
-        hidden_dim = self.transformer.d_model
-        self.num_keypoints = int(num_keypoints)
-        device = self.keypoint_head.layers[-1].weight.device
-        dtype = self.keypoint_head.layers[-1].weight.dtype
-        self.keypoint_head = MLP(hidden_dim, hidden_dim, self.num_keypoints * 3, 3).to(
-            device=device, dtype=dtype
-        )
-        nn.init.constant_(self.keypoint_head.layers[-1].weight.data, 0)
-        nn.init.constant_(self.keypoint_head.layers[-1].bias.data, 0)
+
+        if isinstance(num_keypoints_per_class, int):
+            k = int(num_keypoints_per_class)
+            current = list(self.num_keypoints_per_class) if self.num_keypoints_per_class else []
+            num_keypoints_per_class = [k if count > 0 else 0 for count in current] or [k]
+
+        schema = list(num_keypoints_per_class)
+        total_keypoints = sum(schema)
+        self.num_keypoints_per_class = schema
+        self._kp_active_mask = self._create_kp_active_mask(schema).to(self._kp_active_mask.device)
+
+        if hasattr(self.transformer, "num_keypoints_per_class"):
+            self.transformer.num_keypoints_per_class = schema
+
+        decoder = getattr(self.transformer, "decoder", None)
+        if decoder is not None:
+            if hasattr(decoder, "num_keypoints_per_class"):
+                decoder.num_keypoints_per_class = schema
+            keypoint_pos_embed = getattr(decoder, "keypoint_pos_embed", None)
+            if isinstance(keypoint_pos_embed, nn.Parameter):
+                decoder.keypoint_pos_embed = _resize_parameter_rows(keypoint_pos_embed, total_keypoints)
+            if hasattr(decoder, "_create_keypoint_class_mask"):
+                decoder._create_keypoint_class_mask()
+            elif hasattr(decoder, "keypoint_class_mask"):
+                current_mask = decoder.keypoint_class_mask
+                decoder.keypoint_class_mask = self._create_keypoint_class_mask(schema).to(current_mask.device)
+
+        for initializer_name in ("keypoint_query_initializer", "keypoint_query_initializer_enc"):
+            initializer = getattr(self.transformer, initializer_name, None)
+            queries = getattr(initializer, "queries", None)
+            if isinstance(queries, nn.Parameter):
+                initializer.queries = _resize_parameter_rows(queries, total_keypoints)
+
+    def reset_keypoint_gaussian_parameters(self) -> None:
+        """Reset keypoint Gaussian precision outputs to unit values.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+
+        Keypoint channels 4, 5, and 6 encode the lower-triangular precision
+        Cholesky parameters ``log_l11``, ``l21``, and ``log_l22``. Zeroing the
+        final prediction rows gives ``L = identity`` at the start of finetuning
+        while preserving learned keypoint location, visibility, findability, and
+        class-logit channels loaded from the checkpoint.
+        """
+        if not self.use_grouppose_keypoints or self.keypoint_embed is None:
+            return
+
+        _reset_keypoint_gaussian_output_rows(self.keypoint_embed)
+        enc_keypoint_embed = getattr(self.transformer, "enc_out_keypoint_embed", None)
+        if isinstance(enc_keypoint_embed, nn.ModuleList):
+            for keypoint_embed in enc_keypoint_embed:
+                _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
     def export(self):
         self._export = True
@@ -299,6 +495,113 @@ class LWDETR(nn.Module):
         for name, m in self.named_modules():
             if hasattr(m, "export") and isinstance(m.export, Callable) and hasattr(m, "_export") and not m._export:
                 m.export()
+
+    def _format_keypoint_output(
+        self,
+        keypoints_compact: torch.Tensor,
+        batch_size_expected: int,
+        num_queries_expected: int,
+    ) -> torch.Tensor:
+        """Convert compact GroupPose keypoints to class-padded keypoint layout.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        if not self.use_grouppose_keypoints or not self.num_keypoints_per_class:
+            return keypoints_compact
+
+        if keypoints_compact.dim() != 4:
+            return keypoints_compact
+
+        batch_size, num_queries, total_compact_keypoints, keypoint_dim = keypoints_compact.shape
+        if batch_size != batch_size_expected or num_queries != num_queries_expected:
+            raise ValueError(
+                f"_format_keypoint_output received tensor with batch_size={batch_size}, num_queries={num_queries} "
+                f"but expected batch_size={batch_size_expected}, num_queries={num_queries_expected}. "
+                "Shape mismatch silently bypassed in earlier versions; raise to surface upstream bugs."
+            )
+
+        max_num_keypoints = max(self.num_keypoints_per_class)
+        total_padded_keypoints = len(self.num_keypoints_per_class) * max_num_keypoints
+        total_actual_keypoints = sum(self.num_keypoints_per_class)
+
+        if total_compact_keypoints == total_padded_keypoints:
+            # Already in the per-class padded layout — pass through.
+            return keypoints_compact
+        if total_compact_keypoints != total_actual_keypoints:
+            raise ValueError(
+                f"_format_keypoint_output received tensor with total_compact_keypoints={total_compact_keypoints} "
+                f"but schema expects either compact total={total_actual_keypoints} "
+                f"or padded total={total_padded_keypoints} for num_keypoints_per_class={self.num_keypoints_per_class}."
+            )
+
+        padded = torch.zeros(
+            batch_size,
+            num_queries,
+            total_padded_keypoints,
+            keypoint_dim,
+            dtype=keypoints_compact.dtype,
+            device=keypoints_compact.device,
+        )
+        compact_idx = 0
+        for class_idx, keypoint_count in enumerate(self.num_keypoints_per_class):
+            class_offset = class_idx * max_num_keypoints
+            for keypoint_idx in range(keypoint_count):
+                padded[:, :, class_offset + keypoint_idx, :] = keypoints_compact[:, :, compact_idx, :]
+                compact_idx += 1
+        return padded
+
+    def _aggregate_keypoint_class_logits(self, keypoint_predictions: torch.Tensor) -> torch.Tensor:
+        """Aggregate keypoint class-logit contributions into detection-class logits.
+
+        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
+        """
+        if not self.num_keypoints_per_class:
+            return torch.zeros(
+                (*keypoint_predictions.shape[:-2], self.class_embed.out_features),
+                dtype=keypoint_predictions.dtype,
+                device=keypoint_predictions.device,
+            )
+
+        num_keypoint_classes = len(self.num_keypoints_per_class)
+        max_num_keypoints = max(self.num_keypoints_per_class)
+        class_contrib = keypoint_predictions[..., 7].view(
+            *keypoint_predictions.shape[:-2], num_keypoint_classes, max_num_keypoints
+        )
+        class_contrib = class_contrib * self._kp_active_mask.to(class_contrib.dtype)
+        class_boost = class_contrib.sum(dim=-1)
+
+        detection_num_classes = self.class_embed.out_features
+        foreground_num_classes = detection_num_classes - 1
+        if class_boost.shape[-1] < detection_num_classes:
+            if class_boost.shape[-1] < foreground_num_classes:
+                # Only warn when the schema doesn't cover all foreground detection classes.
+                # The background slot (index detection_num_classes-1) always receives zero boost,
+                # so a schema that covers exactly num_classes foreground classes is correct and
+                # does not warrant a warning.
+                if not self._kp_zero_pad_warned:
+                    logger.warning(
+                        "Keypoint class-logit boost has %d classes but detection head has %d foreground classes; "
+                        "zero-padding boost for classes %d..%d. Detection classes with no keypoint schema "
+                        "will receive zero boost. This warning is emitted once per model instance.",
+                        class_boost.shape[-1],
+                        foreground_num_classes,
+                        class_boost.shape[-1],
+                        foreground_num_classes - 1,
+                    )
+                    self._kp_zero_pad_warned = True
+            class_boost = torch.cat(
+                [
+                    class_boost,
+                    class_boost.new_zeros(*class_boost.shape[:-1], detection_num_classes - class_boost.shape[-1]),
+                ],
+                dim=-1,
+            )
+        elif class_boost.shape[-1] > detection_num_classes:
+            # Unreachable under normal use: ``__init__`` raises ``ValueError`` when
+            # ``len(num_keypoints_per_class) > num_classes``. Kept defensively in case
+            # ``class_embed`` is resized post-init.
+            class_boost = class_boost[..., :detection_num_classes]
+        return class_boost
 
     def forward(self, samples: NestedTensor, targets=None):
         """The forward expects a NestedTensor, which consists of:
@@ -317,7 +620,16 @@ class LWDETR(nn.Module):
         """
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
-        features, poss = self.backbone(samples)
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # The dual-projector backbone returns a 3-tuple ``(features, poss,
+        # cross_attn_features)``; detection/seg backbones return the 2-tuple
+        # ``(features, poss)``. Stay byte-identical for the non-keypoint path.
+        backbone_outputs = self.backbone(samples)
+        if len(backbone_outputs) == 3:
+            features, poss, cross_attn_features = backbone_outputs
+        else:
+            features, poss = backbone_outputs
+            cross_attn_features = None
 
         srcs = []
         masks = []
@@ -338,9 +650,28 @@ class LWDETR(nn.Module):
         if self.segmentation_head is not None:
             seg_head_fwd = self.segmentation_head.sparse_forward if self.training else self.segmentation_head.forward
 
-        hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
-            srcs, masks, poss, refpoint_embed_weight, query_feat_weight
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        cross_attn_srcs = None
+        if cross_attn_features is not None:
+            cross_attn_srcs = []
+            for feature in cross_attn_features:
+                cross_src, _ = feature.decompose()
+                cross_attn_srcs.append(cross_src)
+
+        transformer_outputs = self.transformer(
+            srcs,
+            masks,
+            poss,
+            refpoint_embed_weight,
+            query_feat_weight,
+            cross_attn_srcs=cross_attn_srcs,
         )
+        if self.use_grouppose_keypoints:
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+        else:
+            hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
+            keypoint_hs = None
+            enc_kp_predictions = None
 
         if hs is not None:
             if self.bbox_reparam:
@@ -358,11 +689,37 @@ class LWDETR(nn.Module):
                 else None
             )
 
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+            outputs_keypoints = None
+            if self.use_grouppose_keypoints and self.keypoint_embed is not None:
+                if keypoint_hs is None:
+                    raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
+
+                # keypoint_hs: (L, B, Q, total_keypoints, kp_dim). Decode each layer's
+                # delta into compact keypoints, then class-pad. Class-logit boost added
+                # into the detection logits exactly as upstream does.
+                outputs_keypoints_delta = self.keypoint_embed(keypoint_hs)
+                ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)
+                ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
+                keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy
+                keypoints_other = outputs_keypoints_delta[..., 2:]
+                outputs_keypoints_compact = torch.cat([keypoints_xy, keypoints_other], dim=-1)
+
+                layer_outputs_keypoints = []
+                for layer_idx in range(outputs_keypoints_compact.shape[0]):
+                    compact_preds = outputs_keypoints_compact[layer_idx]
+                    layer_outputs_keypoints.append(
+                        self._format_keypoint_output(
+                            compact_preds,
+                            compact_preds.shape[0],
+                            compact_preds.shape[1],
+                        )
+                    )
+                outputs_keypoints = torch.stack(layer_outputs_keypoints, dim=0)
+                outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
+
             if self.segmentation_head is not None:
                 outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
-            outputs_keypoints = None
-            if self.keypoint_head is not None:
-                outputs_keypoints = self._decode_keypoints(hs, ref_unsigmoid)
 
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if outputs_angle is not None:
@@ -390,6 +747,16 @@ class LWDETR(nn.Module):
 
             cls_enc = torch.cat(cls_enc, dim=1)
 
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+            keypoints_enc = None
+            if self.use_grouppose_keypoints and enc_kp_predictions is not None:
+                keypoints_enc = self._format_keypoint_output(
+                    enc_kp_predictions,
+                    enc_kp_predictions.shape[0],
+                    enc_kp_predictions.shape[1],
+                )
+                cls_enc = cls_enc + self._aggregate_keypoint_class_logits(keypoints_enc)
+
             if self.segmentation_head is not None:
                 masks_enc = seg_head_fwd(
                     features[0].tensors,
@@ -399,9 +766,6 @@ class LWDETR(nn.Module):
                     samples.tensors.shape[-2:],
                     skip_blocks=True,
                 )[0]
-            keypoints_enc = None
-            if self.keypoint_head is not None:
-                keypoints_enc = self._decode_keypoints(hs_enc.unsqueeze(0), ref_enc.unsqueeze(0))[0]
 
             if hs is not None:
                 out["enc_outputs"] = {"pred_logits": cls_enc, "pred_boxes": ref_enc}
@@ -422,23 +786,35 @@ class LWDETR(nn.Module):
 
         return out
 
-    def _decode_keypoints(self, hs, reference):
-        raw = self.keypoint_head(hs).view(*hs.shape[:-1], self.num_keypoints, 3)
-        if self.bbox_reparam:
-            xy = raw[..., :2] * reference[..., None, 2:] + reference[..., None, :2]
-        else:
-            xy = (raw[..., :2] + reference[..., None, :2]).sigmoid()
-        return torch.cat((xy, raw[..., 2:3]), dim=-1)
-
     def forward_export(self, tensors):
-        srcs, _, poss = self.backbone(tensors)
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # The dual-projector backbone export returns a 4-tuple
+        # ``(srcs, None, poss, cross_attn_srcs)``; detection/seg export returns the
+        # 3-tuple ``(srcs, None, poss)``. Stay byte-identical for the non-keypoint path.
+        backbone_outputs = self.backbone(tensors)
+        if len(backbone_outputs) == 4:
+            srcs, _, poss, cross_attn_srcs = backbone_outputs
+        else:
+            srcs, _, poss = backbone_outputs
+            cross_attn_srcs = None
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
         query_feat_weight = self.query_feat.weight[: self.num_queries]
 
-        hs, ref_unsigmoid, hs_enc, ref_enc = self.transformer(
-            srcs, None, poss, refpoint_embed_weight, query_feat_weight
+        transformer_outputs = self.transformer(
+            srcs,
+            None,
+            poss,
+            refpoint_embed_weight,
+            query_feat_weight,
+            cross_attn_srcs=cross_attn_srcs,
         )
+        if self.use_grouppose_keypoints:
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+        else:
+            hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
+            keypoint_hs = None
+            enc_kp_predictions = None
 
         outputs_masks = None
         outputs_keypoints = None
@@ -457,6 +833,24 @@ class LWDETR(nn.Module):
                 if self.angle_embed is not None
                 else None
             )
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+            if self.use_grouppose_keypoints and self.keypoint_embed is not None:
+                if keypoint_hs is None:
+                    raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
+                outputs_keypoints_delta = self.keypoint_embed(keypoint_hs)
+                ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)
+                ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
+                keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy
+                keypoints_other = outputs_keypoints_delta[..., 2:]
+                outputs_keypoints = torch.cat([keypoints_xy, keypoints_other], dim=-1)
+                if outputs_keypoints.dim() == 5:
+                    outputs_keypoints = outputs_keypoints[-1]
+                outputs_keypoints = self._format_keypoint_output(
+                    outputs_keypoints,
+                    outputs_keypoints.shape[0],
+                    outputs_keypoints.shape[1],
+                )
+                outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(
                     srcs[0],
@@ -465,8 +859,6 @@ class LWDETR(nn.Module):
                     ],
                     tensors.shape[-2:],
                 )[0]
-            if self.keypoint_head is not None:
-                outputs_keypoints = self._decode_keypoints(hs, ref_unsigmoid)[-1]
         else:
             assert self.two_stage, "if not using decoder, two_stage must be True"
             outputs_class = self.transformer.enc_out_class_embed[0](hs_enc)
@@ -476,6 +868,14 @@ class LWDETR(nn.Module):
                 if self.angle_embed is not None
                 else None
             )
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+            if self.use_grouppose_keypoints and enc_kp_predictions is not None:
+                outputs_keypoints = self._format_keypoint_output(
+                    enc_kp_predictions,
+                    enc_kp_predictions.shape[0],
+                    enc_kp_predictions.shape[1],
+                )
+                outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(
                     srcs[0],
@@ -485,8 +885,6 @@ class LWDETR(nn.Module):
                     tensors.shape[-2:],
                     skip_blocks=True,
                 )[0]
-            if self.keypoint_head is not None:
-                outputs_keypoints = self._decode_keypoints(hs_enc.unsqueeze(0), ref_enc.unsqueeze(0))[0]
 
         if outputs_masks is not None:
             return outputs_coord, outputs_class, outputs_masks
@@ -586,6 +984,13 @@ def build_model(args: Any):
     num_classes = args.num_classes + 1
     torch.device(args.device)
 
+    # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+    # The GroupPose keypoint preview uses a second ("cross-attention") projector
+    # whose features feed the keypoint cross-attention branch. Detection/seg
+    # builds keep dual_projector=False so the backbone is byte-identical.
+    use_grouppose_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    dual_projector = getattr(args, "dual_projector", False) or use_grouppose_keypoints
+
     backbone = build_backbone(
         encoder=args.encoder,
         vit_encoder_num_layers=args.vit_encoder_num_layers,
@@ -613,6 +1018,7 @@ def build_model(args: Any):
         patch_size=args.patch_size,
         num_windows=args.num_windows,
         positional_encoding_size=args.positional_encoding_size,
+        dual_projector=dual_projector,
     )
     if args.encoder_only:
         return backbone[0].encoder, None, None
@@ -633,26 +1039,25 @@ def build_model(args: Any):
         if args.segmentation_head
         else None
     )
-    keypoint_head = (
-        MLP(args.hidden_dim, args.hidden_dim, args.num_keypoints * 3, 3)
-        if getattr(args, "keypoint_head", False)
-        else None
-    )
 
     model = LWDETR(
         backbone,
         transformer,
         segmentation_head,
-        keypoint_head,
         num_classes=num_classes,
         num_queries=args.num_queries,
-        num_keypoints=getattr(args, "num_keypoints", 17),
         aux_loss=args.aux_loss,
         group_detr=args.group_detr,
         two_stage=args.two_stage,
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
         obb=getattr(args, "obb", False),
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # Detection/seg/obb builder namespaces omit these; default to the
+        # non-keypoint path so existing builds are unchanged.
+        use_grouppose_keypoints=use_grouppose_keypoints,
+        num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+        grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
     )
     return model
 
@@ -667,10 +1072,14 @@ def build_criterion_and_postprocessors(args: Any):
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
-    if getattr(args, "keypoint_head", False):
+    # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+    # Gate on the new GroupPose flag (the legacy ``keypoint_head`` arg was removed).
+    has_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    if has_keypoints:
         weight_dict["loss_keypoints_l1"] = args.keypoint_l1_loss_coef
-        weight_dict["loss_keypoints_oks"] = args.keypoint_oks_loss_coef
-        weight_dict["loss_keypoints_vis"] = args.keypoint_vis_loss_coef
+        weight_dict["loss_keypoints_findable"] = args.keypoint_findable_loss_coef
+        weight_dict["loss_keypoints_visible"] = args.keypoint_visible_loss_coef
+        weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -685,7 +1094,7 @@ def build_criterion_and_postprocessors(args: Any):
         losses.append("angles")
     if args.segmentation_head:
         losses.append("masks")
-    if getattr(args, "keypoint_head", False):
+    if has_keypoints:
         losses.append("keypoints")
 
     sum_group_losses = getattr(args, "sum_group_losses", False)
@@ -702,8 +1111,8 @@ def build_criterion_and_postprocessors(args: Any):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
-            num_keypoints=getattr(args, "num_keypoints", 17),
-            oks_sigmas=getattr(args, "oks_sigmas", None),
+            use_grouppose_keypoints=has_keypoints,
+            num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
         criterion = SetCriterion(
@@ -717,8 +1126,8 @@ def build_criterion_and_postprocessors(args: Any):
             use_varifocal_loss=args.use_varifocal_loss,
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
-            num_keypoints=getattr(args, "num_keypoints", 17),
-            oks_sigmas=getattr(args, "oks_sigmas", None),
+            use_grouppose_keypoints=has_keypoints,
+            num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)
