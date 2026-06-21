@@ -744,20 +744,32 @@ def _is_coco_keypoints_annotation_file(path: Path) -> bool:
     return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
 
 
-def _annotation_config_values(config: dict[str, Any]) -> list[Any]:
+def _annotation_config_values(
+    config: dict[str, Any],
+    *,
+    split: str | None = None,
+) -> list[Any]:
     values: list[Any] = []
     if config.get("keypoints_json"):
         values.append(config["keypoints_json"])
     annotations = config.get("annotations") or {}
     if isinstance(annotations, dict):
-        values.extend(annotations.values())
+        if split is None:
+            values.extend(annotations.values())
+        elif annotations.get(split):
+            values.append(annotations[split])
     elif annotations:
         values.append(annotations)
     return values
 
 
-def _has_pose_annotation_config(config: dict[str, Any], root: Path | None = None) -> bool:
-    for value in _annotation_config_values(config):
+def _has_pose_annotation_config(
+    config: dict[str, Any],
+    root: Path | None = None,
+    *,
+    split: str | None = None,
+) -> bool:
+    for value in _annotation_config_values(config, split=split):
         if not value:
             continue
         if root is not None:
@@ -772,13 +784,17 @@ def _has_pose_annotation_config(config: dict[str, Any], root: Path | None = None
     return False
 
 
-def prepare_pose_data(data_yaml: Path) -> Path:
+def prepare_pose_data(data_yaml: Path, *, split: str = "val") -> Path:
     config = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
     if config.get("kpt_shape"):
         if data_yaml.name == "coco-val2017-mini500-pose.yaml":
             return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
         return data_yaml
-    if _has_pose_annotation_config(config, _dataset_root_from_yaml(data_yaml)):
+    if _has_pose_annotation_config(
+        config,
+        _dataset_root_from_yaml(data_yaml),
+        split=split,
+    ):
         return data_yaml
     return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
 
@@ -1201,7 +1217,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     args.data_yaml = prepare_data(args, output_dir)
     args.pose_data_yaml = (
-        prepare_pose_data(args.data_yaml)
+        prepare_pose_data(args.data_yaml, split=args.split)
         if any(case.task == "pose" for case in cases)
         else args.data_yaml
     )

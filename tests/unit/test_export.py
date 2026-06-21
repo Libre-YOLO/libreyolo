@@ -292,8 +292,25 @@ class TestExporterFormats:
 
         assert metadata["task"] == "pose"
         assert metadata["num_keypoints"] == "17"
-        assert metadata["keypoint_dim"] == "3"
+        assert metadata["keypoint_dim"] == "8"
         assert json.loads(metadata["num_keypoints_per_class"]) == [0, 17, 4]
+
+    def test_ec_pose_onnx_metadata_describes_exported_xy_keypoints(self):
+        wrapper = _make_wrapper(model_name="ec")
+        wrapper.task = "pose"
+        wrapper.SUPPORTED_TASKS = ("detect", "pose")
+        wrapper.DEFAULT_TASK = "detect"
+        wrapper.num_keypoints = 17
+        wrapper.keypoint_dim = 3
+
+        metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "pose"
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "2"
 
     def test_tensorrt_export_forwards_dynamic_batch_profile(
         self, monkeypatch, tmp_path

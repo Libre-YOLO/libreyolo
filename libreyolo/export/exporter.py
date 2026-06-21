@@ -108,7 +108,6 @@ def _pose_keypoint_shape_metadata(model) -> dict:
         model, "num_keypoints", getattr(model, "POSE_NUM_KEYPOINTS", "")
     )
     keypoint_dim = getattr(model, "keypoint_dim", getattr(model, "KEYPOINT_DIM", ""))
-    meta = {"num_keypoints": num_keypoints, "keypoint_dim": keypoint_dim}
 
     schema = getattr(model, "num_keypoints_per_class", None)
     inner = getattr(model, "model", None)
@@ -119,6 +118,19 @@ def _pose_keypoint_shape_metadata(model) -> dict:
         inner_model, "get_num_keypoints_per_class"
     ):
         schema = inner_model.get_num_keypoints_per_class()
+
+    model_family = model._get_model_name() if hasattr(model, "_get_model_name") else ""
+    if model_family == "ec":
+        # EC pose exports raw xy-only tensors; visibility is appended by runtime
+        # postprocessing after decoding.
+        keypoint_dim = 2
+    elif model_family == "rfdetr" and schema:
+        # GroupPose RF-DETR exports the raw padded per-class tensor, whose
+        # keypoint payload is (x, y, findable, visible, log_l11, l21, log_l22,
+        # class_logit_boost).
+        keypoint_dim = 8
+
+    meta = {"num_keypoints": num_keypoints, "keypoint_dim": keypoint_dim}
     if schema:
         meta["num_keypoints_per_class"] = [int(count) for count in schema]
     return meta

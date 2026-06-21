@@ -90,8 +90,10 @@ Pose runtime exports may also write these flat metadata keys:
 
 - `num_keypoints`: positive integer keypoint count used by the exported pose
   head.
-- `keypoint_dim`: pose output dimension, either `2` for xy or `3` for
-  xy+visibility.
+- `keypoint_dim`: pose output dimension. Common values are `2` for xy-only
+  exports and `3` for xy+visibility. GroupPose-style raw runtime exports may
+  use larger values, such as `8`, when the tensor includes precision or
+  class-logit fields consumed by LibreYOLO postprocessing.
 - `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
   counts for GroupPose-style heads. Readers must preserve zero-keypoint class
   slots because they define the class-to-keypoint schema.

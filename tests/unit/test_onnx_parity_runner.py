@@ -562,6 +562,87 @@ def test_prepare_pose_data_regenerates_for_box_only_annotation(tmp_path, monkeyp
     assert prepare_pose_data(pose_yaml) == tmp_path / "coco-val2017-mini500-pose.yaml"
 
 
+def test_prepare_pose_data_honors_selected_split(tmp_path, monkeypatch):
+    import vision_analysis_benchmark.onnx_parity as parity
+
+    annotations_dir = tmp_path / "annotations"
+    annotations_dir.mkdir(parents=True)
+    (annotations_dir / "instances_val2017.json").write_text(
+        json.dumps(
+            {
+                "annotations": [{"id": 1, "image_id": 1, "category_id": 0}],
+                "categories": [{"id": 0, "name": "person"}],
+            }
+        )
+    )
+    (annotations_dir / "person_keypoints_test-dev2017.json").write_text(
+        json.dumps(
+            {
+                "annotations": [],
+                "categories": [
+                    {
+                        "id": 0,
+                        "name": "person",
+                        "keypoints": [f"kpt_{idx}" for idx in range(17)],
+                    }
+                ],
+            }
+        )
+    )
+    (tmp_path / MINI500_ANNOTATION).write_text(
+        json.dumps({"images": [{"id": 1, "file_name": "a.jpg"}], "annotations": []})
+    )
+    (tmp_path / MINI500_IMAGE_DIR).mkdir(parents=True)
+    full_keypoints = tmp_path / "full_person_keypoints.json"
+    full_keypoints.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.jpg"}],
+                "annotations": [
+                    {
+                        "id": 10,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "keypoints": [0] * 51,
+                        "num_keypoints": 0,
+                    }
+                ],
+                "categories": [
+                    {
+                        "id": 1,
+                        "name": "person",
+                        "keypoints": [f"kpt_{idx}" for idx in range(17)],
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(
+        parity,
+        "_download_coco_person_keypoints",
+        lambda _dataset_root: full_keypoints,
+    )
+    pose_yaml = tmp_path / "coco-pose.yaml"
+    pose_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "test": "images/test2017",
+                "annotations": {
+                    "val": "annotations/instances_val2017.json",
+                    "test": "annotations/person_keypoints_test-dev2017.json",
+                },
+            }
+        )
+    )
+
+    assert prepare_pose_data(pose_yaml, split="val") == (
+        tmp_path / "coco-val2017-mini500-pose.yaml"
+    )
+    assert prepare_pose_data(pose_yaml, split="test") == pose_yaml
+
+
 def test_pose_direct_paths_honor_selected_split(tmp_path):
     annotation_path = tmp_path / "annotations" / "person_keypoints_test-dev2017.json"
     annotation_path.parent.mkdir(parents=True)
