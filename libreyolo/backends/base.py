@@ -1301,7 +1301,12 @@ class BaseBackend(ABC):
         class_ids = class_ids[keep]
         max_scores = scores[keep]
 
-        boxes = self._scale_cxcywh_boxes(pred_boxes[query_idx], orig_w, orig_h)
+        boxes = self._scale_cxcywh_boxes(
+            pred_boxes[query_idx],
+            orig_w,
+            orig_h,
+            clip=False,
+        )
         masks_out = None
         if pred_masks is not None and query_idx.size > 0:
             masks_t = torch.from_numpy(pred_masks[query_idx]).unsqueeze(1).float()
@@ -1381,7 +1386,7 @@ class BaseBackend(ABC):
         return query_idx, class_ids, flat[idx]
 
     @staticmethod
-    def _scale_cxcywh_boxes(boxes_cxcywh, orig_w, orig_h):
+    def _scale_cxcywh_boxes(boxes_cxcywh, orig_w, orig_h, *, clip: bool = True):
         cx, cy, w, h = (
             boxes_cxcywh[:, 0],
             boxes_cxcywh[:, 1],
@@ -1392,8 +1397,9 @@ class BaseBackend(ABC):
         boxes = boxes.astype(np.float32, copy=False)
         boxes[:, [0, 2]] *= orig_w
         boxes[:, [1, 3]] *= orig_h
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        if clip:
+            boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+            boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         return boxes
 
     def _normalize_rfdetr_keypoint_output(

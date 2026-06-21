@@ -744,13 +744,32 @@ def _is_coco_keypoints_annotation_file(path: Path) -> bool:
     return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
 
 
-def _has_pose_annotation_config(config: dict[str, Any]) -> bool:
+def _annotation_config_values(config: dict[str, Any]) -> list[Any]:
+    values: list[Any] = []
     if config.get("keypoints_json"):
-        return True
+        values.append(config["keypoints_json"])
     annotations = config.get("annotations") or {}
     if isinstance(annotations, dict):
-        return any(_looks_like_pose_annotation(value) for value in annotations.values())
-    return _looks_like_pose_annotation(annotations)
+        values.extend(annotations.values())
+    elif annotations:
+        values.append(annotations)
+    return values
+
+
+def _has_pose_annotation_config(config: dict[str, Any], root: Path | None = None) -> bool:
+    for value in _annotation_config_values(config):
+        if not value:
+            continue
+        if root is not None:
+            annotation_path = _resolve_yaml_path(root, value)
+            if annotation_path.exists():
+                if _is_coco_keypoints_annotation_file(annotation_path):
+                    return True
+                continue
+            continue
+        if _looks_like_pose_annotation(value):
+            return True
+    return False
 
 
 def prepare_pose_data(data_yaml: Path) -> Path:
@@ -759,7 +778,7 @@ def prepare_pose_data(data_yaml: Path) -> Path:
         if data_yaml.name == "coco-val2017-mini500-pose.yaml":
             return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
         return data_yaml
-    if _has_pose_annotation_config(config):
+    if _has_pose_annotation_config(config, _dataset_root_from_yaml(data_yaml)):
         return data_yaml
     return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
 

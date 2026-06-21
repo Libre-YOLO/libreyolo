@@ -535,6 +535,26 @@ def test_ec_segment_backend_parses_masks():
     assert parsed_masks[0].all()
 
 
+def test_ec_segment_backend_does_not_clip_boxes():
+    backend = _DummyBackend(
+        "ec",
+        task="segment",
+        supported_tasks=("detect", "segment"),
+    )
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.05, 0.5, 0.3, 0.5]]], dtype=np.float32)
+    masks = np.ones((1, 1, 2, 2), dtype=np.float32)
+
+    parsed_boxes, scores, classes, parsed_masks = backend._parse_outputs(
+        [logits, boxes, masks], 64, (200, 100), conf=0.5
+    )
+
+    np.testing.assert_allclose(parsed_boxes, [[-20.0, 25.0, 40.0, 75.0]])
+    assert scores[0] > 0.99
+    np.testing.assert_array_equal(classes, [0])
+    assert parsed_masks.shape == (1, 100, 200)
+
+
 def test_ec_segment_backend_honors_max_det():
     backend = _DummyBackend(
         "ec",

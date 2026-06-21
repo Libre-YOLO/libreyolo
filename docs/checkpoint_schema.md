@@ -47,6 +47,10 @@ Pose checkpoints additionally include:
   expose keypoints as `x,y,visibility`.
 - `oks_sigmas`: optional list of per-keypoint OKS sigmas. When omitted, loaders
   and validators use the task default for `num_keypoints`.
+- `num_keypoints_per_class`: optional list of per-class keypoint counts for
+  GroupPose-style heads whose exported keypoint tensor is padded by class. Use
+  `0` for classes without keypoints. Runtime backends use this schema to select
+  the active keypoints for the predicted class.
 
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
@@ -81,6 +85,16 @@ Embedded-NMS runtime exports may also write these flat metadata keys:
   graph output.
 - `nms_raw_output`: string boolean. `"true"` means the exported graph also
   exposes an auxiliary raw detector output for LibreYOLO backend parsing.
+
+Pose runtime exports may also write these flat metadata keys:
+
+- `num_keypoints`: positive integer keypoint count used by the exported pose
+  head.
+- `keypoint_dim`: pose output dimension, either `2` for xy or `3` for
+  xy+visibility.
+- `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
+  counts for GroupPose-style heads. Readers must preserve zero-keypoint class
+  slots because they define the class-to-keypoint schema.
 
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
