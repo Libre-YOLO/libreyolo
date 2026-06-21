@@ -115,12 +115,12 @@ def postprocess_pose(
         out_logits = out_logits[0]
         out_kpts = out_kpts[0]
 
-    num_classes = out_logits.shape[-1]
     prob = out_logits.sigmoid()
-    topk_values, topk_indices = torch.topk(prob.view(-1), min(max_det, prob.numel()))
-    scores = topk_values
-    query_idx = topk_indices // num_classes
-    class_idx = topk_indices % num_classes
+    query_scores = prob.max(dim=-1).values
+    scores, query_idx = torch.topk(
+        query_scores,
+        min(max_det, query_scores.numel()),
+    )
 
     if out_kpts.dim() >= 3 and out_kpts.shape[-1] == 2:
         kpts_xy_all = out_kpts
@@ -130,7 +130,6 @@ def postprocess_pose(
 
     keep = scores >= conf_thres
     scores = scores[keep]
-    class_idx = class_idx[keep]
     kpts_xy = kpts_xy[keep]
 
     if original_size is not None and kpts_xy.numel() > 0:

@@ -230,6 +230,26 @@ class TestPoseForwardAndPostprocess:
         assert det["keypoints"].shape[-2] == 17
         assert det["keypoints"].shape[0] == det["boxes"].shape[0]
 
+    def test_postprocess_selects_unique_queries_before_collapsing_classes(self):
+        raw = {
+            "pred_logits": torch.tensor([[[10.0, 9.0], [8.0, -10.0]]]),
+            "pred_keypoints": torch.tensor(
+                [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]]
+            ),
+        }
+
+        det = postprocess_pose(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=2,
+            num_keypoints=2,
+        )
+
+        assert det["boxes"].shape == (2, 4)
+        np.testing.assert_allclose(det["keypoints"][:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
+
     def test_full_predict_pipeline(self, pose_model):
         # Exercise _wrap_results so the keypoint plumbing stays working.
         from PIL import Image

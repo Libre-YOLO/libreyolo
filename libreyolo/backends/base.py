@@ -608,7 +608,13 @@ class BaseBackend(ABC):
         elif self.model_family == "yolonas":
             if self.task == "pose":
                 return self._parse_yolonas_pose(
-                    all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=ratio
+                    all_outputs,
+                    effective_imgsz,
+                    orig_w,
+                    orig_h,
+                    conf,
+                    ratio=ratio,
+                    max_det=max_det,
                 )
             boxes, scores, cls = self._parse_yolonas(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=ratio
@@ -1136,7 +1142,14 @@ class BaseBackend(ABC):
         return boxes, max_scores, class_ids
 
     def _parse_yolonas_pose(
-        self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        ratio=1.0,
+        max_det=300,
     ):
         """Parse YOLO-NAS pose: boxes, scores, keypoint xy, keypoint confidence."""
         boxes = all_outputs[0][0]
@@ -1155,7 +1168,7 @@ class BaseBackend(ABC):
             keypoints = np.zeros((0, keypoints_xy.shape[-2], 3), dtype=np.float32)
             return boxes, max_scores, class_ids, None, None, keypoints
 
-        pre_nms_top_k = 1000
+        pre_nms_top_k = max(1000, int(max_det))
         if max_scores.size > pre_nms_top_k:
             keep = np.argpartition(-max_scores, pre_nms_top_k - 1)[:pre_nms_top_k]
             keep = keep[np.argsort(-max_scores[keep])]
@@ -1265,10 +1278,13 @@ class BaseBackend(ABC):
         pred_logits = all_outputs[0][0]
         pred_keypoints = all_outputs[1][0]
 
-        query_idx, _class_ids, scores = self._ec_topk(
-            pred_logits,
-            max_det=min(max_det, 60),
-        )
+        scores_per_class = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
+        scores_per_class = scores_per_class.astype(np.float32)
+        query_scores = scores_per_class.max(axis=-1)
+        k = min(max_det, 60, query_scores.size)
+        query_idx = np.argpartition(-query_scores, k - 1)[:k]
+        query_idx = query_idx[np.argsort(-query_scores[query_idx])]
+        scores = query_scores[query_idx]
         keep = scores >= conf
         query_idx = query_idx[keep]
         max_scores = scores[keep]
@@ -1360,7 +1376,7 @@ class BaseBackend(ABC):
                 raw = raw.reshape(raw.shape[0], slots, pred_dim)
             else:
                 keypoint_dim = int(getattr(self, "keypoint_dim", 3) or 3)
-                if keypoint_dim <= 0 or raw.shape[-1] % keypoint_dim != 0:
+                if keypoint_dim not in (2, 3) or raw.shape[-1] % keypoint_dim != 0:
                     raise ValueError(
                         "RF-DETR flattened keypoint output cannot be reshaped "
                         f"with keypoint_dim={keypoint_dim}: {raw.shape}"
@@ -1630,7 +1646,12 @@ class BaseBackend(ABC):
             keypoints_out = np.asarray(keypoints_raw, dtype=np.float32).copy()
             keypoints_out[..., 0] *= float(orig_w)
             keypoints_out[..., 1] *= float(orig_h)
-            keypoints_out[..., 2] = 1.0 / (1.0 + np.exp(-keypoints_out[..., 2]))
+            if keypoints_out.shape[-1] == 2:
+                visibility = np.ones((*keypoints_out.shape[:-1], 1), dtype=np.float32)
+                keypoints_out = np.concatenate([keypoints_out, visibility], axis=-1)
+            else:
+                keypoints_out[..., 2] = 1.0 / (1.0 + np.exp(-keypoints_out[..., 2]))
+                keypoints_out = keypoints_out[..., :3]
             if grouppose_active_keypoints is not None:
                 keypoints_out[~grouppose_active_keypoints] = 0.0
 
