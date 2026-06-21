@@ -166,6 +166,73 @@ def test_pose_validator_uses_coco_keypoints_annotation_from_yaml(tmp_path):
     assert not (tmp_path / "runs" / "ground_truth_yolo_pose.json").exists()
 
 
+def test_pose_validator_ignores_box_only_coco_annotation_for_pose(tmp_path):
+    images_dir = tmp_path / "images" / "val2017"
+    labels_dir = tmp_path / "labels" / "val2017"
+    annotations_dir = tmp_path / "annotations"
+    images_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+    annotations_dir.mkdir(parents=True)
+
+    Image.new("RGB", (320, 240)).save(images_dir / "000000123456.jpg")
+    (labels_dir / "000000123456.txt").write_text(
+        "0 0.5 0.5 0.25 0.5 "
+        "0.4 0.3 2 0.6 0.3 2 0.6 0.7 1 0.4 0.7 0\n"
+    )
+    instances_json = annotations_dir / "instances_val2017.json"
+    instances_json.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 123456,
+                        "file_name": "000000123456.jpg",
+                        "width": 320,
+                        "height": 240,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 123456,
+                        "category_id": 0,
+                        "bbox": [0, 0, 100, 100],
+                        "area": 10000,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 0, "name": "person"}],
+            }
+        )
+    )
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "annotations": {"val": "annotations/instances_val2017.json"},
+                "nc": 1,
+                "names": {0: "person"},
+                "kpt_shape": [4, 3],
+            }
+        )
+    )
+
+    config = ValidationConfig(
+        data=str(data_yaml),
+        save_dir=str(tmp_path / "runs"),
+        verbose=False,
+    )
+    validator = PoseValidator(_DummyPoseModel(), config=config)
+    validator._setup_paths()
+
+    assert validator._kpts_json == tmp_path / "runs" / "ground_truth_yolo_pose.json"
+    coco = json.loads(validator._kpts_json.read_text())
+    assert coco["images"][0]["file_name"] == str(images_dir / "000000123456.jpg")
+    assert "keypoints" in coco["annotations"][0]
+
+
 def test_pose_validator_maps_contiguous_labels_to_coco_category_ids(tmp_path):
     config = ValidationConfig(
         save_dir=str(tmp_path),

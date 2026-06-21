@@ -52,10 +52,9 @@ def test_ec_export_wrapper_flattens_deployed_pose_keypoints():
     wrapper = ECExportWrapper(_FakeEC(), task="pose")
     out = wrapper(torch.zeros(1, 3, 64, 64))
 
-    assert len(out) == 3
+    assert len(out) == 2
     assert out[0].shape == (1, 60, 2)
-    assert out[1].shape == (1, 60, 4)
-    assert out[2].shape == (1, 60, 34)
+    assert out[1].shape == (1, 60, 34)
 
 
 @pytest.mark.skipif(
@@ -112,7 +111,6 @@ def test_ec_pose_export_onnx_output_names(tmp_path):
             device = x.device
             return (
                 torch.zeros(batch, 2, 2, device=device),
-                torch.zeros(batch, 2, 4, device=device),
                 torch.zeros(batch, 2, 34, device=device),
             )
 
@@ -131,6 +129,5 @@ def test_ec_pose_export_onnx_output_names(tmp_path):
     proto = onnx.load(str(path))
     assert [o.name for o in proto.graph.output] == [
         "pred_logits",
-        "pred_boxes",
         "pred_keypoints",
     ]

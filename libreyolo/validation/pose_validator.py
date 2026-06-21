@@ -179,25 +179,36 @@ class PoseValidator(BaseValidator):
         annotation_file = get_coco_annotation_file(data_cfg, self.config.split)
         if annotation_file:
             data_root = Path(data_cfg["root"])
-            self._kpts_json = Path(annotation_file)
-            if not self._kpts_json.is_absolute():
-                self._kpts_json = data_root / self._kpts_json
+            kpts_json = Path(annotation_file)
+            if not kpts_json.is_absolute():
+                kpts_json = data_root / kpts_json
             default_image_dir = resolve_default_coco_image_dir(
                 data_root,
                 self.config.split,
-                self._kpts_json.name,
+                kpts_json.name,
             )
-            self._images_dir = Path(
+            images_dir = Path(
                 get_coco_image_dir(data_cfg, self.config.split, default_image_dir)
             )
-            if not self._images_dir.is_absolute():
-                self._images_dir = data_root / self._images_dir
-            if not self._kpts_json.exists():
-                raise FileNotFoundError(f"Annotations JSON not found: {self._kpts_json}")
-            if not self._images_dir.is_dir():
-                raise FileNotFoundError(f"Images dir not found: {self._images_dir}")
-            return
+            if not images_dir.is_absolute():
+                images_dir = data_root / images_dir
+            if kpts_json.exists() and self._is_coco_keypoints_annotation_file(kpts_json):
+                if not images_dir.is_dir():
+                    raise FileNotFoundError(f"Images dir not found: {images_dir}")
+                self._kpts_json = kpts_json
+                self._images_dir = images_dir
+                return
         self._kpts_json, self._images_dir = self._build_coco_gt_from_yolo()
+
+    @staticmethod
+    def _is_coco_keypoints_annotation_file(path: Path) -> bool:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        categories = data.get("categories") or []
+        if any(cat.get("keypoints") for cat in categories):
+            return True
+        annotations = data.get("annotations") or []
+        return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
 
     def _build_coco_gt_from_yolo(self) -> tuple[Path, Path | None]:
         from PIL import Image
