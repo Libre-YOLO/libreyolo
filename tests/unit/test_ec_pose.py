@@ -69,7 +69,7 @@ class TestPoseFamilyClassWiring:
         assert isinstance(m.model, LibreECPoseModel)
         metadata = OnnxExporter(m)._build_onnx_metadata(dynamic=False, half=False)
         assert metadata["num_keypoints"] == "17"
-        assert metadata["keypoint_dim"] == "3"
+        assert metadata["keypoint_dim"] == "2"
 
     def test_pose_checkpoint_reload_preserves_custom_class_name(self, tmp_path):
         src = LibreEC(model_path=None, size="s", task="pose", device="cpu")

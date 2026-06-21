@@ -299,6 +299,12 @@ class PoseValidator(BaseValidator):
                 )
                 ann_id += 1
 
+        if images and not annotations:
+            raise FileNotFoundError(
+                "No YOLO pose labels were found for the validation split. "
+                "Provide pose label files or a COCO keypoints annotation JSON."
+            )
+
         coco = {
             "info": {},
             "licenses": [],

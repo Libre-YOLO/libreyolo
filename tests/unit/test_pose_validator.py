@@ -67,6 +67,36 @@ def test_pose_validator_accepts_yolo_pose_yaml(tmp_path):
     assert validator._resolve_oks_sigmas() == [0.25] * 4
 
 
+def test_pose_validator_rejects_missing_yolo_pose_labels(tmp_path):
+    images_dir = tmp_path / "images" / "val"
+    labels_dir = tmp_path / "labels" / "val"
+    images_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+    Image.new("RGB", (640, 480)).save(images_dir / "img0.jpg")
+
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val",
+                "nc": 1,
+                "names": {0: "person"},
+                "kpt_shape": [17, 3],
+            }
+        )
+    )
+    config = ValidationConfig(
+        data=str(data_yaml),
+        save_dir=str(tmp_path / "runs"),
+        verbose=False,
+    )
+    validator = PoseValidator(_DummyPoseModel(), config=config)
+
+    with pytest.raises(FileNotFoundError, match="No YOLO pose labels"):
+        validator._setup_paths()
+
+
 def test_pose_validator_zero_predictions_returns_all_keypoint_metrics(tmp_path):
     config = ValidationConfig(
         save_dir=str(tmp_path),
