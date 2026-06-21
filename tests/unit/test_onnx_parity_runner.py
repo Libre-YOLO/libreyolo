@@ -21,9 +21,11 @@ from vision_analysis_benchmark.onnx_parity import (
     _preflight_case_weights,
     _safe_hf_dataset_path,
     compare_metrics,
+    download_hf_dataset_snapshot,
     extract_metrics,
     filter_cases,
     metric_keys_for_task,
+    pose_direct_paths,
     prepare_pose_data,
     write_summary,
     write_mini500_yaml,
@@ -434,3 +436,76 @@ def test_prepare_pose_data_keeps_existing_pose_yaml(tmp_path):
     pose_yaml.write_text(yaml.safe_dump({"kpt_shape": [17, 3]}))
 
     assert prepare_pose_data(pose_yaml) == pose_yaml
+
+
+def test_prepare_pose_data_keeps_native_coco_keypoints_yaml(tmp_path):
+    pose_yaml = tmp_path / "coco-pose.yaml"
+    pose_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "annotations": {"val": "annotations/person_keypoints_val2017.json"},
+            }
+        )
+    )
+
+    assert prepare_pose_data(pose_yaml) == pose_yaml
+
+
+def test_pose_direct_paths_honor_selected_split(tmp_path):
+    pose_yaml = tmp_path / "coco-pose.yaml"
+    pose_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "test": "images/test2017",
+                "annotations": {
+                    "val": "annotations/person_keypoints_val2017.json",
+                    "test": "annotations/image_info_test-dev2017.json",
+                },
+            }
+        )
+    )
+
+    annotation_path, image_dir = pose_direct_paths(pose_yaml, split="test")
+
+    assert annotation_path == tmp_path / "annotations" / "image_info_test-dev2017.json"
+    assert image_dir == tmp_path / "images" / "test2017"
+
+
+def test_download_hf_dataset_snapshot_redownloads_unknown_size_partial(
+    tmp_path,
+    monkeypatch,
+):
+    import vision_analysis_benchmark.onnx_parity as parity
+
+    class FakeTreeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return [{"type": "file", "path": "images/val2017/a.jpg"}]
+
+    def fake_get(_url, headers=None, timeout=60):
+        assert headers == {"Accept": "application/json"}
+        assert timeout == 60
+        return FakeTreeResponse()
+
+    seen = {}
+
+    def fake_download(url, target, *, headers=None) -> None:
+        seen.update({"url": url, "headers": headers})
+        target.write_bytes(b"complete")
+
+    target = tmp_path / "images" / "val2017" / "a.jpg"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"partial")
+    monkeypatch.setattr(parity.requests, "get", fake_get)
+    monkeypatch.setattr(parity, "_download_atomic", fake_download)
+
+    download_hf_dataset_snapshot("LibreYOLO/coco-val2017-mini500", tmp_path)
+
+    assert target.read_bytes() == b"complete"
+    assert seen["headers"] == {}

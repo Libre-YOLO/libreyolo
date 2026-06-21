@@ -134,6 +134,13 @@ def test_rfdetr_detect_size_disambiguates_grouppose_x():
 
     assert LibreRFDETR.detect_size(weights, state_dict=checkpoint) == "x"
     assert LibreRFDETR.detect_size({}, state_dict=checkpoint) == "m"
+    assert (
+        LibreRFDETR.detect_size(
+            {"_kp_active_mask": torch.zeros(0, 0, dtype=torch.bool)},
+            state_dict=checkpoint,
+        )
+        == "m"
+    )
 
 
 @pytest.mark.parametrize("size", ["n", "s", "m", "l", "x"])

@@ -8,7 +8,13 @@ import numpy as np
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, MetadataImageSizeError, _read_metadata_imgsz
+from .base import (
+    BaseBackend,
+    ImageSize,
+    MetadataImageSizeError,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +136,8 @@ class OnnxBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
-        for key, value in pose_metadata.items():
-            setattr(self, key, value)
 
     @staticmethod
     def _read_static_input_imgsz(input_shape) -> ImageSize | None:
@@ -242,19 +247,7 @@ class OnnxBackend(BaseBackend):
             logger.warning("Failed to read ONNX pose metadata from %s: %s", onnx_path, e)
             return {}
 
-        pose_meta = {}
-        if "num_keypoints" in meta:
-            pose_meta["num_keypoints"] = int(meta["num_keypoints"])
-        if "keypoint_dim" in meta:
-            pose_meta["keypoint_dim"] = int(meta["keypoint_dim"])
-        if "num_keypoints_per_class" in meta:
-            import json
-
-            raw_schema = json.loads(meta["num_keypoints_per_class"])
-            pose_meta["num_keypoints_per_class"] = [
-                int(count) for count in raw_schema
-            ]
-        return pose_meta
+        return _read_pose_metadata(meta)
 
     def _supports_batched_inference(self) -> bool:
         # Embedded-NMS graphs are exported batch-1; everything else with a

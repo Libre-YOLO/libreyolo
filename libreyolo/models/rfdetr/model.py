@@ -303,7 +303,10 @@ class LibreRFDETR(BaseModel):
     @staticmethod
     def _has_grouppose_markers(weights_dict: dict, checkpoint: dict[str, Any]) -> bool:
         if "_kp_active_mask" in weights_dict:
-            return True
+            try:
+                return bool(torch.as_tensor(weights_dict["_kp_active_mask"]).any().item())
+            except Exception:
+                return bool(np.asarray(weights_dict["_kp_active_mask"]).any())
         if any("keypoint" in k for k in weights_dict if k.startswith("transformer.")):
             return True
         schema = checkpoint.get("num_keypoints_per_class")

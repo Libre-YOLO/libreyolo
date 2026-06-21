@@ -552,7 +552,7 @@ def download_hf_dataset_snapshot(
     for item in files:
         rel_path, target = _safe_hf_dataset_path(str(item["path"]), dest)
         expected_size = int(item.get("size") or 0)
-        if target.exists() and (expected_size <= 0 or target.stat().st_size == expected_size):
+        if target.exists() and expected_size > 0 and target.stat().st_size == expected_size:
             continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -563,12 +563,13 @@ def download_hf_dataset_snapshot(
         download_headers = {}
         if token:
             download_headers["Authorization"] = f"Bearer {token}"
-        with requests.get(url, headers=download_headers, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            with open(target, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
+        _download_atomic(url, target, headers=download_headers)
+        actual_size = target.stat().st_size
+        if expected_size > 0 and actual_size != expected_size:
+            target.unlink(missing_ok=True)
+            raise IOError(
+                f"Downloaded {target} has size {actual_size}, expected {expected_size}."
+            )
     return dest
 
 
@@ -593,11 +594,21 @@ def write_mini500_yaml(dataset_root: Path) -> Path:
     return yaml_path
 
 
-def _download_atomic(url: str, target: Path) -> None:
+def _download_atomic(
+    url: str,
+    target: Path,
+    *,
+    headers: dict[str, str] | None = None,
+) -> None:
     tmp_path = target.with_name(f"{target.name}.tmp")
     tmp_path.unlink(missing_ok=True)
     try:
-        with requests.get(url, stream=True, timeout=60) as response:
+        with requests.get(
+            url,
+            headers=headers or {},
+            stream=True,
+            timeout=60,
+        ) as response:
             response.raise_for_status()
             with open(tmp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -712,24 +723,52 @@ def _dataset_root_from_yaml(data_yaml: Path) -> Path:
     return root_path if root_path.is_absolute() else (data_yaml.parent / root_path)
 
 
+def _resolve_yaml_path(root: Path, value: Any) -> Path:
+    path = Path(str(value))
+    return path if path.is_absolute() else root / path
+
+
+def _looks_like_pose_annotation(value: Any) -> bool:
+    return "keypoints" in str(value).lower()
+
+
+def _has_pose_annotation_config(config: dict[str, Any]) -> bool:
+    if config.get("keypoints_json"):
+        return True
+    annotations = config.get("annotations") or {}
+    if isinstance(annotations, dict):
+        return any(_looks_like_pose_annotation(value) for value in annotations.values())
+    return _looks_like_pose_annotation(annotations)
+
+
 def prepare_pose_data(data_yaml: Path) -> Path:
     config = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
     if config.get("kpt_shape"):
         if data_yaml.name == "coco-val2017-mini500-pose.yaml":
             return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
         return data_yaml
+    if _has_pose_annotation_config(config):
+        return data_yaml
     return write_mini500_pose_yaml(_dataset_root_from_yaml(data_yaml))
 
 
-def pose_direct_paths(data_yaml: Path) -> tuple[Path | None, Path | None]:
+def pose_direct_paths(
+    data_yaml: Path,
+    *,
+    split: str = "val",
+) -> tuple[Path | None, Path | None]:
     config = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
     root = _dataset_root_from_yaml(data_yaml)
     annotations = config.get("annotations") or {}
-    annotation_rel = config.get("keypoints_json") or annotations.get("val")
-    images_rel = config.get("images_dir") or config.get("val")
+    annotation_rel = config.get("keypoints_json")
+    if annotation_rel is None:
+        annotation_rel = (
+            annotations.get(split) if isinstance(annotations, dict) else annotations
+        )
+    images_rel = config.get("images_dir") or config.get(split)
     if not annotation_rel or not images_rel:
         return None, None
-    return root / annotation_rel, root / images_rel
+    return _resolve_yaml_path(root, annotation_rel), _resolve_yaml_path(root, images_rel)
 
 
 def prepare_data(args: argparse.Namespace, output_dir: Path) -> Path:
@@ -1131,7 +1170,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if any(case.task == "pose" for case in cases):
         args.pose_keypoints_json, args.pose_images_dir = pose_direct_paths(
-            args.pose_data_yaml
+            args.pose_data_yaml,
+            split=args.split,
         )
     else:
         args.pose_keypoints_json = None

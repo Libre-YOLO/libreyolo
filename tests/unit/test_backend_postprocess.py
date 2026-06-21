@@ -18,6 +18,7 @@ class _DummyBackend(BaseBackend):
         supported_tasks=("detect",),
         model_size: str | None = None,
         imgsz=640,
+        **pose_metadata,
     ):
         super().__init__(
             model_path="dummy",
@@ -29,6 +30,7 @@ class _DummyBackend(BaseBackend):
             names={0: "class_0", 1: "class_1"},
             task=task,
             supported_tasks=supported_tasks,
+            **pose_metadata,
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:
@@ -297,6 +299,7 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
         "rfdetr",
         task="pose",
         supported_tasks=("detect", "pose"),
+        num_keypoints_per_class=[0, 17],
     )
     backend.nb_classes = 1
     backend.names = {0: "person"}
@@ -932,6 +935,60 @@ def test_rfdetr_pose_backend_accepts_xy_only_keypoints():
     assert parsed_keypoints.shape == (1, 2, 3)
     np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[10.0, 40.0], [30.0, 80.0]])
     np.testing.assert_allclose(parsed_keypoints[0, :, 2], [1.0, 1.0])
+
+
+def test_backend_sets_pose_metadata_attributes():
+    assert backend_base._read_pose_metadata(
+        {"num_keypoints_per_class": "[0, 17, 4]"}
+    ) == {"num_keypoints_per_class": [0, 17, 4]}
+    assert backend_base._read_pose_metadata(
+        {"num_keypoints": "17", "keypoint_dim": "3", "num_keypoints_per_class": [0, 17]}
+    ) == {
+        "num_keypoints": 17,
+        "keypoint_dim": 3,
+        "num_keypoints_per_class": [0, 17],
+    }
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+        num_keypoints=17,
+        keypoint_dim=3,
+        num_keypoints_per_class=[0, 17, 4],
+    )
+
+    assert backend.num_keypoints == 17
+    assert backend.keypoint_dim == 3
+    assert backend.num_keypoints_per_class == [0, 17, 4]
+
+
+def test_rfdetr_classic_pose_slices_background_logits_before_topk():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+        model_size="n",
+        keypoint_dim=2,
+    )
+    backend.nb_classes = 1
+    backend.names = {0: "person"}
+    boxes = np.array(
+        [[[0.5, 0.5, 0.2, 0.2], [0.25, 0.25, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    logits = np.array([[[-10.0, 12.0], [9.0, -12.0]]], dtype=np.float32)
+    keypoints = np.array([[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [boxes, logits, keypoints], 64, (100, 200), conf=0.6
+    )
+
+    assert parsed_boxes.shape == (1, 4)
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert masks is None
+    assert obb is None
+    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[50.0, 120.0], [70.0, 160.0]])
 
 
 def test_rfdetr_pose_backend_rejects_invalid_grouppose_schema():

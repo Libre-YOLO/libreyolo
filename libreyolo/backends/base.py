@@ -1,10 +1,11 @@
 """Base class for LibreYOLO inference backends."""
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Generator, List, Optional, Tuple, Union
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -121,6 +122,24 @@ def _read_metadata_imgsz(
             ) from e
 
     return None
+
+
+def _read_pose_metadata(meta: dict) -> dict[str, Any]:
+    """Extract shared pose metadata from embedded or sidecar export metadata."""
+    pose_meta: dict[str, Any] = {}
+    if "num_keypoints" in meta:
+        pose_meta["num_keypoints"] = int(meta["num_keypoints"])
+    if "keypoint_dim" in meta:
+        pose_meta["keypoint_dim"] = int(meta["keypoint_dim"])
+    if "num_keypoints_per_class" in meta:
+        raw_schema = meta["num_keypoints_per_class"]
+        if isinstance(raw_schema, str):
+            raw_schema = json.loads(raw_schema)
+        if raw_schema is not None:
+            pose_meta["num_keypoints_per_class"] = [
+                int(count) for count in raw_schema
+            ]
+    return pose_meta
 
 
 def _nms_numpy(
@@ -266,6 +285,9 @@ class BaseBackend(ABC):
         task: str | None = None,
         supported_tasks=None,
         default_task: str | None = None,
+        num_keypoints: int | None = None,
+        keypoint_dim: int | None = None,
+        num_keypoints_per_class: list[int] | None = None,
     ):
         self.model_path = model_path
         self.nb_classes = nb_classes
@@ -302,6 +324,14 @@ class BaseBackend(ABC):
             self.embedded_nms = False
         if not hasattr(self, "embedded_nms_raw_output_index"):
             self.embedded_nms_raw_output_index = None
+        if num_keypoints is not None:
+            self.num_keypoints = int(num_keypoints)
+        if keypoint_dim is not None:
+            self.keypoint_dim = int(keypoint_dim)
+        if num_keypoints_per_class is not None:
+            self.num_keypoints_per_class = [
+                int(count) for count in num_keypoints_per_class
+            ]
         if not hasattr(self, "model"):
             self.model = _BackendEvalProxy()
 
@@ -1418,6 +1448,12 @@ class BaseBackend(ABC):
             else:
                 raw_masks = all_outputs[2][0]
 
+        if raw_keypoint_output is not None and not getattr(
+            self, "num_keypoints_per_class", None
+        ):
+            public_classes = int(self.nb_classes)
+            if 0 < public_classes < logits.shape[-1]:
+                logits = logits[:, :public_classes]
         scores = 1.0 / (1.0 + np.exp(-logits.astype(np.float64))).astype(np.float32)
         num_queries, num_classes = scores.shape
         if raw_keypoint_output is not None:
