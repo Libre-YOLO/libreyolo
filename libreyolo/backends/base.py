@@ -651,7 +651,13 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
         elif self.model_family == "rfdetr":
-            return self._parse_rfdetr(all_outputs, orig_w, orig_h, conf)
+            return self._parse_rfdetr(
+                all_outputs,
+                orig_w,
+                orig_h,
+                conf,
+                max_det=max_det,
+            )
         elif self.model_family in ("dfine", "rtdetrv4"):
             boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
             return boxes, scores, cls, None
@@ -1433,7 +1439,7 @@ class BaseBackend(ABC):
             raise ValueError(f"Unexpected RF-DETR keypoint output shape: {raw.shape}")
         return raw
 
-    def _parse_rfdetr(self, all_outputs, orig_w, orig_h, conf):
+    def _parse_rfdetr(self, all_outputs, orig_w, orig_h, conf, max_det=300):
         """Parse RF-DETR output: boxes (B,300,4) cxcywh [0,1] + logits (B,300,nc).
 
         For segmentation models a third output is present:
@@ -1479,8 +1485,13 @@ class BaseBackend(ABC):
                 num_classes=num_classes,
             )
         model_size = self.model_size or getattr(self, "size", None)
+        num_select = (
+            _rfdetr_num_select(self.task, model_size)
+            if int(max_det) == 300
+            else int(max_det)
+        )
         k = min(
-            _rfdetr_num_select(self.task, model_size),
+            num_select,
             num_queries * num_classes,
         )
         flat_indexes = np.argpartition(scores.reshape(-1), -k)[-k:]

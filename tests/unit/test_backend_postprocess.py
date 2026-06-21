@@ -333,6 +333,37 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     assert 0.7 < scores[0] < 1.0
 
 
+def test_rfdetr_grouppose_backend_honors_requested_max_det():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+        model_size="x",
+        num_keypoints_per_class=[0, 17],
+    )
+    backend.nb_classes = 1
+    backend.names = {0: "person"}
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[10.0, 9.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 34, 8), dtype=np.float32)
+    keypoints[0, 0, 17, :7] = [0.25, 0.5, 2.0, 0.0, 0.0, 1.0, 0.0]
+
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [boxes, logits, keypoints],
+        64,
+        (200, 100),
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert masks is None
+    assert obb is None
+    assert parsed_boxes.shape == (0, 4)
+    assert scores.shape == (0,)
+    assert classes.shape == (0,)
+    assert parsed_keypoints.shape == (0, 17, 3)
+
+
 def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
     backend = _DummyBackend(
         "rfdetr",
