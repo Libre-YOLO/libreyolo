@@ -526,7 +526,9 @@ class LWDETR(nn.Module):
             raise RuntimeError("Cannot decode RF-DETR keypoints without keypoint_head.")
         raw = self.keypoint_head(hs).view(*hs.shape[:-1], self.num_keypoints, 3)
         if self.bbox_reparam:
-            xy = raw[..., :2] * reference[..., None, 2:] + reference[..., None, :2]
+            xy = (raw[..., :2].sigmoid() - 0.5) * reference[
+                ..., None, 2:
+            ] + reference[..., None, :2]
         else:
             xy = (raw[..., :2] + reference[..., None, :2]).sigmoid()
         return torch.cat((xy, raw[..., 2:3]), dim=-1)

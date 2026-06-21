@@ -234,6 +234,25 @@ def test_classic_pose_model_forward_emits_decoded_keypoints():
     assert float(xy.max()) <= 2.0
 
 
+def test_classic_pose_bbox_reparam_keypoints_are_box_relative():
+    class _FixedKeypointHead(torch.nn.Module):
+        def forward(self, hs):
+            raw = torch.tensor([10.0, -10.0, 0.25], dtype=hs.dtype, device=hs.device)
+            return raw.expand(*hs.shape[:-1], 3)
+
+    model = _build_classic_pose_model(num_keypoints=1, nb_classes=1)
+    model.bbox_reparam = True
+    model.keypoint_head = _FixedKeypointHead()
+    hs = torch.zeros(1, 1, 1, 256)
+    reference = torch.tensor([[[[0.5, 0.5, 0.2, 0.4]]]])
+
+    decoded = model._decode_keypoints(hs, reference)
+
+    expected_xy = torch.tensor([0.5999909, 0.3000182])
+    torch.testing.assert_close(decoded[0, 0, 0, 0, :2], expected_xy, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(decoded[0, 0, 0, 0, 2], torch.tensor(0.25))
+
+
 def test_classic_pose_export_preserves_keypoint_batch_axis():
     from libreyolo.models.rfdetr.nn import RFDETRExportWrapper
 
