@@ -635,6 +635,30 @@ def test_ec_pose_backend_selects_unique_queries_before_collapsing_classes():
     np.testing.assert_allclose(parsed_keypoints[:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
 
 
+def test_ec_pose_backend_scores_person_logit_only():
+    backend = _DummyBackend(
+        "ec",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    logits = np.array([[[0.0, 10.0], [9.0, -10.0]]], dtype=np.float32)
+    keypoints = np.array(
+        [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]],
+        dtype=np.float32,
+    )
+
+    boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [logits, keypoints], 64, (100, 100), conf=0.0, max_det=1
+    )
+
+    assert boxes.shape == (1, 4)
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert masks is None
+    assert obb is None
+    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[70.0, 70.0], [80.0, 80.0]])
+
+
 def test_ec_pose_backend_does_not_hard_cap_queries_at_sixty():
     backend = _DummyBackend(
         "ec",

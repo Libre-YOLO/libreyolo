@@ -250,6 +250,26 @@ class TestPoseForwardAndPostprocess:
         assert det["boxes"].shape == (2, 4)
         np.testing.assert_allclose(det["keypoints"][:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
 
+    def test_postprocess_scores_person_logit_only(self):
+        raw = {
+            "pred_logits": torch.tensor([[[0.0, 10.0], [9.0, -10.0]]]),
+            "pred_keypoints": torch.tensor(
+                [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]]
+            ),
+        }
+
+        det = postprocess_pose(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=1,
+            num_keypoints=2,
+        )
+
+        assert det["boxes"].shape == (1, 4)
+        np.testing.assert_allclose(det["keypoints"][0, :, :2], [[70.0, 70.0], [80.0, 80.0]])
+
     def test_wrapper_postprocess_does_not_hard_cap_queries_at_sixty(self, pose_model):
         raw = {
             "pred_logits": torch.linspace(10.0, 1.0, 70).reshape(1, 70, 1),

@@ -115,8 +115,7 @@ def postprocess_pose(
         out_logits = out_logits[0]
         out_kpts = out_kpts[0]
 
-    prob = out_logits.sigmoid()
-    query_scores = prob.max(dim=-1).values
+    query_scores = out_logits[..., 0].sigmoid()
     scores, query_idx = torch.topk(
         query_scores,
         min(max_det, query_scores.numel()),
