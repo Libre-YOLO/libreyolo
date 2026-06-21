@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import zipfile
 
 import pytest
 import yaml
@@ -248,6 +249,25 @@ def test_safe_hf_dataset_path_returns_target_inside_dest(tmp_path):
 
     assert str(rel) == "images/val2017/frame.jpg"
     assert target == tmp_path.resolve() / "images" / "val2017" / "frame.jpg"
+
+
+def test_download_coco_person_keypoints_recovers_corrupt_zip(tmp_path, monkeypatch):
+    import vision_analysis_benchmark.onnx_parity as parity
+
+    zip_path = tmp_path / "annotations" / "annotations_trainval2017.zip"
+    zip_path.parent.mkdir()
+    zip_path.write_bytes(b"partial")
+
+    def fake_download(_url, target):
+        with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr(parity.COCO_PERSON_KEYPOINTS_MEMBER, "{}")
+
+    monkeypatch.setattr(parity, "_download_atomic", fake_download)
+
+    path = parity._download_coco_person_keypoints(tmp_path)
+
+    assert path == tmp_path / parity.COCO_PERSON_KEYPOINTS_MEMBER
+    assert path.read_text(encoding="utf-8") == "{}"
 
 
 def test_load_onnx_for_parity_uses_exported_metadata_task(tmp_path):

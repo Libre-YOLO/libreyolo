@@ -118,6 +118,9 @@ class TestYOLONASHeuristics:
         [
             "LibreYOLONASn-pose.pt",
             "yolo_nas_pose_n_coco_pose.pth",
+            "yolo_nas_pose_s_coco_pose.pth",
+            "yolo_nas_pose_m_coco_pose.pth",
+            "yolo_nas_pose_l_coco_pose.pth",
             "LibreYOLONASs-pose.pt",
             "LibreYOLONASm-pose.pt",
             "LibreYOLONASl-pose.pt",

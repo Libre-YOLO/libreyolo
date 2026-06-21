@@ -212,6 +212,8 @@ def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
     """Return RF-DETR's configured top-k selection for exported backends."""
     if task == "segment":
         return {"n": 100, "s": 100, "m": 200, "l": 200}.get(model_size or "", 300)
+    if task == "pose" and model_size == "x":
+        return 100
     return 300
 
 
@@ -1176,8 +1178,6 @@ class BaseBackend(ABC):
 
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
-        keypoints_xy[..., 0] = np.clip(keypoints_xy[..., 0], 0, orig_w)
-        keypoints_xy[..., 1] = np.clip(keypoints_xy[..., 1], 0, orig_h)
 
         valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         if not valid.all():
@@ -1265,7 +1265,10 @@ class BaseBackend(ABC):
         pred_logits = all_outputs[0][0]
         pred_keypoints = all_outputs[1][0]
 
-        query_idx, _class_ids, scores = self._ec_topk(pred_logits, max_det=max_det)
+        query_idx, _class_ids, scores = self._ec_topk(
+            pred_logits,
+            max_det=min(max_det, 60),
+        )
         keep = scores >= conf
         query_idx = query_idx[keep]
         max_scores = scores[keep]

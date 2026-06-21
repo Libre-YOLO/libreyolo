@@ -593,6 +593,22 @@ def write_mini500_yaml(dataset_root: Path) -> Path:
     return yaml_path
 
 
+def _download_atomic(url: str, target: Path) -> None:
+    tmp_path = target.with_name(f"{target.name}.tmp")
+    tmp_path.unlink(missing_ok=True)
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+        tmp_path.replace(target)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def _download_coco_person_keypoints(dataset_root: Path) -> Path:
     annotations_dir = dataset_root / "annotations"
     annotations_dir.mkdir(parents=True, exist_ok=True)
@@ -601,16 +617,17 @@ def _download_coco_person_keypoints(dataset_root: Path) -> Path:
         return target
 
     zip_path = annotations_dir / "annotations_trainval2017.zip"
-    if not zip_path.exists():
-        with requests.get(COCO_ANNOTATIONS_URL, stream=True, timeout=60) as response:
-            response.raise_for_status()
-            with open(zip_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-
-    with zipfile.ZipFile(zip_path) as archive:
-        archive.extract(COCO_PERSON_KEYPOINTS_MEMBER, path=dataset_root)
+    for attempt in range(2):
+        if not zip_path.exists():
+            _download_atomic(COCO_ANNOTATIONS_URL, zip_path)
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                archive.extract(COCO_PERSON_KEYPOINTS_MEMBER, path=dataset_root)
+            break
+        except zipfile.BadZipFile:
+            zip_path.unlink(missing_ok=True)
+            if attempt == 1:
+                raise
     return target
 
 

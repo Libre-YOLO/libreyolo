@@ -590,6 +590,27 @@ def test_ec_pose_backend_honors_max_det():
     assert parsed_keypoints.shape == (2, 2, 3)
 
 
+def test_ec_pose_backend_caps_default_topk_to_query_count():
+    backend = _DummyBackend(
+        "ec",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    logits = np.ones((1, 60, 2), dtype=np.float32) * 10.0
+    keypoints = np.zeros((1, 60, 34), dtype=np.float32)
+
+    boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [logits, keypoints], 64, (100, 100), conf=0.0, max_det=300
+    )
+
+    assert boxes.shape == (60, 4)
+    assert scores.shape == (60,)
+    assert classes.tolist() == [0] * 60
+    assert masks is None
+    assert obb is None
+    assert parsed_keypoints.shape == (60, 17, 3)
+
+
 def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     backend = _DummyBackend(
         "yolonas",
@@ -622,6 +643,30 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     np.testing.assert_allclose(
         keypoints,
         [[[10.0, 20.0, 0.8], [30.0, 40.0, 0.7]]],
+    )
+
+
+def test_yolonas_pose_backend_does_not_clip_keypoints():
+    backend = _DummyBackend(
+        "yolonas",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    boxes = np.array([[[32.0, 32.0, 160.0, 128.0]]], dtype=np.float32)
+    scores = np.array([[[0.9]]], dtype=np.float32)
+    keypoints_xy = np.array([[[[-32.0, 64.0], [96.0, 800.0]]]], dtype=np.float32)
+    keypoints_conf = np.array([[[0.8, 0.7]]], dtype=np.float32)
+
+    _, _, _, _, _, keypoints = backend._parse_outputs(
+        [boxes, scores, keypoints_xy, keypoints_conf],
+        100,
+        (200, 100),
+        conf=0.5,
+    )
+
+    np.testing.assert_allclose(
+        keypoints,
+        [[[-10.0, 20.0, 0.8], [30.0, 250.0, 0.7]]],
     )
 
 
@@ -696,6 +741,31 @@ def test_rfdetr_seg_backend_uses_detected_size_for_num_select_without_metadata()
     assert len(scores) == 100
     assert classes.tolist() == [0] * 100
     assert parsed_masks.shape == (100, 16, 16)
+
+
+def test_rfdetr_x_pose_backend_uses_configured_num_select():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+        model_size="x",
+    )
+    boxes = np.tile(
+        np.array([[0.5, 0.5, 0.25, 0.25]], dtype=np.float32),
+        (1, 100, 1),
+    )
+    logits = np.ones((1, 100, 2), dtype=np.float32) * 10.0
+
+    parsed_boxes, scores, classes, masks, obb, keypoints = backend._parse_outputs(
+        [boxes, logits], 64, (100, 100), conf=0.5
+    )
+
+    assert parsed_boxes.shape == (100, 4)
+    assert scores.shape == (100,)
+    assert classes.shape == (100,)
+    assert masks is None
+    assert obb is None
+    assert keypoints is None
 
 
 def test_rfdetr_pose_backend_reshapes_batched_flattened_keypoints():
