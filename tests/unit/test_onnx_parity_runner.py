@@ -55,7 +55,6 @@ def test_default_cases_include_supported_onnx_scope():
     assert "rtdetrv2-r18" in case_ids
     assert "rtdetrv4-s" in case_ids
     assert "picodet-s" in case_ids
-    assert "damoyolo-ns" in case_ids
     assert "rtmdet-t" in case_ids
     assert "ec-s" in case_ids
 

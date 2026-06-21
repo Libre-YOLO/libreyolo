@@ -96,12 +96,6 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "RF1 mAP floor on small datasets (skill section 6: fine-tune parity, "
         "not paper parity). Inference parity is verified separately."
     ),
-    "damoyolo": (
-        "DAMO-YOLO training is experimental: GFL+AlignOTA loss and "
-        "trainer plumbing are wired and gradients flow correctly, but "
-        "convergence on RF1's tiny marbles dataset has not been validated "
-        "against the mAP floor. Inference parity is verified separately."
-    ),
 }
 
 RF1_MODEL_WEIGHT_PARAMS = model_cases(
@@ -170,8 +164,6 @@ def rf1_train_kwargs(family: str, size: str) -> dict:
             "hsv_prob": 0.0,
         }
     if family == "ec":
-        return {"allow_experimental": True}
-    if family == "damoyolo":
         return {"allow_experimental": True}
     return {}
 

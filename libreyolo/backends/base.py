@@ -210,11 +210,8 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     DETR-style families already emit a ranked set prediction after top-k
     selection. Applying YOLO-style IoU suppression on top of that can remove
     valid detections and make exported runtimes diverge from native PyTorch.
-    DAMO-YOLO is included because its parser calls the native DAMO batched-NMS
-    postprocessor directly.
     """
     return model_family in {
-        "damoyolo",
         "dfine",
         "deim",
         "deimv2",
@@ -417,11 +414,6 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, ratio
-        elif self.model_family == "damoyolo":
-            tensor, img, size = self._preprocess_damoyolo(
-                image, effective_imgsz, color_format
-            )
-            return tensor, img, size, 1.0
         else:
             tensor, img, size = preprocess_image(
                 image, input_size=effective_imgsz, color_format=color_format
@@ -551,21 +543,6 @@ class BaseBackend(ABC):
         return img_tensor, original_img, original_size
 
     @staticmethod
-    def _preprocess_damoyolo(image, input_size, color_format):
-        """DAMO-YOLO preprocessing: stretch resize + RGB float32 in [0,255]."""
-        from ..models.damoyolo.utils import (
-            preprocess_numpy as damoyolo_preprocess_numpy,
-        )
-
-        img = ImageLoader.load(image, color_format=color_format)
-        original_size = img.size
-        original_img = img.copy()
-
-        img_chw, _ = damoyolo_preprocess_numpy(np.array(img), input_size)
-        img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
-        return img_tensor, original_img, original_size
-
-    @staticmethod
     def _preprocess_rtmdet(image, input_size, color_format):
         """RTMDet preprocessing: BGR letterbox + mmdet mean/std normalization."""
         from ..models.rtmdet.utils import preprocess_numpy as rtmdet_preprocess_numpy
@@ -689,17 +666,6 @@ class BaseBackend(ABC):
         elif self.model_family == "rtmdet":
             boxes, scores, cls = self._parse_rtmdet(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
-            )
-            return boxes, scores, cls, None
-        elif self.model_family == "damoyolo":
-            boxes, scores, cls = self._parse_damoyolo(
-                all_outputs,
-                effective_imgsz,
-                orig_w,
-                orig_h,
-                conf,
-                iou=iou,
-                max_det=max_det,
             )
             return boxes, scores, cls, None
         else:
@@ -886,59 +852,6 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
 
         return boxes, max_scores, class_ids
-
-    def _parse_damoyolo(
-        self,
-        all_outputs,
-        effective_imgsz,
-        orig_w,
-        orig_h,
-        conf,
-        *,
-        iou: float = 0.6,
-        max_det: int = 300,
-    ):
-        """Parse DAMO-YOLO output via its native batched-NMS postprocessor."""
-        from ..postprocess.damoyolo import postprocess_predictions
-
-        first = all_outputs[0][0]
-        second = all_outputs[1][0]
-        if first.shape[-1] == 4 and second.shape[-1] != 4:
-            boxes = first
-            scores = second
-        else:
-            scores = first
-            boxes = second
-
-        if not (scores > conf).any():
-            return (
-                np.empty((0, 4), dtype=boxes.dtype),
-                np.empty((0,), dtype=scores.dtype),
-                np.empty((0,), dtype=np.int64),
-            )
-
-        input_h, input_w = _imgsz_hw(effective_imgsz)
-        device = (
-            torch.device(self.device)
-            if _is_pytorch_cuda_device(str(self.device)) and torch.cuda.is_available()
-            else torch.device("cpu")
-        )
-        cls_scores = torch.as_tensor(scores, dtype=torch.float32, device=device).unsqueeze(0)
-        box_tensor = torch.as_tensor(boxes, dtype=torch.float32, device=device).unsqueeze(0)
-        preds = postprocess_predictions(
-            cls_scores,
-            box_tensor,
-            orig_sizes=[(orig_w, orig_h)],
-            input_size=(input_h, input_w),
-            conf_thres=conf,
-            iou_thres=iou,
-            max_det=max_det,
-        )[0]
-
-        parsed_boxes = preds["boxes"].detach().cpu().numpy()
-        parsed_scores = preds["scores"].detach().cpu().numpy()
-        parsed_classes = preds["classes"].detach().cpu().numpy().astype(np.int64)
-        return parsed_boxes, parsed_scores, parsed_classes
 
     def _parse_embedded_nms(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
         """Parse a graph-embedded-NMS detection output.
@@ -1863,7 +1776,7 @@ class BaseBackend(ABC):
             obb is None
             and not _is_nms_free_family(self.model_family)
         ):
-            # YOLO9 (like DAMO) needs class-aware NMS so multi-label detections
+            # YOLO9 needs class-aware NMS so multi-label detections
             # on a shared anchor (same box, different class) survive, matching
             # the native batched_nms path. Class-agnostic NMS would drop the
             # lower-scored class and make exported runtimes disagree with native.
@@ -1871,7 +1784,6 @@ class BaseBackend(ABC):
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
             if self.model_family in (
-                "damoyolo",
                 "picodet",
                 "rtmdet",
                 "yolo9",
@@ -2025,7 +1937,6 @@ class BaseBackend(ABC):
             img_size = self._get_input_size()
 
         from ..validation.preprocessors import (
-            DAMOYOLOValPreprocessor,
             DEIMValPreprocessor,
             DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
@@ -2055,7 +1966,6 @@ class BaseBackend(ABC):
             return preprocessor_cls(img_size=_imgsz_hw(img_size))
 
         preprocessor_cls = {
-            "damoyolo": DAMOYOLOValPreprocessor,
             "deim": DEIMValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
