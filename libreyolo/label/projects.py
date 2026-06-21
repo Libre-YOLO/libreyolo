@@ -117,3 +117,15 @@ def forget(data: str) -> None:
     key = _key(data)
     with _WLOCK:
         _save([e for e in load() if e.get("key") != key])
+
+
+def rename(data: str, name: str) -> None:
+    """Set the display name of a registry entry without bumping ``last_opened``."""
+    key = _key(data)
+    with _WLOCK:
+        projects = load()
+        for e in projects:
+            if e.get("key") == key:
+                e["name"] = str(name)
+                break
+        _save(projects)

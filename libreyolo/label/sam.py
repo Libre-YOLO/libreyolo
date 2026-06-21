@@ -7,7 +7,7 @@ clicks and +/- point refinements on the same image are near-instant. A click
 Fully local/offline; nothing here writes a label.
 
 LibreSAM is the preferred segmentation engine (vs a raw detector) because it is
-promptable and class-agnostic — exactly the click-to-mask interaction labellers
+promptable and class-agnostic - exactly the click-to-mask interaction labellers
 want. Optional + gated: absent the ``[sam]`` extra it simply stays hidden.
 """
 

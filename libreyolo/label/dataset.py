@@ -8,7 +8,11 @@ them. No database; the filesystem dataset is the store.
 
 from __future__ import annotations
 
+import json
 import os
+import random
+import shutil
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -138,6 +142,141 @@ def update_class_names(yaml_file: str, names: List[str]) -> None:
     _atomic_write_text(p, yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
 
 
+# Image types the upload wizard accepts (matches what the labeler can render).
+IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+
+def _write_json_atomic(path: Path, obj) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_sidecar(base: str) -> dict:
+    """Read the optional ``librelabel.json`` sidecar (project name + per-class
+    colors) the New Project wizard writes next to ``data.yaml``. Convenience only;
+    a missing or malformed sidecar is never fatal."""
+    try:
+        p = Path(base) / "librelabel.json"
+        if p.is_file():
+            d = json.loads(p.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _project_root(data: str) -> Path:
+    """The folder LibreLabel treats as a project: the dir holding ``data.yaml``."""
+    p = Path(data)
+    return p.parent if p.is_file() else p
+
+
+def set_sidecar_name(data: str, name: str) -> str:
+    """Update (or create) the project display name in the ``librelabel.json``
+    sidecar next to ``data.yaml``. Returns the project root path."""
+    root = _project_root(data)
+    sc = load_sidecar(str(root)) or {}
+    sc["name"] = str(name)
+    try:
+        _write_json_atomic(root / "librelabel.json", sc)
+    except OSError:
+        pass
+    return str(root)
+
+
+def trash_project(data: str) -> str:
+    """Soft-delete a project: move its whole folder to ``~/.librelabel/trash/``
+    (recoverable) rather than erasing anything. Returns the trash path."""
+    root = _project_root(data)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Not a folder: {root}")
+    trash = Path.home() / ".librelabel" / "trash"
+    trash.mkdir(parents=True, exist_ok=True)
+    dest = trash / f"{int(time.time())}-{root.name or 'dataset'}"
+    shutil.move(str(root), str(dest))
+    return str(dest)
+
+
+def save_uploaded_image(dst: str, name: str, data: bytes) -> str:
+    """Write one browser-uploaded image into ``<dst>/images/train/`` (created on
+    demand). The name is reduced to a safe basename and only known image
+    extensions are accepted, so an upload can never escape the destination."""
+    safe = Path(str(name)).name.strip()
+    if not safe:
+        raise ValueError("empty filename")
+    if Path(safe).suffix.lower() not in IMG_EXTS:
+        raise ValueError(f"unsupported file type: {safe}")
+    if not data:
+        raise ValueError("empty file")
+    out_dir = Path(dst) / "images" / "train"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / safe
+    tmp = out.with_suffix(out.suffix + ".uptmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, out)
+    return str(out)
+
+
+def create_uploaded_project(dst: str, *, name: Optional[str] = None,
+                            description: str = "", color: str = "",
+                            classes: Optional[List[str]] = None,
+                            colors: Optional[List[str]] = None,
+                            task: Optional[str] = None,
+                            make_val: bool = False, val_frac: float = 0.2) -> str:
+    """Turn just-uploaded images (``<dst>/images/train``) into a real LibreYOLO
+    dataset: an optional held-out ``val`` split, a ``data.yaml`` the trainer reads
+    directly, and a ``librelabel.json`` sidecar (name + per-class colors).
+    Returns the path to the written ``data.yaml``."""
+    base = Path(dst)
+    train_dir = base / "images" / "train"
+    try:
+        imgs = sorted(str(i) for i in get_img_files(train_dir)) if train_dir.is_dir() else []
+    except (FileNotFoundError, ValueError):
+        imgs = []
+    if not imgs:
+        raise FileNotFoundError("No uploaded images found - add some images first.")
+    cls = [str(c).strip() for c in (classes or []) if str(c).strip()]
+    cols = list(colors or [])
+
+    has_val = False
+    if make_val and len(imgs) >= 4:
+        k = max(1, min(len(imgs) - 1, int(round(len(imgs) * float(val_frac)))))
+        val_dir = base / "images" / "val"
+        val_dir.mkdir(parents=True, exist_ok=True)
+        for i in random.Random(1234).sample(range(len(imgs)), k):
+            src = Path(imgs[i])
+            os.replace(src, val_dir / src.name)
+        has_val = True
+
+    cfg = {"path": base.resolve().as_posix(), "train": "images/train"}
+    if has_val:
+        cfg["val"] = "images/val"
+    cfg["names"] = cls
+    cfg["nc"] = len(cls)
+    t = str(task or "").strip().lower()
+    if t and t != "detect":
+        cfg["task"] = t
+    text = (
+        "# LibreLabel project -- created with the New Project wizard.\n"
+        "# Labels are written next to the images, where `libreyolo train` reads them.\n\n"
+        + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+    )
+    _atomic_write_text(base / "data.yaml", text)
+
+    sidecar = {
+        "name": name or base.name,
+        "description": description or "",
+        "color": color or "",
+        "class_colors": {cls[i]: cols[i] for i in range(min(len(cls), len(cols))) if cols[i]},
+    }
+    try:
+        _write_json_atomic(base / "librelabel.json", sidecar)
+    except OSError:
+        pass
+    return str(base / "data.yaml")
+
+
 class DatasetSession:
     """An open dataset: ordered images across train/val/test + label R/W."""
 
@@ -149,6 +288,9 @@ class DatasetSession:
         self.names = _names_to_list(cfg.get("names"))
         nc = cfg.get("nc")
         self.nc = int(nc) if nc else len(self.names)
+        # Optional wizard sidecar: project display name + per-class colors.
+        self._sidecar = load_sidecar(str(self.root)) or load_sidecar(
+            str(Path(self.yaml_file).parent))
 
         self._items: List[Tuple[Path, Path, str]] = []
         seen: set = set()
@@ -192,7 +334,7 @@ class DatasetSession:
         if self.writable and dense:
             self.writable = False
             self.reason = ("Keypoint / mask / depth / classify dataset: view-only in "
-                           "LibreLabel — it edits boxes and polygons, and saving would drop "
+                           "LibreLabel - it edits boxes and polygons, and saving would drop "
                            "or corrupt the dense / task-specific labels.")
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
@@ -262,6 +404,11 @@ class DatasetSession:
             "reason": self.reason,
             "task": self._task or "detect",
             "has_val": any(s in ("val", "test") for _, _, s in self._items),
+            "name": (self._sidecar.get("name") or "") if isinstance(self._sidecar, dict) else "",
+            "colors": [
+                (self._sidecar.get("class_colors", {}) or {}).get(n)
+                for n in self.names
+            ] if isinstance(self._sidecar, dict) else [],
         }
 
     def _status(self, lp: Path) -> str:
@@ -564,7 +711,7 @@ class DatasetSession:
         return self._items[idx][1].exists()
 
     def read_label(self, idx: int) -> Tuple[List[dict], bool]:
-        """Return ``(annotations, editable)`` — mixed box/polygon annotations.
+        """Return ``(annotations, editable)`` - mixed box/polygon annotations.
 
         ``editable`` is ``False`` for files holding keypoint/pose or malformed rows
         (which we don't parse), so a save never silently drops those fields.

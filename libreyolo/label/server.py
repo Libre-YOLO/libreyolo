@@ -38,8 +38,12 @@ from .boost import BoostEngine
 from .dataset import (
     DatasetSession,
     count_images,
+    create_uploaded_project,
     folder_yaml,
+    save_uploaded_image,
     scaffold_data_yaml,
+    set_sidecar_name,
+    trash_project,
     update_class_names,
 )
 from .embed import EmbedEngine
@@ -385,7 +389,8 @@ class _Handler(BaseHTTPRequestHandler):
             # heavy full-dataset compute streams all rebind/clobber server-global
             # state (session, files, the shared pending/findings/embed maps, a host
             # CPU training job) for every teammate -- gate them to the loopback host.
-            if path in ("/api/projects/open", "/api/projects/create", "/api/projects/inspect",
+            if path in ("/api/projects/open", "/api/projects/create", "/api/projects/new",
+                        "/api/upload", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
                         "/api/projects/forget", "/api/pick-folder", "/api/example", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
@@ -395,8 +400,9 @@ class _Handler(BaseHTTPRequestHandler):
                                           "machine on a shared server."})
                 return
             if self.state.session is None and path not in (
-                    "/api/projects/open", "/api/projects/create",
-                    "/api/projects/inspect", "/api/projects/forget", "/api/pick-folder", "/api/example"):
+                    "/api/projects/open", "/api/projects/create", "/api/projects/new", "/api/upload",
+                    "/api/projects/inspect", "/api/projects/forget", "/api/projects/rename",
+                    "/api/projects/delete", "/api/pick-folder", "/api/example"):
                 self._send(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
@@ -463,6 +469,63 @@ class _Handler(BaseHTTPRequestHandler):
                     logger.exception("create project failed")
                     self._send(400, {"error": str(exc).splitlines()[0][:140]
                                      or "Could not create that project."})
+            elif path == "/api/upload":
+                # One browser-uploaded image -> <dst>/images/train/. Raw bytes in the
+                # body (no multipart, stdlib-only); admin-gated like every mutation.
+                qs = parse_qs(parsed.query)
+                dst = (qs.get("dst") or [None])[0]
+                name = (qs.get("name") or [None])[0]
+                data = self._read_body_bytes()
+                if not dst or not name:
+                    self._send(400, {"error": "dst and name are required"})
+                    return
+                try:
+                    saved = save_uploaded_image(str(dst), str(name), data)
+                    self._send(200, {"ok": True, "saved": Path(saved).name})
+                except Exception as exc:  # noqa: BLE001 - bad name / unwritable dst
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "upload failed"})
+            elif path == "/api/projects/new":
+                # The New Project wizard: build a real dataset from uploaded images
+                # (optional val split + per-class colors), then open it.
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    self._send(400, {"error": "bad payload"})
+                    return
+                dst = payload.get("dst")
+                if not dst:
+                    self._send(400, {"error": "destination folder required"})
+                    return
+                task = payload.get("task")
+                if task not in ("detect", "segment", "obb", "classify"):
+                    task = None
+                try:
+                    target = create_uploaded_project(
+                        str(dst),
+                        name=payload.get("name") or None,
+                        description=payload.get("description") or "",
+                        color=payload.get("color") or "",
+                        classes=payload.get("classes") or [],
+                        colors=payload.get("colors") or [],
+                        task=task,
+                        make_val=bool(payload.get("make_val")),
+                        val_frac=float(payload.get("val_frac") or 0.2),
+                    )
+                    meta = self.state.open_project(target)
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    meta["created"] = True
+                    try:
+                        projects.register(target, name=payload.get("name") or None,
+                                          root=meta.get("root"), count=meta.get("count"))
+                    except Exception:  # noqa: BLE001 - registry is convenience only
+                        pass
+                    self._send(200, meta)
+                except FileNotFoundError as exc:
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "No images uploaded yet."})
+                except Exception as exc:  # noqa: BLE001 - bad dst / unwritable path
+                    logger.exception("new project failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:140]
+                                     or "Could not create the project."})
             elif path == "/api/classes":
                 payload = self._read_json()
                 names = payload.get("names") if isinstance(payload, dict) else None
@@ -471,7 +534,7 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "names list required"})
                     return
                 if ep is not None and int(ep) != self.state.epoch:
-                    self._send(409, {"error": "project changed — reopen it before editing classes"})
+                    self._send(409, {"error": "project changed - reopen it before editing classes"})
                     return
                 meta = self.state.set_class_names(names)
                 meta["open"] = True
@@ -515,6 +578,36 @@ class _Handler(BaseHTTPRequestHandler):
                 if data:
                     projects.forget(str(data))
                 self._send(200, {"ok": True})
+            elif path == "/api/projects/rename":
+                payload = self._read_json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                name = payload.get("name") if isinstance(payload, dict) else None
+                if not data or not name or not str(name).strip():
+                    self._send(400, {"error": "data and name are required"})
+                    return
+                try:
+                    set_sidecar_name(str(data), str(name).strip())
+                    projects.rename(str(data), str(name).strip())
+                    self._send(200, {"ok": True})
+                except Exception as exc:  # noqa: BLE001 - bad path / unwritable
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "rename failed"})
+            elif path == "/api/projects/delete":
+                # Soft-delete: move the whole project folder to ~/.librelabel/trash
+                # (recoverable). Never erases user files outright.
+                payload = self._read_json()
+                data = payload.get("data") if isinstance(payload, dict) else None
+                if not data:
+                    self._send(400, {"error": "data is required"})
+                    return
+                try:
+                    trashed = trash_project(str(data))
+                    projects.forget(str(data))
+                    self._send(200, {"ok": True, "trash": trashed})
+                except FileNotFoundError as exc:
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "project folder not found"})
+                except Exception as exc:  # noqa: BLE001 - move/permission failure
+                    logger.exception("delete project failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "delete failed"})
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 payload = self._read_json()
@@ -568,6 +661,10 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         data = self.rfile.read(length) if length else b""
         return json.loads(data.decode("utf-8")) if data else {}
+
+    def _read_body_bytes(self) -> bytes:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        return self.rfile.read(length) if length else b""
 
     @staticmethod
     def _is_loopback(addr: str) -> bool:
@@ -701,7 +798,7 @@ class _Handler(BaseHTTPRequestHandler):
         if ep is not None and int(ep) != self.state.epoch:
             # a stale tab (project switched in another tab) must not populate the
             # current project's pending suggestions with the old dataset's run
-            self._send(409, {"error": "project changed — reload before auto-labeling"})
+            self._send(409, {"error": "project changed - reload before auto-labeling"})
             return
 
         self.send_response(200)

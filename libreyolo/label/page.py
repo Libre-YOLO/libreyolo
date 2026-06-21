@@ -14,38 +14,38 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <title>LibreLabel</title>
 <style>
   :root{
-    /* LibreYOLO theme — dark (slate + cyan), matching the website */
-    --bg:#020617; --bg2:#0b1120;
-    --s1:#0f172a; --s2:#1e293b; --s3:#334155;
-    --line:#1e293b; --line2:#334155;
-    --tx:#e2e8f0; --tx2:#94a3b8; --tx3:#64748b;
-    --ac:#06b6d4; --ac-ink:#012a33; --ai:#22d3ee;
+    /* LibreLabel - refined neutral dark + indigo accent */
+    --bg:#0a0a0c; --bg2:#101013;
+    --s1:#151518; --s2:#1c1c21; --s3:#26262d;
+    --line:#222228; --line2:#31313a;
+    --tx:#f4f4f5; --tx2:#a6a6b2; --tx3:#73737e;
+    --ac:#6366f1; --ac-ink:#ffffff; --ai:#818cf8;
     --ok:#10b981; --warn:#fbbf24; --danger:#ef4444;
-    --r:10px; --r2:8px; --sh:0 12px 34px rgba(2,6,23,.55); --shs:0 2px 8px rgba(2,6,23,.4);
-    --stage1:#0b1120; --stage2:#020617; --topbar1:#0f172a; --topbar2:#0b1120;
-    --acg1:#22d3ee; --acg2:#0891b2; --glass:rgba(15,23,42,.85);
+    --r:12px; --r2:9px; --sh:0 18px 44px -14px rgba(0,0,0,.62); --shs:0 2px 6px rgba(0,0,0,.34);
+    --stage1:#141418; --stage2:#0a0a0c; --topbar1:#151518; --topbar2:#121215;
+    --acg1:#6366f1; --acg2:#4f46e5; --glass:rgba(18,18,22,.82);
   }
   :root.light{
-    --bg:#fafbfd; --bg2:#f1f5f9;
-    --s1:#ffffff; --s2:#f8fafc; --s3:#eef2f7;
-    --line:#e2e8f0; --line2:#cbd5e1;
-    --tx:#1e293b; --tx2:#475569; --tx3:#64748b;
-    --ac:#0891b2; --ac-ink:#ffffff; --ai:#0e7490;
+    --bg:#f6f6f8; --bg2:#ffffff;
+    --s1:#ffffff; --s2:#f4f4f6; --s3:#e9e9ee;
+    --line:#e7e7eb; --line2:#d6d6dd;
+    --tx:#18181b; --tx2:#52525b; --tx3:#8a8a93;
+    --ac:#5b54e8; --ac-ink:#ffffff; --ai:#6d63f0;
     --ok:#059669; --warn:#d97706; --danger:#dc2626;
-    --sh:0 10px 30px rgba(15,23,42,.12); --shs:0 2px 8px rgba(15,23,42,.08);
-    --stage1:#eef2f7; --stage2:#dbe3ee; --topbar1:#ffffff; --topbar2:#f8fafc;
-    --acg1:#22c3e0; --acg2:#0891b2; --glass:rgba(255,255,255,.85);
+    --sh:0 18px 44px -18px rgba(24,24,27,.22); --shs:0 1px 3px rgba(24,24,27,.09);
+    --stage1:#eeeef2; --stage2:#e2e2e9; --topbar1:#ffffff; --topbar2:#fbfbfc;
+    --acg1:#6366f1; --acg2:#4f46e5; --glass:rgba(255,255,255,.86);
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
-    font:13px/1.5 "Outfit",ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   button{font:inherit;color:inherit;cursor:pointer}
   .ic{width:16px;height:16px;display:block;flex:none}
   #app{display:grid;grid-template-rows:52px 1fr;height:100vh}
   /* topbar */
   .topbar{display:flex;align-items:center;gap:12px;padding:0 14px;
-    background:linear-gradient(180deg,var(--topbar1),var(--topbar2));border-bottom:1px solid var(--line)}
+    background:var(--topbar1);border-bottom:1px solid var(--line)}
   .brand{display:flex;align-items:center;gap:8px;font-weight:650;letter-spacing:.2px}
   .brand .ic{width:21px;height:21px;color:var(--ac)}
   .brand b{color:var(--ac)}
@@ -57,9 +57,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 13px;
     border-radius:var(--r2);border:1px solid transparent;font-weight:560;transition:.15s;white-space:nowrap}
   .btn .ic{width:15px;height:15px}
-  .btn-primary{background:linear-gradient(180deg,var(--acg1),var(--acg2));color:var(--ac-ink);
-    box-shadow:0 1px 0 rgba(255,255,255,.18) inset,0 5px 16px rgba(6,182,212,.34)}
-  .btn-primary:hover{filter:brightness(1.07);transform:translateY(-1px)}
+  .btn-primary{background:var(--ac);color:var(--ac-ink);
+    box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .btn-primary:hover{background:var(--ai);transform:translateY(-1px)}
   .btn-primary:active{transform:translateY(0)}
   .btn-ghost{background:var(--s2);border-color:var(--line2);color:var(--tx)}
   .btn-ghost:hover{background:var(--s3)}
@@ -68,15 +68,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
     background:transparent;border:1px solid transparent;color:var(--tx2);transition:.15s}
   .btn-icon:hover{background:var(--s2);color:var(--tx);border-color:var(--line)}
   .ai{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:12px;
-    background:rgba(6,182,212,.10);border:1px solid rgba(6,182,212,.26)}
-  :root.light .ai{background:rgba(8,145,178,.09);border-color:rgba(8,145,178,.32)}
+    background:color-mix(in srgb,var(--ac) 11%,transparent);border:1px solid color-mix(in srgb,var(--ac) 28%,transparent)}
+  :root.light .ai{background:color-mix(in srgb,var(--ac) 9%,transparent);border-color:color-mix(in srgb,var(--ac) 30%,transparent)}
   .tgroup{display:inline-flex;align-items:center;gap:3px}
   .ai .field{display:flex;align-items:center;gap:8px;height:32px;padding:0 11px;border-radius:var(--r2);
     background:var(--s1);border:1px solid var(--line);color:var(--tx3);font-size:12px}
   .ai .field b{color:var(--tx);font-variant-numeric:tabular-nums;min-width:28px;text-align:right}
   .ai input[type=range]{-webkit-appearance:none;appearance:none;width:92px;height:4px;border-radius:9px;background:var(--s3);outline:none}
   .ai input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
-    background:var(--ai);cursor:pointer;box-shadow:0 0 0 3px rgba(34,211,238,.2)}
+    background:var(--ai);cursor:pointer;box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 25%,transparent)}
   .select{height:32px;border-radius:var(--r2);background:var(--s1);color:var(--tx2);
     border:1px solid var(--line);padding:0 8px;font-size:12px;max-width:170px}
   .laprompt{height:32px;width:210px;border-radius:var(--r2);background:var(--s1);color:var(--tx);
@@ -105,7 +105,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .rprow .rpx{opacity:0;color:var(--tx3);font-size:16px;line-height:1;padding:0 3px;border-radius:5px}
   .rprow:hover .rpx{opacity:.55} .rprow .rpx:hover{opacity:1;color:var(--danger);background:var(--s1)}
   .rp-empty{padding:18px 12px;color:var(--tx3);font-size:12px;text-align:center}
-  /* Responsive: the canvas keeps priority — side panels shrink as the window narrows,
+  /* Responsive: the canvas keeps priority - side panels shrink as the window narrows,
      and the regions panel yields below ~820px so the image never becomes a sliver. */
   @media (max-width:1180px){ main{grid-template-columns:232px 1fr 200px} }
   @media (max-width:980px){ main{grid-template-columns:200px 1fr 184px} }
@@ -224,12 +224,17 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .ptxt{color:var(--tx3);font-size:12.5px;font-variant-numeric:tabular-nums;margin-bottom:15px;min-height:18px}
   .ptrack{height:7px;border-radius:99px;background:var(--s3);overflow:hidden}
   .pbar{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--ac),var(--ai));transition:width .25s ease}
-  .help{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,9,12,.8);backdrop-filter:blur(3px);z-index:7}
-  .help .card2{width:min(560px,90vw);background:var(--s1);border:1px solid var(--line2);border-radius:16px;padding:22px 24px;box-shadow:var(--sh)}
-  .help h3{margin:0 0 14px;font-size:15px;display:flex;align-items:center;gap:8px}
-  .help table{border-collapse:collapse;width:100%}
-  .help td{padding:6px 8px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--tx2)}
-  .help td:first-child{white-space:nowrap;width:46%}
+  .help{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,9,12,.8);backdrop-filter:blur(4px);z-index:30}
+  .help .card2{width:min(720px,92vw);max-height:86vh;overflow:auto;background:var(--s1);border:1px solid var(--line2);border-radius:16px;padding:20px 22px;box-shadow:var(--sh)}
+  .help .hh{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  .help h3{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+  .help-sub{color:var(--tx3);font-size:12.5px;margin:0 0 16px}
+  .kgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px 24px}
+  @media (max-width:680px){ .kgrid{grid-template-columns:1fr} }
+  .kgroup h4{margin:0 0 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--tx3)}
+  .krow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--tx2)}
+  .krow:last-child{border-bottom:0}
+  .krow .keys{display:flex;align-items:center;gap:4px;flex:none}
   .help kbd{display:inline-block;background:var(--s3);border:1px solid var(--line2);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font:11px ui-monospace,monospace;color:var(--tx)}
   :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
   /* --- data-quality + AI superpowers: Radar, Boost, Map, dup-fixer --- */
@@ -288,7 +293,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .home-tag{color:var(--tx2);font-size:14px;margin:12px auto 0;max-width:540px}
   .home-open{display:flex;align-items:center;gap:11px;background:var(--s1);border:1px solid var(--line2);
     border-radius:14px;padding:9px 9px 9px 16px;box-shadow:var(--sh);max-width:660px;margin:0 auto}
-  .home-open:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12),var(--sh)}
+  .home-open:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent),var(--sh)}
   .home-open .ic{width:19px;height:19px;color:var(--tx3);flex:none}
   .home-open input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:14px}
   .home-open .btn{height:38px;padding:0 18px}
@@ -307,10 +312,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .prj-barwrap{height:7px;background:var(--s3);border-radius:9px;overflow:hidden;margin:14px 0 8px}
   .prj-bar{height:100%;border-radius:9px;background:linear-gradient(90deg,var(--ac),var(--ai))}
   .prj-meta{display:flex;justify-content:space-between;gap:6px;font-size:11.5px;color:var(--tx2);font-variant-numeric:tabular-nums}
-  .prj-forget{position:absolute;top:9px;right:9px;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
-    background:var(--s2);border:1px solid var(--line);color:var(--tx3);font-size:14px;line-height:1;opacity:0;transition:.12s}
-  .prj:hover .prj-forget{opacity:1}
-  .prj-forget:hover{color:var(--danger);border-color:rgba(239,68,68,.4)}
+  .prj-menu{position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:7px;display:grid;place-items:center;
+    background:var(--s2);border:1px solid var(--line);color:var(--tx3);opacity:0;transition:.12s;cursor:pointer}
+  .prj:hover .prj-menu{opacity:1}
+  .prj-menu:hover{color:var(--tx);border-color:var(--line2)}
+  .prj-menu .ic{width:15px;height:15px}
+  .prj-actions{position:absolute;top:36px;right:8px;z-index:6;display:none;flex-direction:column;min-width:158px;
+    background:var(--s1);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--sh);padding:4px}
+  .prj-actions.show{display:flex}
+  .prj-act{text-align:left;background:transparent;border:0;color:var(--tx);font-size:12.5px;padding:7px 10px;border-radius:7px;cursor:pointer}
+  .prj-act:hover{background:var(--s2)}
+  .prj-act.danger{color:var(--danger)}
+  .prj-act.danger:hover{background:color-mix(in srgb,var(--danger) 13%,transparent)}
   .home-empty{grid-column:1/-1;text-align:center;color:var(--tx3);font-size:13px;padding:28px}
   .rdy{margin-bottom:18px;padding:14px 15px;border-radius:11px;border:1px solid var(--line2);background:var(--s2)}
   .rdy.go{border-color:rgba(16,185,129,.4);background:rgba(16,185,129,.07)}
@@ -344,14 +357,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .hc-lbl{display:block;color:var(--tx);font-size:13px;font-weight:600;margin-bottom:6px}
   .hc-lbl .hc-hint{color:var(--tx3);font-weight:400}
   #hcclasses{width:100%;box-sizing:border-box;resize:vertical;min-height:84px;background:var(--s2);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;color:var(--tx);font:13px ui-monospace,monospace;outline:none}
-  #hcclasses:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12)}
+  #hcclasses:focus{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent)}
   .hc-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
   .cecard{width:min(460px,92vw)}
   .ce-note{color:var(--tx2);font-size:12.5px;line-height:1.5;margin:0 0 14px}
   .ce-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
   .ce-row .sw{width:14px;height:14px;border-radius:4px;flex:none}
   .ce-in{flex:1;background:var(--s2);border:1px solid var(--line2);border-radius:9px;padding:8px 11px;color:var(--tx);font-size:13px;outline:none}
-  .ce-in:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(8,145,178,.12)}
+  .ce-in:focus{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent)}
   .ce-rm{flex:none;width:28px;height:28px;border-radius:8px;background:var(--s2);border:1px solid var(--line2);color:var(--tx2);font-size:16px;line-height:1;cursor:pointer}
   .ce-rm:hover{color:var(--danger);border-color:var(--danger)}
   .ce-fixed{flex:none;width:34px;text-align:center;color:var(--tx3);font:11px ui-monospace,monospace}
@@ -381,23 +394,92 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .taskopt.on{border-color:var(--ac);background:var(--s3);color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset}
   .taskopt[disabled]{opacity:.5;cursor:default}
   .taskopt .soon{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
+  /* ===== New Project wizard ===== */
+  .wz{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+    background:rgba(6,6,8,.66);backdrop-filter:blur(6px)}
+  .wz.show{display:flex}
+  .wz-card{width:min(640px,94vw);max-height:90vh;display:flex;flex-direction:column;
+    background:var(--s1);border:1px solid var(--line2);border-radius:18px;box-shadow:var(--sh);overflow:hidden}
+  .wz-head{display:flex;align-items:center;gap:14px;padding:16px 18px;border-bottom:1px solid var(--line)}
+  .wz-title{font-size:15px;font-weight:680;letter-spacing:-.2px}
+  .wz-steps{display:flex;align-items:center;gap:4px;margin-left:auto}
+  .wz-step{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--tx3);padding:4px}
+  .wz-step i{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;font-size:11px;
+    font-weight:700;background:var(--s3);color:var(--tx2);transition:.15s}
+  .wz-step.on{color:var(--tx)} .wz-step.on i{background:var(--ac);color:var(--ac-ink)}
+  .wz-step.done i{background:color-mix(in srgb,var(--ac) 34%,var(--s3));color:var(--tx)}
+  .wz-body{padding:20px 20px 8px;overflow:auto}
+  .wz-pane{display:flex;flex-direction:column}
+  .wz-lbl{font-size:12.5px;font-weight:600;color:var(--tx);margin:14px 0 7px}
+  .wz-lbl:first-child{margin-top:0}
+  .wz-lbl .wz-hint{color:var(--tx3);font-weight:400;margin-left:5px}
+  .wz-lbl .req{color:var(--danger);margin-left:3px;font-weight:700}
+  .wz-in{width:100%;background:var(--s2);border:1px solid var(--line2);border-radius:10px;
+    padding:10px 12px;color:var(--tx);font-size:13.5px;outline:none;transition:.12s}
+  .wz-in::placeholder{color:var(--tx3)}
+  .wz-in:focus{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent)}
+  .wz-ta{min-height:62px;resize:vertical;font-family:inherit}
+  .wz-tabs{display:flex;gap:3px;padding:3px;background:var(--s2);border:1px solid var(--line);border-radius:10px;margin-bottom:14px}
+  .wz-tab{flex:1;height:32px;border:0;border-radius:7px;background:transparent;color:var(--tx3);font-size:12.5px;font-weight:580}
+  .wz-tab.on{background:var(--s1);color:var(--tx);box-shadow:var(--shs)}
+  .wz-folder{display:flex;gap:8px} .wz-folder .wz-in{flex:1}
+  .wz-drop{margin-top:12px;border:1.5px dashed var(--line2);border-radius:12px;padding:26px 16px;text-align:center;
+    background:var(--s2);transition:.12s;cursor:pointer}
+  .wz-drop:hover,.wz-drop.over{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 8%,var(--s2))}
+  .wz-drop.disabled{opacity:.5}
+  .wz-drop svg{width:26px;height:26px;color:var(--ac);margin:0 auto 8px;display:block}
+  .wz-drop-t{font-size:13.5px;font-weight:600;color:var(--tx)}
+  .wz-drop-s{font-size:12px;color:var(--tx3);margin-top:4px}
+  .wz-link{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;padding:0;cursor:pointer}
+  .wz-files{margin-top:12px;max-height:148px;overflow:auto;display:flex;flex-direction:column;gap:5px}
+  .wz-frow{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--tx2);padding:5px 9px;background:var(--s2);border-radius:8px}
+  .wz-frow .wz-fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wz-frow .wz-fs{font-variant-numeric:tabular-nums;color:var(--tx3);flex:none}
+  .wz-frow.ok .wz-fs{color:var(--ok)} .wz-frow.err{color:var(--danger)} .wz-frow.err .wz-fn{color:var(--danger)}
+  .wz-note{font-size:12px;color:var(--tx3);line-height:1.5;margin:12px 0 0}
+  .wz-tasks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .wz-task{display:flex;align-items:center;gap:8px;padding:11px 13px;border-radius:10px;background:var(--s2);
+    border:1px solid var(--line2);color:var(--tx2);font-size:13px;font-weight:560;text-align:left;transition:.1s}
+  .wz-task:hover:not([disabled]){border-color:var(--ac);color:var(--tx)}
+  .wz-task.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 12%,var(--s2));color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset}
+  .wz-task[disabled]{opacity:.5}
+  .wz-task .soon{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
+  .wz-classes{display:flex;flex-direction:column;gap:8px}
+  .wz-clsrow{display:flex;align-items:center;gap:9px}
+  .wz-clsrow input[type=color]{flex:none;width:34px;height:34px;padding:2px;border:1px solid var(--line2);border-radius:9px;background:var(--s2);cursor:pointer}
+  .wz-clsrow .wz-in{flex:1}
+  .wz-clsrow .wz-rm{flex:none;display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:var(--s2);border:1px solid var(--line2);color:var(--tx3);font-size:17px;line-height:1}
+  .wz-clsrow .wz-rm:hover{color:var(--danger);border-color:var(--danger)}
+  .wz-addcls{margin-top:10px;align-self:flex-start}
+  .wz-check{display:inline-flex;align-items:center;gap:9px;margin-top:16px;font-size:12.5px;color:var(--tx2);cursor:pointer}
+  .wz-check input{width:16px;height:16px;accent-color:var(--ac)}
+  .wz-foot{display:flex;align-items:center;gap:12px;padding:14px 18px;border-top:1px solid var(--line);background:var(--bg2)}
+  .wz-err{flex:1;color:var(--danger);font-size:12.5px;min-height:16px}
+  .wz-nav{display:flex;gap:9px}
+  /* home: primary New project CTA + divider */
+  .home-new{display:flex;justify-content:center;margin:0 auto 4px;max-width:660px}
+  .home-new .btn{height:46px;padding:0 28px;font-size:14.5px;font-weight:640;border-radius:12px}
+  .home-or{max-width:660px;margin:22px auto 12px;display:flex;align-items:center;gap:14px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
+  .home-or::before,.home-or::after{content:"";flex:1;height:1px;background:var(--line)}
+  .home-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px auto 0}
+  .home-actions .btn{height:46px;padding:0 24px;font-size:14px;font-weight:640;border-radius:12px}
 </style>
 </head>
 <body>
 <div id="app">
   <header class="topbar">
-    <span class="brand" id="brandhome" title="Projects — back to the home screen" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
+    <span class="brand" id="brandhome" title="Projects - back to the home screen" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
     <span class="sep"></span>
     <span class="ds" id="dsname"></span>
     <span class="counter" id="counter"></span>
-    <button class="insbtn" id="classesbtn" title="Edit classes — rename or add" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12.2V5a2 2 0 0 1 2-2h7.2a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
+    <button class="insbtn" id="classesbtn" title="Edit classes - rename or add" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12.2V5a2 2 0 0 1 2-2h7.2a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
     <span class="grow"></span>
     <span class="ai" id="assistbar" style="display:none">
       <button class="btn btn-primary" id="aautolabel"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Auto-label all</button>
       <button class="btn btn-ghost btn-sm" id="aprelabel" title="Auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M19 8h2M5 20l9-9M14 6l4 4"/></svg>R</button>
       <button class="btn btn-ghost btn-sm" id="asam" title="Smart-segment with SAM (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>SAM</button>
-      <button class="btn btn-ghost btn-sm" id="aradar" title="Label-Error Radar — audit your accepted labels (Y)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 1 0 21 12"/><path d="M12 12l6.5-4.5"/><circle cx="12" cy="12" r="3"/></svg>Radar</button>
-      <input id="laprompt" class="laprompt" placeholder="objects to find — e.g. person, helmet" style="display:none">
+      <button class="btn btn-ghost btn-sm" id="aradar" title="Label-Error Radar - audit your accepted labels (Y)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 1 0 21 12"/><path d="M12 12l6.5-4.5"/><circle cx="12" cy="12" r="3"/></svg>Radar</button>
+      <input id="laprompt" class="laprompt" placeholder="objects to find - e.g. person, helmet" style="display:none">
       <span class="field" id="aconffield"><span>conf</span><input type="range" id="aconf" min="0.05" max="0.9" step="0.05"><b id="aconfval">0.25</b></span>
       <select id="amodel" class="select"></select>
     </span>
@@ -406,18 +488,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <span class="sep"></span>
     <span class="tgroup">
       <button class="insbtn" id="insbtn" title="Dataset insights &amp; readiness"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-6M21 20H3"/></svg></button>
-      <button class="insbtn" id="mapbtn" title="Embedding map — see your whole dataset (M)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="6" cy="7.5" r="1.7"/><circle cx="9.5" cy="15" r="1.7"/><circle cx="15" cy="9" r="1.7"/><circle cx="18" cy="16.5" r="1.7"/><circle cx="13" cy="18" r="1.5"/><circle cx="17.5" cy="6" r="1.4"/></svg></button>
-      <button class="insbtn" id="boostbtn" title="Boost — fine-tune the model on your labels" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg></button>
+      <button class="insbtn" id="mapbtn" title="Embedding map - see your whole dataset (M)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="6" cy="7.5" r="1.7"/><circle cx="9.5" cy="15" r="1.7"/><circle cx="15" cy="9" r="1.7"/><circle cx="18" cy="16.5" r="1.7"/><circle cx="13" cy="18" r="1.5"/><circle cx="17.5" cy="6" r="1.4"/></svg></button>
+      <button class="insbtn" id="boostbtn" title="Boost - fine-tune the model on your labels" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg></button>
     </span>
     <span class="sep"></span>
     <span class="tgroup">
-      <button class="insbtn" id="homebtn" title="Projects — back to the home screen"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button>
-      <button class="insbtn" id="sharebtn" title="Share — label together with teammates"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.4"/><circle cx="6" cy="12" r="2.4"/><circle cx="18" cy="19" r="2.4"/><path d="M8.1 10.9l7.8-4.8M8.1 13.1l7.8 4.8"/></svg></button>
+      <button class="insbtn" id="homebtn" title="Projects - back to the home screen"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button>
+      <button class="insbtn" id="sharebtn" title="Share - label together with teammates"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.4"/><circle cx="6" cy="12" r="2.4"/><circle cx="18" cy="19" r="2.4"/><path d="M8.1 10.9l7.8-4.8M8.1 13.1l7.8 4.8"/></svg></button>
     </span>
     <span class="sep"></span>
     <span class="tgroup">
       <button class="insbtn" id="themebtn" title="Toggle light / dark"></button>
-      <button class="btn-icon" id="helpbtn" title="Shortcuts (?)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.4 2.4 0 1 1 3.4 2.2c-.9.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg></button>
+      <button class="btn-icon" id="helpbtn" title="Keyboard shortcuts (?)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button>
     </span>
   </header>
   <main>
@@ -441,7 +523,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <button class="tool on" id="toolBox" title="Box / select (B)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
         <button class="tool" id="toolPoly" title="Polygon (P)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 6-3 9H7L4 9z"/></svg></button>
         <button class="tool" id="toolObb" title="Oriented box (O)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="1.5" transform="rotate(20 12 12)"/></svg></button>
-        <button class="tool" id="toolSeg" title="Smart segment — SAM click-to-mask (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><path d="M12 20a8 8 0 0 1-8-8" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg></button>
+        <button class="tool" id="toolSeg" title="Smart segment - SAM click-to-mask (S)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 1 8 8"/><path d="M12 20a8 8 0 0 1-8-8" stroke-dasharray="2 3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg></button>
         <div class="tdiv"></div>
         <button class="tool ai" id="toolAi" title="AI auto-label this image (R)"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
         <div class="tdiv"></div>
@@ -468,22 +550,52 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <div class="ptrack"><div class="pbar" id="pbar"></div></div>
       </div></div>
       <div class="help" id="help"><div class="card2">
-        <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.4 2.4 0 1 1 3.4 2.2c-.9.4-1.1.9-1.1 1.8M12 17h.01"/></svg>Keyboard shortcuts</h3>
-        <table>
-          <tr><td><kbd>drag</kbd></td><td>draw a box (uses active class)</td></tr>
-          <tr><td><kbd>click</kbd> / drag handle</td><td>select &middot; move &middot; resize</td></tr>
-          <tr><td><kbd>1</kbd>..<kbd>9</kbd> <kbd>0</kbd> / <kbd>/</kbd></td><td>set class &middot; open class search</td></tr>
-          <tr><td><kbd>R</kbd></td><td>AI auto-label this image</td></tr>
-          <tr><td><kbd>B</kbd> / <kbd>P</kbd> / <kbd>S</kbd></td><td>box &middot; polygon &middot; smart-segment (SAM, if available)</td></tr>
-          <tr><td><kbd>Enter</kbd></td><td>Submit &amp; go to the next unlabeled image (accepts AI suggestions if any are shown)</td></tr>
-          <tr><td><kbd>A</kbd>/<kbd>D</kbd> &middot; <kbd>E</kbd> &middot; <kbd>C</kbd></td><td>prev / next image &middot; next unlabeled &middot; copy previous labels</td></tr>
-          <tr><td><kbd>Del</kbd> / the red <b>×</b> &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>delete selected (or click the × on the box) &middot; undo / redo &middot; duplicate box</td></tr>
-          <tr><td><kbd>Shift</kbd>+click &middot; <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>add / remove box from selection &middot; select all — then a number reclassifies, or <kbd>Del</kbd> deletes them together</td></tr>
-          <tr><td><kbd>Space</kbd>+drag &middot; <kbd>wheel</kbd> / <kbd>+</kbd> <kbd>−</kbd> &middot; <kbd>F</kbd></td><td>pan &middot; zoom &middot; fit</td></tr>
-          <tr><td><kbd>T</kbd> &middot; <kbd>L</kbd></td><td>tighten box to edges &middot; loupe magnifier</td></tr>
-          <tr><td><kbd>Y</kbd> &middot; <kbd>N</kbd> &middot; <kbd>M</kbd></td><td>Label-Error Radar &middot; next flagged &middot; embedding map</td></tr>
-          <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd> &middot; <kbd>Esc</kbd></td><td>save &middot; cancel / clear / close</td></tr>
-        </table>
+        <div class="hh">
+          <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keyboard shortcuts</h3>
+          <button class="mx" id="helpclose">&times;</button>
+        </div>
+        <p class="help-sub">Everything you can do without leaving the canvas.</p>
+        <div class="kgrid">
+          <div class="kgroup"><h4>Drawing &amp; tools</h4>
+            <div class="krow"><span>Draw a box (active class)</span><span class="keys"><kbd>drag</kbd></span></div>
+            <div class="krow"><span>Box / polygon / smart-segment</span><span class="keys"><kbd>B</kbd><kbd>P</kbd><kbd>S</kbd></span></div>
+            <div class="krow"><span>Tighten box to edges</span><span class="keys"><kbd>T</kbd></span></div>
+            <div class="krow"><span>Loupe magnifier</span><span class="keys"><kbd>L</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>Classes</h4>
+            <div class="krow"><span>Set active class</span><span class="keys"><kbd>1</kbd>..<kbd>9</kbd><kbd>0</kbd></span></div>
+            <div class="krow"><span>Open class search</span><span class="keys"><kbd>/</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>Select &amp; edit</h4>
+            <div class="krow"><span>Select / move / resize</span><span class="keys"><kbd>click</kbd></span></div>
+            <div class="krow"><span>Add / remove from selection</span><span class="keys"><kbd>Shift</kbd><kbd>click</kbd></span></div>
+            <div class="krow"><span>Select all</span><span class="keys"><kbd>Ctrl</kbd><kbd>A</kbd></span></div>
+            <div class="krow"><span>Delete selected</span><span class="keys"><kbd>Del</kbd></span></div>
+            <div class="krow"><span>Undo / redo</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd><kbd>Ctrl</kbd><kbd>Y</kbd></span></div>
+            <div class="krow"><span>Duplicate box</span><span class="keys"><kbd>Ctrl</kbd><kbd>D</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>Navigate</h4>
+            <div class="krow"><span>Previous / next image</span><span class="keys"><kbd>A</kbd><kbd>D</kbd></span></div>
+            <div class="krow"><span>Next unlabeled</span><span class="keys"><kbd>E</kbd></span></div>
+            <div class="krow"><span>Copy previous labels</span><span class="keys"><kbd>C</kbd></span></div>
+            <div class="krow"><span>Submit &amp; next unlabeled</span><span class="keys"><kbd>Enter</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>View</h4>
+            <div class="krow"><span>Pan</span><span class="keys"><kbd>Space</kbd><kbd>drag</kbd></span></div>
+            <div class="krow"><span>Zoom</span><span class="keys"><kbd>wheel</kbd><kbd>+</kbd><kbd>−</kbd></span></div>
+            <div class="krow"><span>Fit to view</span><span class="keys"><kbd>F</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>AI assist</h4>
+            <div class="krow"><span>Auto-label this image</span><span class="keys"><kbd>R</kbd></span></div>
+            <div class="krow"><span>Label-Error Radar</span><span class="keys"><kbd>Y</kbd></span></div>
+            <div class="krow"><span>Next flagged</span><span class="keys"><kbd>N</kbd></span></div>
+            <div class="krow"><span>Embedding map</span><span class="keys"><kbd>M</kbd></span></div>
+          </div>
+          <div class="kgroup"><h4>Save</h4>
+            <div class="krow"><span>Save</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
+            <div class="krow"><span>Cancel / clear / close</span><span class="keys"><kbd>Esc</kbd></span></div>
+          </div>
+        </div>
       </div></div>
     </div>
     <aside class="regions" id="regionspanel">
@@ -510,11 +622,28 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <div class="modal" id="classedit"><div class="mcard cecard">
     <div class="mhead"><h3>Classes</h3><button class="mx" id="ceclose">&times;</button></div>
     <div class="mbody">
-      <p class="ce-note">Rename a class, or add new ones. Existing classes keep their slot — you can't delete or reorder here (that would relabel boxes you've already drawn).</p>
+      <p class="ce-note">Rename a class, or add new ones. Existing classes keep their slot - you can't delete or reorder here (that would relabel boxes you've already drawn).</p>
       <div id="celist"></div>
       <button class="btn btn-ghost ce-add" id="ceadd">+ Add class</button>
       <div class="ce-err" id="ceerr"></div>
       <div class="ce-actions"><button class="btn btn-ghost" id="cecancel">Cancel</button><button class="btn btn-primary" id="cesave">Save</button></div>
+    </div>
+  </div></div>
+  <div class="modal" id="renamemodal"><div class="mcard cecard">
+    <div class="mhead"><h3>Rename project</h3><button class="mx" id="renclose">&times;</button></div>
+    <div class="mbody">
+      <input id="reninput" class="ce-in" style="width:100%" placeholder="Project name" spellcheck="false" autocomplete="off">
+      <div class="ce-err" id="renerr"></div>
+      <div class="ce-actions"><button class="btn btn-ghost" id="rencancel">Cancel</button><button class="btn btn-primary" id="rensave">Save</button></div>
+    </div>
+  </div></div>
+  <div class="modal" id="deletemodal"><div class="mcard cecard">
+    <div class="mhead"><h3>Delete dataset</h3><button class="mx" id="delclose">&times;</button></div>
+    <div class="mbody">
+      <p class="ce-note">This moves the whole project folder to LibreLabel's trash (<code>~/.librelabel/trash</code>). It is recoverable, but your images move with it. Nothing is erased.</p>
+      <p class="ce-note" id="delpath" style="color:var(--tx);font:12px ui-monospace,monospace;word-break:break-all"></p>
+      <div class="ce-err" id="delerr"></div>
+      <div class="ce-actions"><button class="btn btn-ghost" id="delcancel">Cancel</button><button class="btn" id="delconfirm" style="background:var(--danger);color:#fff;border:1px solid var(--danger)">Move to trash</button></div>
     </div>
   </div></div>
   <div id="home" class="home">
@@ -522,36 +651,73 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="home-inner">
       <div class="home-hero">
         <span class="home-brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
-        <p class="home-tag">Label your images and train LibreYOLO on them — your data, your machine, nothing uploaded.</p>
+        <p class="home-tag">Label your images and train LibreYOLO on them - your data, your machine, nothing uploaded.</p>
       </div>
-      <div class="home-resume" id="homeresume" style="display:none;margin:14px auto 0;text-align:center"><button class="btn btn-primary" id="homeresumebtn">← Resume current project</button></div>
-      <div class="home-open">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h7A1.5 1.5 0 0 1 19 9.5v7A1.5 1.5 0 0 1 17.5 18h-13A1.5 1.5 0 0 1 3 16.5z"/></svg>
-        <input id="homepath" placeholder="Paste a folder of images — or an existing data.yaml…" spellcheck="false" autocomplete="off">
-        <button class="btn btn-ghost" id="homebrowse" title="Choose a folder…"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Browse</button>
-        <button class="btn btn-primary" id="homeopen">Open</button>
+      <div class="home-actions">
+        <button class="btn btn-primary" id="homenew"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New project</button>
+        <button class="btn btn-ghost" id="homeexample"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-5 5"/></svg>Try the example</button>
       </div>
-      <div class="home-hint" id="homehint">A folder of images is all you need — LibreLabel writes the dataset config for you.</div>
-      <div class="home-alt">
-        <span class="ha-l"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-5 5"/></svg><span>Just testing? Load a ready-made <b>128-image</b> sample dataset (CC0) and start labelling in one click.</span></span>
-        <button class="btn btn-primary" id="homeexample">Try the example</button>
-      </div>
+      <div class="home-resume" id="homeresume" style="display:none;margin:16px auto 0;text-align:center"><button class="btn btn-ghost" id="homeresumebtn">← Resume current project</button></div>
       <div class="home-err" id="homeerr"></div>
-      <div class="home-create" id="homecreate" style="display:none">
-        <div class="hc-head">New project · <b id="hccount">0</b> images in <code id="hcfolder"></code></div>
-        <label class="hc-lbl">Task type</label>
-        <div class="tasksel" id="tasksel">
-          <button class="taskopt on" data-task="detect">Detection</button>
-          <button class="taskopt" data-task="segment">Segmentation</button>
-          <button class="taskopt" data-task="obb">Oriented boxes</button>
-          <button class="taskopt" data-task="classify" disabled>Classification <span class="soon">soon</span></button>
-        </div>
-        <label class="hc-lbl">Class names <span class="hc-hint">— one per line. Leave it empty and add them while you label.</span></label>
-        <textarea id="hcclasses" rows="4" placeholder="person&#10;helmet&#10;vest" spellcheck="false"></textarea>
-        <div class="hc-actions"><button class="btn btn-ghost" id="hccancel">Cancel</button><button class="btn btn-primary" id="hccreate">Create project</button></div>
-      </div>
-      <div class="home-sec">Projects</div>
+      <div class="home-sec">Your projects</div>
       <div class="home-grid" id="homegrid"></div>
+    </div>
+  </div>
+  <div id="wizard" class="wz">
+    <div class="wz-card">
+      <header class="wz-head">
+        <span class="wz-title">New project</span>
+        <span class="wz-steps">
+          <span class="wz-step on" data-s="1"><i>1</i>Data</span>
+          <span class="wz-step" data-s="2"><i>2</i>Labels</span>
+        </span>
+        <button class="mx" id="wzclose">&times;</button>
+      </header>
+      <div class="wz-body">
+        <section class="wz-pane" data-pane="1">
+          <label class="wz-lbl">Project name <span class="wz-hint">optional, defaults to the folder name</span></label>
+          <input id="wzname" class="wz-in" placeholder="e.g. Helmet detection" spellcheck="false" autocomplete="off">
+          <label class="wz-lbl">Images <span class="req">*</span></label>
+          <div class="wz-tabs">
+            <button class="wz-tab on" data-tab="upload">Upload</button>
+            <button class="wz-tab" data-tab="existing">Open existing</button>
+          </div>
+          <div class="wz-tabpane" data-tabpane="upload">
+            <div class="wz-folder"><input id="wzdst" class="wz-in" placeholder="Destination folder for the dataset…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzbrowse">Browse</button></div>
+            <div class="wz-drop" id="wzdrop">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
+              <div class="wz-drop-t">Drag &amp; drop images here</div>
+              <div class="wz-drop-s">or <button class="wz-link" id="wzpick">click to browse</button> · jpg, png, bmp, webp</div>
+              <input type="file" id="wzfiles" accept="image/*" multiple hidden>
+            </div>
+            <div class="wz-files" id="wzfilelist"></div>
+          </div>
+          <div class="wz-tabpane" data-tabpane="existing" hidden>
+            <div class="wz-folder"><input id="wzexist" class="wz-in" placeholder="Folder of images, or a data.yaml…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzexistbrowse">Browse</button></div>
+            <p class="wz-note">LibreLabel labels the images where they already are and writes the dataset config for you. Nothing is copied or moved.</p>
+          </div>
+        </section>
+        <section class="wz-pane" data-pane="2" hidden>
+          <label class="wz-lbl">Task</label>
+          <div class="wz-tasks" id="wztasks">
+            <button class="wz-task on" data-task="detect">Bounding boxes</button>
+            <button class="wz-task" data-task="obb">Oriented boxes</button>
+            <button class="wz-task" data-task="segment" disabled>Segmentation <span class="soon">soon</span></button>
+            <button class="wz-task" data-task="classify" disabled>Classification <span class="soon">soon</span></button>
+          </div>
+          <label class="wz-lbl">Classes <span class="wz-hint">optional, you can add or rename them anytime while labeling</span></label>
+          <div class="wz-classes" id="wzclasses"></div>
+          <button class="btn btn-ghost wz-addcls" id="wzaddcls">+ Add class</button>
+        </section>
+      </div>
+      <footer class="wz-foot">
+        <div class="wz-err" id="wzerr"></div>
+        <div class="wz-nav">
+          <button class="btn btn-ghost" id="wzback" hidden>Back</button>
+          <button class="btn btn-primary" id="wznext">Next</button>
+          <button class="btn btn-primary" id="wzcreate" hidden>Create project</button>
+        </div>
+      </footer>
     </div>
   </div>
   <div class="pop" id="sharepop"></div>
@@ -600,8 +766,10 @@ let boostTimer = null;
 let _cssCache = {};
 const HANDLES = ["nw","n","ne","e","se","s","sw","w"];
 const HR = 6;
-const color = i => { const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'%)'; };
-const colorA = (i,a) => { const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'% / '+a+')'; };
+let CLSCOL = [];   // per-class custom colors (hex) from the project sidecar; falls back to the golden-angle palette
+function _hexToRgb(h){ h=String(h).replace('#',''); if(h.length===3) h=h.split('').map(c=>c+c).join(''); const n=parseInt(h,16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+const color = i => { const c=CLSCOL[i]; if(c) return c; const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'%)'; };
+const colorA = (i,a) => { const c=CLSCOL[i]; if(c && /^#/.test(c)){ const [r,g,b]=_hexToRgb(c); return 'rgba('+r+','+g+','+b+','+a+')'; } const h=(i*137.508)%360; const l=62 - 16*Math.cos((h-50)*Math.PI/180); return 'hsl('+h+' 70% '+l+'% / '+a+')'; };
 const clamp01 = v => v<0?0:v>1?1:v;
 const ICO_CHECK = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 6"/></svg>';
 const ICO_COPY = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
@@ -681,6 +849,7 @@ async function init(){
 async function enterLabeler(d){
   const gen = loadSeq;                 // re-entrancy guard: a newer open supersedes this one
   DS = d;
+  CLSCOL = Array.isArray(d.colors) ? d.colors.slice() : [];   // custom per-class colors from the sidecar
   try{ sessionStorage.removeItem("ll-home"); }catch(e){}
   if(active>=(DS.names||[]).length) active=0;        // stale class index from a prior project
   $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
@@ -700,7 +869,7 @@ async function enterLabeler(d){
   resizeCanvas();
   initAssist();
   if(IMAGES.length) load(0);
-  else { idx=-1; imgOk=false; stageMsg = "No images found — check the dataset paths"; setSave("no images"); draw(); }
+  else { idx=-1; imgOk=false; stageMsg = "No images found - check the dataset paths"; setSave("no images"); draw(); }
 }
 function wireChrome(){
   $("#classchip").onclick = togglePicker;
@@ -753,7 +922,7 @@ function setTool(t){
   if(ts) ts.classList.toggle("on", t==="seg");
   if(tp) tp.classList.toggle("on", t==="poly");
   if(tO) tO.classList.toggle("on", t==="obb");
-  if(t==="seg") banner("Smart segment: click an object — or drag a box around it — and SAM outlines it. B for box tool.");
+  if(t==="seg") banner("Smart segment: click an object - or drag a box around it - and SAM outlines it. B for box tool.");
   else if(t==="poly") banner("Polygon: click to add points; click the first point or press Enter to close. Esc cancels, Backspace removes the last point.");
   else if(t==="obb") banner("Oriented box: drag to draw, then drag the round handle above it to rotate (hold Shift to snap to 15°).");
   else $("#banner").style.display="none";
@@ -804,7 +973,7 @@ function selectAllBoxes(){
   if(!editable || (DS && !DS.writable) || !boxes.length) return;
   selBoxes = new Set(boxes.map((_,i)=>i));
   sel = boxes.length===1 ? 0 : -1; selPoly = -1;
-  banner(`${boxes.length} box${boxes.length>1?"es":""} selected — press a number to reclassify, or Del to delete.`);
+  banner(`${boxes.length} box${boxes.length>1?"es":""} selected - press a number to reclassify, or Del to delete.`);
   draw();
 }
 function openPicker(){ $("#picker").classList.add("show"); const s=$("#psearch"); s.value=""; filterClasses(""); s.focus(); }
@@ -842,7 +1011,7 @@ function renderLabelBar(){
 // ---- Submit: save this image, then jump to the next unlabeled one ----
 async function submitImage(){
   if(!imgOk) return;
-  if((DS && !DS.writable) || !editable){ banner("This image/dataset is read-only — nothing to submit."); return; }
+  if((DS && !DS.writable) || !editable){ banner("This image/dataset is read-only - nothing to submit."); return; }
   const here=idx;
   if(await save()===false) return;   // save() already surfaced why (degenerate shape, conflict, ...)
   setRowStatus(here, (boxes.length+polys.length)?"labeled":"empty");
@@ -860,7 +1029,7 @@ function renderRegions(){
     +"|e"+(editable?1:0)+"|w"+((DS&&DS.writable)?1:0);
   if(sig===regionsSig) return; regionsSig=sig;
   const cnt=$("#rpcount"); if(cnt) cnt.textContent=n;
-  if(!n){ list.innerHTML=`<div class="rp-empty">No labels yet — draw a box.</div>`; return; }
+  if(!n){ list.innerHTML=`<div class="rp-empty">No labels yet - draw a box.</div>`; return; }
   const canEdit = editable && !(DS && !DS.writable);
   list.innerHTML="";
   boxes.forEach((b,i)=>{
@@ -910,7 +1079,7 @@ function renderClassEdit(){
     div.innerHTML = `<span class="sw" style="background:${color(i)}"></span>`+
       `<input class="ce-in" data-i="${i}" value="${esc(row.name)}" placeholder="class name" spellcheck="false">`+
       (row.isNew ? `<button class="ce-rm" data-i="${i}" title="Remove">&times;</button>`
-                 : `<span class="ce-fixed" title="Existing class — rename only">#${i}</span>`);
+                 : `<span class="ce-fixed" title="Existing class - rename only">#${i}</span>`);
     wrap.appendChild(div);
   });
   wrap.querySelectorAll(".ce-in").forEach(inp=> inp.oninput = e=>{ ceRows[+e.target.dataset.i].name = e.target.value; });
@@ -995,7 +1164,7 @@ async function renderStats(){
   if(!DS || DS.epoch!==myEpoch) return;   // project switched mid-fetch -> drop stale histogram/counts/train CTA
   if(!s.boxes){
     el.innerHTML = `<div class="sh"><span>Dataset health</span></div>`+
-      `<div class="none">No labels yet — Auto-label, then accept</div>`;
+      `<div class="none">No labels yet - Auto-label, then accept</div>`;
     if(tc) tc.style.display="none";
     return;
   }
@@ -1046,13 +1215,13 @@ function renderInsights(d, q){
   let dup;
   if(_dups || _leak){
     const _p=[];
-    if(_leak) _p.push(`<div class="iwarn leak">${_leak} group${_leak>1?"s":""} leak across splits (train↔val) — this inflates your validation score.</div>`);
+    if(_leak) _p.push(`<div class="iwarn leak">${_leak} group${_leak>1?"s":""} leak across splits (train↔val) - this inflates your validation score.</div>`);
     if(_dups){
       _p.push(`<div class="iwarn">${_dups} duplicate group${_dups>1?"s":""} · ${d.duplicate_image_count} images · Fix moves the extras to a reversible quarantine (keeps the train copy)</div>`);
       _p.push(d.duplicate_groups.slice(0,8).map(g=>
         `<div class="idup">${g.ids.slice(0,7).map(id=>`<img class="ithumb" loading="lazy" src="/api/thumb/${id}?e=${(DS&&DS.epoch)||0}">`).join("")}<span class="idsplit">${esc(g.splits.join(" + "))}</span><button class="ifix" data-ids='${JSON.stringify(g.ids)}'>Fix</button></div>`).join(""));
     } else {
-      _p.push(`<div class="iwarn">An identical image path is listed in more than one split — remove the overlap in your data.yaml.</div>`);
+      _p.push(`<div class="iwarn">An identical image path is listed in more than one split - remove the overlap in your data.yaml.</div>`);
     }
     dup = _p.join("");
   } else {
@@ -1067,7 +1236,7 @@ function renderInsights(d, q){
     + `<div class="icard"><div class="ik">Height</div><div class="iv">${H.min}&ndash;${H.max}</div></div>`
     + `<div class="icard"><div class="ik">Megapixels</div><div class="iv">${MP.min}&ndash;${MP.max}</div></div>`
     + `</div>`
-    + `<div class="isec"><div class="ititle">Most common resolutions</div>${resBars||'<div class="iload">—</div>'}</div>`
+    + `<div class="isec"><div class="ititle">Most common resolutions</div>${resBars||'<div class="iload">-</div>'}</div>`
     + `<div class="isec"><div class="ititle">Duplicates &amp; train/val leakage</div>${dup}</div>`
     + `<div class="isec"><div class="ititle">Label geometry</div>${qualitySection(q)}</div>`;
   document.querySelectorAll("#insbody .ifix[data-ids]").forEach(b=> b.onclick=()=>fixDuplicate(JSON.parse(b.dataset.ids), b));
@@ -1088,11 +1257,11 @@ function readinessSection(st, d, q){
   let imbalance=false;
   if(cls.length>=2){ const mx=cls[0][1], mn=cls[cls.length-1][1]; if(mn===0 || (mn>0 && mx/mn>=20)) imbalance=true; }
   const checks=[];
-  checks.push(labeled>0 ? {s:"ok", t:`${labeled} of ${total} images labeled`} : {s:"bad", t:"No labeled images yet — draw some boxes first"});
-  checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits — Fix below`} : {s:"ok", t:"No train/val leakage"});
-  checks.push(geo ? {s:"warn", t:`${geo} geometry issue${geo>1?"s":""} (tiny / sliver / full-frame) — see Label geometry`} : {s:"ok", t:"Box geometry is learnable"});
-  if(cls.length>=2) checks.push(imbalance ? {s:"warn", t:"Class balance is skewed — add examples of the rare classes"} : {s:"ok", t:"Classes are reasonably balanced"});
-  if(DS && DS.has_val===false) checks.push({s:"warn", t:"No val split — the command uses val=False; add a val: split for held-out metrics."});
+  checks.push(labeled>0 ? {s:"ok", t:`${labeled} of ${total} images labeled`} : {s:"bad", t:"No labeled images yet - draw some boxes first"});
+  checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits - Fix below`} : {s:"ok", t:"No train/val leakage"});
+  checks.push(geo ? {s:"warn", t:`${geo} geometry issue${geo>1?"s":""} (tiny / sliver / full-frame) - see Label geometry`} : {s:"ok", t:"Box geometry is learnable"});
+  if(cls.length>=2) checks.push(imbalance ? {s:"warn", t:"Class balance is skewed - add examples of the rare classes"} : {s:"ok", t:"Classes are reasonably balanced"});
+  if(DS && DS.has_val===false) checks.push({s:"warn", t:"No val split - the command uses val=False; add a val: split for held-out metrics."});
   const go = labeled>0 && !leak;
   const ico = s=> s==="ok"?ICO_CHECK : s==="bad"?ICO_X : ICO_WARN;
   const rows = checks.map(c=>`<div class="rdy-row ${c.s}">${ico(c.s)}<span>${esc(c.t)}</span></div>`).join("");
@@ -1100,7 +1269,7 @@ function readinessSection(st, d, q){
   return `<div class="rdy ${go?"go":""}"><div class="rdy-h">${go?ICO_CHECK:ICO_WARN}${go?"Ready to train":"Almost ready to train"}</div>${rows}${cmd}</div>`;
 }
 function qualitySection(q){
-  if(!q || !q.issues) return `<div class="iok">${ICO_CHECK}No geometry problems — every box is a learnable size.</div>`;
+  if(!q || !q.issues) return `<div class="iok">${ICO_CHECK}No geometry problems - every box is a learnable size.</div>`;
   const c=q.counts||{};
   const parts=[c.tiny?`${c.tiny} tiny`:"", c.sliver?`${c.sliver} sliver`:"", c.fullframe?`${c.fullframe} full-frame`:""].filter(Boolean).join(" · ");
   const head=`<div class="iwarn">${q.issues} geometry issue${q.issues>1?"s":""} at imgsz ${q.imgsz}${parts?` · ${parts}`:""}</div>`;
@@ -1115,7 +1284,7 @@ async function fixDuplicate(ids, btn){
   // so persist its edits first -- otherwise the only labelled copy could be moved
   // away before the user's edits are saved.
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image before fixing duplicates."); return; }
-  if(dirty){ banner("You have unsaved edits — save before fixing duplicates."); return; }
+  if(dirty){ banner("You have unsaved edits - save before fixing duplicates."); return; }
   btn.disabled=true; btn.textContent="…";
   const myEpoch = DS && DS.epoch;   // the post-fix re-fetches below must not land in a since-switched project
   try{
@@ -1172,18 +1341,18 @@ async function load(i){
   if(IMAGES[i] && IMAGES[i].status==="deleted") return;   // never open a quarantined image
   const myGen = ++loadSeq;
   if(dirty && idx>=0 && !(await save())){
-    banner("Save failed — staying on this image so you don't lose work."); return;
+    banner("Save failed - staying on this image so you don't lose work."); return;
   }
   if(myGen !== loadSeq) return;   // a newer load() started during the await -> bail before mutating idx
   if(dirty){   // edits landed *during* the save (snap changed mid-POST) -> still unsaved; don't discard them
-    banner("You edited while saving — press → again to save those changes."); return;
+    banner("You edited while saving - press → again to save those changes."); return;
   }
   idx = i; sel = -1; selPoly = -1; selBoxes.clear(); hover = -1; undoStack = []; redoStack = []; gestureSnap = null; boxes = []; polys = []; ghosts = [];
   radarFindings = []; gradData = null;
   imgOk = false; editable = false; curRev = null;   // canvas stays inert until metadata loads; a failed fetch must not leave it editable on the previous image
   let lab;
   try{ lab = await jget(`/api/label/${i}`); }
-  catch(e){ if(myGen!==loadSeq) return; stageMsg = "Couldn't load this image's labels — pick another image."; draw(); return; }
+  catch(e){ if(myGen!==loadSeq) return; stageMsg = "Couldn't load this image's labels - pick another image."; draw(); return; }
   if(myGen !== loadSeq) return;
   editable = lab.editable;
   curRev = (lab.rev!=null) ? lab.rev : null;
@@ -1250,7 +1419,7 @@ async function save(){
       // and it can't silently vanish on the next load -- the user must fix or delete it.
       dirty = true; setSave("unsaved");
       suggestedIds.delete(cur); setRowStatus(cur, saved? "labeled":"empty"); scheduleStats();
-      banner(`${dropped} invalid shape${dropped>1?"s":""} dropped (degenerate) — fix or delete it to save.`);
+      banner(`${dropped} invalid shape${dropped>1?"s":""} dropped (degenerate) - fix or delete it to save.`);
       return false;
     }
     savedSnap = sent; dirty = (snap()!==sent);   // edits made during the POST keep it unsaved
@@ -1310,15 +1479,15 @@ function nextUnlabeled(dir){
 }
 async function carryForward(){
   if(!imgOk || !editable || (DS && !DS.writable)) return;
-  if(boxes.length + polys.length > 0){ banner("This image already has labels — carry-forward only fills an empty image."); return; }
+  if(boxes.length + polys.length > 0){ banner("This image already has labels - carry-forward only fills an empty image."); return; }
   const vis = visibleIds(), p = vis.indexOf(idx);
   const prevId = p>0 ? vis[p-1] : -1;
   if(prevId<0){ banner("No previous image to copy from."); return; }
   const myGen = loadSeq, srcIdx = idx;
   let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
   if(myGen!==loadSeq || idx!==srcIdx) return;   // navigated during the fetch -> don't paste onto the wrong image
-  if(boxes.length + polys.length > 0){ banner("This image already has labels — carry-forward only fills an empty image."); return; }   // drawn during the fetch -> don't merge stale labels
-  if(lab.editable===false){ banner("The previous image's labels are read-only (keypoints/unsupported) — can't carry them forward."); return; }   // partial view: don't drop the unparsed rows
+  if(boxes.length + polys.length > 0){ banner("This image already has labels - carry-forward only fills an empty image."); return; }   // drawn during the fetch -> don't merge stale labels
+  if(lab.editable===false){ banner("The previous image's labels are read-only (keypoints/unsupported) - can't carry them forward."); return; }   // partial view: don't drop the unparsed rows
   const anns = lab.annotations||[];
   if(!anns.length){ banner("The previous image has no labels to copy."); return; }
   const iw=img.naturalWidth, ih=img.naturalHeight; let n=0;
@@ -1330,7 +1499,7 @@ async function carryForward(){
   });
   if(!n){ undoStack.pop(); return; }
   markDirty(); draw();
-  banner(`Copied ${n} annotation${n===1?"":"s"} from the previous image — nudge them into place, then save.`);
+  banner(`Copied ${n} annotation${n===1?"":"s"} from the previous image - nudge them into place, then save.`);
 }
 function duplicateSelected(){
   if(sel<0 || !imgOk || !editable || (DS && !DS.writable)) return;
@@ -1370,7 +1539,7 @@ function updateEngineUI(){
   const lp=$("#laprompt"), cf=$("#aconffield");
   if(lp) lp.style.display = la? "inline-block":"none";
   if(cf) cf.style.display = la? "none":"inline-flex";
-  if(la){ banner("Locate Anything — NVIDIA non-commercial model (downloads a 3B model + runs remote code). Type the objects to find, then Auto-label."); if(lp) lp.focus(); }
+  if(la){ banner("Locate Anything - NVIDIA non-commercial model (downloads a 3B model + runs remote code). Type the objects to find, then Auto-label."); if(lp) lp.focus(); }
   else { $("#banner").style.display="none"; }
 }
 function laQuery(){
@@ -1389,14 +1558,14 @@ function showGhosts(list){
   ghosts = ghostsFromNorm(list); draw();
   if(ghosts.length){
     const unm = ghosts.filter(g=>!g.mapped).length;
-    banner(`${ghosts.length} AI suggestion${ghosts.length===1?"":"s"} — `
+    banner(`${ghosts.length} AI suggestion${ghosts.length===1?"":"s"} - `
       + "Enter: accept all · click one · Alt+click rejects · Esc clears"
-      + (unm? ` · ${unm} unmatched (grey) — set a class to accept`:""));
+      + (unm? ` · ${unm} unmatched (grey) - set a class to accept`:""));
   } else banner("No objects found above the confidence threshold");
 }
 async function prelabelCurrent(){
   if(!assist || !assist.available || idx<0 || !imgOk) return;
-  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — auto-label is disabled."); return; }
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - auto-label is disabled."); return; }
   const myGen = loadSeq; setSave("running model…");
   try{
     const r = await fetch(`/api/assist/prelabel/${idx}?${laQuery()}`, {method:"POST"});
@@ -1434,7 +1603,7 @@ function hitVertex(p, mx, my){
 }
 async function segmentAt(mx,my){
   if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable || (DS && !DS.writable)) return;   // view-only dataset: no canvas mutation
-  if(!(DS.names||[]).length){ banner("Add a class before segmenting — every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
+  if(!(DS.names||[]).length){ banner("Add a class before segmenting - every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
   const iw=img.naturalWidth, ih=img.naturalHeight, X=ix(mx), Y=iy(my);
   if(X<0||Y<0||X>iw||Y>ih) return;
   segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM, on your machine)"); cv.style.cursor="wait";
@@ -1444,7 +1613,7 @@ async function segmentAt(mx,my){
     if(myGen!==loadSeq) return;
     if(!r.ok){ const e=await r.json().catch(()=>({})); banner("Segment failed: "+(e.error||r.status)); return; }
     const d = await r.json();
-    if(!d.polygon || d.polygon.length<6){ banner("No object found there — try clicking on an object"); return; }
+    if(!d.polygon || d.polygon.length<6){ banner("No object found there - try clicking on an object"); return; }
     pushUndo();
     polys.push({cls:active, pts:d.polygon.map((v,k)=> k%2===0? v*iw : v*ih)});
     selPoly=polys.length-1; sel=-1; markDirty(); $("#banner").style.display="none"; draw();
@@ -1453,7 +1622,7 @@ async function segmentAt(mx,my){
 }
 async function segmentBox(r){
   if(segBusy || !assist || !assist.sam || idx<0 || !imgOk || !editable) return;
-  if(!(DS.names||[]).length){ banner("Add a class before segmenting — every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
+  if(!(DS.names||[]).length){ banner("Add a class before segmenting - every annotation needs one."); openClassEdit(); return; }   // nc=0 -> server would drop the polygon
   const iw=img.naturalWidth, ih=img.naturalHeight;
   const x1=Math.max(0,Math.min(r.x0,r.x1)), y1=Math.max(0,Math.min(r.y0,r.y1));
   const x2=Math.min(iw,Math.max(r.x0,r.x1)), y2=Math.min(ih,Math.max(r.y0,r.y1));
@@ -1480,7 +1649,7 @@ function hitGhost(mx,my){
 }
 function acceptGhost(i){
   const g=ghosts[i]; if(!g) return;
-  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — suggestions can't be accepted."); return; }
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - suggestions can't be accepted."); return; }
   // Unmatched suggestion (no dataset class): honour the UI's promise and apply the
   // active palette class the user selected, so open-vocab / custom-name detections
   // are acceptable instead of impossible to take without redrawing.
@@ -1501,7 +1670,7 @@ function clearReviewState(){   // a fully-dismissed image leaves the review queu
 }
 function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.length){ $("#banner").style.display="none"; clearReviewState(); } } }
 function acceptAllGhosts(){
-  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only — suggestions can't be accepted."); return; }
+  if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - suggestions can't be accepted."); return; }
   if(!ghosts.length) return;
   // Matched ghosts keep their mapped class; unmatched ones take the active palette
   // class (same fallback as acceptGhost), so keyboard accept-all works on
@@ -1516,7 +1685,7 @@ function clearGhosts(){ if(ghosts.length){ ghosts=[]; draw(); $("#banner").style
 async function autolabelAll(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Couldn't save the current image; fix that first."); return; }
-  if(dirty){ banner("You edited while saving — press → to save before auto-labeling all."); return; }   // in-flight edits: don't queue suggestions against stale labels
+  if(dirty){ banner("You edited while saving - press → to save before auto-labeling all."); return; }   // in-flight edits: don't queue suggestions against stale labels
   const ov=$("#progress"), bar=$("#pbar"), txt=$("#ptxt");
   ov.style.display="flex"; bar.style.width="0%"; txt.textContent="Starting… (first run loads your model)";
   IMAGES.forEach(im=>{ if(im.status==="suggested") setRowStatus(im.id, "unlabeled"); });  // clear last run's stale review rows
@@ -1535,7 +1704,7 @@ async function autolabelAll(){
         if(!line) continue; let o; try{o=JSON.parse(line);}catch(e){ continue; }
         if(o.type==="progress"){
           bar.style.width = Math.round(100*o.i/Math.max(1,o.total))+"%";
-          txt.textContent = `${o.i} / ${o.total} — ${o.name}` + (o.count? `  (+${o.count})`:"");
+          txt.textContent = `${o.i} / ${o.total} - ${o.name}` + (o.count? `  (+${o.count})`:"");
           if(o.count>0){ suggestedIds.add(o.id); setRowStatus(o.id, "suggested"); }
         } else if(o.type==="done"){ suggested=o.suggested; totalBoxes=o.boxes; classes=o.classes||[]; }
         else if(o.type==="error"){ failed = o.error || "auto-label failed"; banner("Auto-label failed: "+failed); }
@@ -1551,11 +1720,11 @@ async function autolabelAll(){
     bar.style.width="100%";
     const secs = ((Date.now()-t0)/1000).toFixed(1);
     const top = classes.slice(0,5).map(c=>`${c[1]} ${esc(c[0])}`).join("  ·  ");
-    $(".ptitle").textContent = "Done — fully offline, your own model";
+    $(".ptitle").textContent = "Done - fully offline, your own model";
     txt.innerHTML = `<b style="color:var(--tx);font-size:16px">${totalBoxes} boxes</b> across `
       + `<b style="color:var(--tx)">${suggested}</b> images in <b style="color:var(--tx)">${secs}s</b>`
       + (top? `<div style="margin-top:9px;color:var(--tx2)">${top}</div>`:"")
-      + `<div style="margin-top:9px;color:var(--tx3)">Review &amp; accept — nothing is saved until you confirm →</div>`;
+      + `<div style="margin-top:9px;color:var(--tx3)">Review &amp; accept - nothing is saved until you confirm →</div>`;
     setTimeout(()=>{ ov.style.display="none"; $(".ptitle").textContent="Auto-labeling with your model"; }, 2800);
     progSig = "";
     const first = [...suggestedIds].sort((a,b)=>a-b)[0];
@@ -1759,7 +1928,7 @@ cv.addEventListener("pointerdown", e=>{
     sel=-1; selPoly=-1; draw(); return;
   }
   if(tool==="poly"){   // manual polygon: each click drops a vertex; click the first to close
-    if(!(DS.names||[]).length){ banner("Add a class before drawing — every annotation needs one."); openClassEdit(); return; }
+    if(!(DS.names||[]).length){ banner("Add a class before drawing - every annotation needs one."); openClassEdit(); return; }
     if(polyDraft && polyDraft.length>=6 && Math.hypot(sx(polyDraft[0])-mx, sy(polyDraft[1])-my)<12){ commitPolyDraft(); return; }
     if(!polyDraft) polyDraft=[];
     polyDraft.push(ix(mx), iy(my)); draw(); return;
@@ -1811,7 +1980,7 @@ cv.addEventListener("pointerdown", e=>{
     if(g>=0){ if(e.altKey) rejectGhost(g); else acceptGhost(g); mode=null; drag=null; return; }
   }
   if(!editable || (DS && !DS.writable)) return;
-  if(!(DS.names||[]).length){ banner("Add a class before drawing — every box needs one."); openClassEdit(); return; }
+  if(!(DS.names||[]).length){ banner("Add a class before drawing - every box needs one."); openClassEdit(); return; }
   if(tool==="seg"){ mode="segbox"; drag={mx, my, x0:ix(mx), y0:iy(my)}; segRect=null; return; }
   if(tool==="obb"){ snapStart(); mode="obbnew"; drag={}; obbRect={x0:ix(mx), y0:iy(my), x1:ix(mx), y1:iy(my)}; draw(); return; }
   if(tool!=="box") return;   // poly/seg/obb were handled above; only the box tool free-draws on empty
@@ -1990,7 +2159,7 @@ function closeRadar(){ $("#radar").classList.remove("show"); }
 async function runRadar(){
   if(!assist || !assist.available) return;
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image first, then run Radar."); return; }
-  if(dirty){ banner("You edited while saving — press → to save before running Radar."); return; }   // in-flight edits: don't audit stale on-disk labels
+  if(dirty){ banner("You edited while saving - press → to save before running Radar."); return; }   // in-flight edits: don't audit stale on-disk labels
   const myEpoch = DS && DS.epoch;   // project-scoped: image navigation must not abort the dataset-wide scan
   openRadar();
   $("#radarbody").innerHTML = `<div class="iload">Auditing your accepted labels with your model…<div class="ptrack" style="width:240px;margin:14px auto 0"><div class="pbar" id="rbar"></div></div></div>`;
@@ -2012,11 +2181,11 @@ async function runRadar(){
 }
 function renderRadarDeck(o){
   const deck=o.deck||[];
-  if(!o.scanned){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No labelled images to audit yet — accept some boxes, then run Radar to check them against your model.</div>`; return; }
-  if(!deck.length){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No disagreements — your model agrees with your labels across ${o.scanned} labelled image${o.scanned===1?"":"s"}.</div>`; return; }
+  if(!o.scanned){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No labelled images to audit yet - accept some boxes, then run Radar to check them against your model.</div>`; return; }
+  if(!deck.length){ $("#radarbody").innerHTML=`<div class="iok">${ICO_CHECK}No disagreements - your model agrees with your labels across ${o.scanned} labelled image${o.scanned===1?"":"s"}.</div>`; return; }
   const totalIssues=deck.reduce((a,d)=>a+d.issues,0);
   const order={class:0,miss:1,phantom:2};
-  const sum=`<div class="rsummary"><div class="iwarn">${deck.length} image${deck.length>1?"s":""} · ${totalIssues} likely issue${totalIssues>1?"s":""} — worst first. Click one to review; nothing changes until you edit by hand.</div></div>`;
+  const sum=`<div class="rsummary"><div class="iwarn">${deck.length} image${deck.length>1?"s":""} · ${totalIssues} likely issue${totalIssues>1?"s":""} - worst first. Click one to review; nothing changes until you edit by hand.</div></div>`;
   const maxS = deck[0] ? (deck[0].score||1) : 1;
   const rows=deck.slice(0,80).map(d=>{
     const badges=Object.entries(d.counts||{}).sort((a,b)=>(order[a[0]]||9)-(order[b[0]]||9))
@@ -2034,7 +2203,7 @@ async function loadRadarFindings(id){
   try{ const d=await jget(`/api/assist/radar/${id}`);
     if(myGen!==loadSeq) return;            // navigated away mid-fetch -> drop stale findings
     radarFindings=d.findings||[]; draw();
-    if(radarFindings.length) banner(`Radar flagged ${radarFindings.length} here — fix by hand, then save. N: next flagged · Esc: clear.`);
+    if(radarFindings.length) banner(`Radar flagged ${radarFindings.length} here - fix by hand, then save. N: next flagged · Esc: clear.`);
   }catch(e){ if(myGen===loadSeq) radarFindings=[]; }
 }
 function nextFlagged(){ if(!radarDeck.length) return; const ids=radarDeck.map(d=>d.id); const nxt=ids.find(j=>j>idx); reviewFinding(nxt!=null?nxt:ids[0]); }
@@ -2133,10 +2302,10 @@ function drawLoupe(){
 async function runBoost(){
   if(!assist || !assist.boost) return;
   if(dirty && idx>=0 && !(await save())){
-    banner("Save the current image first — Boost trains on your accepted labels."); return;
+    banner("Save the current image first - Boost trains on your accepted labels."); return;
   }
-  if(dirty){ banner("You edited while saving — press → to save before boosting."); return; }   // in-flight edits: don't train on stale labels
-  setBoostChip("run", "Boosting — warming up…");
+  if(dirty){ banner("You edited while saving - press → to save before boosting."); return; }   // in-flight edits: don't train on stale labels
+  setBoostChip("run", "Boosting - warming up…");
   try{
     const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
     const d=await r.json();
@@ -2159,7 +2328,7 @@ function pollBoost(){
     else if(s.state==="done"){
       const a=Math.round((s.boosted_agreement||0)*100), b=Math.round((s.base_agreement||0)*100), dl=Math.round((s.delta||0)*100);
       setBoostChip(dl<0?"bad":"good", `model agrees ${a}% (was ${b}% · ${dl>=0?"+":""}${dl}pts)`);
-      if(s.usable){ addBoostedOption(true); banner("Boosted model ready & selected — press R to auto-label with it, or use Auto-label all."); }
+      if(s.usable){ addBoostedOption(true); banner("Boosted model ready & selected - press R to auto-label with it, or use Auto-label all."); }
     } else if(s.state==="error"){ setBoostChip("bad", s.error||"Boost failed"); }
   }, 1600);
 }
@@ -2257,29 +2426,169 @@ function wireMap(){
   });
 }
 function mapSelect(ids){
-  if(!ids.length){ $("#maphint").textContent="Nothing in the lasso — try again."; return; }
+  if(!ids.length){ $("#maphint").textContent="Nothing in the lasso - try again."; return; }
   if(ids.length===1){ closeMap(); load(ids[0]); return; }
   selSet=new Set(ids); listFilter="all";
   document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
   renderList(); closeMap();
-  banner(`${ids.length} images selected from the map — sidebar filtered to them. Click a filter tab to clear.`);
+  banner(`${ids.length} images selected from the map - sidebar filtered to them. Click a filter tab to clear.`);
 }
 
 // ===== Project home: list projects, open/switch, reset per-project state =====
 function wireHome(){
-  $("#homeopen").onclick = ()=> smartOpen($("#homepath").value.trim());
-  { const hb=$("#homebrowse"); if(hb) hb.onclick = browseFolder; }
-  document.querySelectorAll("#tasksel .taskopt").forEach(b=> b.onclick=()=>{
-    if(b.disabled) return;
-    document.querySelectorAll("#tasksel .taskopt").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on");
-  });
-  { const he=$("#homeexample"); if(he) he.onclick = openExample; }
-  $("#homepath").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen($("#homepath").value.trim()); } });
-  $("#homepath").addEventListener("input", ()=>{ homeError(""); hideCreate(); });
-  $("#hometheme").onclick = toggleTheme;
-  $("#hccancel").onclick = hideCreate;
-  $("#hccreate").onclick = doCreate;
+  // Landing is now New project + Try the example + your projects grid; the old
+  // inline open-row / create-panel were removed, so every binding is guarded.
+  const he=$("#homeexample"); if(he) he.onclick = openExample;
+  const ht=$("#hometheme"); if(ht) ht.onclick = toggleTheme;
+  const ho=$("#homeopen"); if(ho) ho.onclick = ()=> smartOpen(($("#homepath")||{value:""}).value.trim());
+  const hb=$("#homebrowse"); if(hb) hb.onclick = browseFolder;
+  const hp=$("#homepath");
+  if(hp){ hp.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen(hp.value.trim()); } });
+          hp.addEventListener("input", ()=>{ homeError(""); hideCreate(); }); }
+  const hcc=$("#hccancel"); if(hcc) hcc.onclick = hideCreate;
+  const hcr=$("#hccreate"); if(hcr) hcr.onclick = doCreate;
+  wireWizard();
+  wireProjectActions();
+}
+
+// ===== New Project wizard =====
+const WZPRESET = ["#6366f1","#22c55e","#f59e0b","#ef4444","#06b6d4","#ec4899","#a855f7","#14b8a6"];
+let WZ = null;
+function openWizard(){
+  WZ = {step:1, mode:"upload", task:"detect",
+        dst:"", uploaded:0, files:[], classes:[{name:"",color:WZPRESET[0]}]};
+  $("#wzname").value=""; $("#wzdst").value=""; $("#wzexist").value="";
+  document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.classList.toggle("on", b.dataset.task==="detect"));
+  renderWzClasses(); renderWzFiles(); wzSetTab("upload"); wzGoto(1);
+  $("#wizard").classList.add("show"); setTimeout(()=>{ const n=$("#wzname"); if(n) n.focus(); },30);
+}
+function closeWizard(){ const w=$("#wizard"); if(w) w.classList.remove("show"); WZ=null; }
+function wzErr(m){ const e=$("#wzerr"); if(e) e.textContent=m||""; }
+function wzGoto(s){
+  WZ.step=s;
+  document.querySelectorAll("#wizard .wz-pane").forEach(p=>p.hidden=(+p.dataset.pane!==s));
+  document.querySelectorAll("#wizard .wz-step").forEach(el=>{ const n=+el.dataset.s;
+    el.classList.toggle("on", n===s); el.classList.toggle("done", n<s); });
+  $("#wzback").hidden = s===1;
+  $("#wznext").hidden = s===2;
+  $("#wzcreate").hidden = s!==2;
+  wzErr("");
+}
+function renderWzClasses(){
+  const wrap=$("#wzclasses"); if(!wrap) return;
+  wrap.innerHTML = WZ.classes.map((c,i)=>
+    `<div class="wz-clsrow"><input type="color" value="${c.color}" data-i="${i}" data-k="color">`
+    +`<input class="wz-in" placeholder="class name" value="${esc(c.name)}" data-i="${i}" data-k="name" autocomplete="off">`
+    +`<button class="wz-rm" data-i="${i}" title="Remove class">&times;</button></div>`).join("");
+  wrap.querySelectorAll("input").forEach(inp=>inp.oninput=()=>{ WZ.classes[+inp.dataset.i][inp.dataset.k]=inp.value; });
+  wrap.querySelectorAll(".wz-rm").forEach(b=>b.onclick=()=>{ WZ.classes.splice(+b.dataset.i,1);
+    if(!WZ.classes.length) WZ.classes.push({name:"",color:WZPRESET[0]}); renderWzClasses(); });
+}
+function wzAddClass(){
+  WZ.classes.push({name:"",color:WZPRESET[WZ.classes.length%WZPRESET.length]}); renderWzClasses();
+  const rows=$("#wzclasses").querySelectorAll('.wz-clsrow input[data-k="name"]'); const last=rows[rows.length-1]; if(last) last.focus();
+}
+function wzSetTab(t){
+  WZ.mode=t;
+  document.querySelectorAll("#wizard .wz-tab").forEach(b=>b.classList.toggle("on", b.dataset.tab===t));
+  document.querySelectorAll("#wizard .wz-tabpane").forEach(p=>p.hidden = p.dataset.tabpane!==t);
+  wzErr("");
+}
+function renderWzFiles(){
+  const wrap=$("#wzfilelist"); if(!wrap) return;
+  wrap.innerHTML = WZ.files.map(f=>`<div class="wz-frow ${f.status}"><span class="wz-fn">${esc(f.name)}</span><span class="wz-fs">${f.status==="ok"?"uploaded":f.status==="err"?"failed":"…"}</span></div>`).join("");
+  const drop=$("#wzdrop"); if(drop) drop.classList.toggle("disabled", !($("#wzdst").value||"").trim());
+}
+async function wzUpload(fileList){
+  const dst=($("#wzdst").value||"").trim();
+  if(!dst){ wzErr("Choose a destination folder first."); return; }
+  wzErr("");
+  for(const file of fileList){
+    const rec={name:file.name, status:"up"}; WZ.files.push(rec); renderWzFiles();
+    try{
+      const r=await fetch(`/api/upload?dst=${encodeURIComponent(dst)}&name=${encodeURIComponent(file.name)}`,{method:"POST",body:file});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&d.ok){ rec.status="ok"; WZ.uploaded++; } else { rec.status="err"; }
+    }catch(e){ rec.status="err"; }
+    renderWzFiles();
+  }
+}
+async function wzNext(){
+  if(WZ.step!==1) return;
+  if(WZ.mode==="upload"){
+    if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder."); return; }
+    if(WZ.uploaded<1){ wzErr("Upload at least one image."); return; }
+    WZ.dst=$("#wzdst").value.trim(); wzGoto(2); return;
+  }
+  const p=($("#wzexist").value||"").trim();
+  if(!p){ wzErr("Paste a folder or a data.yaml."); return; }
+  if(/\.ya?ml$/i.test(p)){ closeWizard(); return openProject(p); }
+  wzErr("Checking…");
+  let info;
+  try{ const r=await fetch("/api/projects/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:p})}); info=await r.json(); if(!r.ok) throw 0; }
+  catch(e){ wzErr("Couldn't read that path."); return; }
+  if(info.has_yaml){ closeWizard(); return openProject(info.yaml||p); }
+  if(!info.is_dir){ wzErr("That isn't a folder or a data.yaml."); return; }
+  if(!info.images){ wzErr("No images found in that folder."); return; }
+  WZ.dst=p; wzErr(""); wzGoto(2);
+}
+function wzClassesPayload(){
+  const seen=new Set(), names=[], colors=[];
+  for(const c of WZ.classes){ const n=(c.name||"").trim(); if(!n) continue;
+    const k=n.toLowerCase(); if(seen.has(k)) return {dup:true}; seen.add(k); names.push(n); colors.push(c.color||""); }
+  return {names, colors};
+}
+async function wzCreate(){
+  const cp=wzClassesPayload();
+  if(cp.dup){ wzErr("Class names must be unique."); return; }
+  const task=WZ.task;
+  const btn=$("#wzcreate"), t=btn.textContent; btn.disabled=true; btn.textContent="Creating…"; wzErr("");
+  try{
+    let d;
+    if(WZ.mode==="upload"){
+      const body={dst:WZ.dst, name:$("#wzname").value.trim(), description:"",
+        color:"", task, classes:cp.names, colors:cp.colors, make_val:false};
+      const r=await fetch("/api/projects/new",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
+    } else {
+      const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:WZ.dst, classes:cp.names, task})});
+      d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
+    }
+    closeWizard(); resetClientState(); await enterLabeler(d);
+  }catch(e){ wzErr("Could not create the project."); }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+async function wzPickFolder(){
+  try{ const r=await fetch("/api/pick-folder",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json().catch(()=>({})); if(d&&d.folder) return d.folder; }catch(e){}
+  return null;
+}
+function wireWizard(){
+  const nb=$("#homenew"); if(nb) nb.onclick=openWizard;
+  const w=$("#wizard"); if(!w) return;
+  $("#wzclose").onclick=closeWizard;
+  w.addEventListener("click",e=>{ if(e.target.id==="wizard") closeWizard(); });
+  $("#wzback").onclick=()=>wzGoto(Math.max(1,WZ.step-1));
+  $("#wznext").onclick=wzNext;
+  $("#wzcreate").onclick=wzCreate;
+  $("#wzaddcls").onclick=wzAddClass;
+  document.querySelectorAll("#wizard .wz-tab").forEach(b=>b.onclick=()=>wzSetTab(b.dataset.tab));
+  document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.onclick=()=>{ if(b.disabled) return; WZ.task=b.dataset.task;
+    document.querySelectorAll("#wztasks .wz-task").forEach(x=>x.classList.toggle("on",x===b)); });
+  $("#wzbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f){ $("#wzdst").value=f; renderWzFiles(); } };
+  $("#wzexistbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f) $("#wzexist").value=f; };
+  $("#wzdst").oninput=renderWzFiles;
+  const fi=$("#wzfiles"); if(fi) fi.onchange=()=>{ if(fi.files&&fi.files.length) wzUpload(Array.from(fi.files)); fi.value=""; };
+  $("#wzpick").onclick=(e)=>{ e.stopPropagation(); if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder first."); return; } $("#wzfiles").click(); };
+  const drop=$("#wzdrop");
+  if(drop){
+    drop.onclick=(e)=>{ if(e.target.closest(".wz-link")) return; if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder first."); return; } $("#wzfiles").click(); };
+    drop.addEventListener("dragover",e=>{ e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
+    drop.addEventListener("drop",e=>{ e.preventDefault(); drop.classList.remove("over");
+      const fs=Array.from((e.dataTransfer&&e.dataTransfer.files)||[]).filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|bmp|webp|tiff?)$/i.test(f.name));
+      if(fs.length) wzUpload(fs); });
+  }
 }
 function looksLikeYaml(s){ return /\.ya?ml$/i.test(s); }
 // One smart input: a data.yaml opens directly; any other path is inspected so we
@@ -2291,16 +2600,16 @@ async function browseFolder(){
   try{
     const r=await fetch("/api/pick-folder",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok){ homeError(d.error||"Couldn't open the folder dialog — paste the path instead."); return; }
-    if(d.unavailable){ homeError("No folder dialog available on this machine — paste the path instead."); return; }
+    if(!r.ok){ homeError(d.error||"Couldn't open the folder dialog - paste the path instead."); return; }
+    if(d.unavailable){ homeError("No folder dialog available on this machine - paste the path instead."); return; }
     if(d.folder){ const hp=$("#homepath"); if(hp) hp.value=d.folder; smartOpen(d.folder); }
-  }catch(e){ homeError("Couldn't open the folder dialog — paste the path instead."); }
+  }catch(e){ homeError("Couldn't open the folder dialog - paste the path instead."); }
   finally{ if(btn) btn.disabled=false; }
 }
 async function smartOpen(p){
   if(!p){ homeError("Paste a folder of images, or a data.yaml."); return; }
   if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
-  if(dirty){ homeError("You edited while saving — save before switching projects."); return; }
+  if(dirty){ homeError("You edited while saving - save before switching projects."); return; }
   homeError(""); hideCreate();
   if(looksLikeYaml(p)) return openProject(p);
   const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Checking…";
@@ -2376,8 +2685,8 @@ function showHome(openMeta){
 }
 function hideHome(){ $("#home").classList.remove("show"); }
 async function backToHome(){
-  if(dirty && idx>=0 && !(await save())){ banner("Save failed — fix it before leaving this image."); return; }
-  if(dirty){ banner("You edited while saving — press → to save before going home."); return; }   // in-flight edits: don't drop them on Home
+  if(dirty && idx>=0 && !(await save())){ banner("Save failed - fix it before leaving this image."); return; }
+  if(dirty){ banner("You edited while saving - press → to save before going home."); return; }   // in-flight edits: don't drop them on Home
   try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
   showHome(DS);   // pass the open session so "Resume current project" is offered
 }
@@ -2388,22 +2697,89 @@ async function renderProjects(){
   let d; try{ d = await jget("/api/projects"); }
   catch(e){ grid.innerHTML = `<div class="home-empty">Could not load projects.</div>`; return; }
   const list = d.projects||[];
-  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet — paste a folder of images above and LibreLabel sets up the rest.</div>`; return; }
+  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet - click <b>New project</b> to get started, or <b>Try the example</b>.</div>`; return; }
+  const dots = `<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`;
   grid.innerHTML = list.map(p=>{
-    const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0;
-    return `<button class="prj" data-data="${esc(p.data)}">`
-      + `<span class="prj-forget" data-forget="${esc(p.data)}" title="Forget (does not delete files)">&times;</span>`
+    const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0; const dd=esc(p.data);
+    return `<div class="prj" data-data="${dd}" tabindex="0">`
+      + `<span class="prj-menu" title="Project actions">${dots}</span>`
+      + `<div class="prj-actions">`
+      +   `<button class="prj-act" data-act="open">Open</button>`
+      +   `<button class="prj-act" data-act="rename">Rename</button>`
+      +   `<button class="prj-act" data-act="classes">Edit classes</button>`
+      +   `<button class="prj-act" data-act="forget">Forget</button>`
+      +   `<button class="prj-act danger" data-act="delete">Delete dataset</button>`
+      + `</div>`
       + `<div class="prj-name">${esc(p.name||"dataset")}</div>`
-      + `<div class="prj-path" title="${esc(p.data)}">${esc(p.data)}</div>`
+      + `<div class="prj-path" title="${dd}">${dd}</div>`
       + `<div class="prj-barwrap"><div class="prj-bar" style="width:${pct}%"></div></div>`
       + `<div class="prj-meta"><span>${n} images · ${l} labeled</span><span>${esc(relTime(p.last_opened))}</span></div>`
-      + `</button>`;
+      + `</div>`;
   }).join("");
-  grid.querySelectorAll(".prj").forEach(b=> b.onclick=(e)=>{ if(e.target.closest(".prj-forget")) return; openProject(b.dataset.data); });
-  grid.querySelectorAll(".prj-forget").forEach(b=> b.onclick=async (e)=>{ e.stopPropagation();
-    try{ await fetch("/api/projects/forget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:b.dataset.forget})}); }catch(_e){}
-    renderProjects();
+  grid.querySelectorAll(".prj").forEach(card=> card.onclick=(e)=>{
+    if(e.target.closest(".prj-menu")||e.target.closest(".prj-actions")) return;
+    openProject(card.dataset.data);
   });
+  grid.querySelectorAll(".prj-menu").forEach(m=> m.onclick=(e)=>{ e.stopPropagation();
+    const acts=m.parentElement.querySelector(".prj-actions"); const wasOpen=acts.classList.contains("show");
+    closeAllPrjMenus(); if(!wasOpen) acts.classList.add("show");
+  });
+  grid.querySelectorAll(".prj-act").forEach(btn=> btn.onclick=(e)=>{ e.stopPropagation();
+    const card=btn.closest(".prj"), data=card.dataset.data, act=btn.dataset.act; closeAllPrjMenus();
+    if(act==="open") openProject(data);
+    else if(act==="rename") openRename(data, card.querySelector(".prj-name").textContent);
+    else if(act==="classes") editClassesFromCard(data);
+    else if(act==="forget") forgetProject(data);
+    else if(act==="delete") openDeleteConfirm(data);
+  });
+}
+function closeAllPrjMenus(){ document.querySelectorAll(".prj-actions.show").forEach(x=>x.classList.remove("show")); }
+async function forgetProject(data){
+  try{ await fetch("/api/projects/forget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data})}); }catch(_e){}
+  renderProjects();
+}
+let renameTarget=null, deleteTarget=null;
+function openRename(data, current){
+  renameTarget=data; const i=$("#reninput"); if(i) i.value=current||""; $("#renerr").textContent="";
+  $("#renamemodal").classList.add("show"); setTimeout(()=>{ if(i){ i.focus(); i.select(); } },30);
+}
+function closeRename(){ const m=$("#renamemodal"); if(m) m.classList.remove("show"); renameTarget=null; }
+async function doRename(){
+  const name=(($("#reninput").value)||"").trim(); if(!name){ $("#renerr").textContent="Enter a name."; return; }
+  if(!renameTarget){ closeRename(); return; }
+  const btn=$("#rensave"), t=btn.textContent; btn.disabled=true; btn.textContent="Saving…";
+  try{
+    const r=await fetch("/api/projects/rename",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:renameTarget, name})});
+    const dd=await r.json().catch(()=>({})); if(!r.ok||!dd.ok){ $("#renerr").textContent=(dd&&dd.error)||"Rename failed."; return; }
+    closeRename(); renderProjects();
+  }catch(e){ $("#renerr").textContent="Rename failed."; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+function openDeleteConfirm(data){
+  deleteTarget=data; $("#delpath").textContent=data; $("#delerr").textContent="";
+  $("#deletemodal").classList.add("show");
+}
+function closeDelete(){ const m=$("#deletemodal"); if(m) m.classList.remove("show"); deleteTarget=null; }
+async function doDelete(){
+  if(!deleteTarget){ closeDelete(); return; }
+  const btn=$("#delconfirm"), t=btn.textContent; btn.disabled=true; btn.textContent="Moving…";
+  try{
+    const r=await fetch("/api/projects/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:deleteTarget})});
+    const dd=await r.json().catch(()=>({})); if(!r.ok||!dd.ok){ $("#delerr").textContent=(dd&&dd.error)||"Delete failed."; return; }
+    closeDelete(); renderProjects();
+  }catch(e){ $("#delerr").textContent="Delete failed."; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
+async function editClassesFromCard(data){ await openProject(data); if(DS) openClassEdit(); }
+function wireProjectActions(){
+  document.addEventListener("click", ()=>closeAllPrjMenus());
+  $("#renclose").onclick=closeRename; $("#rencancel").onclick=closeRename; $("#rensave").onclick=doRename;
+  $("#renamemodal").addEventListener("click",e=>{ if(e.target.id==="renamemodal") closeRename(); });
+  $("#reninput").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); doRename(); } });
+  $("#delclose").onclick=closeDelete; $("#delcancel").onclick=closeDelete; $("#delconfirm").onclick=doDelete;
+  $("#deletemodal").addEventListener("click",e=>{ if(e.target.id==="deletemodal") closeDelete(); });
+  $("#helpclose").onclick=toggleHelp;
+  $("#help").addEventListener("click",e=>{ if(e.target.id==="help") toggleHelp(); });
 }
 async function openProject(data){
   if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return; }
@@ -2411,7 +2787,7 @@ async function openProject(data){
   // zeroes `dirty` and clears boxes/polys, so without this the work is lost silently
   // (not even the beforeunload warning fires). Same guard as backToHome/fixDuplicate.
   if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
-  if(dirty){ homeError("You edited while saving — save before switching projects."); return; }
+  if(dirty){ homeError("You edited while saving - save before switching projects."); return; }
   homeError("");
   const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Opening…";
   try{
@@ -2431,6 +2807,7 @@ function resetClientState(){
   idx=-1; sel=-1; selPoly=-1; selBoxes.clear(); hover=-1; active=0; boxes=[]; polys=[]; ghosts=[]; radarFindings=[];
   IMAGES=[]; suggestedIds=new Set(); selSet=null; listFilter="all"; radarDeck=[]; mapPoints=[]; mapFit=null; progSig="";
   undoStack=[]; redoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
+  CLSCOL=[];
   setTool("box");
   imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";
   document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
@@ -2457,7 +2834,7 @@ async function toggleShare(){
   pop.classList.add("show"); pop.innerHTML = `<p>Loading…</p>`;
   let s; try{ s=await jget("/api/server"); }catch(e){ pop.innerHTML=`<p>Could not read server info.</p>`; return; }
   if(s.shareable && s.lan_url){
-    pop.innerHTML = `<h4>Label together</h4><p>Send this link to teammates on your network — they open the same dataset and you split the images (each save writes its own file).</p>` + urlRow(s.lan_url);
+    pop.innerHTML = `<h4>Label together</h4><p>Send this link to teammates on your network - they open the same dataset and you split the images (each save writes its own file).</p>` + urlRow(s.lan_url);
   } else {
     pop.innerHTML = `<h4>Running locally</h4><p>Only this machine can reach it. To let teammates on your network join, restart with <code>--share</code>.</p>` + urlRow(s.local_url);
   }
@@ -2470,6 +2847,62 @@ async function toggleShare(){
 
 init().catch(err=>{ document.body.insertAdjacentHTML("afterbegin",
   `<div style="padding:14px;color:#f5b13d">LibreLabel failed to start: ${err.message}</div>`); });
+</script>
+<!-- in-app feedback -> GitHub issue via issue-creator (LibreYOLO/libreyolo, app=librelabel) -->
+<script data-endpoint="https://issue-creator.xuban-ceccon.workers.dev" data-repo="LibreYOLO/libreyolo" data-app="librelabel">
+/* issue-creator widget - https://github.com/EHxuban11/issue-creator */
+"use strict";(()=>{var x=document.currentScript;(function(){let t=h(x);if(!t){console.error("[issue-creator] widget needs data-endpoint and data-repo on its <script> tag.");return}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",()=>b(t)):b(t)})();function h(e){if(!e)return null;let t=e.getAttribute("data-endpoint"),o=e.getAttribute("data-repo");if(!t||!o)return null;let n=t.replace(/\/+$/,"");return{url:n.endsWith("/feedback")?n:`${n}/feedback`,repo:o,app:e.getAttribute("data-app")||void 0,version:e.getAttribute("data-version")||void 0}}function b(e){let t=document.createElement("div");t.setAttribute("data-issue-creator","");let o=t.attachShadow({mode:"open"});o.innerHTML=k(),document.body.appendChild(t);let n=s=>o.querySelector(s),g=n(".launcher"),d=n(".panel"),l=n("textarea"),c=n(".submit"),r=n(".status"),f=()=>{d.classList.add("open"),r.innerHTML="",l.focus()},p=()=>d.classList.remove("open");g.addEventListener("click",()=>d.classList.contains("open")?p():f()),n(".close").addEventListener("click",p),c.addEventListener("click",async()=>{let s=l.value.trim();if(!s){i(r,"Please write something first.","err");return}c.disabled=!0,i(r,"Sending…","");try{let u=await fetch(e.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo:e.repo,message:s,app:e.app,meta:m(e)})}),a=await u.json().catch(()=>({}));u.ok&&a.ok&&a.url?(i(r,`Filed → <a href="${v(a.url)}" target="_blank" rel="noopener">view issue</a>`,"ok"),l.value=""):i(r,a.error||`Something went wrong (HTTP ${u.status}).`,"err")}catch{i(r,"Network error - could not reach the feedback service.","err")}finally{c.disabled=!1}})}function m(e){let t={url:location.href,userAgent:navigator.userAgent};return e.version&&(t.version=e.version),t}function i(e,t,o){e.className=`status ${o}`.trim(),e.innerHTML=t}function v(e){return e.replace(/"/g,"%22")}function k(){return`
+    <style>
+      :host { all: initial; }
+      * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      .launcher {
+        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
+        border: none; border-radius: 9999px; padding: 12px 18px; cursor: pointer;
+        background: #1f2937; color: #fff; font-size: 14px; font-weight: 600;
+        box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      }
+      .launcher:hover { background: #111827; }
+      .panel {
+        position: fixed; bottom: 76px; right: 20px; z-index: 2147483647;
+        width: 320px; max-width: calc(100vw - 40px);
+        background: #fff; color: #111827; border-radius: 12px;
+        box-shadow: 0 12px 40px rgba(0,0,0,.25); border: 1px solid #e5e7eb;
+        display: none; overflow: hidden;
+      }
+      .panel.open { display: block; }
+      .head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid #f0f0f0; }
+      .title { font-size: 14px; font-weight: 700; }
+      .close { border: none; background: none; cursor: pointer; font-size: 18px; line-height: 1; color: #6b7280; }
+      .body { padding: 14px; }
+      textarea {
+        width: 100%; min-height: 110px; resize: vertical; padding: 10px;
+        border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; color: #111827;
+      }
+      textarea:focus { outline: 2px solid #2563eb; border-color: transparent; }
+      .submit {
+        margin-top: 10px; width: 100%; border: none; border-radius: 8px; padding: 10px;
+        background: #2563eb; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+      }
+      .submit:hover { background: #1d4ed8; }
+      .submit:disabled { opacity: .6; cursor: default; }
+      .status { margin-top: 10px; font-size: 13px; min-height: 18px; }
+      .status.ok { color: #047857; }
+      .status.err { color: #b91c1c; }
+      .status a { color: inherit; font-weight: 600; }
+    </style>
+    <button class="launcher" type="button">Feedback</button>
+    <div class="panel" role="dialog" aria-label="Send feedback">
+      <div class="head">
+        <span class="title">Send feedback</span>
+        <button class="close" type="button" aria-label="Close">\xD7</button>
+      </div>
+      <div class="body">
+        <textarea placeholder="Describe the bug or idea…"></textarea>
+        <button class="submit" type="button">Send</button>
+        <div class="status"></div>
+      </div>
+    </div>
+  `}})();
 </script>
 </body>
 </html>
