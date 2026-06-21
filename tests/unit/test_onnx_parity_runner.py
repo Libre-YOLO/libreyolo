@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+import yaml
+
+from vision_analysis_benchmark.onnx_parity import (
+    COCO80_NAMES,
+    DEFAULT_CASES,
+    MINI500_ANNOTATION,
+    MINI500_IMAGE_DIR,
+    MINI500_POSE_ANNOTATION,
+    compare_metrics,
+    extract_metrics,
+    filter_cases,
+    metric_keys_for_task,
+    prepare_pose_data,
+    write_mini500_yaml,
+    write_mini500_pose_yaml,
+)
+
+
+pytestmark = pytest.mark.unit
+
+
+def _case_ids() -> set[str]:
+    return {case.id for case in DEFAULT_CASES}
+
+
+def test_default_cases_include_supported_onnx_scope():
+    case_ids = _case_ids()
+
+    assert "yolo9-t" in case_ids
+    assert "rfdetr-n" in case_ids
+    assert "yolox-n" in case_ids
+    assert "yolo9_e2e-t" in case_ids
+    assert "yolonas-s" in case_ids
+    assert "dfine-n" in case_ids
+    assert "deim-n" in case_ids
+    assert "deimv2-atto" in case_ids
+    assert "rtdetr-r18" in case_ids
+    assert "rtdetrv2-r18" in case_ids
+    assert "rtdetrv4-s" in case_ids
+    assert "picodet-s" in case_ids
+    assert "damoyolo-ns" in case_ids
+    assert "rtmdet-t" in case_ids
+    assert "ec-s" in case_ids
+
+
+def test_default_cases_include_new_segment_and_pose_paths():
+    case_ids = _case_ids()
+
+    assert "yolo9-s-segment" in case_ids
+    assert "rfdetr-s-segment" in case_ids
+    assert "ec-s-segment" in case_ids
+    assert "yolo9-s-pose" in case_ids
+    assert "rfdetr-x-pose" in case_ids
+    assert "yolonas-n-pose" in case_ids
+    assert "ec-s-pose" in case_ids
+
+
+def test_metric_keys_are_task_specific():
+    assert "metrics/mAP50-95" in metric_keys_for_task("detect")
+    assert "metrics/mAP50-95(M)" in metric_keys_for_task("segment")
+    assert "metrics/keypoints_mAP50-95" in metric_keys_for_task("pose")
+
+
+def test_extract_metrics_ignores_non_task_and_non_numeric_values():
+    metrics = {
+        "metrics/mAP50-95": "0.40",
+        "metrics/mAP50": 0.55,
+        "metrics/precision": "bad",
+        "metrics/recall": 0.72,
+        "metrics/mAP50-95(M)": 0.1,
+    }
+
+    assert extract_metrics(metrics, "detect") == {
+        "metrics/mAP50-95": 0.40,
+        "metrics/mAP50": 0.55,
+        "metrics/recall": 0.72,
+    }
+
+
+def test_compare_metrics_passes_within_absolute_tolerance():
+    comparisons = compare_metrics(
+        {
+            "metrics/mAP50-95": 0.50000,
+            "metrics/mAP50": 0.60000,
+            "metrics/precision": 0.70000,
+            "metrics/recall": 0.80000,
+        },
+        {
+            "metrics/mAP50-95": 0.50004,
+            "metrics/mAP50": 0.60003,
+            "metrics/precision": 0.70002,
+            "metrics/recall": 0.80001,
+        },
+        "detect",
+        abs_tolerance=1e-4,
+        rel_tolerance=0.0,
+    )
+
+    assert all(item.passed for item in comparisons)
+
+
+def test_compare_metrics_fails_missing_and_drifted_values():
+    comparisons = compare_metrics(
+        {
+            "metrics/keypoints_mAP50-95": 0.50,
+            "metrics/keypoints_mAP50": 0.60,
+            "metrics/keypoints_mAP75": 0.40,
+        },
+        {
+            "metrics/keypoints_mAP50-95": 0.45,
+            "metrics/keypoints_mAP50": 0.60,
+        },
+        "pose",
+        abs_tolerance=1e-4,
+        rel_tolerance=0.0,
+    )
+
+    by_key = {item.key: item for item in comparisons}
+    assert not by_key["metrics/keypoints_mAP50-95"].passed
+    assert by_key["metrics/keypoints_mAP75"].reason == "missing metric"
+
+
+def test_filter_cases_by_family_task_and_claim():
+    selected = filter_cases(
+        DEFAULT_CASES,
+        families=["ec"],
+        tasks=["pose"],
+        claims=["experimental"],
+    )
+
+    assert {case.id for case in selected} == {
+        "ec-s-pose",
+        "ec-m-pose",
+        "ec-l-pose",
+        "ec-x-pose",
+    }
+
+
+def test_filter_cases_can_return_empty_selection():
+    assert filter_cases(DEFAULT_CASES, families=["does-not-exist"]) == []
+
+
+def test_write_mini500_yaml_uses_explicit_annotation_mapping(tmp_path):
+    root = tmp_path / "mini500"
+    (root / Path(MINI500_ANNOTATION).parent).mkdir(parents=True)
+    (root / MINI500_ANNOTATION).write_text(json.dumps({"images": []}))
+    (root / MINI500_IMAGE_DIR).mkdir(parents=True)
+
+    yaml_path = write_mini500_yaml(root)
+    config = yaml.safe_load(yaml_path.read_text())
+
+    assert config["path"] == str(root.resolve())
+    assert config["val"] == MINI500_IMAGE_DIR
+    assert config["annotations"]["val"] == MINI500_ANNOTATION
+    assert config["names"] == COCO80_NAMES
+
+
+def test_write_mini500_pose_yaml_filters_keypoints_to_mini500_images(tmp_path):
+    root = tmp_path / "mini500"
+    (root / Path(MINI500_ANNOTATION).parent).mkdir(parents=True)
+    (root / MINI500_IMAGE_DIR).mkdir(parents=True)
+    (root / MINI500_ANNOTATION).write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": "a.jpg"}, {"id": 2, "file_name": "b.jpg"}],
+                "annotations": [],
+            }
+        )
+    )
+    keypoints_path = tmp_path / "person_keypoints_val2017.json"
+    keypoints_path.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 1, "file_name": "a.jpg"},
+                    {"id": 2, "file_name": "b.jpg"},
+                    {"id": 3, "file_name": "c.jpg"},
+                ],
+                "annotations": [
+                    {"id": 10, "image_id": 1, "category_id": 1},
+                    {"id": 11, "image_id": 3, "category_id": 1},
+                ],
+                "categories": [{"id": 1, "name": "person"}],
+            }
+        )
+    )
+
+    yaml_path = write_mini500_pose_yaml(root, full_keypoints_path=keypoints_path)
+    config = yaml.safe_load(yaml_path.read_text())
+    filtered = json.loads((root / MINI500_POSE_ANNOTATION).read_text())
+
+    assert config["annotations"]["val"] == MINI500_POSE_ANNOTATION
+    assert config["kpt_shape"] == [17, 3]
+    assert config["names"] == {0: "person"}
+    assert filtered["categories"] == [{"id": 0, "name": "person"}]
+    assert {image["id"] for image in filtered["images"]} == {1, 2}
+    assert [ann["id"] for ann in filtered["annotations"]] == [10]
+    assert {ann["category_id"] for ann in filtered["annotations"]} == {0}
+
+
+def test_prepare_pose_data_keeps_existing_pose_yaml(tmp_path):
+    pose_yaml = tmp_path / "pose.yaml"
+    pose_yaml.write_text(yaml.safe_dump({"kpt_shape": [17, 3]}))
+
+    assert prepare_pose_data(pose_yaml) == pose_yaml

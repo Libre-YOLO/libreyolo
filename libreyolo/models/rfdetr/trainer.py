@@ -1093,14 +1093,10 @@ def train_rfdetr(
     """Compatibility helper around :class:`LibreRFDETR.train`."""
     from .model import LibreRFDETR
 
-    # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
-    # Pose has a single GroupPose preset ('x'); 's'/'m'/'l' are not in
-    # RFDETR_POSE_CONFIGS, so resolve any requested pose size to 'x' (the only
-    # valid option) instead of failing with "Invalid RF-DETR size: s".
-    # Detection/seg keep the historical default: None -> LibreRFDETR resolves to
-    # its own small default ('s'), byte-identical to the prior behavior.
+    # Detection/seg keep the historical default: None -> small. Pose defaults to
+    # the x GroupPose preview unless the caller asks for a specific pose size.
     resolved_size = size
-    if pose:
+    if pose and resolved_size is None:
         resolved_size = "x"
     elif resolved_size is None:
         resolved_size = "s"

@@ -16,7 +16,12 @@ from ..models.yolo9.utils import (
     postprocess as yolo9_postprocess,
     preprocess_image,
 )
-from ..models.yolonas.utils import preprocess_image as yolonas_preprocess_image
+from ..models.yolonas.utils import (
+    YOLO_NAS_PRE_NMS_TOP_K,
+    YOLO_NAS_RESIZE_SIZE,
+    preprocess_image as yolonas_preprocess_image,
+    preprocess_pose_image as yolonas_preprocess_pose_image,
+)
 from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb
@@ -185,8 +190,11 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
     DETR-style families already emit a ranked set prediction after top-k
     selection. Applying YOLO-style IoU suppression on top of that can remove
     valid detections and make exported runtimes diverge from native PyTorch.
+    DAMO-YOLO is included because its parser calls the native DAMO batched-NMS
+    postprocessor directly.
     """
     return model_family in {
+        "damoyolo",
         "dfine",
         "deim",
         "deimv2",
@@ -195,6 +203,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "rtdetr",
         "rtdetrv2",
         "rtdetrv4",
+        "yolo9_e2e",
     }
 
 
@@ -203,6 +212,33 @@ def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
     if task == "segment":
         return {"n": 100, "s": 100, "m": 200, "l": 200}.get(model_size or "", 300)
     return 300
+
+
+def _logsumexp_np(values: np.ndarray, axis: int) -> np.ndarray:
+    max_values = np.max(values, axis=axis, keepdims=True)
+    return (
+        np.squeeze(max_values, axis=axis)
+        + np.log(np.sum(np.exp(values - max_values), axis=axis))
+    )
+
+
+def _rfdetr_keypoint_log_mean_trace_np(active_keypoints: np.ndarray) -> np.ndarray:
+    log_l11 = active_keypoints[..., 4]
+    l21 = active_keypoints[..., 5]
+    log_l22 = active_keypoints[..., 6]
+    w_find = 1.0 / (1.0 + np.exp(-active_keypoints[..., 2]))
+    log_t1 = -2.0 * log_l11
+    log_t2 = -2.0 * log_l22
+    log_t3 = 2.0 * np.log(np.clip(np.abs(l21), 1e-12, None)) + log_t1 + log_t2
+    log_trace_sigma = _logsumexp_np(
+        np.stack([log_t1, log_t2, log_t3], axis=-1),
+        axis=-1,
+    )
+    log_w_find = np.log(np.clip(w_find, 1e-12, None))
+    return _logsumexp_np(log_trace_sigma + log_w_find, axis=-1) - _logsumexp_np(
+        log_w_find,
+        axis=-1,
+    )
 
 
 class BaseBackend(ABC):
@@ -298,12 +334,19 @@ class BaseBackend(ABC):
                 image, input_size=effective_imgsz, color_format=color_format
             )
         elif self.model_family == "yolonas":
+            if self.task == "pose":
+                return yolonas_preprocess_pose_image(
+                    image, input_size=effective_imgsz, color_format=color_format
+                )
             return yolonas_preprocess_image(
                 image, input_size=effective_imgsz, color_format=color_format
             )
         elif self.model_family == "rfdetr":
             tensor, img, size = self._preprocess_rfdetr(
-                image, effective_imgsz, color_format
+                image,
+                effective_imgsz,
+                color_format,
+                task=self.task,
             )
             return tensor, img, size, 1.0
         elif self.model_family in ("dfine", "rtdetrv4"):
@@ -370,13 +413,32 @@ class BaseBackend(ABC):
         return img_tensor, img, original_size, 1.0
 
     @staticmethod
-    def _preprocess_rfdetr(image, input_size, color_format):
+    def _preprocess_rfdetr(image, input_size, color_format, task=None):
         """RF-DETR preprocessing: direct resize + ImageNet normalization."""
-        from ..models.rfdetr.utils import preprocess_numpy as rfdetr_preprocess_numpy
+        from ..models.rfdetr.utils import (
+            IMAGENET_MEAN,
+            IMAGENET_STD,
+            preprocess_numpy as rfdetr_preprocess_numpy,
+        )
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size  # (W, H)
         original_img = img.copy()
+
+        if task == "pose":
+            h, w = _imgsz_hw(input_size)
+            arr = np.asarray(img, dtype=np.float32) / 255.0
+            img_tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            img_tensor = F.interpolate(
+                img_tensor,
+                size=(h, w),
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            mean = torch.tensor(IMAGENET_MEAN, dtype=torch.float32).view(1, 3, 1, 1)
+            std = torch.tensor(IMAGENET_STD, dtype=torch.float32).view(1, 3, 1, 1)
+            return (img_tensor - mean) / std, original_img, original_size
 
         img_chw, _ = rfdetr_preprocess_numpy(np.array(img), input_size)
         img_tensor = torch.from_numpy(img_chw).unsqueeze(0)
@@ -541,8 +603,12 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
         elif self.model_family == "yolonas":
+            if self.task == "pose":
+                return self._parse_yolonas_pose(
+                    all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=ratio
+                )
             boxes, scores, cls = self._parse_yolonas(
-                all_outputs, orig_w, orig_h, conf, ratio=ratio
+                all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=ratio
             )
             return boxes, scores, cls, None
         elif self.model_family == "rfdetr":
@@ -557,8 +623,10 @@ class BaseBackend(ABC):
             boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
             return boxes, scores, cls, None
         elif self.model_family == "ec":
-            # EC emits the same {pred_logits, pred_boxes} schema as D-FINE
-            # so the parser is shared.
+            if self.task == "segment":
+                return self._parse_ec_segment(all_outputs, orig_w, orig_h, conf)
+            if self.task == "pose":
+                return self._parse_ec_pose(all_outputs, orig_w, orig_h, conf)
             boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
             return boxes, scores, cls, None
         elif self.model_family in ("rtdetr", "rtdetrv2"):
@@ -571,18 +639,26 @@ class BaseBackend(ABC):
             return boxes, scores, cls, None
         elif self.model_family == "rtmdet":
             boxes, scores, cls = self._parse_rtmdet(
-                all_outputs, orig_w, orig_h, conf, ratio
+                all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
             )
             return boxes, scores, cls, None
         elif self.model_family == "damoyolo":
             boxes, scores, cls = self._parse_damoyolo(
-                all_outputs, effective_imgsz, orig_w, orig_h, conf
+                all_outputs,
+                effective_imgsz,
+                orig_w,
+                orig_h,
+                conf,
+                iou=iou,
+                max_det=max_det,
             )
             return boxes, scores, cls, None
         else:
             parsed = self._parse_yolo9(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, iou, max_det
             )
+            if len(parsed) == 6:
+                return parsed
             if len(parsed) == 5:
                 return parsed
             if len(parsed) == 4:
@@ -617,34 +693,90 @@ class BaseBackend(ABC):
         y2 = cy + h / 2
         boxes = np.stack([x1, y1, x2, y2], axis=1)
 
+        if ratio == 1.0:
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            ratio = min(input_h / orig_h, input_w / orig_w)
         boxes /= ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        boxes = boxes[valid_boxes]
+        max_scores = max_scores[valid_boxes]
+        class_ids = class_ids[valid_boxes]
 
         return boxes, max_scores, class_ids
 
-    def _parse_rtmdet(self, all_outputs, orig_w, orig_h, conf, ratio=1.0):
+    def _parse_rtmdet(
+        self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+    ):
         """Parse RTMDet export-mode output: (B, N, 4 + nc) — xyxy (input-canvas pixels) + sigmoid scores.
 
         RTMDet exports use letterbox preprocessing, so the inverse scale is a
         single ``ratio`` (aspect-preserving), like YOLOX.
         """
         outputs = all_outputs[0][0]  # (N, 4 + nc)
-        boxes = outputs[:, :4]
+        boxes_all = outputs[:, :4]
         scores = outputs[:, 4:]
 
-        max_scores = np.max(scores, axis=1)
-        class_ids = np.argmax(scores, axis=1)
+        valid = scores > conf
+        if not valid.any():
+            return (
+                np.empty((0, 4), dtype=boxes_all.dtype),
+                np.empty((0,), dtype=scores.dtype),
+                np.empty((0,), dtype=np.int64),
+            )
 
-        mask = max_scores > conf
-        boxes, max_scores, class_ids = boxes[mask], max_scores[mask], class_ids[mask]
+        box_indices, class_ids = np.nonzero(valid)
+        max_scores = scores[box_indices, class_ids]
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        strides = (8, 16, 32)
+        level_sizes = [
+            int(np.ceil(input_h / stride)) * int(np.ceil(input_w / stride))
+            for stride in strides
+        ]
+        level_offsets = np.cumsum([0, *level_sizes])
+        if level_offsets[-1] == boxes_all.shape[0]:
+            nms_pre = 30000
+            keep_parts = []
+            for start, end in zip(level_offsets[:-1], level_offsets[1:]):
+                level_mask = (box_indices >= start) & (box_indices < end)
+                level_indices = np.nonzero(level_mask)[0]
+                if level_indices.size > nms_pre:
+                    level_scores = max_scores[level_indices]
+                    keep = np.argpartition(-level_scores, nms_pre - 1)[:nms_pre]
+                    keep = keep[np.argsort(-level_scores[keep])]
+                    level_indices = level_indices[keep]
+                keep_parts.append(level_indices)
+            keep_indices = (
+                np.concatenate(keep_parts)
+                if keep_parts
+                else np.empty((0,), dtype=np.int64)
+            )
+        else:
+            nms_pre = min(30000, max_scores.size)
+            keep_indices = np.argpartition(-max_scores, nms_pre - 1)[:nms_pre]
+            keep_indices = keep_indices[np.argsort(-max_scores[keep_indices])]
+
+        box_indices = box_indices[keep_indices]
+        max_scores = max_scores[keep_indices]
+        class_ids = class_ids[keep_indices]
+        boxes = boxes_all[box_indices].astype(np.float32, copy=True)
 
         if len(boxes) == 0:
             return boxes, max_scores, class_ids
 
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, input_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, input_h)
+        if ratio == 1.0:
+            ratio = min(input_h / orig_h, input_w / orig_w)
         boxes = boxes / ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        boxes = boxes[valid_boxes]
+        max_scores = max_scores[valid_boxes]
+        class_ids = class_ids[valid_boxes]
 
         return boxes, max_scores, class_ids
 
@@ -706,8 +838,20 @@ class BaseBackend(ABC):
 
         return boxes, max_scores, class_ids
 
-    def _parse_damoyolo(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
-        """Parse DAMO-YOLO output: (cls_scores, boxes) with stretch-resize inverse."""
+    def _parse_damoyolo(
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        *,
+        iou: float = 0.6,
+        max_det: int = 300,
+    ):
+        """Parse DAMO-YOLO output via its native batched-NMS postprocessor."""
+        from ..postprocess.damoyolo import postprocess_predictions
+
         first = all_outputs[0][0]
         second = all_outputs[1][0]
         if first.shape[-1] == 4 and second.shape[-1] != 4:
@@ -717,35 +861,35 @@ class BaseBackend(ABC):
             scores = first
             boxes = second
 
-        valid = scores > conf
-        if not valid.any():
+        if not (scores > conf).any():
             return (
                 np.empty((0, 4), dtype=boxes.dtype),
                 np.empty((0,), dtype=scores.dtype),
                 np.empty((0,), dtype=np.int64),
             )
 
-        box_indices, class_ids = np.nonzero(valid)
-        boxes = boxes[box_indices].copy()
-        max_scores = scores[box_indices, class_ids]
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        device = (
+            torch.device(self.device)
+            if _is_pytorch_cuda_device(str(self.device)) and torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        cls_scores = torch.as_tensor(scores, dtype=torch.float32, device=device).unsqueeze(0)
+        box_tensor = torch.as_tensor(boxes, dtype=torch.float32, device=device).unsqueeze(0)
+        preds = postprocess_predictions(
+            cls_scores,
+            box_tensor,
+            orig_sizes=[(orig_w, orig_h)],
+            input_size=(input_h, input_w),
+            conf_thres=conf,
+            iou_thres=iou,
+            max_det=max_det,
+        )[0]
 
-        # DAMO's multi-label expansion floods NMS at low conf (~115k-670k (anchor,class) pairs);
-        # the shared 30k cap still left the pure-Python O(n^2) numpy NMS at ~0.5-5 s/img. Cap to
-        # top-1000 by score: numpy NMS drops to ~16 ms with exact parity, since NMS only
-        # suppresses lower-scored boxes and max_det (300) << 1000 (verified top-300 identical).
-        nms_pre = 1000
-        if max_scores.shape[0] > nms_pre:
-            keep = np.argpartition(-max_scores, nms_pre - 1)[:nms_pre]
-            boxes, max_scores, class_ids = boxes[keep], max_scores[keep], class_ids[keep]
-
-        scale_x = orig_w / effective_imgsz
-        scale_y = orig_h / effective_imgsz
-        boxes[:, [0, 2]] *= scale_x
-        boxes[:, [1, 3]] *= scale_y
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
-
-        return boxes, max_scores, class_ids
+        parsed_boxes = preds["boxes"].detach().cpu().numpy()
+        parsed_scores = preds["scores"].detach().cpu().numpy()
+        parsed_classes = preds["classes"].detach().cpu().numpy().astype(np.int64)
+        return parsed_boxes, parsed_scores, parsed_classes
 
     def _parse_embedded_nms(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
         """Parse a graph-embedded-NMS detection output.
@@ -810,8 +954,41 @@ class BaseBackend(ABC):
 
         boxes_input_all = outputs[:, :4]
         scores = outputs[:, 4:]
+        keypoints = None
+        keypoints_all = None
+        if self.task == "pose" and len(all_outputs) >= 2:
+            keypoints_all = np.asarray(all_outputs[1][0], dtype=np.float32)
 
-        if self.task == "segment":
+        if self.model_family == "yolo9_e2e" and self.task == "detect":
+            topk_anchors = min(max_det, scores.shape[0])
+            if topk_anchors == 0 or scores.shape[-1] == 0:
+                return (
+                    np.empty((0, 4), dtype=np.float32),
+                    np.empty((0,), dtype=np.float32),
+                    np.empty((0,), dtype=np.int64),
+                )
+
+            anchor_scores = np.max(scores, axis=1)
+            anchor_idx = np.argpartition(-anchor_scores, topk_anchors - 1)[
+                :topk_anchors
+            ]
+            anchor_idx = anchor_idx[np.argsort(-anchor_scores[anchor_idx])]
+            boxes_subset = boxes_input_all[anchor_idx]
+            scores_subset = scores[anchor_idx]
+
+            flat_scores = scores_subset.reshape(-1)
+            topk_scores = min(max_det, flat_scores.size)
+            flat_idx = np.argpartition(-flat_scores, topk_scores - 1)[:topk_scores]
+            flat_idx = flat_idx[np.argsort(-flat_scores[flat_idx])]
+            class_ids = flat_idx % scores_subset.shape[-1]
+            box_indices = flat_idx // scores_subset.shape[-1]
+            boxes_input = boxes_subset[box_indices]
+            max_scores = flat_scores[flat_idx]
+            keep = max_scores > conf
+            boxes_input = boxes_input[keep]
+            max_scores = max_scores[keep]
+            class_ids = class_ids[keep]
+        elif self.task == "segment":
             max_scores = np.max(scores, axis=1)
             class_ids = np.argmax(scores, axis=1)
             mask = max_scores > conf
@@ -821,6 +998,8 @@ class BaseBackend(ABC):
             anchor_idx, class_ids = np.nonzero(scores > conf)
             boxes_input = boxes_input_all[anchor_idx]
             max_scores = scores[anchor_idx, class_ids]
+            if keypoints_all is not None:
+                keypoints = keypoints_all[anchor_idx].copy()
             max_nms = max(max_det, _YOLO9_MAX_NMS_CANDIDATES)
             if max_scores.size > max_nms:
                 keep = np.argpartition(-max_scores, max_nms - 1)[:max_nms]
@@ -828,29 +1007,52 @@ class BaseBackend(ABC):
                 boxes_input = boxes_input[keep]
                 max_scores = max_scores[keep]
                 class_ids = class_ids[keep]
+                if keypoints is not None:
+                    keypoints = keypoints[keep]
 
         boxes = boxes_input.copy()
 
         if len(boxes) == 0:
             if self.task == "segment":
                 return boxes, max_scores, class_ids, None
+            if self.task == "pose" and keypoints_all is not None:
+                return boxes, max_scores, class_ids, None, None, keypoints_all[:0]
             return boxes, max_scores, class_ids
 
         input_h, input_w = _imgsz_hw(effective_imgsz)
         ratio = min(input_h / orig_h, input_w / orig_w)
         boxes[:, :4] /= ratio
+        if keypoints is not None:
+            keypoints[..., :2] /= ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        if keypoints is not None:
+            keypoints[..., 0] = np.clip(keypoints[..., 0], 0, orig_w)
+            keypoints[..., 1] = np.clip(keypoints[..., 1], 0, orig_h)
         valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         if not valid_boxes.any():
             if self.task == "segment":
                 return boxes[:0], max_scores[:0], class_ids[:0], None
+            if self.task == "pose" and keypoints is not None:
+                return (
+                    boxes[:0],
+                    max_scores[:0],
+                    class_ids[:0],
+                    None,
+                    None,
+                    keypoints[:0],
+                )
             return boxes[:0], max_scores[:0], class_ids[:0]
         if not valid_boxes.all():
             boxes = boxes[valid_boxes]
             boxes_input = boxes_input[valid_boxes]
             max_scores = max_scores[valid_boxes]
             class_ids = class_ids[valid_boxes]
+            if keypoints is not None:
+                keypoints = keypoints[valid_boxes]
+
+        if self.task == "pose" and keypoints is not None:
+            return boxes, max_scores, class_ids, None, None, keypoints
 
         if self.task == "segment" and len(all_outputs) >= 3:
             from ..models.yolo9.utils import _process_masks
@@ -873,7 +1075,9 @@ class BaseBackend(ABC):
 
         return boxes, max_scores, class_ids
 
-    def _parse_yolonas(self, all_outputs, orig_w, orig_h, conf, ratio=1.0):
+    def _parse_yolonas(
+        self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+    ):
         """Parse YOLO-NAS output: [boxes(B,N,4), scores(B,N,nc)] in input pixels."""
         first = all_outputs[0][0]
         second = all_outputs[1][0]
@@ -897,10 +1101,85 @@ class BaseBackend(ABC):
             return boxes, max_scores, class_ids
 
         boxes = boxes.astype(np.float32, copy=True)
-        boxes /= ratio
+        if YOLO_NAS_PRE_NMS_TOP_K and max_scores.size > YOLO_NAS_PRE_NMS_TOP_K:
+            keep = np.argpartition(-max_scores, YOLO_NAS_PRE_NMS_TOP_K - 1)[
+                :YOLO_NAS_PRE_NMS_TOP_K
+            ]
+            keep = keep[np.argsort(-max_scores[keep])]
+            boxes = boxes[keep]
+            max_scores = max_scores[keep]
+            class_ids = class_ids[keep]
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        resize_size = min(YOLO_NAS_RESIZE_SIZE, input_h, input_w)
+        ratio = min(resize_size / orig_h, resize_size / orig_w)
+        new_w = int(round(orig_w * ratio))
+        new_h = int(round(orig_h * ratio))
+        offset_x = (input_w - new_w) // 2
+        offset_y = (input_h - new_h) // 2
+        boxes[:, 0::2] = (boxes[:, 0::2] - offset_x) / ratio
+        boxes[:, 1::2] = (boxes[:, 1::2] - offset_y) / ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        boxes = boxes[valid_boxes]
+        max_scores = max_scores[valid_boxes]
+        class_ids = class_ids[valid_boxes]
         return boxes, max_scores, class_ids
+
+    def _parse_yolonas_pose(
+        self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+    ):
+        """Parse YOLO-NAS pose: boxes, scores, keypoint xy, keypoint confidence."""
+        boxes = all_outputs[0][0]
+        scores = all_outputs[1][0].squeeze(-1)
+        keypoints_xy = all_outputs[2][0]
+        keypoints_conf = all_outputs[3][0]
+
+        mask = scores >= conf
+        boxes = boxes[mask].astype(np.float32, copy=True)
+        max_scores = scores[mask].astype(np.float32, copy=False)
+        keypoints_xy = keypoints_xy[mask].astype(np.float32, copy=True)
+        keypoints_conf = keypoints_conf[mask].astype(np.float32, copy=False)
+        class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
+
+        if len(boxes) == 0:
+            keypoints = np.zeros((0, keypoints_xy.shape[-2], 3), dtype=np.float32)
+            return boxes, max_scores, class_ids, None, None, keypoints
+
+        pre_nms_top_k = 1000
+        if max_scores.size > pre_nms_top_k:
+            keep = np.argpartition(-max_scores, pre_nms_top_k - 1)[:pre_nms_top_k]
+            keep = keep[np.argsort(-max_scores[keep])]
+            boxes = boxes[keep]
+            max_scores = max_scores[keep]
+            keypoints_xy = keypoints_xy[keep]
+            keypoints_conf = keypoints_conf[keep]
+            class_ids = class_ids[keep]
+
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        resize_size = min(input_h, input_w)
+        scale = min(resize_size / orig_h, resize_size / orig_w)
+        boxes[:, 0::2] /= scale
+        boxes[:, 1::2] /= scale
+        keypoints_xy[..., 0] /= scale
+        keypoints_xy[..., 1] /= scale
+
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        keypoints_xy[..., 0] = np.clip(keypoints_xy[..., 0], 0, orig_w)
+        keypoints_xy[..., 1] = np.clip(keypoints_xy[..., 1], 0, orig_h)
+
+        valid = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
+        if not valid.all():
+            boxes = boxes[valid]
+            max_scores = max_scores[valid]
+            class_ids = class_ids[valid]
+            keypoints_xy = keypoints_xy[valid]
+            keypoints_conf = keypoints_conf[valid]
+
+        keypoints = np.concatenate([keypoints_xy, keypoints_conf[..., None]], axis=-1)
+        return boxes, max_scores, class_ids, None, None, keypoints
 
     def _parse_dfine(self, all_outputs, orig_w, orig_h, conf, max_det: int = 300):
         """Parse D-FINE outputs: pred_logits (B, Q, nc) + pred_boxes (B, Q, 4) cxcywh [0,1].
@@ -944,6 +1223,97 @@ class BaseBackend(ABC):
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
 
+    def _parse_ec_segment(self, all_outputs, orig_w, orig_h, conf):
+        """Parse EC segmentation outputs: logits, normalized cxcywh boxes, masks."""
+        pred_logits = all_outputs[0][0]
+        pred_boxes = all_outputs[1][0]
+        pred_masks = all_outputs[2][0] if len(all_outputs) >= 3 else None
+
+        query_idx, class_ids, scores = self._ec_topk(pred_logits, max_det=300)
+        keep = scores > conf
+        query_idx = query_idx[keep]
+        class_ids = class_ids[keep]
+        max_scores = scores[keep]
+
+        boxes = self._scale_cxcywh_boxes(pred_boxes[query_idx], orig_w, orig_h)
+        masks_out = None
+        if pred_masks is not None and query_idx.size > 0:
+            masks_t = torch.from_numpy(pred_masks[query_idx]).unsqueeze(1).float()
+            masks_t = F.interpolate(
+                masks_t,
+                size=(int(orig_h), int(orig_w)),
+                mode="bilinear",
+                align_corners=False,
+            )
+            masks_out = (masks_t[:, 0] > 0.0).numpy()
+
+        return boxes, max_scores, class_ids.astype(np.int64), masks_out
+
+    def _parse_ec_pose(self, all_outputs, orig_w, orig_h, conf):
+        """Parse EC pose outputs: logits and normalized flattened keypoints."""
+        pred_logits = all_outputs[0][0]
+        pred_keypoints = all_outputs[1][0]
+
+        query_idx, _class_ids, scores = self._ec_topk(pred_logits, max_det=60)
+        keep = scores >= conf
+        query_idx = query_idx[keep]
+        max_scores = scores[keep]
+        class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
+
+        if pred_keypoints.ndim >= 3 and pred_keypoints.shape[-1] == 2:
+            num_keypoints = int(pred_keypoints.shape[-2])
+        else:
+            num_keypoints = int(pred_keypoints.shape[-1]) // 2
+        if num_keypoints <= 0:
+            num_keypoints = int(getattr(self, "num_keypoints", 17) or 17)
+        if query_idx.size == 0:
+            empty_boxes = np.zeros((0, 4), dtype=np.float32)
+            empty_keypoints = np.zeros((0, num_keypoints, 3), dtype=np.float32)
+            return empty_boxes, max_scores, class_ids, None, None, empty_keypoints
+
+        keypoints_xy = pred_keypoints[query_idx].reshape(-1, num_keypoints, 2)
+        keypoints_xy = keypoints_xy.astype(np.float32, copy=True)
+        keypoints_xy[..., 0] *= float(orig_w)
+        keypoints_xy[..., 1] *= float(orig_h)
+
+        x_min = keypoints_xy[..., 0].min(axis=1)
+        y_min = keypoints_xy[..., 1].min(axis=1)
+        x_max = keypoints_xy[..., 0].max(axis=1)
+        y_max = keypoints_xy[..., 1].max(axis=1)
+        boxes = np.stack([x_min, y_min, x_max, y_max], axis=1)
+        visibility = np.ones((*keypoints_xy.shape[:-1], 1), dtype=np.float32)
+        keypoints = np.concatenate([keypoints_xy, visibility], axis=-1)
+        return boxes, max_scores, class_ids, None, None, keypoints
+
+    @staticmethod
+    def _ec_topk(pred_logits, max_det: int):
+        scores = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
+        scores = scores.astype(np.float32)
+        num_classes = scores.shape[-1]
+        flat = scores.reshape(-1)
+        k = min(max_det, flat.size)
+        idx = np.argpartition(-flat, k - 1)[:k]
+        idx = idx[np.argsort(-flat[idx])]
+        query_idx = idx // num_classes
+        class_ids = idx % num_classes
+        return query_idx, class_ids, flat[idx]
+
+    @staticmethod
+    def _scale_cxcywh_boxes(boxes_cxcywh, orig_w, orig_h):
+        cx, cy, w, h = (
+            boxes_cxcywh[:, 0],
+            boxes_cxcywh[:, 1],
+            boxes_cxcywh[:, 2],
+            boxes_cxcywh[:, 3],
+        )
+        boxes = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=1)
+        boxes = boxes.astype(np.float32, copy=False)
+        boxes[:, [0, 2]] *= orig_w
+        boxes[:, [1, 3]] *= orig_h
+        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
+        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
+        return boxes
+
     def _parse_rfdetr(self, all_outputs, orig_w, orig_h, conf):
         """Parse RF-DETR output: boxes (B,300,4) cxcywh [0,1] + logits (B,300,nc).
 
@@ -969,7 +1339,12 @@ class BaseBackend(ABC):
             if self.task == "obb":
                 raw_angles = all_outputs[2][0]
             elif self.task == "pose":
-                raw_keypoints = all_outputs[2][0]
+                raw_keypoint_output = all_outputs[2]
+                raw_keypoints = (
+                    raw_keypoint_output[0]
+                    if raw_keypoint_output.ndim == 4
+                    else raw_keypoint_output
+                )
             else:
                 raw_masks = all_outputs[2][0]
 
@@ -992,6 +1367,70 @@ class BaseBackend(ABC):
         )
         if raw_masks is not None:
             raw_masks = raw_masks[query_idx]
+
+        if (
+            self.task == "pose"
+            and keypoints_raw is not None
+            and keypoints_raw.ndim == 3
+            and keypoints_raw.shape[-1] >= 7
+            and num_classes > 1
+            and keypoints_raw.shape[1] % num_classes == 0
+        ):
+            max_num_keypoints = keypoints_raw.shape[1] // num_classes
+            grouped = keypoints_raw.reshape(
+                keypoints_raw.shape[0],
+                num_classes,
+                max_num_keypoints,
+                keypoints_raw.shape[-1],
+            )
+            selected = grouped[np.arange(len(class_ids)), class_ids]
+
+            # GroupPose exports use internal class 0 for no-keypoint detections
+            # and keypoint-bearing classes after it. Public pose labels are
+            # contiguous over only the keypoint-bearing classes (person -> 0).
+            keypoint_counts = np.full(num_classes, max_num_keypoints, dtype=np.int64)
+            if self.nb_classes == num_classes - 1:
+                keypoint_counts[0] = 0
+            active_counts = keypoint_counts[class_ids]
+            valid_pose_class = active_counts > 0
+
+            if np.any(valid_pose_class):
+                trace_alpha = 0.2
+                log_mean_traces = np.zeros(len(selected), dtype=np.float32)
+                for row_idx, active_count in enumerate(active_counts):
+                    if active_count <= 0:
+                        continue
+                    log_mean_traces[row_idx] = _rfdetr_keypoint_log_mean_trace_np(
+                        selected[row_idx : row_idx + 1, :active_count]
+                    )[0]
+                max_scores = max_scores * np.exp(-trace_alpha * log_mean_traces)
+
+            keypoints_selected = np.zeros(
+                (len(selected), max_num_keypoints, 3),
+                dtype=np.float32,
+            )
+            for row_idx, active_count in enumerate(active_counts):
+                if active_count <= 0:
+                    continue
+                keypoints_selected[row_idx, :active_count, :3] = selected[
+                    row_idx,
+                    :active_count,
+                    :3,
+                ]
+
+            kp_classes = np.flatnonzero(keypoint_counts > 0)
+            remap = np.full(num_classes, -1, dtype=class_ids.dtype)
+            remap[kp_classes] = np.arange(len(kp_classes), dtype=class_ids.dtype)
+
+            boxes_raw = boxes_raw[valid_pose_class]
+            max_scores = max_scores[valid_pose_class]
+            class_ids = remap[class_ids[valid_pose_class]]
+            if angles_raw is not None:
+                angles_raw = angles_raw[valid_pose_class]
+            if keypoints_raw is not None:
+                keypoints_raw = keypoints_selected[valid_pose_class]
+            if raw_masks is not None:
+                raw_masks = raw_masks[valid_pose_class]
 
         mask = max_scores > conf
         boxes_raw = boxes_raw[mask]
@@ -1248,7 +1687,14 @@ class BaseBackend(ABC):
             # ONNX models with graph-embedded NMS still pass through this after
             # backend clipping so letterboxed-image behavior stays aligned with
             # native YOLO9 postprocess.
-            if self.model_family in ("damoyolo", "yolo9", "yolo9_e2e", "yolox", "picodet"):
+            if self.model_family in (
+                "damoyolo",
+                "picodet",
+                "rtmdet",
+                "yolo9",
+                "yolonas",
+                "yolox",
+            ):
                 keep = _batched_nms_numpy(boxes, max_scores, class_ids, iou)
             else:
                 keep = _nms_numpy(boxes, max_scores, iou)
@@ -1398,6 +1844,7 @@ class BaseBackend(ABC):
         from ..validation.preprocessors import (
             DAMOYOLOValPreprocessor,
             DEIMValPreprocessor,
+            DEIMv2DINOValPreprocessor,
             DEIMv2ValPreprocessor,
             DFINEValPreprocessor,
             ECValPreprocessor,
@@ -1413,10 +1860,20 @@ class BaseBackend(ABC):
             YOLOXValPreprocessor,
         )
 
+        if self.model_family == "deimv2":
+            from ..models.deimv2.nn import DINO_SIZES
+
+            model_size = self.model_size or getattr(self, "size", None)
+            preprocessor_cls = (
+                DEIMv2DINOValPreprocessor
+                if model_size in DINO_SIZES
+                else DEIMv2ValPreprocessor
+            )
+            return preprocessor_cls(img_size=_imgsz_hw(img_size))
+
         preprocessor_cls = {
             "damoyolo": DAMOYOLOValPreprocessor,
             "deim": DEIMValPreprocessor,
-            "deimv2": DEIMv2ValPreprocessor,
             "dfine": DFINEValPreprocessor,
             "ec": ECValPreprocessor,
             "picodet": PICODETValPreprocessor,

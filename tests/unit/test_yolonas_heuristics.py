@@ -109,17 +109,37 @@ class TestYOLONASHeuristics:
     def test_get_download_url_returns_none_for_unknown_filename(self):
         assert LibreYOLONAS.get_download_url("unrelated.pt") is None
 
+    @pytest.mark.parametrize("filename", ["LibreYOLONASn.pt", "yolo_nas_n_coco.pth"])
+    def test_get_download_url_returns_none_for_detection_only_n_size(self, filename):
+        assert LibreYOLONAS.get_download_url(filename) is None
+
     @pytest.mark.parametrize(
-        "filename",
+        ("filename", "expected_url"),
         [
-            "LibreYOLONASn.pt",
-            "yolo_nas_n_coco.pth",
-            "LibreYOLONASn-pose.pt",
-            "yolo_nas_pose_n_coco_pose.pth",
+            (
+                "LibreYOLONASn-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
+            ),
+            (
+                "yolo_nas_pose_n_coco_pose.pth",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASs-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_s_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASm-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_m_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASl-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_l_coco_pose.pth",
+            ),
         ],
     )
-    def test_get_download_url_returns_none_for_pose_only_n_size(self, filename):
-        assert LibreYOLONAS.get_download_url(filename) is None
+    def test_get_download_url_points_to_deci_pose_cdn(self, filename, expected_url):
+        assert LibreYOLONAS.get_download_url(filename) == expected_url
 
 
 class TestYOLONASNativeModel:

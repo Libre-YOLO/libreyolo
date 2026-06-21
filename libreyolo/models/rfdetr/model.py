@@ -18,7 +18,6 @@ from .nn import (
     LibreRFDETRModel,
     RFDETR_CONFIGS,
     RFDETR_SEG_CONFIGS,
-    RFDETR_POSE_CONFIGS,
 )
 from .config import RFDETRConfig
 from ...postprocess.rfdetr import postprocess
@@ -176,9 +175,9 @@ class LibreRFDETR(BaseModel):
     FILENAME_PREFIX = "LibreRFDETR"
     INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704}
     SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
-    # Pose uses the dedicated GroupPose preset (adapted from RF-DETR v1.8.0);
-    # the keypoint preview runs the encoder at a 576 square.
-    POSE_INPUT_SIZES = {"x": 576}
+    # Pose checkpoints carry their own validation/export sizes. n/s/m/l use the
+    # classic keypoint_head path; x uses the GroupPose preview path.
+    POSE_INPUT_SIZES = {"n": 512, "s": 768, "m": 576, "l": 704, "x": 576}
     # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
     CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
     # Semantic runs the DINOv2 backbone at its native pretrained 518 square
@@ -211,7 +210,15 @@ class LibreRFDETR(BaseModel):
     # (patch_size 14 x num_windows 1) used by the semantic backbone.
     semantic_imgsz_divisor = 14
     depth_imgsz_divisor = 14
-    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrx-pose.pt"})
+    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset(
+        {
+            "librerfdetrn-pose.pt",
+            "librerfdetrs-pose.pt",
+            "librerfdetrm-pose.pt",
+            "librerfdetrl-pose.pt",
+            "librerfdetrx-pose.pt",
+        }
+    )
     TRAIN_CONFIG = RFDETRConfig
     val_preprocessor_class = RFDETRValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
@@ -1321,7 +1328,18 @@ class LibreRFDETR(BaseModel):
                     ignored.append("keypoint_head.")
                 if self._allow_detect_to_obb_transfer:
                     ignored.append("angle_embed.")
-                important = [k for k in missing if not k.startswith(tuple(ignored))]
+                inner = getattr(self.model, "model", None)
+                uses_grouppose = bool(
+                    getattr(inner, "use_grouppose_keypoints", False)
+                )
+                ignored_exact = set()
+                if not uses_grouppose:
+                    ignored_exact.add("_kp_active_mask")
+                important = [
+                    k
+                    for k in missing
+                    if k not in ignored_exact and not k.startswith(tuple(ignored))
+                ]
                 if important:
                     raise RuntimeError(
                         f"Missing RF-DETR checkpoint keys: {sorted(important)[:10]}"

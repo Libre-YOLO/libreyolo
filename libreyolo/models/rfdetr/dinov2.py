@@ -377,7 +377,8 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
             size=(torch_int(height), torch_int(width)),  # Explicit size instead of scale_factor
             mode="bicubic",
             align_corners=False,
-            antialias=patch_pos_embed.device.type != "mps",
+            antialias=patch_pos_embed.device.type != "mps"
+            and not torch.onnx.is_in_onnx_export(),
         ).to(dtype=target_dtype)
 
         # Validate output dimensions if not tracing

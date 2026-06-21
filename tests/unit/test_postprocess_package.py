@@ -183,3 +183,15 @@ def test_ec_postprocess_smoke_lazy_import():
     )
     assert pose["num_detections"] == len(pose["boxes"])
     assert pose["keypoints"].shape[1:] == (17, 3)
+
+    structured_pose = ec.postprocess_pose(
+        {
+            "pred_logits": torch.randn(1, 15, 1, generator=g),
+            "pred_keypoints": torch.rand(1, 15, 17, 2, generator=g),
+        },
+        conf_thres=0.05,
+        original_size=(320, 320),
+        max_det=5,
+    )
+    assert structured_pose["num_detections"] == len(structured_pose["boxes"])
+    assert structured_pose["keypoints"].shape[1:] == (17, 3)

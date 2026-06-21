@@ -10,7 +10,6 @@ All model families register here via ``__init_subclass__``. Adding a new model m
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from .base import BaseModel
@@ -215,17 +214,6 @@ def LibreYOLO(
     ensure_default_logging()
     model_path = _resolve_weights_path(model_path)
 
-    if task is not None:
-        filename = Path(model_path).name
-        for cls in BaseModel._registry:
-            if cls.detect_size_from_filename(filename) is not None:
-                resolve_task(
-                    explicit_task=task,
-                    default_task=cls.DEFAULT_TASK,
-                    supported_tasks=cls.SUPPORTED_TASKS,
-                )
-                break
-
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
         from ..backends.onnx import OnnxBackend
@@ -275,6 +263,17 @@ def LibreYOLO(
             return NcnnBackend(
                 model_path, nb_classes=nb_classes, device=device, task=task
             )
+
+    if task is not None:
+        filename = Path(model_path).name
+        for cls in BaseModel._registry:
+            if cls.detect_size_from_filename(filename) is not None:
+                resolve_task(
+                    explicit_task=task,
+                    default_task=cls.DEFAULT_TASK,
+                    supported_tasks=cls.SUPPORTED_TASKS,
+                )
+                break
 
     # Download if missing
     if not Path(model_path).exists():

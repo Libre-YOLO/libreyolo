@@ -110,7 +110,7 @@ def postprocess_pose(
     tensor of shape ``(N, num_keypoints, 3)`` with (x, y, vis).
     """
     out_logits = outputs["pred_logits"]
-    out_kpts = outputs["pred_keypoints"]  # (B, Q, K*2) flattened
+    out_kpts = outputs["pred_keypoints"]  # (B, Q, K*2) or (B, Q, K, 2)
     if out_logits.dim() == 3:
         out_logits = out_logits[0]
         out_kpts = out_kpts[0]
@@ -122,7 +122,11 @@ def postprocess_pose(
     query_idx = topk_indices // num_classes
     class_idx = topk_indices % num_classes
 
-    kpts_xy = out_kpts.unflatten(-1, (num_keypoints, 2))[query_idx]  # (N, K, 2) in [0,1]
+    if out_kpts.dim() >= 3 and out_kpts.shape[-1] == 2:
+        kpts_xy_all = out_kpts
+    else:
+        kpts_xy_all = out_kpts.unflatten(-1, (num_keypoints, 2))
+    kpts_xy = kpts_xy_all[query_idx]  # (N, K, 2) in [0,1]
 
     keep = scores >= conf_thres
     scores = scores[keep]

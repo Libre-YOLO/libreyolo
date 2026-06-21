@@ -541,7 +541,9 @@ class BaseExporter(ABC):
         elif family == "ec":
             from ..models.ec.nn import ECExportWrapper
 
-            nn_model = ECExportWrapper(nn_model).to(device)
+            nn_model = ECExportWrapper(
+                nn_model, task=getattr(self.model, "task", "detect")
+            ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
@@ -800,7 +802,9 @@ class BaseExporter(ABC):
             "dynamic": str(dynamic),
             "precision": "fp16" if half else "fp32",
             "half": str(half),
-            "segmentation": str(getattr(self.model, "_is_segmentation", False)).lower(),
+            "segmentation": str(
+                task == "segment" or getattr(self.model, "_is_segmentation", False)
+            ).lower(),
             "obb": str(task == "obb").lower(),
         }
         if task == "pose":

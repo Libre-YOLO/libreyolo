@@ -28,6 +28,7 @@ import torch.nn.init as init
 
 from ..dfine.denoising import get_contrastive_denoising_training_group
 from .utils import (
+    _grid_sample_bilinear_manual,
     bias_init_with_prob,
     deformable_attention_core_func_v2,
     distance2bbox,
@@ -1216,11 +1217,23 @@ def _ms_deform_attn_core_pytorch_pose(
     for lid_, (h, w) in enumerate(value_spatial_shapes):
         value_l = value[lid_].unflatten(2, (h, w))
         grid_l = sampling_grids[:, :, lid_]
-        sampling_value_list.append(
-            F.grid_sample(
-                value_l, grid_l,
-                mode="bilinear", padding_mode="zeros", align_corners=False,
+        if torch.onnx.is_in_onnx_export():
+            sampling_value = _grid_sample_bilinear_manual(
+                value_l,
+                grid_l,
+                padding_mode="zeros",
+                align_corners=False,
             )
+        else:
+            sampling_value = F.grid_sample(
+                value_l,
+                grid_l,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+        sampling_value_list.append(
+            sampling_value
         )
     attn = attention_weights.transpose(1, 2).reshape(
         bs * num_heads, 1, num_query, num_levels * num_points
@@ -1335,13 +1348,23 @@ class LQEPose(nn.Module):
     def forward(self, scores, pred_poses, feat):
         b, length = pred_poses.shape[:2]
         pred_poses = pred_poses.reshape(b, length, self.num_keypoints, 2)
-        sampling_values = F.grid_sample(
-            feat,
-            2 * pred_poses - 1,
-            mode="bilinear",
-            padding_mode="zeros",
-            align_corners=False,
-        ).permute(0, 2, 3, 1)
+        sampling_grid = 2 * pred_poses - 1
+        if torch.onnx.is_in_onnx_export():
+            sampling_values = _grid_sample_bilinear_manual(
+                feat,
+                sampling_grid,
+                padding_mode="zeros",
+                align_corners=False,
+            )
+        else:
+            sampling_values = F.grid_sample(
+                feat,
+                sampling_grid,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+        sampling_values = sampling_values.permute(0, 2, 3, 1)
         prob_topk = sampling_values.topk(self.k, dim=-1)[0]
         stat = torch.cat([prob_topk, prob_topk.mean(dim=-1, keepdim=True)], dim=-1)
         return scores + self.reg_conf(stat.reshape(b, length, -1))

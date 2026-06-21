@@ -144,6 +144,26 @@ def _postprocess_grouppose_keypoints(
     return scores_i, output_keypoints, output_keypoint_precision
 
 
+def _postprocess_classic_keypoints(
+    out_keypoints_i: torch.Tensor,
+    topk_boxes_i: torch.Tensor,
+    target_size: torch.Tensor,
+) -> torch.Tensor:
+    """Gather classic RF-DETR keypoints and scale them to pixel coordinates."""
+    keypoints_i = torch.gather(
+        out_keypoints_i,
+        0,
+        topk_boxes_i.unsqueeze(-1).unsqueeze(-1).repeat(
+            1, out_keypoints_i.shape[-2], out_keypoints_i.shape[-1]
+        ),
+    ).clone()
+    img_h, img_w = target_size
+    keypoints_i[..., 0] = keypoints_i[..., 0] * img_w
+    keypoints_i[..., 1] = keypoints_i[..., 1] * img_h
+    keypoints_i[..., 2] = keypoints_i[..., 2].sigmoid()
+    return keypoints_i
+
+
 def postprocess(
     outputs: dict[str, torch.Tensor],
     target_sizes: torch.Tensor,
@@ -270,7 +290,7 @@ def postprocess(
             # Threshold at 0.0 in logit space (= 0.5 probability)
             res_i["masks"] = (masks_i[:, 0] > 0.0).bool()  # (K, H, W)
 
-        if out_keypoints is not None:
+        if out_keypoints is not None and num_keypoints_per_class:
             # GroupPose keypoint decode (ported from RF-DETR v1.8.0). The raw
             # keypoints are (Q, num_classes * max_K, D); the predicted-class slot
             # is gathered per query, xy scaled to original pixels, confidence =
@@ -331,6 +351,12 @@ def postprocess(
             res_i["scores"] = scores_i[keep_kp]
             res_i["keypoints"] = keypoints_i[keep_kp]
             res_i["keypoint_precision_cholesky"] = precision_i[keep_kp]
+        elif out_keypoints is not None:
+            res_i["keypoints"] = _postprocess_classic_keypoints(
+                out_keypoints[i],
+                topk_boxes[i],
+                target_sizes[i],
+            )
 
         results.append(res_i)
 

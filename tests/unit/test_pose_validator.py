@@ -65,3 +65,102 @@ def test_pose_validator_accepts_yolo_pose_yaml(tmp_path):
     assert validator._normalize_skeleton([[1, 2], [3, 4]]) == ((0, 1), (2, 3))
     assert validator._normalize_skeleton([[0, 1], [2, 3]]) == ((0, 1), (2, 3))
     assert validator._resolve_oks_sigmas() == [0.25] * 4
+
+
+def test_pose_validator_zero_predictions_returns_all_keypoint_metrics(tmp_path):
+    config = ValidationConfig(
+        save_dir=str(tmp_path),
+        verbose=False,
+        keypoints_json=str(tmp_path / "unused.json"),
+        images_dir=str(tmp_path),
+    )
+    validator = PoseValidator(_DummyPoseModel(), config=config)
+    validator.save_dir = tmp_path
+    validator._predictions = []
+
+    metrics = validator._evaluate_oks_ap()
+
+    assert metrics == {
+        "metrics/keypoints_mAP50-95": 0.0,
+        "metrics/keypoints_mAP50": 0.0,
+        "metrics/keypoints_mAP75": 0.0,
+        "metrics/keypoints_mAP_M": 0.0,
+        "metrics/keypoints_mAP_L": 0.0,
+        "metrics/keypoints_AR50-95": 0.0,
+        "metrics/keypoints_AR50": 0.0,
+        "metrics/keypoints_AR75": 0.0,
+        "metrics/keypoints_AR_M": 0.0,
+        "metrics/keypoints_AR_L": 0.0,
+    }
+    assert (tmp_path / "predictions.json").exists()
+
+
+def test_pose_validator_uses_coco_keypoints_annotation_from_yaml(tmp_path):
+    images_dir = tmp_path / "images" / "val2017"
+    annotations_dir = tmp_path / "annotations"
+    images_dir.mkdir(parents=True)
+    annotations_dir.mkdir(parents=True)
+    Image.new("RGB", (320, 240)).save(images_dir / "000000123456.jpg")
+
+    keypoints_json = annotations_dir / "person_keypoints_val2017_mini500.json"
+    keypoints_json.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 123456,
+                        "file_name": "000000123456.jpg",
+                        "width": 320,
+                        "height": 240,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 123456,
+                        "category_id": 0,
+                        "bbox": [0, 0, 100, 100],
+                        "area": 10000,
+                        "iscrowd": 0,
+                        "num_keypoints": 1,
+                        "keypoints": [50, 60, 2] + [0, 0, 0] * 16,
+                    }
+                ],
+                "categories": [
+                    {
+                        "id": 0,
+                        "name": "person",
+                        "keypoints": [f"kpt_{i}" for i in range(17)],
+                        "skeleton": [],
+                    }
+                ],
+            }
+        )
+    )
+    data_yaml = tmp_path / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "annotations": {"val": "annotations/person_keypoints_val2017_mini500.json"},
+                "nc": 1,
+                "names": {0: "person"},
+                "kpt_shape": [17, 3],
+            }
+        )
+    )
+
+    config = ValidationConfig(
+        data=str(data_yaml),
+        save_dir=str(tmp_path / "runs"),
+        verbose=False,
+    )
+    validator = PoseValidator(_DummyPoseModel(), config=config)
+    validator._setup_paths()
+    validator._load_coco_gt()
+
+    assert validator._kpts_json == keypoints_json
+    assert validator._images_dir == images_dir
+    assert validator._image_records[0]["id"] == 123456
+    assert not (tmp_path / "runs" / "ground_truth_yolo_pose.json").exists()

@@ -23,9 +23,12 @@ from tqdm import tqdm
 from libreyolo.data import (
     COCO17_OKS_SIGMAS,
     default_oks_sigmas,
+    get_coco_annotation_file,
+    get_coco_image_dir,
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from libreyolo.data.pose_dataset import parse_yolo_pose_label_line
 
@@ -168,6 +171,28 @@ class PoseValidator(BaseValidator):
                 "PoseValidator requires either YOLO-pose data.yaml via data=... "
                 "or keypoints_json + images_dir."
             )
+        data_cfg = load_data_config(
+            self.config.data,
+            autodownload=True,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        annotation_file = get_coco_annotation_file(data_cfg, self.config.split)
+        if annotation_file:
+            self._kpts_json = Path(annotation_file)
+            data_root = Path(data_cfg["root"])
+            default_image_dir = resolve_default_coco_image_dir(
+                data_root,
+                self.config.split,
+                self._kpts_json.name,
+            )
+            self._images_dir = Path(
+                get_coco_image_dir(data_cfg, self.config.split, default_image_dir)
+            )
+            if not self._kpts_json.exists():
+                raise FileNotFoundError(f"Annotations JSON not found: {self._kpts_json}")
+            if not self._images_dir.is_dir():
+                raise FileNotFoundError(f"Images dir not found: {self._images_dir}")
+            return
         self._kpts_json, self._images_dir = self._build_coco_gt_from_yolo()
 
     def _build_coco_gt_from_yolo(self) -> tuple[Path, Path | None]:
@@ -436,6 +461,13 @@ class PoseValidator(BaseValidator):
                 "metrics/keypoints_mAP50-95": 0.0,
                 "metrics/keypoints_mAP50": 0.0,
                 "metrics/keypoints_mAP75": 0.0,
+                "metrics/keypoints_mAP_M": 0.0,
+                "metrics/keypoints_mAP_L": 0.0,
+                "metrics/keypoints_AR50-95": 0.0,
+                "metrics/keypoints_AR50": 0.0,
+                "metrics/keypoints_AR75": 0.0,
+                "metrics/keypoints_AR_M": 0.0,
+                "metrics/keypoints_AR_L": 0.0,
             }
 
         coco_dt = self._coco_gt.loadRes(str(pred_path))
