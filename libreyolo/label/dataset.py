@@ -136,10 +136,14 @@ def update_class_names(yaml_file: str, names: List[str]) -> None:
     other key. Callers must only rename or append (never delete or reorder) so
     existing label class ids keep their meaning."""
     p = Path(yaml_file)
-    cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    original = p.read_text(encoding="utf-8")
+    cfg = yaml.safe_load(original) or {}
     cfg["names"] = list(names)
     cfg["nc"] = len(names)
-    _atomic_write_text(p, yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+    # Keep the leading comment block (LibreLabel project hints) that safe_dump drops.
+    comment = "\n".join(l for l in original.splitlines() if l.lstrip().startswith("#"))
+    body = yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+    _atomic_write_text(p, (comment + "\n\n" + body) if comment else body)
 
 
 # Image types the upload wizard accepts (matches what the labeler can render).
@@ -229,6 +233,9 @@ def create_uploaded_project(dst: str, *, name: Optional[str] = None,
     directly, and a ``librelabel.json`` sidecar (name + per-class colors).
     Returns the path to the written ``data.yaml``."""
     base = Path(dst)
+    if folder_yaml(str(base)):
+        raise FileExistsError(
+            "That folder already has a dataset config (data.yaml). Pick an empty or new folder.")
     train_dir = base / "images" / "train"
     try:
         imgs = sorted(str(i) for i in get_img_files(train_dir)) if train_dir.is_dir() else []

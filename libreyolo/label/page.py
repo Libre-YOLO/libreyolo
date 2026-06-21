@@ -14,31 +14,32 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <title>LibreLabel</title>
 <style>
   :root{
-    /* LibreLabel - refined neutral dark + indigo accent */
-    --bg:#0a0a0c; --bg2:#101013;
-    --s1:#151518; --s2:#1c1c21; --s3:#26262d;
-    --line:#222228; --line2:#31313a;
-    --tx:#f4f4f5; --tx2:#a6a6b2; --tx3:#73737e;
-    --ac:#6366f1; --ac-ink:#ffffff; --ai:#818cf8;
+    /* LibreYOLO brand - dark (slate + cyan), matching libreyolo.com */
+    --bg:#020617; --bg2:#0b1120;
+    --s1:#0f172a; --s2:#1e293b; --s3:#334155;
+    --line:#1e293b; --line2:#334155;
+    --tx:#e2e8f0; --tx2:#94a3b8; --tx3:#64748b;
+    --ac:#06b6d4; --ac-ink:#012a33; --ai:#22d3ee;
     --ok:#10b981; --warn:#fbbf24; --danger:#ef4444;
-    --r:12px; --r2:9px; --sh:0 18px 44px -14px rgba(0,0,0,.62); --shs:0 2px 6px rgba(0,0,0,.34);
-    --stage1:#141418; --stage2:#0a0a0c; --topbar1:#151518; --topbar2:#121215;
-    --acg1:#6366f1; --acg2:#4f46e5; --glass:rgba(18,18,22,.82);
+    --r:12px; --r2:9px; --sh:0 18px 44px -14px rgba(2,6,23,.62); --shs:0 2px 6px rgba(2,6,23,.42);
+    --stage1:#0b1120; --stage2:#020617; --topbar1:#0f172a; --topbar2:#0b1120;
+    --acg1:#22d3ee; --acg2:#0891b2; --glass:rgba(15,23,42,.85);
   }
   :root.light{
-    --bg:#f6f6f8; --bg2:#ffffff;
-    --s1:#ffffff; --s2:#f4f4f6; --s3:#e9e9ee;
-    --line:#e7e7eb; --line2:#d6d6dd;
-    --tx:#18181b; --tx2:#52525b; --tx3:#8a8a93;
-    --ac:#5b54e8; --ac-ink:#ffffff; --ai:#6d63f0;
+    /* LibreYOLO brand - warm light, inspired by the marketing carousels (cream + cyan) */
+    --bg:#faf6ec; --bg2:#fffdf6;
+    --s1:#fffdf7; --s2:#f4eedd; --s3:#e9e1cd;
+    --line:#ece4d2; --line2:#dccfb4;
+    --tx:#1c1917; --tx2:#57534e; --tx3:#8a8175;
+    --ac:#0891b2; --ac-ink:#ffffff; --ai:#0e7490;
     --ok:#059669; --warn:#d97706; --danger:#dc2626;
-    --sh:0 18px 44px -18px rgba(24,24,27,.22); --shs:0 1px 3px rgba(24,24,27,.09);
-    --stage1:#eeeef2; --stage2:#e2e2e9; --topbar1:#ffffff; --topbar2:#fbfbfc;
-    --acg1:#6366f1; --acg2:#4f46e5; --glass:rgba(255,255,255,.86);
+    --sh:0 18px 44px -18px rgba(28,25,23,.18); --shs:0 1px 3px rgba(28,25,23,.08);
+    --stage1:#f1ead8; --stage2:#e6dcc5; --topbar1:#fffdf7; --topbar2:#f7f1e2;
+    --acg1:#22c3e0; --acg2:#0891b2; --glass:rgba(255,253,247,.85);
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
-    font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font:13.5px/1.55 "Outfit",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
   button{font:inherit;color:inherit;cursor:pointer}
   .ic{width:16px;height:16px;display:block;flex:none}
@@ -383,7 +384,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .lchip .ln{overflow:hidden;text-overflow:ellipsis;max-width:160px}
   .lchip .lk{font:11px ui-monospace,monospace;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px;font-variant-numeric:tabular-nums}
   .lchip.add{color:var(--tx3);border-style:dashed;box-shadow:none}
-  .submitbtn{display:inline-flex;align-items:center;gap:8px;height:39px;padding:0 18px;border-radius:10px;flex:none;background:var(--ac);color:#fff;font-size:13px;font-weight:650;border:1px solid var(--ac);box-shadow:var(--sh);transition:.12s}
+  .submitbtn{display:inline-flex;align-items:center;gap:8px;height:39px;padding:0 18px;border-radius:10px;flex:none;background:var(--ac);color:var(--ac-ink);font-size:13px;font-weight:650;border:1px solid var(--ac);box-shadow:var(--sh);transition:.12s}
   .submitbtn:hover{filter:brightness(1.08)}
   .submitbtn:disabled{opacity:.45;cursor:default;filter:none}
   .submitbtn .ic{width:16px;height:16px}
@@ -655,9 +656,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="home-actions">
         <button class="btn btn-primary" id="homenew"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New project</button>
-        <button class="btn btn-ghost" id="homeexample"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-5 5"/></svg>Try the example</button>
       </div>
-      <div class="home-resume" id="homeresume" style="display:none;margin:16px auto 0;text-align:center"><button class="btn btn-ghost" id="homeresumebtn">← Resume current project</button></div>
       <div class="home-err" id="homeerr"></div>
       <div class="home-sec">Your projects</div>
       <div class="home-grid" id="homegrid"></div>
@@ -1247,7 +1246,9 @@ function renderInsights(d, q){
 function trainCmd(){
   // A scaffolded folder has only `train: .` (no val split); the detection validator
   // errors on a missing val set, so suggest val=False there -> the command runs.
-  return 'libreyolo train data='+((DS&&DS.yaml)||'')
+  const y=(DS&&DS.yaml)||'';
+  const dq = /[\s"'\\$`&|;<>()]/.test(y) ? '"'+y.replace(/(["\\$`])/g,'\\$1')+'"' : y;
+  return 'libreyolo train data='+dq
     + ((DS && DS.has_val===false) ? ' val=False' : '');
 }
 function readinessSection(st, d, q){
@@ -2106,7 +2107,7 @@ window.addEventListener("keydown", e=>{
   if(e.key==="e"||e.key==="E"){ e.preventDefault(); nextUnlabeled(e.shiftKey?-1:1); return; }
   if(e.key==="c"||e.key==="C"){ e.preventDefault(); carryForward(); return; }
   if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
-  if(e.key==="b"||e.key==="B"){ setTool("box"); return; }
+  if(e.key==="b"||e.key==="B"){ if(!(DS&&DS.task==="obb")) setTool("box"); return; }
   if(e.key==="p"||e.key==="P"){ setTool("poly"); return; }
   if(e.key==="o"||e.key==="O"){ setTool("obb"); return; }
   if((e.key==="s"||e.key==="S") && assist && assist.sam){ setTool("seg"); return; }
@@ -2452,7 +2453,7 @@ function wireHome(){
 }
 
 // ===== New Project wizard =====
-const WZPRESET = ["#6366f1","#22c55e","#f59e0b","#ef4444","#06b6d4","#ec4899","#a855f7","#14b8a6"];
+const WZPRESET = ["#06b6d4","#10b981","#f59e0b","#ef4444","#a855f7","#ec4899","#14b8a6","#3b82f6"];
 let WZ = null;
 function openWizard(){
   WZ = {step:1, mode:"upload", task:"detect",
@@ -2789,7 +2790,7 @@ async function openProject(data){
   if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
   if(dirty){ homeError("You edited while saving - save before switching projects."); return; }
   homeError("");
-  const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Opening…";
+  const btn=$("#homeopen"); const t=btn?btn.textContent:""; if(btn){ btn.disabled=true; btn.textContent="Opening…"; }
   try{
     const r = await fetch("/api/projects/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data})});
     const d = await r.json();
@@ -2798,7 +2799,7 @@ async function openProject(data){
     await enterLabeler(d);
     const hp=$("#homepath"); if(hp) hp.value="";
   }catch(e){ showHome(); homeError("Could not open that dataset"); }
-  finally{ btn.disabled=false; btn.textContent=t; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent=t; } }
 }
 function resetClientState(){
   loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project

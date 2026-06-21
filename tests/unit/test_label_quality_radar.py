@@ -423,14 +423,18 @@ def _make_task_dataset(root, task):
     return root / "data.yaml"
 
 
-def test_obb_and_classify_datasets_are_view_only(tmp_path):
-    # Codex round 3: task-only OBB/classify/depth yamls must be view-only even
-    # without an explicit dense-label dir.
+def test_classify_and_depth_datasets_are_view_only(tmp_path):
+    # task-only classify/depth yamls must be view-only even without an explicit
+    # dense-label dir. OBB is now authorable (4-corner polygons), so it is
+    # intentionally writable and excluded here.
     from libreyolo.label.dataset import DatasetSession
 
-    for task in ("obb", "classify", "depth"):
+    for task in ("classify", "depth"):
         ds = DatasetSession(str(_make_task_dataset(tmp_path / task, task)))
         assert ds.writable is False, f"task={task} should be view-only"
+
+    obb = DatasetSession(str(_make_task_dataset(tmp_path / "obb", "obb")))
+    assert obb.writable is True, "OBB is authorable and should be writable"
 
 
 def test_parse_annotations_skips_fractional_class():

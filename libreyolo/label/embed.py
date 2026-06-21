@@ -38,7 +38,14 @@ class EmbedEngine:
         self._cache: dict = {}  # str(path) -> np.ndarray (1-D, L2-normalised)
 
     def available(self) -> bool:
-        return bool(self.enabled)
+        if not self.enabled:
+            return False
+        from .assist import weight_is_local
+        try:
+            from libreyolo.cli.config import resolve_model_name
+            return weight_is_local(resolve_model_name(self.model_name))
+        except Exception:  # noqa: BLE001 - if weight resolution fails, report unavailable
+            return False
 
     # -- model -------------------------------------------------------------
     def _ensure(self):

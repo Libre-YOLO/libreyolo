@@ -600,8 +600,16 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "data is required"})
                     return
                 try:
+                    cur = getattr(self.state, "_data", None)
                     trashed = trash_project(str(data))
                     projects.forget(str(data))
+                    # If we just deleted the live project, drop the session so the UI
+                    # stops reporting an open dataset whose files have moved.
+                    if cur and self.state.session is not None and \
+                            os.path.normcase(os.path.abspath(str(cur))) == os.path.normcase(os.path.abspath(str(data))):
+                        self.state.session = None
+                        self.state._data = None
+                        self.state.epoch += 1
                     self._send(200, {"ok": True, "trash": trashed})
                 except FileNotFoundError as exc:
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "project folder not found"})
