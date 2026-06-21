@@ -27,6 +27,52 @@ logger = logging.getLogger(__name__)
 _SANITIZED_COST_MARGIN = 1.0
 
 
+def _classic_keypoint_matching_cost(
+    all_pred_keypoints: torch.Tensor,
+    target_keypoints: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pairwise keypoint costs for classic RF-DETR pose heads."""
+    if all_pred_keypoints.shape[-1] < 3:
+        raise ValueError("classic RF-DETR keypoints must have x, y, and visibility")
+    if all_pred_keypoints.shape[-2] != target_keypoints.shape[-2]:
+        raise ValueError(
+            "classic RF-DETR keypoint count does not match target keypoint count: "
+            f"{all_pred_keypoints.shape[-2]} vs {target_keypoints.shape[-2]}"
+        )
+
+    pred = all_pred_keypoints
+    target = target_keypoints.to(device=pred.device, dtype=pred.dtype)
+    target_xy = target[..., :2]
+    target_vis = target[..., 2]
+
+    finite_xy = torch.isfinite(target_xy).all(dim=-1)
+    finite_vis = torch.isfinite(target_vis)
+    visible = finite_xy & finite_vis & (target_vis > 0)
+    visible_f = visible.to(pred.dtype)
+    visible_count = visible_f.sum(dim=-1).clamp(min=1.0)
+
+    l1 = (pred[:, :, None, :, :2] - target_xy[None, None, :, :, :]).abs().sum(dim=-1)
+    cost_l1 = (l1 * visible_f[None, None]).sum(dim=-1) / visible_count[None, None]
+
+    pred_vis_logits = pred[..., 2][:, :, None, :].expand(
+        -1, -1, target.shape[0], -1
+    )
+    valid_vis_f = finite_vis.to(pred.dtype)
+    vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
+    target_findable = (target_vis > 0).to(pred.dtype)
+    cost_findable = (
+        F.binary_cross_entropy_with_logits(
+            pred_vis_logits,
+            target_findable[None, None].expand_as(pred_vis_logits),
+            reduction="none",
+        )
+        * valid_vis_f[None, None]
+    ).sum(dim=-1) / vis_count[None, None]
+    cost_visible = torch.zeros_like(cost_findable)
+    cost_nll = torch.zeros_like(cost_l1)
+    return cost_l1, cost_findable, cost_visible, cost_nll
+
+
 class HungarianMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
     For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -245,24 +291,32 @@ class HungarianMatcher(nn.Module):
 
         # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
         if keypoints_present and tgt_keypoints is not None:
-            target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
-            # Class-index remap at the matcher boundary: lift the LibreYOLO
-            # contiguous pose label (person = 0) to the GroupPose internal schema
-            # class (person = 1 for ``[0, 17]``) so it indexes
-            # ``num_keypoints_per_class`` at the keypoint-bearing slot. Label 0
-            # would otherwise select the empty slot (0 keypoints) and the keypoint
-            # matching cost would collapse to zero. The classification cost above
-            # uses the same schema-space ids (``cls_tgt_ids``); reuse them here.
-            kp_target_classes = map_labels_to_keypoint_schema(
-                tgt_ids, self.num_keypoints_per_class
-            )
-            cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
-                all_pred_keypoints=outputs["pred_keypoints"],
-                target_keypoints=tgt_keypoints,
-                target_classes=kp_target_classes,
-                target_areas=target_areas,
-                num_keypoints_per_class=self.num_keypoints_per_class,
-            )
+            if self.num_keypoints_per_class:
+                target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]
+                # Class-index remap at the matcher boundary: lift the LibreYOLO
+                # contiguous pose label (person = 0) to the GroupPose internal schema
+                # class (person = 1 for ``[0, 17]``) so it indexes
+                # ``num_keypoints_per_class`` at the keypoint-bearing slot. Label 0
+                # would otherwise select the empty slot (0 keypoints) and the keypoint
+                # matching cost would collapse to zero. The classification cost above
+                # uses the same schema-space ids (``cls_tgt_ids``); reuse them here.
+                kp_target_classes = map_labels_to_keypoint_schema(
+                    tgt_ids, self.num_keypoints_per_class
+                )
+                cost_l1, cost_findable, cost_visible, cost_nll = compute_keypoint_matching_cost(
+                    all_pred_keypoints=outputs["pred_keypoints"],
+                    target_keypoints=tgt_keypoints,
+                    target_classes=kp_target_classes,
+                    target_areas=target_areas,
+                    num_keypoints_per_class=self.num_keypoints_per_class,
+                )
+            else:
+                cost_l1, cost_findable, cost_visible, cost_nll = (
+                    _classic_keypoint_matching_cost(
+                        outputs["pred_keypoints"],
+                        tgt_keypoints,
+                    )
+                )
             cost_l1 = cost_l1.flatten(0, 1)
             cost_findable = cost_findable.flatten(0, 1)
             cost_visible = cost_visible.flatten(0, 1)

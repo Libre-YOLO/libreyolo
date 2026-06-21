@@ -566,7 +566,8 @@ class DinoV2(nn.Module):
                 size=(height, width),
                 mode="bicubic",
                 align_corners=False,
-                antialias=patch_pos_embed.device.type != "mps",
+                antialias=patch_pos_embed.device.type != "mps"
+                and not torch.onnx.is_in_onnx_export(),
             )
 
             patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, dim)

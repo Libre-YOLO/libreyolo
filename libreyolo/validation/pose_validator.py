@@ -23,9 +23,12 @@ from tqdm import tqdm
 from libreyolo.data import (
     COCO17_OKS_SIGMAS,
     default_oks_sigmas,
+    get_coco_annotation_file,
+    get_coco_image_dir,
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from libreyolo.data.pose_dataset import parse_yolo_pose_label_line
 
@@ -168,7 +171,44 @@ class PoseValidator(BaseValidator):
                 "PoseValidator requires either YOLO-pose data.yaml via data=... "
                 "or keypoints_json + images_dir."
             )
+        data_cfg = load_data_config(
+            self.config.data,
+            autodownload=True,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        annotation_file = get_coco_annotation_file(data_cfg, self.config.split)
+        if annotation_file:
+            data_root = Path(data_cfg["root"])
+            kpts_json = Path(annotation_file)
+            if not kpts_json.is_absolute():
+                kpts_json = data_root / kpts_json
+            default_image_dir = resolve_default_coco_image_dir(
+                data_root,
+                self.config.split,
+                kpts_json.name,
+            )
+            images_dir = Path(
+                get_coco_image_dir(data_cfg, self.config.split, default_image_dir)
+            )
+            if not images_dir.is_absolute():
+                images_dir = data_root / images_dir
+            if kpts_json.exists() and self._is_coco_keypoints_annotation_file(kpts_json):
+                if not images_dir.is_dir():
+                    raise FileNotFoundError(f"Images dir not found: {images_dir}")
+                self._kpts_json = kpts_json
+                self._images_dir = images_dir
+                return
         self._kpts_json, self._images_dir = self._build_coco_gt_from_yolo()
+
+    @staticmethod
+    def _is_coco_keypoints_annotation_file(path: Path) -> bool:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        categories = data.get("categories") or []
+        if any(cat.get("keypoints") for cat in categories):
+            return True
+        annotations = data.get("annotations") or []
+        return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
 
     def _build_coco_gt_from_yolo(self) -> tuple[Path, Path | None]:
         from PIL import Image
@@ -259,6 +299,12 @@ class PoseValidator(BaseValidator):
                 )
                 ann_id += 1
 
+        if images and not annotations:
+            raise FileNotFoundError(
+                "No YOLO pose labels were found for the validation split. "
+                "Provide pose label files or a COCO keypoints annotation JSON."
+            )
+
         coco = {
             "info": {},
             "licenses": [],
@@ -286,6 +332,7 @@ class PoseValidator(BaseValidator):
         self._coco_gt = COCO(str(self._kpts_json))
         cats = self._coco_gt.loadCats(self._coco_gt.getCatIds())
         self._category_id = self._infer_category_id()
+        self._category_ids = [int(cat["id"]) for cat in sorted(cats, key=lambda c: int(c["id"]))]
         self._image_records = self._coco_gt.loadImgs(self._coco_gt.getImgIds())
         if self._num_keypoints is None:
             keypoints = cats[0].get("keypoints", []) if cats else []
@@ -319,6 +366,14 @@ class PoseValidator(BaseValidator):
             if cat.get("name") == "person":
                 return int(cat["id"])
         return int(cats[0]["id"])
+
+    def _prediction_category_id(self, cls_id: int) -> int:
+        category_ids = getattr(self, "_category_ids", [])
+        if 0 <= cls_id < len(category_ids):
+            return int(category_ids[cls_id])
+        if cls_id in category_ids:
+            return int(cls_id)
+        return int(self._category_id)
 
     # =========================================================================
     # Inference loop
@@ -413,7 +468,7 @@ class PoseValidator(BaseValidator):
             self._predictions.append(
                 {
                     "image_id": image_id,
-                    "category_id": int(cls_id),
+                    "category_id": self._prediction_category_id(int(cls_id)),
                     "keypoints": flat,
                     "score": float(score),
                 }
@@ -436,6 +491,13 @@ class PoseValidator(BaseValidator):
                 "metrics/keypoints_mAP50-95": 0.0,
                 "metrics/keypoints_mAP50": 0.0,
                 "metrics/keypoints_mAP75": 0.0,
+                "metrics/keypoints_mAP_M": 0.0,
+                "metrics/keypoints_mAP_L": 0.0,
+                "metrics/keypoints_AR50-95": 0.0,
+                "metrics/keypoints_AR50": 0.0,
+                "metrics/keypoints_AR75": 0.0,
+                "metrics/keypoints_AR_M": 0.0,
+                "metrics/keypoints_AR_L": 0.0,
             }
 
         coco_dt = self._coco_gt.loadRes(str(pred_path))

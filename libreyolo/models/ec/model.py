@@ -38,6 +38,7 @@ class LibreEC(BaseModel):
         "segment": SEG_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = ECValPreprocessor
 
     _GH_RELEASE_BASE = (
@@ -159,6 +160,8 @@ class LibreEC(BaseModel):
             # Pose head outputs 2 class logits (person, bg); user-facing single
             # class is "person" with index 0.
             nb_classes = 1
+        self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         super().__init__(
             model_path=model_path,
             size=size,
@@ -242,7 +245,7 @@ class LibreEC(BaseModel):
                 conf_thres=conf_thres,
                 iou_thres=iou_thres,
                 original_size=original_size,
-                max_det=min(max_det, 60),  # ECPose ships with num_queries=60
+                max_det=max_det,
                 num_keypoints=self.POSE_NUM_KEYPOINTS,
             )
         if self.task == "segment":

@@ -59,12 +59,17 @@ class TestPoseCheckpointDiscrimination:
 
 class TestPoseFamilyClassWiring:
     def test_pose_init_sets_task_and_metadata(self):
+        from libreyolo.export.exporter import OnnxExporter
+
         m = LibreEC(model_path=None, size="s", task="pose")
         assert m.task == "pose"
         assert m.family == "ec"
         assert m.nb_classes == 1
         assert m.names == {0: "person"}
         assert isinstance(m.model, LibreECPoseModel)
+        metadata = OnnxExporter(m)._build_onnx_metadata(dynamic=False, half=False)
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "2"
 
     def test_pose_checkpoint_reload_preserves_custom_class_name(self, tmp_path):
         src = LibreEC(model_path=None, size="s", task="pose", device="cpu")
@@ -224,6 +229,63 @@ class TestPoseForwardAndPostprocess:
         assert det["keypoints"].shape[-1] == 3
         assert det["keypoints"].shape[-2] == 17
         assert det["keypoints"].shape[0] == det["boxes"].shape[0]
+
+    def test_postprocess_selects_unique_queries_before_collapsing_classes(self):
+        raw = {
+            "pred_logits": torch.tensor([[[10.0, 9.0], [8.0, -10.0]]]),
+            "pred_keypoints": torch.tensor(
+                [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]]
+            ),
+        }
+
+        det = postprocess_pose(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=2,
+            num_keypoints=2,
+        )
+
+        assert det["boxes"].shape == (2, 4)
+        np.testing.assert_allclose(det["keypoints"][:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
+
+    def test_postprocess_scores_person_logit_only(self):
+        raw = {
+            "pred_logits": torch.tensor([[[0.0, 10.0], [9.0, -10.0]]]),
+            "pred_keypoints": torch.tensor(
+                [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]]
+            ),
+        }
+
+        det = postprocess_pose(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=1,
+            num_keypoints=2,
+        )
+
+        assert det["boxes"].shape == (1, 4)
+        np.testing.assert_allclose(det["keypoints"][0, :, :2], [[70.0, 70.0], [80.0, 80.0]])
+
+    def test_wrapper_postprocess_does_not_hard_cap_queries_at_sixty(self, pose_model):
+        raw = {
+            "pred_logits": torch.linspace(10.0, 1.0, 70).reshape(1, 70, 1),
+            "pred_keypoints": torch.zeros(1, 70, 34),
+        }
+
+        det = pose_model._postprocess(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=70,
+        )
+
+        assert det["boxes"].shape == (70, 4)
+        assert det["keypoints"].shape == (70, 17, 3)
 
     def test_full_predict_pipeline(self, pose_model):
         # Exercise _wrap_results so the keypoint plumbing stays working.

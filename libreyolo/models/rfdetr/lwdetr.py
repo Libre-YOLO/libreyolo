@@ -230,6 +230,8 @@ class LWDETR(nn.Module):
         lite_refpoint_refine=False,
         bbox_reparam=False,
         obb=False,
+        keypoint_head=False,
+        num_keypoints=17,
         # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
         # All keypoint flags default to off so the detection/seg/obb construction
         # path remains byte-identical to the original.
@@ -305,6 +307,12 @@ class LWDETR(nn.Module):
             nn.init.constant_(self.keypoint_embed.layers[-1].bias.data, 0)
         else:
             self.keypoint_embed = None
+        self.keypoint_head = (
+            MLP(hidden_dim, hidden_dim, int(num_keypoints) * 3, 3)
+            if keypoint_head and not self.use_grouppose_keypoints
+            else None
+        )
+        self.num_keypoints = int(num_keypoints)
 
         self.register_buffer("_kp_active_mask", self._create_kp_active_mask(self.num_keypoints_per_class))
 
@@ -316,6 +324,9 @@ class LWDETR(nn.Module):
         # init bbox_mebed
         nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        if self.keypoint_head is not None:
+            nn.init.constant_(self.keypoint_head.layers[-1].weight.data, 0)
+            nn.init.constant_(self.keypoint_head.layers[-1].bias.data, 0)
         if self.angle_embed is not None:
             nn.init.constant_(self.angle_embed.layers[-1].weight.data, 0)
             nn.init.constant_(self.angle_embed.layers[-1].bias.data, 0)
@@ -433,7 +444,28 @@ class LWDETR(nn.Module):
 
         Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
         """
-        if not self.use_grouppose_keypoints or not num_keypoints_per_class:
+        if not num_keypoints_per_class:
+            return
+
+        if not self.use_grouppose_keypoints:
+            if self.keypoint_head is None:
+                return
+            if isinstance(num_keypoints_per_class, int):
+                num_keypoints = int(num_keypoints_per_class)
+            else:
+                active = [int(count) for count in num_keypoints_per_class if int(count) > 0]
+                if not active:
+                    return
+                num_keypoints = active[0]
+            hidden_dim = self.transformer.d_model
+            device = self.keypoint_head.layers[-1].weight.device
+            dtype = self.keypoint_head.layers[-1].weight.dtype
+            self.num_keypoints = num_keypoints
+            self.keypoint_head = MLP(
+                hidden_dim, hidden_dim, self.num_keypoints * 3, 3
+            ).to(device=device, dtype=dtype)
+            nn.init.constant_(self.keypoint_head.layers[-1].weight.data, 0)
+            nn.init.constant_(self.keypoint_head.layers[-1].bias.data, 0)
             return
 
         if isinstance(num_keypoints_per_class, int):
@@ -487,6 +519,19 @@ class LWDETR(nn.Module):
         if isinstance(enc_keypoint_embed, nn.ModuleList):
             for keypoint_embed in enc_keypoint_embed:
                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
+
+    def _decode_keypoints(self, hs: torch.Tensor, reference: torch.Tensor) -> torch.Tensor:
+        """Decode classic keypoint_head outputs to normalized image coordinates."""
+        if self.keypoint_head is None:
+            raise RuntimeError("Cannot decode RF-DETR keypoints without keypoint_head.")
+        raw = self.keypoint_head(hs).view(*hs.shape[:-1], self.num_keypoints, 3)
+        if self.bbox_reparam:
+            xy = (raw[..., :2].sigmoid() - 0.5) * reference[
+                ..., None, 2:
+            ] + reference[..., None, :2]
+        else:
+            xy = (raw[..., :2] + reference[..., None, :2]).sigmoid()
+        return torch.cat((xy, raw[..., 2:3]), dim=-1)
 
     def export(self):
         self._export = True
@@ -717,6 +762,8 @@ class LWDETR(nn.Module):
                     )
                 outputs_keypoints = torch.stack(layer_outputs_keypoints, dim=0)
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
+            elif self.keypoint_head is not None:
+                outputs_keypoints = self._decode_keypoints(hs, ref_unsigmoid)
 
             if self.segmentation_head is not None:
                 outputs_masks = seg_head_fwd(features[0].tensors, hs, samples.tensors.shape[-2:])
@@ -756,6 +803,8 @@ class LWDETR(nn.Module):
                     enc_kp_predictions.shape[1],
                 )
                 cls_enc = cls_enc + self._aggregate_keypoint_class_logits(keypoints_enc)
+            elif self.keypoint_head is not None:
+                keypoints_enc = self._decode_keypoints(hs_enc.unsqueeze(0), ref_enc.unsqueeze(0))[0]
 
             if self.segmentation_head is not None:
                 masks_enc = seg_head_fwd(
@@ -851,6 +900,13 @@ class LWDETR(nn.Module):
                     outputs_keypoints.shape[1],
                 )
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
+            elif self.keypoint_head is not None:
+                decoded_keypoints = self._decode_keypoints(hs, ref_unsigmoid)
+                outputs_keypoints = (
+                    decoded_keypoints[-1]
+                    if decoded_keypoints.dim() == 5
+                    else decoded_keypoints
+                )
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(
                     srcs[0],
@@ -876,6 +932,8 @@ class LWDETR(nn.Module):
                     enc_kp_predictions.shape[1],
                 )
                 outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)
+            elif self.keypoint_head is not None:
+                outputs_keypoints = self._decode_keypoints(hs_enc.unsqueeze(0), ref_enc.unsqueeze(0))[0]
             if self.segmentation_head is not None:
                 outputs_masks = self.segmentation_head(
                     srcs[0],
@@ -1052,6 +1110,8 @@ def build_model(args: Any):
         lite_refpoint_refine=args.lite_refpoint_refine,
         bbox_reparam=args.bbox_reparam,
         obb=getattr(args, "obb", False),
+        keypoint_head=getattr(args, "keypoint_head", False),
+        num_keypoints=getattr(args, "num_keypoints", 17),
         # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
         # Detection/seg/obb builder namespaces omit these; default to the
         # non-keypoint path so existing builds are unchanged.
@@ -1072,14 +1132,16 @@ def build_criterion_and_postprocessors(args: Any):
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
-    # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
-    # Gate on the new GroupPose flag (the legacy ``keypoint_head`` arg was removed).
-    has_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    has_keypoints = bool(
+        getattr(args, "use_grouppose_keypoints", False)
+        or getattr(args, "keypoint_head", False)
+    )
     if has_keypoints:
         weight_dict["loss_keypoints_l1"] = args.keypoint_l1_loss_coef
         weight_dict["loss_keypoints_findable"] = args.keypoint_findable_loss_coef
         weight_dict["loss_keypoints_visible"] = args.keypoint_visible_loss_coef
-        weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
+        if getattr(args, "use_grouppose_keypoints", False):
+            weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -1111,7 +1173,7 @@ def build_criterion_and_postprocessors(args: Any):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
-            use_grouppose_keypoints=has_keypoints,
+            use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
@@ -1126,7 +1188,7 @@ def build_criterion_and_postprocessors(args: Any):
             use_varifocal_loss=args.use_varifocal_loss,
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
-            use_grouppose_keypoints=has_keypoints,
+            use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     criterion.to(device)

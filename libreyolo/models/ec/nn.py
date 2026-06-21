@@ -280,11 +280,19 @@ class LibreECPoseModel(nn.Module):
 class ECExportWrapper(nn.Module):
     """Tracing-friendly wrapper for ONNX/TorchScript export."""
 
-    def __init__(self, model: LibreECModel):
+    def __init__(self, model: LibreECModel, task: str = "detect"):
         super().__init__()
         self.model = model
+        self.task = task
         self.model.deploy()
 
     def forward(self, x):
         out = self.model(x)
+        if self.task == "segment":
+            return out["pred_logits"], out["pred_boxes"], out["pred_masks"]
+        if self.task == "pose":
+            keypoints = out["pred_keypoints"]
+            if keypoints.dim() == 4:
+                keypoints = keypoints.flatten(-2)
+            return out["pred_logits"], keypoints
         return out["pred_logits"], out["pred_boxes"]

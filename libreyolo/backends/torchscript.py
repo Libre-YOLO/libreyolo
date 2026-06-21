@@ -12,7 +12,7 @@ import torch
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz
+from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ class TorchScriptBackend(BaseBackend):
         )
         if metadata_imgsz is not None:
             input_size = metadata_imgsz
+        pose_metadata = _read_pose_metadata(metadata)
 
         if nb_classes is not None:
             resolved_nb_classes = nb_classes
@@ -107,6 +108,7 @@ class TorchScriptBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:
