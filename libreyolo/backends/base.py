@@ -1119,7 +1119,13 @@ class BaseBackend(ABC):
         return boxes, max_scores, class_ids
 
     def _parse_yolonas(
-        self, all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=1.0
+        self,
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        ratio: Optional[float] = None,
     ):
         """Parse YOLO-NAS output: [boxes(B,N,4), scores(B,N,nc)] in input pixels."""
         first = all_outputs[0][0]
@@ -1154,7 +1160,7 @@ class BaseBackend(ABC):
             class_ids = class_ids[keep]
 
         input_h, input_w = _imgsz_hw(effective_imgsz)
-        if ratio <= 0 or ratio == 1.0:
+        if ratio is None or ratio <= 0:
             resize_size = min(YOLO_NAS_RESIZE_SIZE, input_h, input_w)
             ratio = min(resize_size / orig_h, resize_size / orig_w)
         new_w = round(orig_w * ratio)
@@ -1178,7 +1184,7 @@ class BaseBackend(ABC):
         orig_w,
         orig_h,
         conf,
-        ratio=1.0,
+        ratio: Optional[float] = None,
         max_det=300,
     ):
         """Parse YOLO-NAS pose: boxes, scores, keypoint xy, keypoint confidence."""
@@ -1209,7 +1215,7 @@ class BaseBackend(ABC):
             class_ids = class_ids[keep]
 
         scale = ratio
-        if scale <= 0 or scale == 1.0:
+        if scale is None or scale <= 0:
             scale = min(
                 YOLO_NAS_POSE_RESIZE_SIZE / orig_h,
                 YOLO_NAS_POSE_RESIZE_SIZE / orig_w,

@@ -705,6 +705,7 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
         100,
         (200, 100),
         conf=0.5,
+        ratio=None,
     )
 
     assert masks is None
@@ -734,6 +735,7 @@ def test_yolonas_pose_backend_does_not_clip_keypoints():
         100,
         (200, 100),
         conf=0.5,
+        ratio=None,
     )
 
     np.testing.assert_allclose(
@@ -762,6 +764,7 @@ def test_yolonas_pose_backend_preselects_requested_max_det():
         100,
         (200, 100),
         conf=0.0,
+        ratio=None,
         max_det=count,
     )
 
