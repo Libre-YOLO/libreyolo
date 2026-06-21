@@ -183,6 +183,41 @@ class MetricComparison:
     reason: str = ""
 
 
+def _checkpoint_unavailable_reason(exc: BaseException) -> str | None:
+    """Return a reportable reason when a parity case lacks usable weights."""
+    messages: list[str] = []
+    current: BaseException | None = exc
+    while current is not None:
+        message = str(current)
+        if message:
+            messages.append(message)
+        current = current.__cause__ or current.__context__
+
+    text = "\n".join(messages).lower()
+    if isinstance(exc, FileNotFoundError):
+        return str(exc)
+    if "model weights file not found" in text:
+        return str(exc)
+    if "pretrained weights are not available" in text:
+        return str(exc)
+    if "could not determine download url" in text:
+        return str(exc)
+    if "failed to download weights" in text and any(
+        marker in text
+        for marker in (
+            "401 client error",
+            "403 client error",
+            "404 client error",
+            "410 client error",
+            "no such bucket",
+            "repo not found",
+            "repository not found",
+        )
+    ):
+        return str(exc)
+    return None
+
+
 def _weights(prefix: str, size: str, task: str) -> str:
     return f"{prefix}{size}{TASK_SUFFIX[task]}.pt"
 
@@ -742,14 +777,25 @@ def run_case(case: ParityCase, args: argparse.Namespace, output_dir: Path) -> di
             }
         )
     except Exception as exc:
-        record.update(
-            {
-                "status": "error",
-                "error": str(exc),
-                "traceback": traceback.format_exc(),
-            }
-        )
-        print(f"[{case.id}] ERROR: {exc}", file=sys.stderr)
+        unavailable_reason = _checkpoint_unavailable_reason(exc)
+        if unavailable_reason is not None:
+            record.update(
+                {
+                    "status": "unavailable",
+                    "error": str(exc),
+                    "unavailable_reason": unavailable_reason,
+                }
+            )
+            print(f"[{case.id}] UNAVAILABLE: {exc}", file=sys.stderr)
+        else:
+            record.update(
+                {
+                    "status": "error",
+                    "error": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+            )
+            print(f"[{case.id}] ERROR: {exc}", file=sys.stderr)
     finally:
         record["duration_seconds"] = round(time.perf_counter() - started, 3)
         (case_dir / "parity.json").write_text(
@@ -803,6 +849,9 @@ def write_summary(
             "passed": sum(1 for r in records if r.get("status") == "passed"),
             "failed": sum(1 for r in records if r.get("status") == "failed"),
             "error": sum(1 for r in records if r.get("status") == "error"),
+            "unavailable": sum(
+                1 for r in records if r.get("status") == "unavailable"
+            ),
         },
         "records": records,
     }
@@ -878,6 +927,8 @@ def write_summary(
         f"validation `{(run_config or {}).get('val_device', '')}`",
         f"Tolerances: abs `{(run_config or {}).get('abs_tolerance', '')}`, "
         f"rel `{(run_config or {}).get('rel_tolerance', '')}`",
+        "Counts: passed `{passed}`, failed `{failed}`, error `{error}`, "
+        "unavailable `{unavailable}`".format(**summary["counts"]),
         "",
         "| Case | Task | ONNX claim | Status | Worst metric delta | Notes |",
         "|---|---:|---:|---:|---:|---|",
@@ -891,7 +942,14 @@ def write_summary(
             if numeric:
                 item = max(numeric, key=lambda c: float(c["abs_delta"]))
                 worst = f"{item['key']} = {float(item['abs_delta']):.6g}"
-        notes = case.get("notes") or record.get("error", "")
+        if record.get("status") == "unavailable":
+            notes = (
+                record.get("unavailable_reason")
+                or record.get("error", "")
+                or case.get("notes", "")
+            )
+        else:
+            notes = case.get("notes") or record.get("error", "")
         md_lines.append(
             "| {case} | {task} | {claim} | {status} | {worst} | {notes} |".format(
                 case=case["id"],
@@ -941,6 +999,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--save-plots", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--allow-download-scripts", action="store_true")
+    parser.add_argument(
+        "--fail-on-unavailable",
+        action="store_true",
+        help="Return a nonzero exit code when selected checkpoint weights are unavailable.",
+    )
     parser.add_argument("--abs-tolerance", type=float, default=1e-4)
     parser.add_argument("--rel-tolerance", type=float, default=1e-3)
     return parser.parse_args(argv)
@@ -992,7 +1055,12 @@ def main(argv: list[str] | None = None) -> int:
 
     records = [run_case(case, args, output_dir) for case in cases]
     write_summary(records, output_dir, run_config=_runtime_report_config(args))
-    failing = [r for r in records if r.get("status") != "passed"]
+    failing = [
+        r
+        for r in records
+        if r.get("status") in {"failed", "error"}
+        or (args.fail_on_unavailable and r.get("status") == "unavailable")
+    ]
     print(f"Wrote parity report to {output_dir}")
     return 1 if failing else 0
 

@@ -12,11 +12,13 @@ from vision_analysis_benchmark.onnx_parity import (
     MINI500_ANNOTATION,
     MINI500_IMAGE_DIR,
     MINI500_POSE_ANNOTATION,
+    _checkpoint_unavailable_reason,
     compare_metrics,
     extract_metrics,
     filter_cases,
     metric_keys_for_task,
     prepare_pose_data,
+    write_summary,
     write_mini500_yaml,
     write_mini500_pose_yaml,
 )
@@ -124,6 +126,51 @@ def test_compare_metrics_fails_missing_and_drifted_values():
     by_key = {item.key: item for item in comparisons}
     assert not by_key["metrics/keypoints_mAP50-95"].passed
     assert by_key["metrics/keypoints_mAP75"].reason == "missing metric"
+
+
+def test_checkpoint_unavailable_reason_is_weight_specific():
+    assert _checkpoint_unavailable_reason(
+        FileNotFoundError("Model weights file not found: weights/model.pt")
+    )
+    assert _checkpoint_unavailable_reason(
+        RuntimeError("Failed to download weights from https://example.test: 404 Client Error")
+    )
+    assert _checkpoint_unavailable_reason(
+        ValueError("Could not determine download URL for 'missing.pt'.")
+    )
+    assert _checkpoint_unavailable_reason(RuntimeError("ONNX export failed")) is None
+
+
+def test_write_summary_counts_unavailable_cases(tmp_path):
+    records = [
+        {
+            "case": {
+                "id": "missing-model",
+                "family": "family",
+                "size": "s",
+                "task": "detect",
+                "onnx_claim": "experimental",
+                "notes": "",
+            },
+            "status": "unavailable",
+            "error": "Model weights file not found: weights/missing.pt",
+            "unavailable_reason": "Model weights file not found: weights/missing.pt",
+        }
+    ]
+
+    write_summary(records, tmp_path)
+    summary = json.loads((tmp_path / "summary.json").read_text())
+    markdown = (tmp_path / "summary.md").read_text()
+
+    assert summary["counts"] == {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "error": 0,
+        "unavailable": 1,
+    }
+    assert "unavailable `1`" in markdown
+    assert "Model weights file not found: weights/missing.pt" in markdown
 
 
 def test_filter_cases_by_family_task_and_claim():
