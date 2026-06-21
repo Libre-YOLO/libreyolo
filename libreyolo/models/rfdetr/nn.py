@@ -1016,6 +1016,9 @@ class LibreRFDETRModel(nn.Module):
             )
 
         checkpoint_args = state_dict.get("args") if isinstance(state_dict, dict) else None
+        checkpoint_num_keypoints = (
+            state_dict.get("num_keypoints") if isinstance(state_dict, dict) else None
+        )
         state_dict = _unwrap_state_dict(state_dict)
 
         class_bias = state_dict.get("class_embed.bias")
@@ -1038,6 +1041,20 @@ class LibreRFDETRModel(nn.Module):
                 self.model.reinitialize_keypoint_head(ckpt_schema)
                 self.num_keypoints_per_class = ckpt_schema
                 self.args.num_keypoints_per_class = ckpt_schema
+        elif self.pose:
+            ckpt_num_keypoints = checkpoint_num_keypoints
+            if ckpt_num_keypoints is None:
+                final_weight = state_dict.get("keypoint_head.layers.2.weight")
+                if final_weight is not None and final_weight.shape[0] % 3 == 0:
+                    ckpt_num_keypoints = int(final_weight.shape[0] // 3)
+            if (
+                ckpt_num_keypoints is not None
+                and int(ckpt_num_keypoints) != self.model.num_keypoints
+            ):
+                num_keypoints = int(ckpt_num_keypoints)
+                self.model.reinitialize_keypoint_head(num_keypoints)
+                self.num_keypoints = num_keypoints
+                self.args.num_keypoints = num_keypoints
 
         for key in ("refpoint_embed.weight", "query_feat.weight"):
             if key in state_dict:

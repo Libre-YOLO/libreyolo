@@ -8,6 +8,7 @@ import yaml
 
 from vision_analysis_benchmark.onnx_parity import (
     COCO80_NAMES,
+    CheckpointUnavailableError,
     DEFAULT_CASES,
     MINI500_ANNOTATION,
     MINI500_IMAGE_DIR,
@@ -15,6 +16,8 @@ from vision_analysis_benchmark.onnx_parity import (
     ParityCase,
     _checkpoint_unavailable_reason,
     _ensure_case_weights_available,
+    _load_onnx_for_parity,
+    _preflight_case_weights,
     compare_metrics,
     extract_metrics,
     filter_cases,
@@ -140,6 +143,9 @@ def test_checkpoint_unavailable_reason_is_weight_specific():
     assert _checkpoint_unavailable_reason(
         ValueError("Could not determine download URL for 'missing.pt'.")
     )
+    assert _checkpoint_unavailable_reason(
+        FileNotFoundError("annotations file not found")
+    ) is None
     assert _checkpoint_unavailable_reason(RuntimeError("ONNX export failed")) is None
 
 
@@ -180,6 +186,104 @@ def test_ensure_case_weights_available_skips_existing_file(tmp_path):
         resolve_weights_path=lambda _name: str(weight_path),
         downloader=lambda _path, _size: pytest.fail("download should not run"),
     )
+
+
+def test_preflight_case_weights_raises_unavailable_for_weight_download_failure(monkeypatch):
+    import vision_analysis_benchmark.onnx_parity as parity
+
+    case = ParityCase(
+        id="missing",
+        family="family",
+        size="s",
+        task="detect",
+        weights="missing.pt",
+        onnx_claim="experimental",
+    )
+    monkeypatch.setattr(
+        parity,
+        "_ensure_case_weights_available",
+        lambda _case: (_ for _ in ()).throw(
+            RuntimeError(
+                "Failed to download weights from https://example.test: "
+                "404 Client Error"
+            )
+        ),
+    )
+
+    with pytest.raises(CheckpointUnavailableError, match="Failed to download weights"):
+        _preflight_case_weights(case)
+
+
+def test_preflight_case_weights_does_not_hide_unrelated_file_errors(monkeypatch):
+    import vision_analysis_benchmark.onnx_parity as parity
+
+    case = ParityCase(
+        id="broken-data",
+        family="family",
+        size="s",
+        task="detect",
+        weights="exists.pt",
+        onnx_claim="experimental",
+    )
+    monkeypatch.setattr(
+        parity,
+        "_ensure_case_weights_available",
+        lambda _case: (_ for _ in ()).throw(
+            FileNotFoundError("annotations file not found")
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError, match="annotations file not found"):
+        _preflight_case_weights(case)
+
+
+def test_load_onnx_for_parity_uses_exported_metadata_task(tmp_path):
+    class FakeModel:
+        task = "segment"
+
+    seen = {}
+
+    def fake_loader(path, **kwargs):
+        seen.update({"path": path, "kwargs": kwargs})
+        return FakeModel()
+
+    args = type("Args", (), {"onnx_device": "cuda"})()
+    case = ParityCase(
+        id="seg",
+        family="family",
+        size="s",
+        task="segment",
+        weights="seg.pt",
+        onnx_claim="complete",
+    )
+
+    model = _load_onnx_for_parity(tmp_path / "seg.onnx", case, args, loader=fake_loader)
+
+    assert model.task == "segment"
+    assert seen == {"path": str(tmp_path / "seg.onnx"), "kwargs": {"device": "cuda"}}
+
+
+def test_load_onnx_for_parity_rejects_wrong_exported_task(tmp_path):
+    class FakeModel:
+        task = "detect"
+
+    args = type("Args", (), {"onnx_device": "cpu"})()
+    case = ParityCase(
+        id="seg",
+        family="family",
+        size="s",
+        task="segment",
+        weights="seg.pt",
+        onnx_claim="complete",
+    )
+
+    with pytest.raises(RuntimeError, match="task metadata resolved to 'detect'"):
+        _load_onnx_for_parity(
+            tmp_path / "seg.onnx",
+            case,
+            args,
+            loader=lambda *_args, **_kwargs: FakeModel(),
+        )
 
 
 def test_write_summary_counts_unavailable_cases(tmp_path):

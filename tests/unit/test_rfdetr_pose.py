@@ -21,6 +21,8 @@ GroupPose module:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -109,8 +111,8 @@ def test_rfdetr_pose_size_table_includes_public_checkpoints():
     from libreyolo.models.rfdetr.nn import RFDETR_POSE_CONFIGS
 
     assert LibreRFDETR.POSE_INPUT_SIZES == {
-        "n": 512,
-        "s": 768,
+        "n": 384,
+        "s": 512,
         "m": 576,
         "l": 704,
         "x": 576,
@@ -227,6 +229,48 @@ def test_classic_pose_export_preserves_keypoint_batch_axis():
     assert tuple(boxes.shape) == (1, q, 4)
     assert tuple(logits.shape) == (1, q, 1)
     assert tuple(keypoints.shape) == (1, q, 5, 3)
+
+
+def test_classic_pose_training_model_detected():
+    from libreyolo.models.rfdetr.trainer import _is_classic_pose_training_model
+
+    classic = SimpleNamespace(
+        model=SimpleNamespace(keypoint_head=object(), use_grouppose_keypoints=False)
+    )
+    grouppose = SimpleNamespace(
+        model=SimpleNamespace(keypoint_head=None, use_grouppose_keypoints=True)
+    )
+
+    assert _is_classic_pose_training_model(classic) is True
+    assert _is_classic_pose_training_model(grouppose) is False
+
+
+def test_classic_pose_load_state_dict_reinitializes_keypoint_count(monkeypatch):
+    import libreyolo.models.rfdetr.nn as rfdetr_nn
+
+    cfg = _small_pose_config()
+    monkeypatch.setitem(rfdetr_nn.RFDETR_POSE_CONFIGS, "tiny", cfg)
+    source = rfdetr_nn.LibreRFDETRModel(
+        config="tiny",
+        nb_classes=1,
+        pose=True,
+        device="cpu",
+        num_keypoints=5,
+    )
+    target = rfdetr_nn.LibreRFDETRModel(
+        config="tiny",
+        nb_classes=1,
+        pose=True,
+        device="cpu",
+        num_keypoints=17,
+    )
+
+    target.load_state_dict(source.state_dict(), strict=False)
+
+    assert target.num_keypoints == 5
+    assert target.model.num_keypoints == 5
+    assert target.args.num_keypoints == 5
+    assert target.model.keypoint_head.layers[-1].out_features == 15
 
 
 # ---------------------------------------------------------------------------

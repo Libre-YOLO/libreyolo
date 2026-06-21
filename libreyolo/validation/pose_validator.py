@@ -311,6 +311,7 @@ class PoseValidator(BaseValidator):
         self._coco_gt = COCO(str(self._kpts_json))
         cats = self._coco_gt.loadCats(self._coco_gt.getCatIds())
         self._category_id = self._infer_category_id()
+        self._category_ids = [int(cat["id"]) for cat in sorted(cats, key=lambda c: int(c["id"]))]
         self._image_records = self._coco_gt.loadImgs(self._coco_gt.getImgIds())
         if self._num_keypoints is None:
             keypoints = cats[0].get("keypoints", []) if cats else []
@@ -344,6 +345,14 @@ class PoseValidator(BaseValidator):
             if cat.get("name") == "person":
                 return int(cat["id"])
         return int(cats[0]["id"])
+
+    def _prediction_category_id(self, cls_id: int) -> int:
+        category_ids = getattr(self, "_category_ids", [])
+        if 0 <= cls_id < len(category_ids):
+            return int(category_ids[cls_id])
+        if cls_id in category_ids:
+            return int(cls_id)
+        return int(self._category_id)
 
     # =========================================================================
     # Inference loop
@@ -438,7 +447,7 @@ class PoseValidator(BaseValidator):
             self._predictions.append(
                 {
                     "image_id": image_id,
-                    "category_id": int(cls_id),
+                    "category_id": self._prediction_category_id(int(cls_id)),
                     "keypoints": flat,
                     "score": float(score),
                 }

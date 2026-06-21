@@ -183,6 +183,10 @@ class MetricComparison:
     reason: str = ""
 
 
+class CheckpointUnavailableError(RuntimeError):
+    """Raised when a selected parity checkpoint cannot be obtained."""
+
+
 def _checkpoint_unavailable_reason(exc: BaseException) -> str | None:
     """Return a reportable reason when a parity case lacks usable weights."""
     messages: list[str] = []
@@ -194,8 +198,6 @@ def _checkpoint_unavailable_reason(exc: BaseException) -> str | None:
         current = current.__cause__ or current.__context__
 
     text = "\n".join(messages).lower()
-    if isinstance(exc, FileNotFoundError):
-        return str(exc)
     if "model weights file not found" in text:
         return str(exc)
     if "pretrained weights are not available" in text:
@@ -239,6 +241,37 @@ def _ensure_case_weights_available(
     if weights_path.exists():
         return
     downloader(str(weights_path), case.size)
+
+
+def _preflight_case_weights(case: ParityCase) -> None:
+    try:
+        _ensure_case_weights_available(case)
+    except Exception as exc:
+        reason = _checkpoint_unavailable_reason(exc)
+        if reason is not None:
+            raise CheckpointUnavailableError(reason) from exc
+        raise
+
+
+def _load_onnx_for_parity(
+    onnx_path: Path,
+    case: ParityCase,
+    args: argparse.Namespace,
+    *,
+    loader=None,
+):
+    """Load exported ONNX through its own metadata and verify task resolution."""
+    if loader is None:
+        from libreyolo import LibreYOLO as loader
+
+    model = loader(str(onnx_path), device=args.onnx_device)
+    resolved_task = getattr(model, "task", None)
+    if resolved_task != case.task:
+        raise RuntimeError(
+            f"ONNX artifact task metadata resolved to {resolved_task!r}, "
+            f"expected {case.task!r} for parity case {case.id!r}."
+        )
+    return model
 
 
 def _weights(prefix: str, size: str, task: str) -> str:
@@ -735,7 +768,7 @@ def run_case(case: ParityCase, args: argparse.Namespace, output_dir: Path) -> di
     }
     try:
         print(f"[{case.id}] loading PyTorch weights {case.weights}")
-        _ensure_case_weights_available(case)
+        _preflight_case_weights(case)
         pt_model = LibreYOLO(
             case.weights,
             size=case.size,
@@ -771,7 +804,7 @@ def run_case(case: ParityCase, args: argparse.Namespace, output_dir: Path) -> di
         pt_metrics = extract_metrics(pt_metrics_raw, case.task)
 
         print(f"[{case.id}] validating ONNX")
-        onnx_model = LibreYOLO(str(onnx_path), task=case.task, device=args.onnx_device)
+        onnx_model = _load_onnx_for_parity(onnx_path, case, args)
         onnx_metrics_raw = onnx_model.val(
             **_val_kwargs(
                 args,
@@ -800,26 +833,24 @@ def run_case(case: ParityCase, args: argparse.Namespace, output_dir: Path) -> di
                 "comparisons": [asdict(item) for item in comparisons],
             }
         )
+    except CheckpointUnavailableError as exc:
+        record.update(
+            {
+                "status": "unavailable",
+                "error": str(exc),
+                "unavailable_reason": str(exc),
+            }
+        )
+        print(f"[{case.id}] UNAVAILABLE: {exc}", file=sys.stderr)
     except Exception as exc:
-        unavailable_reason = _checkpoint_unavailable_reason(exc)
-        if unavailable_reason is not None:
-            record.update(
-                {
-                    "status": "unavailable",
-                    "error": str(exc),
-                    "unavailable_reason": unavailable_reason,
-                }
-            )
-            print(f"[{case.id}] UNAVAILABLE: {exc}", file=sys.stderr)
-        else:
-            record.update(
-                {
-                    "status": "error",
-                    "error": str(exc),
-                    "traceback": traceback.format_exc(),
-                }
-            )
-            print(f"[{case.id}] ERROR: {exc}", file=sys.stderr)
+        record.update(
+            {
+                "status": "error",
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+        )
+        print(f"[{case.id}] ERROR: {exc}", file=sys.stderr)
     finally:
         record["duration_seconds"] = round(time.perf_counter() - started, 3)
         (case_dir / "parity.json").write_text(

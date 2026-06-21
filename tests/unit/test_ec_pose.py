@@ -59,12 +59,17 @@ class TestPoseCheckpointDiscrimination:
 
 class TestPoseFamilyClassWiring:
     def test_pose_init_sets_task_and_metadata(self):
+        from libreyolo.export.exporter import OnnxExporter
+
         m = LibreEC(model_path=None, size="s", task="pose")
         assert m.task == "pose"
         assert m.family == "ec"
         assert m.nb_classes == 1
         assert m.names == {0: "person"}
         assert isinstance(m.model, LibreECPoseModel)
+        metadata = OnnxExporter(m)._build_onnx_metadata(dynamic=False, half=False)
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "3"
 
     def test_pose_checkpoint_reload_preserves_custom_class_name(self, tmp_path):
         src = LibreEC(model_path=None, size="s", task="pose", device="cpu")

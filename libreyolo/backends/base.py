@@ -18,6 +18,7 @@ from ..models.yolo9.utils import (
 )
 from ..models.yolonas.utils import (
     YOLO_NAS_PRE_NMS_TOP_K,
+    YOLO_NAS_POSE_RESIZE_SIZE,
     YOLO_NAS_RESIZE_SIZE,
     preprocess_image as yolonas_preprocess_image,
     preprocess_pose_image as yolonas_preprocess_pose_image,
@@ -624,7 +625,9 @@ class BaseBackend(ABC):
             return boxes, scores, cls, None
         elif self.model_family == "ec":
             if self.task == "segment":
-                return self._parse_ec_segment(all_outputs, orig_w, orig_h, conf)
+                return self._parse_ec_segment(
+                    all_outputs, orig_w, orig_h, conf, max_det=max_det
+                )
             if self.task == "pose":
                 return self._parse_ec_pose(all_outputs, orig_w, orig_h, conf)
             boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
@@ -1157,9 +1160,10 @@ class BaseBackend(ABC):
             keypoints_conf = keypoints_conf[keep]
             class_ids = class_ids[keep]
 
-        input_h, input_w = _imgsz_hw(effective_imgsz)
-        resize_size = min(input_h, input_w)
-        scale = min(resize_size / orig_h, resize_size / orig_w)
+        scale = min(
+            YOLO_NAS_POSE_RESIZE_SIZE / orig_h,
+            YOLO_NAS_POSE_RESIZE_SIZE / orig_w,
+        )
         boxes[:, 0::2] /= scale
         boxes[:, 1::2] /= scale
         keypoints_xy[..., 0] /= scale
@@ -1223,13 +1227,13 @@ class BaseBackend(ABC):
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
 
-    def _parse_ec_segment(self, all_outputs, orig_w, orig_h, conf):
+    def _parse_ec_segment(self, all_outputs, orig_w, orig_h, conf, max_det=300):
         """Parse EC segmentation outputs: logits, normalized cxcywh boxes, masks."""
         pred_logits = all_outputs[0][0]
         pred_boxes = all_outputs[1][0]
         pred_masks = all_outputs[2][0] if len(all_outputs) >= 3 else None
 
-        query_idx, class_ids, scores = self._ec_topk(pred_logits, max_det=300)
+        query_idx, class_ids, scores = self._ec_topk(pred_logits, max_det=max_det)
         keep = scores > conf
         query_idx = query_idx[keep]
         class_ids = class_ids[keep]
@@ -1335,6 +1339,7 @@ class BaseBackend(ABC):
         raw_masks = None
         raw_keypoints = None
         raw_angles = None
+        grouppose_active_keypoints = None
         if len(all_outputs) >= 3:
             if self.task == "obb":
                 raw_angles = all_outputs[2][0]
@@ -1376,7 +1381,21 @@ class BaseBackend(ABC):
             and num_classes > 1
             and keypoints_raw.shape[1] % num_classes == 0
         ):
-            max_num_keypoints = keypoints_raw.shape[1] // num_classes
+            schema = getattr(self, "num_keypoints_per_class", None)
+            keypoint_counts = None
+            if schema:
+                schema_counts = np.asarray([int(count) for count in schema], dtype=np.int64)
+                if (
+                    schema_counts.size == num_classes
+                    and schema_counts.max() > 0
+                    and keypoints_raw.shape[1] == schema_counts.size * int(schema_counts.max())
+                ):
+                    keypoint_counts = schema_counts
+                    max_num_keypoints = int(schema_counts.max())
+                else:
+                    max_num_keypoints = keypoints_raw.shape[1] // num_classes
+            else:
+                max_num_keypoints = keypoints_raw.shape[1] // num_classes
             grouped = keypoints_raw.reshape(
                 keypoints_raw.shape[0],
                 num_classes,
@@ -1388,9 +1407,10 @@ class BaseBackend(ABC):
             # GroupPose exports use internal class 0 for no-keypoint detections
             # and keypoint-bearing classes after it. Public pose labels are
             # contiguous over only the keypoint-bearing classes (person -> 0).
-            keypoint_counts = np.full(num_classes, max_num_keypoints, dtype=np.int64)
-            if self.nb_classes == num_classes - 1:
-                keypoint_counts[0] = 0
+            if keypoint_counts is None:
+                keypoint_counts = np.full(num_classes, max_num_keypoints, dtype=np.int64)
+                if self.nb_classes == num_classes - 1:
+                    keypoint_counts[0] = 0
             active_counts = keypoint_counts[class_ids]
             valid_pose_class = active_counts > 0
 
@@ -1409,6 +1429,10 @@ class BaseBackend(ABC):
                 (len(selected), max_num_keypoints, 3),
                 dtype=np.float32,
             )
+            active_keypoint_mask = np.zeros(
+                (len(selected), max_num_keypoints),
+                dtype=bool,
+            )
             for row_idx, active_count in enumerate(active_counts):
                 if active_count <= 0:
                     continue
@@ -1417,6 +1441,7 @@ class BaseBackend(ABC):
                     :active_count,
                     :3,
                 ]
+                active_keypoint_mask[row_idx, :active_count] = True
 
             kp_classes = np.flatnonzero(keypoint_counts > 0)
             remap = np.full(num_classes, -1, dtype=class_ids.dtype)
@@ -1429,6 +1454,7 @@ class BaseBackend(ABC):
                 angles_raw = angles_raw[valid_pose_class]
             if keypoints_raw is not None:
                 keypoints_raw = keypoints_selected[valid_pose_class]
+                grouppose_active_keypoints = active_keypoint_mask[valid_pose_class]
             if raw_masks is not None:
                 raw_masks = raw_masks[valid_pose_class]
 
@@ -1439,6 +1465,8 @@ class BaseBackend(ABC):
             angles_raw = angles_raw[mask]
         if keypoints_raw is not None:
             keypoints_raw = keypoints_raw[mask]
+            if grouppose_active_keypoints is not None:
+                grouppose_active_keypoints = grouppose_active_keypoints[mask]
         if raw_masks is not None:
             raw_masks = raw_masks[mask]
 
@@ -1468,6 +1496,8 @@ class BaseBackend(ABC):
                 angles_raw = angles_raw[valid]
             if keypoints_raw is not None:
                 keypoints_raw = keypoints_raw[valid]
+                if grouppose_active_keypoints is not None:
+                    grouppose_active_keypoints = grouppose_active_keypoints[valid]
             if raw_masks is not None:
                 raw_masks = raw_masks[valid]
 
@@ -1540,6 +1570,8 @@ class BaseBackend(ABC):
             keypoints_out[..., 0] *= float(orig_w)
             keypoints_out[..., 1] *= float(orig_h)
             keypoints_out[..., 2] = 1.0 / (1.0 + np.exp(-keypoints_out[..., 2]))
+            if grouppose_active_keypoints is not None:
+                keypoints_out[~grouppose_active_keypoints] = 0.0
 
         if self.task == "obb":
             return boxes, max_scores, class_ids, masks_out, obb_out

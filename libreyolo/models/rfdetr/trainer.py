@@ -48,6 +48,15 @@ def _pose_worker_init_fn(worker_id: int) -> None:
     np.random.seed(seed)
 
 
+def _is_classic_pose_training_model(model) -> bool:
+    core = getattr(model, "model", model)
+    core = getattr(core, "model", core)
+    return bool(
+        getattr(core, "keypoint_head", None) is not None
+        and not getattr(core, "use_grouppose_keypoints", False)
+    )
+
+
 class RFDETRStepScheduler(BaseScheduler):
     """RF-DETR upstream-style warmup plus step decay schedule."""
 
@@ -593,6 +602,12 @@ class RFDETRTrainer(BaseTrainer):
             )
         if task in ("classify", "semantic", "depth"):
             return
+        if task == "pose" and _is_classic_pose_training_model(self.model):
+            raise NotImplementedError(
+                "Classic RF-DETR pose training is not implemented because its "
+                "criterion does not include keypoint losses. Use a GroupPose RF-DETR "
+                "pose model or export/infer the classic pose checkpoints only."
+            )
         # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
         # The GroupPose detection head must keep one logit column per keypoint
         # class (``out_features == len(num_keypoints_per_class)``, e.g. 2 for

@@ -40,6 +40,7 @@ def test_yolonas_pose_onnx_export_roundtrip(tmp_path):
     assert metadata.get("model_family") == "yolonas"
     assert metadata.get("task") == "pose"
     assert metadata.get("num_keypoints") == "17"
+    assert metadata.get("keypoint_dim") == "3"
 
     sess = ort.InferenceSession(str(out_path), providers=["CPUExecutionProvider"])
     outs = sess.run(None, {"images": np.random.randn(1, 3, 64, 64).astype(np.float32)})

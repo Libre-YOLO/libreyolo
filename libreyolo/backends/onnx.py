@@ -87,6 +87,9 @@ class OnnxBackend(BaseBackend):
         ) = self._read_onnx_metadata(
             onnx_path, nb_classes, runtime_metadata=runtime_metadata
         )
+        pose_metadata = self._read_onnx_pose_metadata(
+            onnx_path, runtime_metadata=runtime_metadata
+        )
         # Models exported with nms=True emit final (1, max_det, 6) detections.
         # Newer YOLO9 ONNX exports also include a raw auxiliary output so the
         # LibreYOLO backend can apply native clipping/NMS for non-square images.
@@ -128,6 +131,8 @@ class OnnxBackend(BaseBackend):
             supported_tasks=supported_tasks,
             default_task=default_task,
         )
+        for key, value in pose_metadata.items():
+            setattr(self, key, value)
 
     @staticmethod
     def _read_static_input_imgsz(input_shape) -> ImageSize | None:
@@ -220,6 +225,36 @@ class OnnxBackend(BaseBackend):
             embedded_nms,
             imgsz,
         )
+
+    @staticmethod
+    def _read_onnx_pose_metadata(
+        onnx_path: str,
+        runtime_metadata: dict | None = None,
+    ) -> dict:
+        try:
+            meta = dict(runtime_metadata or {})
+            if not meta:
+                import onnx
+
+                model_proto = onnx.load(onnx_path)
+                meta = {p.key: p.value for p in model_proto.metadata_props}
+        except Exception as e:
+            logger.warning("Failed to read ONNX pose metadata from %s: %s", onnx_path, e)
+            return {}
+
+        pose_meta = {}
+        if "num_keypoints" in meta:
+            pose_meta["num_keypoints"] = int(meta["num_keypoints"])
+        if "keypoint_dim" in meta:
+            pose_meta["keypoint_dim"] = int(meta["keypoint_dim"])
+        if "num_keypoints_per_class" in meta:
+            import json
+
+            raw_schema = json.loads(meta["num_keypoints_per_class"])
+            pose_meta["num_keypoints_per_class"] = [
+                int(count) for count in raw_schema
+            ]
+        return pose_meta
 
     def _supports_batched_inference(self) -> bool:
         # Embedded-NMS graphs are exported batch-1; everything else with a

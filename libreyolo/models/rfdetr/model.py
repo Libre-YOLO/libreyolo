@@ -175,9 +175,8 @@ class LibreRFDETR(BaseModel):
     FILENAME_PREFIX = "LibreRFDETR"
     INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704}
     SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
-    # Pose checkpoints carry their own validation/export sizes. n/s/m/l use the
-    # classic keypoint_head path; x uses the GroupPose preview path.
-    POSE_INPUT_SIZES = {"n": 512, "s": 768, "m": 576, "l": 704, "x": 576}
+    # Pose checkpoints use the dedicated RFDETR_POSE_CONFIGS resolutions.
+    POSE_INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704, "x": 576}
     # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
     CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
     # Semantic runs the DINOv2 backbone at its native pretrained 518 square

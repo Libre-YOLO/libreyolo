@@ -330,6 +330,52 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     assert 0.7 < scores[0] < 1.0
 
 
+def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    backend.nb_classes = 2
+    backend.names = {0: "person", 1: "tool"}
+    backend.num_keypoints_per_class = [0, 17, 4]
+
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[-10.0, -10.0, 10.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 51, 8), dtype=np.float32)
+    class_offset = 2 * 17
+    keypoints[0, 0, class_offset : class_offset + 4, :7] = np.array(
+        [
+            [0.25, 0.50, 2.0, 0.0, 0.0, 0.0, 0.0],
+            [0.75, 0.25, 2.0, 0.0, 0.0, 0.0, 0.0],
+            [0.50, 0.75, 2.0, 0.0, 0.0, 0.0, 0.0],
+            [0.10, 0.10, 2.0, 0.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    keypoints[0, 0, class_offset + 4 : class_offset + 17, 2] = 10.0
+    keypoints[0, 0, class_offset + 4 : class_offset + 17, 4] = -10.0
+    keypoints[0, 0, class_offset + 4 : class_offset + 17, 6] = -10.0
+
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_rfdetr(
+            [boxes, logits, keypoints],
+            orig_w=200,
+            orig_h=100,
+            conf=0.5,
+        )
+    )
+
+    assert masks is None
+    assert obb is None
+    assert classes.tolist() == [1]
+    assert parsed_boxes.shape == (1, 4)
+    assert parsed_keypoints.shape == (1, 17, 3)
+    assert scores[0] > 0.5
+    np.testing.assert_allclose(parsed_keypoints[0, :4, 0], [50.0, 150.0, 100.0, 20.0])
+    np.testing.assert_allclose(parsed_keypoints[0, 4:, :], 0.0)
+
+
 def test_rfdetr_pose_backend_postprocess_returns_keypoints():
     backend = _DummyBackend(
         "rfdetr",
@@ -455,6 +501,29 @@ def test_ec_segment_backend_parses_masks():
     assert parsed_masks[0].all()
 
 
+def test_ec_segment_backend_honors_max_det():
+    backend = _DummyBackend(
+        "ec",
+        task="segment",
+        supported_tasks=("detect", "segment"),
+    )
+    logits = np.array([[[10.0], [9.0], [8.0]]], dtype=np.float32)
+    boxes = np.array(
+        [[[0.1, 0.1, 0.1, 0.1], [0.5, 0.5, 0.2, 0.2], [0.8, 0.8, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    masks = np.ones((1, 3, 2, 2), dtype=np.float32)
+
+    parsed_boxes, scores, classes, parsed_masks = backend._parse_outputs(
+        [logits, boxes, masks], 64, (100, 100), conf=0.5, max_det=1
+    )
+
+    assert parsed_boxes.shape == (1, 4)
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert parsed_masks.shape == (1, 100, 100)
+
+
 def test_ec_pose_backend_parses_flattened_keypoints():
     backend = _DummyBackend(
         "ec",
@@ -503,10 +572,13 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
         task="pose",
         supported_tasks=("detect", "pose"),
     )
-    boxes = np.array([[[10.0, 10.0, 50.0, 40.0], [0.0, 0.0, 5.0, 5.0]]], dtype=np.float32)
+    boxes = np.array(
+        [[[32.0, 32.0, 160.0, 128.0], [0.0, 0.0, 5.0, 5.0]]],
+        dtype=np.float32,
+    )
     scores = np.array([[[0.9], [0.1]]], dtype=np.float32)
     keypoints_xy = np.array(
-        [[[[10.0, 20.0], [30.0, 40.0]], [[0.0, 0.0], [1.0, 1.0]]]],
+        [[[[32.0, 64.0], [96.0, 128.0]], [[0.0, 0.0], [1.0, 1.0]]]],
         dtype=np.float32,
     )
     keypoints_conf = np.array([[[0.8, 0.7], [0.1, 0.1]]], dtype=np.float32)
@@ -521,11 +593,11 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     assert masks is None
     assert obb is None
     np.testing.assert_array_equal(classes, [0])
-    np.testing.assert_allclose(parsed_boxes, [[20.0, 20.0, 100.0, 80.0]])
+    np.testing.assert_allclose(parsed_boxes, [[10.0, 10.0, 50.0, 40.0]])
     np.testing.assert_allclose(parsed_scores, [0.9])
     np.testing.assert_allclose(
         keypoints,
-        [[[20.0, 40.0, 0.8], [60.0, 80.0, 0.7]]],
+        [[[10.0, 20.0, 0.8], [30.0, 40.0, 0.7]]],
     )
 
 

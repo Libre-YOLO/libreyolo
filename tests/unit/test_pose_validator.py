@@ -164,3 +164,20 @@ def test_pose_validator_uses_coco_keypoints_annotation_from_yaml(tmp_path):
     assert validator._images_dir == images_dir
     assert validator._image_records[0]["id"] == 123456
     assert not (tmp_path / "runs" / "ground_truth_yolo_pose.json").exists()
+
+
+def test_pose_validator_maps_contiguous_labels_to_coco_category_ids(tmp_path):
+    config = ValidationConfig(
+        save_dir=str(tmp_path),
+        verbose=False,
+        keypoints_json=str(tmp_path / "unused.json"),
+        images_dir=str(tmp_path),
+    )
+    validator = PoseValidator(_DummyPoseModel(), config=config)
+    validator._category_id = 1
+    validator._category_ids = [1, 3]
+
+    assert validator._prediction_category_id(0) == 1
+    assert validator._prediction_category_id(1) == 3
+    assert validator._prediction_category_id(3) == 3
+    assert validator._prediction_category_id(7) == 1

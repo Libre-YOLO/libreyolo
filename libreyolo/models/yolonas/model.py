@@ -41,6 +41,7 @@ class LibreYOLONAS(BaseModel):
         "pose": POSE_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = YOLONASValPreprocessor
 
     _REQUIRED_SIGNATURE_KEYS = (
@@ -172,6 +173,7 @@ class LibreYOLONAS(BaseModel):
         # Default keypoint count; overridden from checkpoint metadata/state
         # before model construction or from dataset kpt_shape in train().
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         if isinstance(model_path, dict):
             model_path = unwrap_yolonas_checkpoint(model_path)
             if resolved_task == "pose":
