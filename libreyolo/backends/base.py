@@ -601,7 +601,7 @@ class BaseBackend(ABC):
         effective_imgsz: ImageSize,
         original_size: tuple,
         conf: float,
-        ratio: float = 1.0,
+        ratio: float | None = None,
         iou: float = 0.45,
         max_det: int = 300,
     ):
@@ -742,7 +742,7 @@ class BaseBackend(ABC):
         y2 = cy + h / 2
         boxes = np.stack([x1, y1, x2, y2], axis=1)
 
-        if ratio == 1.0:
+        if ratio is None or ratio == 1.0:
             input_h, input_w = _imgsz_hw(effective_imgsz)
             ratio = min(input_h / orig_h, input_w / orig_w)
         boxes /= ratio
@@ -817,7 +817,7 @@ class BaseBackend(ABC):
 
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, input_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, input_h)
-        if ratio == 1.0:
+        if ratio is None or ratio == 1.0:
             ratio = min(input_h / orig_h, input_w / orig_w)
         boxes = boxes / ratio
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
@@ -2131,7 +2131,7 @@ class BaseBackend(ABC):
         input_size: ImageSize | None = None,
         letterbox: bool = False,
         max_det: int = 300,
-        ratio: float = 1.0,
+        ratio: float | None = None,
         **kwargs,
     ) -> Dict:
         effective_imgsz = self._resolve_predict_imgsz(input_size)

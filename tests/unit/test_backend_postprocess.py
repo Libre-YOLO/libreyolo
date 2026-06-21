@@ -848,6 +848,46 @@ def test_yolonas_backend_uses_preprocess_ratio_for_large_canvas():
     np.testing.assert_allclose(boxes, [[100.0, 50.0, 200.0, 150.0]], atol=1e-4)
 
 
+def test_yolonas_backend_recomputes_ratio_when_validation_omits_it():
+    backend = _DummyBackend("yolonas")
+    ratio = 636.0 / 1000.0
+    offset_x = 2.0
+    offset_y = 161.0
+    boxes_out = np.array(
+        [
+            [
+                [
+                    100.0 * ratio + offset_x,
+                    50.0 * ratio + offset_y,
+                    200.0 * ratio + offset_x,
+                    150.0 * ratio + offset_y,
+                ]
+            ]
+        ],
+        dtype=np.float32,
+    )
+    scores_out = np.array([[[0.9, 0.1]]], dtype=np.float32)
+
+    result = backend._postprocess(
+        [boxes_out, scores_out],
+        conf_thres=0.5,
+        iou_thres=0.6,
+        original_size=(1000, 500),
+        input_size=640,
+        letterbox=True,
+        max_det=300,
+    )
+
+    assert result["num_detections"] == 1
+    np.testing.assert_allclose(
+        result["boxes"].numpy(),
+        [[100.0, 50.0, 200.0, 150.0]],
+        atol=1e-4,
+    )
+    np.testing.assert_allclose(result["scores"].numpy(), [0.9], rtol=1e-6)
+    np.testing.assert_array_equal(result["classes"].numpy(), [0])
+
+
 def test_yolo9_pose_backend_parses_keypoints():
     backend = _DummyBackend(
         "yolo9",
