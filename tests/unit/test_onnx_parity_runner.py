@@ -12,7 +12,9 @@ from vision_analysis_benchmark.onnx_parity import (
     MINI500_ANNOTATION,
     MINI500_IMAGE_DIR,
     MINI500_POSE_ANNOTATION,
+    ParityCase,
     _checkpoint_unavailable_reason,
+    _ensure_case_weights_available,
     compare_metrics,
     extract_metrics,
     filter_cases,
@@ -139,6 +141,45 @@ def test_checkpoint_unavailable_reason_is_weight_specific():
         ValueError("Could not determine download URL for 'missing.pt'.")
     )
     assert _checkpoint_unavailable_reason(RuntimeError("ONNX export failed")) is None
+
+
+def test_ensure_case_weights_available_downloads_canonical_path(tmp_path):
+    seen = {}
+    weight_path = tmp_path / "weights" / "missing.pt"
+
+    _ensure_case_weights_available(
+        ParityCase(
+            id="missing",
+            family="family",
+            size="s",
+            task="detect",
+            weights="missing.pt",
+            onnx_claim="experimental",
+        ),
+        resolve_weights_path=lambda _name: str(weight_path),
+        downloader=lambda path, size: seen.update({"path": path, "size": size}),
+    )
+
+    assert seen == {"path": str(weight_path), "size": "s"}
+
+
+def test_ensure_case_weights_available_skips_existing_file(tmp_path):
+    weight_path = tmp_path / "weights" / "exists.pt"
+    weight_path.parent.mkdir()
+    weight_path.write_bytes(b"weights")
+
+    _ensure_case_weights_available(
+        ParityCase(
+            id="exists",
+            family="family",
+            size="s",
+            task="detect",
+            weights="exists.pt",
+            onnx_claim="experimental",
+        ),
+        resolve_weights_path=lambda _name: str(weight_path),
+        downloader=lambda _path, _size: pytest.fail("download should not run"),
+    )
 
 
 def test_write_summary_counts_unavailable_cases(tmp_path):

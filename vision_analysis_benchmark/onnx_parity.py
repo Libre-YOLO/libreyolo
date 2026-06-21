@@ -218,6 +218,29 @@ def _checkpoint_unavailable_reason(exc: BaseException) -> str | None:
     return None
 
 
+def _ensure_case_weights_available(
+    case: ParityCase,
+    *,
+    resolve_weights_path=None,
+    downloader=None,
+) -> None:
+    """Download missing checkpoint weights before model construction.
+
+    The LibreYOLO factory logs auto-download failures and then raises a generic
+    missing-file error. Preflight keeps the original HTTP/download exception
+    attached to the parity record, which matters for unavailable checkpoints.
+    """
+    if resolve_weights_path is None:
+        from libreyolo.models import _resolve_weights_path as resolve_weights_path
+    if downloader is None:
+        from libreyolo.utils.download import download_weights as downloader
+
+    weights_path = Path(resolve_weights_path(case.weights))
+    if weights_path.exists():
+        return
+    downloader(str(weights_path), case.size)
+
+
 def _weights(prefix: str, size: str, task: str) -> str:
     return f"{prefix}{size}{TASK_SUFFIX[task]}.pt"
 
@@ -712,6 +735,7 @@ def run_case(case: ParityCase, args: argparse.Namespace, output_dir: Path) -> di
     }
     try:
         print(f"[{case.id}] loading PyTorch weights {case.weights}")
+        _ensure_case_weights_available(case)
         pt_model = LibreYOLO(
             case.weights,
             size=case.size,
