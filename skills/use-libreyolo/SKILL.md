@@ -73,7 +73,7 @@ recalling flags from memory:
 ```bash
 libreyolo --help                 # list every command
 libreyolo train --help-json      # full argument schema for one command, as JSON
-libreyolo models                 # list supported models / families / tasks
+libreyolo models                 # list available model families and sizes
 libreyolo predict ... --json     # machine-readable results to stdout
 libreyolo ... --quiet            # suppress progress output (good for scripting)
 ```
@@ -85,7 +85,7 @@ describe the loaded model.
 
 - **Tasks:** detection — and segmentation on YOLO9 / RF-DETR — are the
   well-supported core. Pose, OBB, classify, and semantic are experimental;
-  confirm with `libreyolo models` before relying on them.
+  see the README model-compatibility table before relying on them.
 - **Datasets** are standard YOLO format, so existing Ultralytics dataset YAMLs
   (e.g. `coco8.yaml`) work unchanged.
 - **Outputs** land under `runs/` (`runs/detect`, `runs/train`, `runs/val`).

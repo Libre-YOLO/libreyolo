@@ -139,6 +139,12 @@ class TestEmittedCodesRegistered:
                     arg = node.args[0] if node.args else None
                 else:
                     continue
+                if arg is None:
+                    # also handle keyword form, e.g. exit_with_error(out, code="...")
+                    for kw in node.keywords:
+                        if kw.arg == "code":
+                            arg = kw.value
+                            break
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     codes.setdefault(arg.value, f"{path.name}:{arg.lineno}")
         return codes
