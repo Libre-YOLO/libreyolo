@@ -454,6 +454,22 @@ def test_prepare_pose_data_keeps_native_coco_keypoints_yaml(tmp_path):
 
 
 def test_pose_direct_paths_honor_selected_split(tmp_path):
+    annotation_path = tmp_path / "annotations" / "person_keypoints_test-dev2017.json"
+    annotation_path.parent.mkdir(parents=True)
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "annotations": [],
+                "categories": [
+                    {
+                        "id": 0,
+                        "name": "person",
+                        "keypoints": [f"kpt_{idx}" for idx in range(17)],
+                    }
+                ],
+            }
+        )
+    )
     pose_yaml = tmp_path / "coco-pose.yaml"
     pose_yaml.write_text(
         yaml.safe_dump(
@@ -463,7 +479,7 @@ def test_pose_direct_paths_honor_selected_split(tmp_path):
                 "test": "images/test2017",
                 "annotations": {
                     "val": "annotations/person_keypoints_val2017.json",
-                    "test": "annotations/image_info_test-dev2017.json",
+                    "test": "annotations/person_keypoints_test-dev2017.json",
                 },
             }
         )
@@ -471,8 +487,41 @@ def test_pose_direct_paths_honor_selected_split(tmp_path):
 
     annotation_path, image_dir = pose_direct_paths(pose_yaml, split="test")
 
-    assert annotation_path == tmp_path / "annotations" / "image_info_test-dev2017.json"
+    assert annotation_path == tmp_path / "annotations" / "person_keypoints_test-dev2017.json"
     assert image_dir == tmp_path / "images" / "test2017"
+
+
+def test_pose_direct_paths_ignores_box_only_coco_annotations(tmp_path):
+    annotation_path = tmp_path / "annotations" / "instances_val2017.json"
+    annotation_path.parent.mkdir(parents=True)
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 0,
+                        "bbox": [0, 0, 10, 10],
+                    }
+                ],
+                "categories": [{"id": 0, "name": "person"}],
+            }
+        )
+    )
+    pose_yaml = tmp_path / "pose.yaml"
+    pose_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val2017",
+                "annotations": {"val": "annotations/instances_val2017.json"},
+                "kpt_shape": [17, 3],
+            }
+        )
+    )
+
+    assert pose_direct_paths(pose_yaml) == (None, None)
 
 
 def test_download_hf_dataset_snapshot_redownloads_unknown_size_partial(

@@ -732,6 +732,18 @@ def _looks_like_pose_annotation(value: Any) -> bool:
     return "keypoints" in str(value).lower()
 
 
+def _is_coco_keypoints_annotation_file(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    categories = data.get("categories") or []
+    if any(cat.get("keypoints") for cat in categories):
+        return True
+    annotations = data.get("annotations") or []
+    return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
+
+
 def _has_pose_annotation_config(config: dict[str, Any]) -> bool:
     if config.get("keypoints_json"):
         return True
@@ -768,7 +780,13 @@ def pose_direct_paths(
     images_rel = config.get("images_dir") or config.get(split)
     if not annotation_rel or not images_rel:
         return None, None
-    return _resolve_yaml_path(root, annotation_rel), _resolve_yaml_path(root, images_rel)
+    annotation_path = _resolve_yaml_path(root, annotation_rel)
+    if annotation_path.exists():
+        if not _is_coco_keypoints_annotation_file(annotation_path):
+            return None, None
+    elif not _looks_like_pose_annotation(annotation_rel):
+        return None, None
+    return annotation_path, _resolve_yaml_path(root, images_rel)
 
 
 def prepare_data(args: argparse.Namespace, output_dir: Path) -> Path:
