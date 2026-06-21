@@ -13,7 +13,7 @@ LibreYOLO ships no model source and stays MIT, exactly as the LibreVLM tier
 does). Like LibreVLM, this base does NOT define ``can_load``, which keeps the
 family out of the state-dict ``_registry`` and the ``LibreYOLO`` factory.
 
-See ``docs/adr/0005-libresam-contract.md`` for the contract and the
+See ``docs/adr/0007-libresam-contract.md`` for the contract and the
 clean-room API notes.
 """
 
