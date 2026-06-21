@@ -258,7 +258,7 @@ def test_download_coco_person_keypoints_recovers_corrupt_zip(tmp_path, monkeypat
     zip_path.parent.mkdir()
     zip_path.write_bytes(b"partial")
 
-    def fake_download(_url, target):
+    def fake_download(_url, target) -> None:
         with zipfile.ZipFile(target, "w") as archive:
             archive.writestr(parity.COCO_PERSON_KEYPOINTS_MEMBER, "{}")
 
