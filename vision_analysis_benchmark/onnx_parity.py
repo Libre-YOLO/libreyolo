@@ -26,7 +26,7 @@ import traceback
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import quote
 
@@ -42,7 +42,7 @@ MINI500_DATASET_ID = "LibreYOLO/coco-val2017-mini500"
 MINI500_ANNOTATION = "annotations/instances_val2017_mini500.json"
 MINI500_POSE_ANNOTATION = "annotations/person_keypoints_val2017_mini500.json"
 MINI500_IMAGE_DIR = "images/val2017"
-COCO_ANNOTATIONS_URL = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
+COCO_ANNOTATIONS_URL = "https://images.cocodataset.org/annotations/annotations_trainval2017.zip"
 COCO_PERSON_KEYPOINTS_MEMBER = "annotations/person_keypoints_val2017.json"
 COCO_POSE_FLIP_IDX = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
 
@@ -519,6 +519,23 @@ def _headers(token: str | None = None) -> dict[str, str]:
     return headers
 
 
+def _safe_hf_dataset_path(raw_path: str, dest: Path) -> tuple[PurePosixPath, Path]:
+    raw = str(raw_path)
+    if "\\" in raw or "\x00" in raw:
+        raise ValueError(f"Unsafe Hugging Face dataset path: {raw_path!r}")
+    rel = PurePosixPath(raw)
+    if rel.is_absolute() or any(part in {"..", ""} or ":" in part for part in rel.parts):
+        raise ValueError(f"Unsafe Hugging Face dataset path: {raw_path!r}")
+
+    dest_root = dest.resolve()
+    target = dest_root.joinpath(*rel.parts)
+    try:
+        target.resolve().relative_to(dest_root)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe Hugging Face dataset path: {raw_path!r}") from exc
+    return rel, target
+
+
 def download_hf_dataset_snapshot(
     repo_id: str,
     dest: Path,
@@ -533,8 +550,7 @@ def download_hf_dataset_snapshot(
     files = [item for item in response.json() if item.get("type") == "file"]
 
     for item in files:
-        rel_path = str(item["path"])
-        target = dest / rel_path
+        rel_path, target = _safe_hf_dataset_path(str(item["path"]), dest)
         expected_size = int(item.get("size") or 0)
         if target.exists() and (expected_size <= 0 or target.stat().st_size == expected_size):
             continue
@@ -542,7 +558,7 @@ def download_hf_dataset_snapshot(
         target.parent.mkdir(parents=True, exist_ok=True)
         url = (
             f"https://huggingface.co/datasets/{repo_id}/resolve/"
-            f"{quote(revision)}/{quote(rel_path)}"
+            f"{quote(revision)}/{quote(str(rel_path))}"
         )
         download_headers = {}
         if token:

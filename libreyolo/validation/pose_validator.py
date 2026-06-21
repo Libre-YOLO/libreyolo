@@ -178,8 +178,10 @@ class PoseValidator(BaseValidator):
         )
         annotation_file = get_coco_annotation_file(data_cfg, self.config.split)
         if annotation_file:
-            self._kpts_json = Path(annotation_file)
             data_root = Path(data_cfg["root"])
+            self._kpts_json = Path(annotation_file)
+            if not self._kpts_json.is_absolute():
+                self._kpts_json = data_root / self._kpts_json
             default_image_dir = resolve_default_coco_image_dir(
                 data_root,
                 self.config.split,
@@ -188,6 +190,8 @@ class PoseValidator(BaseValidator):
             self._images_dir = Path(
                 get_coco_image_dir(data_cfg, self.config.split, default_image_dir)
             )
+            if not self._images_dir.is_absolute():
+                self._images_dir = data_root / self._images_dir
             if not self._kpts_json.exists():
                 raise FileNotFoundError(f"Annotations JSON not found: {self._kpts_json}")
             if not self._images_dir.is_dir():

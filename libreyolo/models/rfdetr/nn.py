@@ -267,7 +267,9 @@ def _make_args(
         dual_projector_kp_only=dual_projector_kp_only,
         # GroupPose keypoint flags ported from RF-DETR v1.8.0 (keypoint preview).
         use_grouppose_keypoints=use_grouppose_keypoints,
-        num_keypoints_per_class=list(num_keypoints_per_class) if num_keypoints_per_class else [],
+        num_keypoints_per_class=list(num_keypoints_per_class)
+        if num_keypoints_per_class is not None
+        else [],
         grouppose_keypoint_dim_downscale=grouppose_keypoint_dim_downscale,
         keypoint_cross_attn=keypoint_cross_attn,
         inter_instance_kp_attn=inter_instance_kp_attn,
@@ -943,7 +945,7 @@ class LibreRFDETRModel(nn.Module):
         # The n/s/m/l pose checkpoints carry normal keypoint_head.* tensors.
         self.num_keypoints_per_class = (
             list(num_keypoints_per_class)
-            if num_keypoints_per_class
+            if num_keypoints_per_class is not None
             else ([0, int(num_keypoints)] if pose and configs[config].grouppose_head else [])
         )
         # The GroupPose detection head must keep one logit column per keypoint

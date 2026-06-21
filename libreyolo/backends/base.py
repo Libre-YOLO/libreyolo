@@ -629,7 +629,9 @@ class BaseBackend(ABC):
                     all_outputs, orig_w, orig_h, conf, max_det=max_det
                 )
             if self.task == "pose":
-                return self._parse_ec_pose(all_outputs, orig_w, orig_h, conf)
+                return self._parse_ec_pose(
+                    all_outputs, orig_w, orig_h, conf, max_det=max_det
+                )
             boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
             return boxes, scores, cls, None
         elif self.model_family in ("rtdetr", "rtdetrv2"):
@@ -1114,10 +1116,11 @@ class BaseBackend(ABC):
             class_ids = class_ids[keep]
 
         input_h, input_w = _imgsz_hw(effective_imgsz)
-        resize_size = min(YOLO_NAS_RESIZE_SIZE, input_h, input_w)
-        ratio = min(resize_size / orig_h, resize_size / orig_w)
-        new_w = int(round(orig_w * ratio))
-        new_h = int(round(orig_h * ratio))
+        if ratio <= 0 or ratio == 1.0:
+            resize_size = min(YOLO_NAS_RESIZE_SIZE, input_h, input_w)
+            ratio = min(resize_size / orig_h, resize_size / orig_w)
+        new_w = round(orig_w * ratio)
+        new_h = round(orig_h * ratio)
         offset_x = (input_w - new_w) // 2
         offset_y = (input_h - new_h) // 2
         boxes[:, 0::2] = (boxes[:, 0::2] - offset_x) / ratio
@@ -1160,10 +1163,12 @@ class BaseBackend(ABC):
             keypoints_conf = keypoints_conf[keep]
             class_ids = class_ids[keep]
 
-        scale = min(
-            YOLO_NAS_POSE_RESIZE_SIZE / orig_h,
-            YOLO_NAS_POSE_RESIZE_SIZE / orig_w,
-        )
+        scale = ratio
+        if scale <= 0 or scale == 1.0:
+            scale = min(
+                YOLO_NAS_POSE_RESIZE_SIZE / orig_h,
+                YOLO_NAS_POSE_RESIZE_SIZE / orig_w,
+            )
         boxes[:, 0::2] /= scale
         boxes[:, 1::2] /= scale
         keypoints_xy[..., 0] /= scale
@@ -1227,7 +1232,9 @@ class BaseBackend(ABC):
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
 
-    def _parse_ec_segment(self, all_outputs, orig_w, orig_h, conf, max_det=300):
+    def _parse_ec_segment(
+        self, all_outputs, orig_w, orig_h, conf, max_det=300
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
         """Parse EC segmentation outputs: logits, normalized cxcywh boxes, masks."""
         pred_logits = all_outputs[0][0]
         pred_boxes = all_outputs[1][0]
@@ -1253,12 +1260,12 @@ class BaseBackend(ABC):
 
         return boxes, max_scores, class_ids.astype(np.int64), masks_out
 
-    def _parse_ec_pose(self, all_outputs, orig_w, orig_h, conf):
+    def _parse_ec_pose(self, all_outputs, orig_w, orig_h, conf, max_det=300):
         """Parse EC pose outputs: logits and normalized flattened keypoints."""
         pred_logits = all_outputs[0][0]
         pred_keypoints = all_outputs[1][0]
 
-        query_idx, _class_ids, scores = self._ec_topk(pred_logits, max_det=60)
+        query_idx, _class_ids, scores = self._ec_topk(pred_logits, max_det=max_det)
         keep = scores >= conf
         query_idx = query_idx[keep]
         max_scores = scores[keep]
@@ -1318,6 +1325,49 @@ class BaseBackend(ABC):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         return boxes
 
+    def _normalize_rfdetr_keypoint_output(
+        self,
+        raw_keypoint_output,
+        *,
+        query_count: int,
+        num_classes: int,
+    ) -> np.ndarray:
+        raw = np.asarray(raw_keypoint_output)
+        if raw.ndim >= 3 and raw.shape[0] == 1 and raw.shape[1] == query_count:
+            raw = raw[0]
+        elif raw.ndim == 4 and raw.shape[0] == 1:
+            raw = raw[0]
+
+        if raw.ndim == 2:
+            schema = getattr(self, "num_keypoints_per_class", None)
+            if schema:
+                schema_counts = np.asarray([int(count) for count in schema], dtype=np.int64)
+                if schema_counts.size != num_classes or schema_counts.max() <= 0:
+                    raise ValueError(
+                        "Invalid RF-DETR GroupPose num_keypoints_per_class metadata "
+                        f"for {num_classes} classes: {list(schema_counts)}"
+                    )
+                slots = int(schema_counts.size * schema_counts.max())
+                if slots <= 0 or raw.shape[-1] % slots != 0:
+                    raise ValueError(
+                        "RF-DETR GroupPose flattened keypoint output cannot be "
+                        f"reshaped with schema {list(schema_counts)}: {raw.shape}"
+                    )
+                pred_dim = raw.shape[-1] // slots
+                raw = raw.reshape(raw.shape[0], slots, pred_dim)
+            else:
+                keypoint_dim = int(getattr(self, "keypoint_dim", 3) or 3)
+                if keypoint_dim <= 0 or raw.shape[-1] % keypoint_dim != 0:
+                    raise ValueError(
+                        "RF-DETR flattened keypoint output cannot be reshaped "
+                        f"with keypoint_dim={keypoint_dim}: {raw.shape}"
+                    )
+                raw = raw.reshape(raw.shape[0], raw.shape[-1] // keypoint_dim, keypoint_dim)
+
+        if raw.ndim != 3:
+            raise ValueError(f"Unexpected RF-DETR keypoint output shape: {raw.shape}")
+        return raw
+
     def _parse_rfdetr(self, all_outputs, orig_w, orig_h, conf):
         """Parse RF-DETR output: boxes (B,300,4) cxcywh [0,1] + logits (B,300,nc).
 
@@ -1338,6 +1388,7 @@ class BaseBackend(ABC):
             boxes_all = second
         raw_masks = None
         raw_keypoints = None
+        raw_keypoint_output = None
         raw_angles = None
         grouppose_active_keypoints = None
         if len(all_outputs) >= 3:
@@ -1345,16 +1396,17 @@ class BaseBackend(ABC):
                 raw_angles = all_outputs[2][0]
             elif self.task == "pose":
                 raw_keypoint_output = all_outputs[2]
-                raw_keypoints = (
-                    raw_keypoint_output[0]
-                    if raw_keypoint_output.ndim == 4
-                    else raw_keypoint_output
-                )
             else:
                 raw_masks = all_outputs[2][0]
 
         scores = 1.0 / (1.0 + np.exp(-logits.astype(np.float64))).astype(np.float32)
         num_queries, num_classes = scores.shape
+        if raw_keypoint_output is not None:
+            raw_keypoints = self._normalize_rfdetr_keypoint_output(
+                raw_keypoint_output,
+                query_count=num_queries,
+                num_classes=num_classes,
+            )
         model_size = self.model_size or getattr(self, "size", None)
         k = min(
             _rfdetr_num_select(self.task, model_size),
@@ -1393,7 +1445,10 @@ class BaseBackend(ABC):
                     keypoint_counts = schema_counts
                     max_num_keypoints = int(schema_counts.max())
                 else:
-                    max_num_keypoints = keypoints_raw.shape[1] // num_classes
+                    raise ValueError(
+                        "Invalid RF-DETR GroupPose num_keypoints_per_class metadata "
+                        f"for keypoint output {keypoints_raw.shape}: {list(schema_counts)}"
+                    )
             else:
                 max_num_keypoints = keypoints_raw.shape[1] // num_classes
             grouped = keypoints_raw.reshape(
@@ -1417,12 +1472,15 @@ class BaseBackend(ABC):
             if np.any(valid_pose_class):
                 trace_alpha = 0.2
                 log_mean_traces = np.zeros(len(selected), dtype=np.float32)
-                for row_idx, active_count in enumerate(active_counts):
+                for class_idx, active_count in enumerate(keypoint_counts):
                     if active_count <= 0:
                         continue
-                    log_mean_traces[row_idx] = _rfdetr_keypoint_log_mean_trace_np(
-                        selected[row_idx : row_idx + 1, :active_count]
-                    )[0]
+                    class_mask = class_ids == class_idx
+                    if not np.any(class_mask):
+                        continue
+                    log_mean_traces[class_mask] = _rfdetr_keypoint_log_mean_trace_np(
+                        selected[class_mask, :active_count]
+                    )
                 max_scores = max_scores * np.exp(-trace_alpha * log_mean_traces)
 
             keypoints_selected = np.zeros(

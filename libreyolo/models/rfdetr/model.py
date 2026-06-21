@@ -171,20 +171,48 @@ class LibreRFDETR(BaseModel):
     autobatch_fraction: float = 0.45
 
     # Class-level metadata
-    FAMILY = "rfdetr"
-    FILENAME_PREFIX = "LibreRFDETR"
-    INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704}
-    SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
+    FAMILY: ClassVar[str] = "rfdetr"
+    FILENAME_PREFIX: ClassVar[str] = "LibreRFDETR"
+    INPUT_SIZES: ClassVar[dict[str, int]] = {"n": 384, "s": 512, "m": 576, "l": 704}
+    SEG_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 312,
+        "s": 384,
+        "m": 432,
+        "l": 504,
+        "x": 624,
+        "xx": 768,
+    }
     # Pose checkpoints use the dedicated RFDETR_POSE_CONFIGS resolutions.
-    POSE_INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704, "x": 576}
+    POSE_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 384,
+        "s": 512,
+        "m": 576,
+        "l": 704,
+        "x": 576,
+    }
     # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
-    CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
+    CLS_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 224,
+        "s": 224,
+        "m": 224,
+        "l": 224,
+    }
     # Semantic runs the DINOv2 backbone at its native pretrained 518 square
     # (37 positional tokens * patch_size 14).
-    SEM_INPUT_SIZES = {"n": 518, "s": 518, "m": 518, "l": 518}
+    SEM_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 518,
+        "s": 518,
+        "m": 518,
+        "l": 518,
+    }
     # Depth uses the same DINOv2-native patch grid as semantic segmentation.
-    DEPTH_INPUT_SIZES = {"n": 518, "s": 518, "m": 518, "l": 518}
-    SUPPORTED_TASKS = (
+    DEPTH_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 518,
+        "s": 518,
+        "m": 518,
+        "l": 518,
+    }
+    SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = (
         "detect",
         "segment",
         "semantic",
@@ -193,7 +221,7 @@ class LibreRFDETR(BaseModel):
         "obb",
         "depth",
     )
-    TASK_INPUT_SIZES = {
+    TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {
         "detect": INPUT_SIZES,
         "segment": SEG_INPUT_SIZES,
         "semantic": SEM_INPUT_SIZES,
@@ -209,7 +237,7 @@ class LibreRFDETR(BaseModel):
     # (patch_size 14 x num_windows 1) used by the semantic backbone.
     semantic_imgsz_divisor = 14
     depth_imgsz_divisor = 14
-    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset(
+    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset(
         {
             "librerfdetrn-pose.pt",
             "librerfdetrs-pose.pt",
@@ -218,9 +246,9 @@ class LibreRFDETR(BaseModel):
             "librerfdetrx-pose.pt",
         }
     )
-    TRAIN_CONFIG = RFDETRConfig
-    val_preprocessor_class = RFDETRValPreprocessor
-    TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
+    TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
+    val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
+    TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op
 
     # CLI parameters intentionally ignored by native RF-DETR training.
     UNSUPPORTED_TRAIN_PARAMS: ClassVar[set[str]] = {
@@ -272,6 +300,23 @@ class LibreRFDETR(BaseModel):
             k.startswith("backbone.") for k in weights_dict
         )
 
+    @staticmethod
+    def _has_grouppose_markers(weights_dict: dict, checkpoint: dict[str, Any]) -> bool:
+        if "_kp_active_mask" in weights_dict:
+            return True
+        if any("keypoint" in k for k in weights_dict if k.startswith("transformer.")):
+            return True
+        schema = checkpoint.get("num_keypoints_per_class")
+        if schema:
+            return True
+        args = checkpoint.get("args")
+        if args is None:
+            return False
+        if isinstance(args, dict):
+            schema = args.get("num_keypoints_per_class")
+            return bool(schema)
+        return bool(getattr(args, "num_keypoints_per_class", None))
+
     @classmethod
     def detect_size(
         cls, weights_dict: dict, state_dict: dict | None = None
@@ -280,8 +325,14 @@ class LibreRFDETR(BaseModel):
         if isinstance(full_ckpt, dict) and isinstance(full_ckpt.get("size"), str):
             return full_ckpt["size"]
         is_seg = any(k.startswith("segmentation_head") for k in weights_dict)
+        is_grouppose = cls._has_grouppose_markers(weights_dict, full_ckpt)
 
-        RESOLUTION_TO_SIZE = {384: "n", 512: "s", 576: "m", 704: "l"}
+        RESOLUTION_TO_SIZE = {
+            384: "n",
+            512: "s",
+            576: "x" if is_grouppose else "m",
+            704: "l",
+        }
         SEG_RESOLUTION_TO_SIZE = {
             312: "n",
             384: "s",
@@ -321,7 +372,7 @@ class LibreRFDETR(BaseModel):
                 else {
                     24 * 24 + 1: "n",
                     32 * 32 + 1: "s",
-                    36 * 36 + 1: "m",
+                    36 * 36 + 1: "x" if is_grouppose else "m",
                     44 * 44 + 1: "l",
                 }
             )

@@ -7,7 +7,7 @@ import importlib.util
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.unit, pytest.mark.yolonas]
+pytestmark = [pytest.mark.e2e, pytest.mark.yolonas]
 
 
 @pytest.mark.skipif(

@@ -73,8 +73,8 @@ class LibreYOLONAS(BaseModel):
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
         # Accept the LibreYOLO convention (LibreYOLONAS<size>.pt) handled by the
         # base regex, and also the native Deci filenames the CDN serves
-        # (yolo_nas_<size>_coco.pth / yolo_nas_pose_<size>_coco_pose.pth) so the
-        # checkpoints auto-download by their canonical upstream names.
+        # (yolo_nas_<size>_coco.pth / yolo_nas_pose_<size>_coco_pose.pth) so
+        # locally staged native checkpoints resolve to the right model size.
         size = super().detect_size_from_filename(filename)
         if size is not None:
             return size
@@ -84,9 +84,7 @@ class LibreYOLONAS(BaseModel):
     @classmethod
     def detect_task_from_filename(cls, filename: str) -> Optional[str]:
         # Native Deci pose checkpoints are named yolo_nas_pose_<size>_coco_pose.pth.
-        # Detect that here so get_download_url routes to the pose CDN URL; without
-        # it the base regex sees no task and a pose request fetches detection
-        # weights, which then fail the pose/detection checkpoint guard.
+        # Detect that here so local checkpoints route to the pose architecture.
         if re.search(r"yolo_nas_pose_[nsml]_coco", filename.lower()):
             return "pose"
         return super().detect_task_from_filename(filename)
@@ -100,9 +98,7 @@ class LibreYOLONAS(BaseModel):
             return None
         task = cls.detect_task_from_filename(filename)
         if task == "pose":
-            if size not in cls.POSE_INPUT_SIZES:
-                return None
-            return f"{cls._DECI_CDN_BASE}/yolo_nas_pose_{size}_coco_pose.pth"
+            return None
         if size not in cls.INPUT_SIZES:
             return None
         return f"{cls._DECI_CDN_BASE}/yolo_nas_{size}_coco.pth"
@@ -346,10 +342,6 @@ class LibreYOLONAS(BaseModel):
         "yolo_nas_s_coco.pth": "c1b1d9148ab8ae5d5984699547e850955ff9efccaf568c67b3d605acb4bfe1cb",
         "yolo_nas_m_coco.pth": "b194fc7fa196f76161c6356558bedf04fb99a62325a74a36a4bec3ca8ba48250",
         "yolo_nas_l_coco.pth": "91a06beaa1ce1a651d6691e3198061da996eafc8890503238dedacbd4c392a32",
-        "yolo_nas_pose_n_coco_pose.pth": "3544cd4bef7a4930e79c2d9a9ec50167be6fa366be834d52d462393edfc3a64f",
-        "yolo_nas_pose_s_coco_pose.pth": "54f0933cb3760c5f9ba47e901c58d6d114cd206718667a586031bea0ab9ea849",
-        "yolo_nas_pose_m_coco_pose.pth": "6d0f92a589fd2f39a9fb92c42894cca76e81eaf2fcb3a00f1cac2e7089fb91ec",
-        "yolo_nas_pose_l_coco_pose.pth": "d05c55157b3eb917e43d3669cc1e99fbe35a8a93c7883b95b93036a81216c5ab",
     }
 
     @classmethod

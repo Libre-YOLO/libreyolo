@@ -566,6 +566,30 @@ def test_ec_pose_backend_does_not_clip_keypoints():
     np.testing.assert_allclose(boxes, [[-50.0, 50.0, 100.0, 125.0]])
 
 
+def test_ec_pose_backend_honors_max_det():
+    backend = _DummyBackend(
+        "ec",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    logits = np.array([[[10.0], [9.0], [8.0]]], dtype=np.float32)
+    keypoints = np.array(
+        [[[0.1, 0.1, 0.2, 0.2], [0.3, 0.3, 0.4, 0.4], [0.5, 0.5, 0.6, 0.6]]],
+        dtype=np.float32,
+    )
+
+    boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [logits, keypoints], 64, (100, 100), conf=0.0, max_det=2
+    )
+
+    assert boxes.shape == (2, 4)
+    assert scores.shape == (2,)
+    assert classes.tolist() == [0, 0]
+    assert masks is None
+    assert obb is None
+    assert parsed_keypoints.shape == (2, 2, 3)
+
+
 def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     backend = _DummyBackend(
         "yolonas",
@@ -599,6 +623,25 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
         keypoints,
         [[[10.0, 20.0, 0.8], [30.0, 40.0, 0.7]]],
     )
+
+
+def test_yolonas_backend_uses_preprocess_ratio_for_large_canvas():
+    backend = _DummyBackend("yolonas")
+    boxes_out = np.array([[[384.0, 512.0, 448.0, 576.0]]], dtype=np.float32)
+    scores_out = np.array([[[0.9, 0.1]]], dtype=np.float32)
+
+    boxes, scores, classes = backend._parse_yolonas(
+        [boxes_out, scores_out],
+        effective_imgsz=1280,
+        orig_w=1000,
+        orig_h=500,
+        conf=0.5,
+        ratio=0.64,
+    )
+
+    np.testing.assert_array_equal(classes, [0])
+    np.testing.assert_allclose(scores, [0.9], rtol=1e-6)
+    np.testing.assert_allclose(boxes, [[100.0, 50.0, 200.0, 150.0]], atol=1e-4)
 
 
 def test_yolo9_pose_backend_parses_keypoints():
@@ -653,6 +696,62 @@ def test_rfdetr_seg_backend_uses_detected_size_for_num_select_without_metadata()
     assert len(scores) == 100
     assert classes.tolist() == [0] * 100
     assert parsed_masks.shape == (100, 16, 16)
+
+
+def test_rfdetr_pose_backend_reshapes_batched_flattened_keypoints():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+        model_size="n",
+    )
+    backend.keypoint_dim = 3
+    boxes = np.array(
+        [[[0.5, 0.5, 0.2, 0.2], [0.25, 0.25, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    logits = np.array([[[10.0], [9.0]]], dtype=np.float32)
+    keypoints = np.array(
+        [
+            [
+                [0.1, 0.2, 2.0, 0.3, 0.4, 4.0],
+                [0.5, 0.6, 0.0, 0.7, 0.8, -2.0],
+            ]
+        ],
+        dtype=np.float32,
+    )
+
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [boxes, logits, keypoints], 64, (100, 200), conf=0.5
+    )
+
+    assert parsed_boxes.shape == (2, 4)
+    assert scores.shape == (2,)
+    assert classes.tolist() == [0, 0]
+    assert masks is None
+    assert obb is None
+    assert parsed_keypoints.shape == (2, 2, 3)
+    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[10.0, 40.0], [30.0, 80.0]])
+    np.testing.assert_allclose(
+        parsed_keypoints[0, :, 2],
+        [1.0 / (1.0 + np.exp(-2.0)), 1.0 / (1.0 + np.exp(-4.0))],
+    )
+
+
+def test_rfdetr_pose_backend_rejects_invalid_grouppose_schema():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+        model_size="n",
+    )
+    backend.num_keypoints_per_class = [0, 17, 4]
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.2]]], dtype=np.float32)
+    logits = np.array([[[10.0, 9.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 34, 8), dtype=np.float32)
+
+    with pytest.raises(ValueError, match="GroupPose"):
+        backend._parse_outputs([boxes, logits, keypoints], 64, (100, 100), conf=0.5)
 
 
 def test_yolo_backend_still_applies_nms():

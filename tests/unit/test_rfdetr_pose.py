@@ -124,6 +124,18 @@ def test_rfdetr_pose_size_table_includes_public_checkpoints():
     )
 
 
+def test_rfdetr_detect_size_disambiguates_grouppose_x():
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    weights = {
+        "_kp_active_mask": torch.ones(2, 17, dtype=torch.bool),
+    }
+    checkpoint = {"args": {"resolution": 576}}
+
+    assert LibreRFDETR.detect_size(weights, state_dict=checkpoint) == "x"
+    assert LibreRFDETR.detect_size({}, state_dict=checkpoint) == "m"
+
+
 @pytest.mark.parametrize("size", ["n", "s", "m", "l", "x"])
 def test_rfdetr_pose_download_url_for_public_sizes(size):
     from libreyolo.models.rfdetr.model import LibreRFDETR

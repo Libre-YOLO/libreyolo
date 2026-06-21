@@ -18,6 +18,7 @@ from vision_analysis_benchmark.onnx_parity import (
     _ensure_case_weights_available,
     _load_onnx_for_parity,
     _preflight_case_weights,
+    _safe_hf_dataset_path,
     compare_metrics,
     extract_metrics,
     filter_cases,
@@ -235,6 +236,18 @@ def test_preflight_case_weights_does_not_hide_unrelated_file_errors(monkeypatch)
 
     with pytest.raises(FileNotFoundError, match="annotations file not found"):
         _preflight_case_weights(case)
+
+
+def test_safe_hf_dataset_path_rejects_traversal(tmp_path):
+    with pytest.raises(ValueError, match="Unsafe Hugging Face dataset path"):
+        _safe_hf_dataset_path("../outside.jpg", tmp_path)
+
+
+def test_safe_hf_dataset_path_returns_target_inside_dest(tmp_path):
+    rel, target = _safe_hf_dataset_path("images/val2017/frame.jpg", tmp_path)
+
+    assert str(rel) == "images/val2017/frame.jpg"
+    assert target == tmp_path.resolve() / "images" / "val2017" / "frame.jpg"
 
 
 def test_load_onnx_for_parity_uses_exported_metadata_task(tmp_path):

@@ -114,32 +114,17 @@ class TestYOLONASHeuristics:
         assert LibreYOLONAS.get_download_url(filename) is None
 
     @pytest.mark.parametrize(
-        ("filename", "expected_url"),
+        "filename",
         [
-            (
-                "LibreYOLONASn-pose.pt",
-                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
-            ),
-            (
-                "yolo_nas_pose_n_coco_pose.pth",
-                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
-            ),
-            (
-                "LibreYOLONASs-pose.pt",
-                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_s_coco_pose.pth",
-            ),
-            (
-                "LibreYOLONASm-pose.pt",
-                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_m_coco_pose.pth",
-            ),
-            (
-                "LibreYOLONASl-pose.pt",
-                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_l_coco_pose.pth",
-            ),
+            "LibreYOLONASn-pose.pt",
+            "yolo_nas_pose_n_coco_pose.pth",
+            "LibreYOLONASs-pose.pt",
+            "LibreYOLONASm-pose.pt",
+            "LibreYOLONASl-pose.pt",
         ],
     )
-    def test_get_download_url_points_to_deci_pose_cdn(self, filename, expected_url):
-        assert LibreYOLONAS.get_download_url(filename) == expected_url
+    def test_get_download_url_returns_none_for_pose_checkpoints(self, filename):
+        assert LibreYOLONAS.get_download_url(filename) is None
 
 
 class TestYOLONASNativeModel:
