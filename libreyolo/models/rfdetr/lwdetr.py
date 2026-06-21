@@ -1132,14 +1132,16 @@ def build_criterion_and_postprocessors(args: Any):
     if args.segmentation_head:
         weight_dict["loss_mask_ce"] = args.mask_ce_loss_coef
         weight_dict["loss_mask_dice"] = args.mask_dice_loss_coef
-    # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
-    # Gate on the new GroupPose flag (the legacy ``keypoint_head`` arg was removed).
-    has_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    has_keypoints = bool(
+        getattr(args, "use_grouppose_keypoints", False)
+        or getattr(args, "keypoint_head", False)
+    )
     if has_keypoints:
         weight_dict["loss_keypoints_l1"] = args.keypoint_l1_loss_coef
         weight_dict["loss_keypoints_findable"] = args.keypoint_findable_loss_coef
         weight_dict["loss_keypoints_visible"] = args.keypoint_visible_loss_coef
-        weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
+        if getattr(args, "use_grouppose_keypoints", False):
+            weight_dict["loss_keypoints_nll"] = args.keypoint_nll_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -1171,7 +1173,7 @@ def build_criterion_and_postprocessors(args: Any):
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
-            use_grouppose_keypoints=has_keypoints,
+            use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
@@ -1186,7 +1188,7 @@ def build_criterion_and_postprocessors(args: Any):
             use_varifocal_loss=args.use_varifocal_loss,
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
-            use_grouppose_keypoints=has_keypoints,
+            use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     criterion.to(device)

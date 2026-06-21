@@ -1312,7 +1312,14 @@ class BaseBackend(ABC):
     def _parse_ec_pose(self, all_outputs, orig_w, orig_h, conf, max_det=300):
         """Parse EC pose outputs: logits and normalized flattened keypoints."""
         pred_logits = all_outputs[0][0]
+        pred_boxes = None
         pred_keypoints = all_outputs[1][0]
+        if len(all_outputs) >= 3:
+            maybe_boxes = all_outputs[1][0]
+            maybe_keypoints = all_outputs[2][0]
+            if maybe_boxes.shape[-1] == 4:
+                pred_boxes = maybe_boxes
+                pred_keypoints = maybe_keypoints
 
         scores_per_class = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
         scores_per_class = scores_per_class.astype(np.float32)
@@ -1342,11 +1349,14 @@ class BaseBackend(ABC):
         keypoints_xy[..., 0] *= float(orig_w)
         keypoints_xy[..., 1] *= float(orig_h)
 
-        x_min = keypoints_xy[..., 0].min(axis=1)
-        y_min = keypoints_xy[..., 1].min(axis=1)
-        x_max = keypoints_xy[..., 0].max(axis=1)
-        y_max = keypoints_xy[..., 1].max(axis=1)
-        boxes = np.stack([x_min, y_min, x_max, y_max], axis=1)
+        if pred_boxes is not None:
+            boxes = self._scale_cxcywh_boxes(pred_boxes[query_idx], orig_w, orig_h)
+        else:
+            x_min = keypoints_xy[..., 0].min(axis=1)
+            y_min = keypoints_xy[..., 1].min(axis=1)
+            x_max = keypoints_xy[..., 0].max(axis=1)
+            y_max = keypoints_xy[..., 1].max(axis=1)
+            boxes = np.stack([x_min, y_min, x_max, y_max], axis=1)
         visibility = np.ones((*keypoints_xy.shape[:-1], 1), dtype=np.float32)
         keypoints = np.concatenate([keypoints_xy, visibility], axis=-1)
         return boxes, max_scores, class_ids, None, None, keypoints

@@ -294,5 +294,5 @@ class ECExportWrapper(nn.Module):
             keypoints = out["pred_keypoints"]
             if keypoints.dim() == 4:
                 keypoints = keypoints.flatten(-2)
-            return out["pred_logits"], keypoints
+            return out["pred_logits"], out["pred_boxes"], keypoints
         return out["pred_logits"], out["pred_boxes"]

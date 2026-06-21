@@ -570,3 +570,115 @@ def test_grouppose_person_only_target_trains_nonzero_keypoint_loss():
     total = sum(losses.values())
     assert torch.isfinite(total)
     assert float(total) > 0.0
+
+
+def test_classic_pose_criterion_includes_keypoint_losses():
+    from libreyolo.models.rfdetr.lwdetr import build_criterion_and_postprocessors
+
+    args = _make_args(
+        _small_pose_config(),
+        pose=True,
+        use_grouppose_keypoints=False,
+        num_keypoints=5,
+        nb_classes=1,
+        device="cpu",
+        segmentation=False,
+    )
+
+    criterion, _ = build_criterion_and_postprocessors(args)
+
+    assert criterion.use_grouppose_keypoints is False
+    assert "keypoints" in criterion.losses
+    assert criterion.weight_dict["loss_keypoints_l1"] == 1.0
+    assert criterion.weight_dict["loss_keypoints_findable"] == 1.0
+    assert criterion.weight_dict["loss_keypoints_visible"] == 1.0
+    assert "loss_keypoints_nll" not in criterion.weight_dict
+
+
+def test_classic_pose_target_trains_nonzero_keypoint_loss():
+    from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    pred_keypoints = torch.tensor(
+        [[[[0.1, 0.2, -2.0], [0.3, 0.4, 2.0]]]],
+        requires_grad=True,
+    )
+    matcher = HungarianMatcher(
+        keypoint_l1_loss_coef=1.0,
+        keypoint_findable_loss_coef=1.0,
+        keypoint_visible_loss_coef=1.0,
+    )
+    criterion = SetCriterion(
+        num_classes=1,
+        matcher=matcher,
+        weight_dict={},
+        focal_alpha=0.25,
+        losses=["keypoints"],
+        group_detr=1,
+        use_grouppose_keypoints=False,
+    )
+    targets = [
+        {
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),
+            "keypoints": torch.tensor([[[0.7, 0.8, 2.0], [0.9, 0.1, 1.0]]]),
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]
+
+    losses = criterion.loss_keypoints(
+        {"pred_keypoints": pred_keypoints},
+        targets,
+        indices,
+        num_boxes=1.0,
+    )
+
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) > 0.0
+    assert float(losses["loss_keypoints_nll"]) == 0.0
+    total = sum(losses.values())
+    total.backward()
+    assert pred_keypoints.grad is not None
+    assert torch.isfinite(pred_keypoints.grad).all()
+    assert float(pred_keypoints.grad.abs().sum()) > 0.0
+
+
+def test_classic_pose_forward_loss_runs_through_matcher():
+    from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    criterion = SetCriterion(
+        num_classes=1,
+        matcher=HungarianMatcher(
+            keypoint_l1_loss_coef=1.0,
+            keypoint_findable_loss_coef=1.0,
+            keypoint_visible_loss_coef=1.0,
+        ),
+        weight_dict={},
+        focal_alpha=0.25,
+        losses=["keypoints"],
+        group_detr=1,
+        use_grouppose_keypoints=False,
+    )
+    outputs = {
+        "pred_logits": torch.zeros(1, 2, 1),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.4, 0.4], [0.1, 0.1, 0.2, 0.2]]]),
+        "pred_keypoints": torch.tensor(
+            [[[[0.1, 0.2, -2.0], [0.3, 0.4, 2.0]], [[0.8, 0.8, 1.0], [0.9, 0.9, 1.0]]]]
+        ),
+    }
+    targets = [
+        {
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),
+            "keypoints": torch.tensor([[[0.7, 0.8, 2.0], [0.9, 0.1, 1.0]]]),
+        }
+    ]
+
+    losses = criterion(outputs, targets)
+
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) > 0.0
+    assert float(losses["loss_keypoints_nll"]) == 0.0

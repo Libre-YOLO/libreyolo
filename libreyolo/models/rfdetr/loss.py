@@ -29,6 +29,58 @@ from . import box_ops
 logger = logging.getLogger(__name__)
 
 
+def _classic_keypoint_losses(
+    src_keypoints: torch.Tensor,
+    target_keypoints: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-instance keypoint losses for classic RF-DETR pose heads."""
+    if src_keypoints.shape[-1] < 3:
+        raise ValueError("classic RF-DETR keypoints must have x, y, and visibility")
+    if src_keypoints.shape[-2] != target_keypoints.shape[-2]:
+        raise ValueError(
+            "classic RF-DETR keypoint count does not match target keypoint count: "
+            f"{src_keypoints.shape[-2]} vs {target_keypoints.shape[-2]}"
+        )
+
+    target = target_keypoints.to(device=src_keypoints.device, dtype=src_keypoints.dtype)
+    target_xy = target[..., :2]
+    target_vis = target[..., 2]
+
+    finite_xy = torch.isfinite(target_xy).all(dim=-1)
+    finite_vis = torch.isfinite(target_vis)
+    visible = finite_xy & finite_vis & (target_vis > 0)
+    visible_f = visible.to(src_keypoints.dtype)
+    visible_count = visible_f.sum(dim=-1).clamp(min=1.0)
+    loss_l1 = (
+        F.l1_loss(src_keypoints[..., :2], target_xy, reduction="none").sum(dim=-1)
+        * visible_f
+    ).sum(dim=-1) / visible_count
+
+    valid_vis_f = finite_vis.to(src_keypoints.dtype)
+    vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
+    pred_vis_logits = src_keypoints[..., 2]
+    target_findable = (target_vis > 0).to(src_keypoints.dtype)
+    target_visible = (target_vis > 1).to(src_keypoints.dtype)
+    loss_findable = (
+        F.binary_cross_entropy_with_logits(
+            pred_vis_logits,
+            target_findable,
+            reduction="none",
+        )
+        * valid_vis_f
+    ).sum(dim=-1) / vis_count
+    loss_visible = (
+        F.binary_cross_entropy_with_logits(
+            pred_vis_logits,
+            target_visible,
+            reduction="none",
+        )
+        * valid_vis_f
+    ).sum(dim=-1) / vis_count
+    loss_nll = torch.zeros_like(loss_l1)
+    return loss_l1, loss_findable, loss_visible, loss_nll
+
+
 @torch.no_grad()
 def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)):
     """Computes the precision@k for the specified values of k."""
@@ -529,40 +581,39 @@ class SetCriterion(nn.Module):
         return losses
 
     def loss_keypoints(self, outputs, targets, indices, num_boxes):
-        """Compute GroupPose keypoint losses on matched prediction/target pairs.
-
-        Ported from RF-DETR v1.8.0 (GroupPose keypoint additions). Produces the four
-        GroupPose loss terms ``loss_keypoints_l1`` / ``loss_keypoints_findable`` /
-        ``loss_keypoints_visible`` / ``loss_keypoints_nll``, each normalized by
-        ``num_boxes``. Per-instance keypoint classes are read from ``targets[*]['labels']``
-        and per-instance areas are derived from the cxcywh ``targets[*]['boxes']``
-        (``area = w * h``), matching the upstream criterion exactly.
-        """
+        """Compute RF-DETR keypoint losses on matched prediction/target pairs."""
         assert "pred_keypoints" in outputs, "pred_keypoints missing in model outputs"
         idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs["pred_keypoints"][idx]
         target_keypoints = torch.cat([target["keypoints"][j] for target, (_, j) in zip(targets, indices)], dim=0)
-        target_classes = torch.cat([target["labels"][j] for target, (_, j) in zip(targets, indices)], dim=0)
-        target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
-        target_areas = target_boxes[:, 2] * target_boxes[:, 3]
 
-        # Class-index remap at the criterion boundary: lift the LibreYOLO
-        # contiguous pose label (person = 0) to the GroupPose internal schema
-        # class (person = 1 for ``[0, 17]``) before it indexes
-        # ``num_keypoints_per_class`` inside ``compute_l1_keypoint_loss``. Without
-        # this, label 0 selects the empty schema slot (0 keypoints) and the
-        # keypoint loss collapses to zero, so the head never trains.
-        target_classes = map_labels_to_keypoint_schema(
-            target_classes.to(src_keypoints.device), self.num_keypoints_per_class
-        )
+        if self.use_grouppose_keypoints:
+            target_classes = torch.cat([target["labels"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+            target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+            target_areas = target_boxes[:, 2] * target_boxes[:, 3]
 
-        loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
-            all_pred_keypoints=src_keypoints,
-            target_keypoints=target_keypoints.to(src_keypoints.device),
-            target_classes=target_classes,
-            target_areas=target_areas.to(src_keypoints.device),
-            num_keypoints_per_class=self.num_keypoints_per_class,
-        )
+            # Class-index remap at the criterion boundary: lift the LibreYOLO
+            # contiguous pose label (person = 0) to the GroupPose internal schema
+            # class (person = 1 for ``[0, 17]``) before it indexes
+            # ``num_keypoints_per_class`` inside ``compute_l1_keypoint_loss``. Without
+            # this, label 0 selects the empty schema slot (0 keypoints) and the
+            # keypoint loss collapses to zero, so the head never trains.
+            target_classes = map_labels_to_keypoint_schema(
+                target_classes.to(src_keypoints.device), self.num_keypoints_per_class
+            )
+
+            loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
+                all_pred_keypoints=src_keypoints,
+                target_keypoints=target_keypoints.to(src_keypoints.device),
+                target_classes=target_classes,
+                target_areas=target_areas.to(src_keypoints.device),
+                num_keypoints_per_class=self.num_keypoints_per_class,
+            )
+        else:
+            loss_l1, loss_findable, loss_visible, loss_nll = _classic_keypoint_losses(
+                src_keypoints,
+                target_keypoints,
+            )
 
         return {
             "loss_keypoints_l1": loss_l1.sum() / num_boxes,

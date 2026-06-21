@@ -552,6 +552,28 @@ def test_ec_pose_backend_parses_flattened_keypoints():
     assert scores[0] > 0.99
 
 
+def test_ec_pose_backend_uses_exported_boxes_when_present():
+    backend = _DummyBackend(
+        "ec",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    logits = np.array([[[10.0, -10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.5, 0.5, 0.8, 0.6]]], dtype=np.float32)
+    keypoints = np.array([[[0.45, 0.45, 0.55, 0.55]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [logits, boxes, keypoints], 64, (200, 100), conf=0.5
+    )
+
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert masks is None
+    assert obb is None
+    np.testing.assert_allclose(parsed_boxes, [[20.0, 20.0, 180.0, 80.0]])
+    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[90.0, 45.0], [110.0, 55.0]])
+
+
 def test_ec_pose_backend_does_not_clip_keypoints():
     backend = _DummyBackend(
         "ec",

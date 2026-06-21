@@ -264,11 +264,12 @@ def export_onnx(
             else None
         )
     elif is_ec_pose:
-        output_names = ["pred_logits", "pred_keypoints"]
+        output_names = ["pred_logits", "pred_boxes", "pred_keypoints"]
         dynamic_axes = (
             {
                 "images": {0: "batch"},
                 "pred_logits": {0: "batch", 1: "queries"},
+                "pred_boxes": {0: "batch", 1: "queries"},
                 "pred_keypoints": {0: "batch", 1: "queries", 2: "keypoint_values"},
             }
             if dynamic
