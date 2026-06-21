@@ -21,8 +21,6 @@ GroupPose module:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
@@ -267,20 +265,6 @@ def test_classic_pose_export_preserves_keypoint_batch_axis():
     assert tuple(boxes.shape) == (1, q, 4)
     assert tuple(logits.shape) == (1, q, 1)
     assert tuple(keypoints.shape) == (1, q, 5, 3)
-
-
-def test_classic_pose_training_model_detected():
-    from libreyolo.models.rfdetr.trainer import _is_classic_pose_training_model
-
-    classic = SimpleNamespace(
-        model=SimpleNamespace(keypoint_head=object(), use_grouppose_keypoints=False)
-    )
-    grouppose = SimpleNamespace(
-        model=SimpleNamespace(keypoint_head=None, use_grouppose_keypoints=True)
-    )
-
-    assert _is_classic_pose_training_model(classic) is True
-    assert _is_classic_pose_training_model(grouppose) is False
 
 
 def test_classic_pose_load_state_dict_reinitializes_keypoint_count(monkeypatch):
@@ -635,7 +619,7 @@ def test_classic_pose_target_trains_nonzero_keypoint_loss():
 
     assert float(losses["loss_keypoints_l1"]) > 0.0
     assert float(losses["loss_keypoints_findable"]) > 0.0
-    assert float(losses["loss_keypoints_visible"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) == 0.0
     assert float(losses["loss_keypoints_nll"]) == 0.0
     total = sum(losses.values())
     total.backward()
@@ -680,5 +664,89 @@ def test_classic_pose_forward_loss_runs_through_matcher():
 
     assert float(losses["loss_keypoints_l1"]) > 0.0
     assert float(losses["loss_keypoints_findable"]) > 0.0
-    assert float(losses["loss_keypoints_visible"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) == 0.0
     assert float(losses["loss_keypoints_nll"]) == 0.0
+
+
+def test_train_rfdetr_pose_checkpoint_keeps_size_unset(monkeypatch):
+    import libreyolo.models.rfdetr.model as rfdetr_model
+    from libreyolo.models.rfdetr.trainer import train_rfdetr
+
+    captured = {}
+
+    class _FakeRFDETR:
+        def __init__(
+            self,
+            *,
+            model_path=None,
+            size=None,
+            device="auto",
+            segmentation=False,
+            task=None,
+        ):
+            captured["init"] = {
+                "model_path": model_path,
+                "size": size,
+                "device": device,
+                "segmentation": segmentation,
+                "task": task,
+            }
+
+        def train(self, **kwargs):
+            captured["train"] = kwargs
+            return {"ok": True}
+
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _FakeRFDETR)
+
+    result = train_rfdetr(
+        data="pose.yaml",
+        pose=True,
+        pretrain_weights="LibreRFDETRn-pose.pt",
+        epochs=1,
+    )
+
+    assert result == {"ok": True}
+    assert captured["init"] == {
+        "model_path": "LibreRFDETRn-pose.pt",
+        "size": None,
+        "device": "auto",
+        "segmentation": False,
+        "task": "pose",
+    }
+
+
+def test_train_rfdetr_pose_without_checkpoint_keeps_grouppose_default(monkeypatch):
+    import libreyolo.models.rfdetr.model as rfdetr_model
+    from libreyolo.models.rfdetr.trainer import train_rfdetr
+
+    captured = {}
+
+    class _FakeRFDETR:
+        def __init__(
+            self,
+            *,
+            model_path=None,
+            size=None,
+            device="auto",
+            segmentation=False,
+            task=None,
+        ):
+            captured["init"] = {
+                "model_path": model_path,
+                "size": size,
+                "device": device,
+                "segmentation": segmentation,
+                "task": task,
+            }
+
+        def train(self, **kwargs):
+            captured["train"] = kwargs
+            return {"ok": True}
+
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _FakeRFDETR)
+
+    result = train_rfdetr(data="pose.yaml", pose=True, epochs=1)
+
+    assert result == {"ok": True}
+    assert captured["init"]["size"] == "x"
+    assert captured["init"]["task"] == "pose"

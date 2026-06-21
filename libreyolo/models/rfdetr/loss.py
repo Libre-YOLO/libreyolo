@@ -60,7 +60,6 @@ def _classic_keypoint_losses(
     vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
     pred_vis_logits = src_keypoints[..., 2]
     target_findable = (target_vis > 0).to(src_keypoints.dtype)
-    target_visible = (target_vis > 1).to(src_keypoints.dtype)
     loss_findable = (
         F.binary_cross_entropy_with_logits(
             pred_vis_logits,
@@ -69,14 +68,7 @@ def _classic_keypoint_losses(
         )
         * valid_vis_f
     ).sum(dim=-1) / vis_count
-    loss_visible = (
-        F.binary_cross_entropy_with_logits(
-            pred_vis_logits,
-            target_visible,
-            reduction="none",
-        )
-        * valid_vis_f
-    ).sum(dim=-1) / vis_count
+    loss_visible = torch.zeros_like(loss_findable)
     loss_nll = torch.zeros_like(loss_l1)
     return loss_l1, loss_findable, loss_visible, loss_nll
 

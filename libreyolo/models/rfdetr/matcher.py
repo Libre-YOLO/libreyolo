@@ -60,7 +60,6 @@ def _classic_keypoint_matching_cost(
     valid_vis_f = finite_vis.to(pred.dtype)
     vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
     target_findable = (target_vis > 0).to(pred.dtype)
-    target_visible = (target_vis > 1).to(pred.dtype)
     cost_findable = (
         F.binary_cross_entropy_with_logits(
             pred_vis_logits,
@@ -69,14 +68,7 @@ def _classic_keypoint_matching_cost(
         )
         * valid_vis_f[None, None]
     ).sum(dim=-1) / vis_count[None, None]
-    cost_visible = (
-        F.binary_cross_entropy_with_logits(
-            pred_vis_logits,
-            target_visible[None, None].expand_as(pred_vis_logits),
-            reduction="none",
-        )
-        * valid_vis_f[None, None]
-    ).sum(dim=-1) / vis_count[None, None]
+    cost_visible = torch.zeros_like(cost_findable)
     cost_nll = torch.zeros_like(cost_l1)
     return cost_l1, cost_findable, cost_visible, cost_nll
 
