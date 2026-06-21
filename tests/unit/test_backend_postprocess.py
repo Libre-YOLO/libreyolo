@@ -635,6 +635,27 @@ def test_ec_pose_backend_selects_unique_queries_before_collapsing_classes():
     np.testing.assert_allclose(parsed_keypoints[:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
 
 
+def test_ec_pose_backend_does_not_hard_cap_queries_at_sixty():
+    backend = _DummyBackend(
+        "ec",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+    )
+    logits = np.linspace(10.0, 1.0, 70, dtype=np.float32).reshape(1, 70, 1)
+    keypoints = np.zeros((1, 70, 34), dtype=np.float32)
+
+    boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
+        [logits, keypoints], 64, (100, 100), conf=0.0, max_det=70
+    )
+
+    assert boxes.shape == (70, 4)
+    assert scores.shape == (70,)
+    assert classes.shape == (70,)
+    assert masks is None
+    assert obb is None
+    assert parsed_keypoints.shape == (70, 17, 3)
+
+
 def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     backend = _DummyBackend(
         "yolonas",

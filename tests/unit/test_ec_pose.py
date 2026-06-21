@@ -250,6 +250,23 @@ class TestPoseForwardAndPostprocess:
         assert det["boxes"].shape == (2, 4)
         np.testing.assert_allclose(det["keypoints"][:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
 
+    def test_wrapper_postprocess_does_not_hard_cap_queries_at_sixty(self, pose_model):
+        raw = {
+            "pred_logits": torch.linspace(10.0, 1.0, 70).reshape(1, 70, 1),
+            "pred_keypoints": torch.zeros(1, 70, 34),
+        }
+
+        det = pose_model._postprocess(
+            raw,
+            conf_thres=0.0,
+            iou_thres=0.0,
+            original_size=(100, 100),
+            max_det=70,
+        )
+
+        assert det["boxes"].shape == (70, 4)
+        assert det["keypoints"].shape == (70, 17, 3)
+
     def test_full_predict_pipeline(self, pose_model):
         # Exercise _wrap_results so the keypoint plumbing stays working.
         from PIL import Image

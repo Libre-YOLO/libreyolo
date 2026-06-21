@@ -245,7 +245,7 @@ class LibreEC(BaseModel):
                 conf_thres=conf_thres,
                 iou_thres=iou_thres,
                 original_size=original_size,
-                max_det=min(max_det, 60),  # ECPose ships with num_queries=60
+                max_det=max_det,
                 num_keypoints=self.POSE_NUM_KEYPOINTS,
             )
         if self.task == "segment":
