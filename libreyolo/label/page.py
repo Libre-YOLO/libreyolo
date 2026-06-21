@@ -457,6 +457,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .wz-foot{display:flex;align-items:center;gap:12px;padding:14px 18px;border-top:1px solid var(--line);background:var(--bg2)}
   .wz-err{flex:1;color:var(--danger);font-size:12.5px;min-height:16px}
   .wz-nav{display:flex;gap:9px}
+  .exp-ratios{display:flex;gap:14px;margin-top:10px;flex-wrap:wrap}
+  .exp-ratios label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--tx2)}
+  .exp-ratios input{width:92px;background:var(--s2);border:1px solid var(--line2);border-radius:8px;padding:6px 9px;color:var(--tx);font-size:13px;outline:none}
+  .exp-ratios input:focus{border-color:var(--ac)}
+  .exp-fmts{display:flex;gap:18px;flex-wrap:wrap;margin-top:2px}
+  .exp-result{font-size:12px;color:var(--ok);margin-top:8px;word-break:break-all;line-height:1.5}
   /* home: primary New project CTA + divider */
   .home-new{display:flex;justify-content:center;margin:0 auto 4px;max-width:660px}
   .home-new .btn{height:46px;padding:0 28px;font-size:14.5px;font-weight:640;border-radius:12px}
@@ -469,7 +475,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <body>
 <div id="app">
   <header class="topbar">
-    <span class="brand" id="brandhome" title="Projects - back to the home screen" style="cursor:pointer"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
+    <span class="brand" id="brandhome" title="Projects - back to the home screen" style="cursor:pointer"><svg class="ic" viewBox="0 0 400 400" fill="currentColor" fill-rule="evenodd" aria-label="LibreYOLO"><path d="M86 86 L123.09 86 A78 78 0 0 1 276.91 86 L314 86 L314 123.09 A78 78 0 0 1 314 276.91 L314 314 L276.91 314 A78 78 0 0 1 123.09 314 L86 314 L86 276.91 A78 78 0 0 1 86 123.09 Z M116 116 L157.26 116 A46 46 0 1 1 242.74 116 L284 116 L284 157.26 A46 46 0 1 1 284 242.74 L284 284 L242.74 284 A46 46 0 1 1 157.26 284 L116 284 L116 242.74 A46 46 0 1 1 116 157.26 Z"/></svg>Libre<b>Label</b></span>
     <span class="sep"></span>
     <span class="ds" id="dsname"></span>
     <span class="counter" id="counter"></span>
@@ -489,6 +495,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <span class="sep"></span>
     <span class="tgroup">
       <button class="insbtn" id="insbtn" title="Dataset insights &amp; readiness"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V11M10 20V4M16 20v-6M21 20H3"/></svg></button>
+      <button class="btn btn-ghost btn-sm" id="exportbtn" title="Export dataset (YOLO / COCO / Pascal VOC)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Export</button>
       <button class="insbtn" id="mapbtn" title="Embedding map - see your whole dataset (M)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="6" cy="7.5" r="1.7"/><circle cx="9.5" cy="15" r="1.7"/><circle cx="15" cy="9" r="1.7"/><circle cx="18" cy="16.5" r="1.7"/><circle cx="13" cy="18" r="1.5"/><circle cx="17.5" cy="6" r="1.4"/></svg></button>
       <button class="insbtn" id="boostbtn" title="Boost - fine-tune the model on your labels" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h6v6"/></svg></button>
     </span>
@@ -647,12 +654,44 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <div class="ce-actions"><button class="btn btn-ghost" id="delcancel">Cancel</button><button class="btn" id="delconfirm" style="background:var(--danger);color:#fff;border:1px solid var(--danger)">Move to trash</button></div>
     </div>
   </div></div>
+  <div class="modal" id="exportmodal"><div class="mcard cecard">
+    <div class="mhead"><h3>Export dataset</h3><button class="mx" id="expclose">&times;</button></div>
+    <div class="mbody">
+      <label class="wz-lbl">Split</label>
+      <div class="seg" id="expsplit">
+        <button data-s="trainval" class="on">Train / Val</button>
+        <button data-s="trainvaltest">Train / Val / Test</button>
+        <button data-s="none">No split</button>
+      </div>
+      <div class="exp-ratios" id="expratios">
+        <label>Val %<input type="number" id="expval" value="20" min="1" max="90"></label>
+        <label id="exptestwrap" hidden>Test %<input type="number" id="exptest" value="10" min="0" max="90"></label>
+        <label>Seed<input type="number" id="expseed" value="1234"></label>
+      </div>
+      <label class="wz-check" style="margin-top:14px"><input type="checkbox" id="expinplace"> Re-split in place (reorganize this folder, no copy)</label>
+      <p class="wz-note" id="expinplacewarn" hidden>Moves your images into images/train|val(/test) and rewrites data.yaml - it changes your working folder (YOLO only).</p>
+      <div id="expcopyopts">
+        <label class="wz-lbl">Formats</label>
+        <div class="exp-fmts">
+          <label class="wz-check"><input type="checkbox" id="expyolo" checked> YOLO</label>
+          <label class="wz-check"><input type="checkbox" id="expcoco"> COCO</label>
+          <label class="wz-check"><input type="checkbox" id="expvoc"> Pascal VOC</label>
+        </div>
+        <label class="wz-lbl">Destination folder</label>
+        <div class="wz-folder"><input id="expdst" class="wz-in" placeholder="Where to write the exported dataset…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="expbrowse">Browse</button></div>
+        <label class="wz-check" style="margin-top:10px"><input type="checkbox" id="expzip"> Also create a .zip</label>
+      </div>
+      <div class="ce-err" id="experr"></div>
+      <div class="exp-result" id="expresult"></div>
+      <div class="ce-actions"><button class="btn btn-ghost" id="expcancel">Cancel</button><button class="btn btn-primary" id="expgo">Export</button></div>
+    </div>
+  </div></div>
   <div id="home" class="home">
     <button class="insbtn home-theme" id="hometheme" title="Toggle light / dark"></button>
     <div class="home-inner">
       <div class="home-hero">
-        <span class="home-brand"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" stroke="none"/></svg>Libre<b>Label</b></span>
-        <p class="home-tag">Label your images and train LibreYOLO on them - your data, your machine, nothing uploaded.</p>
+        <span class="home-brand"><svg class="ic" viewBox="0 0 400 400" fill="currentColor" fill-rule="evenodd" aria-label="LibreYOLO"><path d="M86 86 L123.09 86 A78 78 0 0 1 276.91 86 L314 86 L314 123.09 A78 78 0 0 1 314 276.91 L314 314 L276.91 314 A78 78 0 0 1 123.09 314 L86 314 L86 276.91 A78 78 0 0 1 86 123.09 Z M116 116 L157.26 116 A46 46 0 1 1 242.74 116 L284 116 L284 157.26 A46 46 0 1 1 284 242.74 L284 284 L242.74 284 A46 46 0 1 1 157.26 284 L116 284 L116 242.74 A46 46 0 1 1 116 157.26 Z"/></svg>Libre<b>Label</b></span>
+        <p class="home-tag">Label your images and export to YOLO, COCO or Pascal VOC - your data, your machine, nothing uploaded.</p>
       </div>
       <div class="home-actions">
         <button class="btn btn-primary" id="homenew"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New project</button>
@@ -1016,7 +1055,8 @@ async function submitImage(){
   setRowStatus(here, (boxes.length+polys.length)?"labeled":"empty");
   const vis=visibleIds();
   const hasUnlabeled = vis.some(id=> id!==here && IMAGES[id] && IMAGES[id].status==="unlabeled");
-  if(hasUnlabeled) nextUnlabeled(1); else step(1);
+  if(hasUnlabeled){ nextUnlabeled(1); }
+  else { banner("All images labeled. Use Export (top bar) to save your dataset as YOLO, COCO or Pascal VOC."); }
 }
 // ---- Regions panel (Outliner): every annotation on this image, select/hover/delete ----
 let regionsSig="";
@@ -1180,11 +1220,9 @@ async function renderStats(){
   if(tc){
     if(s.labeled>0 && DS && DS.yaml){
       tc.style.display="flex";
-      tc.innerHTML = `<span class="t-l">${ICO_CHECK}<span>${s.labeled} images ready</span></span>`+
-        `<button class="t-cmd" id="traincmd">${ICO_COPY}<code>libreyolo train</code></button>`;
-      const b=$("#traincmd");
-      if(b) b.onclick=()=>{ try{ navigator.clipboard.writeText(trainCmd()); }catch(e){}
-        b.classList.add('copied'); setTimeout(()=>b.classList.remove('copied'),1200); };
+      tc.innerHTML = `<span class="t-l">${ICO_CHECK}<span>${s.labeled} labeled</span></span>`+
+        `<button class="t-cmd" id="exportcta"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Export</button>`;
+      const b=$("#exportcta"); if(b) b.onclick=openExport;
     } else tc.style.display="none";
   }
 }
@@ -1240,16 +1278,7 @@ function renderInsights(d, q){
     + `<div class="isec"><div class="ititle">Label geometry</div>${qualitySection(q)}</div>`;
   document.querySelectorAll("#insbody .ifix[data-ids]").forEach(b=> b.onclick=()=>fixDuplicate(JSON.parse(b.dataset.ids), b));
   document.querySelectorAll("#insbody .qrow[data-id]").forEach(b=> b.onclick=()=>{ closeInsights(); load(+b.dataset.id); });
-  const rc=$("#rdycmd"); if(rc) rc.onclick=()=>{ try{ navigator.clipboard.writeText(trainCmd()); }catch(e){}
-    rc.classList.add('copied'); setTimeout(()=>rc.classList.remove('copied'),1200); };
-}
-function trainCmd(){
-  // A scaffolded folder has only `train: .` (no val split); the detection validator
-  // errors on a missing val set, so suggest val=False there -> the command runs.
-  const y=(DS&&DS.yaml)||'';
-  const dq = /[\s"'\\$`&|;<>()]/.test(y) ? '"'+y.replace(/(["\\$`])/g,'\\$1')+'"' : y;
-  return 'libreyolo train data='+dq
-    + ((DS && DS.has_val===false) ? ' val=False' : '');
+  const rc=$("#rdyexport"); if(rc) rc.onclick=()=>{ closeInsights(); openExport(); };
 }
 function readinessSection(st, d, q){
   if(!st) return "";
@@ -1259,15 +1288,15 @@ function readinessSection(st, d, q){
   if(cls.length>=2){ const mx=cls[0][1], mn=cls[cls.length-1][1]; if(mn===0 || (mn>0 && mx/mn>=20)) imbalance=true; }
   const checks=[];
   checks.push(labeled>0 ? {s:"ok", t:`${labeled} of ${total} images labeled`} : {s:"bad", t:"No labeled images yet - draw some boxes first"});
-  checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits - Fix below`} : {s:"ok", t:"No train/val leakage"});
+  checks.push(leak ? {s:"bad", t:`${leak} duplicate group${leak>1?"s":""} leak across splits - Fix below`} : {s:"ok", t:"No leakage across splits"});
   checks.push(geo ? {s:"warn", t:`${geo} geometry issue${geo>1?"s":""} (tiny / sliver / full-frame) - see Label geometry`} : {s:"ok", t:"Box geometry is learnable"});
   if(cls.length>=2) checks.push(imbalance ? {s:"warn", t:"Class balance is skewed - add examples of the rare classes"} : {s:"ok", t:"Classes are reasonably balanced"});
-  if(DS && DS.has_val===false) checks.push({s:"warn", t:"No val split - the command uses val=False; add a val: split for held-out metrics."});
+  if(DS && DS.has_val===false) checks.push({s:"warn", t:"No val split yet - add one in Export for held-out metrics."});
   const go = labeled>0 && !leak;
   const ico = s=> s==="ok"?ICO_CHECK : s==="bad"?ICO_X : ICO_WARN;
   const rows = checks.map(c=>`<div class="rdy-row ${c.s}">${ico(c.s)}<span>${esc(c.t)}</span></div>`).join("");
-  const cmd = (DS&&DS.yaml) ? `<button class="t-cmd" id="rdycmd">${ICO_COPY}<code>${esc(trainCmd())}</code></button>` : "";
-  return `<div class="rdy ${go?"go":""}"><div class="rdy-h">${go?ICO_CHECK:ICO_WARN}${go?"Ready to train":"Almost ready to train"}</div>${rows}${cmd}</div>`;
+  const cmd = (DS&&DS.yaml) ? `<button class="t-cmd" id="rdyexport"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>Export dataset</button>` : "";
+  return `<div class="rdy ${go?"go":""}"><div class="rdy-h">${go?ICO_CHECK:ICO_WARN}${go?"Ready to export":"Almost ready"}</div>${rows}${cmd}</div>`;
 }
 function qualitySection(q){
   if(!q || !q.issues) return `<div class="iok">${ICO_CHECK}No geometry problems - every box is a learnable size.</div>`;
@@ -2772,6 +2801,49 @@ async function doDelete(){
   finally{ btn.disabled=false; btn.textContent=t; }
 }
 async function editClassesFromCard(data){ await openProject(data); if(DS) openClassEdit(); }
+// ===== Export (YOLO / COCO / Pascal VOC, with split) =====
+function openExport(){
+  if(!DS){ banner("Open a project first."); return; }
+  $("#experr").textContent=""; $("#expresult").textContent="";
+  const root=((DS.root||"")+"").replace(/[\\/]+$/,"");
+  $("#expdst").value = root ? root+"_export" : "";
+  $("#expinplace").checked=false; expSyncMode(); expSetSplit("trainval");
+  $("#exportmodal").classList.add("show");
+}
+function closeExport(){ const m=$("#exportmodal"); if(m) m.classList.remove("show"); }
+function expSetSplit(s){
+  document.querySelectorAll("#expsplit button").forEach(b=>b.classList.toggle("on", b.dataset.s===s));
+  const tw=$("#exptestwrap"); if(tw) tw.hidden = (s!=="trainvaltest");
+  const r=$("#expratios"); if(r) r.style.display = (s==="none")?"none":"flex";
+}
+function expSyncMode(){
+  const ip=$("#expinplace").checked;
+  const co=$("#expcopyopts"); if(co) co.style.display = ip?"none":"";
+  const w=$("#expinplacewarn"); if(w) w.hidden = !ip;
+}
+async function doExport(){
+  if(!DS){ return; }
+  const inplace=$("#expinplace").checked;
+  const splitEl=document.querySelector("#expsplit button.on"); const split=(splitEl&&splitEl.dataset.s)||"trainval";
+  const body={ split, val_frac:((+$("#expval").value)||20)/100, test_frac:((+$("#exptest").value)||0)/100,
+    seed:(+$("#expseed").value)||1234, in_place:inplace };
+  const yamlp=(DS&&DS.yaml)||"";
+  if(!inplace){
+    const fmts=[]; if($("#expyolo").checked)fmts.push("yolo"); if($("#expcoco").checked)fmts.push("coco"); if($("#expvoc").checked)fmts.push("voc");
+    if(!fmts.length){ $("#experr").textContent="Pick at least one format."; return; }
+    const dst=($("#expdst").value||"").trim(); if(!dst){ $("#experr").textContent="Choose a destination folder."; return; }
+    body.formats=fmts; body.dst=dst; body.make_zip=$("#expzip").checked;
+  }
+  const btn=$("#expgo"), t=btn.textContent; btn.disabled=true; btn.textContent="Exporting…"; $("#experr").textContent=""; $("#expresult").textContent="";
+  try{
+    const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok||!d.ok){ $("#experr").textContent=(d&&d.error)||"Export failed."; return; }
+    const c=d.counts||{}; const sp=`train ${c.train||0}, val ${c.val||0}${c.test?(", test "+c.test):""}`;
+    if(d.in_place){ banner("Re-split in place ("+sp+")."); closeExport(); if(yamlp) openProject(yamlp); }
+    else { $("#expresult").innerHTML=`Exported (${sp}) to<br><b>${esc(d.out)}</b>`+(d.zip?`<br>zip: ${esc(d.zip)}`:""); }
+  }catch(e){ $("#experr").textContent="Export failed."; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
 function wireProjectActions(){
   document.addEventListener("click", ()=>closeAllPrjMenus());
   $("#renclose").onclick=closeRename; $("#rencancel").onclick=closeRename; $("#rensave").onclick=doRename;
@@ -2781,6 +2853,12 @@ function wireProjectActions(){
   $("#deletemodal").addEventListener("click",e=>{ if(e.target.id==="deletemodal") closeDelete(); });
   $("#helpclose").onclick=toggleHelp;
   $("#help").addEventListener("click",e=>{ if(e.target.id==="help") toggleHelp(); });
+  const eb=$("#exportbtn"); if(eb) eb.onclick=openExport;
+  $("#expclose").onclick=closeExport; $("#expcancel").onclick=closeExport; $("#expgo").onclick=doExport;
+  $("#exportmodal").addEventListener("click",e=>{ if(e.target.id==="exportmodal") closeExport(); });
+  document.querySelectorAll("#expsplit button").forEach(b=>b.onclick=()=>expSetSplit(b.dataset.s));
+  $("#expinplace").addEventListener("change", expSyncMode);
+  $("#expbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f) $("#expdst").value=f; };
 }
 async function openProject(data){
   if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return; }

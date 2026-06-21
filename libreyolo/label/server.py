@@ -391,6 +391,7 @@ class _Handler(BaseHTTPRequestHandler):
             # CPU training job) for every teammate -- gate them to the loopback host.
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/new",
                         "/api/upload", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
+                        "/api/export",
                         "/api/projects/forget", "/api/pick-folder", "/api/example", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
@@ -616,6 +617,37 @@ class _Handler(BaseHTTPRequestHandler):
                 except Exception as exc:  # noqa: BLE001 - move/permission failure
                     logger.exception("delete project failed")
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "delete failed"})
+            elif path == "/api/export":
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    self._send(400, {"error": "bad payload"})
+                    return
+                try:
+                    from . import export as _export
+                    res = _export.export_dataset(
+                        self.state.session,
+                        dst=payload.get("dst") or None,
+                        formats=tuple(payload.get("formats") or ["yolo"]),
+                        split=payload.get("split") or "trainval",
+                        val_frac=float(payload.get("val_frac") or 0.2),
+                        test_frac=float(payload.get("test_frac") or 0.0),
+                        seed=int(payload.get("seed") or 1234),
+                        in_place=bool(payload.get("in_place")),
+                        make_zip=bool(payload.get("make_zip")),
+                    )
+                    if res.get("in_place"):
+                        # the working folder was reorganised; reopen so the live
+                        # session points at the new split layout.
+                        try:
+                            self.state.open_project(res.get("yaml") or self.state._data)
+                            res["epoch"] = self.state.epoch
+                            res["reopened"] = True
+                        except Exception:  # noqa: BLE001
+                            pass
+                    self._send(200, {"ok": True, **res})
+                except Exception as exc:  # noqa: BLE001 - bad dst / unreadable images
+                    logger.exception("export failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:160] or "export failed"})
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 payload = self._read_json()
