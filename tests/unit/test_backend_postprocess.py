@@ -37,6 +37,13 @@ class _DummyBackend(BaseBackend):
         raise NotImplementedError
 
 
+def test_removed_family_export_is_rejected():
+    """A removed-family (DAMO-YOLO) exported artifact must fail loudly instead of
+    silently falling through to YOLO9 preprocessing/parsing."""
+    with pytest.raises(ValueError, match="no longer supported"):
+        _DummyBackend("damoyolo")
+
+
 def test_dfine_backend_skips_generic_nms():
     backend = _DummyBackend("dfine")
 

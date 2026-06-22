@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 ImageSize = Union[int, Tuple[int, int]]
 _RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e"}
 
+# Families removed from LibreYOLO. An exported artifact whose metadata still names
+# one of these must fail loudly instead of being silently parsed as YOLO9.
+_REMOVED_FAMILIES = {"damoyolo"}
+
 
 class _BackendEvalProxy:
     def eval(self):
@@ -292,6 +296,15 @@ class BaseBackend(ABC):
         self.imgsz = _normalize_imgsz(imgsz)
         self.model_family = model_family
         self.family = model_family
+        # DAMO-YOLO was removed; reject its exported artifacts loudly instead of
+        # silently mis-parsing them as YOLO9 (DAMO used different pre/post-processing).
+        if model_family in _REMOVED_FAMILIES:
+            raise ValueError(
+                f"model_family={model_family!r} is no longer supported: the "
+                f"{model_family} family was removed from LibreYOLO. Re-export this "
+                "model with a supported family, or pin an older LibreYOLO release "
+                "to run an existing export."
+            )
         self.model_size = model_size
         self.DEFAULT_TASK = normalize_task(default_task, default="detect")
         self.SUPPORTED_TASKS = normalize_supported_tasks(
