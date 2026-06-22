@@ -20,7 +20,7 @@ segmenter with an interactive, encode-once / prompt-many surface:
 
 The default family is SAM-1, whose code and weights are Apache-2.0, loaded
 through the permissive ``transformers`` model API. See
-``docs/adr/0005-libresam-contract.md``.
+``docs/adr/0007-libresam-contract.md``.
 """
 
 from __future__ import annotations

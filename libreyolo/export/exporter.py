@@ -103,6 +103,39 @@ def _restore_rfdetr_export_state(snapshots):
             module._export = state["export"]
 
 
+def _pose_keypoint_shape_metadata(model) -> dict:
+    num_keypoints = getattr(
+        model, "num_keypoints", getattr(model, "POSE_NUM_KEYPOINTS", "")
+    )
+    keypoint_dim = getattr(model, "keypoint_dim", getattr(model, "KEYPOINT_DIM", ""))
+
+    schema = getattr(model, "num_keypoints_per_class", None)
+    inner = getattr(model, "model", None)
+    if not schema and inner is not None:
+        schema = getattr(inner, "num_keypoints_per_class", None)
+    inner_model = getattr(inner, "model", None) if inner is not None else None
+    if not schema and inner_model is not None and hasattr(
+        inner_model, "get_num_keypoints_per_class"
+    ):
+        schema = inner_model.get_num_keypoints_per_class()
+
+    model_family = model._get_model_name() if hasattr(model, "_get_model_name") else ""
+    if model_family == "ec":
+        # EC pose exports raw xy-only tensors; visibility is appended by runtime
+        # postprocessing after decoding.
+        keypoint_dim = 2
+    elif model_family == "rfdetr" and schema:
+        # GroupPose RF-DETR exports the raw padded per-class tensor, whose
+        # keypoint payload is (x, y, findable, visible, log_l11, l21, log_l22,
+        # class_logit_boost).
+        keypoint_dim = 8
+
+    meta = {"num_keypoints": num_keypoints, "keypoint_dim": keypoint_dim}
+    if schema:
+        meta["num_keypoints_per_class"] = [int(count) for count in schema]
+    return meta
+
+
 _FIXED_SQUARE_EXPORT_FAMILIES = {
     "dfine",
     "deim",
@@ -541,7 +574,9 @@ class BaseExporter(ABC):
         elif family == "ec":
             from ..models.ec.nn import ECExportWrapper
 
-            nn_model = ECExportWrapper(nn_model).to(device)
+            nn_model = ECExportWrapper(
+                nn_model, task=getattr(self.model, "task", "detect")
+            ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
@@ -750,12 +785,7 @@ class BaseExporter(ABC):
         if onnx_path is not None:
             meta["exported_from"] = str(Path(onnx_path).name)
         if task == "pose":
-            meta.update(
-                {
-                    "num_keypoints": getattr(self.model, "num_keypoints", None),
-                    "keypoint_dim": getattr(self.model, "keypoint_dim", None),
-                }
-            )
+            meta.update(_pose_keypoint_shape_metadata(self.model))
         return meta
 
     def _build_onnx_metadata(
@@ -800,16 +830,23 @@ class BaseExporter(ABC):
             "dynamic": str(dynamic),
             "precision": "fp16" if half else "fp32",
             "half": str(half),
-            "segmentation": str(getattr(self.model, "_is_segmentation", False)).lower(),
+            "segmentation": str(
+                task == "segment" or getattr(self.model, "_is_segmentation", False)
+            ).lower(),
             "obb": str(task == "obb").lower(),
         }
         if task == "pose":
+            pose_meta = _pose_keypoint_shape_metadata(self.model)
             meta.update(
                 {
-                    "num_keypoints": str(getattr(self.model, "num_keypoints", "")),
-                    "keypoint_dim": str(getattr(self.model, "keypoint_dim", "")),
+                    "num_keypoints": str(pose_meta["num_keypoints"]),
+                    "keypoint_dim": str(pose_meta["keypoint_dim"]),
                 }
             )
+            if "num_keypoints_per_class" in pose_meta:
+                meta["num_keypoints_per_class"] = json.dumps(
+                    pose_meta["num_keypoints_per_class"]
+                )
         return meta
 
     def _task_metadata(self) -> tuple[str, list[str], str]:

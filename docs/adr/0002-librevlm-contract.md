@@ -1,6 +1,6 @@
 # ADR 0002: LibreVLM Contract For Vision-Language Detectors
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-06-05 (updated 2026-06-06)
 - Scope: New model tier (vision-language models used as open-vocab detectors)
 

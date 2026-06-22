@@ -109,16 +109,24 @@ class TestYOLONASHeuristics:
     def test_get_download_url_returns_none_for_unknown_filename(self):
         assert LibreYOLONAS.get_download_url("unrelated.pt") is None
 
+    @pytest.mark.parametrize("filename", ["LibreYOLONASn.pt", "yolo_nas_n_coco.pth"])
+    def test_get_download_url_returns_none_for_detection_only_n_size(self, filename):
+        assert LibreYOLONAS.get_download_url(filename) is None
+
     @pytest.mark.parametrize(
         "filename",
         [
-            "LibreYOLONASn.pt",
-            "yolo_nas_n_coco.pth",
             "LibreYOLONASn-pose.pt",
             "yolo_nas_pose_n_coco_pose.pth",
+            "yolo_nas_pose_s_coco_pose.pth",
+            "yolo_nas_pose_m_coco_pose.pth",
+            "yolo_nas_pose_l_coco_pose.pth",
+            "LibreYOLONASs-pose.pt",
+            "LibreYOLONASm-pose.pt",
+            "LibreYOLONASl-pose.pt",
         ],
     )
-    def test_get_download_url_returns_none_for_pose_only_n_size(self, filename):
+    def test_get_download_url_returns_none_for_pose_checkpoints(self, filename):
         assert LibreYOLONAS.get_download_url(filename) is None
 
 

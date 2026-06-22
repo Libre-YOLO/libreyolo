@@ -1,6 +1,6 @@
 # ADR 0001: Multi-Task Architecture For Detection, Segmentation, and Keypoints
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-04-27
 - Scope: Core library architecture
 

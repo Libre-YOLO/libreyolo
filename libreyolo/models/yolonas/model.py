@@ -41,6 +41,7 @@ class LibreYOLONAS(BaseModel):
         "pose": POSE_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = YOLONASValPreprocessor
 
     _REQUIRED_SIGNATURE_KEYS = (
@@ -72,8 +73,8 @@ class LibreYOLONAS(BaseModel):
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
         # Accept the LibreYOLO convention (LibreYOLONAS<size>.pt) handled by the
         # base regex, and also the native Deci filenames the CDN serves
-        # (yolo_nas_<size>_coco.pth / yolo_nas_pose_<size>_coco_pose.pth) so the
-        # checkpoints auto-download by their canonical upstream names.
+        # (yolo_nas_<size>_coco.pth / yolo_nas_pose_<size>_coco_pose.pth) so
+        # locally staged native checkpoints resolve to the right model size.
         size = super().detect_size_from_filename(filename)
         if size is not None:
             return size
@@ -83,9 +84,7 @@ class LibreYOLONAS(BaseModel):
     @classmethod
     def detect_task_from_filename(cls, filename: str) -> Optional[str]:
         # Native Deci pose checkpoints are named yolo_nas_pose_<size>_coco_pose.pth.
-        # Detect that here so get_download_url routes to the pose CDN URL; without
-        # it the base regex sees no task and a pose request fetches detection
-        # weights, which then fail the pose/detection checkpoint guard.
+        # Detect that here so local checkpoints route to the pose architecture.
         if re.search(r"yolo_nas_pose_[nsml]_coco", filename.lower()):
             return "pose"
         return super().detect_task_from_filename(filename)
@@ -99,13 +98,6 @@ class LibreYOLONAS(BaseModel):
             return None
         task = cls.detect_task_from_filename(filename)
         if task == "pose":
-            # Pose checkpoints are intentionally NOT auto-downloadable: their
-            # SHA-256 is not pinned (only the detection s/m/l checkpoints are, see
-            # _DECI_CHECKPOINT_SHA256 / verify_downloaded_file), so we return no
-            # route rather than fetch an unverifiable third-party pickle that the
-            # checksum gate would then refuse. Pose weights must be staged
-            # manually. Detecting the task here still prevents a pose request from
-            # mis-routing to the detection URL.
             return None
         if size not in cls.INPUT_SIZES:
             return None
@@ -177,6 +169,7 @@ class LibreYOLONAS(BaseModel):
         # Default keypoint count; overridden from checkpoint metadata/state
         # before model construction or from dataset kpt_shape in train().
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         if isinstance(model_path, dict):
             model_path = unwrap_yolonas_checkpoint(model_path)
             if resolved_task == "pose":

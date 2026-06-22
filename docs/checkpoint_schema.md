@@ -47,6 +47,10 @@ Pose checkpoints additionally include:
   expose keypoints as `x,y,visibility`.
 - `oks_sigmas`: optional list of per-keypoint OKS sigmas. When omitted, loaders
   and validators use the task default for `num_keypoints`.
+- `num_keypoints_per_class`: optional list of per-class keypoint counts for
+  GroupPose-style heads whose exported keypoint tensor is padded by class. Use
+  `0` for classes without keypoints. Runtime backends use this schema to select
+  the active keypoints for the predicted class.
 
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
@@ -81,6 +85,18 @@ Embedded-NMS runtime exports may also write these flat metadata keys:
   graph output.
 - `nms_raw_output`: string boolean. `"true"` means the exported graph also
   exposes an auxiliary raw detector output for LibreYOLO backend parsing.
+
+Pose runtime exports may also write these flat metadata keys:
+
+- `num_keypoints`: positive integer keypoint count used by the exported pose
+  head.
+- `keypoint_dim`: pose output dimension. Common values are `2` for xy-only
+  exports and `3` for xy+visibility. GroupPose-style raw runtime exports may
+  use larger values, such as `8`, when the tensor includes precision or
+  class-logit fields consumed by LibreYOLO postprocessing.
+- `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
+  counts for GroupPose-style heads. Readers must preserve zero-keypoint class
+  slots because they define the class-to-keypoint schema.
 
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
@@ -132,6 +148,26 @@ When metadata is missing or incomplete:
 - Foreign upstream checkpoints are not loaded by `LibreYOLO(...)` as LibreYOLO
   checkpoints. Convert them with the appropriate `weights/convert_*.py` script
   before loading.
+
+### RF-DETR COCO normalization
+
+Upstream RF-DETR checkpoints expose a 91-output `class_embed` head
+(`raw_nc = 90`, COCO's 90 classes + background). Auto-conversion normalizes a
+*COCO* RF-DETR to LibreYOLO's COCO-80 convention (`nc = 80`, with the COCO
+remap applied at post-process). A checkpoint is treated as COCO when it:
+
+- carries exactly 80 names, **or**
+- declares an explicit class count of 80 (`nc` / `args.num_classes`), **or**
+- has a `coco` dataset hint, **or**
+- has **no** class or dataset metadata at all — a bare upstream state-dict is
+  the canonical Roboflow COCO-pretrained checkpoint (the only metadata-less
+  91-output RF-DETR in distribution).
+
+A genuine custom 90-class RF-DETR is preserved as `nc = 90`. It is identified
+by a `names`/`class_names` list, an explicit non-80 class count, or a non-COCO
+dataset hint (e.g. `args.dataset_file`), so the bare-checkpoint COCO fallback
+does not fire for it. Empty placeholders (`""`, `{}`, `[]`) are ignored when
+deciding whether a dataset hint is present.
 
 Schema helpers live in `libreyolo/utils/serialization.py`:
 

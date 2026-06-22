@@ -1,540 +1,752 @@
-"""Unit tests for RF-DETR pose support."""
+"""Unit tests for RF-DETR pose keypoint support.
+
+These tests cover both the GroupPose keypoint architecture ported from RF-DETR
+v1.8.0 and the classic ``keypoint_head`` path used by public n/s/m/l pose
+checkpoints. The model is built via
+``libreyolo.models.rfdetr.nn._make_args`` + ``lwdetr.build_model`` directly so
+we can exercise the keypoint modules with random weights on CPU (no downloads).
+
+A tiny size config keeps construction + forward fast while still building every
+GroupPose module:
+  * patch_size=12 / num_windows=2 / resolution=48 (divisible by 24) keeps the
+    windowed DINOv2 backbone valid.
+  * num_queries=13 == group_detr (the ``_make_args`` default). This is REQUIRED:
+    the GroupPose encoder keypoint branch in ``transformer.py`` chunks the
+    keypoint memory by ``len(enc_out_keypoint_embed)`` (== group_detr == 13)
+    regardless of eval mode, and ``torch.chunk`` only yields 13 pieces when the
+    query dimension is a multiple of 13. Smaller/odd query counts (e.g. 10, 14)
+    crash with ``IndexError: tuple index out of range``. See the module-level
+    note in the test report.
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
 import torch
-import torch.nn as nn
 
-pytestmark = pytest.mark.unit
+from libreyolo.models.rfdetr.lwdetr import build_model
+from libreyolo.models.rfdetr.nn import RFDETRSizeConfig, _make_args
+from libreyolo.models.rfdetr.tensors import NestedTensor
+
+pytestmark = [pytest.mark.unit, pytest.mark.rfdetr]
+
+# group_detr default from ``_make_args``; num_queries must be a multiple of it so
+# ``torch.chunk(num_queries, group_detr)`` yields exactly group_detr pieces in the
+# GroupPose encoder keypoint branch.
+_GROUP_DETR = 13
+_RES = 48  # divisible by patch_size(12) * num_windows(2) = 24
+_PE = 4    # _RES // patch_size
 
 
-def test_rfdetr_pose_download_url_and_notice():
+def _small_pose_config() -> RFDETRSizeConfig:
+    """Minimal-but-valid GroupPose-capable size config (CPU fast)."""
+    return RFDETRSizeConfig(
+        patch_size=12,
+        num_windows=2,
+        dec_layers=1,
+        num_queries=_GROUP_DETR,
+        num_select=_GROUP_DETR,
+        projector_scale=("P4",),
+        out_feature_indexes=(3, 6, 9, 12),
+        resolution=_RES,
+        positional_encoding_size=_PE,
+    )
+
+
+def _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2) -> torch.nn.Module:
+    """Build a GroupPose keypoint LWDETR with random weights on CPU."""
+    cfg = _small_pose_config()
+    args = _make_args(
+        cfg,
+        pose=True,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=list(num_keypoints_per_class),
+        dual_projector=True,
+        dual_projector_kp_only=True,
+        nb_classes=nb_classes,
+        device="cpu",
+        segmentation=False,
+    )
+    model = build_model(args)
+    model.eval()
+    return model
+
+
+def _build_classic_pose_model(num_keypoints=17, nb_classes=1) -> torch.nn.Module:
+    """Build a classic keypoint_head LWDETR with random weights on CPU."""
+    cfg = _small_pose_config()
+    args = _make_args(
+        cfg,
+        pose=True,
+        use_grouppose_keypoints=False,
+        num_keypoints=num_keypoints,
+        nb_classes=nb_classes,
+        device="cpu",
+        segmentation=False,
+    )
+    model = build_model(args)
+    model.eval()
+    return model
+
+
+def _build_detect_model(nb_classes=3) -> torch.nn.Module:
+    """Build a plain detection LWDETR (no pose / keypoint flags)."""
+    cfg = _small_pose_config()
+    args = _make_args(
+        cfg,
+        pose=False,
+        nb_classes=nb_classes,
+        device="cpu",
+        segmentation=False,
+    )
+    model = build_model(args)
+    model.eval()
+    return model
+
+
+def test_rfdetr_pose_size_table_includes_public_checkpoints():
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.models.rfdetr.nn import RFDETR_POSE_CONFIGS
+
+    assert LibreRFDETR.POSE_INPUT_SIZES == {
+        "n": 384,
+        "s": 512,
+        "m": 576,
+        "l": 704,
+        "x": 576,
+    }
+    assert set(RFDETR_POSE_CONFIGS) == {"n", "s", "m", "l", "x"}
+    assert RFDETR_POSE_CONFIGS["x"].grouppose_head is True
+    assert all(
+        not RFDETR_POSE_CONFIGS[size].grouppose_head for size in ("n", "s", "m", "l")
+    )
+
+
+def test_rfdetr_detect_size_disambiguates_grouppose_x():
     from libreyolo.models.rfdetr.model import LibreRFDETR
 
-    url = LibreRFDETR.get_download_url("LibreRFDETRn-pose.pt")
+    weights = {
+        "_kp_active_mask": torch.ones(2, 17, dtype=torch.bool),
+    }
+    checkpoint = {"args": {"resolution": 576}}
 
+    assert LibreRFDETR.detect_size(weights, state_dict=checkpoint) == "x"
+    assert LibreRFDETR.detect_size({}, state_dict=checkpoint) == "m"
     assert (
-        url
-        == "https://huggingface.co/LibreYOLO/LibreRFDETRn-pose/resolve/main/LibreRFDETRn-pose.pt"
-    )
-    assert "EXTREMELY experimental" in LibreRFDETR.get_download_notice(
-        "LibreRFDETRn-pose.pt",
-        url,
-    )
-    assert LibreRFDETR.get_download_notice("LibreRFDETRn.pt", url) is None
-
-
-def test_rfdetr_pose_transform_square_resizes_boxes_and_keypoints():
-    from libreyolo.models.rfdetr.pose_transforms import RFDETRPoseTransform
-
-    image = np.zeros((20, 40, 3), dtype=np.uint8)
-    boxes = np.array([[0.5, 0.5, 0.5, 0.5]], dtype=np.float32)
-    cls = np.array([0], dtype=np.float32)
-    kpts = np.array([[[0.25, 0.5, 2.0], [0.75, 0.25, 1.0]]], dtype=np.float32)
-    transform = RFDETRPoseTransform(2, max_labels=4, flip_prob=0.0, imgsz=80)
-
-    img, target = transform(image, boxes, cls, kpts, (80, 80))
-
-    assert img.shape == (3, 80, 80)
-    assert target.shape == (4, 11)
-    assert target[0, :5].tolist() == pytest.approx([0.0, 40.0, 40.0, 40.0, 40.0])
-    assert target[0, 5:11].tolist() == pytest.approx([20.0, 40.0, 2.0, 60.0, 20.0, 1.0])
-
-
-def test_rfdetr_pose_transform_zeroes_visibility_for_outside_keypoints():
-    from libreyolo.models.rfdetr.pose_transforms import RFDETRPoseTransform
-
-    image = np.zeros((20, 40, 3), dtype=np.uint8)
-    boxes = np.array([[0.5, 0.5, 0.5, 0.5]], dtype=np.float32)
-    cls = np.array([0], dtype=np.float32)
-    kpts = np.array([[[0.5, 0.5, 2.0], [1.25, -0.25, 1.0]]], dtype=np.float32)
-    transform = RFDETRPoseTransform(2, max_labels=4, flip_prob=0.0, imgsz=80)
-
-    _img, target = transform(image, boxes, cls, kpts, (80, 80))
-
-    assert target[0, 5:11].tolist() == pytest.approx([40.0, 40.0, 2.0, 80.0, 0.0, 0.0])
-
-
-def test_rfdetr_pose_transform_flips_and_reindexes_keypoints(monkeypatch):
-    from libreyolo.models.rfdetr.pose_transforms import RFDETRPoseTransform
-
-    monkeypatch.setattr("libreyolo.models.rfdetr.pose_transforms.random.random", lambda: 0.0)
-    image = np.zeros((20, 40, 3), dtype=np.uint8)
-    boxes = np.array([[0.25, 0.5, 0.25, 0.5]], dtype=np.float32)
-    cls = np.array([0], dtype=np.float32)
-    kpts = np.array([[[0.25, 0.5, 2.0], [0.75, 0.5, 2.0]]], dtype=np.float32)
-    transform = RFDETRPoseTransform(
-        2,
-        flip_idx=[1, 0],
-        max_labels=4,
-        flip_prob=1.0,
-        imgsz=80,
-    )
-
-    _img, target = transform(image, boxes, cls, kpts, (80, 80))
-
-    assert target[0, :5].tolist() == pytest.approx([0.0, 60.0, 40.0, 20.0, 40.0])
-    assert target[0, 5:11].tolist() == pytest.approx([20.0, 40.0, 2.0, 60.0, 40.0, 2.0])
-
-
-def test_rfdetr_trainer_converts_pose_targets_to_normalized_keypoints():
-    from libreyolo.models.rfdetr.config import RFDETRConfig
-    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
-
-    trainer = RFDETRTrainer.__new__(RFDETRTrainer)
-    trainer.wrapper_model = SimpleNamespace(task="pose")
-    trainer.config = RFDETRConfig(num_keypoints=2)
-    trainer.device = torch.device("cpu")
-    targets = torch.zeros(1, 3, 11)
-    targets[0, 0] = torch.tensor(
-        [0.0, 16.0, 32.0, 8.0, 10.0, 12.0, 20.0, 2.0, 40.0, 24.0, 2.0]
-    )
-
-    target_list = trainer._targets_to_rfdetr_list(targets, height=64, width=32)
-
-    assert target_list[0]["boxes"].shape == (1, 4)
-    assert target_list[0]["boxes"][0].tolist() == pytest.approx([0.5, 0.5, 0.25, 0.15625])
-    assert target_list[0]["keypoints"].shape == (1, 2, 3)
-    assert target_list[0]["keypoints"][0].reshape(-1).tolist() == pytest.approx(
-        [0.375, 0.3125, 2.0, 1.0, 0.375, 0.0]
+        LibreRFDETR.detect_size(
+            {"_kp_active_mask": torch.zeros(0, 0, dtype=torch.bool)},
+            state_dict=checkpoint,
+        )
+        == "m"
     )
 
 
-def test_rfdetr_pose_loss_runs_and_no_match_zero_is_connected():
+@pytest.mark.parametrize("size", ["n", "s", "m", "l", "x"])
+def test_rfdetr_pose_download_url_for_public_sizes(size):
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    name = f"LibreRFDETR{size}-pose.pt"
+
+    assert LibreRFDETR.get_download_url(name) == (
+        f"https://huggingface.co/LibreYOLO/LibreRFDETR{size}-pose/"
+        f"resolve/main/{name}"
+    )
+
+
+def _random_nested_tensor(batch: int = 1) -> NestedTensor:
+    images = torch.rand(batch, 3, _RES, _RES)
+    mask = torch.zeros(batch, _RES, _RES, dtype=torch.bool)
+    return NestedTensor(images, mask)
+
+
+# ---------------------------------------------------------------------------
+# 1. Construction
+# ---------------------------------------------------------------------------
+def test_grouppose_model_builds_with_expected_head_shapes():
+    model = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+
+    # build_model passes num_classes = args.num_classes + 1 = (2 - 1) + 1 = 2.
+    assert model.class_embed.out_features == 2
+    assert tuple(model._kp_active_mask.shape) == (2, 17)
+    # Compact GroupPose keypoint head: MLP(256, 256, 8, 3) -> last layer emits 8.
+    assert model.keypoint_embed.layers[-1].out_features == 8
+    assert model.use_grouppose_keypoints is True
+    assert model.get_num_keypoints_per_class() == [0, 17]
+
+
+# ---------------------------------------------------------------------------
+# 2. Forward shapes
+# ---------------------------------------------------------------------------
+def test_grouppose_forward_emits_logits_boxes_keypoints():
+    model = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+    samples = _random_nested_tensor(batch=1)
+
+    with torch.no_grad():
+        out = model(samples)
+
+    q = _GROUP_DETR
+    assert tuple(out["pred_logits"].shape) == (1, q, 2)
+    assert tuple(out["pred_boxes"].shape) == (1, q, 4)
+    # (B, Q, num_classes * max_K, KEYPOINT_PRED_DIM) = (1, 13, 2 * 17, 8) = (1, 13, 34, 8)
+    assert tuple(out["pred_keypoints"].shape) == (1, q, 34, 8)
+
+
+# ---------------------------------------------------------------------------
+# 3. Keypoint decode sanity + no vestigial projector
+# ---------------------------------------------------------------------------
+def test_grouppose_keypoint_xy_finite_and_no_vestigial_keypoint_proj():
+    model = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+    samples = _random_nested_tensor(batch=1)
+
+    with torch.no_grad():
+        out = model(samples)
+
+    kp_xy = out["pred_keypoints"][..., :2]
+    assert torch.isfinite(kp_xy).all()
+    # xy are normalized box-relative coordinates; with zero-initialized keypoint
+    # head deltas they sit near the box centers, comfortably within a plausible
+    # normalized band.
+    assert kp_xy.min() >= -1.0
+    assert kp_xy.max() <= 2.0
+
+    # GroupPose must not carry a classic keypoint_head module.
+    module_names = {name for name, _ in model.named_modules()}
+    assert not any("keypoint_proj" in name for name in module_names)
+    assert getattr(model, "keypoint_head", None) is None
+
+
+def test_classic_pose_model_forward_emits_decoded_keypoints():
+    model = _build_classic_pose_model(num_keypoints=5, nb_classes=1)
+    samples = _random_nested_tensor(batch=1)
+
+    with torch.no_grad():
+        out = model(samples)
+
+    q = _GROUP_DETR
+    assert tuple(out["pred_logits"].shape) == (1, q, 1)
+    assert tuple(out["pred_boxes"].shape) == (1, q, 4)
+    assert tuple(out["pred_keypoints"].shape) == (1, q, 5, 3)
+    xy = out["pred_keypoints"][..., :2]
+    assert torch.isfinite(xy).all()
+    assert float(xy.min()) >= -1.0
+    assert float(xy.max()) <= 2.0
+
+
+def test_classic_pose_bbox_reparam_keypoints_are_box_relative():
+    class _FixedKeypointHead(torch.nn.Module):
+        def forward(self, hs):
+            raw = torch.tensor([10.0, -10.0, 0.25], dtype=hs.dtype, device=hs.device)
+            return raw.expand(*hs.shape[:-1], 3)
+
+    model = _build_classic_pose_model(num_keypoints=1, nb_classes=1)
+    model.bbox_reparam = True
+    model.keypoint_head = _FixedKeypointHead()
+    hs = torch.zeros(1, 1, 1, 256)
+    reference = torch.tensor([[[[0.5, 0.5, 0.2, 0.4]]]])
+
+    decoded = model._decode_keypoints(hs, reference)
+
+    expected_xy = torch.tensor([0.5999909, 0.3000182])
+    torch.testing.assert_close(decoded[0, 0, 0, 0, :2], expected_xy, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(decoded[0, 0, 0, 0, 2], torch.tensor(0.25))
+
+
+def test_classic_pose_export_preserves_keypoint_batch_axis():
+    from libreyolo.models.rfdetr.nn import RFDETRExportWrapper
+
+    model = _build_classic_pose_model(num_keypoints=5, nb_classes=1)
+    wrapper = RFDETRExportWrapper(model).eval()
+    x = torch.rand(1, 3, _RES, _RES)
+
+    with torch.no_grad():
+        boxes, logits, keypoints = wrapper(x)
+
+    q = _GROUP_DETR
+    assert tuple(boxes.shape) == (1, q, 4)
+    assert tuple(logits.shape) == (1, q, 1)
+    assert tuple(keypoints.shape) == (1, q, 5, 3)
+
+
+def test_classic_pose_load_state_dict_reinitializes_keypoint_count(monkeypatch):
+    import libreyolo.models.rfdetr.nn as rfdetr_nn
+
+    cfg = _small_pose_config()
+    monkeypatch.setitem(rfdetr_nn.RFDETR_POSE_CONFIGS, "tiny", cfg)
+    source = rfdetr_nn.LibreRFDETRModel(
+        config="tiny",
+        nb_classes=1,
+        pose=True,
+        device="cpu",
+        num_keypoints=5,
+    )
+    target = rfdetr_nn.LibreRFDETRModel(
+        config="tiny",
+        nb_classes=1,
+        pose=True,
+        device="cpu",
+        num_keypoints=17,
+    )
+
+    target.load_state_dict(source.state_dict(), strict=False)
+
+    assert target.num_keypoints == 5
+    assert target.model.num_keypoints == 5
+    assert target.args.num_keypoints == 5
+    assert target.model.keypoint_head.layers[-1].out_features == 15
+
+
+# ---------------------------------------------------------------------------
+# 4. Schema reinit + round-trip
+# ---------------------------------------------------------------------------
+def test_grouppose_reinitialize_keypoint_head_updates_schema():
+    model = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+
+    model.reinitialize_keypoint_head([0, 15])
+
+    assert tuple(model._kp_active_mask.shape) == (2, 15)
+    assert model.get_num_keypoints_per_class() == [0, 15]
+
+    # keypoint_pos_embed rows track total active keypoints (sum == 15).
+    decoder = model.transformer.decoder
+    keypoint_pos_embed = getattr(decoder, "keypoint_pos_embed", None)
+    assert keypoint_pos_embed is not None
+    assert keypoint_pos_embed.shape[0] == 15
+
+    # Schema round-trips through the checkpoint helpers.
+    state_dict = model.state_dict()
+    assert model.get_num_keypoints_per_class_from_checkpoint(state_dict) == [0, 15]
+
+
+# ---------------------------------------------------------------------------
+# 5. Checkpoint round-trip (strict)
+# ---------------------------------------------------------------------------
+def test_grouppose_state_dict_strict_roundtrip():
+    source = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+    fresh = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+
+    result = fresh.load_state_dict(source.state_dict(), strict=True)
+
+    assert list(result.missing_keys) == []
+    assert list(result.unexpected_keys) == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Postprocess decode
+# ---------------------------------------------------------------------------
+def test_grouppose_postprocess_emits_keypoints_with_normalized_visibility():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    num_queries, num_classes = 5, 2
+    logits = torch.full((1, num_queries, num_classes), -5.0)
+    logits[0, 0, 1] = 5.0  # query 0 -> person (internal class 1), high score
+    logits[0, 1, 1] = 4.0  # query 1 -> person, slightly lower
+
+    boxes = torch.rand(1, num_queries, 4) * 0.2 + 0.4  # cxcywh in [0, 1]
+
+    # padded slots = num_kp_classes * max_K = 2 * 17 = 34, KEYPOINT_PRED_DIM = 8.
+    keypoints = torch.zeros(1, num_queries, 34, 8)
+    keypoints[..., 0] = 0.5  # x normalized
+    keypoints[..., 1] = 0.5  # y normalized
+    keypoints[..., 2] = 3.0  # findable logit -> sigmoid ~0.95
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes, "pred_keypoints": keypoints},
+        torch.tensor([[100.0, 200.0]]),  # (height, width)
+        num_select=4,
+        num_keypoints_per_class=[0, 17],
+        trace_alpha=0.0,
+    )[0]
+
+    keypoints_out = result["keypoints"]
+    labels_out = result["labels"]
+    vis = keypoints_out[..., 2]
+    assert float(vis.min()) >= 0.0
+    assert float(vis.max()) <= 1.0
+
+    # Class-index remap: the keypoint-bearing internal class 1 ("person") is
+    # emitted as the LibreYOLO contiguous pose label 0, and detections whose
+    # predicted class is NOT keypoint-bearing (internal class 0) are dropped.
+    assert labels_out.numel() >= 2  # both explicit person queries survive
+    assert torch.all(labels_out == 0)
+    # The surviving detections (person) and their keypoints stay in lockstep.
+    assert keypoints_out.shape[0] == labels_out.numel()
+    assert tuple(keypoints_out.shape[1:]) == (17, 3)
+    assert result["boxes"].shape[0] == labels_out.numel()
+    assert result["scores"].shape[0] == labels_out.numel()
+    # The top person detection lands its keypoints at (x*width, y*height) = (100, 50).
+    person_xy = keypoints_out[0, 0, :2]
+    assert person_xy.tolist() == pytest.approx([100.0, 50.0])
+
+
+def test_classic_pose_postprocess_keeps_keypoints_without_grouppose_schema():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    logits = torch.tensor([[[5.0], [4.0]]])
+    boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.4], [0.25, 0.25, 0.1, 0.1]]])
+    keypoints = torch.zeros(1, 2, 2, 3)
+    keypoints[0, 0, :, 0] = torch.tensor([0.25, 0.75])
+    keypoints[0, 0, :, 1] = torch.tensor([0.5, 0.25])
+    keypoints[0, 0, :, 2] = torch.tensor([2.0, -2.0])
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes, "pred_keypoints": keypoints},
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=None,
+    )[0]
+
+    assert result["labels"].tolist() == [0]
+    assert tuple(result["keypoints"].shape) == (1, 2, 3)
+    assert result["keypoints"][0, :, 0].tolist() == pytest.approx([50.0, 150.0])
+    assert result["keypoints"][0, :, 1].tolist() == pytest.approx([50.0, 25.0])
+    assert result["keypoints"][0, :, 2].tolist() == pytest.approx(
+        [0.880797, 0.119203],
+        rel=1e-5,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. Detection path unaffected
+# ---------------------------------------------------------------------------
+def test_detection_model_has_no_keypoint_modules():
+    model = _build_detect_model(nb_classes=3)
+
+    assert model.use_grouppose_keypoints is False
+    assert getattr(model, "keypoint_embed", None) is None
+    # Detection registers an empty (0, 0) active mask, never a populated one.
+    assert model._kp_active_mask.numel() == 0
+    module_names = {name for name, _ in model.named_modules()}
+    assert not any("keypoint" in name for name in module_names)
+
+
+def test_detection_checkpoint_without_kp_active_mask_loads(monkeypatch):
+    import libreyolo.models.rfdetr.model as rfdetr_model
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    cfg = _small_pose_config()
+    monkeypatch.setitem(rfdetr_model.RFDETR_CONFIGS, "tiny", cfg)
+    monkeypatch.setitem(LibreRFDETR.INPUT_SIZES, "tiny", cfg.resolution)
+    monkeypatch.setitem(LibreRFDETR.TASK_INPUT_SIZES["detect"], "tiny", cfg.resolution)
+
+    source = _build_detect_model(nb_classes=3)
+    state = dict(source.state_dict())
+    assert "_kp_active_mask" in state
+    state.pop("_kp_active_mask")
+
+    model = LibreRFDETR(
+        model_path={"model": state, "task": "detect", "size": "tiny", "nc": 3},
+        size="tiny",
+        task="detect",
+        nb_classes=3,
+        device="cpu",
+    )
+
+    assert model.task == "detect"
+    assert model.model.model._kp_active_mask.numel() == 0
+
+
+# ---------------------------------------------------------------------------
+# 8. Class-index convention: postprocess remaps to contiguous 0
+# ---------------------------------------------------------------------------
+def test_grouppose_postprocess_remaps_keypoint_class_to_contiguous_zero():
+    """The keypoint-bearing internal class (1 for ``[0, 17]``) is emitted as 0.
+
+    The GroupPose schema places "person" at internal index 1, so the model emits
+    detection label 1. LibreYOLO's person-only pose convention is contiguous
+    index 0, so the postprocess must remap 1 -> 0 and drop non-keypoint-bearing
+    detections (internal class 0), without disturbing keypoint xy/conf.
+    """
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    num_queries, num_classes = 4, 2
+    # Make every selected detection a confident person (internal class 1) so we
+    # can assert the full set survives and is relabeled.
+    logits = torch.full((1, num_queries, num_classes), -10.0)
+    logits[0, :, 1] = 6.0  # all queries -> person (internal class 1)
+
+    boxes = torch.rand(1, num_queries, 4) * 0.2 + 0.4  # cxcywh in [0, 1]
+    keypoints = torch.zeros(1, num_queries, 34, 8)
+    keypoints[..., 0] = 0.25  # x normalized
+    keypoints[..., 1] = 0.75  # y normalized
+    keypoints[..., 2] = 2.0   # findable logit
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes, "pred_keypoints": keypoints},
+        torch.tensor([[80.0, 120.0]]),  # (height, width)
+        num_select=4,
+        num_keypoints_per_class=[0, 17],
+        trace_alpha=0.0,
+    )[0]
+
+    labels = result["labels"]
+    # Every kept detection is the keypoint-bearing class, remapped to contiguous 0.
+    assert labels.numel() == num_queries
+    assert torch.all(labels == 0)
+    # The internal class 1 never leaks through.
+    assert int(labels.max()) == 0
+    # Keypoint xy still scale to (x*width, y*height) = (30, 60); the remap only
+    # touches the integer label, not the decoded keypoints.
+    assert result["keypoints"][0, 0, :2].tolist() == pytest.approx([30.0, 60.0])
+
+
+# ---------------------------------------------------------------------------
+# 9. Class-index convention: person-only target trains a nonzero keypoint loss
+# ---------------------------------------------------------------------------
+def test_grouppose_person_only_target_trains_nonzero_keypoint_loss():
+    """A LibreYOLO person target (label 0) must produce a finite, positive loss.
+
+    Without the schema remap the contiguous label 0 selects the empty slot
+    (``num_keypoints_per_class[0] == 0``) and every keypoint loss term collapses
+    to zero, so the keypoint head never trains. The criterion-boundary remap
+    lifts label 0 -> internal class 1 so the loss is finite and strictly > 0.
+    """
+    from libreyolo.models.rfdetr.keypoints import map_labels_to_keypoint_schema
     from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
 
+    torch.manual_seed(0)
+    schema = [0, 17]
+    k_total = len(schema) * max(schema)  # 2 * 17 = 34
+
+    # The remap helper itself lifts the contiguous person label to schema class 1.
+    assert map_labels_to_keypoint_schema(torch.tensor([0]), schema).tolist() == [1]
+
+    matcher = HungarianMatcher(
+        num_keypoints_per_class=schema,
+        keypoint_l1_loss_coef=1.0,
+        keypoint_findable_loss_coef=1.0,
+        keypoint_visible_loss_coef=1.0,
+        keypoint_nll_loss_coef=1.0,
+    )
     criterion = SetCriterion(
-        num_classes=1,
-        matcher=None,
+        num_classes=2,
+        matcher=matcher,
         weight_dict={},
         focal_alpha=0.25,
         losses=["keypoints"],
-        num_keypoints=2,
+        group_detr=1,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=schema,
     )
+
+    num_queries = 5
+    outputs = {"pred_keypoints": torch.randn(1, num_queries, k_total, 8)}
+    target_keypoints = torch.rand(1, max(schema), 3)
+    target_keypoints[..., 2] = 2.0  # all keypoints fully visible
+    targets = [
+        {
+            "labels": torch.tensor([0]),  # LibreYOLO contiguous "person"
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),  # cxcywh
+            "keypoints": target_keypoints,
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]  # query 0 <-> target 0
+
+    losses = criterion.loss_keypoints(outputs, targets, indices, num_boxes=1.0)
+
+    for value in losses.values():
+        assert torch.isfinite(value)
+    # The location/findable/visible terms are strictly positive once the person
+    # target reaches the populated schema slot.
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) > 0.0
+    total = sum(losses.values())
+    assert torch.isfinite(total)
+    assert float(total) > 0.0
+
+
+def test_classic_pose_criterion_includes_keypoint_losses():
+    from libreyolo.models.rfdetr.lwdetr import build_criterion_and_postprocessors
+
+    args = _make_args(
+        _small_pose_config(),
+        pose=True,
+        use_grouppose_keypoints=False,
+        num_keypoints=5,
+        nb_classes=1,
+        device="cpu",
+        segmentation=False,
+    )
+
+    criterion, _ = build_criterion_and_postprocessors(args)
+
+    assert criterion.use_grouppose_keypoints is False
+    assert "keypoints" in criterion.losses
+    assert criterion.weight_dict["loss_keypoints_l1"] == 1.0
+    assert criterion.weight_dict["loss_keypoints_findable"] == 1.0
+    assert criterion.weight_dict["loss_keypoints_visible"] == 1.0
+    assert "loss_keypoints_nll" not in criterion.weight_dict
+
+
+def test_classic_pose_target_trains_nonzero_keypoint_loss():
+    from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
     pred_keypoints = torch.tensor(
-        [[[[0.5, 0.5, 0.1], [0.25, 0.25, -0.1]]]],
-        dtype=torch.float32,
+        [[[[0.1, 0.2, -2.0], [0.3, 0.4, 2.0]]]],
         requires_grad=True,
     )
-    targets = [
-        {
-            "labels": torch.tensor([0], dtype=torch.long),
-            "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]], dtype=torch.float32),
-            "keypoints": torch.tensor(
-                [[[0.5, 0.5, 2.0], [0.25, 0.25, 0.0]]],
-                dtype=torch.float32,
-            ),
-        }
-    ]
-
-    losses = criterion.loss_keypoints(
-        {"pred_keypoints": pred_keypoints},
-        targets,
-        [(torch.tensor([0]), torch.tensor([0]))],
-        num_boxes=1.0,
+    matcher = HungarianMatcher(
+        keypoint_l1_loss_coef=1.0,
+        keypoint_findable_loss_coef=1.0,
+        keypoint_visible_loss_coef=1.0,
     )
-
-    assert set(losses) == {
-        "loss_keypoints_l1",
-        "loss_keypoints_oks",
-        "loss_keypoints_vis",
-    }
-    assert all(torch.isfinite(v) for v in losses.values())
-
-    empty_losses = criterion.loss_keypoints(
-        {"pred_keypoints": pred_keypoints},
-        [{"labels": torch.zeros(0, dtype=torch.long), "boxes": torch.zeros(0, 4), "keypoints": torch.zeros(0, 2, 3)}],
-        [(torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long))],
-        num_boxes=1.0,
-    )
-    zero = sum(empty_losses.values())
-    zero.backward()
-    assert pred_keypoints.grad is not None
-    assert pred_keypoints.grad.abs().sum().item() == 0.0
-
-
-def test_rfdetr_pose_l1_loss_is_area_normalized():
-    from libreyolo.models.rfdetr.loss import SetCriterion
-
     criterion = SetCriterion(
         num_classes=1,
-        matcher=None,
+        matcher=matcher,
         weight_dict={},
         focal_alpha=0.25,
         losses=["keypoints"],
-        num_keypoints=1,
+        group_detr=1,
+        use_grouppose_keypoints=False,
+    )
+    targets = [
+        {
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),
+            "keypoints": torch.tensor([[[0.7, 0.8, 2.0], [0.9, 0.1, 1.0]]]),
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]
+
+    losses = criterion.loss_keypoints(
+        {"pred_keypoints": pred_keypoints},
+        targets,
+        indices,
+        num_boxes=1.0,
+    )
+
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) == 0.0
+    assert float(losses["loss_keypoints_nll"]) == 0.0
+    total = sum(losses.values())
+    total.backward()
+    assert pred_keypoints.grad is not None
+    assert torch.isfinite(pred_keypoints.grad).all()
+    assert float(pred_keypoints.grad.abs().sum()) > 0.0
+
+
+def test_classic_pose_forward_loss_runs_through_matcher():
+    from libreyolo.models.rfdetr.loss import SetCriterion
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    criterion = SetCriterion(
+        num_classes=1,
+        matcher=HungarianMatcher(
+            keypoint_l1_loss_coef=1.0,
+            keypoint_findable_loss_coef=1.0,
+            keypoint_visible_loss_coef=1.0,
+        ),
+        weight_dict={},
+        focal_alpha=0.25,
+        losses=["keypoints"],
+        group_detr=1,
+        use_grouppose_keypoints=False,
     )
     outputs = {
+        "pred_logits": torch.zeros(1, 2, 1),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.4, 0.4], [0.1, 0.1, 0.2, 0.2]]]),
         "pred_keypoints": torch.tensor(
-            [[[[0.6, 0.5, 1.0]], [[0.6, 0.5, 1.0]]]],
-            dtype=torch.float32,
-        )
+            [[[[0.1, 0.2, -2.0], [0.3, 0.4, 2.0]], [[0.8, 0.8, 1.0], [0.9, 0.9, 1.0]]]]
+        ),
     }
     targets = [
         {
-            "labels": torch.tensor([0, 0], dtype=torch.long),
-            "boxes": torch.tensor(
-                [[0.5, 0.5, 0.1, 0.1], [0.5, 0.5, 1.0, 1.0]],
-                dtype=torch.float32,
-            ),
-            "keypoints": torch.tensor(
-                [[[0.5, 0.5, 2.0]], [[0.5, 0.5, 2.0]]],
-                dtype=torch.float32,
-            ),
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]]),
+            "keypoints": torch.tensor([[[0.7, 0.8, 2.0], [0.9, 0.1, 1.0]]]),
         }
     ]
 
-    losses = criterion.loss_keypoints(
-        outputs,
-        targets,
-        [(torch.tensor([0, 1]), torch.tensor([0, 1]))],
-        num_boxes=2.0,
-    )
+    losses = criterion(outputs, targets)
 
-    assert losses["loss_keypoints_l1"].item() == pytest.approx(0.55, rel=1e-5)
+    assert float(losses["loss_keypoints_l1"]) > 0.0
+    assert float(losses["loss_keypoints_findable"]) > 0.0
+    assert float(losses["loss_keypoints_visible"]) == 0.0
+    assert float(losses["loss_keypoints_nll"]) == 0.0
 
 
-def test_lwdetr_keypoint_decode_mirrors_bbox_reparam_without_sigmoid():
-    from libreyolo.models.rfdetr.lwdetr import LWDETR
+def test_train_rfdetr_pose_checkpoint_keeps_size_unset(monkeypatch):
+    import libreyolo.models.rfdetr.model as rfdetr_model
+    from libreyolo.models.rfdetr.trainer import train_rfdetr
 
-    class _Head:
-        def __call__(self, hs):
-            raw = torch.tensor([0.5, -0.5, 3.0], dtype=hs.dtype, device=hs.device)
-            return raw.view(1, 1, 1, 3).expand(*hs.shape[:-1], 1, 3).reshape(*hs.shape[:-1], 3)
-
-    model = object.__new__(LWDETR)
-    model.keypoint_head = _Head()
-    model.num_keypoints = 1
-    model.bbox_reparam = True
-    hs = torch.zeros(1, 1, 1, 4)
-    reference = torch.tensor([[[[0.25, 0.75, 0.20, 0.40]]]], dtype=torch.float32)
-
-    decoded = LWDETR._decode_keypoints(model, hs, reference)
-
-    assert decoded[0, 0, 0, 0].tolist() == pytest.approx([0.35, 0.55, 3.0])
-
-
-def test_rfdetr_postprocess_filters_keypoints_in_topk_lockstep():
-    from libreyolo.models.rfdetr.utils import postprocess
-
-    outputs = {
-        "pred_logits": torch.tensor([[[5.0], [4.0], [-1.0]]]),
-        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2], [0.2, 0.2, 0.1, 0.1], [0.8, 0.8, 0.1, 0.1]]]),
-        "pred_keypoints": torch.zeros(1, 3, 2, 3),
-    }
-    outputs["pred_keypoints"][0, :, :, 0] = torch.tensor([0.1, 0.2, 0.3]).view(3, 1)
-    outputs["pred_keypoints"][0, :, :, 1] = 0.5
-    outputs["pred_keypoints"][0, :, :, 2] = 2.0
-
-    result = postprocess(outputs, torch.tensor([[100.0, 200.0]]), num_select=2)[0]
-
-    assert result["keypoints"].shape == (2, 2, 3)
-    assert result["keypoints"][0, :, 0].tolist() == pytest.approx([20.0, 20.0])
-    assert result["keypoints"][1, :, 0].tolist() == pytest.approx([40.0, 40.0])
-
-
-def test_rfdetr_pose_fresh_model_uses_one_class_logit():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", device="cpu")
-
-    assert model.nb_classes == 1
-    assert model.model.nb_classes == 1
-    assert model.model.args.num_classes == 0
-    assert model.model.model.class_embed.out_features == 1
-    assert model.names == {0: "person"}
-
-
-def test_rfdetr_pose_none_builds_scratch_without_default_detect_load(monkeypatch):
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    def fail_load(self, model_path):
-        raise AssertionError("pose scratch construction should not load detect weights")
-
-    monkeypatch.setattr(LibreRFDETR, "_load_weights", fail_load)
-
-    model = LibreRFDETR(None, size="n", task="pose", device="cpu")
-
-    assert model.task == "pose"
-    assert model.nb_classes == 1
-    assert model.names == {0: "person"}
-
-
-def test_rfdetr_pose_direct_load_rejects_detect_checkpoint():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    with pytest.raises(ValueError, match="task='detect'"):
-        LibreRFDETR(
-            {
-                "model_family": "rfdetr",
-                "task": "detect",
-                "model": {},
-            },
-            size="n",
-            task="pose",
-            device="cpu",
-        )
-
-
-def test_rfdetr_pose_detect_transfer_resizes_to_one_class_logit():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", device="cpu")
-    model._allow_detect_to_pose_transfer = True
-    det_model = LibreRFDETR({}, size="n", task="detect", device="cpu")
-    detect_state = {
-        key: value.detach().clone()
-        for key, value in det_model.model.state_dict().items()
-    }
-
-    model._load_weights(
-        {
-            "model_family": "rfdetr",
-            "task": "detect",
-            "nc": 80,
-            "names": {i: f"class_{i}" for i in range(80)},
-            "model": detect_state,
-        }
-    )
-
-    assert model.nb_classes == 1
-    assert model.model.nb_classes == 1
-    assert model.model.args.num_classes == 0
-    assert model.model.model.class_embed.out_features == 1
-    assert model.names == {0: "person"}
-
-
-def test_rfdetr_pose_load_weights_rejects_detect_without_transfer_flag():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", device="cpu")
-    det_model = LibreRFDETR({}, size="n", task="detect", device="cpu")
-    detect_state = {
-        key: value.detach().clone()
-        for key, value in det_model.model.state_dict().items()
-    }
-
-    with pytest.raises(RuntimeError, match="task='detect'"):
-        model._load_weights(
-            {
-                "model_family": "rfdetr",
-                "task": "detect",
-                "nc": 80,
-                "names": {i: f"class_{i}" for i in range(80)},
-                "model": detect_state,
-            }
-        )
-
-
-def test_rfdetr_detect_nb_classes_keeps_raw_pose_at_one_class():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    state = {
-        "class_embed.bias": torch.zeros(1),
-        "keypoint_head.layers.2.weight": torch.zeros(6, 32),
-    }
-
-    assert LibreRFDETR.detect_nb_classes(state) == 1
-
-
-def test_rfdetr_pose_checkpoint_requires_keypoint_head_weights():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", device="cpu")
-    det_model = LibreRFDETR({}, size="n", task="detect", device="cpu")
-    detect_state = {
-        key: value.detach().clone()
-        for key, value in det_model.model.state_dict().items()
-    }
-
-    with pytest.raises(RuntimeError, match="keypoint_head"):
-        model._load_weights(
-            {
-                "model_family": "rfdetr",
-                "task": "pose",
-                "nc": 1,
-                "names": {0: "person"},
-                "model": detect_state,
-            }
-        )
-
-
-def test_rfdetr_pose_load_restores_keypoint_count_from_head_weights():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", num_keypoints=17, device="cpu")
-    pose_model = LibreRFDETR({}, size="n", task="pose", num_keypoints=2, device="cpu")
-    pose_state = {
-        key: value.detach().clone()
-        for key, value in pose_model.model.state_dict().items()
-    }
-
-    model._load_weights(
-        {
-            "model_family": "rfdetr",
-            "task": "pose",
-            "nc": 1,
-            "names": {0: "person"},
-            "model": pose_state,
-        }
-    )
-
-    assert model.num_keypoints == 2
-
-
-def test_rfdetr_pose_postprocess_trims_legacy_extra_class_column():
-    from libreyolo.models.rfdetr.model import LibreRFDETR
-
-    model = LibreRFDETR({}, size="n", task="pose", device="cpu")
-    output = {
-        "pred_logits": torch.tensor([[[0.1, 10.0], [5.0, -10.0]]]),
-        "pred_boxes": torch.tensor([[[0.1, 0.1, 0.1, 0.1], [0.5, 0.5, 0.2, 0.2]]]),
-        "pred_keypoints": torch.zeros(1, 2, 2, 3),
-    }
-
-    result = model._postprocess(
-        output,
-        conf_thres=0.01,
-        iou_thres=0.5,
-        original_size=(100, 100),
-        max_det=1,
-    )
-
-    assert result["classes"] == [0]
-    assert result["boxes"][0] == pytest.approx([40.0, 40.0, 60.0, 60.0])
-
-
-def test_rfdetr_pose_ddp_uses_find_unused_not_static_graph():
-    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
-
-    trainer = RFDETRTrainer.__new__(RFDETRTrainer)
-    trainer.wrapper_model = SimpleNamespace(task="pose")
-
-    kwargs = trainer._ddp_kwargs()
-
-    assert kwargs["find_unused_parameters"] is True
-    assert kwargs["static_graph"] is False
-
-
-def test_rfdetr_pose_ddp_validation_skips_rank_zero_criterion_collective():
-    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
-
-    class _DummyModel(nn.Module):
-        def forward(self, imgs, targets=None):
-            raise AssertionError("criterion validation forward should be skipped under DDP")
-
-    class _DummyCriterion:
-        weight_dict = {}
-
-        def __call__(self, outputs, targets):
-            raise AssertionError("criterion should be skipped under DDP")
-
-    trainer = RFDETRTrainer.__new__(RFDETRTrainer)
-    trainer.wrapper_model = SimpleNamespace(task="pose")
-    trainer.model = _DummyModel()
-    trainer.ema_model = None
-    trainer.criterion = _DummyCriterion()
-    trainer.val_loader = [(torch.zeros(1, 3, 16, 16), torch.zeros(1, 1, 11))]
-    trainer.device = torch.device("cpu")
-    trainer.is_distributed = True
-    trainer._run_pose_metric_validation = lambda *args, **kwargs: {
-        "metrics/keypoints_mAP50-95": 0.25,
-        "metrics/keypoints_mAP50": 0.5,
-    }
-
-    result = trainer._run_validation(0)
-
-    assert result["best_metric"] == pytest.approx(0.25)
-    assert result["metrics"]["loss/val"] == pytest.approx(0.0)
-
-
-def test_rfdetr_pose_train_resolves_kpt_shape_and_person_class(monkeypatch, tmp_path):
-    from libreyolo.models.rfdetr import model as rfdetr_model
-
-    data_yaml = tmp_path / "pose.yaml"
-    data_yaml.write_text(
-        "path: .\ntrain: images/train\nval: images/val\nnc: 1\nnames: [person]\nkpt_shape: [2, 3]\n",
-        encoding="utf-8",
-    )
     captured = {}
 
-    class _Inner:
-        def __init__(self):
-            self.reinitialized = None
+    class _FakeRFDETR:
+        def __init__(
+            self,
+            *,
+            model_path=None,
+            size=None,
+            device="auto",
+            segmentation=False,
+            task=None,
+        ):
+            captured["init"] = {
+                "model_path": model_path,
+                "size": size,
+                "device": device,
+                "segmentation": segmentation,
+                "task": task,
+            }
 
-        def reinitialize_keypoint_head(self, num_keypoints):
-            self.reinitialized = num_keypoints
+        def train(self, **kwargs):
+            captured["train"] = kwargs
+            return {"ok": True}
 
-    class _Model:
-        def __init__(self):
-            self.num_keypoints = 17
-            self.model = _Inner()
-            self.args = SimpleNamespace(num_keypoints=17)
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _FakeRFDETR)
 
-    class _DummyTrainer:
-        def __init__(self, model, wrapper_model=None, **kwargs):
-            captured["model"] = model
-            captured["wrapper"] = wrapper_model
-            captured["kwargs"] = kwargs
-
-        def train(self):
-            return {"save_dir": str(tmp_path / "run")}
-
-    wrapper = rfdetr_model.LibreRFDETR.__new__(rfdetr_model.LibreRFDETR)
-    wrapper.task = "pose"
-    wrapper.model = _Model()
-    wrapper.size = "n"
-    wrapper.nb_classes = 80
-    wrapper.names = {i: f"class_{i}" for i in range(80)}
-    wrapper.input_size = 384
-    wrapper.device = torch.device("cpu")
-    monkeypatch.setattr(rfdetr_model, "RFDETRTrainer", _DummyTrainer)
-    monkeypatch.setattr(wrapper, "_restore_after_training", lambda _result: None)
-
-    wrapper.train(data=str(data_yaml), epochs=1, batch_size=2, lr=1e-4)
-
-    assert wrapper.model.num_keypoints == 2
-    assert wrapper.model.model.reinitialized == 2
-    assert wrapper.nb_classes == 1
-    assert wrapper.names == {0: "person"}
-    assert captured["kwargs"]["num_keypoints"] == 2
-    assert captured["kwargs"]["keypoint_dim"] == 3
-    assert captured["kwargs"]["num_classes"] == 1
-
-
-def test_rfdetr_pose_onnx_uses_keypoint_output_name(tmp_path):
-    onnx = pytest.importorskip("onnx")
-    from libreyolo.export.onnx import export_onnx
-
-    class _TinyRFDETRPose(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.anchor = nn.Parameter(torch.zeros(()))
-
-        def forward(self, x):
-            batch = x.shape[0]
-            signal = x.mean(dim=(1, 2, 3), keepdim=True) + self.anchor
-            boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
-            logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
-            keypoints = signal.reshape(batch, 1, 1, 1).expand(batch, 3, 2, 3)
-            return boxes, logits, keypoints
-
-    output_path = tmp_path / "rfdetr-pose.onnx"
-    export_onnx(
-        _TinyRFDETRPose(),
-        torch.zeros(1, 3, 32, 32),
-        output_path=str(output_path),
-        opset=17,
-        simplify=False,
-        dynamic=False,
-        half=False,
-        metadata={"model_family": "rfdetr", "task": "pose", "segmentation": "false"},
+    result = train_rfdetr(
+        data="pose.yaml",
+        pose=True,
+        pretrain_weights="LibreRFDETRn-pose.pt",
+        epochs=1,
     )
 
-    proto = onnx.load(output_path)
-    assert [i.name for i in proto.graph.input] == ["input"]
-    assert [o.name for o in proto.graph.output] == ["dets", "labels", "keypoints"]
+    assert result == {"ok": True}
+    assert captured["init"] == {
+        "model_path": "LibreRFDETRn-pose.pt",
+        "size": None,
+        "device": "auto",
+        "segmentation": False,
+        "task": "pose",
+    }
+
+
+def test_train_rfdetr_pose_without_checkpoint_keeps_grouppose_default(monkeypatch):
+    import libreyolo.models.rfdetr.model as rfdetr_model
+    from libreyolo.models.rfdetr.trainer import train_rfdetr
+
+    captured = {}
+
+    class _FakeRFDETR:
+        def __init__(
+            self,
+            *,
+            model_path=None,
+            size=None,
+            device="auto",
+            segmentation=False,
+            task=None,
+        ):
+            captured["init"] = {
+                "model_path": model_path,
+                "size": size,
+                "device": device,
+                "segmentation": segmentation,
+                "task": task,
+            }
+
+        def train(self, **kwargs):
+            captured["train"] = kwargs
+            return {"ok": True}
+
+    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _FakeRFDETR)
+
+    result = train_rfdetr(data="pose.yaml", pose=True, epochs=1)
+
+    assert result == {"ok": True}
+    assert captured["init"]["size"] == "x"
+    assert captured["init"]["task"] == "pose"

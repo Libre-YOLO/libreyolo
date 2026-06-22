@@ -434,3 +434,43 @@ def test_factory_warns_for_foreign_metadata_less_checkpoint(tmp_path, caplog):
 def test_factory_rejects_unsupported_explicit_task_from_filename():
     with pytest.raises(ValueError, match="not supported"):
         LibreYOLO("LibreYOLOXs.pt", task="segment")
+
+
+def test_factory_routes_onnx_before_native_task_validation(monkeypatch, tmp_path):
+    import libreyolo.backends.onnx as onnx_backend
+
+    class _DetectOnlyMatcher:
+        DEFAULT_TASK = "detect"
+        SUPPORTED_TASKS = ("detect",)
+
+        @classmethod
+        def detect_size_from_filename(cls, filename):
+            return "n"
+
+    captured = {}
+
+    class _FakeOnnxBackend:
+        def __init__(self, onnx_path, nb_classes=80, device="auto", task=None):
+            captured.update(
+                {
+                    "onnx_path": onnx_path,
+                    "nb_classes": nb_classes,
+                    "device": device,
+                    "task": task,
+                }
+            )
+
+    monkeypatch.setattr(BaseModel, "_registry", [_DetectOnlyMatcher])
+    monkeypatch.setattr(onnx_backend, "OnnxBackend", _FakeOnnxBackend)
+    onnx_path = tmp_path / "rfdetr-l-segment.onnx"
+    onnx_path.write_bytes(b"not a real onnx model")
+
+    loaded = LibreYOLO(str(onnx_path), task="segment", device="cpu")
+
+    assert isinstance(loaded, _FakeOnnxBackend)
+    assert captured == {
+        "onnx_path": str(onnx_path),
+        "nb_classes": 80,
+        "device": "cpu",
+        "task": "segment",
+    }

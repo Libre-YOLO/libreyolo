@@ -468,9 +468,6 @@ MODEL_CATALOG = [
     ("picodet", "s", "LibrePICODETs.pt"),
     ("picodet", "m", "LibrePICODETm.pt"),
     ("picodet", "l", "LibrePICODETl.pt"),
-    ("damoyolo", "t", "LibreDAMOYOLOt.pt"),
-    ("damoyolo", "s", "LibreDAMOYOLOs.pt"),
-    ("damoyolo", "m", "LibreDAMOYOLOm.pt"),
 ]
 
 FLAGSHIP_FAMILIES = {"yolo9", "rfdetr"}
@@ -498,7 +495,6 @@ GENERAL_NIGHTLY_INFERENCE_MODELS = [
     ("rtdetrv2", "r18", "weights/LibreRTDETRv2r18.pt"),
     ("rtdetrv4", "s", "weights/LibreRTDETRv4s.pt"),
     ("picodet", "s", "LibrePICODETs.pt"),
-    ("damoyolo", "t", "LibreDAMOYOLOt.pt"),
     ("rtmdet", "t", "LibreRTMDett.pt"),
 ]
 
@@ -516,8 +512,6 @@ RTDETR_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 RTDETRV2_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv2"]
 RTDETRV4_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "rtdetrv4"]
 PICODET_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "picodet"]
-DAMOYOLO_SIZES = [s for f, s, _ in MODEL_CATALOG if f == "damoyolo"]
-FOMO_SIZES = ["s", "m", "l"]
 
 ALL_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG]
 ALL_MODELS_WITH_WEIGHTS = MODEL_CATALOG
@@ -549,7 +543,6 @@ FAMILY_MARKERS = {
     "rtdetrv2": pytest.mark.rtdetrv2,
     "rtdetrv4": pytest.mark.rtdetrv4,
     "picodet": pytest.mark.picodet,
-    "damoyolo": pytest.mark.damoyolo,
     "rtmdet": pytest.mark.rtmdet,
     "l2cs": pytest.mark.l2cs,
     "fomo": pytest.mark.fomo,

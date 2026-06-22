@@ -10,7 +10,6 @@ All model families register here via ``__init_subclass__``. Adding a new model m
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from .base import BaseModel
@@ -57,7 +56,6 @@ from .deim.model import LibreDEIM  # noqa: E402
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
-from .damoyolo.model import LibreDAMOYOLO  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
@@ -216,17 +214,6 @@ def LibreYOLO(
     ensure_default_logging()
     model_path = _resolve_weights_path(model_path)
 
-    if task is not None:
-        filename = Path(model_path).name
-        for cls in BaseModel._registry:
-            if cls.detect_size_from_filename(filename) is not None:
-                resolve_task(
-                    explicit_task=task,
-                    default_task=cls.DEFAULT_TASK,
-                    supported_tasks=cls.SUPPORTED_TASKS,
-                )
-                break
-
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
         from ..backends.onnx import OnnxBackend
@@ -276,6 +263,17 @@ def LibreYOLO(
             return NcnnBackend(
                 model_path, nb_classes=nb_classes, device=device, task=task
             )
+
+    if task is not None:
+        filename = Path(model_path).name
+        for cls in BaseModel._registry:
+            if cls.detect_size_from_filename(filename) is not None:
+                resolve_task(
+                    explicit_task=task,
+                    default_task=cls.DEFAULT_TASK,
+                    supported_tasks=cls.SUPPORTED_TASKS,
+                )
+                break
 
     # Download if missing
     if not Path(model_path).exists():
@@ -517,7 +515,11 @@ def LibreYOLO(
     if checkpoint_task is None and matched_cls.FAMILY == "rfdetr":
         if any(k.startswith("segmentation_head") for k in weights_dict):
             checkpoint_task = "segment"
-        elif any(k.startswith("keypoint_head") for k in weights_dict):
+        elif any(k.startswith("keypoint_head") for k in weights_dict) or any(
+            "keypoint" in k for k in weights_dict if k.startswith("transformer.")
+        ):
+            # Legacy clean-room keypoint_head.* weights or the GroupPose
+            # transformer keypoint markers ported from RF-DETR v1.8.0.
             checkpoint_task = "pose"
     if checkpoint_task is None and matched_cls.FAMILY == "yolonas":
         if "heads.head1.pose_pred.weight" in weights_dict:
@@ -596,7 +598,6 @@ __all__ = [
     "LibreDEIMv2",
     "LibreEC",
     "LibrePICODET",
-    "LibreDAMOYOLO",
     "LibreRTMDet",
     "LibreRTDETR",
     "LibreRTDETRv2",

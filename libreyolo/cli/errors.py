@@ -19,6 +19,7 @@ EXIT_CODES: dict[str, int] = {
     "config_required_key": 2,
     "config_conflict": 2,
     "config_unsupported": 2,
+    "invalid_imgsz": 2,
     # Data errors
     "source_not_found": 3,
     "data_not_found": 3,
@@ -33,6 +34,7 @@ EXIT_CODES: dict[str, int] = {
     "export_format_unknown": 5,
     "export_dep_missing": 5,
     "format_precision_unsupported": 5,
+    "nms_unsupported_format": 5,
 }
 
 

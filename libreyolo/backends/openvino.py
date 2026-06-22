@@ -8,7 +8,7 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz
+from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ class OpenVINOBackend(BaseBackend):
         imgsz = 640
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
+        pose_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -72,6 +73,7 @@ class OpenVINOBackend(BaseBackend):
                 imgsz,
                 resolved_nb_classes,
                 names,
+                pose_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -118,6 +120,7 @@ class OpenVINOBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     @staticmethod
@@ -156,7 +159,7 @@ class OpenVINOBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names).
+            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
         """
         import yaml
 
@@ -194,7 +197,17 @@ class OpenVINOBackend(BaseBackend):
         else:
             names = BaseBackend.build_names(nb_classes)
 
-        return model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names
+        return (
+            model_family,
+            model_size,
+            task,
+            supported_tasks,
+            default_task,
+            imgsz,
+            nb_classes,
+            names,
+            _read_pose_metadata(meta),
+        )
 
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run OpenVINO inference."""

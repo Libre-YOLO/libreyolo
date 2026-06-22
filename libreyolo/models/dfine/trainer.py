@@ -304,6 +304,8 @@ class DFINETrainer(BaseTrainer):
                     name=get_coco_image_dir(data_cfg, "train", "train2017"),
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
+                    names=data_cfg.get("names"),
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -319,6 +321,8 @@ class DFINETrainer(BaseTrainer):
                     name="train2017",
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -345,6 +349,7 @@ class DFINETrainer(BaseTrainer):
                     name="train2017",
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
                 )
             else:
                 train_dataset = YOLODataset(
