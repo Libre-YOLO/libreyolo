@@ -1649,4 +1649,4 @@ def test_backend_rejects_unsupported_explicit_task():
 
 def test_backend_rejects_point_task_until_parser_exists():
     with pytest.raises(NotImplementedError, match="point-task inference"):
-        _DummyBackend("librefomo", task="point", supported_tasks=("point",))
+        _DummyBackend("fomo", task="point", supported_tasks=("point",))

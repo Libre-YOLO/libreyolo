@@ -58,6 +58,7 @@ from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTD
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
+from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -601,5 +602,6 @@ __all__ = [
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
+    "LibreFOMO",
     "try_ensure_rfdetr",
 ]

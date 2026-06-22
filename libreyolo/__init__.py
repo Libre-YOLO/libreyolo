@@ -20,6 +20,7 @@ from .models import (
     LibreRTDETRv4,
     LibreRTMDet,
     LibreL2CS,
+    LibreFOMO,
 )
 from .utils.results import (
     Results,
@@ -135,6 +136,7 @@ __all__ = [
     "LibrePICODET",
     "LibreRTMDet",
     "LibreL2CS",
+    "LibreFOMO",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
     "LibreLFM2VL",
