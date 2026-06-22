@@ -8,7 +8,6 @@ from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from ..base.model import BaseModel
 from .nn import CONFIGS, LibreFOMOModel, detect_size_from_state_dict
@@ -41,9 +40,6 @@ class LibreFOMO(BaseModel):
 
     TTA_ENABLED = False
 
-    _HF_REPO = "LibreYOLO/LibreFOMO"
-    _WEIGHTS_REPO = "fomo-edge-ai/FOMO"
-
     # -------------------------------------------------------------------------
     # Registry / can_load interface
     # -------------------------------------------------------------------------
@@ -73,12 +69,10 @@ class LibreFOMO(BaseModel):
         return max(int(weight.shape[0]) - 1, 1)
 
     @classmethod
-    def get_download_url(cls, filename: str) -> Optional[str]:
-        size = cls.detect_size_from_filename(filename)
-        if size is None:
-            return None
-        fomo_filename = f"FOMO{size}.pt"
-        return f"https://huggingface.co/{cls._WEIGHTS_REPO}/resolve/main/weights/{fomo_filename}"
+    def get_download_url(cls, _filename: str) -> Optional[str]:
+        # LibreFOMO pretrained weights are not redistributed or auto-downloaded.
+        # Users who accept third-party terms must provide a local checkpoint path.
+        return None
 
     # -------------------------------------------------------------------------
     # Construction

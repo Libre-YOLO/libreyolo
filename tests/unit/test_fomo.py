@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import torch
 
 pytestmark = [pytest.mark.unit, pytest.mark.fomo]
+
+if TYPE_CHECKING:
+    from libreyolo.models.fomo.model import LibreFOMO
 
 
 # ===========================================================================
@@ -15,7 +19,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.fomo]
 # ===========================================================================
 
 
-def _make_random_fomo(size: str = "s", nc: int = 1) -> "LibreFOMO":
+def _make_random_fomo(size: str = "s", nc: int = 1) -> LibreFOMO:
     from libreyolo.models.fomo.model import LibreFOMO
 
     return LibreFOMO(model_path=None, size=size, nb_classes=nc, device="cpu")
@@ -246,11 +250,11 @@ class TestLibreFOMORandomInit:
 
 
 class TestLibreFOMODownloadURL:
-    def test_valid_filename_returns_url(self) -> None:
+    def test_public_filename_returns_none(self) -> None:
         from libreyolo.models.fomo.model import LibreFOMO
 
         url = LibreFOMO.get_download_url("LibreFOMOs-point.pt")
-        assert url == "https://huggingface.co/fomo-edge-ai/FOMO/resolve/main/weights/FOMOs.pt"
+        assert url is None
 
     def test_unknown_filename_returns_none(self) -> None:
         from libreyolo.models.fomo.model import LibreFOMO
