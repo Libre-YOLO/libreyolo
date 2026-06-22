@@ -13,7 +13,7 @@ import torch.nn as nn
 # Per-size configuration table
 # ---------------------------------------------------------------------------
 
-CONFIGS: ClassVar[Dict[str, dict]] = {
+CONFIGS: Dict[str, dict] = {
     "s": {"alpha": 0.35, "imgsz": 96,  "head_in_channels": 96},
     "m": {"alpha": 0.50, "imgsz": 192, "head_in_channels": 96},
     "l": {"alpha": 1.00, "imgsz": 224, "head_in_channels": 192},

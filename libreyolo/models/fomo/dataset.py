@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from typing import Tuple
+from typing import Any, Tuple
 
 import cv2
 import numpy as np

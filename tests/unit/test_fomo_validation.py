@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -10,6 +11,9 @@ import torch
 from PIL import Image
 
 pytestmark = [pytest.mark.unit, pytest.mark.fomo]
+
+if TYPE_CHECKING:
+    from libreyolo.models.fomo.model import LibreFOMO
 
 
 # ===========================================================================
@@ -45,7 +49,7 @@ def _write_tiny_point_dataset(root: Path, imgsz: int = 96) -> Path:
     return data_yaml
 
 
-def _make_random_fomo(size: str = "s", nc: int = 1) -> "LibreFOMO":
+def _make_random_fomo(size: str = "s", nc: int = 1) -> LibreFOMO:
     from libreyolo.models.fomo.model import LibreFOMO
 
     return LibreFOMO(model_path=None, size=size, nb_classes=nc, device="cpu")
@@ -228,6 +232,56 @@ class TestLibreFOMOParseGtPoints:
         assert xy.shape == (1, 2)
         np.testing.assert_allclose(xy[0], [0.5, 0.5], atol=1e-5)
         assert cls[0] == 0
+
+
+class TestLibreFOMOValidator:
+    """FOMOValidator grid-specific metric handling."""
+
+    def _make_config(self):
+        from libreyolo.validation import ValidationConfig
+
+        return ValidationConfig(data="unused.yaml", device="cpu", verbose=False)
+
+    def test_grid_size_inferred_from_model_size(self) -> None:
+        from libreyolo.validation.fomo_validator import FOMOValidator
+
+        assert FOMOValidator(_make_random_fomo(size="s"), self._make_config()).grid_size == 12
+        assert FOMOValidator(_make_random_fomo(size="m"), self._make_config()).grid_size == 24
+        assert FOMOValidator(_make_random_fomo(size="l"), self._make_config()).grid_size == 28
+
+    def test_grid_metrics_stream_without_raw_logit_cache(self) -> None:
+        from libreyolo.validation.fomo_validator import FOMOValidator
+
+        model = _make_random_fomo(size="s", nc=1)
+        validator = FOMOValidator(
+            model,
+            self._make_config(),
+            conf_thresholds=(0.25,),
+            nms_radii=(1,),
+        )
+        validator._init_metrics()
+        assert validator.last_logits is None
+        assert not hasattr(validator, "grid_cached")
+
+        logits = torch.zeros(1, 2, 12, 12)
+        logits[0, 1, 6, 6] = 20.0
+        validator.last_logits = logits
+        preds = [
+            {
+                "xy_norm": np.array([[0.5, 0.5]], dtype=np.float64),
+                "scores": np.array([0.9], dtype=np.float64),
+                "classes": np.array([0], dtype=np.int64),
+            }
+        ]
+        targets = torch.tensor([[[0.0, 0.5, 0.5, 0.05, 0.05]]], dtype=torch.float32)
+
+        validator._update_metrics(preds, targets, [(96, 96)])
+
+        stats = validator.grid_stats[(0.25, 1)]
+        assert stats["tp"] == 1.0
+        assert stats["fp"] == 0.0
+        assert stats["fn"] == 0.0
+        assert not hasattr(validator, "grid_cached")
 
 
 class TestDecodePoints:
