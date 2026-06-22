@@ -15,7 +15,6 @@ from .models import (
     LibreDEIMv2,
     LibreEC,
     LibrePICODET,
-    LibreDAMOYOLO,
     LibreRTDETR,
     LibreRTDETRv2,
     LibreRTDETRv4,
@@ -134,7 +133,6 @@ __all__ = [
     "LibreDEIMv2",
     "LibreEC",
     "LibrePICODET",
-    "LibreDAMOYOLO",
     "LibreRTMDet",
     "LibreL2CS",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])

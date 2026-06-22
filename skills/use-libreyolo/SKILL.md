@@ -29,7 +29,7 @@ or a path to the user's own `.pt`.
 
 ```bash
 pip install libreyolo
-libreyolo doctor      # verifies install, CUDA/MPS, and optional export backends
+libreyolo checks      # verify install, CUDA/MPS, and optional export backends
 ```
 
 ## The four verbs
@@ -73,7 +73,7 @@ recalling flags from memory:
 ```bash
 libreyolo --help                 # list every command
 libreyolo train --help-json      # full argument schema for one command, as JSON
-libreyolo info                   # supported models / tasks
+libreyolo models                 # list available model families and sizes
 libreyolo predict ... --json     # machine-readable results to stdout
 libreyolo ... --quiet            # suppress progress output (good for scripting)
 ```
@@ -85,9 +85,9 @@ describe the loaded model.
 
 - **Tasks:** detection — and segmentation on YOLO9 / RF-DETR — are the
   well-supported core. Pose, OBB, classify, and semantic are experimental;
-  confirm with `libreyolo info` before relying on them.
+  see the README model-compatibility table before relying on them.
 - **Datasets** are standard YOLO format, so existing Ultralytics dataset YAMLs
   (e.g. `coco8.yaml`) work unchanged.
 - **Outputs** land under `runs/` (`runs/detect`, `runs/train`, `runs/val`).
-- **Stuck or an import/CUDA error?** Run `libreyolo doctor` first — it diagnoses
+- **Stuck or an import/CUDA error?** Run `libreyolo checks` first - it diagnoses
   the environment and export-backend problems before you debug anything else.

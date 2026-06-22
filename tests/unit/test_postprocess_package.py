@@ -50,8 +50,6 @@ def test_family_reexports_are_same_objects():
         ("libreyolo.models.yolonas.utils", "libreyolo.postprocess.yolonas",
          ["postprocess", "postprocess_pose", "_undo_letterbox_xyxy",
           "_undo_letterbox_xy", "_extract_decoded_predictions"]),
-        ("libreyolo.models.damoyolo.utils", "libreyolo.postprocess.damoyolo",
-         ["postprocess_predictions", "multiclass_nms"]),
         ("libreyolo.models.yolo9_e2e.utils", "libreyolo.postprocess.yolo9_e2e",
          ["postprocess", "_scale_and_clip_boxes"]),
         ("libreyolo.models.ec.postprocess", "libreyolo.postprocess.ec",

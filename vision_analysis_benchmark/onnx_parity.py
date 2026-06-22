@@ -394,13 +394,6 @@ def build_default_cases() -> list[ParityCase]:
     )
     add_many("rtdetrv4", "LibreRTDETRv4", ("s", "m", "l", "x"), "detect", "experimental")
     add_many("picodet", "LibrePICODET", ("s", "m", "l"), "detect", "experimental")
-    add_many(
-        "damoyolo",
-        "LibreDAMOYOLO",
-        ("ns", "nm", "nl", "t", "s", "m", "l"),
-        "detect",
-        "experimental",
-    )
     add_many("rtmdet", "LibreRTMDet", ("t", "s", "m", "l", "x"), "detect", "experimental")
     add_many("ec", "LibreEC", ("s", "m", "l", "x"), "detect", "experimental")
     add_many("ec", "LibreEC", ("s", "m", "l", "x"), "segment", "experimental")

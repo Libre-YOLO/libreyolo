@@ -259,7 +259,6 @@ markers = [
     "rtdetrv2: tests covering the RT-DETRv2 model family",
     "rtdetrv4: tests covering the RT-DETRv4 model family",
     "picodet: tests covering the PICODET model family",
-    "damoyolo: tests covering the DAMO-YOLO model family",
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",

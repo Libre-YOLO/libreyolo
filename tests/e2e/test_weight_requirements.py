@@ -38,4 +38,4 @@ def test_missing_unavailable_libreyolo_weight_path_skips(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(pytest.skip.Exception):
-        require_test_weights("weights/LibreDAMOYOLOl.pt", expected_family="damoyolo")
+        require_test_weights("weights/LibreL2CSr50.pt", expected_family="l2cs")

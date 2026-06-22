@@ -1,4 +1,4 @@
-# ADR 0005: LibreSAM Contract For Promptable Segmentation
+# ADR 0007: LibreSAM Contract For Promptable Segmentation
 
 - Status: Proposed
 - Date: 2026-06-14
