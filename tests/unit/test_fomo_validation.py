@@ -253,10 +253,12 @@ class TestLibreFOMOValidator:
         from libreyolo.validation.fomo_validator import FOMOValidator
 
         model = _make_random_fomo(size="s", nc=1)
+        # conf_threshold must be > 0.5: with nc=1 (2 channels), zero-logit cells
+        # have softmax fg probability = 0.5 and would all fire at 0.25.
         validator = FOMOValidator(
             model,
             self._make_config(),
-            conf_thresholds=(0.25,),
+            conf_thresholds=(0.9,),
             nms_radii=(1,),
         )
         validator._init_metrics()
@@ -277,7 +279,7 @@ class TestLibreFOMOValidator:
 
         validator._update_metrics(preds, targets, [(96, 96)])
 
-        stats = validator.grid_stats[(0.25, 1)]
+        stats = validator.grid_stats[(0.9, 1)]
         assert stats["tp"] == 1.0
         assert stats["fp"] == 0.0
         assert stats["fn"] == 0.0
