@@ -180,6 +180,32 @@ Used for: ResNet_vd pretrained classification backbones loaded by
           ResNet{18,34,50,101}_vd weights that originate here).
 
 --------------------------------------------------------------------
+Depth Anything V2 (DepthAnything / TikTok)
+--------------------------------------------------------------------
+Source: https://github.com/DepthAnything/Depth-Anything-V2
+License: Apache License 2.0
+Copyright (c) 2024 Depth Anything V2 authors.
+Citation: Yang, L., Kang, B., Huang, Z., Zhao, Z., Xu, X., Feng, J.,
+          and Zhao, H. "Depth Anything V2." NeurIPS 2024.
+Used for: Depth Anything V2 model family (DINOv2 encoder + DPT head)
+          vendored under libreyolo/models/depth_anything/_vendor/
+          (dinov2, dinov2_layers, dpt, util/{blocks,transform}). Bundled
+          verbatim except for added package __init__.py files. The
+          LibreYOLO-side wrapper (libreyolo/models/depth_anything/
+          {model,nn,utils}.py) adds internal ImageNet normalization and
+          the depth-task contract; it does not modify the vendored code.
+
+NOTE - code vs. weights: The Apache-2.0 license covers the Depth
+Anything V2 *source code* vendored above. It does NOT cover the
+pretrained weights, which are split: the Small (ViT-S) checkpoint is
+Apache-2.0, while Base/Large/Giant (ViT-B/L/G) are CC-BY-NC-4.0
+(non-commercial). LibreYOLO therefore does NOT bundle, mirror, or
+auto-download Depth Anything V2 weights. Users obtain official
+checkpoints upstream, convert them with
+weights/convert_depth_anything_v2_weights.py, and are responsible for
+complying with each checkpoint's license.
+
+--------------------------------------------------------------------
 Apache License 2.0 (full text)
 --------------------------------------------------------------------
 The full text of the Apache License, Version 2.0 is available at
