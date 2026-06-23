@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -200,6 +202,124 @@ def trash_project(data: str) -> str:
     dest = trash / f"{int(time.time())}-{root.name or 'dataset'}"
     shutil.move(str(root), str(dest))
     return str(dest)
+
+
+APP_DIRNAME = "LibreLabel"
+
+# Windows reserved device names that can't be a folder name.
+_WIN_RESERVED = {"CON", "PRN", "AUX", "NUL",
+                 *(f"COM{i}" for i in range(1, 10)),
+                 *(f"LPT{i}" for i in range(1, 10))}
+
+
+def _documents_dir() -> Path:
+    """Best-effort cross-platform path to the user's *Documents* folder.
+
+    We don't hard-code ``~/Documents`` because on Windows it's frequently
+    redirected (notably into OneDrive), so we ask the OS via the Known Folder
+    API and fall back to the registry. macOS always has ``~/Documents``. On
+    Linux we honour the XDG ``user-dirs.dirs`` config. Every branch degrades to
+    ``~/Documents`` then ``~``. Stdlib only -- no third-party deps.
+    """
+    home = Path.home()
+
+    if sys.platform == "win32":  # noqa: SIM108 - platform branches read clearer apart
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _GUID(ctypes.Structure):
+                _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                            ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+            # FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+            fid = _GUID(0xFDD39AD0, 0x238F, 0x46AF,
+                        (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7))
+            ptr = ctypes.c_wchar_p()
+            rc = ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(fid), 0, None, ctypes.byref(ptr))
+            try:
+                if rc == 0 and ptr.value:
+                    p = Path(ptr.value)
+                    if p.is_dir():
+                        return p
+            finally:
+                ctypes.windll.ole32.CoTaskMemFree(ptr)
+        except Exception:  # noqa: BLE001 - any ctypes/API hiccup -> fall through
+            pass
+        try:
+            import winreg
+            key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                val = os.path.expandvars(winreg.QueryValueEx(k, "Personal")[0])
+                if val and Path(val).is_dir():
+                    return Path(val)
+        except Exception:  # noqa: BLE001
+            pass
+        cand = home / "Documents"
+        return cand if cand.is_dir() else home
+
+    if sys.platform == "darwin":
+        return home / "Documents"
+
+    # Linux / other unix: XDG user-dirs, then ~/Documents, then ~.
+    try:
+        cfg = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config")) / "user-dirs.dirs"
+        if cfg.is_file():
+            for line in cfg.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if line.startswith("XDG_DOCUMENTS_DIR"):
+                    raw = line.split("=", 1)[1].strip().strip('"')
+                    raw = raw.replace("$HOME", str(home))
+                    p = Path(os.path.expandvars(raw))
+                    if p.is_dir():
+                        return p
+    except Exception:  # noqa: BLE001
+        pass
+    cand = home / "Documents"
+    return cand if cand.is_dir() else home
+
+
+def default_projects_base() -> Path:
+    """Where uploaded projects are created by default: ``<Documents>/LibreLabel``."""
+    return _documents_dir() / APP_DIRNAME
+
+
+def _sanitize_project_name(name: str) -> str:
+    """Reduce a free-text project name to one safe path segment (or a default)."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', " ", name or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().strip(". ")
+    if cleaned.upper() in _WIN_RESERVED:
+        cleaned += "_"
+    return cleaned[:80].strip() or "Untitled project"
+
+
+def _occupied(p: Path) -> bool:
+    """True if ``p`` is something we should not target: a file, or a non-empty dir."""
+    try:
+        if not p.exists():
+            return False
+        return (not p.is_dir()) or any(p.iterdir())
+    except OSError:
+        return True
+
+
+def suggest_project_dir(name: str = "") -> str:
+    """A pre-fillable, non-colliding default destination for a new project.
+
+    ``<Documents>/LibreLabel/<sanitized name>``; if that path is already taken
+    (a file, or a non-empty folder) we append ``-2``, ``-3`` ... so the default
+    never silently points at existing data. Nothing is created here -- this is
+    only the suggestion the wizard shows, and the user can edit or Browse away
+    from it."""
+    base = default_projects_base()
+    stem = _sanitize_project_name(name)
+    cand = base / stem
+    i = 2
+    while _occupied(cand):
+        cand = base / f"{stem}-{i}"
+        i += 1
+    return str(cand)
 
 
 def save_uploaded_image(dst: str, name: str, data: bytes) -> str:

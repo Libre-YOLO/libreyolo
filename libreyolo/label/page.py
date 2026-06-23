@@ -396,23 +396,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .taskopt[disabled]{opacity:.5;cursor:default}
   .taskopt .soon{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
   /* ===== New Project wizard ===== */
+  /* A real /new route rendered as a full-screen page, not a dismissible overlay:
+     opaque (no backdrop to mis-click) with the card centered and room to breathe. */
   .wz{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
-    background:rgba(6,6,8,.66);backdrop-filter:blur(6px)}
+    background:var(--bg);padding:24px;overflow:auto}
   .wz.show{display:flex}
-  .wz-card{width:min(640px,94vw);max-height:90vh;display:flex;flex-direction:column;
+  .wz-card{width:min(640px,94vw);max-height:calc(100vh - 48px);display:flex;flex-direction:column;
     background:var(--s1);border:1px solid var(--line2);border-radius:18px;box-shadow:var(--sh);overflow:hidden}
   .wz-head{display:flex;align-items:center;gap:14px;padding:16px 18px;border-bottom:1px solid var(--line)}
-  .wz-title{font-size:15px;font-weight:680;letter-spacing:-.2px}
-  .wz-steps{display:flex;align-items:center;gap:4px;margin-left:auto}
-  .wz-step{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--tx3);padding:4px}
-  .wz-step i{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;font-size:11px;
-    font-weight:700;background:var(--s3);color:var(--tx2);transition:.15s}
-  .wz-step.on{color:var(--tx)} .wz-step.on i{background:var(--ac);color:var(--ac-ink)}
-  .wz-step.done i{background:color-mix(in srgb,var(--ac) 34%,var(--s3));color:var(--tx)}
+  .wz-title{font-size:15px;font-weight:680;letter-spacing:-.2px;flex:1}
   .wz-body{padding:20px 20px 8px;overflow:auto}
   .wz-pane{display:flex;flex-direction:column}
   .wz-lbl{font-size:12.5px;font-weight:600;color:var(--tx);margin:14px 0 7px}
   .wz-lbl:first-child{margin-top:0}
+  .wz-lbl-sep{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
   .wz-lbl .wz-hint{color:var(--tx3);font-weight:400;margin-left:5px}
   .wz-lbl .req{color:var(--danger);margin-left:3px;font-weight:700}
   .wz-in{width:100%;background:var(--s2);border:1px solid var(--line2);border-radius:10px;
@@ -424,6 +421,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .wz-tab{flex:1;height:32px;border:0;border-radius:7px;background:transparent;color:var(--tx3);font-size:12.5px;font-weight:580}
   .wz-tab.on{background:var(--s1);color:var(--tx);box-shadow:var(--shs)}
   .wz-folder{display:flex;gap:8px} .wz-folder .wz-in{flex:1}
+  /* Destination is secondary now: a quiet "Saving to <path>  Change" line under the
+     drop zone, with the editable folder field revealed only on demand. */
+  .wz-dest{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--tx3)}
+  .wz-dest .wz-dest-lbl{font-weight:600;color:var(--tx2);flex:none}
+  .wz-dest .wz-dest-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx2)}
+  .wz-dest .wz-link{flex:none}
+  .wz-dest-edit{margin-top:9px}
   .wz-drop{margin-top:12px;border:1.5px dashed var(--line2);border-radius:12px;padding:26px 16px;text-align:center;
     background:var(--s2);transition:.12s;cursor:pointer}
   .wz-drop:hover,.wz-drop.over{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 8%,var(--s2))}
@@ -437,6 +441,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .wz-frow .wz-fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .wz-frow .wz-fs{font-variant-numeric:tabular-nums;color:var(--tx3);flex:none}
   .wz-frow.ok .wz-fs{color:var(--ok)} .wz-frow.err{color:var(--danger)} .wz-frow.err .wz-fn{color:var(--danger)}
+  .wz-frem{background:none;border:none;cursor:pointer;padding:0 2px;line-height:1;color:var(--tx3);flex:none;font-size:14px}
+  .wz-frem:hover{color:var(--danger)}
   .wz-note{font-size:12px;color:var(--tx3);line-height:1.5;margin:12px 0 0}
   .wz-tasks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .wz-task{display:flex;align-items:center;gap:8px;padding:11px 13px;border-radius:10px;background:var(--s2);
@@ -705,14 +711,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="wz-card">
       <header class="wz-head">
         <span class="wz-title">New project</span>
-        <span class="wz-steps">
-          <span class="wz-step on" data-s="1"><i>1</i>Data</span>
-          <span class="wz-step" data-s="2"><i>2</i>Labels</span>
-        </span>
         <button class="mx" id="wzclose">&times;</button>
       </header>
       <div class="wz-body">
-        <section class="wz-pane" data-pane="1">
+        <section class="wz-pane">
           <label class="wz-lbl">Project name <span class="wz-hint">optional, defaults to the folder name</span></label>
           <input id="wzname" class="wz-in" placeholder="e.g. Helmet detection" spellcheck="false" autocomplete="off">
           <label class="wz-lbl">Images <span class="req">*</span></label>
@@ -721,22 +723,26 @@ INDEX_HTML = r"""<!DOCTYPE html>
             <button class="wz-tab" data-tab="existing">Open existing</button>
           </div>
           <div class="wz-tabpane" data-tabpane="upload">
-            <div class="wz-folder"><input id="wzdst" class="wz-in" placeholder="Destination folder for the dataset…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzbrowse">Browse</button></div>
             <div class="wz-drop" id="wzdrop">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
               <div class="wz-drop-t">Drag &amp; drop images here</div>
-              <div class="wz-drop-s">or <button class="wz-link" id="wzpick">click to browse</button> · jpg, png, bmp, webp</div>
+              <div class="wz-drop-s">or <button class="wz-link" id="wzpick">browse files</button> · <button class="wz-link" id="wzpickfolder">select folder</button> · jpg, png, bmp, webp</div>
               <input type="file" id="wzfiles" accept="image/*" multiple hidden>
+              <input type="file" id="wzfolder" webkitdirectory hidden>
             </div>
             <div class="wz-files" id="wzfilelist"></div>
+            <div class="wz-dest">
+              <span class="wz-dest-lbl">Saving to</span>
+              <span class="wz-dest-path" id="wzdstshow" title="">…</span>
+              <button class="wz-link" id="wzdstedit" type="button">Change</button>
+            </div>
+            <div class="wz-folder wz-dest-edit" id="wzdstrow" hidden><input id="wzdst" class="wz-in" placeholder="Where to create the project…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzbrowse">Browse</button></div>
           </div>
           <div class="wz-tabpane" data-tabpane="existing" hidden>
             <div class="wz-folder"><input id="wzexist" class="wz-in" placeholder="Folder of images, or a data.yaml…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzexistbrowse">Browse</button></div>
             <p class="wz-note">LibreLabel labels the images where they already are and writes the dataset config for you. Nothing is copied or moved.</p>
           </div>
-        </section>
-        <section class="wz-pane" data-pane="2" hidden>
-          <label class="wz-lbl">Task</label>
+          <label class="wz-lbl wz-lbl-sep">Task</label>
           <div class="wz-tasks" id="wztasks">
             <button class="wz-task on" data-task="detect">Bounding boxes</button>
             <button class="wz-task" data-task="obb">Oriented boxes</button>
@@ -751,9 +757,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <footer class="wz-foot">
         <div class="wz-err" id="wzerr"></div>
         <div class="wz-nav">
-          <button class="btn btn-ghost" id="wzback" hidden>Back</button>
-          <button class="btn btn-primary" id="wznext">Next</button>
-          <button class="btn btn-primary" id="wzcreate" hidden>Create project</button>
+          <button class="btn btn-ghost" id="wzcancel">Cancel</button>
+          <button class="btn btn-primary" id="wzcreate">Create project</button>
         </div>
       </footer>
     </div>
@@ -2484,26 +2489,73 @@ function wireHome(){
 // ===== New Project wizard =====
 const WZPRESET = ["#06b6d4","#10b981","#f59e0b","#ef4444","#a855f7","#ec4899","#14b8a6","#3b82f6"];
 let WZ = null;
-function openWizard(){
-  WZ = {step:1, mode:"upload", task:"detect",
+// The wizard is a real route: /new. Navigation drives it (so Back, refresh and
+// deep-links all work); the view is shown/hidden purely by wzApplyRoute().
+const WZ_ROUTE="/new";
+const WZ_DISCARD="Discard this new project? Images you've already uploaded stay in the destination folder, but the name and classes here will be cleared.";
+function wzPath(){ return location.pathname.replace(/\/+$/,"")||"/"; }
+function openWizard(){ if(wzPath()!==WZ_ROUTE) history.pushState({wz:1},"",WZ_ROUTE); wzApplyRoute(); }
+function openWizardView(){
+  if(WZ) return;  // already showing
+  WZ = {mode:"upload", task:"detect", dstTouched:false,
         dst:"", uploaded:0, files:[], classes:[{name:"",color:WZPRESET[0]}]};
-  $("#wzname").value=""; $("#wzdst").value=""; $("#wzexist").value="";
+  $("#wzname").value=""; $("#wzdst").value=""; $("#wzexist").value=""; wzShowDest("");
+  const row=$("#wzdstrow"); if(row) row.hidden=true;
   document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.classList.toggle("on", b.dataset.task==="detect"));
-  renderWzClasses(); renderWzFiles(); wzSetTab("upload"); wzGoto(1);
+  renderWzClasses(); renderWzFiles(); wzSetTab("upload"); wzErr("");
+  wzRefreshDst();  // pre-fill an OS-appropriate default destination the user can edit
   $("#wizard").classList.add("show"); setTimeout(()=>{ const n=$("#wzname"); if(n) n.focus(); },30);
 }
-function closeWizard(){ const w=$("#wizard"); if(w) w.classList.remove("show"); WZ=null; }
-function wzErr(m){ const e=$("#wzerr"); if(e) e.textContent=m||""; }
-function wzGoto(s){
-  WZ.step=s;
-  document.querySelectorAll("#wizard .wz-pane").forEach(p=>p.hidden=(+p.dataset.pane!==s));
-  document.querySelectorAll("#wizard .wz-step").forEach(el=>{ const n=+el.dataset.s;
-    el.classList.toggle("on", n===s); el.classList.toggle("done", n<s); });
-  $("#wzback").hidden = s===1;
-  $("#wznext").hidden = s===2;
-  $("#wzcreate").hidden = s!==2;
-  wzErr("");
+// Show/hide the wizard view to match the URL -- the only place that mounts/unmounts it.
+function wzApplyRoute(){ if(wzPath()===WZ_ROUTE){ openWizardView(); } else if(WZ){ closeWizard(); } }
+// Browser Back/Forward: don't silently discard unsaved work.
+let wzLeaving=false;
+window.addEventListener("popstate", ()=>{
+  if(wzLeaving){ wzLeaving=false; wzApplyRoute(); return; }
+  if(wzPath()!==WZ_ROUTE && WZ && wzDirty()){
+    if(!confirm(WZ_DISCARD)){ history.pushState({wz:1},"",WZ_ROUTE); return; }  // stay put
+  }
+  wzApplyRoute();
+});
+// Suggest <Documents>/LibreLabel/<name> as the destination, derived live from the
+// project name -- until the user edits the path themselves or starts uploading
+// (after which the path is committed, so moving it would orphan uploaded images).
+let wzDstTimer=null;
+function wzScheduleDst(){ clearTimeout(wzDstTimer); wzDstTimer=setTimeout(wzRefreshDst, 250); }
+function wzPretty(p){ if(!p) return "…"; const sep=p.indexOf("\\")>=0?"\\":"/"; const parts=p.split(/[\\/]/).filter(Boolean); return parts.length>2 ? "…"+sep+parts.slice(-2).join(sep) : p; }
+function wzShowDest(p){ const s=$("#wzdstshow"); if(s){ s.textContent=wzPretty(p); s.title=p||""; } }
+function wzSetDst(p){ $("#wzdst").value=p||""; wzShowDest(p||""); renderWzFiles(); }
+async function wzRefreshDst(){
+  if(!WZ || WZ.dstTouched || WZ.uploaded) return;
+  const name=($("#wzname").value||"").trim();
+  try{
+    const r=await fetch(`/api/suggest-dst?name=${encodeURIComponent(name)}`);
+    const d=await r.json().catch(()=>({}));
+    if(WZ && !WZ.dstTouched && !WZ.uploaded && d && d.path){ wzSetDst(d.path); }
+  }catch(e){}
 }
+function closeWizard(){
+  if(wzPath()===WZ_ROUTE) history.replaceState({},"","/");  // normalise URL when leaving /new
+  const w=$("#wizard"); if(w) w.classList.remove("show"); WZ=null;
+}
+// True when the wizard holds work worth protecting from an accidental dismiss.
+// A merely pre-filled (untouched) destination doesn't count -- only real input does.
+function wzDirty(){
+  if(!WZ) return false;
+  if(WZ.uploaded>0) return true;
+  if(($("#wzname").value||"").trim()) return true;
+  if(($("#wzexist").value||"").trim()) return true;
+  if(WZ.dstTouched) return true;
+  return WZ.classes.some(c=>(c.name||"").trim());
+}
+// User cancel (the ✕): confirm if there's work, then leave the /new route.
+function navCloseWizard(){
+  if(WZ && wzDirty() && !confirm(WZ_DISCARD)) return;
+  wzLeaving=true;
+  if(history.state && history.state.wz){ history.back(); }                    // unwind the /new entry
+  else { history.replaceState({},"","/"); wzApplyRoute(); wzLeaving=false; }   // deep-linked: go home in place
+}
+function wzErr(m){ const e=$("#wzerr"); if(e) e.textContent=m||""; }
 function renderWzClasses(){
   const wrap=$("#wzclasses"); if(!wrap) return;
   wrap.innerHTML = WZ.classes.map((c,i)=>
@@ -2526,8 +2578,18 @@ function wzSetTab(t){
 }
 function renderWzFiles(){
   const wrap=$("#wzfilelist"); if(!wrap) return;
-  wrap.innerHTML = WZ.files.map(f=>`<div class="wz-frow ${f.status}"><span class="wz-fn">${esc(f.name)}</span><span class="wz-fs">${f.status==="ok"?"uploaded":f.status==="err"?"failed":"…"}</span></div>`).join("");
-  const drop=$("#wzdrop"); if(drop) drop.classList.toggle("disabled", !($("#wzdst").value||"").trim());
+  wrap.innerHTML = WZ.files.map((f,i)=>`<div class="wz-frow ${f.status}" data-i="${i}"><span class="wz-fn">${esc(f.name)}</span><span class="wz-fs">${f.status==="ok"?"uploaded":f.status==="err"?"failed":"&#x2026;"}</span><button class="wz-frem" title="Remove" data-i="${i}">&#x2715;</button></div>`).join("");
+  wrap.querySelectorAll(".wz-frem").forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); wzRemoveFile(+b.dataset.i); });
+}
+async function wzRemoveFile(idx){
+  const f=WZ.files[idx]; if(!f) return;
+  if(f.status==="ok"){
+    const dst=($("#wzdst").value||"").trim();
+    if(dst) try{ await fetch("/api/upload/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dst,name:f.name})}); }catch(_){}
+    WZ.uploaded=Math.max(0,WZ.uploaded-1);
+  }
+  WZ.files.splice(idx,1);
+  renderWzFiles();
 }
 async function wzUpload(fileList){
   const dst=($("#wzdst").value||"").trim();
@@ -2543,47 +2605,49 @@ async function wzUpload(fileList){
     renderWzFiles();
   }
 }
-async function wzNext(){
-  if(WZ.step!==1) return;
-  if(WZ.mode==="upload"){
-    if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder."); return; }
-    if(WZ.uploaded<1){ wzErr("Upload at least one image."); return; }
-    WZ.dst=$("#wzdst").value.trim(); wzGoto(2); return;
-  }
-  const p=($("#wzexist").value||"").trim();
-  if(!p){ wzErr("Paste a folder or a data.yaml."); return; }
-  if(/\.ya?ml$/i.test(p)){ closeWizard(); return openProject(p); }
-  wzErr("Checking…");
-  let info;
-  try{ const r=await fetch("/api/projects/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:p})}); info=await r.json(); if(!r.ok) throw 0; }
-  catch(e){ wzErr("Couldn't read that path."); return; }
-  if(info.has_yaml){ closeWizard(); return openProject(info.yaml||p); }
-  if(!info.is_dir){ wzErr("That isn't a folder or a data.yaml."); return; }
-  if(!info.images){ wzErr("No images found in that folder."); return; }
-  WZ.dst=p; wzErr(""); wzGoto(2);
-}
 function wzClassesPayload(){
   const seen=new Set(), names=[], colors=[];
   for(const c of WZ.classes){ const n=(c.name||"").trim(); if(!n) continue;
     const k=n.toLowerCase(); if(seen.has(k)) return {dup:true}; seen.add(k); names.push(n); colors.push(c.color||""); }
   return {names, colors};
 }
+// Single submit for the whole form: validate, resolve the data source, create.
 async function wzCreate(){
   const cp=wzClassesPayload();
   if(cp.dup){ wzErr("Class names must be unique."); return; }
   const task=WZ.task;
+
+  // Validate + resolve the data source up front (no spinner on early bail-outs).
+  let endpoint, body, inspectPath=null;
+  if(WZ.mode==="upload"){
+    const dst=($("#wzdst").value||"").trim();
+    if(!dst){ wzErr("Choose where to save the project."); return; }
+    if(WZ.uploaded<1){ wzErr("Add at least one image."); return; }
+    WZ.dst=dst;
+    endpoint="/api/projects/new";
+    body={dst, name:$("#wzname").value.trim(), description:"", color:"", task, classes:cp.names, colors:cp.colors, make_val:false};
+  } else {
+    const p=($("#wzexist").value||"").trim();
+    if(!p){ wzErr("Choose a folder of images, or a data.yaml."); return; }
+    if(/\.ya?ml$/i.test(p)){ closeWizard(); return openProject(p); }
+    endpoint="/api/projects/create";
+    body={folder:p, classes:cp.names, task};
+    inspectPath=p;
+  }
+
   const btn=$("#wzcreate"), t=btn.textContent; btn.disabled=true; btn.textContent="Creating…"; wzErr("");
   try{
-    let d;
-    if(WZ.mode==="upload"){
-      const body={dst:WZ.dst, name:$("#wzname").value.trim(), description:"",
-        color:"", task, classes:cp.names, colors:cp.colors, make_val:false};
-      const r=await fetch("/api/projects/new",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
-    } else {
-      const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:WZ.dst, classes:cp.names, task})});
-      d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
+    // "Open existing": confirm the path resolves to images or an existing dataset.
+    if(inspectPath!==null){
+      const ir=await fetch("/api/projects/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:inspectPath})});
+      const info=await ir.json().catch(()=>({}));
+      if(!ir.ok){ wzErr("Couldn't read that path."); return; }
+      if(info.has_yaml){ closeWizard(); return openProject(info.yaml||inspectPath); }
+      if(!info.is_dir){ wzErr("That isn't a folder or a data.yaml."); return; }
+      if(!info.images){ wzErr("No images found in that folder."); return; }
     }
+    const r=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
     closeWizard(); resetClientState(); await enterLabeler(d);
   }catch(e){ wzErr("Could not create the project."); }
   finally{ btn.disabled=false; btn.textContent=t; }
@@ -2596,29 +2660,40 @@ async function wzPickFolder(){
 function wireWizard(){
   const nb=$("#homenew"); if(nb) nb.onclick=openWizard;
   const w=$("#wizard"); if(!w) return;
-  $("#wzclose").onclick=closeWizard;
-  w.addEventListener("click",e=>{ if(e.target.id==="wizard") closeWizard(); });
-  $("#wzback").onclick=()=>wzGoto(Math.max(1,WZ.step-1));
-  $("#wznext").onclick=wzNext;
+  $("#wzclose").onclick=navCloseWizard;
+  // No click-to-dismiss: /new is a full page, left only via the ✕ or browser Back,
+  // both of which run the discard confirm. (Opaque background -- nothing to mis-click.)
+  $("#wzcancel").onclick=navCloseWizard;
   $("#wzcreate").onclick=wzCreate;
   $("#wzaddcls").onclick=wzAddClass;
   document.querySelectorAll("#wizard .wz-tab").forEach(b=>b.onclick=()=>wzSetTab(b.dataset.tab));
   document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.onclick=()=>{ if(b.disabled) return; WZ.task=b.dataset.task;
     document.querySelectorAll("#wztasks .wz-task").forEach(x=>x.classList.toggle("on",x===b)); });
-  $("#wzbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f){ $("#wzdst").value=f; renderWzFiles(); } };
+  $("#wzbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f){ WZ.dstTouched=true; wzSetDst(f); } };
   $("#wzexistbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f) $("#wzexist").value=f; };
-  $("#wzdst").oninput=renderWzFiles;
+  const we=$("#wzdstedit"); if(we) we.onclick=()=>{ const row=$("#wzdstrow"); if(row) row.hidden=false; const i=$("#wzdst"); if(i){ i.focus(); i.select(); } };
+  const nm=$("#wzname"); if(nm) nm.oninput=wzScheduleDst;
+  $("#wzdst").oninput=()=>{ WZ.dstTouched=true; wzShowDest($("#wzdst").value); renderWzFiles(); };
   const fi=$("#wzfiles"); if(fi) fi.onchange=()=>{ if(fi.files&&fi.files.length) wzUpload(Array.from(fi.files)); fi.value=""; };
-  $("#wzpick").onclick=(e)=>{ e.stopPropagation(); if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder first."); return; } $("#wzfiles").click(); };
+  const ff=$("#wzfolder"); if(ff) ff.onchange=()=>{
+    if(ff.files&&ff.files.length){
+      const imgs=Array.from(ff.files).filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|bmp|webp|tiff?)$/i.test(f.name));
+      if(imgs.length) wzUpload(imgs); else wzErr("No images found in that folder.");
+    }
+    ff.value="";
+  };
+  $("#wzpick").onclick=(e)=>{ e.stopPropagation(); $("#wzfiles").click(); };
+  $("#wzpickfolder").onclick=(e)=>{ e.stopPropagation(); $("#wzfolder").click(); };
   const drop=$("#wzdrop");
   if(drop){
-    drop.onclick=(e)=>{ if(e.target.closest(".wz-link")) return; if(!($("#wzdst").value||"").trim()){ wzErr("Choose a destination folder first."); return; } $("#wzfiles").click(); };
+    drop.onclick=(e)=>{ if(e.target.closest(".wz-link")) return; $("#wzfiles").click(); };
     drop.addEventListener("dragover",e=>{ e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave",()=>drop.classList.remove("over"));
     drop.addEventListener("drop",e=>{ e.preventDefault(); drop.classList.remove("over");
       const fs=Array.from((e.dataTransfer&&e.dataTransfer.files)||[]).filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|bmp|webp|tiff?)$/i.test(f.name));
       if(fs.length) wzUpload(fs); });
   }
+  wzApplyRoute();  // honour a deep-link / refresh that lands directly on /new
 }
 function looksLikeYaml(s){ return /\.ya?ml$/i.test(s); }
 // One smart input: a data.yaml opens directly; any other path is inspected so we

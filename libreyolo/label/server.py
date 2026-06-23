@@ -37,12 +37,15 @@ from .assist import AssistEngine
 from .boost import BoostEngine
 from .dataset import (
     DatasetSession,
+    IMG_EXTS,
     count_images,
     create_uploaded_project,
+    default_projects_base,
     folder_yaml,
     save_uploaded_image,
     scaffold_data_yaml,
     set_sidecar_name,
+    suggest_project_dir,
     trash_project,
     update_class_names,
 )
@@ -244,7 +247,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = parsed.path
         try:
             sessionless = path in ("/", "/index.html", "/api/dataset", "/api/projects",
-                                   "/api/server", "/api/assist/status", "/api/boost/status")
+                                   "/api/server", "/api/assist/status", "/api/boost/status",
+                                   "/api/suggest-dst")
             if self.state.session is None and path.startswith("/api/") and not sessionless:
                 self._send(409, {"error": "no project open"})
                 return
@@ -268,6 +272,18 @@ class _Handler(BaseHTTPRequestHandler):
                     "lan_url": ("http://%s:%d" % (ip, self.state.port)) if shareable else None,
                     "shareable": shareable,
                 })
+            elif path == "/api/suggest-dst":
+                # Pre-fill the New Project wizard's destination with a sensible,
+                # OS-appropriate default (<Documents>/LibreLabel/<name>) the user
+                # can still edit or Browse away from. These are host-local paths,
+                # so gate to host-admin; LAN peers (who can't create-from-upload
+                # anyway) get no path and keep the manual picker.
+                if not self._local_admin():
+                    self._send(200, {"path": None})
+                else:
+                    name = (parse_qs(parsed.query).get("name") or [""])[0]
+                    self._send(200, {"path": suggest_project_dir(name),
+                                     "base": str(default_projects_base())})
             elif path == "/api/dataset":
                 if self.state.session is None:
                     self._send(200, {"open": False})
@@ -322,6 +338,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, {"findings": findings})
             elif path == "/api/boost/status":
                 self._send(200, self.state.boost.status())
+            elif not path.startswith("/api/"):
+                # Client-side History-API routes (e.g. /new) -- serve the SPA shell
+                # so a refresh or deep-link on any non-API path lands in the app and
+                # the JS router shows the right view instead of a 404.
+                self._send(200, INDEX_HTML, "text/html; charset=utf-8")
             else:
                 self._send(404, {"error": "not found"})
         except (IndexError, ValueError) as exc:
@@ -390,7 +411,7 @@ class _Handler(BaseHTTPRequestHandler):
             # state (session, files, the shared pending/findings/embed maps, a host
             # CPU training job) for every teammate -- gate them to the loopback host.
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/new",
-                        "/api/upload", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
+                        "/api/upload", "/api/upload/remove", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
                         "/api/export",
                         "/api/projects/forget", "/api/pick-folder", "/api/example", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
@@ -401,7 +422,7 @@ class _Handler(BaseHTTPRequestHandler):
                                           "machine on a shared server."})
                 return
             if self.state.session is None and path not in (
-                    "/api/projects/open", "/api/projects/create", "/api/projects/new", "/api/upload",
+                    "/api/projects/open", "/api/projects/create", "/api/projects/new", "/api/upload", "/api/upload/remove",
                     "/api/projects/inspect", "/api/projects/forget", "/api/projects/rename",
                     "/api/projects/delete", "/api/pick-folder", "/api/example"):
                 self._send(409, {"error": "no project open"})
@@ -485,6 +506,26 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, {"ok": True, "saved": Path(saved).name})
                 except Exception as exc:  # noqa: BLE001 - bad name / unwritable dst
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "upload failed"})
+            elif path == "/api/upload/remove":
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    self._send(400, {"error": "bad payload"})
+                    return
+                dst = payload.get("dst")
+                name = payload.get("name")
+                if not dst or not name:
+                    self._send(400, {"error": "dst and name are required"})
+                    return
+                try:
+                    safe = Path(str(name)).name.strip()
+                    if not safe or Path(safe).suffix.lower() not in IMG_EXTS:
+                        raise ValueError("invalid filename")
+                    target = Path(str(dst)) / "images" / "train" / safe
+                    if target.exists():
+                        target.unlink()
+                    self._send(200, {"ok": True})
+                except Exception as exc:  # noqa: BLE001
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "remove failed"})
             elif path == "/api/projects/new":
                 # The New Project wizard: build a real dataset from uploaded images
                 # (optional val split + per-class colors), then open it.
