@@ -79,7 +79,7 @@ YOLOv9 OBB（旋转框）支持目前为实验性功能，并使用 YOLO OBB `.t
   </thead>
   <tbody>
     <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>exp</td></tr>
     <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
     <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>
     <tr><td>YOLO-NAS</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
