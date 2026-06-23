@@ -54,15 +54,17 @@ class LibreDepthAnythingV2(BaseModel):
 
     # DINOv2 patch grid; the depth dataset and validator enforce divisibility.
     depth_imgsz_divisor = 14
-    # Letterbox keeps the aspect ratio (padded pixels are invalid depth and are
-    # excluded from metrics), closest to DA's native keep-aspect inference.
+    # Validation goes through the shared DepthDataset, which letterboxes to a
+    # fixed square (padded pixels are invalid depth, excluded from metrics).
+    # Note: predict uses DA's native keep-aspect lower-bound resize, so val
+    # metrics on non-square images are a documented approximation of predict.
     depth_resize_mode = "letterbox"
 
     # Keep-aspect preprocessing yields per-image variable sizes, so the stacked
-    # single-forward batched-predict path does not apply. TTA is rejected for
-    # the depth task library-wide.
+    # single-forward batched-predict path does not apply. TTA_ENABLED is left at
+    # its default (True) so predict(augment=True) reaches the depth task's
+    # explicit rejection instead of being silently ignored.
     SUPPORTS_BATCHED_PREDICT = False
-    TTA_ENABLED = False
 
     _SIZE_TO_ENCODER: ClassVar[Dict[str, str]] = {
         "s": "vits",
@@ -127,12 +129,17 @@ class LibreDepthAnythingV2(BaseModel):
             task=task,
             **kwargs,
         )
-        self.names = {0: "depth"}
         self.model.eval()
         # A file path is stored but not loaded by BaseModel; load it here (a raw
         # state_dict passed as ``model_path`` is already loaded by BaseModel).
         if model_path is not None and isinstance(model_path, (str, Path)):
             self._load_weights(str(model_path))
+        # Enforce the single depth slot last, after any loading path. Raw .pth
+        # files loaded via the generic autoconverter would otherwise write
+        # names={0: "class_0"} (build_class_names fallback), violating the
+        # checkpoint schema's {0: "depth"} for this task.
+        self.nb_classes = 1
+        self.names = {0: "depth"}
 
     def _init_model(self) -> nn.Module:
         return LibreDepthAnythingV2Net(self._SIZE_TO_ENCODER[self.size])
@@ -187,11 +194,13 @@ class LibreDepthAnythingV2(BaseModel):
         if isinstance(depth, dict):
             depth = depth.get("depth", depth.get("predictions"))
         orig_w, orig_h = original_size
+        # align_corners=True matches upstream DA infer_image, so converted
+        # checkpoints reproduce upstream depth maps at non-native sizes.
         depth = F.interpolate(
             depth.float(),
             size=(orig_h, orig_w),
             mode="bilinear",
-            align_corners=False,
+            align_corners=True,
         )
         return {"depth": depth[0, 0].cpu()}
 

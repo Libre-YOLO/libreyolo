@@ -24,6 +24,7 @@ a smoke forward pass.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import torch
 
@@ -53,6 +54,18 @@ def convert_weights(
     *,
     size: str | None = None,
 ) -> dict:
+    # Metric checkpoints share the exact same state-dict keys as the relative
+    # ones (the head differs only by a parameter-free Sigmoid * max_depth), so
+    # they cannot be told apart by tensors and would load silently wrong into
+    # the relative ReLU head. Reject by filename - metric depth is out of scope.
+    if "metric" in Path(input_path).name.lower():
+        raise ValueError(
+            f"{input_path} looks like a metric Depth Anything V2 checkpoint. "
+            "LibreYOLO's depth_anything family is relative-depth only; the metric "
+            "head (Sigmoid * max_depth) would load but produce wrong values. "
+            "Metric depth is out of scope."
+        )
+
     print(f"Loading upstream Depth Anything V2 weights from {input_path}")
     raw = load_checkpoint(input_path)
     state_dict = extract_state_dict(raw)

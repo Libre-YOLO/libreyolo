@@ -96,14 +96,17 @@ class TestPreprocess:
         assert chw.dtype == np.float32
         assert chw.shape[0] == 3
         h, w = chw.shape[1], chw.shape[2]
-        assert h % 14 == 0 and w % 14 == 0
-        assert h >= 518 and w >= 518  # lower-bound resize
+        assert h % 14 == 0
+        assert w % 14 == 0
+        assert h >= 518  # lower-bound resize
+        assert w >= 518
         assert ratio == 1.0
         # Normalized to ~[0, 1] (divided by 255). cv2.INTER_CUBIC can overshoot
         # the [0, 1] range slightly, so allow a small margin rather than a hard
         # clamp; the model applies ImageNet normalization next regardless.
         assert np.isfinite(chw).all()
-        assert chw.min() >= -0.5 and chw.max() <= 1.5
+        assert chw.min() >= -0.5
+        assert chw.max() <= 1.5
 
 
 # ---------------------------------------------------------------- forward
@@ -158,6 +161,13 @@ class TestForwardAndPredict:
         Image.new("RGB", (64, 64), color=(10, 20, 30)).save(img_path)
         with pytest.raises(ValueError, match="divisible by 14"):
             da_small.predict(str(img_path), imgsz=100)
+
+    def test_predict_rejects_augment(self, da_small, tmp_path):
+        # augment must raise, not silently fall through to plain inference.
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (56, 56), color=(10, 20, 30)).save(img_path)
+        with pytest.raises(ValueError, match="augment"):
+            da_small.predict(str(img_path), imgsz=70, augment=True)
 
     def test_train_and_export_out_of_scope(self, da_small):
         with pytest.raises(NotImplementedError):
@@ -230,4 +240,25 @@ def test_checkpoint_round_trip(da_small, tmp_path):
     assert loaded.FAMILY == "depth_anything"
     assert loaded.task == "depth"
     assert loaded.size == "s"
+    assert loaded.names == {0: "depth"}
+
+
+def test_names_forced_to_depth(da_small, tmp_path):
+    """A checkpoint carrying a generic class_0 name is normalized to depth."""
+    from libreyolo import LibreYOLO
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    ckpt = wrap_libreyolo_checkpoint(
+        da_small.model.state_dict(),
+        model_family="depth_anything",
+        size="s",
+        task="depth",
+        nc=1,
+        names={0: "class_0"},  # what the generic autoconverter would write
+        imgsz=518,
+    )
+    ckpt_path = tmp_path / "LibreDepthAnythingV2s-depth.pt"
+    torch.save(ckpt, str(ckpt_path))
+
+    loaded = LibreYOLO(str(ckpt_path), device="cpu")
     assert loaded.names == {0: "depth"}
