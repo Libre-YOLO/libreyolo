@@ -156,6 +156,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
+| `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
@@ -215,6 +216,12 @@ LibreRFDETRn-depth.pt      # depth
 LibreECs.pt             # detect (default)
 LibreECs-pose.pt        # pose
 LibreECs-seg.pt         # segment
+
+# depth_anything — Depth Anything V2 (depth-only)
+LibreDepthAnythingV2s-depth.pt   # ViT-S (Apache-2.0 weights)
+LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
+LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
+LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 ```
 
 ### Gaze (inference-only)
