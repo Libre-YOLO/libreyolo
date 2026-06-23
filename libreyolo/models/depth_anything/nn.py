@@ -51,3 +51,13 @@ class LibreDepthAnythingV2Net(DepthAnythingV2):
         x = (x - self.pixel_mean) / self.pixel_std
         depth = super().forward(x)  # (B, H, W), relative inverse depth (>= 0)
         return depth.unsqueeze(1)
+
+    def infer_image(self, *args, **kwargs):
+        # The vendored DepthAnythingV2.infer_image normalizes ImageNet stats in
+        # its own transform and then calls forward, which would normalize again
+        # here. Route callers through LibreYOLO's predict path instead.
+        raise NotImplementedError(
+            "Use the LibreYOLO predict API (model.predict(...) / model(...)) "
+            "instead of infer_image; the vendored infer_image would double-apply "
+            "ImageNet normalization on top of this wrapper's forward."
+        )

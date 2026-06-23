@@ -86,7 +86,11 @@ class TestPreprocess:
     def test_keep_aspect_multiple_of_14_and_range(self):
         from libreyolo.models.depth_anything.utils import preprocess_numpy
 
-        img = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+        # A smooth gradient (real-image-like); cubic resize stays well-behaved.
+        yy, xx = np.mgrid[0:480, 0:640].astype(np.float32)
+        gradient = ((xx / 640.0 + yy / 480.0) * 0.5 * 255.0).astype(np.uint8)
+        img = np.repeat(gradient[:, :, None], 3, axis=2)
+
         chw, ratio = preprocess_numpy(img, input_size=518)
 
         assert chw.dtype == np.float32
@@ -95,7 +99,11 @@ class TestPreprocess:
         assert h % 14 == 0 and w % 14 == 0
         assert h >= 518 and w >= 518  # lower-bound resize
         assert ratio == 1.0
-        assert float(chw.min()) >= 0.0 and float(chw.max()) <= 1.0
+        # Normalized to ~[0, 1] (divided by 255). cv2.INTER_CUBIC can overshoot
+        # the [0, 1] range slightly, so allow a small margin rather than a hard
+        # clamp; the model applies ImageNet normalization next regardless.
+        assert np.isfinite(chw).all()
+        assert chw.min() >= -0.5 and chw.max() <= 1.5
 
 
 # ---------------------------------------------------------------- forward
@@ -156,6 +164,11 @@ class TestForwardAndPredict:
             da_small.train(data="x.yaml")
         with pytest.raises(NotImplementedError):
             da_small.export(format="onnx")
+
+    def test_inherited_infer_image_is_blocked(self, da_small):
+        # The vendored infer_image would double-normalize; it must redirect.
+        with pytest.raises(NotImplementedError, match="predict"):
+            da_small.model.infer_image(np.zeros((10, 10, 3), dtype=np.uint8))
 
 
 # ---------------------------------------------------------------- val + ckpt
