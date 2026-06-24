@@ -234,6 +234,27 @@ class YOLO9PoseConfig(YOLO9Config):
 
 
 @dataclass(kw_only=True)
+class YOLO9ClassifyConfig(YOLO9Config):
+    """YOLO9 classification training defaults.
+
+    Uses AdamW + cosine annealing + label smoothing, which consistently
+    outperforms the SGD + linear schedule used for detection on ImageNet-style
+    datasets.  Batch and image-size defaults match the standard ImageNet recipe.
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 1e-3
+    weight_decay: float = 0.05
+    scheduler: str = "warmcos"
+    warmup_epochs: int = 5
+    warmup_lr_start: float = 1e-6
+    label_smoothing: float = 0.1
+    imgsz: int = 224
+    batch: int = 64
+    name: str = "yolo9_cls_exp"
+
+
+@dataclass(kw_only=True)
 class DFINEConfig(TrainConfig):
     """D-FINE-specific training defaults.
 

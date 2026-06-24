@@ -723,6 +723,61 @@ def test_resolve_classify_data_accepts_tgz_url(monkeypatch, tmp_path):
     assert sorted(p.name for p in (root / "train").iterdir()) == ["cat", "dog"]
 
 
+def test_yolo9_classify_train_defaults_are_classification_appropriate(tmp_path):
+    """YOLO9 classify training uses AdamW + warmcos by default (no explicit overrides)."""
+    from libreyolo import LibreYOLO9
+    from libreyolo.training.config import YOLO9ClassifyConfig
+
+    _make_imagefolder(tmp_path, n_classes=3, n_per=6, size=32)
+    m = LibreYOLO9(None, size="t", task="classify", nb_classes=3, device="cpu")
+
+    # Collect what config the trainer received by intercepting trainer construction.
+    captured_config = {}
+
+    _orig_init = __import__(
+        "libreyolo.models.yolo9.trainer", fromlist=["YOLO9Trainer"]
+    ).YOLO9Trainer.__init__
+
+    def _capture_init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        captured_config.update(
+            optimizer=self.config.optimizer,
+            lr0=self.config.lr0,
+            weight_decay=self.config.weight_decay,
+            scheduler=self.config.scheduler,
+            label_smoothing=self.config.label_smoothing,
+            imgsz=self.config.imgsz,
+        )
+
+    import libreyolo.models.yolo9.trainer as _trainer_mod
+
+    orig = _trainer_mod.YOLO9Trainer.__init__
+    _trainer_mod.YOLO9Trainer.__init__ = _capture_init
+    try:
+        m.train(
+            data=str(tmp_path),
+            epochs=1,
+            workers=0,
+            eval_interval=0,
+            project=str(tmp_path / "runs"),
+            name="defaults_test",
+            exist_ok=True,
+            amp=False,
+            ema=False,
+            warmup_epochs=0,
+        )
+    finally:
+        _trainer_mod.YOLO9Trainer.__init__ = orig
+
+    cls_defaults = YOLO9ClassifyConfig()
+    assert captured_config["optimizer"] == cls_defaults.optimizer  # "adamw"
+    assert captured_config["lr0"] == pytest.approx(cls_defaults.lr0)  # 1e-3
+    assert captured_config["weight_decay"] == pytest.approx(cls_defaults.weight_decay)
+    assert captured_config["scheduler"] == cls_defaults.scheduler  # "warmcos"
+    assert captured_config["label_smoothing"] == pytest.approx(cls_defaults.label_smoothing)
+    assert captured_config["imgsz"] == cls_defaults.imgsz  # 224
+
+
 def test_build_classify_transforms_augment_pipeline():
     """Augmentation pipeline includes at least RandomResizedCrop."""
     from torchvision import transforms as T

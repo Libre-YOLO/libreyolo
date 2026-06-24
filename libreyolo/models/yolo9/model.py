@@ -11,7 +11,7 @@ from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
 from ..base import BaseModel
-from ...training.config import YOLO9Config
+from ...training.config import YOLO9ClassifyConfig, YOLO9Config
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import (
@@ -24,8 +24,11 @@ from ...postprocess.yolo9 import postprocess, postprocess_semantic
 from .utils import preprocess_image
 from ...validation.preprocessors import YOLO9ValPreprocessor
 
-# Single source of truth for training defaults
+# Training defaults — detect/segment/pose share one set; classify gets its own
+# (AdamW + cosine schedule vs SGD + linear) so users get sensible results with
+# just `model.train(data=...)` regardless of task.
 _TRAIN_DEFAULTS = YOLO9Config()
+_CLS_TRAIN_DEFAULTS = YOLO9ClassifyConfig()
 logger = logging.getLogger(__name__)
 
 
@@ -738,10 +741,10 @@ class LibreYOLO9(BaseModel):
         data: str,
         *,
         epochs: int = _TRAIN_DEFAULTS.epochs,
-        batch: int = _TRAIN_DEFAULTS.batch,
-        imgsz: int = _TRAIN_DEFAULTS.imgsz,
-        lr0: float = _TRAIN_DEFAULTS.lr0,
-        optimizer: str = _TRAIN_DEFAULTS.optimizer,
+        batch: int | None = None,
+        imgsz: int | None = None,
+        lr0: float | None = None,
+        optimizer: str | None = None,
         device: str = "",
         workers: int = _TRAIN_DEFAULTS.workers,
         seed: int = _TRAIN_DEFAULTS.seed,
@@ -790,6 +793,21 @@ class LibreYOLO9(BaseModel):
         """
         from .trainer import YOLO9Trainer
         from libreyolo.data import load_data_config
+
+        # Resolve task-appropriate defaults for args that have None sentinels.
+        # This lets classification get AdamW/cosine/224px without forcing users
+        # to pass those explicitly, while still allowing any explicit override.
+        _d = _CLS_TRAIN_DEFAULTS if self._is_classification else _TRAIN_DEFAULTS
+        batch = batch if batch is not None else _d.batch
+        imgsz = imgsz if imgsz is not None else _d.imgsz
+        lr0 = lr0 if lr0 is not None else _d.lr0
+        optimizer = optimizer if optimizer is not None else _d.optimizer
+        if self._is_classification:
+            kwargs.setdefault("weight_decay", _d.weight_decay)
+            kwargs.setdefault("scheduler", _d.scheduler)
+            kwargs.setdefault("warmup_epochs", _d.warmup_epochs)
+            kwargs.setdefault("warmup_lr_start", _d.warmup_lr_start)
+            kwargs.setdefault("label_smoothing", _d.label_smoothing)
 
         pose_label_keypoint_dim = self.keypoint_dim
 

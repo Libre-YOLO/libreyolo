@@ -14,6 +14,7 @@ from .config import (
     TrainConfig as TrainConfig,
     YOLOXConfig as YOLOXConfig,
     YOLO9Config as YOLO9Config,
+    YOLO9ClassifyConfig as YOLO9ClassifyConfig,
 )
 from .loggers import (
     MLflowLogger as MLflowLogger,
