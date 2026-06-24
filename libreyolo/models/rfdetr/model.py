@@ -1508,6 +1508,7 @@ class LibreRFDETR(BaseModel):
                 resolved_batch = _cls_d.batch
             if resolved_lr0 is None:
                 resolved_lr0 = _cls_d.lr0
+            train_kwargs.setdefault("imgsz", _cls_d.imgsz)
             train_kwargs.setdefault("scheduler", _cls_d.scheduler)
             train_kwargs.setdefault("weight_decay", _cls_d.weight_decay)
             train_kwargs.setdefault("warmup_epochs", _cls_d.warmup_epochs)

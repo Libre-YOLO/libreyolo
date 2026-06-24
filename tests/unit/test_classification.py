@@ -631,6 +631,53 @@ def test_rfdetr_classify_predict_returns_probs(tmp_path, rfdetr_classify_monkeyp
     assert result.boxes is None
 
 
+def test_rfdetr_classify_train_defaults_are_classification_appropriate(
+    tmp_path, rfdetr_classify_monkeypatch
+):
+    """RF-DETR classify training defaults use cosine scheduler + imgsz=224."""
+    from libreyolo import LibreRFDETR
+    from libreyolo.models.rfdetr.config import RFDETRClassifyConfig
+
+    _make_imagefolder(tmp_path, n_classes=3, n_per=4, size=32)
+    m = LibreRFDETR(model_path=None, size="n", task="classify", nb_classes=3, device="cpu")
+
+    captured: dict = {}
+    import libreyolo.models.rfdetr.trainer as _rfdetr_trainer
+
+    _orig = _rfdetr_trainer.RFDETRTrainer.__init__
+
+    def _capture(self, *args, **kwargs):
+        _orig(self, *args, **kwargs)
+        captured.update(
+            scheduler=self.config.scheduler,
+            imgsz=self.config.imgsz,
+            weight_decay=self.config.weight_decay,
+            label_smoothing=self.config.label_smoothing,
+        )
+
+    _rfdetr_trainer.RFDETRTrainer.__init__ = _capture
+    try:
+        m.train(
+            data=str(tmp_path),
+            epochs=1,
+            workers=0,
+            eval_interval=0,
+            project=str(tmp_path / "runs"),
+            name="rfdetr_defaults",
+            exist_ok=True,
+            amp=False,
+            ema=False,
+        )
+    finally:
+        _rfdetr_trainer.RFDETRTrainer.__init__ = _orig
+
+    cls_d = RFDETRClassifyConfig()
+    assert captured["scheduler"] == cls_d.scheduler  # "cosine"
+    assert captured["imgsz"] == cls_d.imgsz  # 224
+    assert captured["weight_decay"] == pytest.approx(cls_d.weight_decay)
+    assert captured["label_smoothing"] == pytest.approx(cls_d.label_smoothing)
+
+
 def test_rfdetr_classify_task_inferred_on_load(tmp_path, rfdetr_classify_monkeypatch):
     """A saved RF-DETR classification checkpoint loads without re-specifying task=."""
     from libreyolo import LibreRFDETR
