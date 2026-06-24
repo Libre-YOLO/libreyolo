@@ -1503,6 +1503,16 @@ class LibreRFDETR(BaseModel):
         if resolved_lr0 is None:
             resolved_lr0 = 1e-4
 
+        if self._is_classification:
+            from libreyolo.data import get_class_names, resolve_classify_data
+
+            dataset_root = resolve_classify_data(data)
+            data = str(dataset_root)
+            classes = get_class_names(dataset_root, split="train")
+            if len(classes) != self.nb_classes:
+                self._rebuild_for_new_classes(len(classes))
+            self.names = {i: n for i, n in enumerate(classes)}
+
         pose_train_metadata = {}
         if self._is_pose:
             data_cfg = load_data_config(

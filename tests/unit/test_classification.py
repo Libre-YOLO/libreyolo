@@ -481,3 +481,122 @@ def test_yolo9_classify_export_onnx(tmp_path):
     shape = [d if isinstance(d, int) else 1 for d in inp.shape]
     out = sess.run(None, {inp.name: np.zeros(shape, dtype=np.float32)})
     assert out[0].shape == (1, 5)
+
+
+# ---------------------------------------------------------------------------
+# RF-DETR classification tests (monkeypatch DINOv2 backbone to run offline)
+# ---------------------------------------------------------------------------
+
+def _fake_build_backbone(self, cfg, device):
+    """Tiny Conv2d backbone with the same interface as the real DINOv2 backbone.
+
+    The real ``_build_backbone`` returns a ``nn.Sequential(Backbone, PosEmbed)``
+    so that ``RFDETRClassifier.__init__`` can do ``joiner[0]`` to extract the
+    backbone.  Mirror that contract here.
+    """
+    import torch.nn.functional as F
+    from libreyolo.models.rfdetr.tensors import NestedTensor
+
+    hidden = self.hidden_dim
+
+    class _TinyBackbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = torch.nn.Conv2d(3, hidden, 1)
+
+        def forward(self, nested_tensor: NestedTensor):
+            feat = self.proj(nested_tensor.tensors)
+            h = max(1, nested_tensor.tensors.shape[-2] // 4)
+            w = max(1, nested_tensor.tensors.shape[-1] // 4)
+            feat = F.adaptive_avg_pool2d(feat, (h, w))
+            mask = torch.zeros(
+                feat.shape[0], h, w, dtype=torch.bool, device=feat.device
+            )
+            return [NestedTensor(feat, mask)]
+
+    class _PosEmbed(torch.nn.Module):
+        def forward(self, x):
+            return x
+
+    return torch.nn.Sequential(_TinyBackbone(), _PosEmbed())
+
+
+@pytest.fixture()
+def rfdetr_classify_monkeypatch(monkeypatch):
+    """Patch RFDETRClassifier to skip DINOv2 download in classify tests."""
+    pytest.importorskip("transformers")
+    from libreyolo.models.rfdetr.nn import RFDETRClassifier
+
+    monkeypatch.setattr(RFDETRClassifier, "_build_backbone", _fake_build_backbone)
+
+
+def test_rfdetr_classify_train_smoke(tmp_path, rfdetr_classify_monkeypatch):
+    """RF-DETR classify full training loop runs offline with a patched backbone."""
+    from libreyolo import LibreRFDETR
+
+    _make_imagefolder(tmp_path, n_classes=3, n_per=8, size=32)
+    m = LibreRFDETR(model_path=None, size="n", task="classify", nb_classes=3, device="cpu")
+    assert m.input_size == 224
+
+    res = m.train(
+        data=str(tmp_path),
+        epochs=2,
+        batch_size=4,
+        lr=1e-3,
+        workers=0,
+        eval_interval=1,
+        project=str(tmp_path / "runs"),
+        name="rfdetr_cls_smoke",
+        exist_ok=True,
+        amp=False,
+        ema=False,
+    )
+    losses = res["epoch_losses"]
+    assert len(losses) == 2
+    assert all(np.isfinite(losses))
+    assert (
+        res["epoch_metrics"][-1]["val_metrics"].get("metrics/accuracy_top1") is not None
+    )
+
+
+def test_rfdetr_classify_predict_returns_probs(tmp_path, rfdetr_classify_monkeypatch):
+    """RF-DETR classify predict returns Results.probs, no boxes."""
+    from libreyolo import LibreRFDETR
+
+    classes = _make_imagefolder(tmp_path, n_classes=3, n_per=2)
+    m = LibreRFDETR(model_path=None, size="n", task="classify", nb_classes=len(classes), device="cpu")
+    m.names = {i: n for i, n in enumerate(classes)}
+
+    img_path = next((tmp_path / "val").rglob("*.png"))
+    result = m.predict(str(img_path))
+    assert result.probs is not None
+    assert 0 <= result.probs.top1 < len(classes)
+    assert len(result.probs.top5) <= len(classes)
+    assert result.boxes is None
+
+
+def test_rfdetr_classify_task_inferred_on_load(tmp_path, rfdetr_classify_monkeypatch):
+    """A saved RF-DETR classification checkpoint loads without re-specifying task=."""
+    from libreyolo import LibreRFDETR
+
+    _make_imagefolder(tmp_path, n_classes=3, n_per=6, size=32)
+    m = LibreRFDETR(model_path=None, size="n", task="classify", nb_classes=3, device="cpu")
+    res = m.train(
+        data=str(tmp_path),
+        epochs=1,
+        batch_size=4,
+        lr=1e-3,
+        workers=0,
+        eval_interval=0,
+        project=str(tmp_path / "runs"),
+        name="ckpt",
+        exist_ok=True,
+        amp=False,
+        ema=False,
+    )
+    ckpt = res.get("last_checkpoint") or res.get("best_checkpoint")
+    assert ckpt is not None
+
+    reloaded = LibreRFDETR(ckpt, size="n", device="cpu")  # no task= passed
+    assert reloaded.task == "classify"
+    assert reloaded.nb_classes == 3
