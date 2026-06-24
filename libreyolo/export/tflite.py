@@ -528,7 +528,17 @@ def _rfdetr_input_info(onnx_path: Path) -> tuple[str, int, int, int]:
 
     model = onnx.load(str(onnx_path))
     inp = model.graph.input[0]
-    dims = [d.dim_value for d in inp.type.tensor_type.shape.dim]
+    shape = inp.type.tensor_type.shape
+    if shape is None:
+        raise ValueError(
+            "RF-DETR ONNX input has no shape information. "
+            "Re-export the model with shape inference enabled."
+        )
+    dims = [d.dim_value for d in shape.dim]
+    if len(dims) != 4:
+        raise ValueError(
+            f"RF-DETR ONNX input must be rank-4 (N, C, H, W); got {len(dims)} dims."
+        )
     _, c, h, w = dims
     if any(d <= 0 for d in (h, w, c)):
         h, w, c = _RFDETR_CALIB_DEFAULT
@@ -600,9 +610,23 @@ def _ensure_onnx2tf_patched() -> None:
         text = src_path.read_text(encoding="utf-8")
         if old not in text:
             if new not in text:
-                logger.debug("onnx2tf patch skipped (unrecognised source): %s", label)
+                logger.warning(
+                    "onnx2tf patch skipped (source text not recognised — "
+                    "onnx2tf version may have changed): %s",
+                    label,
+                )
             continue
-        src_path.write_text(text.replace(old, new), encoding="utf-8")
+        try:
+            src_path.write_text(text.replace(old, new), encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "onnx2tf patch could not be written to %s (%s). "
+                "Install onnx2tf into a writable environment (e.g. a virtualenv). "
+                "RF-DETR TFLite conversion may fail.",
+                src_path,
+                exc,
+            )
+            continue
         logger.info("Applied onnx2tf patch: %s", label)
         sys.modules.pop(mod_name, None)
     _RFDETR_ONNX2TF_PATCHED = True
@@ -674,7 +698,7 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
                 logger.warning(
                     "onnx2tf does not support tflite_backend= — falling back to default "
                     "backend. RF-DETR TFLite inference may crash or produce wrong results. "
-                    "Upgrade to onnx2tf>=2.4.0."
+                    "Upgrade to onnx2tf>=2.4.1."
                 )
                 convert(**convert_kwargs)
 
