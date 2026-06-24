@@ -89,7 +89,7 @@ tflite = [
     # permutation, Slice int32/int64, LayerNorm dynamic axis).  Switch back to
     # the upstream package once https://github.com/PINTO0309/onnx2tf/pull/XXX
     # is merged.  Requires Python 3.12+ (onnx2tf 2.4.x constraint).
-    "onnx2tf @ git+https://github.com/LibreYOLO/onnx2tf.git; python_version >= '3.12'",
+    "onnx2tf @ git+https://github.com/EHxuban11/onnx2tf.git; python_version >= '3.12'",
     # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
     "onnx-graphsurgeon>=0.3.27",
     # Required for RF-DETR onnxsim preprocessing step.
