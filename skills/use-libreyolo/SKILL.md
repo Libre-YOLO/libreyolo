@@ -2,17 +2,19 @@
 name: use-libreyolo
 description: >-
   Use LibreYOLO as a computer vision library: run inference, train, validate,
-  and export object-detection / segmentation models on your own images. This is
-  the guide for *using* the `libreyolo` pip package — not for contributing to or
-  developing it. Use whenever someone wants to detect or segment with a YOLO9 or
-  RF-DETR model, train on a YOLO-format dataset, measure mAP, or export to ONNX
-  / TensorRT / OpenVINO / CoreML / NCNN / TFLite. Covers both the `libreyolo`
-  CLI and the `from libreyolo import LibreYOLO` Python API.
+  export, and track with object-detection / segmentation (and pose, classify,
+  gaze, OBB, semantic, depth) models on your own images and video. This is the
+  guide for *using* the `libreyolo` pip package — not for contributing to or
+  developing it. Use whenever someone wants to detect, segment, or track with a
+  YOLO9 or RF-DETR model, train on a YOLO-format dataset, measure mAP, run
+  inference on an exported model, or export to ONNX / TensorRT / OpenVINO /
+  CoreML / NCNN / TFLite. Covers both the `libreyolo` CLI and the
+  `from libreyolo import LibreYOLO` Python API.
 ---
 
 # Use LibreYOLO
 
-LibreYOLO is an MIT-licensed CV library. Its API follows the **Ultralytics YOLO
+LibreYOLO is an MIT-licensed CV library. Its API follows the **YOLO
 standard**, which means two things you can rely on:
 
 1. **CLI and Python mirror each other** — same verbs (`predict`, `train`,
@@ -32,10 +34,17 @@ pip install libreyolo
 libreyolo checks      # verify install, CUDA/MPS, and optional export backends
 ```
 
+The base install is lightweight. Some features need **optional extras** —
+install them as `libreyolo[extra]` (or `libreyolo[all]`). Available extras:
+`onnx`, `rfdetr`, `tensorrt`, `openvino`, `ncnn`, `tflite`, `coreml`,
+`tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `plots`, `lora`, `tensorboard`,
+`mlflow`, `wandb`, `all`. `libreyolo checks` reports which are present.
+
 ## The four verbs
 
-Arguments take either Ultralytics `key=value` **or** `--key value`. Examples use
-`key=value`.
+Arguments take either YOLO-style `key=value` **or** `--key value`. Examples use
+`key=value`. Tip: `save=true` writes annotated outputs under `runs/` — the
+fastest way to eyeball results while experimenting.
 
 **Predict — run inference**
 ```bash
@@ -54,6 +63,9 @@ libreyolo train model=LibreYOLO9t.pt data=coco8.yaml epochs=100 imgsz=640 batch=
 ```python
 model.train(data="coco8.yaml", epochs=100, imgsz=640)
 ```
+> Caveat to the "same arguments" rule: **RF-DETR's train signature differs** —
+> e.g. `batch_size` (not `batch`), `lr` (not `lr0`), `output_dir` (not
+> `project`). Confirm with `libreyolo train --help-json` for the loaded model.
 
 **Validate — mAP on a split**
 ```bash
@@ -64,6 +76,72 @@ libreyolo val model=runs/train/exp/weights/best.pt data=coco8.yaml save_json=tru
 ```bash
 libreyolo export model=runs/train/exp/weights/best.pt format=onnx half=true
 ```
+Run `libreyolo formats` for each format's extension and FP16/INT8 support.
+
+## Reading results
+
+`predict`/`track` return `Results` objects (one per image, or a generator when
+streaming). Read them programmatically rather than re-parsing saved files:
+
+```python
+r = model("img.jpg")[0]
+len(r)              # number of detections
+r.boxes.xyxy        # (N, 4) boxes; also .xywh, .conf, .cls, .id (tracking)
+r.masks             # segmentation masks (segment task)
+r.keypoints         # pose keypoints
+r.probs / r.obb / r.gaze   # classify / oriented-box / gaze tasks
+r.names             # class-id → label map
+```
+For scripting from the CLI, add `--json` to get machine-readable results on
+stdout.
+
+## Beyond the four verbs
+
+- **Inference on an exported model** — the same constructor loads an exported
+  file and runs through the matching backend, so export isn't a dead end:
+  ```python
+  model = LibreYOLO("best.onnx")     # also .torchscript, .engine, OpenVINO, CoreML
+  model("img.jpg", save=True)        # same predict API as a .pt
+  ```
+- **Object tracking** — `model.track(...)` assigns IDs across video frames.
+  Two motion trackers: **ByteTrack** (`tracker="bytetrack"`, default) and
+  **OC-SORT**. IDs come back on `r.boxes.id`. Needs `libreyolo[tracking]`.
+- **Tiled inference for large images** — `predict(..., tiling=True,
+  overlap_ratio=0.2)` slices high-resolution images so small objects aren't
+  lost, then merges detections.
+- **Video & streaming** — point `source` at a video file, or pass
+  `stream=True` to get a per-frame generator (`r.frame_idx` per result);
+  `vid_stride=N` samples every Nth frame.
+- **Ensembling** — `LibreEnsemble` combines multiple detectors;
+  `ExternalDetector` folds in a non-LibreYOLO model.
+
+## Supported tasks
+
+`detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
+`gaze`, `obb`, `depth`. Detection — plus **RF-DETR segmentation** — is the
+heavily-tested core; other task/family combinations vary in maturity, so check
+the README compatibility table before relying on one.
+
+## Models
+
+`libreyolo models` lists every family with its sizes and exact names — treat it
+as the source of truth. By tier:
+
+- **Flagship:** YOLO9 (CNN), RF-DETR (transformer) — detection + segmentation.
+- **Other detectors:** YOLOX, YOLO9-E2E, YOLO-NAS, D-FINE, DEIM, DEIMv2,
+  RT-DETR / v2 / v4, PicoDet, RTMDet, EC.
+- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO.
+- **Open-vocabulary / promptable** (need `libreyolo[vlm]` / `[sam]`): the
+  `LibreVLM` family — Qwen3VL, Florence2, Kosmos2, SmolVLM2, InternVL3,
+  LocateAnything, LFM2VL — and `LibreSAM` / `LibreSAM1`.
+
+## The UI
+
+```bash
+libreyolo ui          # drag/drop/paste images in the browser, pick a model, see results
+```
+A local web app with almost no extra dependencies — the easiest way to try most
+models without writing any code. Great for quick experimentation.
 
 ## Exact, version-correct options
 
@@ -73,7 +151,10 @@ recalling flags from memory:
 ```bash
 libreyolo --help                 # list every command
 libreyolo train --help-json      # full argument schema for one command, as JSON
-libreyolo models                 # list available model families and sizes
+libreyolo models                 # list model families, sizes, and names
+libreyolo formats                # list export formats and their capabilities
+libreyolo info model=...         # resolved family / size / task / device / classes
+libreyolo metadata path=...      # raw metadata embedded in a checkpoint
 libreyolo predict ... --json     # machine-readable results to stdout
 libreyolo ... --quiet            # suppress progress output (good for scripting)
 ```
@@ -83,11 +164,11 @@ describe the loaded model.
 
 ## Notes
 
-- **Tasks:** detection — and segmentation on YOLO9 / RF-DETR — are the
-  well-supported core. Pose, OBB, classify, and semantic are experimental;
-  see the README model-compatibility table before relying on them.
-- **Datasets** are standard YOLO format, so existing Ultralytics dataset YAMLs
+- **Datasets** are standard YOLO format, so existing YOLO dataset YAMLs
   (e.g. `coco8.yaml`) work unchanged.
 - **Outputs** land under `runs/` (`runs/detect`, `runs/train`, `runs/val`).
-- **Stuck or an import/CUDA error?** Run `libreyolo checks` first - it diagnoses
+- **Stuck or an import/CUDA error?** Run `libreyolo checks` first — it diagnoses
   the environment and export-backend problems before you debug anything else.
+- **Deeper guides** (concepts, dataset format, per-task details) live at
+  <https://www.libreyolo.com/docs> — but for exact flags and what the installed
+  version supports, the binary above is authoritative.
