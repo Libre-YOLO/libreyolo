@@ -21,6 +21,7 @@ names, identical across splits.
 from __future__ import annotations
 
 import logging
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -30,6 +31,15 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
+
+# TrivialAugmentWide (torchvision ≥ 0.12) is the standard ImageNet augmentation
+# policy — subsumes RandAugment/ColorJitter/HFlip in one transform.
+try:
+    from torchvision.transforms import TrivialAugmentWide as _TrivialAugmentWide
+
+    _HAS_TRIVIAL_AUGMENT = True
+except ImportError:  # torchvision < 0.12
+    _HAS_TRIVIAL_AUGMENT = False
 
 from .utils import DATASETS_DIR
 
@@ -42,14 +52,39 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
 
-# Small classification datasets that can be fetched by bare name. These are the
-# folder-format sets the wider ecosystem uses for CPU/CI runs and quick checks.
-# ``imagenet10`` is a 10-image-per-split smoke set; ``imagenette160`` is a real
-# 10-class subset (~9k train images at 160px) for accuracy validation.
+# Small classification datasets that can be fetched by bare name.
+#
+# imagenet10      – 10-image smoke set (zip)
+# imagenette160   – 10-class ImageNet subset, 160 px (zip) — fast CI accuracy check
+# imagenette320   – same 10 classes, 320 px (~9k train images) — fuller benchmark
+# imagewoof160    – 10 harder dog breeds, 160 px — accuracy discriminator
+# imagewoof320    – same 10 dog breeds, 320 px — full-res benchmark
 _KNOWN_DATASETS: Dict[str, str] = {
     "imagenet10": "https://github.com/ultralytics/assets/releases/download/v0.0.0/imagenet10.zip",
     "imagenette160": "https://github.com/ultralytics/assets/releases/download/v0.0.0/imagenette160.zip",
+    "imagenette320": "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-320.tgz",
+    "imagewoof160": "https://s3.amazonaws.com/fast-ai-imageclas/imagewoof2-160.tgz",
+    "imagewoof320": "https://s3.amazonaws.com/fast-ai-imageclas/imagewoof2-320.tgz",
 }
+
+
+def _safe_extract_tgz(tf: tarfile.TarFile, dest_dir: Path) -> None:
+    """Extract a tar archive, rejecting entries that escape ``dest_dir`` (path traversal).
+
+    Mirrors the zip-slip protection in ``_safe_extract_zip``.
+    """
+    dest_root = dest_dir.resolve()
+    for member in tf.getmembers():
+        target = (dest_dir / member.name).resolve()
+        if target != dest_root and dest_root not in target.parents:
+            raise ValueError(
+                f"Unsafe path in archive (escapes dataset directory): {member.name!r}"
+            )
+    # filter='data' (Python 3.12+) prevents device files and setuid bits.
+    try:
+        tf.extractall(dest_dir, filter="data")
+    except TypeError:  # Python < 3.12 does not support the filter kwarg.
+        tf.extractall(dest_dir)
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest_dir: Path) -> None:
@@ -83,7 +118,7 @@ def _find_train_root(base: Path) -> Path | None:
 
 
 def _download_and_extract(url: str, name: str) -> Path:
-    """Download a ``.zip`` dataset into ``DATASETS_DIR/<name>`` and extract it.
+    """Download a ``.zip`` or ``.tgz`` dataset into ``DATASETS_DIR/<name>`` and extract it.
 
     Returns the directory that contains the ``train``/``val`` split folders
     (which may be ``DATASETS_DIR/<name>`` or a wrapper directory inside it,
@@ -91,15 +126,22 @@ def _download_and_extract(url: str, name: str) -> Path:
     """
     dest_dir = DATASETS_DIR / name
     dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / f"{name}.zip"
 
-    if not zip_path.exists():
-        logger.info("Downloading classification dataset %s -> %s", url, zip_path)
-        with urlopen(url) as response, open(zip_path, "wb") as out:  # noqa: S310
+    is_tgz = url.endswith(".tgz") or url.endswith(".tar.gz")
+    ext = ".tgz" if is_tgz else ".zip"
+    archive_path = dest_dir / f"{name}{ext}"
+
+    if not archive_path.exists():
+        logger.info("Downloading classification dataset %s -> %s", url, archive_path)
+        with urlopen(url) as response, open(archive_path, "wb") as out:  # noqa: S310
             out.write(response.read())
 
-    with zipfile.ZipFile(zip_path) as zf:
-        _safe_extract_zip(zf, dest_dir)
+    if is_tgz:
+        with tarfile.open(archive_path) as tf:
+            _safe_extract_tgz(tf, dest_dir)
+    else:
+        with zipfile.ZipFile(archive_path) as zf:
+            _safe_extract_zip(zf, dest_dir)
 
     root = _find_train_root(dest_dir)
     if root is None:
@@ -143,7 +185,9 @@ def resolve_classify_data(data: str | Path) -> Path:
     # Known name or URL -> download.
     name = data_str.lower()
     url = _KNOWN_DATASETS.get(name)
-    if url is None and data_str.endswith(".zip") and "://" in data_str:
+    if url is None and "://" in data_str and any(
+        data_str.endswith(ext) for ext in (".zip", ".tgz", ".tar.gz")
+    ):
         url = data_str
         name = Path(data_str).stem
     if url is not None:
@@ -154,7 +198,8 @@ def resolve_classify_data(data: str | Path) -> Path:
 
     raise FileNotFoundError(
         f"Could not resolve classification dataset {data_str!r}. Pass a directory "
-        f"with a train/ split, a .zip URL, or a known name ({', '.join(_KNOWN_DATASETS)})."
+        "with a train/ split, a .zip/.tgz URL, or a known name "
+        f"({', '.join(_KNOWN_DATASETS)})."
     )
 
 
@@ -172,19 +217,30 @@ def get_class_names(dataset_root: str | Path, split: str = "train") -> List[str]
 def build_classify_transforms(imgsz: int, augment: bool):
     """Build train/val image transforms for classification.
 
-    Training uses a random-resized crop plus horizontal flip; validation uses a
-    deterministic resize and center crop. Both normalize with ImageNet stats.
+    Training uses ``RandomResizedCrop`` followed by ``TrivialAugmentWide``
+    (torchvision ≥ 0.12) — the standard ImageNet-scale policy that subsumes
+    colour jitter, horizontal flip, and geometric distortions.  On older
+    torchvision we fall back to ``RandomHorizontalFlip + ColorJitter``.
+    Validation uses a deterministic resize and centre crop.  Both pipelines
+    normalise with ImageNet mean/std.
     """
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     if augment:
-        return transforms.Compose(
-            [
-                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0)),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        )
+        aug_steps = [transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0))]
+        if _HAS_TRIVIAL_AUGMENT:
+            aug_steps.append(_TrivialAugmentWide())
+        else:
+            aug_steps.extend(
+                [
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ColorJitter(
+                        brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1
+                    ),
+                ]
+            )
+        aug_steps.extend([transforms.ToTensor(), normalize])
+        aug_steps.append(transforms.RandomErasing(p=0.1))
+        return transforms.Compose(aug_steps)
     resize = int(round(imgsz / 0.875))
     return transforms.Compose(
         [

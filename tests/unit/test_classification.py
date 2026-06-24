@@ -654,3 +654,100 @@ def test_rfdetr_classify_task_inferred_on_load(tmp_path, rfdetr_classify_monkeyp
     reloaded = LibreRFDETR(ckpt, size="n", device="cpu")  # no task= passed
     assert reloaded.task == "classify"
     assert reloaded.nb_classes == 3
+
+
+# ---------------------------------------------------------------------------
+# Dataset resolution & augmentation pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_safe_tgz_extraction_rejects_path_traversal(tmp_path):
+    """_safe_extract_tgz must refuse members that escape the destination dir."""
+    import io
+    import tarfile as _tarfile
+
+    from libreyolo.data.classify_dataset import _safe_extract_tgz
+
+    # Craft a tar with a path-traversal member.
+    buf = io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        info = _tarfile.TarInfo(name="../escape.txt")
+        payload = b"evil"
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+    buf.seek(0)
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    with _tarfile.open(fileobj=buf) as tf:
+        with pytest.raises(ValueError, match="Unsafe path"):
+            _safe_extract_tgz(tf, dest)
+
+
+def test_resolve_classify_data_accepts_tgz_url(monkeypatch, tmp_path):
+    """resolve_classify_data routes .tgz URLs through the tgz extractor."""
+    import io
+    import tarfile as _tarfile
+
+    from libreyolo.data import classify_dataset as _ds
+
+    # Build an in-memory tgz with the expected ImageFolder layout.
+    buf = io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for split in ("train", "val"):
+            for cls in ("cat", "dog"):
+                for i in range(2):
+                    path = f"myset/{split}/{cls}/img{i}.txt"
+                    content = b"x"
+                    info = _tarfile.TarInfo(name=path)
+                    info.size = len(content)
+                    tf.addfile(info, io.BytesIO(content))
+    tgz_bytes = buf.getvalue()
+
+    # Patch the module-level urlopen reference in classify_dataset, not the stdlib.
+    class _FakeResponse:
+        def read(self):
+            return tgz_bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(_ds, "urlopen", lambda url: _FakeResponse())
+    monkeypatch.setattr(_ds, "DATASETS_DIR", tmp_path)
+
+    root = _ds.resolve_classify_data("https://example.com/myset.tgz")
+    assert (root / "train").is_dir()
+    assert sorted(p.name for p in (root / "train").iterdir()) == ["cat", "dog"]
+
+
+def test_build_classify_transforms_augment_pipeline():
+    """Augmentation pipeline includes at least RandomResizedCrop."""
+    from torchvision import transforms as T
+
+    from libreyolo.data.classify_dataset import (
+        _HAS_TRIVIAL_AUGMENT,
+        build_classify_transforms,
+    )
+
+    train_tf = build_classify_transforms(224, augment=True)
+    transform_types = [type(t) for t in train_tf.transforms]
+
+    assert T.RandomResizedCrop in transform_types
+    assert T.RandomErasing in transform_types
+    if _HAS_TRIVIAL_AUGMENT:
+        from torchvision.transforms import TrivialAugmentWide
+
+        assert TrivialAugmentWide in transform_types
+    else:
+        assert T.RandomHorizontalFlip in transform_types
+        assert T.ColorJitter in transform_types
+
+    # Val pipeline has no random components.
+    val_tf = build_classify_transforms(224, augment=False)
+    val_types = [type(t) for t in val_tf.transforms]
+    assert T.Resize in val_types
+    assert T.CenterCrop in val_types
+    assert T.RandomResizedCrop not in val_types
