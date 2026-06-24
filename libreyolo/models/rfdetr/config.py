@@ -62,3 +62,27 @@ class RFDETRConfig(TrainConfig):
     decode_scale: int = 1
 
     name: str = "rfdetr_exp"
+
+
+@dataclass(kw_only=True)
+class RFDETRClassifyConfig(RFDETRConfig):
+    """RF-DETR classification training defaults.
+
+    DINOv2 fine-tuning recipe: AdamW + cosine schedule, larger batch, higher
+    weight_decay, ImageNet imgsz, and label smoothing.  Detection-specific
+    options (multi_scale, expanded_scales, crop_resize_prob) are disabled
+    since the classification pipeline feeds fixed-size crops.
+    """
+
+    scheduler: str = "cosine"
+    batch: int = 64
+    nbs: int | None = None  # no gradient accumulation needed at batch=64+
+    weight_decay: float = 0.05
+    warmup_epochs: int = 5
+    warmup_lr_start: float = 1e-6
+    label_smoothing: float = 0.1
+    imgsz: int = 224
+    multi_scale: bool = False
+    expanded_scales: bool = False
+    crop_resize_prob: float = 0.0
+    name: str = "rfdetr_cls_exp"

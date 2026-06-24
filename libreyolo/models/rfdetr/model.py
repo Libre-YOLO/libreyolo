@@ -1498,10 +1498,29 @@ class LibreRFDETR(BaseModel):
 
         resolved_batch = batch if batch is not None else batch_size
         resolved_lr0 = lr0 if lr0 is not None else lr
-        if resolved_batch is None:
-            resolved_batch = 4
-        if resolved_lr0 is None:
-            resolved_lr0 = 1e-4
+
+        # Apply classification-specific defaults when no explicit value was given.
+        if self._is_classification:
+            from .config import RFDETRClassifyConfig
+
+            _cls_d = RFDETRClassifyConfig()
+            if resolved_batch is None:
+                resolved_batch = _cls_d.batch
+            if resolved_lr0 is None:
+                resolved_lr0 = _cls_d.lr0
+            train_kwargs.setdefault("scheduler", _cls_d.scheduler)
+            train_kwargs.setdefault("weight_decay", _cls_d.weight_decay)
+            train_kwargs.setdefault("warmup_epochs", _cls_d.warmup_epochs)
+            train_kwargs.setdefault("warmup_lr_start", _cls_d.warmup_lr_start)
+            train_kwargs.setdefault("label_smoothing", _cls_d.label_smoothing)
+            train_kwargs.setdefault("multi_scale", _cls_d.multi_scale)
+            train_kwargs.setdefault("expanded_scales", _cls_d.expanded_scales)
+            train_kwargs.setdefault("crop_resize_prob", _cls_d.crop_resize_prob)
+        else:
+            if resolved_batch is None:
+                resolved_batch = 4
+            if resolved_lr0 is None:
+                resolved_lr0 = 1e-4
 
         if self._is_classification:
             from libreyolo.data import get_class_names, resolve_classify_data

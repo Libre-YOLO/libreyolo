@@ -250,6 +250,8 @@ def test_yolo9_classify_train_smoke(tmp_path):
         amp=False,
         ema=False,
         warmup_epochs=0,
+        label_smoothing=0.0,  # keep smoke test deterministic; default test is separate
+        scheduler="linear",   # avoid warmcos LR collapse in 3 epochs
     )
     losses = res["epoch_losses"]
     assert len(losses) == 3
