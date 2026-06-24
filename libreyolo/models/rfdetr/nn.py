@@ -459,6 +459,7 @@ class RFDETRClassifier(nn.Module):
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.drop = nn.Dropout(p=dropout)
         self.linear = nn.Linear(self.hidden_dim, nb_classes)
+        self.label_smoothing: float = 0.0
 
     def _build_backbone(self, cfg: RFDETRSizeConfig, device: str):
         kwargs = dict(
@@ -506,7 +507,9 @@ class RFDETRClassifier(nn.Module):
         pooled = self.drop(pooled)
         logits = self.linear(pooled)
         if self.training and targets is not None:
-            loss = F.cross_entropy(logits, targets.long())
+            loss = F.cross_entropy(
+                logits, targets.long(), label_smoothing=self.label_smoothing
+            )
             return {"total_loss": loss, "cls": loss}
         return logits
 

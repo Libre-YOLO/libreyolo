@@ -93,6 +93,11 @@ class TrainConfig:
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 2.0
 
+    # Classification loss
+    # Cross-entropy label smoothing for the classify task.  0.0 = standard
+    # CE; 0.1 is the standard ImageNet-scale regularizer.
+    label_smoothing: float = 0.0
+
     # Training features
     ema: bool = True
     ema_decay: float = 0.9998

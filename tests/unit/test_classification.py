@@ -285,6 +285,60 @@ def test_rfdetr_classify_forward():
         assert m.model(x).shape == (1, 4)
 
 
+def test_yolo9_classify_label_smoothing(tmp_path):
+    """label_smoothing kwarg is forwarded to the classify loss."""
+    from libreyolo import LibreYOLO9
+
+    _make_imagefolder(tmp_path, n_classes=3, n_per=6, size=32)
+    m = LibreYOLO9(None, size="t", task="classify", nb_classes=3, device="cpu")
+
+    res_no_ls = m.train(
+        data=str(tmp_path),
+        epochs=1,
+        batch=6,
+        imgsz=32,
+        optimizer="adamw",
+        lr0=1e-3,
+        workers=0,
+        eval_interval=0,
+        project=str(tmp_path / "runs"),
+        name="no_ls",
+        exist_ok=True,
+        amp=False,
+        ema=False,
+        warmup_epochs=0,
+    )
+
+    m2 = LibreYOLO9(None, size="t", task="classify", nb_classes=3, device="cpu")
+    m2.model.load_state_dict(
+        LibreYOLO9(None, size="t", task="classify", nb_classes=3, device="cpu").model.state_dict()
+    )
+    res_ls = m2.train(
+        data=str(tmp_path),
+        epochs=1,
+        batch=6,
+        imgsz=32,
+        optimizer="adamw",
+        lr0=1e-3,
+        workers=0,
+        eval_interval=0,
+        project=str(tmp_path / "runs"),
+        name="with_ls",
+        exist_ok=True,
+        amp=False,
+        ema=False,
+        warmup_epochs=0,
+        label_smoothing=0.1,
+    )
+
+    # Both should complete; the smoothed loss will typically be slightly higher
+    # at step 0 because smoothing raises the floor of the CE loss.
+    assert np.isfinite(res_no_ls["epoch_losses"][0])
+    assert np.isfinite(res_ls["epoch_losses"][0])
+    # Trainer must have set label_smoothing on the head before training.
+    assert m2.model.head.label_smoothing == pytest.approx(0.1)
+
+
 def test_safe_zip_extraction_rejects_path_traversal(tmp_path):
     import zipfile
 

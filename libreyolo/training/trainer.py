@@ -694,6 +694,18 @@ class BaseTrainer(ABC):
             drop_last=visible_samples >= per_rank_batch,
         )
 
+        # Wire label_smoothing from the training config to the model head so that
+        # the classify loss function uses it.  Works for both YOLO9 (head) and
+        # RF-DETR (classifier) heads which both expose a ``label_smoothing``
+        # attribute.
+        ls = float(getattr(self.config, "label_smoothing", 0.0))
+        if ls > 0.0:
+            for attr in ("head", "classifier"):
+                head = getattr(self.model, attr, None)
+                if head is not None and hasattr(head, "label_smoothing"):
+                    head.label_smoothing = ls
+                    break
+
         if is_main_process():
             logger.info(
                 "Classification dataset: %d images, %d classes",
