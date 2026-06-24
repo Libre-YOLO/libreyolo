@@ -549,7 +549,7 @@ def _rfdetr_input_info(onnx_path: Path) -> tuple[str, int, int, int]:
     return inp.name, c, h, w
 
 
-def _rfdetr_calib_data(inp_name: str, c: int, h: int, w: int, output_dir: Path) -> Path:
+def _rfdetr_calib_data(c: int, h: int, w: int, output_dir: Path) -> Path:
     """Generate random NHWC calibration data for the given shape."""
     calib = np.random.rand(20, h, w, c).astype(np.float32)
     npy_path = output_dir / "_rfdetr_calib.npy"
@@ -662,7 +662,7 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
         simplified_onnx = _simplify_rfdetr_onnx(onnx_file, c, h, w, tmp)
 
         # Step 2: Calibration data in NHWC layout for onnx2tf's validation.
-        calib_npy = _rfdetr_calib_data(inp_name, c, h, w, tmp)
+        calib_npy = _rfdetr_calib_data(c, h, w, tmp)
 
         # Step 3: Write backbone Add transpose fixes to a temp JSON file.
         fix_json = _write_rfdetr_fix_json(tmp)
@@ -755,7 +755,11 @@ def export_tflite(
     onnx2tf_args: Iterable[str] | None = None,
     metadata: dict | None = None,
 ) -> str:
-    """Convert a static ONNX model to TensorFlow Lite using onnx2tf."""
+    """Convert a static ONNX model to TensorFlow Lite using onnx2tf.
+
+    Note: ``onnx2tf_args`` is forwarded only on the YOLO9 CLI path.  It is
+    not applicable to the RF-DETR Python-API path and will be ignored there.
+    """
     if half:
         raise ValueError(
             "TFLite FP16 export is not supported yet. Omit half=True for FP32."
@@ -765,6 +769,11 @@ def export_tflite(
 
     model_family = ((metadata or {}).get("model_family") or "").lower()
     if model_family == "rfdetr":
+        if onnx2tf_args is not None:
+            logger.warning(
+                "onnx2tf_args is not supported on the RF-DETR TFLite path "
+                "(uses the Python API, not the CLI) and will be ignored."
+            )
         result = _export_tflite_rfdetr(onnx_path, output_path, verbose=verbose)
         if metadata is not None:
             _write_metadata_sidecar(Path(output_path), metadata)
