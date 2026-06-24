@@ -85,8 +85,15 @@ ncnn = [
 ]
 tflite = [
     "libreyolo[onnx]",
-    # onnx2tf 2.4.x requires Python 3.12+.
-    "onnx2tf>=2.4.1; python_version >= '3.12'",
+    # onnx2tf fork with three bug fixes for RF-DETR TFLite export (Tile
+    # permutation, Slice int32/int64, LayerNorm dynamic axis).  Switch back to
+    # the upstream package once https://github.com/PINTO0309/onnx2tf/pull/XXX
+    # is merged.  Requires Python 3.12+ (onnx2tf 2.4.x constraint).
+    "onnx2tf @ git+https://github.com/LibreYOLO/onnx2tf.git; python_version >= '3.12'",
+    # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
+    "onnx-graphsurgeon>=0.3.27",
+    # Required for RF-DETR onnxsim preprocessing step.
+    "onnx-simplifier>=0.4.36",
 ]
 tracking = []
 rtdetr = []
@@ -114,6 +121,7 @@ all = [
     "libreyolo[lora]",
     "libreyolo[plots]",
     "libreyolo[tensorrt]",
+    "libreyolo[tflite]",
     "libreyolo[openvino]",
     "libreyolo[ncnn]",
     "libreyolo[tracking]",
