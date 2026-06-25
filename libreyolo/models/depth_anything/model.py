@@ -207,39 +207,13 @@ class LibreDepthAnythingV2(BaseModel):
     # ====================================================================
     # Weights I/O
     # ====================================================================
-
-    @classmethod
-    def get_download_url(cls, filename: str) -> None:
-        # LibreYOLO does not mirror Depth Anything V2 weights: the strong
-        # checkpoints (Base/Large/Giant) are CC-BY-NC-4.0. Users convert the
-        # official weights with the conversion script.
-        return None
-
-    def _load_weights(self, model_path: str) -> None:
-        path = Path(model_path)
-        if path.exists():
-            super()._load_weights(str(path))
-            return
-        alt = Path("weights") / path.name
-        if alt.exists():
-            super()._load_weights(str(alt))
-            return
-        raise FileNotFoundError(self._weights_help(model_path))
-
-    @classmethod
-    def _weights_help(cls, requested: str) -> str:
-        return (
-            f"Depth Anything V2 weights not found: {requested}\n\n"
-            "LibreYOLO does not redistribute these weights. The Small encoder is\n"
-            "Apache-2.0; Base/Large/Giant are CC-BY-NC-4.0 (non-commercial).\n\n"
-            "To use them:\n"
-            f"  1. Download an official checkpoint from {cls._UPSTREAM_URL}\n"
-            "     (e.g. depth_anything_v2_vitl.pth).\n"
-            "  2. Convert it to a LibreYOLO checkpoint:\n"
-            "       python weights/convert_depth_anything_v2_weights.py \\\n"
-            "         depth_anything_v2_vitl.pth weights/LibreDepthAnythingV2l-depth.pt\n"
-            "  3. Load it: LibreYOLO('weights/LibreDepthAnythingV2l-depth.pt')\n"
-        )
+    # Weights load (and auto-download) through BaseModel. A missing checkpoint
+    # is fetched from the LibreYOLO Hugging Face org via the inherited
+    # ``get_download_url`` -> ``LibreYOLO/LibreDepthAnythingV2{s,l}-depth``,
+    # which mirrors the converted checkpoints. The offline path is still to
+    # convert an upstream checkpoint with
+    # ``weights/convert_depth_anything_v2_weights.py``. Note Base/Large/Giant
+    # (ViT-B/L/G) are CC-BY-NC-4.0 (non-commercial); see THIRD_PARTY_NOTICES.txt.
 
     # ====================================================================
     # Out of scope

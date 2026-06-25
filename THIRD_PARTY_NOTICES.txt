@@ -199,11 +199,13 @@ NOTE - code vs. weights: The Apache-2.0 license covers the Depth
 Anything V2 *source code* vendored above. It does NOT cover the
 pretrained weights, which are split: the Small (ViT-S) checkpoint is
 Apache-2.0, while Base/Large/Giant (ViT-B/L/G) are CC-BY-NC-4.0
-(non-commercial). LibreYOLO therefore does NOT bundle, mirror, or
-auto-download Depth Anything V2 weights. Users obtain official
-checkpoints upstream, convert them with
-weights/convert_depth_anything_v2_weights.py, and are responsible for
-complying with each checkpoint's license.
+(non-commercial). LibreYOLO mirrors the converted checkpoints on its
+Hugging Face org (LibreYOLO/LibreDepthAnythingV2{s,l}-depth) and
+auto-downloads them on demand; each mirror carries the upstream
+license. Users remain responsible for complying with each checkpoint's
+license — in particular, the CC-BY-NC-4.0 checkpoints (Base/Large/
+Giant) are for non-commercial use only. The offline conversion path
+(weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
 Apache License 2.0 (full text)
