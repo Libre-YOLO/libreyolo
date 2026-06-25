@@ -529,17 +529,53 @@ class DinoV2(nn.Module):
                 window_block_indexes=window_block_indexes,
                 gradient_checkpointing=gradient_checkpointing,
             )
-            self.encoder = (
-                WindowedDinov2WithRegistersBackbone.from_pretrained(
-                    name,
-                    config=windowed_dino_config,
-                )
-                if load_dinov2_weights
-                else WindowedDinov2WithRegistersBackbone(windowed_dino_config)
-            )
+            self.encoder = WindowedDinov2WithRegistersBackbone(windowed_dino_config)
+            if load_dinov2_weights:
+                # NOTE: WindowedDinov2WithRegistersBackbone.from_pretrained(...) silently
+                # no-ops the weight transfer under recent Transformers releases: the class
+                # inherits base_model_prefix="dinov2_with_registers" but attaches its
+                # submodules directly (self.embeddings/self.encoder/self.layernorm), so the
+                # loader's prefix reconciliation fails to populate any weights while still
+                # reporting success. That leaves the ViT randomly initialized. We copy the
+                # reference DINOv2 state dict explicitly and verify the transfer took effect.
+                self._load_pretrained_dinov2(name)
 
         self._out_feature_channels = [size_to_width[size]] * len(out_feature_indexes)
         self._export = False
+
+    def _load_pretrained_dinov2(self, name):
+        """Explicitly copy pretrained DINOv2 weights into the windowed backbone.
+
+        The windowed backbone's state-dict keys (embeddings.*, encoder.*, layernorm.*)
+        match the reference DINOv2 checkpoint exactly, so a direct shape-checked copy is
+        robust across Transformers versions. Raises if the transfer fails to land, so a
+        silently-random backbone can never ship again.
+        """
+        from transformers import AutoModel
+
+        ref_sd = AutoModel.from_pretrained(name).state_dict()
+        tgt_sd = self.encoder.state_dict()
+        new_sd, matched, skipped = {}, 0, 0
+        for k, v in tgt_sd.items():
+            if k in ref_sd and ref_sd[k].shape == v.shape:
+                new_sd[k] = ref_sd[k]
+                matched += 1
+            else:
+                new_sd[k] = v
+                skipped += 1
+        self.encoder.load_state_dict(new_sd, strict=False)
+
+        pe_std = self.encoder.embeddings.patch_embeddings.projection.weight.std().item()
+        if matched == 0 or pe_std > 0.015:
+            raise RuntimeError(
+                f"DINOv2 pretrained transfer failed for '{name}' "
+                f"(matched={matched}, skipped={skipped}, patch_embed std={pe_std:.4f}). "
+                "The backbone would train from random init."
+            )
+        logger.info(
+            f"Loaded pretrained DINOv2 weights from '{name}' "
+            f"(matched={matched}, skipped={skipped}, patch_embed std={pe_std:.4f})."
+        )
 
     def export(self):
         if self._export:
