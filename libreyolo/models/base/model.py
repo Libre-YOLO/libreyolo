@@ -104,6 +104,7 @@ class BaseModel(ABC):
         INPUT_SIZES: Mapping of size code to input resolution.
         TRAIN_CONFIG: TrainConfig subclass with family-specific defaults.
         val_preprocessor_class: Preprocessor class for validation.
+        validator_class: Override the validator used by val(); defaults to task-based dispatch.
     """
 
     # Class-level model metadata — subclasses override these

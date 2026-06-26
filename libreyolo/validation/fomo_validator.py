@@ -171,8 +171,8 @@ class FOMOValidator(PointValidator):
             self.val_loss_total += float(loss_out["total_loss"].item())
             self.batch_count += 1
 
-        logits_cpu = logits.detach().cpu()
         from ..models.fomo.utils import decode_points_from_logits
+        logits_cpu = logits.detach().cpu()
         targets_cpu = grid_targets.detach().cpu()
         for threshold in self.conf_thresholds:
             for nms_radius in self.nms_radii:
