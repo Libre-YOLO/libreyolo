@@ -159,30 +159,6 @@ class LibreYOLO9(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
-    @classmethod
-    def _infer_task_from_source(cls, model_path) -> str | None:
-        """Best-effort task inference from a weight filename or checkpoint metadata."""
-        from ...tasks import normalize_task
-        from ...utils.serialization import load_untrusted_torch_file
-
-        resolved = (
-            cls._resolve_weights_path(model_path)
-            if isinstance(model_path, str)
-            else str(model_path)
-        )
-        path = Path(resolved)
-        if path.exists():
-            try:
-                loaded = load_untrusted_torch_file(
-                    resolved, map_location="cpu", context="task detection"
-                )
-            except Exception:
-                loaded = None
-            if isinstance(loaded, dict) and isinstance(loaded.get("task"), str):
-                return normalize_task(loaded["task"])
-
-        return cls.detect_task_from_filename(Path(resolved).name)
-
     # =========================================================================
     # Model lifecycle
     # =========================================================================

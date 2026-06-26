@@ -66,7 +66,9 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
 
 def _ensure_rfdetr():
     """Lazily register RF-DETR and LibreDINOv2 if their dependencies are installed."""
-    if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry):
+    if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry) and any(
+        c.__name__ == "LibreDINOv2" for c in BaseModel._registry
+    ):
         return
     import importlib.util
 
