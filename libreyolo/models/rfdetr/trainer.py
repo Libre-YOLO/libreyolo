@@ -87,13 +87,11 @@ class RFDETRTrainer(BaseTrainer):
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if task == "pose":
             self.best_metric_key = "metrics/keypoints_mAP50-95"
-        elif task == "depth":
-            self.best_metric_key = "metrics/delta1"
         # Classification resolves its class count from the ImageFolder dataset
         # in _setup_classify_data; semantic resolves it from the mask dataset
         # in _setup_semantic_data (including the polygon-fallback background
         # class) — neither reads a detection YAML here.
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             return
         if self.config.data:
             data_cfg = load_data_config(
@@ -159,28 +157,6 @@ class RFDETRTrainer(BaseTrainer):
             head = getattr(segmenter, "predict", None)
             if head is not None:
                 groups.append(("head", head))
-            return groups or super().get_freeze_groups()
-
-        depth_estimator = (
-            getattr(self.model, "depth_estimator", None) if core_model is None else None
-        )
-        if depth_estimator is not None:
-            self._append_backbone_freeze_groups(
-                groups,
-                getattr(depth_estimator, "backbone", None),
-            )
-            head_modules = tuple(
-                module
-                for module in (
-                    getattr(depth_estimator, "laterals", None),
-                    getattr(depth_estimator, "refine", None),
-                    getattr(depth_estimator, "output_refine", None),
-                    getattr(depth_estimator, "depth_head", None),
-                )
-                if module is not None
-            )
-            if head_modules:
-                groups.append(("head", head_modules))
             return groups or super().get_freeze_groups()
 
         backbone = getattr(core_model, "backbone", None)
@@ -379,7 +355,6 @@ class RFDETRTrainer(BaseTrainer):
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (
             "classify",
             "semantic",
-            "depth",
         ):
             return imgs, targets, polygons
         scales = self._multi_scale_scales()
@@ -582,7 +557,7 @@ class RFDETRTrainer(BaseTrainer):
         # and size it from their datasets in _setup_classify_data /
         # _setup_semantic_data — no detection criterion or head
         # reinitialization is needed.
-        if task in ("semantic", "depth") and getattr(self.config, "lora", False):
+        if task == "semantic" and getattr(self.config, "lora", False):
             # LoRA injection targets the detection transformer; silently
             # fine-tuning the full semantic model while config says LoRA
             # would misrepresent the run.
@@ -591,7 +566,7 @@ class RFDETRTrainer(BaseTrainer):
                 "Use freeze='backbone.encoder' for parameter-efficient "
                 f"{task} fine-tuning."
             )
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             return
         # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
         # The GroupPose detection head must keep one logit column per keypoint
@@ -678,7 +653,6 @@ class RFDETRTrainer(BaseTrainer):
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (
             "classify",
             "semantic",
-            "depth",
         ):
             # The DINOv2 backbone + projector is LayerNorm-only (no BatchNorm),
             # so the shared BN/conv/bias grouping leaves an empty first group.
@@ -875,9 +849,9 @@ class RFDETRTrainer(BaseTrainer):
         polygons: Optional[List] = None,
     ) -> Dict:
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             # ``targets`` are class indices [B] (classify) or dense class maps
-            # [B, H, W] (semantic/depth); the model head returns the loss dict
+            # [B, H, W] (semantic); the model head returns the loss dict
             # directly.
             return self.model(imgs, targets=targets)
 
@@ -916,11 +890,6 @@ class RFDETRTrainer(BaseTrainer):
         if loss_task == "semantic":
             value = outputs.get("sem", 0)
             return {"sem": value.item() if isinstance(value, torch.Tensor) else float(value)}
-        if loss_task == "depth":
-            value = outputs.get("depth", 0)
-            return {
-                "depth": value.item() if isinstance(value, torch.Tensor) else float(value)
-            }
 
         def _sum_with_prefix(prefix: str) -> float:
             total = 0.0
