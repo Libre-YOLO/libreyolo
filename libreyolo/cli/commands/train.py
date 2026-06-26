@@ -93,21 +93,6 @@ def _create_explicit_task_train_model(
     return model_cls(None, size=size, task=train_task, device=device, **extra)
 
 
-def _create_yolo9_obb_from_loaded_detect_model(loaded_model, device: str):
-    """Switch an already-loaded YOLO9 detect checkpoint to OBB architecture."""
-    if (
-        get_loaded_model_family(loaded_model) != "yolo9"
-        or getattr(loaded_model, "task", "detect") != "detect"
-    ):
-        return None
-
-    from libreyolo.models.yolo9.model import LibreYOLO9
-
-    size = getattr(loaded_model, "size", None)
-    if size is None:
-        return None
-    return LibreYOLO9(None, size=size, task="obb", device=device)
-
 
 def _create_rfdetr_obb_from_loaded_detect_model(
     loaded_model,
@@ -163,6 +148,8 @@ def _create_yolo9_task_from_loaded_model(loaded_model, task: str, device: str):
 
     from libreyolo.models.yolo9.model import LibreYOLO9
 
+    if task not in LibreYOLO9.SUPPORTED_TASKS:
+        return None
     size = getattr(loaded_model, "size", None)
     if size is None:
         return None
@@ -354,16 +341,11 @@ def train_cmd(
                 device=device,
             )
             if replacement is None and normalized_task == "obb":
-                replacement = _create_yolo9_obb_from_loaded_detect_model(
+                replacement = _create_rfdetr_obb_from_loaded_detect_model(
                     loaded_model,
+                    model_path=model_path,
                     device=device,
                 )
-                if replacement is None:
-                    replacement = _create_rfdetr_obb_from_loaded_detect_model(
-                        loaded_model,
-                        model_path=model_path,
-                        device=device,
-                    )
             if replacement is None and normalized_task == "pose":
                 replacement = _create_rfdetr_pose_from_loaded_detect_model(
                     loaded_model,
