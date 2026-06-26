@@ -98,7 +98,7 @@ class LibreYOLONAS(BaseModel):
             return None
         task = cls.detect_task_from_filename(filename)
         if task == "pose":
-            if size not in cls._SIZE_FROM_HEAD_WIDTH_POSE.values():
+            if size not in cls.POSE_INPUT_SIZES:
                 return None
             return f"{cls._DECI_CDN_BASE}/yolo_nas_pose_{size}_coco_pose.pth"
         if size not in cls.INPUT_SIZES:
