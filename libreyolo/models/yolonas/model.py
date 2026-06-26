@@ -98,7 +98,9 @@ class LibreYOLONAS(BaseModel):
             return None
         task = cls.detect_task_from_filename(filename)
         if task == "pose":
-            return None
+            if size not in cls.POSE_INPUT_SIZES:
+                return None
+            return f"{cls._DECI_CDN_BASE}/yolo_nas_pose_{size}_coco_pose.pth"
         if size not in cls.INPUT_SIZES:
             return None
         return f"{cls._DECI_CDN_BASE}/yolo_nas_{size}_coco.pth"
@@ -332,7 +334,7 @@ class LibreYOLONAS(BaseModel):
     def _strict_loading(self) -> bool:
         return False
 
-    # SHA-256 of the official Deci CDN detection checkpoints. Auto-downloaded
+    # SHA-256 of the official Deci CDN checkpoints (detection + pose). Auto-downloaded
     # YOLO-NAS weights are third-party pickles that must be loaded with
     # weights_only=False, so they are verified against these pins before being
     # unpickled; a compromised/tampered CDN object then fails closed instead of
@@ -342,6 +344,10 @@ class LibreYOLONAS(BaseModel):
         "yolo_nas_s_coco.pth": "c1b1d9148ab8ae5d5984699547e850955ff9efccaf568c67b3d605acb4bfe1cb",
         "yolo_nas_m_coco.pth": "b194fc7fa196f76161c6356558bedf04fb99a62325a74a36a4bec3ca8ba48250",
         "yolo_nas_l_coco.pth": "91a06beaa1ce1a651d6691e3198061da996eafc8890503238dedacbd4c392a32",
+        "yolo_nas_pose_n_coco_pose.pth": "3544cd4bef7a4930e79c2d9a9ec50167be6fa366be834d52d462393edfc3a64f",
+        "yolo_nas_pose_s_coco_pose.pth": "54f0933cb3760c5f9ba47e901c58d6d114cd206718667a586031bea0ab9ea849",
+        "yolo_nas_pose_m_coco_pose.pth": "6d0f92a589fd2f39a9fb92c42894cca76e81eaf2fcb3a00f1cac2e7089fb91ec",
+        "yolo_nas_pose_l_coco_pose.pth": "d05c55157b3eb917e43d3669cc1e99fbe35a8a93c7883b95b93036a81216c5ab",
     }
 
     @classmethod

@@ -114,20 +114,46 @@ class TestYOLONASHeuristics:
         assert LibreYOLONAS.get_download_url(filename) is None
 
     @pytest.mark.parametrize(
-        "filename",
+        ("filename", "expected_url"),
         [
-            "LibreYOLONASn-pose.pt",
-            "yolo_nas_pose_n_coco_pose.pth",
-            "yolo_nas_pose_s_coco_pose.pth",
-            "yolo_nas_pose_m_coco_pose.pth",
-            "yolo_nas_pose_l_coco_pose.pth",
-            "LibreYOLONASs-pose.pt",
-            "LibreYOLONASm-pose.pt",
-            "LibreYOLONASl-pose.pt",
+            (
+                "LibreYOLONASn-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASs-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_s_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASm-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_m_coco_pose.pth",
+            ),
+            (
+                "LibreYOLONASl-pose.pt",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_l_coco_pose.pth",
+            ),
+            (
+                "yolo_nas_pose_n_coco_pose.pth",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_n_coco_pose.pth",
+            ),
+            (
+                "yolo_nas_pose_s_coco_pose.pth",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_s_coco_pose.pth",
+            ),
+            (
+                "yolo_nas_pose_m_coco_pose.pth",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_m_coco_pose.pth",
+            ),
+            (
+                "yolo_nas_pose_l_coco_pose.pth",
+                "https://d2gjn4b69gu75n.cloudfront.net/models/yolo_nas_pose_l_coco_pose.pth",
+            ),
         ],
     )
-    def test_get_download_url_returns_none_for_pose_checkpoints(self, filename):
-        assert LibreYOLONAS.get_download_url(filename) is None
+    def test_get_download_url_returns_cdn_url_for_pose_checkpoints(
+        self, filename, expected_url
+    ):
+        assert LibreYOLONAS.get_download_url(filename) == expected_url
 
 
 class TestYOLONASNativeModel:
