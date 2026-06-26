@@ -65,7 +65,7 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
 
 
 def _ensure_rfdetr():
-    """Lazily register RF-DETR if its dependencies are installed."""
+    """Lazily register RF-DETR and LibreDINOv2 if their dependencies are installed."""
     if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry):
         return
     import importlib.util
@@ -78,6 +78,8 @@ def _ensure_rfdetr():
             "Install with: pip install libreyolo[rfdetr]"
         )
     from .rfdetr.model import LibreRFDETR  # noqa: F401  (import triggers registration)
+    # LibreDINOv2 shares the same transformers dependency (DINOv2 backbone).
+    from .dinov2.model import LibreDINOv2  # noqa: F401  (import triggers registration)
 
 
 def try_ensure_rfdetr():
@@ -405,8 +407,11 @@ def LibreYOLO(
         if isinstance(loaded, dict) and isinstance(loaded.get("model_family"), str)
         else None
     )
-    if metadata_family_for_registration == "rfdetr" or _needs_rfdetr_registration(
+    if metadata_family_for_registration in ("rfdetr", "dinov2") or _needs_rfdetr_registration(
         weights_dict
+    ) or (
+        "predict.weight" in weights_dict
+        and any(k.startswith("backbone.") for k in weights_dict)
     ):
         try:
             _ensure_rfdetr()
@@ -494,11 +499,10 @@ def LibreYOLO(
     # the fresh model init too early. This matters for YOLO9-t where the class
     # branch width depends on COCO-vs-custom ``nc`` during construction.
     if nb_classes is None:
-        if matched_cls.FAMILY == "rfdetr":
-            # RF-DETR builds its detection head to the checkpoint's class width
-            # (read from class_embed). The 80 default below is a YOLO9-family
-            # convention that would mis-size the head for a metadata-wrapped
-            # 91-class COCO or fine-tuned RF-DETR checkpoint.
+        if matched_cls.FAMILY in ("rfdetr", "dinov2"):
+            # RF-DETR / DINOv2 build their heads to the checkpoint's class width.
+            # The 80 default below is a YOLO9-family convention that would
+            # mis-size the head for a metadata-wrapped checkpoint.
             nb_classes = matched_cls.detect_nb_classes(weights_dict)
             if nb_classes is None:
                 nb_classes = 80
@@ -556,8 +560,8 @@ def LibreYOLO(
         if detected_keypoints is not None:
             family_kwargs["num_keypoints"] = detected_keypoints
 
-    if matched_cls.FAMILY == "rfdetr":
-        # RF-DETR always needs the path (handles its own loading internally)
+    if matched_cls.FAMILY in ("rfdetr", "dinov2"):
+        # RF-DETR / DINOv2 always need the path (handle their own loading internally)
         model = matched_cls(
             model_path=model_path,
             size=size,
@@ -608,4 +612,5 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "try_ensure_rfdetr",
+    "LibreDINOv2",
 ]

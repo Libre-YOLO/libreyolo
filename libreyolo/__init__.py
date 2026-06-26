@@ -73,6 +73,7 @@ def __getattr__(name):
 
     _lazy = {
         "LibreRFDETR": (".models.rfdetr.model", "LibreRFDETR"),
+        "LibreDINOv2": (".models.dinov2.model", "LibreDINOv2"),
         "LibreEnsemble": (".ensemble", "LibreEnsemble"),
         "ExternalDetector": (".ensemble", "ExternalDetector"),
         "OnnxBackend": (".backends.onnx", "OnnxBackend"),
@@ -105,8 +106,8 @@ def __getattr__(name):
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
     }
-    if name == "LibreRFDETR":
-        # RF-DETR needs dependency check before import
+    if name in ("LibreRFDETR", "LibreDINOv2"):
+        # RF-DETR and DINOv2 share the same transformers dependency check.
         from .models import _ensure_rfdetr
 
         _ensure_rfdetr()
@@ -139,6 +140,7 @@ __all__ = [
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
     "LibreLFM2VL",

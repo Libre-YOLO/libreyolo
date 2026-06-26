@@ -1,4 +1,4 @@
-"""Unit tests for RF-DETR semantic segmentation.
+"""Unit tests for LibreDINOv2 semantic segmentation.
 
 Structural tests run against a lightweight fake backbone (monkeypatched
 ``build_backbone``) so they stay hermetic; one real-backbone forward test is
@@ -51,40 +51,55 @@ def fake_backbone(monkeypatch):
     return _build
 
 
-class TestSemanticMetadata:
+class TestDINOv2Metadata:
     def test_task_registration(self):
-        from libreyolo.models.rfdetr.model import LibreRFDETR
+        from libreyolo.models.dinov2.model import LibreDINOv2
 
-        assert "semantic" in LibreRFDETR.SUPPORTED_TASKS
-        assert LibreRFDETR.TASK_INPUT_SIZES["semantic"]["n"] == 518
-        assert LibreRFDETR.semantic_resize_mode == "stretch"
+        assert "semantic" in LibreDINOv2.SUPPORTED_TASKS
+        assert LibreDINOv2.INPUT_SIZES["n"] == 518
+        assert LibreDINOv2.semantic_resize_mode == "stretch"
+
+    def test_family_is_dinov2(self):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        assert LibreDINOv2.FAMILY == "dinov2"
+        assert LibreDINOv2.FILENAME_PREFIX == "LibreDINOv2"
 
     def test_can_load_recognizes_semantic_signature(self):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        state = {
+            "backbone.encoder.proj.weight": torch.zeros(1),
+            "predict.weight": torch.zeros(3, 8, 1, 1),
+        }
+        assert LibreDINOv2.can_load(state)
+
+    def test_can_load_rejects_detection_signature(self):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        state = {
+            "backbone.encoder.proj.weight": torch.zeros(1),
+            "class_embed.bias": torch.zeros(81),
+        }
+        assert not LibreDINOv2.can_load(state)
+
+    def test_rfdetr_no_longer_claims_semantic(self):
+        """LibreRFDETR.can_load must return False for semantic-only key sets."""
         from libreyolo.models.rfdetr.model import LibreRFDETR
 
         state = {
             "backbone.encoder.proj.weight": torch.zeros(1),
             "predict.weight": torch.zeros(3, 8, 1, 1),
         }
-        assert LibreRFDETR.can_load(state)
+        assert not LibreRFDETR.can_load(state)
 
-    def test_detect_task_from_source_prefers_metadata_then_signature(self):
+    def test_rfdetr_supported_tasks_excludes_semantic(self):
         from libreyolo.models.rfdetr.model import LibreRFDETR
 
-        assert (
-            LibreRFDETR._detect_task_from_source({"task": "semantic", "model": {}})
-            == "semantic"
-        )
-        signature_ckpt = {
-            "model": {
-                "backbone.encoder.proj.weight": torch.zeros(1),
-                "predict.weight": torch.zeros(3, 8, 1, 1),
-            }
-        }
-        assert LibreRFDETR._detect_task_from_source(signature_ckpt) == "semantic"
+        assert "semantic" not in LibreRFDETR.SUPPORTED_TASKS
 
 
-class TestSemanticSegmenter:
+class TestDINOv2SemanticSegmenter:
     def test_forward_loss_and_eval_shapes(self, fake_backbone):
         from libreyolo.models.rfdetr.nn import RFDETRSemanticSegmenter
 
@@ -105,19 +120,13 @@ class TestSemanticSegmenter:
             logits = model(x)
         assert logits.shape == (2, 3, 70, 70)
 
-    def test_one_task_head_at_a_time(self, fake_backbone):
-        from libreyolo.models.rfdetr.nn import LibreRFDETRModel
-
-        with pytest.raises(ValueError, match="one task head"):
-            LibreRFDETRModel(config="n", semantic=True, classification=True)
-
     def test_wrapper_predict_returns_semantic_mask(self, fake_backbone, tmp_path):
-        from libreyolo.models.rfdetr.model import LibreRFDETR
+        from libreyolo.models.dinov2.model import LibreDINOv2
 
         img_path = tmp_path / "img.jpg"
         Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
 
-        m = LibreRFDETR(
+        m = LibreDINOv2(
             model_path=None, size="n", task="semantic", nb_classes=3, device="cpu"
         )
         assert m.task == "semantic"
@@ -130,9 +139,9 @@ class TestSemanticSegmenter:
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
     def test_wrapper_class_rebuild(self, fake_backbone):
-        from libreyolo.models.rfdetr.model import LibreRFDETR
+        from libreyolo.models.dinov2.model import LibreDINOv2
 
-        m = LibreRFDETR(
+        m = LibreDINOv2(
             model_path=None, size="n", task="semantic", nb_classes=3, device="cpu"
         )
         m._rebuild_for_new_classes(5)
@@ -141,6 +150,12 @@ class TestSemanticSegmenter:
         with torch.no_grad():
             logits = m.model(torch.rand(1, 3, 70, 70))
         assert logits.shape == (1, 5, 70, 70)
+
+    def test_wrong_task_raises(self):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        with pytest.raises(ValueError, match="semantic"):
+            LibreDINOv2(model_path=None, size="n", task="detect", nb_classes=3, device="cpu")
 
 
 def _make_semantic_yaml(root, n_images=4, size=70):
@@ -175,12 +190,12 @@ def _make_semantic_yaml(root, n_images=4, size=70):
     return yaml_path
 
 
-def test_rfdetr_semantic_train_smoke(fake_backbone, tmp_path):
+def test_dinov2_semantic_train_smoke(fake_backbone, tmp_path):
     """One epoch through the shared trainer with the stub backbone."""
-    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
     yaml_path = _make_semantic_yaml(tmp_path)
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
     )
 
@@ -203,19 +218,47 @@ def test_rfdetr_semantic_train_smoke(fake_backbone, tmp_path):
     assert res["epoch_metrics"][-1]["val_metrics"].get("metrics/mIoU") is not None
 
 
+def test_dinov2_checkpoint_family_is_dinov2(fake_backbone, tmp_path):
+    """Trainer must save model_family='dinov2' (not 'rfdetr')."""
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.utils.serialization import load_trusted_torch_file
+
+    yaml_path = _make_semantic_yaml(tmp_path)
+    m = LibreDINOv2(
+        model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
+    )
+    res = m.train(
+        data=str(yaml_path),
+        epochs=1,
+        batch=2,
+        imgsz=70,
+        workers=0,
+        eval_interval=0,
+        project=str(tmp_path / "runs"),
+        name="ckpt_family",
+        exist_ok=True,
+        amp=False,
+        ema=False,
+        warmup_epochs=0,
+    )
+    ckpt_path = res.get("best_checkpoint") or res.get("last_checkpoint")
+    assert ckpt_path is not None
+    ckpt = load_trusted_torch_file(ckpt_path, map_location="cpu", context="test")
+    assert ckpt.get("model_family") == "dinov2"
+
+
 @pytest.mark.external_data
 @pytest.mark.network
 @pytest.mark.slow
-def test_rfdetr_semantic_forward_real_backbone():
-    """RF-DETR semantic build + forward (DINOv2 backbone; random-init if offline)."""
-    from libreyolo import LibreRFDETR
+def test_dinov2_semantic_forward_real_backbone():
+    """LibreDINOv2 build + forward (DINOv2 backbone; random-init if offline)."""
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=4, device="cpu"
     )
     assert m.task == "semantic"
     assert m.input_size == 518
-    assert m.model.semantic
 
     x = torch.rand(1, 3, 518, 518)
     m.model.train()
@@ -241,12 +284,12 @@ def test_all_ignore_targets_yield_finite_zero_loss(fake_backbone):
     assert float(out["total_loss"]) == 0.0
 
 
-def test_rfdetr_semantic_predict_rejects_non_patch_imgsz(fake_backbone, tmp_path):
-    from libreyolo.models.rfdetr.model import LibreRFDETR
+def test_dinov2_semantic_predict_rejects_non_patch_imgsz(fake_backbone, tmp_path):
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
     img_path = tmp_path / "img.jpg"
     Image.new("RGB", (64, 64), color=(10, 20, 30)).save(img_path)
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
     )
 
@@ -254,11 +297,11 @@ def test_rfdetr_semantic_predict_rejects_non_patch_imgsz(fake_backbone, tmp_path
         m.predict(str(img_path), imgsz=100)
 
 
-def test_rfdetr_semantic_train_rejects_non_patch_imgsz(fake_backbone, tmp_path):
-    from libreyolo.models.rfdetr.model import LibreRFDETR
+def test_dinov2_semantic_train_rejects_non_patch_imgsz(fake_backbone, tmp_path):
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
     yaml_path = _make_semantic_yaml(tmp_path)
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
     )
 
@@ -279,11 +322,11 @@ def test_rfdetr_semantic_train_rejects_non_patch_imgsz(fake_backbone, tmp_path):
         )
 
 
-def test_rfdetr_semantic_rejects_lora(fake_backbone, tmp_path):
-    from libreyolo.models.rfdetr.model import LibreRFDETR
+def test_dinov2_semantic_rejects_lora(fake_backbone, tmp_path):
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
     yaml_path = _make_semantic_yaml(tmp_path)
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
     )
 

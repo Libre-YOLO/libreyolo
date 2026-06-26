@@ -630,7 +630,6 @@ class LibreRFDETRModel(nn.Module):
         pose: bool = False,
         classification: bool = False,
         obb: bool = False,
-        semantic: bool = False,
         num_keypoints: int = 17,
         oks_sigmas=None,
         num_keypoints_per_class: "list[int] | None" = None,
@@ -638,13 +637,13 @@ class LibreRFDETRModel(nn.Module):
         super().__init__()
 
         if (
-            sum(bool(x) for x in (segmentation, pose, classification, obb, semantic))
+            sum(bool(x) for x in (segmentation, pose, classification, obb))
             > 1
         ):
             raise ValueError("RF-DETR can enable only one task head at a time")
 
         self.classification = classification
-        self.semantic = semantic
+        self.semantic = False
         if classification:
             # Backbone-only classification path: no detection decoder/criterion.
             self.config_name = config
@@ -658,23 +657,6 @@ class LibreRFDETRModel(nn.Module):
             self.hidden_dim = self.classifier.hidden_dim
             self.patch_size = self.classifier.patch_size
             self.num_windows = self.classifier.num_windows
-            self.model = None
-            self.postprocess = None
-            return
-
-        if semantic:
-            # Backbone-only dense path: no detection decoder/criterion.
-            self.config_name = config
-            self.config = RFDETR_CONFIGS[config]
-            self.nb_classes = nb_classes
-            self.segmentation = False
-            self.segmenter = RFDETRSemanticSegmenter(
-                config=config, nb_classes=nb_classes, device=device
-            )
-            self.resolution = self.segmenter.resolution
-            self.hidden_dim = self.segmenter.hidden_dim
-            self.patch_size = self.segmenter.patch_size
-            self.num_windows = self.segmenter.num_windows
             self.model = None
             self.postprocess = None
             return
@@ -760,10 +742,6 @@ class LibreRFDETRModel(nn.Module):
             return self.classifier.load_state_dict(
                 _unwrap_state_dict(state_dict), strict=strict
             )
-        if self.semantic:
-            return self.segmenter.load_state_dict(
-                _unwrap_state_dict(state_dict), strict=strict
-            )
 
         checkpoint_args = state_dict.get("args") if isinstance(state_dict, dict) else None
         checkpoint_num_keypoints = (
@@ -821,8 +799,6 @@ class LibreRFDETRModel(nn.Module):
     def state_dict(self, *args, **kwargs):
         if self.classification:
             return self.classifier.state_dict(*args, **kwargs)
-        if self.semantic:
-            return self.segmenter.state_dict(*args, **kwargs)
         return self.model.state_dict(*args, **kwargs)
 
 
