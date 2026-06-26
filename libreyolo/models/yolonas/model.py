@@ -334,7 +334,7 @@ class LibreYOLONAS(BaseModel):
     def _strict_loading(self) -> bool:
         return False
 
-    # SHA-256 of the official Deci CDN detection checkpoints. Auto-downloaded
+    # SHA-256 of the official Deci CDN checkpoints (detection + pose). Auto-downloaded
     # YOLO-NAS weights are third-party pickles that must be loaded with
     # weights_only=False, so they are verified against these pins before being
     # unpickled; a compromised/tampered CDN object then fails closed instead of
