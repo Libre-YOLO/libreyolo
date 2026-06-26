@@ -116,6 +116,7 @@ class BaseModel(ABC):
     TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {}
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
+    validator_class: ClassVar[Optional[type]] = None
     EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
 
     # Batched-predict policy: True when ``_preprocess`` yields stackable
@@ -1200,7 +1201,9 @@ class BaseModel(ABC):
                 "is out of scope for LibreYOLO. Evaluate upstream at "
                 "https://github.com/Ahmednull/L2CS-Net."
             )
-        if self.task == "pose":
+        if self.validator_class is not None:
+            validator_cls = self.validator_class
+        elif self.task == "pose":
             validator_cls = PoseValidator
         elif self.task == "point":
             validator_cls = PointValidator
