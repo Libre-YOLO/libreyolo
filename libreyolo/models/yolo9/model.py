@@ -290,10 +290,6 @@ class LibreYOLO9(BaseModel):
         head.no = self.nb_classes + head.reg_max * 4
         head._init_bias()
         head._loss_fn = None
-        if hasattr(head, "_seg_loss_fn"):
-            head._seg_loss_fn = None
-        if hasattr(head, "_obb_loss_fn"):
-            head._obb_loss_fn = None
         head.to(next(self.model.parameters()).device)
 
     def _load_transfer_weights(self, weights: str | Path) -> dict[str, int]:

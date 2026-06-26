@@ -614,5 +614,4 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "try_ensure_rfdetr",
-    "LibreDINOv2",
 ]
