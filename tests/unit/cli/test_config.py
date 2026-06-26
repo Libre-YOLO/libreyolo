@@ -33,11 +33,6 @@ class TestResolveModelName:
         assert resolve_model_name("yolo9-t") == "LibreYOLO9t.pt"
         assert resolve_model_name("yolo9-m") == "LibreYOLO9m.pt"
 
-    def test_yolo9_task_aliases(self):
-        assert resolve_model_name("yolo9-t-seg") == "LibreYOLO9t-seg.pt"
-        assert resolve_model_name("yolo9-t-cls") == "LibreYOLO9t-cls.pt"
-        assert resolve_model_name("yolo9-t-obb") == "LibreYOLO9t-obb.pt"
-
     def test_deimv2_sizes(self):
         assert resolve_model_name("deimv2-atto") == "LibreDEIMv2atto.pt"
         assert resolve_model_name("deimv2-femto") == "LibreDEIMv2femto.pt"
@@ -54,7 +49,6 @@ class TestResolveModelName:
     def test_case_insensitive(self):
         assert resolve_model_name("YOLOX-S") == "LibreYOLOXs.pt"
         assert resolve_model_name("Yolo9-T") == "LibreYOLO9t.pt"
-        assert resolve_model_name("YOLO9-T-OBB") == "LibreYOLO9t-obb.pt"
         assert resolve_model_name("RFDETR-N-SEG") == "LibreRFDETRn-seg.pt"
 
     def test_local_path_passthrough(self):
@@ -71,7 +65,6 @@ class TestResolveModelName:
     def test_known_weight_filename_detection(self):
         assert is_known_weight_filename("LibreYOLOXs.pt") is True
         assert is_known_weight_filename("weights/LibreYOLOXs.pt") is True
-        assert is_known_weight_filename("LibreYOLO9t-obb.pt") is True
         assert is_known_weight_filename("LibreRFDETRn-seg.pt") is True
         assert is_known_weight_filename("weights/LibreRFDETRxx-seg.pt") is True
         assert is_known_weight_filename("not-a-real-model.pt") is False
@@ -87,7 +80,6 @@ class TestDetectFamilyFromName:
     def test_yolo9_family(self):
         assert detect_family_from_name("yolo9-m") == "yolo9"
         assert detect_family_from_name("yolo9-t") == "yolo9"
-        assert detect_family_from_name("yolo9-t-obb") == "yolo9"
 
     def test_task_alias_family_uses_real_model_family(self):
         assert detect_family_from_name("rfdetr-n-seg") == "rfdetr"
@@ -106,9 +98,6 @@ class TestDetectFamilyFromModelRef:
     def test_weight_filename_family(self):
         assert detect_family_from_weight_filename("LibreYOLOXs.pt") == "yolox"
         assert detect_family_from_weight_filename("weights/LibreYOLO9t.pt") == "yolo9"
-        assert (
-            detect_family_from_weight_filename("weights/LibreYOLO9t-obb.pt") == "yolo9"
-        )
         assert detect_family_from_weight_filename("LibreRTDETRr18.pt") == "rtdetr"
         assert detect_family_from_weight_filename("LibreDEIMv2atto.pt") == "deimv2"
 
@@ -119,7 +108,6 @@ class TestDetectFamilyFromModelRef:
         assert detect_family_from_model_ref("LibreRTDETRr18.pt") == "rtdetr"
         assert detect_family_from_model_ref("/tmp/models/LibreRTDETRr18.pt") == "rtdetr"
         assert detect_family_from_model_ref("deimv2-atto") == "deimv2"
-        assert detect_family_from_model_ref("yolo9-t-obb") == "yolo9"
 
     def test_unknown_checkpoint_name_returns_none(self):
         assert detect_family_from_model_ref("best.pt") is None

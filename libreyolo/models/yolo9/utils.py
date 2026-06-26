@@ -26,7 +26,6 @@ from ...postprocess.yolo9 import (  # noqa: F401  (backward-compatible re-export
     _xywhr_to_corners,
     _xywhr_to_xyxy,
     postprocess,
-    postprocess_semantic,
 )
 from ...utils.image_loader import ImageLoader, ImageInput
 
