@@ -15,6 +15,7 @@ from .utils import postprocess as postprocess_fomo
 from ...training.config import FOMOConfig
 from ...training.ddp_spawn import ddp_aware
 from ...validation.preprocessors import FOMOValPreprocessor
+from ...validation.fomo_validator import FOMOValidator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class LibreFOMO(BaseModel):
     DEFAULT_TASK = "point"
     TRAIN_CONFIG = FOMOConfig
     val_preprocessor_class = FOMOValPreprocessor
+    validator_class = FOMOValidator
 
     TTA_ENABLED = False
 

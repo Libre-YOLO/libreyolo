@@ -9,8 +9,6 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
-from ..models.fomo.loss import FOMOLoss
-from ..models.fomo.utils import decode_points_from_logits
 from .point_validator import PointValidator
 
 __all__ = ["FOMOValidator"]
@@ -37,6 +35,7 @@ class FOMOValidator(PointValidator):
         self.nms_radii = nms_radii
         self.distance_tolerance = distance_tolerance
 
+        from ..models.fomo.loss import FOMOLoss
         self.val_loss_fn = FOMOLoss(
             num_classes=self.nc,
             fg_weight=self.fg_weight,
@@ -172,6 +171,7 @@ class FOMOValidator(PointValidator):
             self.val_loss_total += float(loss_out["total_loss"].item())
             self.batch_count += 1
 
+        from ..models.fomo.utils import decode_points_from_logits
         logits_cpu = logits.detach().cpu()
         targets_cpu = grid_targets.detach().cpu()
         for threshold in self.conf_thresholds:

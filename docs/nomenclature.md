@@ -160,7 +160,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
-LibreFOMO supports and ships `point` weights natively, using `SUPPORTED_TASKS = ("point",)`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
+LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-downloadable for this family; see `libreyolo/models/fomo/model.py`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
 
 ## Examples by family + task
 
@@ -234,7 +234,13 @@ LibreL2CSr50.pt           # L2CS gaze estimation (ResNet-50, Gaze360 weights)
 
 ```text
 LibreFOMOs-point.pt       # FOMO point-localizer (size s, point task)
+LibreFOMOm-point.pt       # FOMO point-localizer (size m, point task)
+LibreFOMOl-point.pt       # FOMO point-localizer (size l, point task)
 ```
+
+These are the canonical filenames for LibreFOMO checkpoints. Pretrained weights
+are not currently auto-downloadable; pass a local checkpoint path or train from
+scratch. See `libreyolo/models/fomo/model.py` for details.
 
 `gaze` is L2CS's only task, so — like `detect` for the detection families —
 it carries no suffix in the canonical filename; `-gaze` is accepted but
