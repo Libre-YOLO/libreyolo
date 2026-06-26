@@ -466,9 +466,7 @@ class LibreYOLO9(BaseModel):
             patience: Early stopping patience.
             pretrained: Optional training initialization weights. Use True to
                 load the matching LibreYOLO9 detect checkpoint for transfer
-                learning, or pass a checkpoint path/name. Detect -> segment,
-                pose, and OBB transfer is allowed here only as explicit
-                initialization.
+                learning, or pass a checkpoint path/name.
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a name
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger
