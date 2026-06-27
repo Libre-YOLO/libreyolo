@@ -40,6 +40,36 @@ def test_rfdetr_obb_transform_refits_angle_after_nonuniform_resize():
     assert labels[1:].sum() == 0
 
 
+def test_rfdetr_obb_transform_drops_crop_collapsed_boxes(monkeypatch):
+    import libreyolo.models.rfdetr.seg_transforms as transforms
+    from libreyolo.models.rfdetr.seg_transforms import RFDETRDetTransform
+
+    random_values = iter([1.0, 0.0])
+    monkeypatch.setattr(transforms.random, "random", lambda: next(random_values))
+    monkeypatch.setattr(transforms.random, "choice", lambda seq: seq[0])
+
+    randint_values = iter([20, 0, 10])
+    monkeypatch.setattr(transforms.random, "randint", lambda _a, _b: next(randint_values))
+
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+    targets = np.array([[0, 10, 10, 30, 1, 0.0]], dtype=np.float32)
+    transform = RFDETRDetTransform(
+        max_labels=4,
+        flip_prob=0.0,
+        imgsz=40,
+        crop_resize_prob=1.0,
+        crop_intermediate_sizes=(40,),
+        crop_min_size=20,
+        crop_max_size=20,
+        target_dim=6,
+    )
+
+    _, labels = transform(image, targets, (40, 40))
+
+    assert labels.shape == (4, 6)
+    assert labels.sum() == 0
+
+
 def test_rfdetr_postprocess_returns_obb_payload():
     from libreyolo.models.rfdetr.utils import postprocess
 
@@ -63,6 +93,23 @@ def test_rfdetr_postprocess_returns_obb_payload():
         rtol=1e-5,
         atol=1e-5,
     )
+
+
+def test_rfdetr_postprocess_tolerates_degenerate_obb_prediction():
+    from libreyolo.models.rfdetr.utils import postprocess
+
+    outputs = {
+        "pred_logits": torch.tensor([[[10.0]]]),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.0, 0.2]]]),
+        "pred_angles": torch.tensor([[[0.0]]]),
+    }
+
+    results = postprocess(outputs, torch.tensor([[100.0, 200.0]]), num_select=1)
+
+    assert "obb" in results[0]
+    assert torch.isfinite(results[0]["obb"]).all()
+    assert results[0]["obb"][0, 2] > 0.0
+    assert results[0]["obb"][0, 3] > 0.0
 
 
 def test_rfdetr_obb_load_rejects_detect_checkpoint_without_transfer_flag():

@@ -8,6 +8,7 @@ import pytest
 from libreyolo.data.obb import (
     corners_to_xywhr,
     parse_yolo_obb_label_line,
+    scale_xywhr,
     xywhr_iou,
     xywhr_to_proxy_xyxy,
 )
@@ -68,6 +69,26 @@ def test_corners_to_xywhr_and_proxy_box():
     np.testing.assert_allclose(xywhr[:4], [0.30, 0.30, 0.40, 0.20], atol=1e-6)
     assert xywhr[4] == pytest.approx(0.0, abs=1e-6)
     np.testing.assert_allclose(proxy, [0.10, 0.20, 0.50, 0.40], atol=1e-6)
+
+
+def test_corners_to_xywhr_rejects_degenerate_corners_by_default():
+    corners = np.array([[0.5, 0.1], [0.5, 0.1], [0.5, 0.9], [0.5, 0.9]], dtype=np.float32)
+
+    with pytest.raises(ValueError, match="width and height"):
+        corners_to_xywhr(corners)
+
+
+def test_scale_xywhr_can_clamp_degenerate_transform_outputs():
+    scaled = scale_xywhr(
+        np.array([0.5, 0.5, 0.0, 0.2, 0.0], dtype=np.float32),
+        200.0,
+        100.0,
+        min_size=1e-4,
+    )
+
+    np.testing.assert_allclose(scaled[:2], [100.0, 50.0], atol=1e-6)
+    assert scaled[2] > 0.0
+    assert scaled[3] > 0.0
 
 
 def test_xywhr_iou_handles_rotated_identity_and_disjoint_boxes():

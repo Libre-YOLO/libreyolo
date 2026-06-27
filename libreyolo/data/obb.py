@@ -25,14 +25,21 @@ def canonicalize_xywhr(xywhr: Sequence[float]) -> np.ndarray:
     return np.array([cx, cy, w, h, normalize_obb_angle(angle)], dtype=np.float32)
 
 
-def corners_to_xywhr(corners: np.ndarray) -> np.ndarray:
+def corners_to_xywhr(corners: np.ndarray, *, min_size: float | None = None) -> np.ndarray:
     """Convert four OBB corners to canonical ``xywhr``.
 
     The angle is in radians and follows the ``OBB`` result container contract:
-    rotation of the width side around the center.
+    rotation of the width side around the center. ``min_size`` is an explicit
+    post-transform clamp; by default, degenerate corners still raise.
     """
     corners = np.asarray(corners, dtype=np.float32).reshape(4, 2)
     (cx, cy), (w, h), angle_deg = cv2.minAreaRect(corners)
+    if min_size is not None:
+        min_size_f = float(min_size)
+        if not np.isfinite(min_size_f) or min_size_f <= 0.0:
+            raise ValueError(f"min_size must be positive, got {min_size!r}")
+        w = max(float(w), min_size_f)
+        h = max(float(h), min_size_f)
     return canonicalize_xywhr((cx, cy, w, h, math.radians(angle_deg)))
 
 
@@ -69,6 +76,8 @@ def scale_xywhr(
     xywhr: Sequence[float] | np.ndarray,
     scale_x: float,
     scale_y: float,
+    *,
+    min_size: float | None = None,
 ) -> np.ndarray:
     """Scale rotated rectangles through corners and refit canonical ``xywhr``.
 
@@ -84,7 +93,9 @@ def scale_xywhr(
     corners = xywhr_to_corners(rects)
     corners[..., 0] *= float(scale_x)
     corners[..., 1] *= float(scale_y)
-    scaled = np.stack([corners_to_xywhr(corner_set) for corner_set in corners])
+    scaled = np.stack(
+        [corners_to_xywhr(corner_set, min_size=min_size) for corner_set in corners]
+    )
     return scaled[0] if single else scaled.astype(np.float32, copy=False)
 
 

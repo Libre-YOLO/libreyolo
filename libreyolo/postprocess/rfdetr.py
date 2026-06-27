@@ -243,6 +243,7 @@ def postprocess(
                 obb_rel[batch_idx].detach().cpu().numpy(),
                 float(img_w[batch_idx].detach().cpu().item()),
                 float(img_h[batch_idx].detach().cpu().item()),
+                min_size=1e-4,
             )
             obb_rows.append(
                 torch.as_tensor(

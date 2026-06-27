@@ -382,7 +382,10 @@ class RFDETRSegTransform:
                     ),
                     axis=1,
                 )
-                xywhr = scale_xywhr(xywhr, scale_x, scale_y)
+                # Crop clipping can collapse OBB proxy boxes before the refit.
+                # Clamp the fitted line segment so the post-refit tiny-box
+                # filter below can drop it without crashing the dataloader.
+                xywhr = scale_xywhr(xywhr, scale_x, scale_y, min_size=1e-4)
                 boxes[:, 0] = xywhr[:, 0] - xywhr[:, 2] * 0.5
                 boxes[:, 1] = xywhr[:, 1] - xywhr[:, 3] * 0.5
                 boxes[:, 2] = xywhr[:, 0] + xywhr[:, 2] * 0.5
