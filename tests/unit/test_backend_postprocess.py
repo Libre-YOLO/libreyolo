@@ -591,7 +591,8 @@ def test_ec_pose_backend_parses_flattened_keypoints():
         task="pose",
         supported_tasks=("detect", "pose"),
     )
-    logits = np.array([[[10.0, -10.0], [-10.0, -10.0]]], dtype=np.float32)
+    # person is the LAST logit (index 1) of the 2-class ECPose head.
+    logits = np.array([[[-10.0, 10.0], [-10.0, -10.0]]], dtype=np.float32)
     keypoints = np.array(
         [[[0.25, 0.5, 0.75, 0.25], [0.0, 0.0, 0.0, 0.0]]],
         dtype=np.float32,
@@ -616,7 +617,7 @@ def test_ec_pose_backend_uses_exported_boxes_when_present():
         task="pose",
         supported_tasks=("detect", "pose"),
     )
-    logits = np.array([[[10.0, -10.0]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 10.0]]], dtype=np.float32)  # person == last logit
     boxes = np.array([[[0.5, 0.5, 0.8, 0.6]]], dtype=np.float32)
     keypoints = np.array([[[0.45, 0.45, 0.55, 0.55]]], dtype=np.float32)
 
@@ -638,7 +639,7 @@ def test_ec_pose_backend_does_not_clip_keypoints():
         task="pose",
         supported_tasks=("detect", "pose"),
     )
-    logits = np.array([[[10.0, -10.0]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 10.0]]], dtype=np.float32)  # person == last logit
     keypoints = np.array([[[-0.25, 1.25, 0.5, 0.5]]], dtype=np.float32)
 
     boxes, _, _, _, _, parsed_keypoints = backend._parse_outputs(
@@ -724,6 +725,8 @@ def test_ec_pose_backend_scores_person_logit_only():
         task="pose",
         supported_tasks=("detect", "pose"),
     )
+    # Person is the LAST logit (index 1): query 0 wins on its person logit
+    # (10.0) over query 1 (-10.0); query 1's high index-0 logit (9.0) is ignored.
     logits = np.array([[[0.0, 10.0], [9.0, -10.0]]], dtype=np.float32)
     keypoints = np.array(
         [[[0.1, 0.1, 0.2, 0.2], [0.7, 0.7, 0.8, 0.8]]],
@@ -739,7 +742,7 @@ def test_ec_pose_backend_scores_person_logit_only():
     assert classes.tolist() == [0]
     assert masks is None
     assert obb is None
-    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[70.0, 70.0], [80.0, 80.0]])
+    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[10.0, 10.0], [20.0, 20.0]])
 
 
 def test_ec_pose_backend_does_not_hard_cap_queries_at_sixty():

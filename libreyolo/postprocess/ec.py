@@ -115,7 +115,11 @@ def postprocess_pose(
         out_logits = out_logits[0]
         out_kpts = out_kpts[0]
 
-    query_scores = out_logits[..., 0].sigmoid()
+    # DETRPose's class head emits ``num_classes`` logits; the published ECPose
+    # COCO checkpoints encode the person class on the LAST logit (index 1 of the
+    # 2-class head) and leave index 0 as an unused background-style slot. Score
+    # the person logit; ``[..., -1]`` also degrades correctly to a 1-logit head.
+    query_scores = out_logits[..., -1].sigmoid()
     scores, query_idx = torch.topk(
         query_scores,
         min(max_det, query_scores.numel()),
