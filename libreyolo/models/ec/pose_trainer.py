@@ -333,7 +333,8 @@ class ECPoseTrainer(BaseTrainer):
             if tv.numel() == 0:
                 out.append(
                     {
-                        "labels": torch.zeros(0, dtype=torch.int64, device=self.device),
+                        # person == last logit (index 1) of the 2-class head.
+                        "labels": torch.ones(0, dtype=torch.int64, device=self.device),
                         "boxes": torch.zeros(0, 4, device=self.device),
                         "keypoints": torch.zeros(0, 3 * K, device=self.device),
                         "area": torch.zeros(0, device=self.device),
