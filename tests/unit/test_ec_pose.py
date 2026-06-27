@@ -251,6 +251,9 @@ class TestPoseForwardAndPostprocess:
         np.testing.assert_allclose(det["keypoints"][:, 0, :2], [[10.0, 10.0], [70.0, 70.0]])
 
     def test_postprocess_scores_person_logit_only(self):
+        # Person is the LAST logit (index 1) of the 2-class ECPose head; query 0
+        # wins on its person logit (10.0) over query 1 (-10.0), and the high
+        # index-0 logit on query 1 (9.0) must be ignored.
         raw = {
             "pred_logits": torch.tensor([[[0.0, 10.0], [9.0, -10.0]]]),
             "pred_keypoints": torch.tensor(
@@ -268,7 +271,7 @@ class TestPoseForwardAndPostprocess:
         )
 
         assert det["boxes"].shape == (1, 4)
-        np.testing.assert_allclose(det["keypoints"][0, :, :2], [[70.0, 70.0], [80.0, 80.0]])
+        np.testing.assert_allclose(det["keypoints"][0, :, :2], [[10.0, 10.0], [20.0, 20.0]])
 
     def test_wrapper_postprocess_does_not_hard_cap_queries_at_sixty(self, pose_model):
         raw = {

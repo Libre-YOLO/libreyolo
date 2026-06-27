@@ -313,7 +313,10 @@ class ECPoseTrainer(BaseTrainer):
         """``(B, max_labels, 5 + 3K)`` pixel slab -> per-image DETRPose target dicts.
 
         Each dict follows DETRPose's contract:
-          - ``labels``   : (n,) all 0 (person)
+          - ``labels``   : (n,) all 1 (person). ECPose uses a 2-logit class head
+            whose person slot is the LAST logit (index 1); this matches the
+            published checkpoints and the inference person score in
+            ``postprocess_pose`` / ``_parse_ec_pose`` (both read ``[..., -1]``).
           - ``boxes``    : (n,4) xyxy normalized (used by the denoising group)
           - ``keypoints``: (n, 2K + K) = [x1,y1,...,xK,yK | v1,...,vK], normalized
                            xy and binary visibility
@@ -351,7 +354,8 @@ class ECPoseTrainer(BaseTrainer):
             keypoints = torch.cat([kxy.reshape(tv.shape[0], 2 * K), vis], dim=1)
             out.append(
                 {
-                    "labels": torch.zeros(tv.shape[0], dtype=torch.int64, device=self.device),
+                    # person == last logit (index 1) of the 2-class head.
+                    "labels": torch.ones(tv.shape[0], dtype=torch.int64, device=self.device),
                     "boxes": boxes,
                     "keypoints": keypoints,
                     "area": area,

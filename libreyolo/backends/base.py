@@ -1260,7 +1260,9 @@ class BaseBackend(ABC):
 
         scores_per_class = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
         scores_per_class = scores_per_class.astype(np.float32)
-        query_scores = scores_per_class[..., 0]
+        # Person class is the LAST logit (index 1 of ECPose's 2-class head); keep
+        # this in lockstep with ``postprocess_pose`` so .pt and ONNX agree.
+        query_scores = scores_per_class[..., -1]
         k = min(max_det, query_scores.size)
         query_idx = np.argpartition(-query_scores, k - 1)[:k]
         query_idx = query_idx[np.argsort(-query_scores[query_idx])]
