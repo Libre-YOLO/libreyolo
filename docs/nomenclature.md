@@ -36,6 +36,7 @@ separate category, covered in the note below):
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
+| `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -86,6 +87,7 @@ ships:
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
+| `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -151,7 +153,8 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
-| `rfdetr`    | `("detect", "segment", "pose", "classify", "obb")` | detect | classify uses 224; seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
+| `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -176,7 +179,6 @@ LibreDEIMx.pt
 LibreDEIMv2s.pt
 LibreRTDETRr50.pt
 LibreRFDETRn.pt
-LibreRFDETRn-cls.pt
 LibrePICODETs.pt
 LibreECs.pt
 ```
@@ -191,12 +193,15 @@ LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
 
-# rfdetr - detect + segment + pose + classify + obb
+# rfdetr - detect + segment + pose + obb
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
 LibreRFDETRx-pose.pt       # pose (preview; only size x ships)
-LibreRFDETRn-cls.pt        # classify
 LibreRFDETRn-obb.pt        # obb
+
+# dinov2 — DINOv2 backbone + task head (NOT the RF-DETR detector)
+LibreDINOv2n.pt            # semantic (default task; dense head at 518)
+LibreDINOv2n-cls.pt        # classify (linear probe at 224)
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

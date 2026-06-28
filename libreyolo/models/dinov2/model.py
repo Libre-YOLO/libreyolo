@@ -1,19 +1,27 @@
-"""LibreDINOv2 — DINOv2 backbone + dense decoder for semantic segmentation.
+"""LibreDINOv2 — DINOv2 backbone models for semantic segmentation and classification.
 
-LibreDINOv2 reuses the ``RFDETRSemanticSegmenter`` module from the RF-DETR
-family (DINOv2 encoder + multi-scale projector pyramid + 1x1 dense head) but
-exposes it as its own model family so:
+LibreDINOv2 is the honest home for the tasks that are really "DINOv2 backbone +
+a task head" rather than the RF-DETR detector:
 
-* checkpoints are saved with ``model_family="dinov2"``
-* LibreRFDETR no longer registers ``task="semantic"`` in its supported tasks
-* the factory resolves ``predict.weight + backbone.*`` keys to LibreDINOv2
+* ``semantic`` — reuses ``RFDETRSemanticSegmenter`` (DINOv2 encoder +
+  multi-scale projector pyramid + 1x1 dense head).
+* ``classify`` — reuses ``RFDETRClassifier`` (DINOv2 encoder + projector +
+  global-average-pool + linear head). The DETR decoder/queries are never built;
+  this is a linear probe on the pretrained DINOv2 backbone, not the RF-DETR
+  detector, so it does not belong in the RF-DETR family.
 
-Training delegates to :class:`DINOv2Trainer`, which inherits the semantic
-branches from ``RFDETRTrainer`` and overrides only the family metadata.
+Both expose themselves as the ``dinov2`` family: checkpoints save
+``model_family="dinov2"`` and the factory routes ``backbone.*`` plus
+``predict.*`` (semantic) / ``linear.*`` (classify) keys here. LibreRFDETR no
+longer registers ``semantic`` or ``classify``.
 
-Backward compatibility: checkpoints saved before this split carry
-``model_family="rfdetr"`` and ``task="semantic"``.  :meth:`can_load` accepts
-those keys so the factory can route them here.
+Training delegates to :class:`DINOv2Trainer`, which inherits the semantic and
+classify branches from ``RFDETRTrainer`` and overrides only the family metadata.
+
+Backward compatibility: pre-split semantic checkpoints carry
+``model_family="rfdetr"`` / ``task="semantic"`` and are still accepted.
+Classify is intentionally a clean break — legacy ``LibreRFDETR*-cls``
+checkpoints are not loaded (retrain/republish as ``LibreDINOv2*-cls``).
 """
 
 from __future__ import annotations
@@ -91,6 +99,53 @@ class _DINOv2ModelWrapper(nn.Module):
         return self.segmenter.load_state_dict(state_dict, strict=strict)
 
 
+class _DINOv2ClassifierWrapper(nn.Module):
+    """Exposes ``RFDETRClassifier`` to ``RFDETRTrainer``'s classify path.
+
+    ``RFDETRTrainer.get_freeze_groups`` activates the classify branch when
+    ``self.model.model is None`` and reads ``self.model.classifier`` (backbone +
+    linear head). Mirrors :class:`_DINOv2ModelWrapper` but wraps the linear-probe
+    classifier instead of the dense segmenter. The DETR decoder is never built —
+    this is a DINOv2 backbone + global-average-pool + linear head.
+    """
+
+    def __init__(
+        self,
+        config: str,
+        nb_classes: int,
+        device: str = "cpu",
+    ) -> None:
+        super().__init__()
+        # Lazy import so the outer module-level import stays rfdetr-free.
+        from ..rfdetr.nn import RFDETRClassifier
+
+        # ``model = None`` signals RFDETRTrainer.get_freeze_groups that this is
+        # the linear-head path (uses the classifier freeze layout).
+        self.model: nn.Module | None = None
+        self.classifier = RFDETRClassifier(
+            config=config, nb_classes=nb_classes, device=device
+        )
+        self.nb_classes = nb_classes
+        self.resolution = self.classifier.resolution
+        self.hidden_dim = self.classifier.hidden_dim
+        self.patch_size = self.classifier.patch_size
+        self.num_windows = self.classifier.num_windows
+
+    def forward(self, x: torch.Tensor, targets=None):
+        return self.classifier(x, targets=targets)
+
+    def state_dict(self, *args, **kwargs):
+        return self.classifier.state_dict(*args, **kwargs)
+
+    def load_state_dict(self, state_dict: dict, strict: bool = False):
+        if isinstance(state_dict, dict):
+            if "model" in state_dict and isinstance(state_dict["model"], dict):
+                state_dict = state_dict["model"]
+            elif "state_dict" in state_dict and isinstance(state_dict["state_dict"], dict):
+                state_dict = state_dict["state_dict"]
+        return self.classifier.load_state_dict(state_dict, strict=strict)
+
+
 # ---------------------------------------------------------------------------
 # LibreDINOv2
 # ---------------------------------------------------------------------------
@@ -118,9 +173,12 @@ class LibreDINOv2(BaseModel):
     FILENAME_PREFIX: ClassVar[str] = "LibreDINOv2"
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
-    # All sizes run at the DINOv2-native 518 (37 × 14) resolution.
+    # Semantic runs at the DINOv2-native 518 (37 × 14); classify runs at 224.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"n": 518, "s": 518, "m": 518, "l": 518}
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic",)
+    TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
+        "classify": {"n": 224, "s": 224, "m": 224, "l": 224},
+    }
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "classify")
     DEFAULT_TASK: ClassVar[str] = "semantic"
 
     TRAIN_CONFIG: ClassVar[type] = RFDETRConfig
@@ -137,14 +195,18 @@ class LibreDINOv2(BaseModel):
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
-        """Match checkpoints whose keys form the backbone + dense-head pattern.
+        """Match LibreDINOv2 checkpoints: backbone + dense head (semantic) or
+        backbone + linear head (classify).
 
-        Also accepts old ``model_family="rfdetr"`` semantic checkpoints for
-        backward compatibility.
+        Semantic also accepts old ``model_family="rfdetr"`` checkpoints for
+        backward compatibility; classify is a clean break (legacy
+        ``LibreRFDETR*-cls`` checkpoints are not matched as new dinov2 weights).
         """
-        return "predict.weight" in weights_dict and any(
-            k.startswith("backbone.") for k in weights_dict
-        )
+        if not any(k.startswith("backbone.") for k in weights_dict):
+            return False
+        is_semantic = "predict.weight" in weights_dict
+        is_classify = "linear.weight" in weights_dict and "predict.weight" not in weights_dict
+        return is_semantic or is_classify
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
@@ -157,6 +219,9 @@ class LibreDINOv2(BaseModel):
         pw = weights_dict.get("predict.weight")
         if pw is not None:
             return int(pw.shape[0])
+        lw = weights_dict.get("linear.weight")
+        if lw is not None:
+            return int(lw.shape[0])
         return None
 
     # =========================================================================
@@ -173,9 +238,9 @@ class LibreDINOv2(BaseModel):
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "semantic"
-        if resolved_task != "semantic":
+        if resolved_task not in ("semantic", "classify"):
             raise ValueError(
-                f"LibreDINOv2 only supports task='semantic'; got {task!r}."
+                f"LibreDINOv2 supports task in ('semantic', 'classify'); got {task!r}."
             )
 
         if isinstance(model_path, dict) and not model_path:
@@ -259,6 +324,12 @@ class LibreDINOv2(BaseModel):
     # =========================================================================
 
     def _init_model(self) -> nn.Module:
+        if self.task == "classify":
+            return _DINOv2ClassifierWrapper(
+                config=self.size,
+                nb_classes=self._model_num_classes,
+                device=str(self.device),
+            )
         return _DINOv2ModelWrapper(
             config=self.size,
             nb_classes=self._model_num_classes,
@@ -268,10 +339,16 @@ class LibreDINOv2(BaseModel):
     def _rebuild_for_new_classes(self, new_nc: int) -> None:
         self.nb_classes = new_nc
         self._model_num_classes = new_nc
-        segmenter = self.model.segmenter
-        in_channels = segmenter.predict.in_channels
-        segmenter.predict = nn.Conv2d(in_channels, new_nc, 1)
-        segmenter.nb_classes = new_nc
+        if self.task == "classify":
+            classifier = self.model.classifier
+            in_features = classifier.linear.in_features
+            classifier.linear = nn.Linear(in_features, new_nc)
+            classifier.nb_classes = new_nc
+        else:
+            segmenter = self.model.segmenter
+            in_channels = segmenter.predict.in_channels
+            segmenter.predict = nn.Conv2d(in_channels, new_nc, 1)
+            segmenter.nb_classes = new_nc
         self.model.nb_classes = new_nc
         self.model.to(self.device)
         self.names = {i: f"class_{i}" for i in range(new_nc)}
@@ -280,14 +357,18 @@ class LibreDINOv2(BaseModel):
         return False
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
-        segmenter = self.model.segmenter
+        core = self.model.classifier if self.task == "classify" else self.model.segmenter
         layers: Dict[str, nn.Module] = {}
-        backbone = getattr(segmenter, "backbone", None)
+        backbone = getattr(core, "backbone", None)
         if backbone is not None:
             layers["backbone"] = backbone
-        predict = getattr(segmenter, "predict", None)
-        if predict is not None:
-            layers["head"] = predict
+        head = (
+            getattr(core, "linear", None)
+            if self.task == "classify"
+            else getattr(core, "predict", None)
+        )
+        if head is not None:
+            layers["head"] = head
         return layers
 
     @staticmethod
@@ -315,8 +396,15 @@ class LibreDINOv2(BaseModel):
         color_format: str = "auto",
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
-        """Stretch-resize to square; the segmenter applies ImageNet norm."""
+        """Stretch-resize to square; the model applies ImageNet norm."""
         effective_res = input_size if input_size is not None else self.input_size
+        if self.task == "classify":
+            from ...data.classify_dataset import build_classify_transforms
+
+            img = ImageLoader.load(image, color_format=color_format)
+            orig_w, orig_h = img.size
+            transform = build_classify_transforms(effective_res, augment=False)
+            return transform(img).unsqueeze(0), img, (orig_w, orig_h), 1.0
         if effective_res % self.semantic_imgsz_divisor:
             raise ValueError(
                 f"LibreDINOv2 semantic imgsz={effective_res} must be divisible "
@@ -341,6 +429,12 @@ class LibreDINOv2(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "classify":
+            logits = output
+            if isinstance(logits, dict):
+                logits = logits.get("logits", logits.get("predictions"))
+            probs = torch.softmax(logits.float(), dim=1)[0]
+            return {"probs": probs.cpu()}
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("predictions"))
@@ -358,7 +452,11 @@ class LibreDINOv2(BaseModel):
     # =========================================================================
 
     def _load_weights(self, model_path: str | dict[str, Any]) -> None:
-        """Load a LibreDINOv2 (or legacy RF-DETR semantic) checkpoint."""
+        """Load a LibreDINOv2 checkpoint.
+
+        Semantic also accepts legacy ``model_family="rfdetr"`` checkpoints;
+        classify is a clean break (see :meth:`_load_classify_weights`).
+        """
         if isinstance(model_path, str):
             if not Path(model_path).exists():
                 from ...utils.download import download_weights
@@ -367,13 +465,16 @@ class LibreDINOv2(BaseModel):
             loaded = load_trusted_torch_file(
                 model_path,
                 map_location="cpu",
-                context="DINOv2 semantic weights",
+                context=f"DINOv2 {self.task} weights",
             )
         else:
             loaded = model_path
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreDINOv2 checkpoints must be dictionaries")
+
+        if self.task == "classify":
+            return self._load_classify_weights(loaded)
 
         # Accept both model_family="dinov2" (new) and "rfdetr" (legacy semantic).
         ckpt_family = loaded.get("model_family", "")
@@ -419,6 +520,54 @@ class LibreDINOv2(BaseModel):
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
         self.model.to(self.device)
 
+    def _load_classify_weights(self, loaded: dict) -> None:
+        """Load a LibreDINOv2 classification checkpoint.
+
+        Clean break: legacy ``LibreRFDETR*-cls`` checkpoints
+        (``model_family="rfdetr"``) are rejected with a clear message.
+        """
+        ckpt_family = loaded.get("model_family", "")
+        if ckpt_family and ckpt_family != self.FAMILY:
+            raise RuntimeError(
+                f"Checkpoint was trained with model_family='{ckpt_family}', but "
+                f"LibreDINOv2 classification only loads model_family='{self.FAMILY}' "
+                "checkpoints. Legacy LibreRFDETR*-cls weights are not supported — "
+                "retrain/republish as LibreDINOv2*-cls."
+            )
+        ckpt_task = loaded.get("task")
+        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "classify":
+            raise RuntimeError(
+                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
+                "but is being loaded into a LibreDINOv2 classification model."
+            )
+
+        state = self._extract_state(loaded)
+        lw = state.get("linear.weight")
+        if lw is None:
+            raise RuntimeError(
+                "Checkpoint does not look like a LibreDINOv2 classification model "
+                "(no 'linear.weight' classifier head found)."
+            )
+        ckpt_nc = int(lw.shape[0])
+        if ckpt_nc != self.nb_classes:
+            self._rebuild_for_new_classes(ckpt_nc)
+
+        result = self.model.load_state_dict(loaded, strict=False)
+        unexpected = list(getattr(result, "unexpected_keys", []) or [])
+        if any(
+            ("class_embed" in k or "transformer" in k or k.startswith("predict."))
+            for k in unexpected
+        ):
+            raise RuntimeError(
+                "Checkpoint does not look like a LibreDINOv2 classification model "
+                "(weights match a detector or dense head, not backbone + linear)."
+            )
+
+        ckpt_names = loaded.get("names")
+        if ckpt_names is not None:
+            self.names = self._sanitize_names(ckpt_names, self.nb_classes)
+        self.model.to(self.device)
+
     # =========================================================================
     # Training
     # =========================================================================
@@ -434,7 +583,11 @@ class LibreDINOv2(BaseModel):
         resume=None,
         **kwargs,
     ) -> Dict:
-        """Fine-tune LibreDINOv2 for semantic segmentation."""
+        """Fine-tune LibreDINOv2 for semantic segmentation or classification.
+
+        Task is taken from ``self.task``; ``DINOv2Trainer`` (via ``RFDETRTrainer``)
+        routes the classify vs semantic data/loss branches accordingly.
+        """
         from pathlib import Path as _Path
 
         from .trainer import DINOv2Trainer
