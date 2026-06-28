@@ -25,3 +25,4 @@ recursive-include libreyolo/models NOTICE
 include THIRD_PARTY_NOTICES.txt
 include weights/LICENSE_NOTICE.txt
 include NOTICE
+include licenses/Apache-2.0.txt

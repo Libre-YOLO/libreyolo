@@ -37,6 +37,7 @@ class LibreConvNeXt(BaseModel):
     INPUT_SIZES = {"t": 224, "s": 224, "b": 224}
     SUPPORTED_TASKS = ("classify",)
     DEFAULT_TASK = "classify"
+    REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreConvNeXt<size>-cls.pt
     TRAIN_CONFIG = ConvNeXtConfig
 
     # timm eval crop_pct per checkpoint — convnext_*.fb_in1k all use 0.875.
@@ -226,6 +227,16 @@ class LibreConvNeXt(BaseModel):
             patience=patience,
             **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreConvNeXt('path/to/last.pt', size='t'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
 
         results = trainer.train()
         best_ckpt = results.get("best_checkpoint")

@@ -114,6 +114,9 @@ class BaseModel(ABC):
     INPUT_SIZES: ClassVar[dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
+    # When True, the task suffix is mandatory in weight filenames (e.g. a
+    # classify-only family requires ``-cls``); detect families leave it optional.
+    REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
     TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {}
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
@@ -407,7 +410,14 @@ class BaseModel(ABC):
         prefix = cls.FILENAME_PREFIX.lower()
         ext = re.escape(cls.WEIGHT_EXT)
         suffixes = task_suffix_pattern(cls.SUPPORTED_TASKS)
-        suffix_group = rf"(?P<task>{suffixes})?" if suffixes else ""
+        if suffixes:
+            # Families with no suffixless (detect) task can require the task
+            # suffix so that e.g. ``LibreResNet50.pt`` is not accepted as a
+            # classify checkpoint -- only ``LibreResNet50-cls.pt`` is canonical.
+            optional = "" if getattr(cls, "REQUIRE_TASK_SUFFIX", False) else "?"
+            suffix_group = rf"(?P<task>{suffixes}){optional}"
+        else:
+            suffix_group = ""
         return re.compile(rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}")
 
     @classmethod

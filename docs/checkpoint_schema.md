@@ -98,6 +98,16 @@ Pose runtime exports may also write these flat metadata keys:
   counts for GroupPose-style heads. Readers must preserve zero-keypoint class
   slots because they define the class-to-keypoint schema.
 
+Classification runtime exports (MobileNetV4 / ConvNeXt / EfficientNetV2 /
+ResNet) may also write these flat metadata keys so that exported-backend
+preprocessing reproduces the native model's resize/crop and the logits stay
+bit-identical:
+
+- `crop_pct`: float center-crop ratio. The pre-crop resize target is
+  `round(imgsz / crop_pct)`. Readers default to `0.875` when the key is absent.
+- `interpolation`: resize filter, `"bilinear"` or `"bicubic"`. Readers default
+  to `"bilinear"` when the key is absent.
+
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
 `max_det` values. When `nms_raw_output=true`, output `1` / `raw` is reserved for

@@ -38,6 +38,7 @@ class LibreResNet(BaseModel):
     INPUT_SIZES = {"18": 224, "34": 224, "50": 224, "101": 224}
     SUPPORTED_TASKS = ("classify",)
     DEFAULT_TASK = "classify"
+    REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreResNet<size>-cls.pt
     TRAIN_CONFIG = ResNetConfig
 
     # timm a1 eval crop_pct (matches the upstream benchmark preprocessing).
@@ -242,6 +243,16 @@ class LibreResNet(BaseModel):
             patience=patience,
             **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreResNet('path/to/last.pt', size='50'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
 
         results = trainer.train()
         best_ckpt = results.get("best_checkpoint")

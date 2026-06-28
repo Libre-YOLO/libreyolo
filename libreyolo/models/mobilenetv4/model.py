@@ -37,6 +37,7 @@ class LibreMobileNetV4(BaseModel):
     INPUT_SIZES = {"s": 224, "m": 224, "l": 256}
     SUPPORTED_TASKS = ("classify",)
     DEFAULT_TASK = "classify"
+    REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreMobileNetV4<size>-cls.pt
     TRAIN_CONFIG = MobileNetV4Config
 
     # timm eval crop_pct per checkpoint — matches the upstream benchmark preprocessing.
@@ -231,6 +232,16 @@ class LibreMobileNetV4(BaseModel):
             patience=patience,
             **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreMobileNetV4('path/to/last.pt', size='s'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
 
         results = trainer.train()
         best_ckpt = results.get("best_checkpoint")

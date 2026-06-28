@@ -39,6 +39,7 @@ class LibreEfficientNetV2(BaseModel):
     INPUT_SIZES = {"b0": 224, "b1": 240, "b2": 260, "b3": 300}
     SUPPORTED_TASKS = ("classify",)
     DEFAULT_TASK = "classify"
+    REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreEfficientNetV2<size>-cls.pt
     TRAIN_CONFIG = EfficientNetV2Config
 
     # timm eval crop_pct per checkpoint — matches the upstream benchmark preprocessing.
@@ -231,6 +232,16 @@ class LibreEfficientNetV2(BaseModel):
             patience=patience,
             **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreEfficientNetV2('path/to/last.pt', size='b0'); "
+                    "model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
 
         results = trainer.train()
         best_ckpt = results.get("best_checkpoint")

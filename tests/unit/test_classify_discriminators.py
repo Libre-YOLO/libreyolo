@@ -68,3 +68,29 @@ def test_unsupported_variants_rejected():
         sd = _sd(timm, tag)
         assert cls.detect_size(sd) is None, f"{cls.__name__} mis-sized unsupported {tag}"
         assert cls.can_load(sd) is False, f"{cls.__name__} wrongly claimed unsupported {tag}"
+
+
+def test_classify_filenames_require_cls_suffix():
+    """Classify families are classify-only, so the ``-cls`` suffix is mandatory
+    in weight filenames; a suffixless name (e.g. ``LibreResNet50.pt``) must not
+    be accepted as a classify checkpoint (detect families keep it optional)."""
+    from libreyolo import (
+        LibreConvNeXt,
+        LibreEfficientNetV2,
+        LibreMobileNetV4,
+        LibreResNet,
+    )
+
+    for cls, size in [
+        (LibreResNet, "50"),
+        (LibreConvNeXt, "t"),
+        (LibreEfficientNetV2, "b0"),
+        (LibreMobileNetV4, "s"),
+    ]:
+        stem = f"{cls.FILENAME_PREFIX}{size}"
+        assert cls.detect_size_from_filename(f"{stem}-cls.pt") == size, (
+            f"{cls.__name__} should accept the canonical -cls filename"
+        )
+        assert cls.detect_size_from_filename(f"{stem}.pt") is None, (
+            f"{cls.__name__} must reject a suffixless filename"
+        )
