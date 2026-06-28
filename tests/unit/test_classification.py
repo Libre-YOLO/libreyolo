@@ -1,8 +1,10 @@
-"""Image-classification task tests for YOLO9 and RF-DETR.
+"""Image-classification task tests.
 
 Covers the shared classification stack (ImageFolder dataset, collate,
-ClassifyValidator, Results.probs) and the per-family model wiring. All tests
-run on CPU with a tiny synthetic ImageFolder so they need no network or GPU.
+ClassifyValidator, Results.probs) and the LibreDINOv2 model wiring (classify is
+a DINOv2 linear probe, not the RF-DETR detector, so it lives in the dinov2
+family). All tests run on CPU with a tiny synthetic ImageFolder so they need no
+network or GPU.
 """
 
 from __future__ import annotations
@@ -122,16 +124,19 @@ def test_classify_validator_uses_model_name_order(tmp_path):
 @pytest.mark.external_data
 @pytest.mark.network
 @pytest.mark.slow
-def test_rfdetr_classify_forward():
-    """RF-DETR classify build + forward (DINOv2 backbone; random-init if offline)."""
-    from libreyolo import LibreRFDETR
+def test_dinov2_classify_forward():
+    """LibreDINOv2 classify build + forward (DINOv2 backbone; random-init if offline)."""
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
-    m = LibreRFDETR(
+    m = LibreDINOv2(
         model_path=None, size="n", task="classify", nb_classes=4, device="cpu"
     )
     assert m.task == "classify"
     assert m.input_size == 224
-    assert m.model.classification
+    # The classify wrapper exposes the linear-probe classifier and builds no
+    # DETR decoder (model is None signals the non-detection head path).
+    assert m.model.model is None
+    assert m.model.classifier is not None
 
     x = torch.randn(1, 3, 224, 224)
     m.model.train()
@@ -156,8 +161,9 @@ def test_safe_zip_extraction_rejects_path_traversal(tmp_path):
             _safe_extract_zip(zf, tmp_path / "dest")
 
 
-def test_rfdetr_classify_detect_size_uses_metadata():
+def test_dinov2_classify_can_load_and_detect_nb_classes():
     pytest.importorskip("transformers")
+    from libreyolo.models.dinov2.model import LibreDINOv2
     from libreyolo.models.rfdetr.model import LibreRFDETR
 
     weights = {
@@ -166,14 +172,17 @@ def test_rfdetr_classify_detect_size_uses_metadata():
         ),
         "linear.weight": torch.empty(4, 256),
     }
-    checkpoint = {"model_family": "rfdetr", "size": "n", "task": "classify"}
 
-    assert LibreRFDETR.detect_size(weights, state_dict=checkpoint) == "n"
+    # Classify checkpoints (backbone + linear head) belong to LibreDINOv2 now;
+    # RF-DETR must no longer claim them.
+    assert LibreDINOv2.can_load(weights)
+    assert not LibreRFDETR.can_load(weights)
+    assert LibreDINOv2.detect_nb_classes(weights) == 4
 
 
-def test_rfdetr_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path):
+def test_dinov2_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path):
     pytest.importorskip("transformers")
-    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.models.dinov2.model import LibreDINOv2
 
     class _LoadResult:
         missing_keys = []
@@ -185,11 +194,10 @@ def test_rfdetr_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
             self.linear = torch.nn.Linear(2, nb_classes)
             self.nb_classes = nb_classes
 
-    class _FakeRFDETRModel(torch.nn.Module):
-        classification = True
-
+    class _FakeWrapper(torch.nn.Module):
         def __init__(self):
             super().__init__()
+            self.model = None  # signals the non-detection (linear-head) path
             self.classifier = _FakeClassifier(80)
             self.nb_classes = 80
 
@@ -201,7 +209,7 @@ def test_rfdetr_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
                 raise RuntimeError(f"expected {expected} classifier rows, got {actual}")
             return _LoadResult()
 
-    monkeypatch.setattr(LibreRFDETR, "_init_model", lambda self: _FakeRFDETRModel())
+    monkeypatch.setattr(LibreDINOv2, "_init_model", lambda self: _FakeWrapper())
     path = tmp_path / "best.pt"
     torch.save(
         {
@@ -210,14 +218,14 @@ def test_rfdetr_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
                 "linear.weight": torch.ones(4, 2),
                 "linear.bias": torch.ones(4),
             },
-            "model_family": "rfdetr",
+            "model_family": "dinov2",
             "size": "n",
             "task": "classify",
         },
         path,
     )
 
-    model = LibreRFDETR(str(path), size="n", task="classify", device="cpu")
+    model = LibreDINOv2(str(path), size="n", task="classify", device="cpu")
 
     assert model.nb_classes == 4
     assert model.model.classifier.linear.out_features == 4

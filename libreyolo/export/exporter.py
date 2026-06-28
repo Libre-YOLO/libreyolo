@@ -583,11 +583,11 @@ class BaseExporter(ABC):
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
-        elif family == "rfdetr" and getattr(self.model, "task", None) == "classify":
-            # Classification has no detection decoder; trace the backbone +
-            # linear classifier directly (it returns logits). The detection
-            # export wrapper forwards through ``model.model``, which is None
-            # for classification.
+        elif family == "dinov2" and getattr(self.model, "task", None) == "classify":
+            # Classification (now in the LibreDINOv2 family) has no detection
+            # decoder; trace the backbone + linear classifier directly (it
+            # returns logits). The detection export wrapper forwards through
+            # ``model.model``, which is None for classification.
             nn_model = nn_model.classifier.to(device)
             nn_model.eval()
             # Precompute static DINOv2 positional encodings for the fixed export
