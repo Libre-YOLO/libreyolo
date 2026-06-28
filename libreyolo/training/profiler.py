@@ -146,6 +146,8 @@ def analyze_trace(trace_path, summary_path=None):
         return w0 is None or (w0 <= ts < w1)
 
     kern, opagg, phase_gpu = {}, {}, {}
+    kernel_list, op_list = [], []
+    gpu_intervals, cpu_intervals = {}, {}
     gpu_busy_us = memcpy_us = tc_us = 0.0
     n_kern = 0
     for e in events:
@@ -165,14 +167,51 @@ def analyze_trace(trace_path, summary_path=None):
             k = kern.setdefault(name, [0.0, 0])
             k[0] += dur
             k[1] += 1
+            kernel_list.append((name, dur, ts))
         elif cat in ("gpu_memcpy", "gpu_memset"):
             memcpy_us += dur
         elif cat == "cpu_op":
             o = opagg.setdefault(name, [0.0, 0])
             o[0] += dur
             o[1] += 1
+            op_list.append((name, dur, ts))
         elif cat == "gpu_user_annotation" and name.startswith("step/"):
-            phase_gpu[name[5:]] = phase_gpu.get(name[5:], 0.0) + dur
+            p = name[5:]
+            phase_gpu[p] = phase_gpu.get(p, 0.0) + dur
+            gpu_intervals.setdefault(p, []).append((ts, ts + dur))
+        elif cat == "user_annotation" and name.startswith("step/"):
+            cpu_intervals.setdefault(name[5:], []).append((ts, ts + dur))
+
+    # Tag each kernel/op with the phase whose span contains it (for `phases`
+    # and `--phase` drill-down).
+    gpu_iv = sorted((s, en, p) for p, ivs in gpu_intervals.items() for (s, en) in ivs)
+    cpu_iv = sorted((s, en, p) for p, ivs in cpu_intervals.items() for (s, en) in ivs)
+
+    def _phase_of(ts, iv):
+        for s, en, p in iv:
+            if s <= ts < en:
+                return p
+        return "unphased"
+
+    phase_kern, phase_kcount, phase_op, phase_ocount = {}, {}, {}, {}
+    phase_gpu_us = {}
+    # Tag GPU kernels by the CPU phase span that launched them. The gpu-side
+    # annotation spans overlap and mis-attribute (forward swallows backward);
+    # the CPU launch spans are clean, and for a host-bound step each kernel
+    # runs inside its launch span.
+    for name, dur, ts in kernel_list:
+        p = _phase_of(ts, cpu_iv)
+        d = phase_kern.setdefault(p, {}).setdefault(name, [0.0, 0])
+        d[0] += dur
+        d[1] += 1
+        phase_kcount[p] = phase_kcount.get(p, 0) + 1
+        phase_gpu_us[p] = phase_gpu_us.get(p, 0.0) + dur
+    for name, dur, ts in op_list:
+        p = _phase_of(ts, cpu_iv)
+        d = phase_op.setdefault(p, {}).setdefault(name, [0.0, 0])
+        d[0] += dur
+        d[1] += 1
+        phase_ocount[p] = phase_ocount.get(p, 0) + 1
 
     wall_ms = (w1 - w0) / 1000.0 if w0 is not None else 0.0
     tot = sum(v[0] for v in kern.values()) or 1.0
@@ -185,22 +224,28 @@ def analyze_trace(trace_path, summary_path=None):
         except Exception:
             summary = {}
     real = summary.get("real", {})
+    comp = summary.get("composition_ms", {})
     step_ms = real.get("step_ms") or (wall_ms / n_real if n_real else wall_ms)
     gpu_busy_ms = gpu_busy_us / 1000.0 / n_real
     util = (gpu_busy_ms / step_ms) if step_ms else 0.0
 
-    def krow(name, td):
+    def krow(name, td, denom):
         return {
             "kernel": _friendly_kernel(name),
             "raw_name": name[:90],
             "category": _kernel_category(name),
             "tensorcore": _is_tensorcore(name),
             "ms_per_step": round(td[0] / 1000.0 / n_real, 4),
-            "pct_of_gpu": round(td[0] / tot * 100, 2),
+            "pct_of_gpu": round(td[0] / denom * 100, 2),
             "count_per_step": max(td[1] // n_real, 1),
         }
 
-    kernels = sorted((krow(n, td) for n, td in kern.items()),
+    def orow(name, td, denom):
+        return {"op": name[:70], "ms_per_step": round(td[0] / 1000.0 / n_real, 4),
+                "pct_of_cpu_ops": round(td[0] / denom * 100, 2),
+                "count_per_step": max(td[1] // n_real, 1)}
+
+    kernels = sorted((krow(n, td, tot) for n, td in kern.items()),
                      key=lambda r: r["pct_of_gpu"], reverse=True)
     cats = {}
     for n, td in kern.items():
@@ -210,13 +255,30 @@ def analyze_trace(trace_path, summary_path=None):
                    "ms_per_step": round(v / 1000.0 / n_real, 3)}
                   for c, v in sorted(cats.items(), key=lambda kv: kv[1], reverse=True) if v > 0]
     optot = sum(v[0] for v in opagg.values()) or 1.0
-    ops = sorted(({"op": n[:70], "ms_per_step": round(td[0] / 1000.0 / n_real, 4),
-                   "pct_of_cpu_ops": round(td[0] / optot * 100, 2),
-                   "count_per_step": max(td[1] // n_real, 1)}
-                  for n, td in opagg.items()),
+    ops = sorted((orow(n, td, optot) for n, td in opagg.items()),
                  key=lambda r: r["pct_of_cpu_ops"], reverse=True)
-    phases_gpu = [{"phase": p, "gpu_ms_per_step": round(v / 1000.0 / n_real, 3)}
-                  for p, v in sorted(phase_gpu.items(), key=lambda kv: kv[1], reverse=True)]
+
+    # Per-phase rollup + drill lists.
+    _ORDER = ["dataload", "to_device", "forward", "backward", "optimizer"]
+    phase_names = [p for p in _ORDER if p in phase_gpu or p in phase_kern or p in phase_op]
+    phase_names += [p for p in phase_kern if p not in phase_names]
+    phases, kernels_by_phase, ops_by_phase = [], {}, {}
+    for p in phase_names:
+        ptot = sum(v[0] for v in phase_kern.get(p, {}).values()) or 1.0
+        potot = sum(v[0] for v in phase_op.get(p, {}).values()) or 1.0
+        kernels_by_phase[p] = sorted((krow(n, td, ptot) for n, td in phase_kern.get(p, {}).items()),
+                                     key=lambda r: r["pct_of_gpu"], reverse=True)[:40]
+        ops_by_phase[p] = sorted((orow(n, td, potot) for n, td in phase_op.get(p, {}).items()),
+                                 key=lambda r: r["pct_of_cpu_ops"], reverse=True)[:40]
+        wall = real.get("dataload_ms") if p == "dataload" else comp.get(p)
+        phases.append({
+            "phase": p,
+            "gpu_ms_per_step": round(phase_gpu_us.get(p, 0.0) / 1000.0 / n_real, 3),
+            "wall_ms_per_step": round(wall, 2) if wall is not None else None,
+            "kernels_per_step": int(phase_kcount.get(p, 0) // n_real),
+            "ops_per_step": int(phase_ocount.get(p, 0) // n_real),
+            "unique_kernels": len(phase_kern.get(p, {})),
+        })
 
     bound = summary.get("bound")
     why = summary.get("bound_why", "")
@@ -226,6 +288,33 @@ def analyze_trace(trace_path, summary_path=None):
                if bound == "compute" else
                f"GPU only ~{util * 100:.0f}% busy — tiny kernels / host overhead "
                "(dataloader stall not measurable from trace alone)")
+
+    tc_pct = round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0
+    peak_vram = (summary.get("analysis") or {}).get("peak_vram_mb")
+
+    # Flat metrics for `profile get <field>` (atomic, minimal-output queries).
+    metrics = {
+        "img_per_s": real.get("img_per_s"),
+        "step_ms": round(step_ms, 2),
+        "dataload_ms": real.get("dataload_ms"),
+        "dataload_frac": real.get("dataload_frac"),
+        "gpu_util": round(util, 3),
+        "gpu_busy_ms": round(gpu_busy_ms, 2),
+        "mean_kernel_us": round(gpu_busy_us / n_kern, 2) if n_kern else 0.0,
+        "kernels_per_step": int(n_kern // n_real),
+        "unique_kernels": len(kern),
+        "ops_per_step": int(sum(phase_ocount.values()) // n_real),
+        "memcpy_ms": round(memcpy_us / 1000.0 / n_real, 3),
+        "tensorcore_pct": tc_pct,
+        "peak_vram_mb": peak_vram,
+        "bound": bound,
+    }
+    for ph in phases:
+        p = ph["phase"]
+        metrics[f"{p}_gpu_ms"] = ph["gpu_ms_per_step"]
+        metrics[f"{p}_wall_ms"] = ph["wall_ms_per_step"]
+        metrics[f"{p}_kernels"] = ph["kernels_per_step"]
+        metrics[f"{p}_ops"] = ph["ops_per_step"]
 
     return {
         "trace": str(trace_path),
@@ -243,11 +332,16 @@ def analyze_trace(trace_path, summary_path=None):
         "kernels_per_step": int(n_kern // n_real),
         "unique_kernels": len(kern),
         "memcpy_ms_per_step": round(memcpy_us / 1000.0 / n_real, 3),
-        "tensorcore_pct": round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0,
-        "peak_vram_mb": (summary.get("analysis") or {}).get("peak_vram_mb"),
+        "tensorcore_pct": tc_pct,
+        "peak_vram_mb": peak_vram,
         "window": {"wall_ms": round(wall_ms, 1), "real_steps": n_real},
+        "metrics": metrics,
         "categories": categories,
-        "phases_gpu": phases_gpu,
+        "phases": phases,
+        "phases_gpu": [{"phase": ph["phase"], "gpu_ms_per_step": ph["gpu_ms_per_step"]}
+                       for ph in phases],
+        "kernels_by_phase": kernels_by_phase,
+        "ops_by_phase": ops_by_phase,
         "top_kernels": kernels[:8],
         "kernels": kernels,
         "ops": ops,

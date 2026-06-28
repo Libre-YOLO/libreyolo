@@ -115,6 +115,42 @@ def summary_cmd(
         print(f"  {k['pct_of_gpu']:5.1f}%  {k['ms_per_step']:6.3f} ms  x{k['count_per_step']:<4} {k['kernel']}{tc}")
 
 
+@profile_app.command("get")
+def get_cmd(
+    trace: str = typer.Argument(..., help="Path to profile_trace.json"),
+    field: Optional[str] = typer.Argument(None, help="Metric name (omit to list metrics)"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Print ONE metric — minimal output for tight loops (img_per_s, forward_ms, gpu_util...)."""
+    a = _load(trace)
+    m = a["metrics"]
+    if not field:
+        keys = sorted(m.keys())
+        print(_json.dumps(keys) if json_output else "available metrics:\n  " + "\n  ".join(keys))
+        return
+    if field not in m:
+        typer.echo(f"unknown metric '{field}'. run 'profile get {trace}' to list metrics.", err=True)
+        raise typer.Exit(2)
+    print(_json.dumps({field: m[field]}) if json_output else m[field])
+
+
+@profile_app.command("phases")
+def phases_cmd(
+    trace: str = typer.Argument(..., help="Path to profile_trace.json"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Per-phase breakdown: GPU ms, wall ms, kernel & op counts (forward/backward/dataload/...)."""
+    a = _load(trace)
+    if json_output:
+        print(_json.dumps({"trace": a["trace"], "phases": a["phases"]}, indent=2))
+        return
+    print(f"{'phase':<11} {'gpu_ms':>8} {'wall_ms':>8} {'kernels':>8} {'ops':>7}")
+    for p in a["phases"]:
+        wall = "-" if p["wall_ms_per_step"] is None else f"{p['wall_ms_per_step']:.1f}"
+        print(f"{p['phase']:<11} {p['gpu_ms_per_step']:8.1f} {wall:>8} "
+              f"{p['kernels_per_step']:8d} {p['ops_per_step']:7d}")
+
+
 @profile_app.command("kernels")
 def kernels_cmd(
     trace: str = typer.Argument(..., help="Path to profile_trace.json"),
@@ -123,11 +159,18 @@ def kernels_cmd(
     grep: Optional[str] = typer.Option(None, "--grep", help="Filter by kernel-name regex"),
     tensorcore: bool = typer.Option(False, "--tensorcore", help="Only Tensor-Core kernels"),
     sort: str = typer.Option("time", "--sort", help="time | count | name"),
+    phase: Optional[str] = typer.Option(None, "--phase", help="Restrict to a phase (forward/backward/dataload/to_device/optimizer)"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Drill to individual GPU kernels — the bottom of the analysis."""
     a = _load(trace)
-    ks = a["kernels"]
+    if phase:
+        ks = a["kernels_by_phase"].get(phase)
+        if ks is None:
+            typer.echo(f"unknown phase '{phase}'. available: {', '.join(a['kernels_by_phase'])}", err=True)
+            raise typer.Exit(2)
+    else:
+        ks = a["kernels"]
     if category:
         ks = [k for k in ks if category.lower() in k["category"].lower()]
     if grep:
@@ -151,11 +194,19 @@ def kernels_cmd(
 def ops_cmd(
     trace: str = typer.Argument(..., help="Path to profile_trace.json"),
     top: int = typer.Option(20, "--top"),
+    phase: Optional[str] = typer.Option(None, "--phase", help="Restrict to a phase (forward/backward/...)"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Framework view: aten/autograd ops by CPU time (host-launch culprits)."""
     a = _load(trace)
-    ops = a["ops"][:top]
+    if phase:
+        ops_all = a["ops_by_phase"].get(phase)
+        if ops_all is None:
+            typer.echo(f"unknown phase '{phase}'. available: {', '.join(a['ops_by_phase'])}", err=True)
+            raise typer.Exit(2)
+    else:
+        ops_all = a["ops"]
+    ops = ops_all[:top]
     if json_output:
         print(_json.dumps({"trace": a["trace"], "ops": ops}, indent=2))
         return
