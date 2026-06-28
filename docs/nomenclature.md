@@ -43,6 +43,7 @@ separate category, covered in the note below):
 | `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
 | `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
+| `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 
 Casing rules observed in the table:
 
@@ -96,6 +97,7 @@ ships:
 | `fomo`      | `s`, `m`, `l` |
 | `mobilenetv4` | `s`, `m`, `l` (conv-Small/Medium/Large) |
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
+| `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 
 Notes:
 
@@ -166,6 +168,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
@@ -250,18 +253,28 @@ license forbids redistribution); see `libreyolo/models/l2cs/model.py`.
 LibreMobileNetV4s-cls.pt   # MobileNetV4-conv-Small  (224, ImageNet-1k)
 LibreMobileNetV4m-cls.pt   # MobileNetV4-conv-Medium (224, ImageNet-1k)
 LibreMobileNetV4l-cls.pt   # MobileNetV4-conv-Large  (256, ImageNet-1k)
+
 LibreConvNeXtt-cls.pt      # ConvNeXt-V1-Tiny        (224, ImageNet-1k)
 LibreConvNeXts-cls.pt      # ConvNeXt-V1-Small       (224, ImageNet-1k)
 LibreConvNeXtb-cls.pt      # ConvNeXt-V1-Base        (224, ImageNet-1k)
+
+LibreEfficientNetV2b0-cls.pt   # EfficientNetV2-base-b0 (224, ImageNet-1k)
+LibreEfficientNetV2b1-cls.pt   # EfficientNetV2-base-b1 (240, ImageNet-1k)
+LibreEfficientNetV2b2-cls.pt   # EfficientNetV2-base-b2 (260, ImageNet-1k)
+LibreEfficientNetV2b3-cls.pt   # EfficientNetV2-base-b3 (300, ImageNet-1k)
 ```
 
 Unlike `gaze`/`point` (which carry their suffix despite being single-task),
 `classify` keeps its `-cls` suffix to match the ecosystem-wide convention. The
-architectures are native ports derived from timm (Apache-2.0); weights are
-Apache-2.0 ImageNet-1k and load bit-identically (see each family's `NOTICE`,
-e.g. `libreyolo/models/mobilenetv4/NOTICE`, `libreyolo/models/convnext/NOTICE`).
+`mobilenetv4` family is a native port of MobileNetV4 (the speed tier); the
+`convnext` family is a native port of ConvNeXt V1; the `efficientnetv2` family
+is a native port of EfficientNetV2-base (the accuracy tier). All are derived
+from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
+bit-identically (see each family's `NOTICE`, e.g.
+`libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/convnext/NOTICE`).
 Only ConvNeXt **V1** ships — ConvNeXt-V2's small checkpoints are CC-BY-NC and
-are excluded.
+are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
+`.in21k`/JFT variants carry extra-data terms.
 
 ## Resolution precedence
 

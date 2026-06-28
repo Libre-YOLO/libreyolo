@@ -103,8 +103,19 @@ LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt,
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
 LibreECx-pose.pt, LibreECs-seg.pt, LibreECm-seg.pt,
-LibreECl-seg.pt, LibreECx-seg.pt
+LibreECl-seg.pt, LibreECx-seg.pt,
+
+LibreMobileNetV4s-cls.pt, LibreMobileNetV4m-cls.pt,
+LibreMobileNetV4l-cls.pt,
+
+LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
+LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt
 ```
+
+Classification (`-cls`) repos use `pipeline_tag: image-classification`,
+`datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
+tracks detection only). The architecture is a native timm-derived port; weights
+are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
 
 Common rule violations to reject before upload:
 
