@@ -65,6 +65,7 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 
 
 def _ensure_rfdetr():

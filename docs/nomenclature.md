@@ -44,6 +44,7 @@ separate category, covered in the note below):
 | `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
+| `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 
 Casing rules observed in the table:
 
@@ -98,6 +99,7 @@ ships:
 | `mobilenetv4` | `s`, `m`, `l` (conv-Small/Medium/Large) |
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
+| `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 
 Notes:
 
@@ -169,6 +171,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
@@ -262,6 +265,11 @@ LibreEfficientNetV2b0-cls.pt   # EfficientNetV2-base-b0 (224, ImageNet-1k)
 LibreEfficientNetV2b1-cls.pt   # EfficientNetV2-base-b1 (240, ImageNet-1k)
 LibreEfficientNetV2b2-cls.pt   # EfficientNetV2-base-b2 (260, ImageNet-1k)
 LibreEfficientNetV2b3-cls.pt   # EfficientNetV2-base-b3 (300, ImageNet-1k)
+
+LibreResNet18-cls.pt       # ResNet-18  (224, ImageNet-1k, a1 recipe)
+LibreResNet34-cls.pt       # ResNet-34  (224, ImageNet-1k, a1 recipe)
+LibreResNet50-cls.pt       # ResNet-50  (224, ImageNet-1k, a1 recipe)
+LibreResNet101-cls.pt      # ResNet-101 (224, ImageNet-1k, a1 recipe)
 ```
 
 Unlike `gaze`/`point` (which carry their suffix despite being single-task),

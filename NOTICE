@@ -68,6 +68,17 @@ EfficientNetV2 / timm (Apache License 2.0)
     naming mirrors timm so its Apache-2.0 ImageNet-1k weights load unchanged and
     inference is bit-identical.
 
+ResNet / timm (Apache License 2.0)
+    Path:    libreyolo/models/resnet/
+    License: libreyolo/models/resnet/NOTICE  (Apache-2.0)
+    Source:  https://github.com/huggingface/pytorch-image-models
+
+    The ResNet architecture (libreyolo/models/resnet/nn.py) is a native
+    re-implementation of the vanilla ResNet (He et al. 2015, v1.5). Weights are
+    timm's `resnet*.a1_in1k` (Ross Wightman), Apache-2.0, ImageNet-1k. Module
+    naming mirrors timm/torchvision so weights load unchanged and inference is
+    bit-identical.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------
