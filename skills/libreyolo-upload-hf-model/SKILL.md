@@ -49,6 +49,9 @@ file = name + ".pt"
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
+| ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
+| EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 
 **Ask the user** if: the size code isn't obvious, the family isn't one of the above, or the filename doesn't match what the loader at `libreyolo/models/base/model.py:get_download_url` builds. Do not guess.
 
@@ -107,6 +110,8 @@ LibreECl-seg.pt, LibreECx-seg.pt,
 
 LibreMobileNetV4s-cls.pt, LibreMobileNetV4m-cls.pt,
 LibreMobileNetV4l-cls.pt,
+
+LibreConvNeXtt-cls.pt, LibreConvNeXts-cls.pt, LibreConvNeXtb-cls.pt,
 
 LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
 LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt

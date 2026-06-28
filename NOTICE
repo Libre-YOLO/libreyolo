@@ -44,6 +44,30 @@ MobileNetV4 / timm (Apache License 2.0)
     unchanged and inference is bit-identical. Apache-2.0 is MIT-compatible;
     these terms add only attribution obligations.
 
+ConvNeXt / timm (MIT code + Apache-2.0 weights)
+    Path:    libreyolo/models/convnext/
+    License: libreyolo/models/convnext/NOTICE
+    Source:  https://github.com/facebookresearch/ConvNeXt
+             https://github.com/huggingface/pytorch-image-models
+
+    The ConvNeXt V1 architecture (libreyolo/models/convnext/nn.py) is a native
+    re-implementation derived from Meta's ConvNeXt (MIT) and timm's ConvNeXt.
+    Module naming mirrors timm so its Apache-2.0 ImageNet-1k `fb_in1k` weights
+    load unchanged and inference is bit-identical. ConvNeXt-V2's small
+    checkpoints are CC-BY-NC and are intentionally NOT used.
+
+EfficientNetV2 / timm (Apache License 2.0)
+    Path:    libreyolo/models/efficientnetv2/
+    License: libreyolo/models/efficientnetv2/NOTICE  (Apache-2.0)
+    Source:  https://github.com/huggingface/pytorch-image-models
+             https://github.com/google/automl
+
+    The EfficientNetV2 architecture (libreyolo/models/efficientnetv2/nn.py) is a
+    native re-implementation derived from timm's EfficientNetV2 (Ross Wightman)
+    and Google's EfficientNetV2 (google/automl), licensed Apache-2.0. Module
+    naming mirrors timm so its Apache-2.0 ImageNet-1k weights load unchanged and
+    inference is bit-identical.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------
