@@ -663,6 +663,14 @@ class BaseTrainer(ABC):
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        if per_rank_batch < 2:
+            raise ValueError(
+                "Classification training needs an effective per-rank batch size >= 2 "
+                f"(got {per_rank_batch} from batch={self.config.batch}, "
+                f"world_size={self.world_size}). A batch of 1 breaks the BatchNorm in "
+                "the pooled classifier head (e.g. MobileNetV4/EfficientNetV2 norm_head). "
+                "Increase batch (or reduce world_size)."
+            )
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler

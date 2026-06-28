@@ -208,6 +208,23 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+timm / PyTorch Image Models (Hugging Face)
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/pytorch-image-models
+License: Apache License 2.0
+Copyright (c) Ross Wightman and the timm contributors.
+Used for: the native image-classification model families ported from
+          timm architectures — libreyolo/models/{mobilenetv4,convnext,
+          efficientnetv2,resnet}/. Module/attribute names mirror timm so
+          its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
+          inference is bit-identical. Architecture lineage: ConvNeXt also
+          derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from
+          google/automl (Apache-2.0); ResNet from He et al. 2015. Weights
+          (timm *.in1k / *.fb_in1k / a1_in1k, Apache-2.0) are mirrored on
+          the LibreYOLO Hugging Face org. ConvNeXt-V2 fcmae weights
+          (CC-BY-NC) are NOT used.
+
+--------------------------------------------------------------------
 Apache License 2.0 (full text)
 --------------------------------------------------------------------
 The full text of the Apache License, Version 2.0 is available at

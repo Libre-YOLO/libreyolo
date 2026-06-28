@@ -21,6 +21,7 @@ recursive-include libreyolo *.yaml
 
 # Bundled third-party license texts (must ship with the wheel)
 recursive-include libreyolo/models *.md
+recursive-include libreyolo/models NOTICE
 include THIRD_PARTY_NOTICES.txt
 include weights/LICENSE_NOTICE.txt
 include NOTICE

@@ -67,7 +67,7 @@ def convert(size: str) -> Path:
     out = Path("weights") / f"LibreResNet{size}-cls.pt"
     tmp = out.with_suffix(out.suffix + ".tmp")
     save_checkpoint(wrapped, tmp)
-    tmp.rename(out)  # atomic
+    tmp.replace(out)  # atomic overwrite (Windows-safe on rerun)
     print(f"Wrote {out}  (timm {tag}, nc=1000, task=classify, imgsz={IMGSZ})")
     return out
 

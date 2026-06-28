@@ -186,10 +186,14 @@ class ConvNeXt(nn.Module):
         return self.head(x, pre_logits=pre_logits)
 
     def reset_classifier(self, num_classes: int) -> None:
-        """Swap the final Linear for fine-tuning to a new class count."""
+        """Swap the final Linear for fine-tuning to a new class count.
+
+        Preserves the existing head's device AND dtype so half/bfloat16 flows
+        survive a class-count change.
+        """
         self.num_classes = num_classes
-        device = self.head.fc.weight.device
-        self.head.fc = nn.Linear(self.num_features, num_classes).to(device)
+        w = self.head.fc.weight
+        self.head.fc = nn.Linear(self.num_features, num_classes).to(device=w.device, dtype=w.dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.forward_head(self.forward_features(x))

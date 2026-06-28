@@ -22,8 +22,10 @@ Libre<FAMILY><size>[-<task>].pt
 
 ## Family prefixes
 
-The 12 detector families registered into the model factory (the VLM tier is a
-separate category, covered in the note below):
+The model families registered into the model factory (the VLM tier is a
+separate category, covered in the note below). Most are detectors; the
+`mobilenetv4` / `convnext` / `efficientnetv2` / `resnet` families are
+classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -80,7 +82,7 @@ intentionally preserved. See
 Sizes are family-specific. The table below records what each family currently
 ships:
 
-| Family | Size codes (detect) |
+| Family | Size codes |
 |---|---|
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
 | `yolo9`     | `t`, `s`, `m`, `c` |

@@ -148,6 +148,8 @@ libreyolo = [
     "assets/*.jpg",
     "config/**/*.yaml",
     "training/*.yaml",
+    "models/**/NOTICE",
+    "models/**/*.md",
 ]
 
 [tool.setuptools.packages.find]

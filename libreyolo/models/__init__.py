@@ -617,5 +617,9 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
     "try_ensure_rfdetr",
 ]
