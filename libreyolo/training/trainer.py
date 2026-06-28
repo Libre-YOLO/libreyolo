@@ -660,6 +660,8 @@ class BaseTrainer(ABC):
             imgsz=imgsz,
             augment=True,
             class_to_idx=class_to_idx,
+            crop_pct=getattr(wrapper, "crop_pct", 0.875),
+            interpolation=getattr(wrapper, "interpolation", "bilinear"),
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))

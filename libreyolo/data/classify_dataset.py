@@ -29,6 +29,7 @@ from urllib.request import urlopen
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 from torchvision.datasets import ImageFolder
 
 from .utils import DATASETS_DIR
@@ -169,26 +170,45 @@ def get_class_names(dataset_root: str | Path, split: str = "train") -> List[str]
     return classes
 
 
-def build_classify_transforms(imgsz: int, augment: bool):
+def _interp_mode(interpolation: str) -> InterpolationMode:
+    return {
+        "bilinear": InterpolationMode.BILINEAR,
+        "bicubic": InterpolationMode.BICUBIC,
+        "nearest": InterpolationMode.NEAREST,
+    }.get(str(interpolation).lower(), InterpolationMode.BILINEAR)
+
+
+def build_classify_transforms(
+    imgsz: int,
+    augment: bool,
+    crop_pct: float = 0.875,
+    interpolation: str = "bilinear",
+):
     """Build train/val image transforms for classification.
 
     Training uses a random-resized crop plus horizontal flip; validation uses a
-    deterministic resize and center crop. Both normalize with ImageNet stats.
+    deterministic shorter-side resize (``floor(imgsz / crop_pct)``) and center
+    crop. ``crop_pct`` and ``interpolation`` let a model family match its native
+    eval pipeline (e.g. bicubic + 0.95 crop) so ``model.val()`` agrees with
+    ``model.predict()``. Both normalize with ImageNet stats.
     """
+    import math
+
+    mode = _interp_mode(interpolation)
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     if augment:
         return transforms.Compose(
             [
-                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0)),
+                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]
         )
-    resize = int(round(imgsz / 0.875))
+    resize = int(math.floor(imgsz / crop_pct))
     return transforms.Compose(
         [
-            transforms.Resize(resize),
+            transforms.Resize(resize, interpolation=mode),
             transforms.CenterCrop(imgsz),
             transforms.ToTensor(),
             normalize,
@@ -210,6 +230,8 @@ class ClassifyDataset(Dataset):
         imgsz: int,
         augment: bool,
         class_to_idx: Dict[str, int] | None = None,
+        crop_pct: float = 0.875,
+        interpolation: str = "bilinear",
     ):
         self.root = Path(dataset_root)
         self.split = split
@@ -218,7 +240,7 @@ class ClassifyDataset(Dataset):
         if not split_dir.is_dir():
             raise FileNotFoundError(f"Split directory not found: {split_dir}")
 
-        transform = build_classify_transforms(imgsz, augment)
+        transform = build_classify_transforms(imgsz, augment, crop_pct, interpolation)
         self._impl = ImageFolder(str(split_dir), transform=transform)
 
         # Pin the label mapping to the train split when supplied so val labels

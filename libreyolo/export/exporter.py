@@ -835,6 +835,14 @@ class BaseExporter(ABC):
             ).lower(),
             "obb": str(task == "obb").lower(),
         }
+        # Classification eval preprocessing — lets exported-backend inference
+        # match native predict()/val() (per-family crop_pct + interpolation).
+        _crop_pct = getattr(self.model, "crop_pct", None)
+        _interp = getattr(self.model, "interpolation", None)
+        if _crop_pct is not None:
+            meta["crop_pct"] = str(_crop_pct)
+        if _interp is not None:
+            meta["interpolation"] = str(_interp)
         if task == "pose":
             pose_meta = _pose_keypoint_shape_metadata(self.model)
             meta.update(

@@ -83,6 +83,9 @@ class ClassifyValidator(BaseValidator):
             imgsz=self.config.imgsz,
             augment=False,
             class_to_idx=class_to_idx,
+            # Match the model's native eval pipeline so val() agrees with predict().
+            crop_pct=getattr(self.model, "crop_pct", 0.875),
+            interpolation=getattr(self.model, "interpolation", "bilinear"),
         )
         self._num_classes = len(class_names)
         return DataLoader(
