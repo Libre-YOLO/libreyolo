@@ -39,10 +39,15 @@ _NULL = contextlib.nullcontext()
 
 # Kernel-name -> coarse category. Order matters (first match wins): norm before
 # gemm/conv (cudnn batchnorm), layout before gemm/conv (cudnn nchw<->nhwc).
+# First match wins. Explicit transposes are checked BEFORE conv (cudnn's
+# nchwToNhwc kernel also contains "cudnn"); conv/gemm is checked BEFORE generic
+# copies (cutlass conv epilogues mention "copy"); bare nchw/nhwc are NOT layout
+# tokens (they appear in conv kernel names as layout specialisations).
 _KERNEL_CATS = (
-    ("reduction / norm", r"reduce|_norm|batchnorm|\bbn_|softmax|layer_norm|welford|variance|moment"),
-    ("layout / copy", r"nchw|nhwc|memcpy|memset|gather|scatter|permute|transpose|contiguous|\bcat\b|concat|slice"),
+    ("reduction / norm", r"bn_bw|bn_fw|batchnorm|batch_norm|layer_norm|group_norm|instance_norm|softmax|welford|\breduce|variance|rms_norm"),
+    ("layout / copy", r"nchwtonhwc|nhwctonchw"),
     ("gemm / conv", r"gemm|conv|implicit|cutlass|cudnn|wgrad|dgrad|winograd"),
+    ("layout / copy", r"memcpy|memset|\bcopy|catarray|concat|contiguous|\bgather|\bscatter|\bpermute|\btranspose"),
     ("elementwise", r"elementwise|vectorized|pointwise|activation|silu|relu|sigmoid|unary|binary|clamp|fill|arange"),
 )
 
@@ -90,6 +95,163 @@ _TC_PAT = r"h884|h1688|i16832|i8816|s16816|s1688|hmma|imma|tensorop|wmma|16816|1
 
 def _is_tensorcore(name: str) -> bool:
     return re.search(_TC_PAT, name.lower()) is not None
+
+
+def _pick_window(steps):
+    """Return ``(w0, w1, n_real)`` for a steady multi-step analysis window.
+
+    Skips the first two (cold) ProfilerStep markers; spanning several steps is
+    immune to torch's duplicate big/small ProfilerStep markers.
+    """
+    if len(steps) >= 4:
+        w0 = steps[2]["ts"]
+        w1 = steps[min(len(steps) - 1, 8)]["ts"]
+    elif steps:
+        w0 = steps[0]["ts"]
+        w1 = steps[-1]["ts"] + (steps[-1].get("dur", 0) or 0)
+    else:
+        return None, None, 1
+    if w1 <= w0:
+        w1 = w0 + 1.0
+    import statistics as _st
+    med = _st.median([s.get("dur", 0) for s in steps]) if steps else 0
+    n_real = max(len([s for s in steps if w0 <= s["ts"] < w1 and s.get("dur", 0) > med]), 1)
+    return w0, w1, n_real
+
+
+def analyze_trace(trace_path, summary_path=None):
+    """Rich, CLI-facing analysis of a torch ``profile_trace.json``.
+
+    Mines the GPU truth at every abstraction level (utilisation, kernel mix,
+    every kernel, every aten op, per-phase GPU time, Tensor-Core %). When a
+    sibling ``profile_summary.json`` is present it is used for the honest
+    unsynced step time / dataloader stall / verdict; otherwise those are
+    derived from the trace (with dataloader-vs-host noted as approximate).
+
+    Returns a plain dict — safe to ``json.dumps`` — so an agent can drive a
+    train -> profile -> drill-down -> change -> compare loop over the CLI.
+    """
+    trace_path = Path(trace_path)
+    data = json.loads(trace_path.read_text(encoding="utf-8"))
+    events = data.get("traceEvents", []) if isinstance(data, dict) else data
+
+    steps = sorted(
+        (e for e in events if e.get("ph") == "X"
+         and str(e.get("name", "")).startswith("ProfilerStep")),
+        key=lambda e: e.get("ts", 0),
+    )
+    w0, w1, n_real = _pick_window(steps)
+
+    def in_win(ts):
+        return w0 is None or (w0 <= ts < w1)
+
+    kern, opagg, phase_gpu = {}, {}, {}
+    gpu_busy_us = memcpy_us = tc_us = 0.0
+    n_kern = 0
+    for e in events:
+        if e.get("ph") != "X":
+            continue
+        cat = e.get("cat", "")
+        ts = e.get("ts")
+        dur = e.get("dur", 0) or 0
+        if ts is None or not in_win(ts):
+            continue
+        name = str(e.get("name", ""))
+        if cat == "kernel":
+            gpu_busy_us += dur
+            n_kern += 1
+            if _is_tensorcore(name):
+                tc_us += dur
+            k = kern.setdefault(name, [0.0, 0])
+            k[0] += dur
+            k[1] += 1
+        elif cat in ("gpu_memcpy", "gpu_memset"):
+            memcpy_us += dur
+        elif cat == "cpu_op":
+            o = opagg.setdefault(name, [0.0, 0])
+            o[0] += dur
+            o[1] += 1
+        elif cat == "gpu_user_annotation" and name.startswith("step/"):
+            phase_gpu[name[5:]] = phase_gpu.get(name[5:], 0.0) + dur
+
+    wall_ms = (w1 - w0) / 1000.0 if w0 is not None else 0.0
+    tot = sum(v[0] for v in kern.values()) or 1.0
+
+    summary = {}
+    sp = Path(summary_path) if summary_path else trace_path.with_name("profile_summary.json")
+    if sp.exists():
+        try:
+            summary = json.loads(sp.read_text(encoding="utf-8"))
+        except Exception:
+            summary = {}
+    real = summary.get("real", {})
+    step_ms = real.get("step_ms") or (wall_ms / n_real if n_real else wall_ms)
+    gpu_busy_ms = gpu_busy_us / 1000.0 / n_real
+    util = (gpu_busy_ms / step_ms) if step_ms else 0.0
+
+    def krow(name, td):
+        return {
+            "kernel": _friendly_kernel(name),
+            "raw_name": name[:90],
+            "category": _kernel_category(name),
+            "tensorcore": _is_tensorcore(name),
+            "ms_per_step": round(td[0] / 1000.0 / n_real, 4),
+            "pct_of_gpu": round(td[0] / tot * 100, 2),
+            "count_per_step": max(td[1] // n_real, 1),
+        }
+
+    kernels = sorted((krow(n, td) for n, td in kern.items()),
+                     key=lambda r: r["pct_of_gpu"], reverse=True)
+    cats = {}
+    for n, td in kern.items():
+        c = _kernel_category(n)
+        cats[c] = cats.get(c, 0.0) + td[0]
+    categories = [{"name": c, "pct": round(v / tot * 100, 1),
+                   "ms_per_step": round(v / 1000.0 / n_real, 3)}
+                  for c, v in sorted(cats.items(), key=lambda kv: kv[1], reverse=True) if v > 0]
+    optot = sum(v[0] for v in opagg.values()) or 1.0
+    ops = sorted(({"op": n[:70], "ms_per_step": round(td[0] / 1000.0 / n_real, 4),
+                   "pct_of_cpu_ops": round(td[0] / optot * 100, 2),
+                   "count_per_step": max(td[1] // n_real, 1)}
+                  for n, td in opagg.items()),
+                 key=lambda r: r["pct_of_cpu_ops"], reverse=True)
+    phases_gpu = [{"phase": p, "gpu_ms_per_step": round(v / 1000.0 / n_real, 3)}
+                  for p, v in sorted(phase_gpu.items(), key=lambda kv: kv[1], reverse=True)]
+
+    bound = summary.get("bound")
+    why = summary.get("bound_why", "")
+    if not bound:
+        bound = "compute" if util >= 0.8 else "host / launch"
+        why = (f"GPU ~{util * 100:.0f}% busy"
+               if bound == "compute" else
+               f"GPU only ~{util * 100:.0f}% busy — tiny kernels / host overhead "
+               "(dataloader stall not measurable from trace alone)")
+
+    return {
+        "trace": str(trace_path),
+        "model": (summary.get("meta") or {}).get("model"),
+        "config": summary.get("meta") or {},
+        "bound": bound,
+        "bound_why": why,
+        "step_ms": round(step_ms, 2),
+        "img_per_s": real.get("img_per_s"),
+        "dataload_ms": real.get("dataload_ms"),
+        "dataload_frac": real.get("dataload_frac"),
+        "gpu_util": round(util, 3),
+        "gpu_busy_ms_per_step": round(gpu_busy_ms, 2),
+        "mean_kernel_us": round(gpu_busy_us / n_kern, 2) if n_kern else 0.0,
+        "kernels_per_step": int(n_kern // n_real),
+        "unique_kernels": len(kern),
+        "memcpy_ms_per_step": round(memcpy_us / 1000.0 / n_real, 3),
+        "tensorcore_pct": round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0,
+        "peak_vram_mb": (summary.get("analysis") or {}).get("peak_vram_mb"),
+        "window": {"wall_ms": round(wall_ms, 1), "real_steps": n_real},
+        "categories": categories,
+        "phases_gpu": phases_gpu,
+        "top_kernels": kernels[:8],
+        "kernels": kernels,
+        "ops": ops,
+    }
 
 
 class TrainStepProfiler:
