@@ -41,6 +41,7 @@ separate category, covered in the note below):
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
 | `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
+| `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
 
 Casing rules observed in the table:
 
@@ -92,6 +93,7 @@ ships:
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
 | `fomo`      | `s`, `m`, `l` |
+| `mobilenetv4` | `s`, `m`, `l` (conv-Small/Medium/Large) |
 
 Notes:
 
@@ -160,6 +162,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
+| `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
@@ -237,6 +240,20 @@ scratch. See `libreyolo/models/fomo/model.py` for details.
 it carries no suffix in the canonical filename; `-gaze` is accepted but
 redundant. L2CS weights are not hosted by LibreYOLO (the Gaze360 dataset
 license forbids redistribution); see `libreyolo/models/l2cs/model.py`.
+
+### Classification (classifier-only)
+
+```text
+LibreMobileNetV4s-cls.pt   # MobileNetV4-conv-Small  (224, ImageNet-1k)
+LibreMobileNetV4m-cls.pt   # MobileNetV4-conv-Medium (224, ImageNet-1k)
+LibreMobileNetV4l-cls.pt   # MobileNetV4-conv-Large  (256, ImageNet-1k)
+```
+
+Unlike `gaze`/`point` (which carry their suffix despite being single-task),
+`classify` keeps its `-cls` suffix to match the ecosystem-wide convention. The
+architecture is a native port of MobileNetV4 derived from timm (Apache-2.0);
+weights are Apache-2.0 ImageNet-1k and load bit-identically (see
+`libreyolo/models/mobilenetv4/NOTICE`).
 
 ## Resolution precedence
 

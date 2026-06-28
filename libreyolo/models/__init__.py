@@ -62,6 +62,7 @@ from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 
 
 def _ensure_rfdetr():

@@ -32,6 +32,18 @@ DINOv3 (Meta DINOv3 License Agreement)
     These terms apply only to the DINOv3 subtree listed above. The
     rest of LibreYOLO remains under the MIT License.
 
+MobileNetV4 / timm (Apache License 2.0)
+    Path:    libreyolo/models/mobilenetv4/
+    License: libreyolo/models/mobilenetv4/NOTICE  (Apache-2.0)
+    Source:  https://github.com/huggingface/pytorch-image-models
+
+    The MobileNetV4 architecture (libreyolo/models/mobilenetv4/nn.py) is a
+    native re-implementation derived from timm's MobileNetV4
+    (Ross Wightman and the timm contributors), licensed Apache-2.0. Module
+    naming mirrors timm so its Apache-2.0 ImageNet-1k pretrained weights load
+    unchanged and inference is bit-identical. Apache-2.0 is MIT-compatible;
+    these terms add only attribution obligations.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------
