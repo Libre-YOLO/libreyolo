@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -35,6 +36,60 @@ from torch.profiler import record_function
 
 PHASES = ("to_device", "forward", "backward", "optimizer")
 _NULL = contextlib.nullcontext()
+
+# Kernel-name -> coarse category. Order matters (first match wins): norm before
+# gemm/conv (cudnn batchnorm), layout before gemm/conv (cudnn nchw<->nhwc).
+_KERNEL_CATS = (
+    ("reduction / norm", r"reduce|_norm|batchnorm|\bbn_|softmax|layer_norm|welford|variance|moment"),
+    ("layout / copy", r"nchw|nhwc|memcpy|memset|gather|scatter|permute|transpose|contiguous|\bcat\b|concat|slice"),
+    ("gemm / conv", r"gemm|conv|implicit|cutlass|cudnn|wgrad|dgrad|winograd"),
+    ("elementwise", r"elementwise|vectorized|pointwise|activation|silu|relu|sigmoid|unary|binary|clamp|fill|arange"),
+)
+
+# Friendly labels for the most common mangled kernel names.
+_KERNEL_FRIENDLY = (
+    ("bn_bw", "cudnn batchnorm (bwd)"),
+    ("bn_fw", "cudnn batchnorm (fwd)"),
+    ("nchwtonhwc", "layout nchw->nhwc"),
+    ("nhwctonchw", "layout nhwc->nchw"),
+    ("implicitgemm", "cutlass conv (implicit gemm)"),
+    ("implicit_convolve", "implicit conv"),
+    ("wgrad", "conv wgrad"),
+    ("dgrad", "conv dgrad"),
+    ("cgemm", "gemm"),
+    ("sgemm", "gemm"),
+    ("gemm", "gemm"),
+    ("vectorized_elementwise", "elementwise"),
+    ("elementwise", "elementwise"),
+    ("softmax", "softmax"),
+    ("reduce", "reduction"),
+    ("cat", "concat"),
+)
+
+
+def _kernel_category(name: str) -> str:
+    nl = name.lower()
+    for cat, pat in _KERNEL_CATS:
+        if re.search(pat, nl):
+            return cat
+    return "other"
+
+
+def _friendly_kernel(name: str) -> str:
+    nl = name.lower()
+    for key, friendly in _KERNEL_FRIENDLY:
+        if key in nl:
+            return friendly
+    return name[:40]
+
+
+# Tensor-Core kernel signatures (Volta h884, Ampere/Ada 16816/16832, tf32 s1688,
+# int8 imma, cutlass tensorop, wmma).
+_TC_PAT = r"h884|h1688|i16832|i8816|s16816|s1688|hmma|imma|tensorop|wmma|16816|16832|884gemm|1688gemm"
+
+
+def _is_tensorcore(name: str) -> bool:
+    return re.search(_TC_PAT, name.lower()) is not None
 
 
 class TrainStepProfiler:
@@ -62,6 +117,11 @@ class TrainStepProfiler:
         self.meta = meta or {}
 
         self._is_cuda = getattr(device, "type", str(device)) == "cuda"
+        if self._is_cuda:
+            try:
+                torch.cuda.reset_peak_memory_stats(device)
+            except Exception:
+                pass
         # First half of the active window is unsynced (real timing); second half
         # is synced (compute composition).
         self._half = max(1, self.active // 2)
@@ -184,7 +244,31 @@ class TrainStepProfiler:
         self._build_summary(trace_path)
         timeline_path = None
         if trace_path is not None:
-            timeline_path = self._write_timeline_html(self._curate_trace(trace_path))
+            curated, analysis = self._analyze_trace(trace_path)
+            if analysis:
+                self.summary["analysis"] = analysis
+                if self._is_cuda:
+                    try:
+                        analysis["peak_vram_mb"] = round(
+                            torch.cuda.max_memory_allocated(self.device) / 1e6, 1)
+                    except Exception:
+                        pass
+                self._refine_verdict(analysis)
+                if self.save_dir is not None:
+                    try:
+                        (self.save_dir / "profile_summary.json").write_text(
+                            json.dumps(self.summary, indent=2)
+                        )
+                    except Exception:
+                        pass
+            if curated:
+                if analysis:
+                    analysis["bound"] = self.summary.get("bound")
+                    analysis["bound_why"] = self.summary.get("bound_why", "")
+                    analysis["step_ms"] = self.summary["real"]["step_ms"]
+                    analysis["img_per_s"] = self.summary["real"]["img_per_s"]
+                    analysis["dataload_ms"] = self.summary["real"]["dataload_ms"]
+                timeline_path = self._write_timeline_html(curated)
         self._report(trace_path, timeline_path)
         if self.open_report and timeline_path is not None:
             try:
@@ -218,11 +302,12 @@ class TrainStepProfiler:
                 "dataload_ms": round(real_dl, 3),
                 "compute_ms": round(real_compute, 3),
                 "img_per_s": round(img_s, 2),
-                "gpu_idle_fraction": round(idle_frac, 3),
+                "dataload_frac": round(idle_frac, 3),
             },
             "composition_ms": {p: round(comp[p], 3) for p in PHASES},
             "composition_total_ms": round(comp_total, 3),
             "bound": "dataloader" if idle_frac >= 0.2 else "compute",
+            "bound_why": "",
             "trace": str(trace_path) if trace_path else None,
         }
         if self.save_dir is not None:
@@ -234,6 +319,29 @@ class TrainStepProfiler:
             except Exception:
                 pass
 
+    def _refine_verdict(self, analysis) -> None:
+        """3-way bottleneck classification using the trace-mined GPU util."""
+        dl = self.summary["real"].get("dataload_frac", 0.0)
+        # Tie utilisation to our honest unsynced step time (the trace window's
+        # wall can include the profiler's own sync overhead); GPU-busy is stable.
+        real_step = self.summary["real"].get("step_ms", 0.0)
+        busy = analysis.get("gpu_busy_ms_per_step", 0.0)
+        util = (busy / real_step) if real_step > 0 else analysis.get("gpu_util", 0.0)
+        analysis["gpu_util"] = round(util, 3)
+        if dl >= 0.2:
+            bound = "dataloader"
+            why = f"the GPU waits on input data (~{dl * 100:.0f}% of the step)"
+        elif util >= 0.8:
+            bound = "compute"
+            why = f"the GPU is saturated (~{util * 100:.0f}% busy)"
+        else:
+            bound = "host / launch"
+            why = (f"GPU only ~{util * 100:.0f}% busy — fed too slowly: "
+                   f"{analysis['kernels_per_step']} kernels/step at "
+                   f"~{analysis['mean_kernel_us']:.0f}us each plus host overhead")
+        self.summary["bound"] = bound
+        self.summary["bound_why"] = why
+
     def _emit(self, line: str) -> None:
         if self.logger is not None:
             self.logger.info(line)
@@ -244,8 +352,7 @@ class TrainStepProfiler:
         s = self.summary
         r = s["real"]
         m = self.meta
-        idle = r["gpu_idle_fraction"] * 100.0
-        comp_total = s["composition_total_ms"] or 1.0
+        an = s.get("analysis")
         bar_w = 20
 
         self._emit("=" * 64)
@@ -255,33 +362,46 @@ class TrainStepProfiler:
             f"imgsz={m.get('imgsz','?')}  amp={m.get('amp','?')}  workers={m.get('workers','?')}"
         )
         self._emit(
-            f"  window: {s['window']['real_steps']} real-timed + "
-            f"{s['window']['synced_steps']} compute-split (+{self.warmup} warmup)"
-        )
-        self._emit(
             f"  REAL step {r['step_ms']:.1f} ms = dataload {r['dataload_ms']:.1f} ms "
             f"+ compute {r['compute_ms']:.1f} ms  ->  {r['img_per_s']:.1f} img/s"
         )
-        if s["bound"] == "dataloader":
+        if an:
             self._emit(
-                f"  >> VERDICT: DATALOADER-BOUND — GPU idle ~{idle:.0f}% "
-                "(waiting on data)."
+                f"  GPU util {an['gpu_util'] * 100:.0f}%  "
+                f"({an['gpu_busy_ms_per_step']:.0f} ms GPU-busy / {r['step_ms']:.0f} ms step)  |  "
+                f"{an['kernels_per_step']} kernels/step @ ~{an['mean_kernel_us']:.0f}us"
             )
-            self._emit(
-                "     Levers: workers↑, cache='ram'/'disk', lighter aug (mosaic), "
-                "or larger batch."
-            )
-        else:
-            self._emit(
-                f"  >> VERDICT: COMPUTE-BOUND — GPU idle only ~{idle:.0f}% (healthy)."
-            )
-        self._emit("  GPU compute composition (synchronized):")
-        for p in PHASES:
-            ms = s["composition_ms"][p]
-            frac = ms / comp_total
-            fill = int(round(frac * bar_w))
-            bar = "#" * fill + "." * (bar_w - fill)
-            self._emit(f"    {p:<10} {ms:8.2f} ms  |{bar}| {frac*100:5.1f}%")
+            bits = []
+            if an.get("peak_vram_mb"):
+                bits.append(f"peak VRAM {an['peak_vram_mb']:.0f} MB")
+            bits.append(f"Tensor Cores {an.get('tensorcore_pct', 0):.0f}% of GPU time")
+            if an.get("memcpy_ms_per_step"):
+                bits.append(f"memcpy {an['memcpy_ms_per_step']:.1f} ms/step")
+            self._emit("  " + "  |  ".join(bits))
+        label = {"dataloader": "DATALOADER-BOUND", "host / launch": "HOST/LAUNCH-BOUND",
+                 "compute": "COMPUTE-BOUND"}.get(s["bound"], str(s["bound"]).upper())
+        self._emit(f"  >> VERDICT: {label} — {s.get('bound_why', '')}.")
+        levers = {
+            "dataloader": "workers↑, cache='ram'/'disk', lighter aug, larger batch",
+            "host / launch": "larger batch (amortize launches), fewer per-step .item()/syncs, CUDA graphs, op fusion",
+            "compute": "already GPU-bound — try AMP/bf16 or a larger model",
+        }
+        self._emit(f"     Levers: {levers.get(s['bound'], '')}.")
+        if an and not self.meta.get("amp"):
+            self._emit("     note: running fp32 — AMP/bf16 would push gemm/conv onto "
+                       f"Tensor Cores (now {an.get('tensorcore_pct', 0):.0f}%).")
+        if an and an.get("categories"):
+            self._emit("  GPU kernel mix:")
+            for c in an["categories"]:
+                fill = int(round(c["pct"] / 100.0 * bar_w))
+                self._emit(f"    {c['name']:<17} {c['pct']:5.1f}%  |"
+                           + "#" * fill + "." * (bar_w - fill)
+                           + f"|  {c['ms']:.1f} ms/step")
+            self._emit("  top kernels (per step):")
+            for k in an["top_kernels"]:
+                self._emit(f"    {k['pct']:5.1f}%  {k['ms']:6.2f} ms  x{k['count']:<4} {k['name']}")
+        self._emit("  per-phase wall (synced): "
+                   + " · ".join(f"{p} {s['composition_ms'][p]:.0f}ms" for p in PHASES))
         if timeline_path:
             self._emit(f"  timeline:  {timeline_path}")
             if self.open_report:
@@ -290,18 +410,18 @@ class TrainStepProfiler:
             self._emit(f"  raw trace: {trace_path}  (load in Perfetto/Nsight if you want)")
         self._emit("=" * 64)
 
-    def _curate_trace(self, trace_path):
-        """Reduce the raw torch trace to the bounded set worth drawing.
+    def _analyze_trace(self, trace_path):
+        """Parse the trace once; return ``(curated_timeline, analysis)``.
 
-        Keeps our ``step/*`` phase spans (CPU + GPU projections), the
-        significant cpu ops, the GPU kernels and memcpys, and the CPU->GPU flow
-        links — within a steady window of ~3 middle training steps.
+        ``analysis`` mines the GPU truth — achieved utilization (kernel busy
+        time / wall), kernel mix and top kernels, mean kernel size — over a
+        steady multi-step window. ``curated_timeline`` is the bounded event set
+        for the viewer (phase bands, capped cpu/gpu lanes, CPU->GPU flows).
         """
         try:
-            import json
             data = json.loads(Path(trace_path).read_text(encoding="utf-8"))
         except Exception:
-            return None
+            return None, None
         events = data.get("traceEvents", []) if isinstance(data, dict) else data
 
         steps = sorted(
@@ -309,60 +429,102 @@ class TrainStepProfiler:
              if e.get("ph") == "X" and str(e.get("name", "")).startswith("ProfilerStep")),
             key=lambda e: e.get("ts", 0),
         )
-        if steps:
-            mid = len(steps) // 2
-            sel = steps[max(0, mid - 1): mid + 2] or steps[:3]
-            w0 = sel[0]["ts"]
-            w1 = sel[-1]["ts"] + sel[-1].get("dur", 0)
+        # Robust window: a contiguous span of several step markers, skipping the
+        # first two (cold). Spanning multiple steps is immune to torch's
+        # duplicate big/small ProfilerStep markers.
+        if len(steps) >= 4:
+            w0 = steps[2]["ts"]
+            w1 = steps[min(len(steps) - 1, 8)]["ts"]
+        elif steps:
+            w0 = steps[0]["ts"]
+            w1 = steps[-1]["ts"] + (steps[-1].get("dur", 0) or 0)
         else:
             w0 = w1 = None
+        if w0 is not None and w1 is not None and w1 <= w0:
+            w1 = w0 + 1.0
 
         def in_win(ts):
-            return w0 is None or (w0 <= ts <= w1)
+            return w0 is None or (w0 <= ts < w1)
 
         LANE = {"pcpu": 0, "cpu": 1, "pgpu": 2, "gpu": 3, "mem": 4}
         kept = []
+        kern_total, kern_count = {}, {}
+        gpu_busy_us = memcpy_us = tc_us = 0.0
+        n_kern = 0
         for e in events:
             if e.get("ph") != "X":
                 continue
             cat = e.get("cat", "")
-            name = str(e.get("name", ""))
             ts = e.get("ts")
             dur = e.get("dur", 0) or 0
             if ts is None or not in_win(ts):
                 continue
-            if cat == "user_annotation" and name.startswith("step/"):
-                lane, label = "pcpu", name[5:]
-            elif cat == "gpu_user_annotation" and name.startswith("step/"):
-                lane, label = "pgpu", name[5:]
-            elif cat == "cpu_op" and dur >= 20:
-                lane, label = "cpu", name
-            elif cat == "kernel" and dur >= 2:
-                lane, label = "gpu", name
+            name = str(e.get("name", ""))
+            if cat == "kernel":
+                gpu_busy_us += dur
+                n_kern += 1
+                if _is_tensorcore(name):
+                    tc_us += dur
+                kern_total[name] = kern_total.get(name, 0.0) + dur
+                kern_count[name] = kern_count.get(name, 0) + 1
+                if dur >= 2:
+                    kept.append({"name": name[:64], "_ts": ts, "_dur": dur,
+                                 "lane": LANE["gpu"], "cat": "gpu"})
             elif cat in ("gpu_memcpy", "gpu_memset"):
-                lane, label = "mem", name
-            else:
-                continue
-            kept.append({"name": label[:64], "_ts": ts, "_dur": dur,
-                         "lane": LANE[lane], "cat": lane})
+                memcpy_us += dur
+                kept.append({"name": name[:64], "_ts": ts, "_dur": dur,
+                             "lane": LANE["mem"], "cat": "mem"})
+            elif cat == "user_annotation" and name.startswith("step/"):
+                kept.append({"name": name[5:], "_ts": ts, "_dur": dur,
+                             "lane": LANE["pcpu"], "cat": "pcpu"})
+            elif cat == "gpu_user_annotation" and name.startswith("step/"):
+                kept.append({"name": name[5:], "_ts": ts, "_dur": dur,
+                             "lane": LANE["pgpu"], "cat": "pgpu"})
+            elif cat == "cpu_op" and dur >= 20:
+                kept.append({"name": name[:64], "_ts": ts, "_dur": dur,
+                             "lane": LANE["cpu"], "cat": "cpu"})
         if not kept:
-            return None
+            return None, None
 
-        # Keep every phase/memcpy span; cap the noisy cpu-op and kernel lanes to
-        # their longest entries so the GPU work isn't crowded out (the autograd
-        # ops are mostly nested wrappers) and the emitted file stays small.
-        def _longest(cat, n):
-            evs = [e for e in kept if e["cat"] == cat]
-            if len(evs) <= n:
-                return evs
-            return sorted(evs, key=lambda e: e["_dur"], reverse=True)[:n]
+        # ---- analysis: the GPU truth ----
+        import statistics as _st
+        wall_ms = (w1 - w0) / 1000.0 if (w0 is not None and w1 is not None) else 0.0
+        med = _st.median([s.get("dur", 0) for s in steps]) if steps else 0
+        n_real = max(len([s for s in steps if w0 <= s["ts"] < w1 and s.get("dur", 0) > med]), 1)
+        gpu_busy_ms = gpu_busy_us / 1000.0
+        util = (gpu_busy_ms / wall_ms) if wall_ms > 0 else 0.0
+        tot = sum(kern_total.values()) or 1.0
+        top = sorted(kern_total.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        top_kernels = [{"name": _friendly_kernel(n), "pct": round(v / tot * 100, 1),
+                        "ms": round(v / 1000.0 / n_real, 3),
+                        "count": max(kern_count[n] // n_real, 1)} for n, v in top]
+        cats = {}
+        for n, v in kern_total.items():
+            c = _kernel_category(n)
+            cats[c] = cats.get(c, 0.0) + v
+        categories = [{"name": c, "pct": round(v / tot * 100, 1),
+                       "ms": round(v / 1000.0 / n_real, 3)}
+                      for c, v in sorted(cats.items(), key=lambda kv: kv[1], reverse=True) if v > 0]
+        analysis = {
+            "gpu_util": round(util, 3),
+            "gpu_busy_ms_per_step": round(gpu_busy_ms / n_real, 2),
+            "mean_kernel_us": round((gpu_busy_us / n_kern) if n_kern else 0.0, 2),
+            "kernels_per_step": int(n_kern // n_real),
+            "memcpy_ms_per_step": round(memcpy_us / 1000.0 / n_real, 3),
+            "tensorcore_pct": round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0,
+            "window_real_steps": n_real,
+            "top_kernels": top_kernels,
+            "categories": categories,
+        }
 
-        kept = (
-            [e for e in kept if e["cat"] in ("pcpu", "pgpu", "mem")]
-            + _longest("cpu", 1500)
-            + _longest("gpu", 2500)
-        )
+        # ---- curate: bounded event set for the viewer ----
+        def _longest(c, n):
+            evs = [e for e in kept if e["cat"] == c]
+            return evs if len(evs) <= n else sorted(
+                evs, key=lambda e: e["_dur"], reverse=True)[:n]
 
+        kept = ([e for e in kept if e["cat"] in ("pcpu", "pgpu", "mem")]
+                + _longest("cpu", 1500) + _longest("gpu", 2500))
         base = min(e["_ts"] for e in kept)
         for e in kept:
             e["t"] = round((e["_ts"] - base) / 1000.0, 3)
@@ -409,8 +571,9 @@ class TrainStepProfiler:
                 break
 
         total = max((e["t"] + e["d"] for e in kept), default=1.0)
-        return {"events": kept, "flows": flows, "lane_rows": lane_rows,
-                "total_ms": round(total, 3), "meta": self.meta}
+        curated = {"events": kept, "flows": flows, "lane_rows": lane_rows,
+                   "total_ms": round(total, 3), "meta": self.meta, "analysis": analysis}
+        return curated, analysis
 
     def _write_timeline_html(self, curated):
         """Render the curated trace into a self-contained timeline.html."""
@@ -465,8 +628,24 @@ _TIMELINE_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
  #tip{position:fixed;pointer-events:none;background:rgba(0,0,0,.88);border:1px solid #333;
       padding:4px 8px;font-size:12px;border-radius:5px;display:none;white-space:nowrap;z-index:9;max-width:60vw;overflow:hidden}
  canvas{display:block;cursor:grab}
+ #ptoggle{position:fixed;right:8px;top:5px;z-index:10;background:#262b36;color:#cbd3df;border:0;
+      border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer}
+ #panel{position:fixed;right:0;top:0;width:332px;height:100vh;overflow:auto;box-sizing:border-box;
+      background:rgba(18,21,28,.96);border-left:1px solid #262b36;padding:34px 14px 30px;font-size:12px;z-index:8}
+ #panel.hidden{display:none}
+ #panel .verdict{font-weight:700;color:#fff;padding:8px 10px;border-radius:7px;margin:2px 0 10px;text-align:center}
+ #panel .util{font-size:26px;font-weight:700;color:#fff}
+ #panel .sub{color:#8b95a5;margin:2px 0}
+ #panel .why{color:#9aa4b2;font-size:11px;margin:8px 0 2px;line-height:1.35}
+ #panel h4{margin:14px 0 6px;color:#cbd3df;font-size:12px}
+ #panel .row{display:flex;align-items:center;gap:6px;margin:3px 0}
+ #panel .nm{flex:0 0 118px;color:#cbd3df;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ #panel .barwrap{flex:1;background:#20242c;border-radius:3px;height:11px;overflow:hidden}
+ #panel .barfill{height:11px}
+ #panel .pc{flex:0 0 42px;text-align:right;color:#8b95a5}
 </style></head><body>
 <div id="hdr"></div><canvas id="c"></canvas><div id="tip"></div>
+<button id="ptoggle" onclick="togglePanel()">hide analysis</button><div id="panel"></div>
 <script>
 var DATA = /*__DATA__*/;
 var cv=document.getElementById('c'),ctx=cv.getContext('2d'),tip=document.getElementById('tip'),
@@ -528,5 +707,26 @@ hdr.innerHTML='LibreYOLO profiler &mdash; <b>'+(DATA.meta.model||'')+'</b> &midd
  '<i class=sw style="background:#3498db"></i>forward<i class=sw style="background:#9b59b6"></i>backward'+
  '<i class=sw style="background:#e67e22"></i>dataload<i class=sw style="background:#16a085"></i>kernel'+
  '<i class=sw style="background:#e74c3c"></i>memcpy &middot; scroll=zoom drag=pan</span>';
+var A=DATA.analysis||{};
+function boundColor(b){return b==='dataloader'?'#c0392b':(b==='compute'?'#1e8449':'#d35400');}
+function buildPanel(){
+ var p=document.getElementById('panel'),tg=document.getElementById('ptoggle');
+ if(A.gpu_util===undefined){p.style.display='none';tg.style.display='none';return;}
+ var CC={'gemm / conv':'#3498db','layout / copy':'#e67e22','elementwise':'#9b59b6','reduction / norm':'#1abc9c','other':'#7f8c8d'};
+ var h='<div class="verdict" style="background:'+boundColor(A.bound)+'">'+String(A.bound||'').toUpperCase()+'</div>';
+ h+='<div class="util">GPU '+Math.round(A.gpu_util*100)+'%</div>';
+ h+='<div class="sub">'+A.gpu_busy_ms_per_step+' ms busy / '+Math.round(A.step_ms||0)+' ms step &middot; '+(A.img_per_s||'?')+' img/s</div>';
+ h+='<div class="sub">'+A.kernels_per_step+' kernels/step @ ~'+Math.round(A.mean_kernel_us)+' &micro;s &middot; memcpy '+A.memcpy_ms_per_step+' ms</div>';
+ h+='<div class="sub">peak VRAM '+(A.peak_vram_mb||'?')+' MB &middot; Tensor Cores '+(A.tensorcore_pct||0)+'% of GPU</div>';
+ h+='<div class="why">'+(A.bound_why||'')+'</div>';
+ h+='<h4>GPU kernel mix</h4>';
+ (A.categories||[]).forEach(function(c){h+='<div class="row"><div class="nm">'+c.name+'</div><div class="barwrap"><div class="barfill" style="width:'+c.pct+'%;background:'+(CC[c.name]||'#7f8c8d')+'"></div></div><div class="pc">'+c.pct+'%</div></div>';});
+ h+='<h4>top kernels / step</h4>';
+ (A.top_kernels||[]).forEach(function(k){h+='<div class="row"><div class="nm" title="'+k.name+'">'+k.name+'</div><div class="pc">'+k.ms.toFixed(2)+'ms</div><div class="pc">'+k.pct+'%</div></div>';});
+ p.innerHTML=h;
+}
+function togglePanel(){var p=document.getElementById('panel'),tg=document.getElementById('ptoggle');
+ p.classList.toggle('hidden');tg.textContent=p.classList.contains('hidden')?'show analysis':'hide analysis';}
+buildPanel();
 window.addEventListener('resize',resize);resize();
 </script></body></html>"""
