@@ -136,6 +136,17 @@ class TrainConfig:
     seed: int = 0
     allow_download_scripts: bool = False
 
+    # Profiling. When ``profile`` is True the trainer profiles a short window of
+    # real training steps (``profile_warmup`` discarded, then ``profile_steps``
+    # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome
+    # trace (open at https://ui.perfetto.dev), then stops early. Zero overhead
+    # when off. Ignored under distributed training.
+    profile: bool = False
+    profile_warmup: int = 5
+    profile_steps: int = 20
+    profile_trace: bool = True
+    profile_open: bool = True
+
     @classmethod
     def from_kwargs(cls, **kwargs):
         """Construct config, warning on unknown keys."""

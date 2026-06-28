@@ -3,6 +3,7 @@
 Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
+import contextlib
 import logging
 import math
 import sys
@@ -142,6 +143,10 @@ class BaseTrainer(ABC):
         self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+
+        # Profiling (opt-in via config.profile). None = disabled, zero overhead.
+        self._profiler = None
+        self._stop_training = False
 
     # =========================================================================
     # Config
@@ -1060,6 +1065,35 @@ class BaseTrainer(ABC):
 
         # Wait for rank 0 to finish dir creation before any rank proceeds.
         barrier()
+
+        # Optional training-step profiler (opt-in via config.profile). Built on
+        # the main process; emits the breakdown + Chrome trace into save_dir.
+        # Disabled under DDP (its early-stop would desync ranks).
+        if getattr(self.config, "profile", False):
+            if self.is_distributed:
+                if is_main_process():
+                    logger.warning("profile=True is ignored under distributed training.")
+            elif is_main_process():
+                from libreyolo.training.profiler import TrainStepProfiler
+
+                self._profiler = TrainStepProfiler(
+                    device=self.device,
+                    warmup=getattr(self.config, "profile_warmup", 5),
+                    active=getattr(self.config, "profile_steps", 20),
+                    trace=getattr(self.config, "profile_trace", True),
+                    open_report=getattr(self.config, "profile_open", True),
+                    save_dir=self.save_dir,
+                    logger=logger,
+                    meta={
+                        "model": self.get_model_tag(),
+                        "device": str(self.device),
+                        "batch": self.config.batch,
+                        "imgsz": self.config.imgsz,
+                        "amp": bool(self.config.amp),
+                        "workers": self.config.workers,
+                    },
+                )
+
         self._is_setup = True
 
     def _ddp_find_unused_parameters(self) -> bool:
@@ -1202,6 +1236,9 @@ class BaseTrainer(ABC):
                             f"Early stopping triggered after {epoch + 1} epochs "
                             f"(patience={self.config.patience}, no improvement for {self.patience_counter} epochs)"
                         )
+                    break
+
+                if getattr(self, "_stop_training", False):
                     break
 
             total_time = time.time() - start_time
@@ -1520,6 +1557,11 @@ class BaseTrainer(ABC):
             max_norm,
         )
 
+    def _prof_phase(self, name: str):
+        """Profiler phase context manager (no-op when profiling is disabled)."""
+        prof = self._profiler
+        return prof.phase(name) if prof is not None else contextlib.nullcontext()
+
     def _train_epoch(
         self, epoch: int
     ) -> Tuple[float, Optional[Dict[str, Any]], Dict[str, float], Dict[str, float]]:
@@ -1551,7 +1593,8 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
-        for batch_idx, batch in enumerate(pbar):
+        loader = self._profiler.wrap_loader(pbar) if self._profiler else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1559,8 +1602,9 @@ class BaseTrainer(ABC):
                 polygons = None
             self.current_iter = epoch * len(self.train_loader) + batch_idx
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1573,25 +1617,31 @@ class BaseTrainer(ABC):
             # so that backward() gradient averaging produces the same
             # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                loss = scale_loss_for_ddp(total_loss_raw)
+                self.optimizer.zero_grad()
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                    if self._should_clip_gradients():
+                        self.scaler.unscale_(self.optimizer)
+                        self._clip_gradients()
+                with self._prof_phase("optimizer"):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                if self._should_clip_gradients():
-                    self.scaler.unscale_(self.optimizer)
+                with self._prof_phase("backward"):
+                    loss.backward()
                     self._clip_gradients()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = scale_loss_for_ddp(total_loss_raw)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self._clip_gradients()
-                self.optimizer.step()
+                with self._prof_phase("optimizer"):
+                    self.optimizer.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1617,6 +1667,12 @@ class BaseTrainer(ABC):
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
+
+            if self._profiler is not None:
+                self._profiler.step()
+                if self._profiler.finished:
+                    self._stop_training = True
+                    break
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -1668,7 +1724,8 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
-        for batch_idx, batch in enumerate(pbar):
+        loader = self._profiler.wrap_loader(pbar) if self._profiler else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1679,8 +1736,9 @@ class BaseTrainer(ABC):
             opt_step = epoch * steps_per_epoch + batch_idx // accum
             self.current_iter = opt_step
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1700,27 +1758,33 @@ class BaseTrainer(ABC):
             # gradient averaging composes correctly with the division-by-
             # window scheme.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                        loss = total_loss_raw / actual_window
+                loss = scale_loss_for_ddp(loss)
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                if is_opt_step:
+                    with self._prof_phase("optimizer"):
+                        if self._should_clip_gradients():
+                            self.scaler.unscale_(self.optimizer)
+                            self._clip_gradients()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
-                self.scaler.scale(loss).backward()
+                with self._prof_phase("backward"):
+                    loss.backward()
                 if is_opt_step:
-                    if self._should_clip_gradients():
-                        self.scaler.unscale_(self.optimizer)
+                    with self._prof_phase("optimizer"):
                         self._clip_gradients()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = total_loss_raw / actual_window
-                loss = scale_loss_for_ddp(loss)
-                loss.backward()
-                if is_opt_step:
-                    self._clip_gradients()
-                    self.optimizer.step()
+                        self.optimizer.step()
 
             if is_opt_step:
                 # EMA
@@ -1744,6 +1808,12 @@ class BaseTrainer(ABC):
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
+
+            if self._profiler is not None:
+                self._profiler.step()
+                if self._profiler.finished:
+                    self._stop_training = True
+                    break
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
