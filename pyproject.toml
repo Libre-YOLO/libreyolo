@@ -85,10 +85,9 @@ ncnn = [
 ]
 tflite = [
     "libreyolo[onnx]",
-    # onnx2tf 2.4.x has four bugs that corrupt RF-DETR conversion; they are
-    # patched at runtime by _ensure_onnx2tf_patched() in export/tflite.py.
+    # onnx2tf 2.4.3 includes the RF-DETR conversion fixes required by this path.
     # Requires Python 3.12+ (onnx2tf 2.4.x wheel constraint).
-    "onnx2tf>=2.4.1; python_version >= '3.12'",
+    "onnx2tf>=2.4.3; python_version >= '3.12'",
     # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
     "onnx-graphsurgeon>=0.3.27",
     # Required for RF-DETR onnxsim preprocessing step.

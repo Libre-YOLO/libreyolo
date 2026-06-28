@@ -557,81 +557,6 @@ def _rfdetr_calib_data(c: int, h: int, w: int, output_dir: Path) -> Path:
     return npy_path
 
 
-# ── onnx2tf runtime patches ────────────────────────────────────────────────────
-# onnx2tf 2.4.x has four bugs that crash or corrupt RF-DETR conversion.  Applied
-# once per process by patching the installed source files on disk (idempotent —
-# skipped if the old text is absent, meaning already patched or version changed).
-#
-# Tile.py: range(len(input_tensor_2.shape)) → range(len(input_tensor_2)...) for
-#   the case where input_tensor_2 is a plain np.ndarray (no .shape on 1-D arr).
-# Slice.py ×2: tf.clip_by_value requires int32; begin_/end_ tensors are int64.
-# LayerNormalization.py: dynamic axis crashes tf_keras.layers.LayerNormalization
-#   at build time; fall back to tf.nn.moments for those cases.
-
-_RFDETR_ONNX2TF_PATCHED: bool = False
-
-
-def _ensure_onnx2tf_patched() -> None:
-    global _RFDETR_ONNX2TF_PATCHED
-    if _RFDETR_ONNX2TF_PATCHED:
-        return
-    import importlib
-    from pathlib import Path as _Path
-
-    _patch_specs = [
-        (
-            "onnx2tf.ops.Tile",
-            "range(len(input_tensor_2.shape))",
-            "range(len(input_tensor_2) if isinstance(input_tensor_2, np.ndarray) else len(input_tensor_2.shape))",
-            "Tile: fix initial permutation for numpy-array multiples",
-        ),
-        (
-            "onnx2tf.ops.LayerNormalization",
-            "    tf_layers_dict[graph_node_output_1.name]['tf_node'] = \\\n        tf_keras.layers.LayerNormalization(\n            axis=axis,\n            epsilon=epsilon,\n            gamma_initializer=cast(Any, gamma_init),\n            beta_initializer=cast(Any, beta_init),\n        )(input_tensor)",
-            "    try:\n        tf_layers_dict[graph_node_output_1.name]['tf_node'] = \\\n            tf_keras.layers.LayerNormalization(\n                axis=axis,\n                epsilon=epsilon,\n                gamma_initializer=cast(Any, gamma_init),\n                beta_initializer=cast(Any, beta_init),\n            )(input_tensor)\n    except (TypeError, ValueError):\n        _gamma = tf.constant(scale, dtype=input_tensor.dtype) if scale is not None else None\n        _beta  = tf.constant(bias,  dtype=input_tensor.dtype) if bias  is not None else None\n        _mean, _var = tf.nn.moments(input_tensor, axes=[axis], keepdims=True)\n        _norm = (input_tensor - _mean) / tf.sqrt(_var + epsilon)\n        if _gamma is not None:\n            _norm = _norm * _gamma\n        if _beta is not None:\n            _norm = _norm + _beta\n        tf_layers_dict[graph_node_output_1.name]['tf_node'] = _norm",
-            "LayerNormalization: add tf.nn.moments fallback for dynamic axis",
-        ),
-        (
-            "onnx2tf.ops.Slice",
-            "tf.clip_by_value(t=begin_, clip_value_min=0, clip_value_max=1)",
-            "tf.clip_by_value(t=tf.cast(begin_, tf.int32), clip_value_min=0, clip_value_max=1)",
-            "Slice: cast begin_ to int32 for clip_by_value",
-        ),
-        (
-            "onnx2tf.ops.Slice",
-            "tf.clip_by_value(t=end_, clip_value_min=0, clip_value_max=1)",
-            "tf.clip_by_value(t=tf.cast(end_, tf.int32), clip_value_min=0, clip_value_max=1)",
-            "Slice: cast end_ to int32 for clip_by_value",
-        ),
-    ]
-    for mod_name, old, new, label in _patch_specs:
-        mod = importlib.import_module(mod_name)
-        src_path = _Path(mod.__file__)
-        text = src_path.read_text(encoding="utf-8")
-        if old not in text:
-            if new not in text:
-                logger.warning(
-                    "onnx2tf patch skipped (source text not recognised — "
-                    "onnx2tf version may have changed): %s",
-                    label,
-                )
-            continue
-        try:
-            src_path.write_text(text.replace(old, new), encoding="utf-8")
-        except OSError as exc:
-            logger.warning(
-                "onnx2tf patch could not be written to %s (%s). "
-                "Install onnx2tf into a writable environment (e.g. a virtualenv). "
-                "RF-DETR TFLite conversion may fail.",
-                src_path,
-                exc,
-            )
-            continue
-        logger.info("Applied onnx2tf patch: %s", label)
-        sys.modules.pop(mod_name, None)
-    _RFDETR_ONNX2TF_PATCHED = True
-
-
 def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = False) -> str:
     """Convert an RF-DETR ONNX model to TFLite via the onnx2tf Python API.
 
@@ -640,9 +565,7 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
          uniform NCHW→NHWC transposition throughout the decoder.
       2. param_replacement JSON — aligns the backbone position-embedding Add
          inputs that onnx2tf would otherwise transpose inconsistently.
-      3. onnx2tf patches — four runtime patches for onnx2tf 2.4.x bugs that
-         crash or corrupt RF-DETR conversion (Tile, Slice ×2, LayerNorm).
-      4. tf_converter backend — avoids the TFLite TopK_V2 crash that the
+      3. tf_converter backend — avoids the TFLite TopK_V2 crash that the
          default flatbuffer_direct backend triggers for deformable attention,
          and correctly lowers GridSample without an ONNX-level rewrite.
 
@@ -667,8 +590,6 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
         # Step 3: Write backbone Add transpose fixes to a temp JSON file.
         fix_json = _write_rfdetr_fix_json(tmp)
 
-        # Step 4: Patch onnx2tf 2.4.x bugs before importing the converter.
-        _ensure_onnx2tf_patched()
         from onnx2tf import convert
 
         convert_kwargs: dict[str, Any] = {
@@ -698,7 +619,7 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
                 logger.warning(
                     "onnx2tf does not support tflite_backend= — falling back to default "
                     "backend. RF-DETR TFLite inference may crash or produce wrong results. "
-                    "Upgrade to onnx2tf>=2.4.1."
+                    "Use onnx2tf>=2.4.3."
                 )
                 convert(**convert_kwargs)
 
