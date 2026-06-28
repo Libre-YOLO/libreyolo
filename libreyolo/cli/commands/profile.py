@@ -35,8 +35,18 @@ def _load(trace: str) -> dict:
 
     p = Path(trace)
     if not p.exists():
-        typer.echo(f"trace not found: {trace}", err=True)
+        typer.echo(f"not found: {trace}", err=True)
         raise typer.Exit(2)
+    try:
+        data = _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        data = None
+    # A self-contained profile.json (the recommended artifact to copy/compare)
+    # is used as-is; a raw profile_trace.json is analysed on the fly.
+    if isinstance(data, dict) and str(data.get("schema", "")).startswith(
+        "libreyolo.profile.analysis"
+    ):
+        return data
     try:
         return analyze_trace(p)
     except Exception as exc:  # pragma: no cover - defensive
@@ -52,37 +62,80 @@ def _pct(before, after) -> str:
 
 @profile_app.command("run")
 def run_cmd(
-    data: str = typer.Argument(..., help="Dataset yaml/name (e.g. coco1000)"),
+    data: str = typer.Argument(..., help="Dataset yaml/name (e.g. coco128)"),
     weights: str = typer.Option("LibreYOLO9t.pt", "--weights", help="Model weights file / name"),
     size: str = typer.Option("t", "--size", help="Model size variant"),
-    batch: int = typer.Option(16, "--batch"),
+    batch: int = typer.Option(16, "--batch", help="Micro-batch (-1 auto-fits ~70%% VRAM)"),
     imgsz: int = typer.Option(640, "--imgsz"),
     workers: int = typer.Option(8, "--workers"),
     amp: bool = typer.Option(False, "--amp", help="Use the family's AMP path"),
     steps: int = typer.Option(20, "--steps", help="Profiled (measured) steps"),
+    warmup: int = typer.Option(5, "--warmup", help="Warmup steps before measuring"),
+    repeat: int = typer.Option(1, "--repeat", help="Repeat N times for mean +/- stdev (a single run lies when launch-bound)"),
     device: str = typer.Option("0", "--device"),
     project: str = typer.Option("runs/profile", "--project"),
-    json_output: bool = typer.Option(False, "--json", help="JSON {trace, summary} to stdout"),
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Launch a short profiled training and emit the trace (no browser)."""
+    """Launch a short profiled training and emit a self-contained profile.json."""
+    import statistics as _st
+
+    import torch
     from libreyolo import LibreYOLO
 
-    m = LibreYOLO(model_path=weights, size=size, device=device)
-    m.train(
-        data=data, epochs=1, batch=batch, imgsz=imgsz, workers=workers, amp=amp,
-        device=device, profile=True, profile_steps=steps, profile_open=False,
-        no_aug_epochs=0, project=project, name="prof", exist_ok=True,
-    )
-    trace = Path(project) / "prof" / "profile_trace.json"
+    # Enough total iterations to fill warmup+steps even on a tiny dataset; the
+    # profiler early-stops once the window is full, so extra epochs never run.
+    epochs = warmup + steps + 5
+    trials, last_dir = [], None
+    for i in range(max(1, repeat)):
+        name = f"prof_{i}" if repeat > 1 else "prof"
+        model = LibreYOLO(model_path=weights, size=size, device=device)
+        model.train(
+            data=data, epochs=epochs, batch=batch, imgsz=imgsz, workers=workers,
+            amp=amp, device=device, profile=True, profile_steps=steps,
+            profile_warmup=warmup, profile_open=False, no_aug_epochs=0,
+            project=project, name=name, exist_ok=True,
+        )
+        last_dir = Path(project) / name
+        pj = last_dir / "profile.json"
+        if not pj.exists():
+            typer.echo(
+                f"no profile produced for run {i}: the window (warmup {warmup} + "
+                f"steps {steps}) never filled. Use a larger dataset, fewer --steps, "
+                "or a smaller --batch.", err=True)
+            raise typer.Exit(3)
+        a = _load(str(pj))
+        if a.get("img_per_s") is not None:
+            trials.append(a["img_per_s"])
+        if i < repeat - 1:
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    pj = last_dir / "profile.json"
+    agg = _load(str(pj))
+    if len(trials) > 1:
+        mean, std = round(_st.fmean(trials), 2), round(_st.pstdev(trials), 2)
+        agg["img_per_s"] = agg["metrics"]["img_per_s"] = mean
+        agg["img_per_s_std"] = agg["metrics"]["img_per_s_std"] = std
+        agg["img_per_s_n"] = agg["metrics"]["img_per_s_n"] = len(trials)
+        agg["img_per_s_trials"] = [round(t, 2) for t in trials]
+        pj.write_text(_json.dumps(agg))
+
     if json_output:
-        a = _load(str(trace)) if trace.exists() else {}
-        print(_json.dumps({"trace": str(trace), "summary": {
-            k: a.get(k) for k in
-            ("bound", "gpu_util", "img_per_s", "step_ms", "tensorcore_pct", "peak_vram_mb")
-        }}, indent=2))
+        print(_json.dumps({
+            "profile": str(pj), "trace": str(last_dir / "profile_trace.json"),
+            "img_per_s": agg.get("img_per_s"), "img_per_s_std": agg.get("img_per_s_std"),
+            "img_per_s_n": agg.get("img_per_s_n", 1), "bound": agg.get("bound"),
+            "gpu_util": agg.get("gpu_util"),
+        }, indent=2))
     else:
-        print(f"trace: {trace}")
-        print(f"next:  libreyolo profile summary {trace}")
+        v = str(agg.get("img_per_s"))
+        if agg.get("img_per_s_n", 1) > 1:
+            v += f" +/- {agg.get('img_per_s_std')} (n={agg['img_per_s_n']})"
+        print(f"img/s: {v}  |  {agg.get('bound')}")
+        print(f"profile: {pj}")
+        print(f"next:    libreyolo profile summary {pj}")
 
 
 @profile_app.command("summary")
@@ -96,8 +149,9 @@ def summary_cmd(
         keep = ("trace", "model", "config", "bound", "bound_why", "step_ms", "img_per_s",
                 "gpu_util", "gpu_busy_ms_per_step", "mean_kernel_us", "kernels_per_step",
                 "unique_kernels", "memcpy_ms_per_step", "tensorcore_pct", "peak_vram_mb",
-                "dataload_ms", "dataload_frac", "window", "categories", "phases_gpu",
-                "top_kernels")
+                "dataload_ms", "dataload_frac", "host_overhead_ms_per_step",
+                "launches_per_step", "memory_pressure", "cuda_mallocs_per_step",
+                "gpu_util_raw", "window", "categories", "phases_gpu", "top_kernels")
         print(_json.dumps({k: a[k] for k in keep}, indent=2))
         return
     print(f"model {a.get('model') or '?'}  |  {a.get('img_per_s') or '?'} img/s  |  "
@@ -105,6 +159,10 @@ def summary_cmd(
     print(f"GPU util {a['gpu_util'] * 100:.0f}%  ({a['gpu_busy_ms_per_step']} ms busy)  |  "
           f"Tensor Cores {a['tensorcore_pct']:.0f}%  |  peak VRAM {a.get('peak_vram_mb') or '?'} MB  |  "
           f"memcpy {a['memcpy_ms_per_step']} ms")
+    print(f"host overhead {a['host_overhead_ms_per_step']} ms/step  |  "
+          f"{a['launches_per_step']} kernel launches/step")
+    if a.get("memory_pressure"):
+        print("** MEMORY-PRESSURE: VRAM thrash — utilisation/throughput here are unreliable **")
     print(f">> {str(a['bound']).upper()} — {a['bound_why']}")
     print("kernel mix:")
     for c in a["categories"]:
@@ -224,36 +282,107 @@ def compare_cmd(
     """Diff two profiles — did the change help? (the optimise-loop closer)."""
     a, b = _load(before), _load(after)
 
-    def delta(x, y):
-        return None if (x is None or y is None) else round(y - x, 3)
+    def per_img(x):
+        bs = (x.get("config") or {}).get("batch") or 0
+        return round(x["step_ms"] / bs, 3) if bs else None
 
-    catA = {c["name"]: c["ms_per_step"] for c in a["categories"]}
-    catB = {c["name"]: c["ms_per_step"] for c in b["categories"]}
-    cat_delta = {k: round(catB.get(k, 0.0) - catA.get(k, 0.0), 2)
-                 for k in set(catA) | set(catB)}
+    def significance(x, y):
+        import math
+        ma, mb = x.get("img_per_s"), y.get("img_per_s")
+        if ma is None or mb is None:
+            return None, "img/s unavailable"
+        sa, sb = x.get("img_per_s_std"), y.get("img_per_s_std")
+        na, nb = x.get("img_per_s_n", 1), y.get("img_per_s_n", 1)
+        if na < 2 or nb < 2 or sa is None or sb is None:
+            return None, "single run — use 'run --repeat N' for a significance call"
+        se = math.sqrt(sa ** 2 / na + sb ** 2 / nb)
+        return (abs(mb - ma) > 2 * se), f"|d|={abs(mb - ma):.1f} vs 2*SE={2 * se:.1f}"
+
+    sig, sig_why = significance(a, b)
     res = {
         "before": before, "after": after,
-        "img_per_s": {"before": a["img_per_s"], "after": b["img_per_s"],
-                      "delta": delta(a["img_per_s"], b["img_per_s"])},
-        "step_ms": {"before": a["step_ms"], "after": b["step_ms"],
-                    "delta": delta(a["step_ms"], b["step_ms"])},
-        "gpu_util": {"before": a["gpu_util"], "after": b["gpu_util"],
-                     "delta": delta(a["gpu_util"], b["gpu_util"])},
-        "gpu_busy_ms_per_step": {"before": a["gpu_busy_ms_per_step"],
-                                 "after": b["gpu_busy_ms_per_step"]},
-        "tensorcore_pct": {"before": a["tensorcore_pct"], "after": b["tensorcore_pct"]},
+        "img_per_s": {"before": a.get("img_per_s"), "after": b.get("img_per_s"),
+                      "std": [a.get("img_per_s_std"), b.get("img_per_s_std")],
+                      "n": [a.get("img_per_s_n", 1), b.get("img_per_s_n", 1)],
+                      "significant": sig, "significance": sig_why},
+        "ms_per_image": {"before": per_img(a), "after": per_img(b)},
+        "gpu_util": {"before": a["gpu_util"], "after": b["gpu_util"]},
+        "host_overhead_ms_per_step": {"before": a.get("host_overhead_ms_per_step"),
+                                      "after": b.get("host_overhead_ms_per_step")},
+        "launches_per_step": {"before": a.get("launches_per_step"),
+                              "after": b.get("launches_per_step")},
         "bound": {"before": a["bound"], "after": b["bound"]},
-        "category_ms_delta": cat_delta,
     }
     if json_output:
         print(_json.dumps(res, indent=2))
         return
-    print(f"img/s    {a.get('img_per_s')} -> {b.get('img_per_s')}"
-          f"{_pct(a.get('img_per_s') or 0, b.get('img_per_s') or 0)}")
-    print(f"step ms  {a['step_ms']} -> {b['step_ms']}{_pct(a['step_ms'], b['step_ms'])}")
-    print(f"GPU util {a['gpu_util'] * 100:.0f}% -> {b['gpu_util'] * 100:.0f}%")
-    print(f"TC %     {a['tensorcore_pct']:.0f}% -> {b['tensorcore_pct']:.0f}%")
-    print(f"verdict  {a['bound']} -> {b['bound']}")
-    print("category ms/step delta (negative = faster):")
-    for k, v in sorted(cat_delta.items(), key=lambda kv: kv[1]):
-        print(f"  {k:<17} {v:+.2f}")
+    tag = {True: "  [significant]", False: "  [NOT significant]"}.get(sig, f"  [{sig_why}]")
+    ia, ib = a.get("img_per_s") or 0, b.get("img_per_s") or 0
+    print(f"img/s          {a.get('img_per_s')} -> {b.get('img_per_s')}{_pct(ia, ib)}{tag}")
+    pa, pb = per_img(a), per_img(b)
+    if pa and pb:
+        print(f"ms/image       {pa} -> {pb}{_pct(pa, pb)}   (batch-independent speed)")
+    print(f"GPU util       {a['gpu_util'] * 100:.0f}% -> {b['gpu_util'] * 100:.0f}%")
+    print(f"host overhead  {a.get('host_overhead_ms_per_step')} -> "
+          f"{b.get('host_overhead_ms_per_step')} ms/step")
+    print(f"launches/step  {a.get('launches_per_step')} -> {b.get('launches_per_step')}")
+    print(f"verdict        {a['bound']} -> {b['bound']}")
+
+
+@profile_app.command("what-if")
+def whatif_cmd(
+    trace: str = typer.Argument(..., help="Path to profile.json / profile_trace.json"),
+    remove_category: Optional[str] = typer.Option(None, "--remove-category", help="Project removing a kernel category (gemm, layout, norm, elementwise)"),
+    remove_launches: Optional[int] = typer.Option(None, "--remove-launches", help="Project removing N kernel launches/step (e.g. an op-fusion win)"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Estimate a change's payoff BEFORE editing code (rough projection)."""
+    a = _load(trace)
+    if not remove_category and remove_launches is None:
+        typer.echo("specify --remove-category or --remove-launches", err=True)
+        raise typer.Exit(2)
+    step = a["step_ms"]
+    bs = (a.get("config") or {}).get("batch") or 0
+    host = a.get("host_overhead_ms_per_step") or 0.0
+    launches = a.get("launches_per_step") or 1
+    gpu = a.get("gpu_busy_ms_per_step") or 0.0
+    util = a.get("gpu_util") or 0.0
+    per_launch_ms = host / launches if launches else 0.0
+
+    removed_gpu = 0.0
+    removed_launches = remove_launches or 0
+    if remove_category:
+        cat = next((c for c in a["categories"]
+                    if remove_category.lower() in c["name"].lower()), None)
+        if cat is None:
+            have = ", ".join(c["name"] for c in a["categories"])
+            typer.echo(f"no category matching '{remove_category}'. have: {have}", err=True)
+            raise typer.Exit(2)
+        removed_gpu = cat["ms_per_step"]
+        removed_launches += int(launches * (cat["ms_per_step"] / (gpu or 1)))
+
+    if util < 0.8:
+        new_step = max(step - removed_launches * per_launch_ms,
+                       gpu + (a.get("dataload_ms") or 0.0))
+        mechanism = (f"host/launch-bound: ~{removed_launches} fewer launches x "
+                     f"~{per_launch_ms * 1000:.0f}us host cost")
+    else:
+        new_step = max(step - removed_gpu, host)
+        mechanism = f"compute-bound: ~{removed_gpu:.1f} ms less GPU work"
+    cur_imgs = a.get("img_per_s")
+    new_imgs = round(bs / (new_step / 1000.0), 1) if (bs and new_step) else None
+    res = {
+        "trace": a["trace"], "bound": a["bound"], "mechanism": mechanism,
+        "removed": {"gpu_ms": round(removed_gpu, 2), "launches": removed_launches},
+        "step_ms": {"now": step, "projected": round(new_step, 1)},
+        "img_per_s": {"now": cur_imgs, "projected": new_imgs},
+        "caveat": "rough estimate (per-launch host cost is approximate); verify by profiling.",
+    }
+    if json_output:
+        print(_json.dumps(res, indent=2))
+        return
+    print(f"what-if [{a['bound']}]: {mechanism}")
+    print(f"  step   {step} -> ~{new_step:.0f} ms")
+    if new_imgs and cur_imgs:
+        print(f"  img/s  {cur_imgs} -> ~{new_imgs:.0f}{_pct(cur_imgs, new_imgs)}")
+    print("  (rough — verify by actually profiling the change)")

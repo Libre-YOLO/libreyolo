@@ -39,6 +39,7 @@ The **verdict** is one of three:
 | `dataloader-bound` | the GPU waits on input data | more `workers`, `cache='ram'/'disk'`, lighter aug, larger batch |
 | `host / launch-bound` | the GPU is fed too slowly (tiny kernels, per-step syncs) | larger batch, fewer `.item()`/syncs, CUDA graphs, op fusion |
 | `compute-bound` | the GPU is saturated | AMP/bf16, a larger model |
+| `memory-pressure` | allocator thrash / VRAM at the edge — util & throughput here are unreliable | lower batch, fix fragmentation; don't run at the OOM edge |
 
 GPU utilisation is measured honestly: kernel busy-time over the *real* (unsynced)
 step time — not wall-clock hand-waving.
@@ -50,6 +51,7 @@ step time — not wall-clock hand-waving.
 | `timeline.html` | self-contained CPU/GPU timeline (auto-opens) + analysis panel — no external viewer |
 | `profile_trace.json` | the raw `torch.profiler` Chrome trace (also loads in Perfetto/Nsight) |
 | `profile_summary.json` | the computed metrics + verdict |
+| `profile.json` | **self-contained** analysis (metrics + verdict + kernels + phases) — the one file to copy and `compare` |
 
 ### Config knobs
 
@@ -67,7 +69,8 @@ The profiler measures **epoch 0**. If you use a tiny `epochs` with the default
 `no_aug_epochs`, mosaic/mixup can be disabled for the window (the no-aug schedule
 kicks in immediately), so you would profile a *lighter* dataloader than you
 train with. To profile the real augmented pipeline, set `no_aug_epochs=0` — or
-use `libreyolo profile run`, which does.
+use `libreyolo profile run`, which sets `no_aug_epochs=0` and runs enough
+epochs to fill the measurement window automatically.
 
 ## The CLI — `libreyolo profile`
 
@@ -76,26 +79,35 @@ inspect the trace at any abstraction level. Each command writes results to
 stdout and supports `--json`.
 
 ```
-libreyolo profile run     --data coco1000 --weights LibreYOLO9t.pt --size t   # train+profile -> trace
-libreyolo profile summary <trace>                 # util, verdict, kernel mix, top kernels
-libreyolo profile get     <trace> <field>         # ONE metric (img_per_s, forward_gpu_ms, ...)
-libreyolo profile phases  <trace>                 # per-phase gpu/wall ms + kernel & op counts
-libreyolo profile kernels <trace> [--phase forward --category gemm --grep bn --tensorcore --sort time --top N]
-libreyolo profile ops     <trace> [--phase backward --top N]   # aten/autograd ops by CPU time
-libreyolo profile compare <before> <after>        # did the change help? (img/s, util, mix deltas)
+libreyolo profile run     coco128 --weights LibreYOLO9t.pt --size t [--repeat 3 --warmup 5 --steps 20]
+libreyolo profile summary <profile.json>          # util, verdict, host overhead, kernel mix, top kernels
+libreyolo profile get     <profile.json> <field>  # ONE metric (img_per_s, forward_gpu_ms, host_overhead_ms, ...)
+libreyolo profile phases  <profile.json>          # per-phase gpu/wall ms + kernel & op counts
+libreyolo profile kernels <profile.json> [--phase forward --category gemm --grep bn --tensorcore --sort time --top N]
+libreyolo profile ops     <profile.json> [--phase backward --top N]   # aten/autograd ops by CPU time
+libreyolo profile what-if <profile.json> [--remove-category layout | --remove-launches 3300]   # project a fix
+libreyolo profile compare <before.json> <after.json>   # did it help? img/s + ms/image + significance
 ```
 
-`get <trace>` with no field lists every available metric.
+Every command takes either the **self-contained `profile.json`** (recommended — copy
+it freely) or a raw `profile_trace.json`. `get <file>` with no field lists every
+metric. Use **`run --repeat N`** for mean±stdev img/s — a single run *lies* when
+the step is launch-bound (the bottleneck itself makes the step time noisy), and
+`compare` will tell you whether a change is statistically significant.
 
 ### Agent loop
 
 ```
-libreyolo profile get trace.json bound            -> host / launch
-libreyolo profile get trace.json gpu_util         -> 0.29
-libreyolo profile phases trace.json               -> forward 42/120, unphased 6gpu/11k ops
-libreyolo profile ops trace.json --phase unphased --top 5   -> aten::lerp_ (EMA), .item ...
-#   ...change config/code, re-run, then:
-libreyolo profile compare before.json after.json  -> img/s +40%, gpu_util 0.29 -> 0.51
+libreyolo profile run coco128 --repeat 3                 -> img/s 50 +/- 1.4 | host / launch
+libreyolo profile get  profile.json gpu_util             -> 0.29        # GPU 71% idle
+libreyolo profile phases profile.json                    -> forward 42/120, unphased 6gpu/11k ops
+libreyolo profile ops  profile.json --phase unphased --top 5  -> aten::lerp_ (EMA) ...
+libreyolo profile what-if profile.json --remove-launches 3300  -> img/s 50 -> ~69 (+38%)   # worth it
+#   ...make the change, re-run with --repeat, then:
+libreyolo profile compare before.json after.json         -> img/s +28%  [significant]
 ```
 
-Train → read → drill → change → **prove it helped**, until images/sec is maxed.
+Train → read → drill → **estimate** (`what-if`) → change → **prove it** (`compare`,
+with significance), until images/sec is maxed. The two things that make this safe
+for an autonomous agent: `--repeat` (so a noisy single run can't lie) and
+`what-if` (so it triages before rewriting code).

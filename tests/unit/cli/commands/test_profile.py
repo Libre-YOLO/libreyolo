@@ -39,6 +39,13 @@ def _write_trace(directory: Path) -> Path:
                "ts": 355, "dur": 50, "pid": 1, "tid": 1})
     trace = Path(directory) / "profile_trace.json"
     trace.write_text(json.dumps({"traceEvents": ev}))
+    (Path(directory) / "profile_summary.json").write_text(json.dumps({
+        "meta": {"model": "YOLOv9-t", "batch": 16},
+        "real": {"step_ms": 0.3, "img_per_s": 53.3, "dataload_ms": 0.0,
+                 "dataload_frac": 0.0},
+        "composition_ms": {"forward": 0.05, "backward": 0.06},
+        "bound": "host / launch", "bound_why": "test",
+    }))
     return trace
 
 
@@ -111,3 +118,29 @@ def test_compare_self(tmp_path):
 def test_missing_trace(tmp_path):
     r = runner.invoke(_app(), ["profile", "summary", str(tmp_path / "nope.json")])
     assert r.exit_code == 2
+
+
+def test_summary_shows_host_overhead(tmp_path):
+    r = runner.invoke(_app(), ["profile", "summary", str(_write_trace(tmp_path))])
+    assert r.exit_code == 0
+    assert "host overhead" in r.stdout and "launches/step" in r.stdout
+
+
+def test_whatif(tmp_path):
+    r = runner.invoke(_app(), ["profile", "what-if", str(_write_trace(tmp_path)),
+                               "--remove-launches", "2"])
+    assert r.exit_code == 0
+    assert "what-if" in r.stdout and "img/s" in r.stdout
+
+
+def test_whatif_requires_arg(tmp_path):
+    r = runner.invoke(_app(), ["profile", "what-if", str(_write_trace(tmp_path))])
+    assert r.exit_code == 2
+
+
+def test_compare_significance_note(tmp_path):
+    t = str(_write_trace(tmp_path))
+    r = runner.invoke(_app(), ["profile", "compare", t, t])
+    assert r.exit_code == 0
+    assert "single run" in r.stdout
+    assert "ms/image" in r.stdout

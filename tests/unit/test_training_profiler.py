@@ -160,3 +160,27 @@ def test_trainstepprofiler_runs_without_trace(tmp_path):
     assert prof.finished
     assert prof.summary is not None
     assert prof.summary["real"]["step_ms"] >= 0
+
+
+def test_analyze_trace_host_overhead_and_schema(tmp_path):
+    a = analyze_trace(write_synthetic_trace(tmp_path, with_summary=True))
+    assert a["schema"] == "libreyolo.profile.analysis/v1"
+    assert a["launches_per_step"] == 5
+    assert a["memory_pressure"] is False
+    # step 100 ms, GPU busy ~0.06 ms, dataload 1 ms -> host overhead dominates
+    assert a["host_overhead_ms_per_step"] > 90
+    assert a["metrics"]["host_overhead_ms"] == a["host_overhead_ms_per_step"]
+    assert a["metrics"]["launches_per_step"] == 5
+
+
+def test_memory_pressure_detected(tmp_path):
+    ev = _trace_events()
+    for i in range(20):
+        ev.append({"ph": "X", "cat": "cuda_runtime", "name": "cudaMalloc",
+                   "ts": 250 + i, "dur": 1, "pid": 1, "tid": 1})
+    trace = tmp_path / "profile_trace.json"
+    trace.write_text(json.dumps({"traceEvents": ev}))
+    a = analyze_trace(trace)
+    assert a["memory_pressure"] is True
+    assert a["bound"] == "memory-pressure"
+    assert a["cuda_mallocs_per_step"] >= 5

@@ -149,7 +149,7 @@ def analyze_trace(trace_path, summary_path=None):
     kernel_list, op_list = [], []
     cpu_intervals = {}
     gpu_busy_us = memcpy_us = tc_us = 0.0
-    n_kern = 0
+    n_kern = n_malloc = 0
     for e in events:
         if e.get("ph") != "X":
             continue
@@ -170,6 +170,8 @@ def analyze_trace(trace_path, summary_path=None):
             kernel_list.append((name, dur, ts))
         elif cat in ("gpu_memcpy", "gpu_memset"):
             memcpy_us += dur
+        elif cat == "cuda_runtime" and ("Malloc" in name or "Free" in name):
+            n_malloc += 1
         elif cat == "cpu_op":
             o = opagg.setdefault(name, [0.0, 0])
             o[0] += dur
@@ -224,7 +226,15 @@ def analyze_trace(trace_path, summary_path=None):
     comp = summary.get("composition_ms", {})
     step_ms = real.get("step_ms") or (wall_ms / n_real if n_real else wall_ms)
     gpu_busy_ms = gpu_busy_us / 1000.0 / n_real
-    util = (gpu_busy_ms / step_ms) if step_ms else 0.0
+    util_raw = (gpu_busy_ms / step_ms) if step_ms else 0.0
+    util = min(util_raw, 1.0)
+    mallocs_per_step = int(n_malloc // n_real) if n_real else n_malloc
+    # util > ~100% or many allocations/step = allocator thrash / VRAM pressure,
+    # not real saturation — flag it so it stops reading as "compute-bound".
+    memory_pressure = mallocs_per_step >= 5 or util_raw > 1.05
+    dl_ms = real.get("dataload_ms") or 0.0
+    host_overhead_ms = max(step_ms - gpu_busy_ms - dl_ms, 0.0)
+    launches_per_step = int(n_kern // n_real)
 
     def krow(name, td, denom):
         return {
@@ -285,6 +295,11 @@ def analyze_trace(trace_path, summary_path=None):
                if bound == "compute" else
                f"GPU only ~{util * 100:.0f}% busy — tiny kernels / host overhead "
                "(dataloader stall not measurable from trace alone)")
+    if memory_pressure:
+        bound = "memory-pressure"
+        why = (f"allocator thrash (~{mallocs_per_step} cudaMalloc/free per step"
+               + (f"; util read {util_raw * 100:.0f}%" if util_raw > 1.05 else "")
+               + ") — VRAM pressure; throughput and utilisation here are unreliable")
 
     tc_pct = round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0
     peak_vram = (summary.get("analysis") or {}).get("peak_vram_mb")
@@ -304,6 +319,10 @@ def analyze_trace(trace_path, summary_path=None):
         "memcpy_ms": round(memcpy_us / 1000.0 / n_real, 3),
         "tensorcore_pct": tc_pct,
         "peak_vram_mb": peak_vram,
+        "host_overhead_ms": round(host_overhead_ms, 2),
+        "launches_per_step": launches_per_step,
+        "cuda_mallocs_per_step": mallocs_per_step,
+        "memory_pressure": memory_pressure,
         "bound": bound,
     }
     for ph in phases:
@@ -314,6 +333,7 @@ def analyze_trace(trace_path, summary_path=None):
         metrics[f"{p}_ops"] = ph["ops_per_step"]
 
     return {
+        "schema": "libreyolo.profile.analysis/v1",
         "trace": str(trace_path),
         "model": (summary.get("meta") or {}).get("model"),
         "config": summary.get("meta") or {},
@@ -324,6 +344,11 @@ def analyze_trace(trace_path, summary_path=None):
         "dataload_ms": real.get("dataload_ms"),
         "dataload_frac": real.get("dataload_frac"),
         "gpu_util": round(util, 3),
+        "gpu_util_raw": round(util_raw, 3),
+        "memory_pressure": memory_pressure,
+        "cuda_mallocs_per_step": mallocs_per_step,
+        "host_overhead_ms_per_step": round(host_overhead_ms, 2),
+        "launches_per_step": launches_per_step,
         "gpu_busy_ms_per_step": round(gpu_busy_ms, 2),
         "mean_kernel_us": round(gpu_busy_us / n_kern, 2) if n_kern else 0.0,
         "kernels_per_step": int(n_kern // n_real),
@@ -522,6 +547,17 @@ class TrainStepProfiler:
                     analysis["img_per_s"] = self.summary["real"]["img_per_s"]
                     analysis["dataload_ms"] = self.summary["real"]["dataload_ms"]
                 timeline_path = self._write_timeline_html(curated)
+            # Self-contained analysis artifact — one copyable file the CLI reads
+            # (summary/get/phases/compare); the raw trace stays for kernel drill.
+            if self.save_dir is not None:
+                try:
+                    full = analyze_trace(
+                        trace_path,
+                        summary_path=self.save_dir / "profile_summary.json",
+                    )
+                    (self.save_dir / "profile.json").write_text(json.dumps(full))
+                except Exception:
+                    pass
         self._report(trace_path, timeline_path)
         if self.open_report and timeline_path is not None:
             try:
