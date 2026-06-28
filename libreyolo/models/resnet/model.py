@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -56,19 +57,37 @@ class LibreResNet(BaseModel):
             "conv1.weight" in weights_dict
             and "fc.weight" in weights_dict
             and "layer1.0.conv1.weight" in weights_dict
+            # Only claim it if the exact depth signature is a shipped size — this
+            # keeps autoconvert from mis-claiming e.g. ResNet-152 as "101".
+            and cls.detect_size(weights_dict) is not None
         )
+
+    @staticmethod
+    def _layer_block_counts(weights_dict: dict) -> tuple:
+        counts = []
+        for i in range(1, 5):
+            idx = -1
+            pat = re.compile(rf"^layer{i}\.(\d+)\.conv1\.weight$")
+            for k in weights_dict:
+                m = pat.match(k)
+                if m:
+                    idx = max(idx, int(m.group(1)))
+            counts.append(idx + 1)
+        return tuple(counts)
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
-        if "conv1.weight" not in weights_dict:
+        if "conv1.weight" not in weights_dict or "fc.weight" not in weights_dict:
             return None
-        # Bottleneck (50/101) has a conv3 in each block; BasicBlock (18/34) does not.
-        bottleneck = "layer1.0.conv3.weight" in weights_dict
-        if bottleneck:
-            # layer3 depth: resnet50 has 6 blocks (0-5), resnet101 has 23 (0-22).
-            return "101" if "layer3.6.conv1.weight" in weights_dict else "50"
-        # layer3 depth: resnet18 has 2 blocks (0-1), resnet34 has 6 (0-5).
-        return "34" if "layer3.2.conv1.weight" in weights_dict else "18"
+        bottleneck = "layer1.0.conv3.weight" in weights_dict  # Bottleneck has conv3
+        counts = cls._layer_block_counts(weights_dict)
+        # (is_bottleneck, per-layer block counts) -> exact shipped size; else None.
+        return {
+            (False, (2, 2, 2, 2)): "18",
+            (False, (3, 4, 6, 3)): "34",
+            (True, (3, 4, 6, 3)): "50",
+            (True, (3, 4, 23, 3)): "101",
+        }.get((bottleneck, counts))
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:

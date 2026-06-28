@@ -52,20 +52,33 @@ class LibreMobileNetV4(BaseModel):
             "conv_stem.weight" in weights_dict
             and "conv_head.weight" in weights_dict
             and any(k.endswith(".pw_exp.conv.weight") for k in weights_dict)
+            # Only claim it if the exact stem+stage-0 signature is a shipped conv
+            # size — rejects the hybrid (MQA) and 035/050-width variants.
+            and cls.detect_size(weights_dict) is not None
         )
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
-        key = "conv_stem.weight"
-        if key not in weights_dict:
+        if "conv_stem.weight" not in weights_dict or "classifier.weight" not in weights_dict:
             return None
-        stem_chs = int(weights_dict[key].shape[0])
-        if stem_chs == 24:
-            return "l"  # large uses a 24-channel stem
-        # small's stage 0 is ConvBnAct ('cn'); medium's is EdgeResidual ('er').
-        if "blocks.0.0.conv_exp.weight" in weights_dict:
+        # Conv-only family: reject the hybrid (Mobile MQA attention) variants.
+        if any(".attn." in k or "mqa" in k.lower() for k in weights_dict):
+            return None
+        # conv s/m/l all end at a 960-wide stage 4 (conv_head in_channels == 960);
+        # the 035/050 width variants (and fix_stem keeps their stem at 32) do not.
+        if "conv_head.weight" not in weights_dict or int(weights_dict["conv_head.weight"].shape[1]) != 960:
+            return None
+        stem_chs = int(weights_dict["conv_stem.weight"].shape[0])
+        is_er = "blocks.0.0.conv_exp.weight" in weights_dict  # EdgeResidual stage 0 (m/l)
+        is_cn = "blocks.0.0.conv.weight" in weights_dict  # ConvBnAct stage 0 (s)
+        # small/medium use a 32-ch stem, large a 24-ch stem; 035/050 differ.
+        if stem_chs == 24 and is_er:
+            return "l"
+        if stem_chs == 32 and is_er:
             return "m"
-        return "s"
+        if stem_chs == 32 and is_cn:
+            return "s"
+        return None
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:

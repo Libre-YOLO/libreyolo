@@ -55,21 +55,30 @@ class LibreEfficientNetV2(BaseModel):
             "conv_stem.weight" in weights_dict
             and "conv_head.weight" in weights_dict
             and any(k.endswith(".se.conv_reduce.weight") for k in weights_dict)
+            # Only claim it if the exact (num_features, stem) signature is a
+            # shipped base size — rejects EfficientNetV2 s/m/l and non-V2 nets.
+            and cls.detect_size(weights_dict) is not None
         )
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
-        key = "conv_head.weight"
-        if key not in weights_dict:
+        if not all(
+            k in weights_dict
+            for k in ("conv_head.weight", "conv_stem.weight", "classifier.weight")
+        ):
             return None
-        # num_features (conv_head out channels) is unique across b2/b3; b0 and b1
-        # share 1280 and are split by stage-0 depth (b0 has one block, b1 two).
-        num_features = int(weights_dict[key].shape[0])
-        if num_features == 1536:
+        # (num_features, stem channels) is an exact signature for the base tiers:
+        # b0/b1 = (1280, 32) split by stage-0 depth; b2 = (1408, 32); b3 = (1536, 40).
+        # s/m/l have stem 24, so they are rejected.
+        nf = int(weights_dict["conv_head.weight"].shape[0])
+        stem = int(weights_dict["conv_stem.weight"].shape[0])
+        if (nf, stem) == (1536, 40):
             return "b3"
-        if num_features == 1408:
+        if (nf, stem) == (1408, 32):
             return "b2"
-        return "b1" if "blocks.0.1.conv.weight" in weights_dict else "b0"
+        if (nf, stem) == (1280, 32):
+            return "b1" if "blocks.0.1.conv.weight" in weights_dict else "b0"
+        return None
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:

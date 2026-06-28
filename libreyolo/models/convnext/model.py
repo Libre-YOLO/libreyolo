@@ -53,21 +53,27 @@ class LibreConvNeXt(BaseModel):
             "stem.0.weight" in weights_dict
             and "head.fc.weight" in weights_dict
             and any(k.endswith(".gamma") and k.startswith("stages.") for k in weights_dict)
+            # Only claim it if the exact (dim, depth) signature is a shipped V1
+            # size — keeps autoconvert from mis-claiming ConvNeXt-L/XL.
+            and cls.detect_size(weights_dict) is not None
         )
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
-        key = "stem.0.weight"
-        if key not in weights_dict:
+        if "stem.0.weight" not in weights_dict or "head.fc.weight" not in weights_dict:
             return None
-        dim0 = int(weights_dict[key].shape[0])
-        if dim0 == 128:
-            return "b"  # base widens to 128/256/512/1024
-        # tiny and small share dims (96..768); they differ in stage-2 depth
-        # (tiny=9 blocks -> max index 8; small=27 -> index 9 exists).
-        if "stages.2.blocks.9.gamma" in weights_dict:
-            return "s"
-        return "t"
+        import re
+
+        dim0 = int(weights_dict["stem.0.weight"].shape[0])
+        s2 = -1
+        for k in weights_dict:
+            m = re.match(r"^stages\.2\.blocks\.(\d+)\.gamma$", k)
+            if m:
+                s2 = max(s2, int(m.group(1)))
+        # (stem dim, stage-2 depth) -> exact shipped V1 size. tiny/small share
+        # dims (96) and differ by stage-2 depth (9 vs 27); base widens to 128.
+        # Rejects ConvNeXt-L/XL (dims 192/256) by returning None.
+        return {(96, 9): "t", (96, 27): "s", (128, 27): "b"}.get((dim0, s2 + 1))
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
