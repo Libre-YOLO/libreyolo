@@ -144,14 +144,14 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | Family    | `SUPPORTED_TASKS`                   | Default | Notes |
 |---|---|---|---|
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
-| `yolo9`     | `("detect", "segment", "semantic", "pose", "classify", "obb")` | detect | native grid, classifier, and dense-decoder heads |
+| `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `dfine`     | `("detect",)` (default)             | detect | detect-only |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
-| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb", "depth")` | detect | classify uses 224; semantic/depth use 518; seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr`    | `("detect", "segment", "pose", "classify", "obb")` | detect | classify uses 224; seg uses smaller sizes; pose/OBB use detect sizes |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -169,10 +169,6 @@ LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-do
 ```text
 LibreYOLOXn.pt
 LibreYOLO9s.pt
-LibreYOLO9t-seg.pt
-LibreYOLO9t-pose.pt
-LibreYOLO9t-cls.pt
-LibreYOLO9t-obb.pt
 LibreYOLO9E2Es.pt
 LibreYOLONASm.pt
 LibreDFINEl.pt
@@ -195,22 +191,12 @@ LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
 
-# yolo9 - detect + segment + semantic + pose + classify + obb
-LibreYOLO9t.pt             # detect (default)
-LibreYOLO9t-seg.pt         # segment
-LibreYOLO9t-sem.pt         # semantic
-LibreYOLO9t-pose.pt        # pose
-LibreYOLO9t-cls.pt         # classify
-LibreYOLO9t-obb.pt         # obb
-
-# rfdetr - detect + segment + semantic + pose + classify + obb + depth
+# rfdetr - detect + segment + pose + classify + obb
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
-LibreRFDETRn-sem.pt        # semantic
 LibreRFDETRx-pose.pt       # pose (preview; only size x ships)
 LibreRFDETRn-cls.pt        # classify
 LibreRFDETRn-obb.pt        # obb
-LibreRFDETRn-depth.pt      # depth
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

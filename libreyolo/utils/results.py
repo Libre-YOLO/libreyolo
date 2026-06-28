@@ -412,6 +412,12 @@ class Probs(_TensorPayload):
             return self.data[torch.tensor(indices, device=self.data.device)]
         return self.data[indices]
 
+    def __getitem__(self, idx):
+        # A classification probability vector is whole-image, not per-detection;
+        # keep it intact so shared Results slicing (e.g. ``result[0]``) cannot
+        # truncate it to a single class. Mirrors SemanticMask/DepthMap.
+        return self.__class__(self.data, self.orig_shape)
+
 
 class SemanticMask(_TensorPayload):
     """Dense semantic segmentation map for a single image.

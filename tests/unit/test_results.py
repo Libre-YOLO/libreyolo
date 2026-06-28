@@ -253,6 +253,26 @@ class TestResults:
         assert result.probs.top5conf.tolist() == pytest.approx([0.7, 0.2, 0.1])
         assert result.summary()[0]["name"] == "b"
 
+    def test_classify_probs_survive_result_indexing(self):
+        # Regression: indexing a classification Results (the universal
+        # ``results[0]`` idiom, and what predict() of a single image invites)
+        # must NOT slice the whole-image probs vector down to one class.
+        probs = Probs(torch.tensor([0.1, 0.7, 0.2]))
+        result = Results(
+            boxes=None,
+            orig_shape=(1, 1),
+            probs=probs,
+            names={0: "a", 1: "b", 2: "c"},
+        )
+
+        indexed = result[0]
+
+        assert indexed.probs.data.shape == (3,)
+        assert indexed.probs.top1 == 1
+        assert indexed.probs.top1conf.item() == pytest.approx(0.7)
+        # Probs payload indexing is itself a no-op (mirrors SemanticMask/DepthMap).
+        assert probs[0].data.shape == (3,)
+
     def test_depth_map_result_ignores_nonfinite_summary_values(self):
         depth = DepthMap(torch.tensor([[1.0, float("nan")], [float("inf"), 3.0]]))
         result = Results(
