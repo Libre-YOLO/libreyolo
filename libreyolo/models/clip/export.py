@@ -50,6 +50,7 @@ def export_frozen_onnx(
     scale = float(model.model.logit_scale.exp().detach().cpu())
     weight = scale * text_embeds  # [K, D]
 
+    original_device = next(model.model.visual.parameters()).device
     visual = model.model.visual.to("cpu").eval()
     frozen = _FrozenCLIPClassifier(visual, weight).eval()
 
@@ -62,20 +63,22 @@ def export_frozen_onnx(
     dynamic_axes = (
         {"images": {0: "batch"}, "logits": {0: "batch"}} if dynamic_batch else None
     )
-    with torch.no_grad():
-        torch.onnx.export(
-            frozen,
-            dummy,
-            output,
-            input_names=["images"],
-            output_names=["logits"],
-            opset_version=opset,
-            dynamic_axes=dynamic_axes,
-            # Use the stable TorchScript exporter (no onnxscript dependency); the
-            # frozen graph is a plain ViT + matmul that exports cleanly.
-            dynamo=False,
-        )
-
-    # Restore the tower to the model's device for further use.
-    model.model.visual.to(model.device)
+    try:
+        with torch.no_grad():
+            torch.onnx.export(
+                frozen,
+                dummy,
+                output,
+                input_names=["images"],
+                output_names=["logits"],
+                opset_version=opset,
+                dynamic_axes=dynamic_axes,
+                # Stable TorchScript exporter (no onnxscript dependency); the
+                # frozen graph is a plain ViT + matmul that exports cleanly.
+                dynamo=False,
+            )
+    finally:
+        # Restore the tower to its original device even if export raised, so the
+        # model instance stays usable for further predict()/_forward() calls.
+        model.model.visual.to(original_device)
     return output

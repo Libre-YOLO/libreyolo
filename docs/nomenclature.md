@@ -223,6 +223,7 @@ LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 # Defaults to ImageNet-1k labels; classify task suffix `-cls`.
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
+LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
 ```
 
 ### Gaze (inference-only)

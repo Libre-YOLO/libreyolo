@@ -106,7 +106,7 @@ LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
 LibreECx-pose.pt, LibreECs-seg.pt, LibreECm-seg.pt,
 LibreECl-seg.pt, LibreECx-seg.pt,
 
-LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt
+LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt
 ```
 
 LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use

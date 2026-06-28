@@ -96,8 +96,10 @@ class ResidualAttentionBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
         mask = attn_mask.to(x.dtype) if attn_mask is not None else None
+        # Self-attention: q == k == v, so layer-norm once and reuse.
+        x_ln1 = self.ln_1(x)
         attn_out = self.attn(
-            self.ln_1(x), self.ln_1(x), self.ln_1(x),
+            x_ln1, x_ln1, x_ln1,
             need_weights=False, attn_mask=mask,
         )[0]
         x = x + attn_out
