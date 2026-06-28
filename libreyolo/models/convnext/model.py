@@ -120,11 +120,16 @@ class LibreConvNeXt(BaseModel):
 
     # ---- inference -------------------------------------------------------
 
-    @staticmethod
-    def _get_preprocess_numpy():
+    def _get_preprocess_numpy(self):
+        # Instance method (not staticmethod) so the per-variant crop_pct is bound.
+        # The base contract calls this as ``preprocess_numpy(img, input_size)``
+        # (e.g. the exporter's INT8 calibration), so binding crop_pct here avoids
+        # relying on the default matching this family's value.
+        from functools import partial
+
         from .utils import preprocess_numpy
 
-        return preprocess_numpy
+        return partial(preprocess_numpy, crop_pct=self.crop_pct)
 
     def _preprocess(
         self,

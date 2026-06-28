@@ -18,7 +18,7 @@ class EfficientNetV2Config(TrainConfig):
     """
 
     size: str = "b0"
-    imgsz: int = 224
+    imgsz: int = 0  # 0 = derive the per-variant eval resolution in __post_init__
     epochs: int = 100
     batch: int = 64
     optimizer: str = "adamw"
@@ -29,3 +29,9 @@ class EfficientNetV2Config(TrainConfig):
     min_lr_ratio: float = 0.01
     workers: int = 8
     ema: bool = True
+
+    def __post_init__(self) -> None:
+        # EfficientNetV2-base evaluates each variant at a different resolution;
+        # derive it from ``size`` unless the caller set ``imgsz`` explicitly.
+        if not self.imgsz:
+            self.imgsz = {"b0": 224, "b1": 240, "b2": 260, "b3": 300}.get(self.size, 224)

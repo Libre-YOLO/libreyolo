@@ -18,7 +18,7 @@ class MobileNetV4Config(TrainConfig):
     """
 
     size: str = "s"
-    imgsz: int = 224
+    imgsz: int = 0  # 0 = derive the per-variant eval resolution in __post_init__
     epochs: int = 100
     batch: int = 64
     optimizer: str = "adamw"
@@ -29,3 +29,9 @@ class MobileNetV4Config(TrainConfig):
     min_lr_ratio: float = 0.01
     workers: int = 8
     ema: bool = True
+
+    def __post_init__(self) -> None:
+        # MobileNetV4-conv-large evaluates at 256; small/medium at 224. Derive
+        # from ``size`` unless the caller set ``imgsz`` explicitly.
+        if not self.imgsz:
+            self.imgsz = {"s": 224, "m": 224, "l": 256}.get(self.size, 224)
