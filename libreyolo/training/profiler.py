@@ -147,7 +147,7 @@ def analyze_trace(trace_path, summary_path=None):
 
     kern, opagg, phase_gpu = {}, {}, {}
     kernel_list, op_list = [], []
-    gpu_intervals, cpu_intervals = {}, {}
+    cpu_intervals = {}
     gpu_busy_us = memcpy_us = tc_us = 0.0
     n_kern = 0
     for e in events:
@@ -176,15 +176,12 @@ def analyze_trace(trace_path, summary_path=None):
             o[1] += 1
             op_list.append((name, dur, ts))
         elif cat == "gpu_user_annotation" and name.startswith("step/"):
-            p = name[5:]
-            phase_gpu[p] = phase_gpu.get(p, 0.0) + dur
-            gpu_intervals.setdefault(p, []).append((ts, ts + dur))
+            phase_gpu[name[5:]] = phase_gpu.get(name[5:], 0.0) + dur
         elif cat == "user_annotation" and name.startswith("step/"):
             cpu_intervals.setdefault(name[5:], []).append((ts, ts + dur))
 
-    # Tag each kernel/op with the phase whose span contains it (for `phases`
-    # and `--phase` drill-down).
-    gpu_iv = sorted((s, en, p) for p, ivs in gpu_intervals.items() for (s, en) in ivs)
+    # CPU phase launch spans, for tagging kernels/ops to a phase (`phases`,
+    # `--phase` drill-down).
     cpu_iv = sorted((s, en, p) for p, ivs in cpu_intervals.items() for (s, en) in ivs)
 
     def _phase_of(ts, iv):
