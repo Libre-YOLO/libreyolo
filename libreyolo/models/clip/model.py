@@ -294,7 +294,12 @@ class LibreCLIP(BaseModel):
         image_features = self.model.encode_image(input_tensor.to(self.device))
         image_features = F.normalize(image_features, dim=-1)
         logit_scale = self.model.logit_scale.exp()
-        return logit_scale * image_features @ self._text_embeds.t().to(image_features.dtype)
+        # Align cached text embeds to the image features' device/dtype so a model
+        # moved via .to() after set_classes() still computes on one device.
+        text_embeds = self._text_embeds.to(
+            device=image_features.device, dtype=image_features.dtype
+        )
+        return logit_scale * image_features @ text_embeds.t()
 
     def _postprocess(
         self,
