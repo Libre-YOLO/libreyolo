@@ -62,6 +62,10 @@ from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+# Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
+# so it registers eagerly. can_load is uniquely keyed on logit_scale +
+# text_projection + visual.conv1, so registration order does not matter.
+from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -613,5 +617,6 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreCLIP",
     "try_ensure_rfdetr",
 ]
