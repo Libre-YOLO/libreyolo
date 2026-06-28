@@ -286,6 +286,16 @@ Only ConvNeXt **V1** ships — ConvNeXt-V2's small checkpoints are CC-BY-NC and
 are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
 `.in21k`/JFT variants carry extra-data terms.
 
+**Eval resolution is a deliberate choice.** The classify families evaluate at a
+real-time-friendly default (224 for MobileNetV4 s/m, ConvNeXt, ResNet; 256 for
+MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
+larger *test* resolutions (e.g. 256/288/320), which trade ~1.6–2× compute for a
+few tenths of a percent top-1. This does **not** affect parity — given the same
+input tensor the logits are bit-identical to timm — only the headline ImageNet
+number, which sits a hair below the test-size figure. Each family threads its
+`crop_pct`/`interpolation` through `predict()`, `val()`, and exported-backend
+inference so all three agree.
+
 ## Resolution precedence
 
 When loading via `LibreYOLO("...")`, the task is resolved with this priority

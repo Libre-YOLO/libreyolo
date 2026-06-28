@@ -467,9 +467,10 @@ def LibreYOLO(
             matched_cls = matching_classes[0]
 
     if matched_cls is None:
+        registered = sorted({c.FAMILY for c in BaseModel._registry if getattr(c, "FAMILY", "")})
         raise ValueError(
             "Could not detect model architecture from state dict keys.\n"
-            "Supported architectures: YOLOX, YOLOv9, YOLOv9-E2E, YOLO-NAS, RT-DETR, RF-DETR, D-FINE, DEIM, DEIMv2."
+            f"Registered model families: {', '.join(registered)}."
         )
 
     # Auto-detect size
