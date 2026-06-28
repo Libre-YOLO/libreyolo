@@ -343,17 +343,25 @@ class TrainStepProfiler:
                 lane, label = "mem", name
             else:
                 continue
-            kept.append({"name": label, "_ts": ts, "_dur": dur,
+            kept.append({"name": label[:64], "_ts": ts, "_dur": dur,
                          "lane": LANE[lane], "cat": lane})
         if not kept:
             return None
 
-        CAP = 8000
-        if len(kept) > CAP:
-            keepers = [e for e in kept if e["cat"] in ("pcpu", "pgpu", "mem")]
-            rest = sorted((e for e in kept if e["cat"] in ("cpu", "gpu")),
-                          key=lambda e: e["_dur"], reverse=True)
-            kept = keepers + rest[: max(0, CAP - len(keepers))]
+        # Keep every phase/memcpy span; cap the noisy cpu-op and kernel lanes to
+        # their longest entries so the GPU work isn't crowded out (the autograd
+        # ops are mostly nested wrappers) and the emitted file stays small.
+        def _longest(cat, n):
+            evs = [e for e in kept if e["cat"] == cat]
+            if len(evs) <= n:
+                return evs
+            return sorted(evs, key=lambda e: e["_dur"], reverse=True)[:n]
+
+        kept = (
+            [e for e in kept if e["cat"] in ("pcpu", "pgpu", "mem")]
+            + _longest("cpu", 1500)
+            + _longest("gpu", 2500)
+        )
 
         base = min(e["_ts"] for e in kept)
         for e in kept:
@@ -414,187 +422,6 @@ class TrainStepProfiler:
             page = _TIMELINE_HTML.replace("/*__DATA__*/", payload)
             path = self.save_dir / "timeline.html"
             path.write_text(page, encoding="utf-8")
-            return path
-        except Exception:
-            return None
-
-    def _open_in_perfetto(self, trace_path, timeout: float = 30.0) -> None:
-        """Open the trace as a GPU/CPU timeline in Perfetto.
-
-        Serves a tiny local page that loads the trace same-origin and hands the
-        bytes to ui.perfetto.dev via the official postMessage API — sidestepping
-        the mixed-content block that defeats the ``?url=`` deep link. Auto-opens;
-        if the browser blocks the popup, the page shows a one-click button.
-        """
-        import functools
-        import http.server
-        import socketserver
-        import threading
-        import webbrowser
-
-        directory = str(trace_path.parent)
-        trace_name = trace_path.name
-        loaded = threading.Event()
-        origin = "https://ui.perfetto.dev"
-
-        open_html = (
-            "<!doctype html><meta charset='utf-8'>"
-            "<title>LibreYOLO profile</title>"
-            "<style>body{font-family:Segoe UI,sans-serif;background:#0f1115;color:#e6e6e6;"
-            "padding:40px;text-align:center}button{font-size:16px;padding:12px 22px;border:0;"
-            "border-radius:8px;background:#3498db;color:#fff;cursor:pointer;margin-top:18px}"
-            "#s{color:#8b95a5;margin-top:10px}</style>"
-            "<h2>LibreYOLO training profile</h2><div id='s'>loading trace...</div>"
-            "<button id='b' style='display:none' onclick='go()'>&#9654; Open timeline in Perfetto</button>"
-            "<script>var O='" + origin + "';var BUF=null;"
-            "fetch('./" + trace_name + "').then(function(r){return r.arrayBuffer();})"
-            ".then(function(b){BUF=b;fetch('/__loaded').catch(function(){});"
-            "document.getElementById('s').textContent='trace ready ('+(b.byteLength/1e6).toFixed(1)+' MB)';go();});"
-            "function go(){var w=window.open(O);"
-            "if(!w){document.getElementById('b').style.display='inline-block';"
-            "document.getElementById('s').textContent='click the button to open the timeline';return;}"
-            "var t=setInterval(function(){w.postMessage('PING',O);},64);"
-            "function h(e){if(e.data!=='PONG')return;clearInterval(t);"
-            "window.removeEventListener('message',h);"
-            "w.postMessage({perfetto:{buffer:BUF,title:'LibreYOLO training profile',"
-            "fileName:'" + trace_name + "'}},O);}"
-            "window.addEventListener('message',h);}</script>"
-        )
-        try:
-            (trace_path.parent / "open.html").write_text(open_html, encoding="utf-8")
-        except Exception:
-            return
-
-        class Handler(http.server.SimpleHTTPRequestHandler):
-            def end_headers(self):
-                self.send_header("Cache-Control", "no-store")
-                super().end_headers()
-
-            def do_GET(self):
-                if "__loaded" in self.path:
-                    loaded.set()
-                    self.send_response(204)
-                    self.end_headers()
-                    return
-                super().do_GET()
-
-            def log_message(self, *args):
-                pass
-
-        handler = functools.partial(Handler, directory=directory)
-        try:
-            httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
-        except Exception:
-            self._emit(f"  (could not start local server — drag {trace_name} "
-                       "into https://ui.perfetto.dev)")
-            return
-        port = httpd.server_address[1]
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        url = f"http://127.0.0.1:{port}/open.html"
-        self._emit(f"  opening the GPU/CPU timeline in Perfetto…  {url}")
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
-        loaded.wait(timeout)
-        if loaded.is_set():
-            self._emit("  trace handed to Perfetto (timeline should be open).")
-            time.sleep(5.0)  # grace for the popup handshake / a manual click
-        else:
-            self._emit(f"  (page didn't load within {int(timeout)}s — open {url} "
-                       f"or drag {trace_name} into https://ui.perfetto.dev)")
-        try:
-            httpd.shutdown()
-        except Exception:
-            pass
-
-    def _write_html(self, trace_path):
-        """Write a self-contained HTML report; returns its path (or None)."""
-        if self.save_dir is None or self.summary is None:
-            return None
-        s = self.summary
-        r = s["real"]
-        m = self.meta
-        comp_total = s["composition_total_ms"] or 1.0
-        idle = r["gpu_idle_fraction"] * 100.0
-        if s["bound"] == "dataloader":
-            banner_bg = "#c0392b"
-            verdict = f"DATALOADER-BOUND — GPU idle ~{idle:.0f}% (waiting on data)"
-        else:
-            banner_bg = "#1e8449"
-            verdict = f"COMPUTE-BOUND — GPU idle only ~{idle:.0f}% (healthy)"
-
-        palette = {
-            "to_device": "#f1c40f", "forward": "#3498db",
-            "backward": "#9b59b6", "optimizer": "#2ecc71",
-        }
-        rows = []
-        for p in PHASES:
-            ms = s["composition_ms"][p]
-            pct = ms / comp_total * 100.0
-            rows.append(
-                f'<tr><td class="ph">{p}</td><td class="ms">{ms:.2f} ms</td>'
-                f'<td class="barcell"><div class="bar" style="width:{pct:.1f}%;'
-                f'background:{palette[p]}"></div></td>'
-                f'<td class="pct">{pct:.1f}%</td></tr>'
-            )
-
-        # Real split: dataload vs compute, as one stacked bar.
-        step = r["step_ms"] or 1.0
-        dl_pct = r["dataload_ms"] / step * 100.0
-        cp_pct = r["compute_ms"] / step * 100.0
-        trace_html = ""
-        if trace_path is not None:
-            trace_html = (
-                '<p class="meta">Full async timeline: drag '
-                f'<code>{Path(trace_path).name}</code> into '
-                '<a href="https://ui.perfetto.dev" target="_blank">ui.perfetto.dev</a>.</p>'
-            )
-        css = (
-            "body{font-family:Segoe UI,Roboto,-apple-system,sans-serif;"
-            "background:#0f1115;color:#e6e6e6;margin:0;padding:32px}"
-            ".card{max-width:780px;margin:auto;background:#171a21;"
-            "border:1px solid #262b36;border-radius:12px;padding:24px 28px}"
-            "h1{font-size:19px;margin:0 0 4px}h2{font-size:14px;color:#cbd3df;margin:20px 0 8px}"
-            ".meta{color:#8b95a5;font-size:13px;margin:6px 0}"
-            ".banner{color:#fff;font-weight:600;padding:10px 14px;"
-            "border-radius:8px;margin:14px 0 8px;background:%s}"
-            ".big{font-size:15px;margin:10px 0}"
-            ".stack{display:flex;height:22px;border-radius:5px;overflow:hidden;margin:8px 0}"
-            ".seg{height:22px;display:flex;align-items:center;justify-content:center;"
-            "font-size:11px;color:#0b0d12;font-weight:600}"
-            "table{width:100%%;border-collapse:collapse}"
-            "td{padding:6px 8px;font-size:14px;vertical-align:middle}"
-            ".ph{width:88px;color:#cbd3df}"
-            ".ms{width:88px;text-align:right;font-variant-numeric:tabular-nums}"
-            ".pct{width:52px;text-align:right;color:#8b95a5}"
-            ".bar{height:16px;border-radius:4px;min-width:2px}"
-            "code{color:#f1c40f}a{color:#4aa3ff}"
-        ) % banner_bg
-        html = (
-            "<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>LibreYOLO profile — {m.get('model','?')}</title>"
-            f"<style>{css}</style></head><body><div class='card'>"
-            f"<h1>LibreYOLO training profile — {m.get('model','?')}</h1>"
-            f"<div class='meta'>device {m.get('device','?')} · batch {m.get('batch','?')}"
-            f" · imgsz {m.get('imgsz','?')} · amp {m.get('amp','?')}"
-            f" · workers {m.get('workers','?')} · "
-            f"{s['window']['real_steps']}+{s['window']['synced_steps']} steps</div>"
-            f"<div class='banner'>{verdict}</div>"
-            f"<div class='big'>Real step <b>{r['step_ms']:.0f} ms</b> &rarr; "
-            f"<b>{r['img_per_s']:.1f} img/s</b></div>"
-            "<div class='stack'>"
-            f"<div class='seg' style='width:{dl_pct:.1f}%;background:#e67e22'>dataload {r['dataload_ms']:.0f}ms</div>"
-            f"<div class='seg' style='width:{cp_pct:.1f}%;background:#3498db'>compute {r['compute_ms']:.0f}ms</div>"
-            "</div>"
-            "<h2>GPU compute composition (synchronized)</h2>"
-            f"<table>{''.join(rows)}</table>"
-            f"{trace_html}</div></body></html>"
-        )
-        try:
-            self.save_dir.mkdir(parents=True, exist_ok=True)
-            path = self.save_dir / "profile_report.html"
-            path.write_text(html, encoding="utf-8")
             return path
         except Exception:
             return None
