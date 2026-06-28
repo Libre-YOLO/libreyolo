@@ -27,28 +27,34 @@ def _load_imagenet() -> dict:
 
 
 @lru_cache()
+def _load_templates() -> tuple:
+    with open(_DATA_DIR / "imagenet_templates.json", encoding="utf-8") as fh:
+        return tuple(json.load(fh))
+
+
+# The accessors below return a *fresh* copy each call. The file reads are cached
+# (above), but the public lists/dicts are not — caching a mutable return would
+# let one caller's mutation corrupt every other caller's view.
+
+
 def imagenet1k_classnames() -> List[str]:
     """The 1000 canonical ImageNet-1k class names (index order)."""
     return list(_load_imagenet()["classnames"])
 
 
-@lru_cache()
 def imagenet1k_wnids() -> List[str]:
     """The 1000 ImageNet-1k WordNet ids (same index order as the class names)."""
     return list(_load_imagenet()["wnids"])
 
 
-@lru_cache()
 def wnid_to_classname() -> Dict[str, str]:
     data = _load_imagenet()
     return dict(zip(data["wnids"], data["classnames"]))
 
 
-@lru_cache()
 def openai_imagenet_templates() -> List[str]:
     """The 80-prompt OpenAI ImageNet template ensemble (``{}``-format strings)."""
-    with open(_DATA_DIR / "imagenet_templates.json", encoding="utf-8") as fh:
-        return list(json.load(fh))
+    return list(_load_templates())
 
 
 def humanize_labels(names: List[str]) -> List[str]:

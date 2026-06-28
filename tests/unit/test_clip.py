@@ -17,7 +17,7 @@ from libreyolo.models.clip import nn as clip_nn
 from libreyolo.models.clip.model import LibreCLIP
 from libreyolo.models.clip.tokenizer import SimpleTokenizer
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.clip]
 
 
 # ---------------------------------------------------------------------------

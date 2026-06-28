@@ -17,7 +17,7 @@ open_clip = pytest.importorskip("open_clip")
 
 from libreyolo.models.clip.tokenizer import SimpleTokenizer  # noqa: E402
 
-pytestmark = [pytest.mark.external_data, pytest.mark.network]
+pytestmark = [pytest.mark.external_data, pytest.mark.network, pytest.mark.clip]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
