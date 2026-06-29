@@ -170,7 +170,9 @@ def get_class_names(dataset_root: str | Path, split: str = "train") -> List[str]
     return classes
 
 
-def _interp_mode(interpolation: str) -> InterpolationMode:
+def _interp_mode(interpolation) -> InterpolationMode:
+    if isinstance(interpolation, InterpolationMode):
+        return interpolation
     return {
         "bilinear": InterpolationMode.BILINEAR,
         "bicubic": InterpolationMode.BICUBIC,
@@ -181,8 +183,11 @@ def _interp_mode(interpolation: str) -> InterpolationMode:
 def build_classify_transforms(
     imgsz: int,
     augment: bool,
+    *,
+    mean=IMAGENET_MEAN,
+    std=IMAGENET_STD,
     crop_pct: float = 0.875,
-    interpolation: str = "bilinear",
+    interpolation="bilinear",
 ):
     """Build train/val image transforms for classification.
 
@@ -190,12 +195,14 @@ def build_classify_transforms(
     deterministic shorter-side resize (``floor(imgsz / crop_pct)``) and center
     crop. ``crop_pct`` and ``interpolation`` let a model family match its native
     eval pipeline (e.g. bicubic + 0.95 crop) so ``model.val()`` agrees with
-    ``model.predict()``. Both normalize with ImageNet stats.
+    ``model.predict()``. Normalization defaults to ImageNet stats; families with
+    their own preprocessing (e.g. CLIP, which uses its own mean/std + bicubic and
+    a 1.0 crop ratio) override ``mean``/``std``/``interpolation``/``crop_pct``.
     """
     import math
 
     mode = _interp_mode(interpolation)
-    normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+    normalize = transforms.Normalize(mean=mean, std=std)
     if augment:
         return transforms.Compose(
             [
@@ -230,8 +237,7 @@ class ClassifyDataset(Dataset):
         imgsz: int,
         augment: bool,
         class_to_idx: Dict[str, int] | None = None,
-        crop_pct: float = 0.875,
-        interpolation: str = "bilinear",
+        transform_kwargs: Dict | None = None,
     ):
         self.root = Path(dataset_root)
         self.split = split
@@ -240,7 +246,7 @@ class ClassifyDataset(Dataset):
         if not split_dir.is_dir():
             raise FileNotFoundError(f"Split directory not found: {split_dir}")
 
-        transform = build_classify_transforms(imgsz, augment, crop_pct, interpolation)
+        transform = build_classify_transforms(imgsz, augment, **(transform_kwargs or {}))
         self._impl = ImageFolder(str(split_dir), transform=transform)
 
         # Pin the label mapping to the train split when supplied so val labels

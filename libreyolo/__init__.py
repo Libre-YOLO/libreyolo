@@ -26,6 +26,7 @@ from .models import (
     LibreConvNeXt,
     LibreEfficientNetV2,
     LibreResNet,
+    LibreCLIP,
 )
 from .utils.results import (
     Results,
@@ -148,6 +149,7 @@ __all__ = [
     "LibreConvNeXt",
     "LibreEfficientNetV2",
     "LibreResNet",
+    "LibreCLIP",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",

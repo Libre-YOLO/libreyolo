@@ -102,6 +102,19 @@ gaze = [
     # it, LibreL2CS prints manual download instructions instead.
     "gdown>=5.1.0",
 ]
+clip = [
+    # LibreCLIP towers are native torch (no open_clip at runtime). Only the
+    # vendored BPE text tokenizer needs these to reproduce CLIP's exact token
+    # IDs (Unicode \p{L}/\p{N} classes + ftfy text fixing).
+    "regex>=2023.0.0",
+    "ftfy>=6.0.0",
+]
+clip-convert = [
+    # Convert-/parity-only: re-host OpenCLIP LAION-2B weights as LibreCLIP
+    # checkpoints (weights/convert_clip_weights.py) and run the parity tests.
+    "libreyolo[clip]",
+    "open_clip_torch>=2.24.0",
+]
 coreml = [
     "coremltools>=8.0",
 ]
@@ -126,6 +139,7 @@ all = [
     "libreyolo[tracking]",
     "libreyolo[rtdetr]",
     "libreyolo[gaze]",
+    "libreyolo[clip]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
@@ -150,6 +164,8 @@ libreyolo = [
     "config/**/*.yaml",
     "training/*.yaml",
     "data/*.json",
+    "models/clip/*.gz",
+    "models/clip/data/*.json",
     "models/**/NOTICE",
     "models/**/*.md",
 ]
@@ -274,6 +290,7 @@ markers = [
     "fomo: tests covering the LibreFOMO point-localizer family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
+    "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",

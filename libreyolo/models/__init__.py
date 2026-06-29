@@ -66,6 +66,10 @@ from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; c
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+# Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
+# so it registers eagerly. can_load is uniquely keyed on logit_scale +
+# text_projection + visual.conv1, so registration order does not matter.
+from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -622,5 +626,6 @@ __all__ = [
     "LibreConvNeXt",
     "LibreEfficientNetV2",
     "LibreResNet",
+    "LibreCLIP",
     "try_ensure_rfdetr",
 ]

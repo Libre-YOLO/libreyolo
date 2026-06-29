@@ -47,6 +47,7 @@ classify-only:
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
+| `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
 
 Casing rules observed in the table:
 
@@ -227,6 +228,16 @@ LibreDepthAnythingV2s-depth.pt   # ViT-S (Apache-2.0 weights)
 LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
+```
+
+### Zero-shot / open-vocabulary classify (inference-only)
+
+```text
+# clip — CLIP zero-shot, open-vocabulary (set_classes); no fixed label set.
+# Defaults to ImageNet-1k labels; classify task suffix `-cls`.
+LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
+LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
+LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
 ```
 
 ### Gaze (inference-only)

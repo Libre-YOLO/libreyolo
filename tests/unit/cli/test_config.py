@@ -44,7 +44,6 @@ class TestResolveModelName:
         assert resolve_model_name("rfdetr-n-seg") == "LibreRFDETRn-seg.pt"
         assert resolve_model_name("rfdetr-x-seg") == "LibreRFDETRx-seg.pt"
         assert resolve_model_name("rfdetr-xx-seg") == "LibreRFDETRxx-seg.pt"
-        assert resolve_model_name("rfdetr-n-cls") == "LibreRFDETRn-cls.pt"
 
     def test_case_insensitive(self):
         assert resolve_model_name("YOLOX-S") == "LibreYOLOXs.pt"

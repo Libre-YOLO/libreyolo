@@ -53,6 +53,7 @@ file = name + ".pt"
 | ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 
 **Ask the user** if: the size code isn't obvious, the family isn't one of the above, or the filename doesn't match what the loader at `libreyolo/models/base/model.py:get_download_url` builds. Do not guess.
 
@@ -118,13 +119,20 @@ LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
 LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
-LibreResNet50-cls.pt, LibreResNet101-cls.pt
+LibreResNet50-cls.pt, LibreResNet101-cls.pt,
+
+LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt
 ```
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
 tracks detection only). The architecture is a native timm-derived port; weights
 are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
+
+LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
+`pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
+data-provenance note** (see `libreyolo/models/clip/NOTICE.md`), and omit the VA
+Benchmarks section (zero-shot, not a trained-on-COCO detector).
 
 Common rule violations to reject before upload:
 

@@ -43,10 +43,24 @@ class ModelEMA:
             msd = (
                 model.module.state_dict() if is_parallel(model) else model.state_dict()
             )
+            # EMA update: v = d*v + (1-d)*model[k] for every float tensor.
+            ema_vals, model_vals = [], []
             for k, v in self.ema.state_dict().items():
                 if v.dtype.is_floating_point:
-                    v *= d
-                    v += (1.0 - d) * msd[k].detach()
+                    ema_vals.append(v)
+                    model_vals.append(msd[k])
+            if ema_vals and ema_vals[0].is_cuda:
+                # CUDA / ROCm: fuse the ~N per-parameter mul_/add_ launches into
+                # two multi-tensor _foreach_ calls — a large win when the step is
+                # launch-bound. Numerically identical (~1e-7).
+                torch._foreach_mul_(ema_vals, d)
+                torch._foreach_add_(ema_vals, model_vals, alpha=1.0 - d)
+            else:
+                # CPU / MPS / other backends: portable per-tensor path (identical
+                # math; _foreach_ coverage is incomplete on MPS, and the launch
+                # win is CUDA-specific anyway).
+                for v, mv in zip(ema_vals, model_vals):
+                    v.mul_(d).add_(mv, alpha=1.0 - d)
 
     def set_decay(self, decay: float, ramp: bool = False):
         """Replace the decay schedule (used for D-FINE-style EMA restart).
