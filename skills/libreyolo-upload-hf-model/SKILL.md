@@ -49,6 +49,7 @@ file = name + ".pt"
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 
 **Ask the user** if: the size code isn't obvious, the family isn't one of the above, or the filename doesn't match what the loader at `libreyolo/models/base/model.py:get_download_url` builds. Do not guess.
 
@@ -103,8 +104,15 @@ LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt,
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
 LibreECx-pose.pt, LibreECs-seg.pt, LibreECm-seg.pt,
-LibreECl-seg.pt, LibreECx-seg.pt
+LibreECl-seg.pt, LibreECx-seg.pt,
+
+LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt
 ```
+
+LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
+`pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
+data-provenance note** (see `libreyolo/models/clip/NOTICE.md`), and omit the VA
+Benchmarks section (zero-shot, not a trained-on-COCO detector).
 
 Common rule violations to reject before upload:
 

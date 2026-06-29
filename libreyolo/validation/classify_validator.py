@@ -45,6 +45,14 @@ class ClassifyValidator(BaseValidator):
             return None
         return ordered
 
+    def _dataset_transform_kwargs(self) -> dict:
+        """Extra kwargs for ``build_classify_transforms`` (mean/std/interp/crop).
+
+        Defaults to ImageNet preprocessing; subclasses (e.g. the CLIP validator)
+        override to inject family-specific normalization.
+        """
+        return {}
+
     @staticmethod
     def _format_class_delta(expected: set[str], actual: set[str]) -> str:
         details = []
@@ -83,6 +91,7 @@ class ClassifyValidator(BaseValidator):
             imgsz=self.config.imgsz,
             augment=False,
             class_to_idx=class_to_idx,
+            transform_kwargs=self._dataset_transform_kwargs(),
         )
         self._num_classes = len(class_names)
         return DataLoader(

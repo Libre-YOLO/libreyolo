@@ -169,26 +169,39 @@ def get_class_names(dataset_root: str | Path, split: str = "train") -> List[str]
     return classes
 
 
-def build_classify_transforms(imgsz: int, augment: bool):
+def build_classify_transforms(
+    imgsz: int,
+    augment: bool,
+    *,
+    mean=IMAGENET_MEAN,
+    std=IMAGENET_STD,
+    interpolation=transforms.InterpolationMode.BILINEAR,
+    crop_pct: float = 0.875,
+):
     """Build train/val image transforms for classification.
 
     Training uses a random-resized crop plus horizontal flip; validation uses a
-    deterministic resize and center crop. Both normalize with ImageNet stats.
+    deterministic resize and center crop. Normalization defaults to ImageNet
+    stats; families with their own preprocessing (e.g. CLIP, which uses its own
+    mean/std + bicubic and a 1.0 crop ratio) override ``mean``/``std``/
+    ``interpolation``/``crop_pct``.
     """
-    normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+    normalize = transforms.Normalize(mean=mean, std=std)
     if augment:
         return transforms.Compose(
             [
-                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0)),
+                transforms.RandomResizedCrop(
+                    imgsz, scale=(0.5, 1.0), interpolation=interpolation
+                ),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]
         )
-    resize = int(round(imgsz / 0.875))
+    resize = int(round(imgsz / crop_pct))
     return transforms.Compose(
         [
-            transforms.Resize(resize),
+            transforms.Resize(resize, interpolation=interpolation),
             transforms.CenterCrop(imgsz),
             transforms.ToTensor(),
             normalize,
@@ -210,6 +223,7 @@ class ClassifyDataset(Dataset):
         imgsz: int,
         augment: bool,
         class_to_idx: Dict[str, int] | None = None,
+        transform_kwargs: Dict | None = None,
     ):
         self.root = Path(dataset_root)
         self.split = split
@@ -218,7 +232,7 @@ class ClassifyDataset(Dataset):
         if not split_dir.is_dir():
             raise FileNotFoundError(f"Split directory not found: {split_dir}")
 
-        transform = build_classify_transforms(imgsz, augment)
+        transform = build_classify_transforms(imgsz, augment, **(transform_kwargs or {}))
         self._impl = ImageFolder(str(split_dir), transform=transform)
 
         # Pin the label mapping to the train split when supplied so val labels
