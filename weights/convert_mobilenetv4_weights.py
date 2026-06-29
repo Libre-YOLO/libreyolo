@@ -8,9 +8,10 @@ The native ``libreyolo.models.mobilenetv4.nn.MobileNetV4`` mirrors timm's module
 names, so the timm ``state_dict`` loads with ``strict=True`` and is bit-identical
 on inference (proven by the parity test). This script just metadata-wraps it.
 
-Names are stored as indexed placeholders so ``model.val()`` reproduces the
-upstream benchmark on a standard ImageNet ImageFolder (torchvision sorts the
-wnid class folders into exactly timm's class-index order).
+Class names are the canonical ImageNet-1k labels, index-aligned to the standard
+wnid-sorted class ordering (torchvision sorts the wnid class folders into exactly
+timm's class-index order), so ``model.val()`` reproduces the upstream benchmark
+and predictions expose readable labels.
 
 Usage::
 
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from _conversion_utils import (
     add_repo_root_to_path,
-    build_class_names,
+    imagenet1k_names,
     save_checkpoint,
     wrap_libreyolo_checkpoint,
 )
@@ -62,7 +63,7 @@ def convert(size: str) -> Path:
         model_family="mobilenetv4",
         size=size,
         nc=1000,
-        names=build_class_names(1000),
+        names=imagenet1k_names(),
         task="classify",
         imgsz=IMGSZ[size],
     )

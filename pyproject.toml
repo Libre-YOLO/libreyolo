@@ -149,6 +149,7 @@ libreyolo = [
     "assets/*.jpg",
     "config/**/*.yaml",
     "training/*.yaml",
+    "data/*.json",
     "models/**/NOTICE",
     "models/**/*.md",
 ]
