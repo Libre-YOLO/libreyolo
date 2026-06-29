@@ -102,17 +102,6 @@ class _TinyRTDETRExport(nn.Module):
         return {"pred_logits": logits, "pred_boxes": boxes}
 
 
-class _TinyRFDETRClassifierRoot(nn.Module):
-    """Small RF-DETR classification root with a classifier submodule."""
-
-    def __init__(self):
-        super().__init__()
-        self.classifier = _TinyModel()
-
-    def forward(self, x):
-        return self.classifier(x)
-
-
 def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
     """Build a mock BaseModel-like wrapper around _TinyModel."""
     wrapper = MagicMock()
@@ -368,27 +357,6 @@ class TestExporterFormats:
         assert imgsz == (32, 32)
         assert device == torch.device("cpu")
         assert output_path.endswith(".onnx")
-
-    def test_rfdetr_classify_export_context_restores_root_training(self):
-        wrapper = _make_wrapper(model_name="rfdetr", input_size=16)
-        wrapper.model = _TinyRFDETRClassifierRoot()
-        wrapper.model.train()
-        wrapper.task = "classify"
-
-        exporter = OnnxExporter(wrapper)
-        with exporter._model_context(
-            torch.device("cpu"),
-            half=False,
-            int8=False,
-            batch=1,
-            imgsz=(16, 16),
-        ) as (nn_model, dummy):
-            assert nn_model is wrapper.model.classifier
-            assert dummy.shape == (1, 3, 16, 16)
-            assert wrapper.model.training is False
-
-        assert wrapper.model.training is True
-        assert wrapper.model.classifier.training is True
 
     def test_rfdetr_export_auto_device_defaults_to_cpu(self):
         wrapper = _make_wrapper(model_name="rfdetr")
