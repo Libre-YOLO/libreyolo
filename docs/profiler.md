@@ -63,6 +63,10 @@ step time — not wall-clock hand-waving.
 | `profile_trace` | `True` | emit the Chrome trace + timeline |
 | `profile_open` | `True` | auto-open `timeline.html` in a browser |
 
+When gradient accumulation is enabled (`nbs > batch`), the profiler rounds the
+warmup and measured windows up to accumulation boundaries so the captured window
+contains complete optimizer steps.
+
 ### Gotcha: augmentation regime
 
 The profiler measures **epoch 0**. If you use a tiny `epochs` with the default
@@ -91,9 +95,11 @@ libreyolo profile compare <before.json> <after.json>   # did it help? img/s + ms
 
 Every command takes either the **self-contained `profile.json`** (recommended — copy
 it freely) or a raw `profile_trace.json`. `get <file>` with no field lists every
-metric. Use **`run --repeat N`** for mean±stdev img/s — a single run *lies* when
-the step is launch-bound (the bottleneck itself makes the step time noisy), and
-`compare` will tell you whether a change is statistically significant.
+metric. `run` follows normal training defaults, including AMP on supported CUDA
+devices; pass `--no-amp` to force fp32. Use **`run --repeat N`** for mean±stdev
+img/s — a single run *lies* when the step is launch-bound (the bottleneck itself
+makes the step time noisy). Repeated runs emit an aggregate `profile_repeat.json`
+for `compare`, plus per-trial `prof_*/profile.json` files for drill-down.
 
 ### Agent loop
 

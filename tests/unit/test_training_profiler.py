@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
 
 import pytest
 import torch
@@ -25,33 +26,34 @@ pytestmark = pytest.mark.unit
 
 
 def _trace_events():
-    """A tiny trace: 6 steps, a forward+backward CPU span, 5 kernels, 2 ops."""
+    """A tiny trace: 6 steps, 3 analysed steps, 5 kernels/step, 2 ops/step."""
     ev = [
         {"ph": "X", "cat": "user_annotation", "name": f"ProfilerStep#{i}",
          "ts": i * 100, "dur": 100, "pid": 1, "tid": 1}
         for i in range(6)
     ]
     # CPU launch spans inside the analysis window [200, 500).
-    ev.append({"ph": "X", "cat": "user_annotation", "name": "step/forward",
-               "ts": 210, "dur": 130, "pid": 1, "tid": 1})
-    ev.append({"ph": "X", "cat": "user_annotation", "name": "step/backward",
-               "ts": 350, "dur": 140, "pid": 1, "tid": 1})
-    # kernels: (name, ts, dur) — fwd: sgemm, elementwise, nchwToNhwc; bwd: bn_bw, h16816gemm(TC)
-    for name, ts, dur in [
-        ("ampere_sgemm_128x128_nt", 220, 10),
-        ("void at::native::vectorized_elementwise_kernel<f>", 230, 5),
-        ("_ZN5cudnn19engines16nchwToNhwcKernel", 240, 8),
-        ("_ZN5cudnn21bn_bw_1C11_kernel_new", 360, 20),
-        ("ampere_h16816gemm_128x128", 380, 15),
-    ]:
-        ev.append({"ph": "X", "cat": "kernel", "name": name, "ts": ts, "dur": dur,
-                   "pid": 0, "tid": 7})
-    ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::conv2d",
-               "ts": 215, "dur": 40, "pid": 1, "tid": 1})
-    ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::convolution_backward",
-               "ts": 355, "dur": 50, "pid": 1, "tid": 1})
-    ev.append({"ph": "X", "cat": "gpu_memcpy", "name": "Memcpy HtoD",
-               "ts": 205, "dur": 3, "pid": 0, "tid": 7})
+    for base in (200, 300, 400):
+        ev.append({"ph": "X", "cat": "user_annotation", "name": "step/forward",
+                   "ts": base + 10, "dur": 35, "pid": 1, "tid": 1})
+        ev.append({"ph": "X", "cat": "user_annotation", "name": "step/backward",
+                   "ts": base + 50, "dur": 40, "pid": 1, "tid": 1})
+        # kernels: fwd: sgemm, elementwise, nchwToNhwc; bwd: bn_bw, h16816gemm(TC)
+        for name, offset, dur in [
+            ("ampere_sgemm_128x128_nt", 12, 10),
+            ("void at::native::vectorized_elementwise_kernel<f>", 23, 5),
+            ("_ZN5cudnn19engines16nchwToNhwcKernel", 31, 8),
+            ("_ZN5cudnn21bn_bw_1C11_kernel_new", 55, 20),
+            ("ampere_h16816gemm_128x128", 78, 15),
+        ]:
+            ev.append({"ph": "X", "cat": "kernel", "name": name,
+                       "ts": base + offset, "dur": dur, "pid": 0, "tid": 7})
+        ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::conv2d",
+                   "ts": base + 15, "dur": 40, "pid": 1, "tid": 1})
+        ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::convolution_backward",
+                   "ts": base + 55, "dur": 50, "pid": 1, "tid": 1})
+        ev.append({"ph": "X", "cat": "gpu_memcpy", "name": "Memcpy HtoD",
+                   "ts": base + 5, "dur": 3, "pid": 0, "tid": 7})
     return ev
 
 
@@ -98,7 +100,15 @@ def test_pick_window():
     steps = [{"ts": i * 100, "dur": 100} for i in range(6)]
     w0, w1, n_real = _pick_window(steps)
     assert (w0, w1) == (200, 500)
-    assert n_real >= 1
+    assert n_real == 3
+
+
+def test_pick_window_counts_equal_duration_steps():
+    steps = [
+        {"name": f"ProfilerStep#{i}", "ts": i * 100, "dur": 100}
+        for i in range(6)
+    ]
+    assert _pick_window(steps) == (200, 500, 3)
 
 
 # --- analyze_trace ----------------------------------------------------------
@@ -160,6 +170,21 @@ def test_trainstepprofiler_runs_without_trace(tmp_path):
     assert prof.finished
     assert prof.summary is not None
     assert prof.summary["real"]["step_ms"] >= 0
+
+
+def test_profiler_real_timing_excludes_warmup_work(tmp_path):
+    prof = TrainStepProfiler(
+        device=torch.device("cpu"), warmup=1, active=2, trace=False,
+        open_report=False, save_dir=tmp_path, meta={"model": "t", "batch": 1},
+    )
+    for idx, _ in enumerate(prof.wrap_loader(range(3))):
+        time.sleep(0.05 if idx == 0 else 0.005)
+        prof.step()
+        if prof.finished:
+            break
+
+    assert prof.summary is not None
+    assert prof.summary["real"]["step_ms"] < 30.0
 
 
 def test_analyze_trace_host_overhead_and_schema(tmp_path):

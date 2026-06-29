@@ -113,10 +113,31 @@ def _pick_window(steps):
         return None, None, 1
     if w1 <= w0:
         w1 = w0 + 1.0
-    import statistics as _st
-    med = _st.median([s.get("dur", 0) for s in steps]) if steps else 0
-    n_real = max(len([s for s in steps if w0 <= s["ts"] < w1 and s.get("dur", 0) > med]), 1)
+    n_real = _count_steps_in_window(steps, w0, w1)
     return w0, w1, n_real
+
+
+def _count_steps_in_window(steps, w0, w1):
+    if w0 is None or w1 is None:
+        return 1
+    in_window = [s for s in steps if w0 <= s.get("ts", 0) < w1]
+    if not in_window:
+        return 1
+    numbered = set()
+    for step in in_window:
+        match = re.search(r"#(\d+)", str(step.get("name", "")))
+        if match:
+            numbered.add(match.group(1))
+    if numbered:
+        return max(len(numbered), 1)
+    starts = sorted(float(s.get("ts", 0)) for s in in_window)
+    clusters = 0
+    last = None
+    for ts in starts:
+        if last is None or ts - last > 1.0:
+            clusters += 1
+        last = ts
+    return max(clusters, 1)
 
 
 def analyze_trace(trace_path, summary_path=None):
@@ -411,7 +432,7 @@ class TrainStepProfiler:
         self._real_step_n = 0
         self._real_dl_ms = 0.0
         self._real_dl_n = 0
-        self._prev_fetch: Optional[float] = None
+        self._step_t0: Optional[float] = None
 
         # Synced compute composition.
         self._sums = {p: 0.0 for p in PHASES}
@@ -482,16 +503,20 @@ class TrainStepProfiler:
             if self._unsynced_phase():
                 self._real_dl_ms += (t1 - t0) * 1000.0
                 self._real_dl_n += 1
-                if self._prev_fetch is not None:
-                    self._real_step_ms += (t1 - self._prev_fetch) * 1000.0
-                    self._real_step_n += 1
-            self._prev_fetch = t1
+                self._step_t0 = t0
+            else:
+                self._step_t0 = None
             yield batch
 
     def step(self) -> None:
         """Advance one iteration; finalizes + reports when the window closes."""
         if self.finished:
             return
+        t_done = time.perf_counter()
+        if self._unsynced_phase() and self._step_t0 is not None:
+            self._real_step_ms += (t_done - self._step_t0) * 1000.0
+            self._real_step_n += 1
+            self._step_t0 = None
         if self._torch_prof is not None:
             try:
                 self._torch_prof.step()
@@ -616,16 +641,28 @@ class TrainStepProfiler:
         real_step = self.summary["real"].get("step_ms", 0.0)
         busy = analysis.get("gpu_busy_ms_per_step", 0.0)
         util = (busy / real_step) if real_step > 0 else analysis.get("gpu_util", 0.0)
-        analysis["gpu_util"] = round(util, 3)
-        if dl >= 0.2:
+        analysis["gpu_util_raw"] = round(util, 3)
+        analysis["gpu_util"] = round(min(util, 1.0), 3)
+        memory_pressure = (
+            analysis.get("cuda_mallocs_per_step", 0) >= 5
+            or util > 1.05
+        )
+        analysis["memory_pressure"] = memory_pressure
+        if memory_pressure:
+            bound = "memory-pressure"
+            why = (
+                f"allocator/VRAM pressure (~{analysis.get('cuda_mallocs_per_step', 0)} "
+                "cudaMalloc/free per step); throughput and utilisation are unreliable"
+            )
+        elif dl >= 0.2:
             bound = "dataloader"
             why = f"the GPU waits on input data (~{dl * 100:.0f}% of the step)"
-        elif util >= 0.8:
+        elif analysis["gpu_util"] >= 0.8:
             bound = "compute"
-            why = f"the GPU is saturated (~{util * 100:.0f}% busy)"
+            why = f"the GPU is saturated (~{analysis['gpu_util'] * 100:.0f}% busy)"
         else:
             bound = "host / launch"
-            why = (f"GPU only ~{util * 100:.0f}% busy — fed too slowly: "
+            why = (f"GPU only ~{analysis['gpu_util'] * 100:.0f}% busy — fed too slowly: "
                    f"{analysis['kernels_per_step']} kernels/step at "
                    f"~{analysis['mean_kernel_us']:.0f}us each plus host overhead")
         self.summary["bound"] = bound
@@ -668,12 +705,14 @@ class TrainStepProfiler:
                 bits.append(f"memcpy {an['memcpy_ms_per_step']:.1f} ms/step")
             self._emit("  " + "  |  ".join(bits))
         label = {"dataloader": "DATALOADER-BOUND", "host / launch": "HOST/LAUNCH-BOUND",
-                 "compute": "COMPUTE-BOUND"}.get(s["bound"], str(s["bound"]).upper())
+                 "compute": "COMPUTE-BOUND", "memory-pressure": "MEMORY-PRESSURE"}.get(
+                     s["bound"], str(s["bound"]).upper())
         self._emit(f"  >> VERDICT: {label} — {s.get('bound_why', '')}.")
         levers = {
             "dataloader": "workers↑, cache='ram'/'disk', lighter aug, larger batch",
             "host / launch": "larger batch (amortize launches), fewer per-step .item()/syncs, CUDA graphs, op fusion",
             "compute": "already GPU-bound — try AMP/bf16 or a larger model",
+            "memory-pressure": "lower batch, reduce activation memory, avoid running at the OOM edge",
         }
         self._emit(f"     Levers: {levers.get(s['bound'], '')}.")
         if an and not self.meta.get("amp"):
@@ -739,7 +778,7 @@ class TrainStepProfiler:
         kept = []
         kern_total, kern_count = {}, {}
         gpu_busy_us = memcpy_us = tc_us = 0.0
-        n_kern = 0
+        n_kern = n_malloc = 0
         for e in events:
             if e.get("ph") != "X":
                 continue
@@ -763,6 +802,8 @@ class TrainStepProfiler:
                 memcpy_us += dur
                 kept.append({"name": name[:64], "_ts": ts, "_dur": dur,
                              "lane": LANE["mem"], "cat": "mem"})
+            elif cat == "cuda_runtime" and ("Malloc" in name or "Free" in name):
+                n_malloc += 1
             elif cat == "user_annotation" and name.startswith("step/"):
                 kept.append({"name": name[5:], "_ts": ts, "_dur": dur,
                              "lane": LANE["pcpu"], "cat": "pcpu"})
@@ -776,12 +817,11 @@ class TrainStepProfiler:
             return None, None
 
         # ---- analysis: the GPU truth ----
-        import statistics as _st
         wall_ms = (w1 - w0) / 1000.0 if (w0 is not None and w1 is not None) else 0.0
-        med = _st.median([s.get("dur", 0) for s in steps]) if steps else 0
-        n_real = max(len([s for s in steps if w0 <= s["ts"] < w1 and s.get("dur", 0) > med]), 1)
+        n_real = _count_steps_in_window(steps, w0, w1)
         gpu_busy_ms = gpu_busy_us / 1000.0
         util = (gpu_busy_ms / wall_ms) if wall_ms > 0 else 0.0
+        mallocs_per_step = int(n_malloc // n_real) if n_real else n_malloc
         tot = sum(kern_total.values()) or 1.0
         top = sorted(kern_total.items(), key=lambda kv: kv[1], reverse=True)[:6]
         top_kernels = [{"name": _friendly_kernel(n), "pct": round(v / tot * 100, 1),
@@ -801,6 +841,9 @@ class TrainStepProfiler:
             "kernels_per_step": int(n_kern // n_real),
             "memcpy_ms_per_step": round(memcpy_us / 1000.0 / n_real, 3),
             "tensorcore_pct": round(tc_us / gpu_busy_us * 100, 1) if gpu_busy_us else 0.0,
+            "cuda_mallocs_per_step": mallocs_per_step,
+            "gpu_util_raw": round(util, 3),
+            "memory_pressure": mallocs_per_step >= 5 or util > 1.05,
             "window_real_steps": n_real,
             "top_kernels": top_kernels,
             "categories": categories,

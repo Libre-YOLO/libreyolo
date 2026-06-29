@@ -22,21 +22,22 @@ def _write_trace(directory: Path) -> Path:
          "ts": i * 100, "dur": 100, "pid": 1, "tid": 1}
         for i in range(6)
     ]
-    ev.append({"ph": "X", "cat": "user_annotation", "name": "step/forward",
-               "ts": 210, "dur": 130, "pid": 1, "tid": 1})
-    ev.append({"ph": "X", "cat": "user_annotation", "name": "step/backward",
-               "ts": 350, "dur": 140, "pid": 1, "tid": 1})
-    for name, ts, dur in [
-        ("ampere_sgemm_128x128_nt", 220, 10),
-        ("_ZN5cudnn21bn_bw_1C11_kernel_new", 360, 20),
-        ("ampere_h16816gemm_128x128", 380, 15),
-    ]:
-        ev.append({"ph": "X", "cat": "kernel", "name": name, "ts": ts, "dur": dur,
-                   "pid": 0, "tid": 7})
-    ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::conv2d",
-               "ts": 215, "dur": 40, "pid": 1, "tid": 1})
-    ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::convolution_backward",
-               "ts": 355, "dur": 50, "pid": 1, "tid": 1})
+    for base in (200, 300, 400):
+        ev.append({"ph": "X", "cat": "user_annotation", "name": "step/forward",
+                   "ts": base + 10, "dur": 35, "pid": 1, "tid": 1})
+        ev.append({"ph": "X", "cat": "user_annotation", "name": "step/backward",
+                   "ts": base + 50, "dur": 40, "pid": 1, "tid": 1})
+        for name, offset, dur in [
+            ("ampere_sgemm_128x128_nt", 20, 10),
+            ("_ZN5cudnn21bn_bw_1C11_kernel_new", 60, 20),
+            ("ampere_h16816gemm_128x128", 80, 15),
+        ]:
+            ev.append({"ph": "X", "cat": "kernel", "name": name,
+                       "ts": base + offset, "dur": dur, "pid": 0, "tid": 7})
+        ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::conv2d",
+                   "ts": base + 15, "dur": 40, "pid": 1, "tid": 1})
+        ev.append({"ph": "X", "cat": "cpu_op", "name": "aten::convolution_backward",
+                   "ts": base + 55, "dur": 50, "pid": 1, "tid": 1})
     trace = Path(directory) / "profile_trace.json"
     trace.write_text(json.dumps({"traceEvents": ev}))
     (Path(directory) / "profile_summary.json").write_text(json.dumps({

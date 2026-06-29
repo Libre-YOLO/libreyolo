@@ -68,7 +68,7 @@ def run_cmd(
     batch: int = typer.Option(16, "--batch", help="Micro-batch (-1 auto-fits ~70%% VRAM)"),
     imgsz: int = typer.Option(640, "--imgsz"),
     workers: int = typer.Option(8, "--workers"),
-    amp: bool = typer.Option(False, "--amp", help="Use the family's AMP path"),
+    amp: bool = typer.Option(True, "--amp/--no-amp", help="Use the family's AMP path"),
     steps: int = typer.Option(20, "--steps", help="Profiled (measured) steps"),
     warmup: int = typer.Option(5, "--warmup", help="Warmup steps before measuring"),
     repeat: int = typer.Option(1, "--repeat", help="Repeat N times for mean +/- stdev (a single run lies when launch-bound)"),
@@ -85,7 +85,7 @@ def run_cmd(
     # Enough total iterations to fill warmup+steps even on a tiny dataset; the
     # profiler early-stops once the window is full, so extra epochs never run.
     epochs = warmup + steps + 5
-    trials, last_dir = [], None
+    trials, trial_profiles, trial_paths, last_dir = [], [], [], None
     for i in range(max(1, repeat)):
         name = f"prof_{i}" if repeat > 1 else "prof"
         model = LibreYOLO(model_path=weights, size=size, device=device)
@@ -104,6 +104,8 @@ def run_cmd(
                 "or a smaller --batch.", err=True)
             raise typer.Exit(3)
         a = _load(str(pj))
+        trial_profiles.append(a)
+        trial_paths.append(str(pj))
         if a.get("img_per_s") is not None:
             trials.append(a["img_per_s"])
         if i < repeat - 1:
@@ -115,11 +117,48 @@ def run_cmd(
     pj = last_dir / "profile.json"
     agg = _load(str(pj))
     if len(trials) > 1:
+        agg = dict(trial_profiles[-1])
         mean, std = round(_st.fmean(trials), 2), round(_st.pstdev(trials), 2)
         agg["img_per_s"] = agg["metrics"]["img_per_s"] = mean
         agg["img_per_s_std"] = agg["metrics"]["img_per_s_std"] = std
         agg["img_per_s_n"] = agg["metrics"]["img_per_s_n"] = len(trials)
         agg["img_per_s_trials"] = [round(t, 2) for t in trials]
+        agg["aggregation"] = {
+            "n": len(trial_profiles),
+            "profiles": trial_paths,
+            "representative_profile": trial_paths[-1],
+            "note": "scalar metrics are averaged; kernel lists and trace view use the final trial.",
+        }
+        scalar_keys = (
+            "step_ms", "gpu_util", "gpu_util_raw", "gpu_busy_ms_per_step",
+            "mean_kernel_us", "kernels_per_step", "memcpy_ms_per_step",
+            "host_overhead_ms_per_step", "launches_per_step", "dataload_ms",
+            "dataload_frac", "tensorcore_pct", "cuda_mallocs_per_step",
+        )
+        metric_aliases = {
+            "gpu_busy_ms_per_step": "gpu_busy_ms",
+            "memcpy_ms_per_step": "memcpy_ms",
+            "host_overhead_ms_per_step": "host_overhead_ms",
+        }
+        metrics = dict(agg.get("metrics") or {})
+        for key in scalar_keys:
+            values = [
+                p.get(key) for p in trial_profiles
+                if isinstance(p.get(key), (int, float)) and p.get(key) is not None
+            ]
+            if not values:
+                continue
+            value = round(_st.fmean(values), 3)
+            if all(isinstance(v, int) for v in values):
+                value = int(round(value))
+            agg[key] = value
+            metrics[metric_aliases.get(key, key)] = value
+        bounds = [p.get("bound") for p in trial_profiles if p.get("bound")]
+        if bounds and len(set(bounds)) > 1:
+            agg["bound"] = metrics["bound"] = "mixed"
+            agg["bound_why"] = "repeat trials produced mixed bottleneck verdicts"
+        agg["metrics"] = metrics
+        pj = Path(project) / "profile_repeat.json"
         pj.write_text(_json.dumps(agg))
 
     if json_output:

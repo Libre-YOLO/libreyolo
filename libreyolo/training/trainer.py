@@ -1076,10 +1076,23 @@ class BaseTrainer(ABC):
             elif is_main_process():
                 from libreyolo.training.profiler import TrainStepProfiler
 
+                profile_warmup = getattr(self.config, "profile_warmup", 5)
+                profile_steps = getattr(self.config, "profile_steps", 20)
+                accum_steps = self._accum_steps
+                if accum_steps > 1:
+                    profile_warmup = math.ceil(profile_warmup / accum_steps) * accum_steps
+                    profile_steps = math.ceil(profile_steps / accum_steps) * accum_steps
+                    logger.info(
+                        "profile window rounded to accumulation boundaries "
+                        "(warmup=%d, steps=%d, accum=%d)",
+                        profile_warmup,
+                        profile_steps,
+                        accum_steps,
+                    )
                 self._profiler = TrainStepProfiler(
                     device=self.device,
-                    warmup=getattr(self.config, "profile_warmup", 5),
-                    active=getattr(self.config, "profile_steps", 20),
+                    warmup=profile_warmup,
+                    active=profile_steps,
                     trace=getattr(self.config, "profile_trace", True),
                     open_report=getattr(self.config, "profile_open", True),
                     save_dir=self.save_dir,
@@ -1559,7 +1572,7 @@ class BaseTrainer(ABC):
 
     def _prof_phase(self, name: str):
         """Profiler phase context manager (no-op when profiling is disabled)."""
-        prof = self._profiler
+        prof = getattr(self, "_profiler", None)
         return prof.phase(name) if prof is not None else contextlib.nullcontext()
 
     def _train_epoch(
@@ -1593,7 +1606,8 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
-        loader = self._profiler.wrap_loader(pbar) if self._profiler else pbar
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
@@ -1668,9 +1682,9 @@ class BaseTrainer(ABC):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
-            if self._profiler is not None:
-                self._profiler.step()
-                if self._profiler.finished:
+            if prof is not None:
+                prof.step()
+                if prof.finished:
                     self._stop_training = True
                     break
 
@@ -1724,7 +1738,8 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
-        loader = self._profiler.wrap_loader(pbar) if self._profiler else pbar
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
@@ -1809,9 +1824,9 @@ class BaseTrainer(ABC):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
-            if self._profiler is not None:
-                self._profiler.step()
-                if self._profiler.finished:
+            if prof is not None:
+                prof.step()
+                if prof.finished:
                     self._stop_training = True
                     break
 
