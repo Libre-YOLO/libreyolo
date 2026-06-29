@@ -29,6 +29,7 @@ from urllib.request import urlopen
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 from torchvision.datasets import ImageFolder
 
 from .utils import DATASETS_DIR
@@ -169,39 +170,52 @@ def get_class_names(dataset_root: str | Path, split: str = "train") -> List[str]
     return classes
 
 
+def _interp_mode(interpolation) -> InterpolationMode:
+    if isinstance(interpolation, InterpolationMode):
+        return interpolation
+    return {
+        "bilinear": InterpolationMode.BILINEAR,
+        "bicubic": InterpolationMode.BICUBIC,
+        "nearest": InterpolationMode.NEAREST,
+    }.get(str(interpolation).lower(), InterpolationMode.BILINEAR)
+
+
 def build_classify_transforms(
     imgsz: int,
     augment: bool,
     *,
     mean=IMAGENET_MEAN,
     std=IMAGENET_STD,
-    interpolation=transforms.InterpolationMode.BILINEAR,
     crop_pct: float = 0.875,
+    interpolation="bilinear",
 ):
     """Build train/val image transforms for classification.
 
     Training uses a random-resized crop plus horizontal flip; validation uses a
-    deterministic resize and center crop. Normalization defaults to ImageNet
-    stats; families with their own preprocessing (e.g. CLIP, which uses its own
-    mean/std + bicubic and a 1.0 crop ratio) override ``mean``/``std``/
-    ``interpolation``/``crop_pct``.
+    deterministic shorter-side resize (``floor(imgsz / crop_pct)``) and center
+    crop. ``crop_pct`` and ``interpolation`` let a model family match its native
+    eval pipeline (e.g. bicubic + 0.95 crop) so ``model.val()`` agrees with
+    ``model.predict()``. Normalization defaults to ImageNet stats; families with
+    their own preprocessing (e.g. CLIP, which uses its own mean/std + bicubic and
+    a 1.0 crop ratio) override ``mean``/``std``/``interpolation``/``crop_pct``.
     """
+    import math
+
+    mode = _interp_mode(interpolation)
     normalize = transforms.Normalize(mean=mean, std=std)
     if augment:
         return transforms.Compose(
             [
-                transforms.RandomResizedCrop(
-                    imgsz, scale=(0.5, 1.0), interpolation=interpolation
-                ),
+                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
             ]
         )
-    resize = int(round(imgsz / crop_pct))
+    resize = int(math.floor(imgsz / crop_pct))
     return transforms.Compose(
         [
-            transforms.Resize(resize, interpolation=interpolation),
+            transforms.Resize(resize, interpolation=mode),
             transforms.CenterCrop(imgsz),
             transforms.ToTensor(),
             normalize,

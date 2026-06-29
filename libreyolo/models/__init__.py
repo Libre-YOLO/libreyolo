@@ -62,6 +62,10 @@ from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
+from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
 # text_projection + visual.conv1, so registration order does not matter.
@@ -467,9 +471,10 @@ def LibreYOLO(
             matched_cls = matching_classes[0]
 
     if matched_cls is None:
+        registered = sorted({c.FAMILY for c in BaseModel._registry if getattr(c, "FAMILY", "")})
         raise ValueError(
             "Could not detect model architecture from state dict keys.\n"
-            "Supported architectures: YOLOX, YOLOv9, YOLOv9-E2E, YOLO-NAS, RT-DETR, RF-DETR, D-FINE, DEIM, DEIMv2."
+            f"Registered model families: {', '.join(registered)}."
         )
 
     # Auto-detect size
@@ -617,6 +622,10 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
     "LibreCLIP",
     "try_ensure_rfdetr",
 ]

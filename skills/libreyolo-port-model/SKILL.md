@@ -887,7 +887,13 @@ input modes — exactly one must be set:
 - `data_dir` — detect/segment with a flat dataset.
 - `keypoints_json` + `images_dir` — pose only.
 
-`ClassifyValidator` and `OBBValidator` **do not exist yet**.
+`ClassifyValidator` and `OBBValidator` now exist
+(`libreyolo/validation/classify_validator.py`, `obb_validator.py`). This skill
+does not yet ship a dedicated `classify` scaffold; for a classify-only family
+follow the merged examples — `libreyolo/models/{mobilenetv4,convnext,efficientnetv2}/`
+— which reuse the shared `BaseTrainer` classify path (`_setup_classify_data` /
+`_run_classify_validation`), return `{"probs": ...}` from `_postprocess`, and set
+`best_metric_key = "metrics/accuracy_top1"`.
 
 **Per-task `best_metric_key` override** is mandatory for non-detect
 trainers. `BaseTrainer.best_metric_key = "metrics/mAP50-95"` (`training/trainer.py:35`)

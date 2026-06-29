@@ -1,0 +1,31 @@
+LibreEfficientNetV2 — third-party attribution
+=============================================
+
+The EfficientNetV2 architecture in this family (``nn.py``) is a native
+re-implementation derived from the EfficientNet/EfficientNetV2 implementation
+in `timm` (PyTorch Image Models):
+
+    Source:   https://github.com/huggingface/pytorch-image-models
+    Files:    timm/models/efficientnet.py, timm/models/_efficientnet_blocks.py,
+              timm/models/_efficientnet_builder.py
+    Author:   Ross Wightman and the timm contributors
+    License:  Apache License 2.0
+
+The original architecture is from Google:
+
+    EfficientNetV2 — "EfficientNetV2: Smaller Models and Faster Training"
+    (https://arxiv.org/abs/2104.00298), reference implementation
+    https://github.com/google/automl/tree/master/efficientnetv2
+    License:  Apache License 2.0
+
+The block definitions, per-variant architecture strings, channel-rounding,
+TensorFlow "SAME" padding, and module/attribute naming follow timm so that
+timm's Apache-2.0 ImageNet-1k pretrained weights load unchanged and produce
+bit-identical inference output (verified by the parity test).
+
+Pretrained weights (tf_efficientnetv2_b{0,1,2,3}, ImageNet-1k, ported by
+Ross Wightman in timm — no ImageNet-21k, no JFT, no extra data) are licensed
+Apache-2.0 and are redistributable for commercial use.
+
+A copy of the Apache License 2.0 is available at:
+    https://www.apache.org/licenses/LICENSE-2.0

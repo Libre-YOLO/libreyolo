@@ -97,6 +97,14 @@ def build_class_names(nc: int) -> dict[int, str]:
     return _build_class_names(nc)
 
 
+def imagenet1k_names() -> dict[int, str]:
+    """Return the canonical ImageNet-1k label map ``{index: name}`` (ids 0..999)."""
+    add_repo_root_to_path()
+    from libreyolo.data.imagenet import imagenet1k_names as _imagenet1k_names
+
+    return _imagenet1k_names()
+
+
 def wrap_libreyolo_checkpoint(
     state_dict: dict[str, torch.Tensor],
     *,

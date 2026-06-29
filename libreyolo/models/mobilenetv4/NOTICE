@@ -1,0 +1,24 @@
+LibreMobileNetV4 — third-party attribution
+==========================================
+
+The MobileNetV4 architecture in this family (``nn.py``) is a native
+re-implementation derived from the MobileNetV4 implementation in
+`timm` (PyTorch Image Models):
+
+    Source:   https://github.com/huggingface/pytorch-image-models
+    Files:    timm/models/mobilenetv3.py, timm/models/_efficientnet_blocks.py,
+              timm/models/_efficientnet_builder.py
+    Author:   Ross Wightman and the timm contributors
+    License:  Apache License 2.0
+
+The block definitions, per-variant architecture strings, channel-rounding,
+and module/attribute naming follow timm so that timm's Apache-2.0
+ImageNet-1k pretrained weights load unchanged and produce bit-identical
+inference output (verified by the parity test).
+
+Pretrained weights (mobilenetv4_conv_{small,medium,large}, ImageNet-1k,
+trained by Ross Wightman in timm — no distillation, no extra data) are
+licensed Apache-2.0 and are redistributable for commercial use.
+
+A copy of the Apache License 2.0 is available at:
+    https://www.apache.org/licenses/LICENSE-2.0

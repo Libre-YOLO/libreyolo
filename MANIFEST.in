@@ -18,6 +18,7 @@ global-exclude *.mp4
 # Re-include packaged sample assets (overrides global-exclude above)
 recursive-include libreyolo/assets *.jpg
 recursive-include libreyolo *.yaml
+recursive-include libreyolo/data *.json
 
 # LibreCLIP shipped data: vendored BPE vocab + ImageNet labels/templates
 recursive-include libreyolo/models/clip *.gz
@@ -25,6 +26,8 @@ recursive-include libreyolo/models/clip/data *.json
 
 # Bundled third-party license texts (must ship with the wheel)
 recursive-include libreyolo/models *.md
+recursive-include libreyolo/models NOTICE
 include THIRD_PARTY_NOTICES.txt
 include weights/LICENSE_NOTICE.txt
 include NOTICE
+include licenses/Apache-2.0.txt

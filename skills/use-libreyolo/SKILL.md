@@ -133,6 +133,11 @@ as the source of truth. By tier:
 - **Other detectors:** YOLOX, YOLO9-E2E, YOLO-NAS, D-FINE, DEIM, DEIMv2,
   RT-DETR / v2 / v4, PicoDet, RTMDet, EC.
 - **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO.
+- **Classifiers** (ImageNet-1k, native timm ports — predict logits are
+  bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
+  EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
+  suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
+  ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
 - **Open-vocabulary / promptable** (need `libreyolo[vlm]` / `[sam]`): the
   `LibreVLM` family — Qwen3VL, Florence2, Kosmos2, SmolVLM2, InternVL3,
   LocateAnything, LFM2VL — and `LibreSAM` / `LibreSAM1`.

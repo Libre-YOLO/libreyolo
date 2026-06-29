@@ -1,0 +1,21 @@
+LibreResNet - third-party attribution
+=====================================
+
+The ResNet architecture in this family (``nn.py``) is a native re-implementation
+of the vanilla ResNet (v1.5 stride placement), faithful to the implementations in
+timm and torchvision so their pretrained weights load unchanged.
+
+    Architecture: "Deep Residual Learning for Image Recognition",
+                  Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun (2015).
+                  https://arxiv.org/abs/1512.03385
+
+    Weights:      timm `resnet{18,34,50,101}.a1_in1k` (the "ResNet Strikes Back"
+                  A1 recipe), ImageNet-1k.
+                  Source:  https://github.com/huggingface/pytorch-image-models
+                  Author:  Ross Wightman and the timm contributors.
+                  License: Apache License 2.0 (redistributable, commercial OK).
+
+Module/attribute names mirror timm/torchvision so the pretrained ``state_dict``
+loads with ``strict=True`` and inference is bit-identical (verified by the parity
+test). A copy of the Apache License 2.0 is at
+https://www.apache.org/licenses/LICENSE-2.0

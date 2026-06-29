@@ -48,10 +48,19 @@ class ClassifyValidator(BaseValidator):
     def _dataset_transform_kwargs(self) -> dict:
         """Extra kwargs for ``build_classify_transforms`` (mean/std/interp/crop).
 
-        Defaults to ImageNet preprocessing; subclasses (e.g. the CLIP validator)
-        override to inject family-specific normalization.
+        Defaults to the model's native eval pipeline (``crop_pct`` +
+        ``interpolation``) so ``val()`` matches ``predict()`` with ImageNet
+        normalization; subclasses (e.g. the CLIP validator) override to inject
+        family-specific normalization (mean/std).
         """
-        return {}
+        kwargs: dict = {}
+        crop_pct = getattr(self.model, "crop_pct", None)
+        if crop_pct is not None:
+            kwargs["crop_pct"] = crop_pct
+        interpolation = getattr(self.model, "interpolation", None)
+        if interpolation is not None:
+            kwargs["interpolation"] = interpolation
+        return kwargs
 
     @staticmethod
     def _format_class_delta(expected: set[str], actual: set[str]) -> str:
@@ -91,6 +100,7 @@ class ClassifyValidator(BaseValidator):
             imgsz=self.config.imgsz,
             augment=False,
             class_to_idx=class_to_idx,
+            # Match the model's native eval pipeline so val() agrees with predict().
             transform_kwargs=self._dataset_transform_kwargs(),
         )
         self._num_classes = len(class_names)

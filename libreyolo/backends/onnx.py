@@ -136,6 +136,12 @@ class OnnxBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=(
+                float(runtime_metadata["crop_pct"])
+                if runtime_metadata.get("crop_pct")
+                else None
+            ),
+            interpolation=runtime_metadata.get("interpolation"),
             **pose_metadata,
         )
 

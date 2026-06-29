@@ -10,6 +10,7 @@ license-files = [
     "NOTICE",
     "THIRD_PARTY_NOTICES.txt",
     "weights/LICENSE_NOTICE.txt",
+    "licenses/Apache-2.0.txt",
 ]
 authors = [
     {name = "LibreYOLO Team"}
@@ -162,8 +163,11 @@ libreyolo = [
     "assets/*.jpg",
     "config/**/*.yaml",
     "training/*.yaml",
+    "data/*.json",
     "models/clip/*.gz",
     "models/clip/data/*.json",
+    "models/**/NOTICE",
+    "models/**/*.md",
 ]
 
 [tool.setuptools.packages.find]

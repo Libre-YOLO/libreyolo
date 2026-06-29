@@ -286,6 +286,8 @@ class BaseBackend(ABC):
         task: str | None = None,
         supported_tasks=None,
         default_task: str | None = None,
+        crop_pct: float | None = None,
+        interpolation: str | None = None,
         num_keypoints: int | None = None,
         keypoint_dim: int | None = None,
         num_keypoints_per_class: list[int] | None = None,
@@ -328,6 +330,10 @@ class BaseBackend(ABC):
             # Some concrete backends expose size as a computed read-only property.
             pass
         self.input_size = self.imgsz
+        # Classification eval preprocessing (from export metadata); defaults keep
+        # legacy behavior. Lets exported-backend classify inference match native.
+        self.crop_pct = crop_pct if crop_pct is not None else 0.875
+        self.interpolation = interpolation or "bilinear"
         # Set by backends that load a model with NMS baked into the graph; such
         # models emit final (1, max_det, 6) detections instead of raw tensors.
         if not hasattr(self, "embedded_nms"):
@@ -433,9 +439,12 @@ class BaseBackend(ABC):
             )
             return tensor, img, size, 1.0
 
-    @staticmethod
-    def _preprocess_classify(image, input_size, color_format):
-        """Classification preprocessing: ImageNet-style resize/crop/normalize."""
+    def _preprocess_classify(self, image, input_size, color_format):
+        """Classification preprocessing: ImageNet-style resize/crop/normalize.
+
+        Uses the per-family ``crop_pct``/``interpolation`` recorded in export
+        metadata so exported-backend inference matches native predict()/val().
+        """
         from ..data.classify_dataset import build_classify_transforms
 
         h, w = _imgsz_hw(input_size)
@@ -446,7 +455,12 @@ class BaseBackend(ABC):
 
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
-        transform = build_classify_transforms(h, augment=False)
+        transform = build_classify_transforms(
+            h,
+            augment=False,
+            crop_pct=getattr(self, "crop_pct", 0.875),
+            interpolation=getattr(self, "interpolation", "bilinear"),
+        )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
 

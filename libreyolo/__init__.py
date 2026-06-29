@@ -22,6 +22,10 @@ from .models import (
     LibreL2CS,
     LibreFOMO,
     LibreDepthAnythingV2,
+    LibreMobileNetV4,
+    LibreConvNeXt,
+    LibreEfficientNetV2,
+    LibreResNet,
     LibreCLIP,
 )
 from .utils.results import (
@@ -141,6 +145,10 @@ __all__ = [
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
     "LibreCLIP",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
