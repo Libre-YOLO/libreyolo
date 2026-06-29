@@ -78,7 +78,7 @@ def entrypoint() -> None:
     argv = _normalize_logging_flags(argv)
     _setup_logging_from_argv(argv)
 
-    from .commands import special, predict, train, val, export, ui, doctor  # noqa: F401
+    from .commands import special, predict, train, val, export, ui, doctor, profile  # noqa: F401
     from .parsing import KeyValueCommand
 
     # Special commands
@@ -92,5 +92,8 @@ def entrypoint() -> None:
     app.command("export", cls=KeyValueCommand)(export.export_cmd)
     app.command("ui", cls=KeyValueCommand)(ui.ui_cmd)
     app.command("doctor", cls=KeyValueCommand)(doctor.doctor_cmd)
+
+    # Profiler analysis command group (agent-friendly: every subcommand --json).
+    app.add_typer(profile.profile_app, name="profile")
 
     app(args=argv[1:])
