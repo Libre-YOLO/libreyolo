@@ -1,7 +1,5 @@
 """LibreYOLO9 inference and training wrapper."""
 
-from libreyolo.training import TrainCallbacks
-
 import logging
 import re
 from pathlib import Path
@@ -12,6 +10,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...training.config import YOLO9Config
 from ...tasks import normalize_task

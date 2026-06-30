@@ -25,7 +25,6 @@ checkpoints are not loaded (retrain/republish as ``LibreDINOv2*-cls``).
 """
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 import logging
 from pathlib import Path
@@ -36,6 +35,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file

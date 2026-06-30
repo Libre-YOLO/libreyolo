@@ -1,7 +1,6 @@
 """LibreFOMO — FOMO point-localizer family wrapper."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 import logging
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import Any, ClassVar, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...training.callbacks import TrainCallbacks
 from ..base.model import BaseModel
 from .nn import CONFIGS, LibreFOMOModel, detect_size_from_state_dict
 from .utils import postprocess as postprocess_fomo

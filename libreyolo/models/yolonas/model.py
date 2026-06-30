@@ -1,7 +1,6 @@
 """LibreYOLO YOLO-NAS wrapper (detect + pose)."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 import logging
 import re
@@ -12,6 +11,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput

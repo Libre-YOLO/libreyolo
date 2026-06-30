@@ -1,7 +1,6 @@
 """LibreEC — BaseModel wrapper for the EC (EdgeCrafter detection) family."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -10,6 +9,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file

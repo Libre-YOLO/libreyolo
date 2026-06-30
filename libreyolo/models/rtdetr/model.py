@@ -1,7 +1,5 @@
 """LibreRTDETR implementation for LibreYOLO."""
 
-from libreyolo.training import TrainCallbacks
-
 import os
 import re
 from pathlib import Path
@@ -13,6 +11,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...postprocess.rtdetr import postprocess as rtdetr_postprocess
 from ...utils.image_loader import ImageInput

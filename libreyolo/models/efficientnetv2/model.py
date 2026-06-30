@@ -1,7 +1,6 @@
 """LibreEfficientNetV2: BaseModel subclass wiring EfficientNetV2 classification into the factory."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -10,6 +9,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...postprocess.efficientnetv2 import postprocess as _effv2_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel

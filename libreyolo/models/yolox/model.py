@@ -1,7 +1,5 @@
 """LibreYOLOX implementation for LibreYOLO."""
 
-from libreyolo.training import TrainCallbacks
-
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -10,6 +8,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...training.config import YOLOXConfig
 from ...utils.image_loader import ImageInput

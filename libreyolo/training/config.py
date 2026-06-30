@@ -1,12 +1,11 @@
 """Training configuration dataclasses for LibreYOLO."""
 
-from libreyolo.training import TrainCallbacks
-
 import logging
 import warnings
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
+from .callbacks import TrainCallbacks
 
 import yaml
 

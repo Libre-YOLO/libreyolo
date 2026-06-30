@@ -11,8 +11,6 @@ Color space: RGB 0–1 (same as standard YOLOv9).
 Sizes: t / s / m / c (same backbone configs as yolo9).
 """
 
-from libreyolo.training import TrainCallbacks
-
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -21,6 +19,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ..yolo9.model import LibreYOLO9
 from .config import YOLO9E2EConfig
 from .nn import LibreYOLO9E2EModel

@@ -1,7 +1,6 @@
 """LibreDEIM — BaseModel wrapper for the DEIM native detection family."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -11,6 +10,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...utils.image_loader import ImageInput
 from ...training.config import DEIMConfig
 from ...validation.preprocessors import DEIMValPreprocessor

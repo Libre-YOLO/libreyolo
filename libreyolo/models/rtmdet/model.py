@@ -9,7 +9,6 @@ Inference is bit-equivalent to upstream mmdet on the same checkpoint.
 """
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -19,6 +18,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import RTMDetConfig
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import RTMDetValPreprocessor

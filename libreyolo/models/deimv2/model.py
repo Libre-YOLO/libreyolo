@@ -1,7 +1,6 @@
 """LibreDEIMv2 — BaseModel wrapper for the DEIMv2 detection family."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 from functools import partial
 import re
@@ -12,6 +11,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import DEIMv2Config
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file

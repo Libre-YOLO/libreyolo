@@ -1,7 +1,6 @@
 """LibreRTDETRv4 — RT-DETRv4 student detectors."""
 
 from __future__ import annotations
-from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -11,6 +10,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import RTDETRv4Config
 from ..dfine.model import LibreDFINE
 from ..dfine.nn import LibreDFINEModel

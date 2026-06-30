@@ -1,7 +1,5 @@
 """LibreRFDETR implementation for LibreYOLO."""
 
-from libreyolo.training import TrainCallbacks
-
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -11,6 +9,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...data import load_data_config
 from ...tasks import normalize_task
