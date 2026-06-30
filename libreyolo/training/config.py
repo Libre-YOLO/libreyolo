@@ -1,5 +1,7 @@
 """Training configuration dataclasses for LibreYOLO."""
 
+from libreyolo.training import TrainCallbacks
+
 import logging
 import warnings
 from dataclasses import asdict, dataclass, fields
@@ -135,6 +137,7 @@ class TrainConfig:
     log_interval: int = 10
     seed: int = 0
     allow_download_scripts: bool = False
+    callbacks: TrainCallbacks = None
 
     # Profiling. When ``profile`` is True the trainer profiles a short window of
     # real training steps (``profile_warmup`` discarded, then ``profile_steps``
