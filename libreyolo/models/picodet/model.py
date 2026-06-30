@@ -184,7 +184,7 @@ class LibrePICODET(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
     ) -> dict:

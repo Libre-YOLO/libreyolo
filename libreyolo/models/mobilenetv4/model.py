@@ -197,7 +197,7 @@ class LibreMobileNetV4(BaseModel):
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
-        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
+        callbacks: TrainCallbacks = None,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune the classifier on an ImageFolder-style dataset.
