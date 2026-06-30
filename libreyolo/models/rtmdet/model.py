@@ -23,7 +23,7 @@ from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import RTMDetValPreprocessor
 from ..base import BaseModel
 from .nn import LibreRTMDetModel
-from .utils import postprocess as _postprocess
+from ...postprocess.rtmdet import postprocess as _postprocess
 from .utils import preprocess_image as _rtmdet_preprocess
 from .utils import preprocess_numpy as _preprocess_numpy
 
@@ -82,6 +82,15 @@ class LibreRTMDet(BaseModel):
             if key in weights_dict:
                 return int(weights_dict[key].shape[0])
         return None
+
+    @classmethod
+    def convert_upstream_state_dict(cls, weights_dict: dict) -> Optional[dict]:
+        """Remap mm-series ``bbox_head`` naming to LibreRTMDet's ``head``."""
+        from .convert import convert_upstream, is_upstream_state_dict
+
+        if not is_upstream_state_dict(weights_dict):
+            return None
+        return convert_upstream(weights_dict)
 
     # =========================================================================
     # Initialization
@@ -200,6 +209,8 @@ class LibreRTMDet(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune LibreRTMDet on a YOLO-format dataset.
@@ -220,6 +231,12 @@ class LibreRTMDet(BaseModel):
         val2017 subsets. See the family docstring for the full contract.
 
         Pass ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if not allow_experimental:
             raise RuntimeError(
@@ -289,6 +306,8 @@ class LibreRTMDet(BaseModel):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

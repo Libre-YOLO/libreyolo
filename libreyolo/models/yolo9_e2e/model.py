@@ -22,7 +22,7 @@ from libreyolo.training.ddp_spawn import ddp_aware
 from ..yolo9.model import LibreYOLO9
 from .config import YOLO9E2EConfig
 from .nn import LibreYOLO9E2EModel
-from .utils import postprocess
+from ...postprocess.yolo9_e2e import postprocess
 from ...training.config import YOLO9Config
 from ...validation.preprocessors import YOLO9E2EValPreprocessor
 
@@ -82,6 +82,21 @@ class LibreYOLO9E2E(LibreYOLO9):
             if any(re.match(pattern, key) for pattern in patterns):
                 return tensor.shape[0]
         return None
+
+    @classmethod
+    def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
+        """Claim native-keyed E2E dicts only.
+
+        The numbered upstream layout belongs to LibreYOLO9 (its remap converts
+        the detection head); a numbered dict that happens to carry a one2one
+        key must not be passed through raw here, or the subclass-wins rule
+        would hand LibreYOLO9's correct claim to a garbage E2E wrap.
+        """
+        from ..yolo9.convert import is_upstream_state_dict
+
+        if is_upstream_state_dict(state_dict):
+            return None
+        return dict(state_dict) if cls.can_load(state_dict) else None
 
     # =====================================================================
     # Model lifecycle
@@ -171,6 +186,8 @@ class LibreYOLO9E2E(LibreYOLO9):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLOv9 E2E model on a dataset.
@@ -192,6 +209,10 @@ class LibreYOLO9E2E(LibreYOLO9):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             allow_download_scripts: Allow embedded Python in dataset YAML downloads.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
@@ -250,6 +271,8 @@ class LibreYOLO9E2E(LibreYOLO9):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

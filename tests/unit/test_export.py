@@ -1,5 +1,6 @@
 """Unit tests for the unified Exporter module."""
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -8,12 +9,16 @@ import pytest
 import torch
 import torch.nn as nn
 
+import libreyolo.export.exporter as exporter_module
+import libreyolo.export.onnx as onnx_module
 from libreyolo.export.exporter import (
     BaseExporter,
+    CoreMLExporter,
     NcnnExporter,
     OnnxExporter,
     OpenVINOExporter,
     TensorRTExporter,
+    TFLiteExporter,
     TorchScriptExporter,
 )
 from libreyolo.export.onnx import export_onnx
@@ -42,12 +47,30 @@ class _TinyModel(nn.Module):
         return self.fc(x)
 
 
+def test_onnx_simplify_skip_targets_known_macos_arm64_combo(monkeypatch):
+    versions = {"onnx": "1.22.0", "onnxsim": "0.6.5"}
+    monkeypatch.setattr(onnx_module.importlib_metadata, "version", versions.__getitem__)
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(onnx_module.platform, "machine", lambda: "arm64")
+    assert onnx_module._should_skip_onnx_simplify()
+
+    versions["onnxsim"] = "0.6.6"
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    versions.update(onnx="1.21.0", onnxsim="0.6.5")
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Linux")
+    assert not onnx_module._should_skip_onnx_simplify()
+
+
 class _TinyRFDETRExport(nn.Module):
     """Small RF-DETR-shaped export module for ONNX schema tests."""
 
-    def __init__(self, *, segmentation=False):
+    def __init__(self, *, segmentation=False, obb=False):
         super().__init__()
         self.segmentation = segmentation
+        self.obb = obb
         self.anchor = nn.Parameter(torch.zeros(()))
 
     def forward(self, x):
@@ -58,7 +81,25 @@ class _TinyRFDETRExport(nn.Module):
         if self.segmentation:
             masks = signal.expand(batch, 3, 8, 8)
             return boxes, logits, masks
+        if self.obb:
+            angles = signal.reshape(batch, 1, 1).expand(batch, 3, 1)
+            return boxes, logits, angles
         return boxes, logits
+
+
+class _TinyRTDETRExport(nn.Module):
+    """Small RT-DETR-shaped module that returns the native output dict."""
+
+    def __init__(self):
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+
+    def forward(self, x):
+        batch = x.shape[0]
+        signal = x.mean(dim=(1, 2, 3), keepdim=True) + self.anchor
+        logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
+        boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
+        return {"pred_logits": logits, "pred_boxes": boxes}
 
 
 def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
@@ -70,6 +111,8 @@ def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
     wrapper.nb_classes = nb_classes
     wrapper.names = {i: f"class_{i}" for i in range(nb_classes)}
     wrapper.device = torch.device("cpu")
+    wrapper.model_path = None
+    wrapper.FILENAME_PREFIX = ""
     wrapper._get_model_name.return_value = model_name
     wrapper._get_input_size.return_value = input_size
     return wrapper
@@ -87,6 +130,7 @@ class TestExporterFormats:
         assert "tensorrt" in BaseExporter._registry
         assert "openvino" in BaseExporter._registry
         assert "ncnn" in BaseExporter._registry
+        assert "tflite" in BaseExporter._registry
 
     def test_suffix_present(self):
         for cls in BaseExporter._registry.values():
@@ -94,9 +138,78 @@ class TestExporterFormats:
 
     def test_subclass_attributes(self):
         assert OnnxExporter.suffix == ".onnx"
+        assert OnnxExporter.supports_int8 is True
+        assert OnnxExporter.supports_embedded_nms is True
+        assert CoreMLExporter.supports_embedded_nms is True
         assert TensorRTExporter.requires_onnx is True
         assert TorchScriptExporter.apply_model_half is True
+        assert TorchScriptExporter.supports_embedded_nms is False
         assert NcnnExporter.supports_int8 is False
+        assert TFLiteExporter.requires_onnx is True
+        assert TFLiteExporter.supports_fp16 is False
+
+    def test_unsupported_exporter_rejects_embedded_nms(self):
+        exporter = TorchScriptExporter(_make_wrapper())
+
+        with pytest.raises(NotImplementedError, match="TORCHSCRIPT embedded NMS"):
+            exporter._preflight(half=False, int8=False, data=None, nms=True)
+
+    def test_coreml_exporter_accepts_embedded_nms_preflight(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        exporter._preflight(half=False, int8=False, data=None, nms=True)
+
+    def test_coreml_embedded_nms_preflight_rejects_rtdetr(self):
+        wrapper = _make_wrapper(model_name="rtdetr")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="YOLOX and YOLO9"):
+            exporter._preflight(half=False, int8=False, data=None, nms=True)
+
+    def test_coreml_embedded_nms_preflight_rejects_yolo9_segment(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "segment"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+            exporter._preflight(half=False, int8=False, data=None, nms=True)
+
+    def test_coreml_embedded_nms_preflight_rejects_max_det(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="does not support max_det"):
+            exporter._preflight(
+                half=False, int8=False, data=None, nms=True, max_det=12
+            )
+
+    def test_onnx_embedded_nms_preflight_rejects_non_yolo9_detect(self):
+        exporter = OnnxExporter(_make_wrapper(model_name="yolox"))
+
+        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+            exporter._preflight(half=False, int8=False, data=None, nms=True)
+
+    def test_point_export_fails_before_artifact_creation(self, tmp_path):
+        wrapper = _make_wrapper()
+        wrapper.task = "point"
+
+        with pytest.raises(NotImplementedError, match="point-task models"):
+            OnnxExporter(wrapper)(output_path=str(tmp_path / "point.onnx"))
+
+        assert not (tmp_path / "point.onnx").exists()
+
+    def test_semantic_export_fails_before_artifact_creation(self, tmp_path):
+        wrapper = _make_wrapper()
+        wrapper.task = "semantic"
+
+        with pytest.raises(NotImplementedError, match="semantic-segmentation"):
+            OnnxExporter(wrapper)(output_path=str(tmp_path / "sem.onnx"))
+
+        assert not (tmp_path / "sem.onnx").exists()
 
     def test_metadata_includes_task_contract(self):
         wrapper = _make_wrapper()
@@ -114,6 +227,28 @@ class TestExporterFormats:
         assert metadata["supported_tasks"] == ["detect", "segment"]
         assert metadata["default_task"] == "detect"
 
+    def test_metadata_includes_obb_task_contract(self):
+        wrapper = _make_wrapper()
+        wrapper.task = "obb"
+        wrapper.SUPPORTED_TASKS = ("detect", "segment", "obb")
+        wrapper.DEFAULT_TASK = "detect"
+
+        metadata = TensorRTExporter(wrapper)._build_metadata(
+            precision="fp32",
+            dynamic=False,
+            onnx_path=None,
+        )
+        onnx_metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "obb"
+        assert metadata["obb"] is True
+        assert metadata["supported_tasks"] == ["detect", "segment", "obb"]
+        assert onnx_metadata["task"] == "obb"
+        assert onnx_metadata["obb"] == "true"
+
     def test_rfdetr_export_metadata_is_single_task(self):
         wrapper = _make_wrapper(model_name="rfdetr")
         wrapper.task = "segment"
@@ -129,6 +264,42 @@ class TestExporterFormats:
         assert metadata["task"] == "segment"
         assert metadata["supported_tasks"] == ["segment"]
         assert metadata["default_task"] == "segment"
+
+    def test_rfdetr_pose_onnx_metadata_preserves_grouppose_schema(self):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "pose"
+        wrapper.SUPPORTED_TASKS = ("detect", "pose")
+        wrapper.DEFAULT_TASK = "detect"
+        wrapper.num_keypoints = 17
+        wrapper.keypoint_dim = 3
+        wrapper.num_keypoints_per_class = [0, 17, 4]
+
+        metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "pose"
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "8"
+        assert json.loads(metadata["num_keypoints_per_class"]) == [0, 17, 4]
+
+    def test_ec_pose_onnx_metadata_describes_exported_xy_keypoints(self):
+        wrapper = _make_wrapper(model_name="ec")
+        wrapper.task = "pose"
+        wrapper.SUPPORTED_TASKS = ("detect", "pose")
+        wrapper.DEFAULT_TASK = "detect"
+        wrapper.num_keypoints = 17
+        wrapper.keypoint_dim = 3
+
+        metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "pose"
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "2"
 
     def test_tensorrt_export_forwards_dynamic_batch_profile(
         self, monkeypatch, tmp_path
@@ -183,7 +354,7 @@ class TestExporterFormats:
             int8=False,
         )
 
-        assert imgsz == 32
+        assert imgsz == (32, 32)
         assert device == torch.device("cpu")
         assert output_path.endswith(".onnx")
 
@@ -201,21 +372,44 @@ class TestExporterFormats:
 
         assert device == torch.device("cpu")
 
-    def test_rfdetr_export_auto_opset_is_17(self, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("device_arg", ["0", 0])
+    def test_export_normalizes_bare_numeric_device(self, device_arg):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.device = torch.device("cpu")
+
+        _imgsz, device, _output_path = OnnxExporter(wrapper)._resolve_params(
+            output_path=None,
+            imgsz=None,
+            device=device_arg,
+            half=False,
+            int8=False,
+        )
+
+        assert device == torch.device("cuda:0")
+
+    @pytest.mark.parametrize("family", ["rfdetr", "rtdetr", "rtdetrv2"])
+    def test_detr_export_auto_opset_is_17(self, monkeypatch, tmp_path, family):
         captured = {}
-        wrapper = _make_wrapper(model_name="rfdetr")
-        wrapper.model = _TinyRFDETRExport(segmentation=False)
+        wrapper = _make_wrapper(model_name=family)
+        if family == "rfdetr":
+            wrapper.model = _TinyRFDETRExport(segmentation=False)
+        elif family in {"rtdetr", "rtdetrv2"}:
+            wrapper.model = _TinyRTDETRExport()
         wrapper.task = "detect"
         wrapper.SUPPORTED_TASKS = ("detect",)
         wrapper.DEFAULT_TASK = "detect"
 
         def fake_export_onnx(_nn_model, _dummy, **kwargs):
             captured.update(kwargs)
+            if family in {"rtdetr", "rtdetrv2"}:
+                output = _nn_model(_dummy)
+                captured["output_is_tuple"] = isinstance(output, tuple)
+                captured["output_len"] = len(output)
             Path(kwargs["output_path"]).write_bytes(b"onnx")
             return kwargs["output_path"]
 
         monkeypatch.setattr("libreyolo.export.exporter.export_onnx", fake_export_onnx)
-        output_path = tmp_path / "rfdetr.onnx"
+        output_path = tmp_path / f"{family}.onnx"
 
         exported = OnnxExporter(wrapper)(
             output_path=str(output_path),
@@ -226,22 +420,26 @@ class TestExporterFormats:
 
         assert exported == str(output_path)
         assert captured["opset"] == 17
+        if family in {"rtdetr", "rtdetrv2"}:
+            assert captured["output_is_tuple"] is True
+            assert captured["output_len"] == 2
 
     @pytest.mark.parametrize(
-        ("segmentation", "expected_outputs"),
+        ("task", "segmentation", "obb", "expected_outputs"),
         [
-            (False, ["dets", "labels"]),
-            (True, ["dets", "labels", "masks"]),
+            ("detect", False, False, ["dets", "labels"]),
+            ("segment", True, False, ["dets", "labels", "masks"]),
+            ("obb", False, True, ["dets", "labels", "angles"]),
         ],
     )
     def test_rfdetr_onnx_uses_upstream_io_names(
-        self, tmp_path, segmentation, expected_outputs
+        self, tmp_path, task, segmentation, obb, expected_outputs
     ):
         onnx = pytest.importorskip("onnx")
         output_path = tmp_path / "rfdetr.onnx"
 
         export_onnx(
-            _TinyRFDETRExport(segmentation=segmentation),
+            _TinyRFDETRExport(segmentation=segmentation, obb=obb),
             torch.zeros(1, 3, 32, 32),
             output_path=str(output_path),
             opset=17,
@@ -250,7 +448,7 @@ class TestExporterFormats:
             half=False,
             metadata={
                 "model_family": "rfdetr",
-                "task": "segment" if segmentation else "detect",
+                "task": task,
                 "segmentation": "true" if segmentation else "false",
             },
         )
@@ -258,6 +456,27 @@ class TestExporterFormats:
         proto = onnx.load(output_path)
         assert [i.name for i in proto.graph.input] == ["input"]
         assert [o.name for o in proto.graph.output] == expected_outputs
+
+    @pytest.mark.parametrize("family", ["rtdetr", "rtdetrv2", "rtdetrv4"])
+    def test_rtdetr_onnx_uses_detr_io_names(self, tmp_path, family):
+        onnx = pytest.importorskip("onnx")
+        wrapper = _make_wrapper(model_name=family, input_size=32)
+        wrapper.model = _TinyRTDETRExport()
+        wrapper.task = "detect"
+        wrapper.SUPPORTED_TASKS = ("detect",)
+        wrapper.DEFAULT_TASK = "detect"
+        output_path = tmp_path / f"{family}.onnx"
+
+        OnnxExporter(wrapper)(
+            output_path=str(output_path),
+            simplify=False,
+            dynamic=False,
+            device="cpu",
+        )
+
+        proto = onnx.load(output_path)
+        assert [i.name for i in proto.graph.input] == ["images"]
+        assert [o.name for o in proto.graph.output] == ["pred_logits", "pred_boxes"]
 
     def test_onnx_metadata_uses_export_imgsz_override(self, tmp_path):
         onnx = pytest.importorskip("onnx")
@@ -278,6 +497,402 @@ class TestExporterFormats:
         from libreyolo.backends.onnx import OnnxBackend
 
         assert OnnxBackend._read_onnx_metadata(str(output_path), 4)[-1] == 48
+
+    def test_onnx_backend_reads_runtime_metadata_without_onnx_load(self):
+        from libreyolo.backends.onnx import OnnxBackend
+
+        metadata = {
+            "model_family": "yolo9",
+            "task": "detect",
+            "nb_classes": "1",
+            "imgsz": "64",
+            "nms": "true",
+            "nms_conf": "0.25",
+            "nms_iou": "0.45",
+            "max_det": "300",
+            "nms_raw_output": "true",
+        }
+
+        parsed = OnnxBackend._read_onnx_metadata(
+            "metadata-from-onnxruntime.onnx",
+            80,
+            runtime_metadata=metadata,
+        )
+
+        assert parsed[0] == "yolo9"
+        assert parsed[2] == "detect"
+        assert parsed[5] == {0: "class_0"}
+        assert parsed[6] is True
+        assert parsed[7] == 64
+
+    def test_onnx_backend_reads_rectangular_static_input_imgsz(self):
+        from libreyolo.backends.onnx import OnnxBackend
+
+        assert OnnxBackend._read_static_input_imgsz([1, 3, 32, 64]) == (32, 64)
+        assert OnnxBackend._read_static_input_imgsz([1, 3, -1, -1]) is None
+
+    @pytest.mark.parametrize(
+        "exporter_cls",
+        [
+            OnnxExporter,
+            TorchScriptExporter,
+            TensorRTExporter,
+            OpenVINOExporter,
+            NcnnExporter,
+            TFLiteExporter,
+            CoreMLExporter,
+        ],
+    )
+    def test_rectangular_imgsz_supported_for_yolo9_export_formats(self, exporter_cls):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+
+        imgsz, device, _output_path = exporter_cls(wrapper)._resolve_params(
+            output_path=None,
+            imgsz=(32, 64),
+            device="cpu",
+            half=False,
+            int8=False,
+        )
+
+        assert imgsz == (32, 64)
+        assert device == torch.device("cpu")
+
+    def test_rectangular_imgsz_is_limited_to_yolo9_family(self):
+        wrapper = _make_wrapper(model_name="yolox", input_size=32)
+
+        with pytest.raises(NotImplementedError, match="YOLO9-family"):
+            OnnxExporter(wrapper)._resolve_params(
+                output_path=None,
+                imgsz=(32, 64),
+                device="cpu",
+                half=False,
+                int8=False,
+            )
+
+    @pytest.mark.parametrize(
+        "family",
+        ["dfine", "deim", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"],
+    )
+    def test_rectangular_imgsz_rejected_for_fixed_square_families(self, family):
+        wrapper = _make_wrapper(model_name=family, input_size=32)
+
+        with pytest.raises(NotImplementedError, match="fixed square"):
+            OnnxExporter(wrapper)._resolve_params(
+                output_path=None,
+                imgsz=(32, 64),
+                device="cpu",
+                half=False,
+                int8=False,
+            )
+
+    def test_deimv2_tuple_imgsz_must_match_native(self):
+        wrapper = _make_wrapper(model_name="deimv2", input_size=320)
+
+        with pytest.raises(ValueError, match="fixed decoder anchors"):
+            OnnxExporter(wrapper)._resolve_params(
+                output_path=None,
+                imgsz=(320, 640),
+                device="cpu",
+                half=False,
+                int8=False,
+            )
+
+    def test_rectangular_onnx_export_writes_shape_metadata_without_onnx(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        output_path = tmp_path / "rectangular.onnx"
+        captured = {}
+
+        def fake_export_onnx(_nn_model, dummy, **kwargs):
+            captured["dummy_shape"] = tuple(dummy.shape)
+            captured["metadata"] = kwargs["metadata"]
+            return kwargs["output_path"]
+
+        monkeypatch.setattr("libreyolo.export.exporter.export_onnx", fake_export_onnx)
+
+        exported = OnnxExporter(wrapper)(
+            output_path=str(output_path),
+            imgsz=(16, 32),
+            simplify=False,
+            dynamic=False,
+            device="cpu",
+        )
+
+        assert exported == str(output_path)
+        assert captured["dummy_shape"] == (1, 3, 16, 32)
+        assert captured["metadata"]["imgsz"] == "32"
+        assert captured["metadata"]["imgsz_h"] == "16"
+        assert captured["metadata"]["imgsz_w"] == "32"
+
+    def test_onnx_int8_missing_data_uses_default_calibration(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        wrapper.task = "detect"
+        exporter = OnnxExporter(wrapper)
+        output_path = tmp_path / "model_int8.onnx"
+        captured = {}
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+
+        def fake_load_calibration(
+            data,
+            imgsz,
+            batch,
+            fraction,
+            allow_download_scripts=False,
+        ):
+            captured["data"] = data
+            captured["imgsz"] = imgsz
+            captured["batch"] = batch
+            return object()
+
+        def fake_export(nn_model, dummy, *, output_path, calibration_data, **kwargs):
+            captured["dummy_dtype"] = dummy.dtype
+            captured["param_dtype"] = next(nn_model.parameters()).dtype
+            captured["calibration_data"] = calibration_data
+            captured["half"] = kwargs["half"]
+            captured["int8"] = kwargs["int8"]
+            return output_path
+
+        monkeypatch.setattr(exporter, "_load_calibration", fake_load_calibration)
+        monkeypatch.setattr(exporter, "_export", fake_export)
+
+        with caplog.at_level("WARNING", logger="libreyolo.export.exporter"):
+            result = exporter(
+                output_path=str(output_path),
+                int8=True,
+                half=True,
+                batch=2,
+                device="cpu",
+                simplify=False,
+                dynamic=False,
+            )
+
+        assert result == str(output_path)
+        assert captured["data"] == "coco8.yaml"
+        assert captured["imgsz"] == (32, 32)
+        assert captured["batch"] == 2
+        assert captured["dummy_dtype"] == torch.float32
+        assert captured["param_dtype"] == torch.float32
+        assert captured["half"] is False
+        assert captured["int8"] is True
+        assert captured["calibration_data"] is not None
+        assert "8-image fallback is not representative" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("family", "task"),
+        [("rfdetr", "detect"), ("yolo9", "segment"), ("yolo9_e2e", "detect")],
+    )
+    def test_onnx_int8_scope_is_yolo9_detect_only(self, family, task):
+        wrapper = _make_wrapper(model_name=family, input_size=32)
+        wrapper.task = task
+
+        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+            OnnxExporter(wrapper)._preflight(
+                half=False,
+                int8=True,
+                data="data.yaml",
+            )
+
+    def test_onnx_int8_export_uses_fp32_temp_then_quantizes(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        wrapper.task = "detect"
+        exporter = OnnxExporter(wrapper)
+        output_path = tmp_path / "model_int8.onnx"
+        captured = {}
+
+        def fake_export_onnx(_nn_model, _dummy, **kwargs):
+            captured["fp32_export"] = kwargs
+            Path(kwargs["output_path"]).write_bytes(b"fp32")
+            return kwargs["output_path"]
+
+        def fake_quantize_onnx_int8(fp32_path, quant_output_path, **kwargs):
+            captured["quantize"] = {
+                "fp32_path": fp32_path,
+                "output_path": quant_output_path,
+                **kwargs,
+            }
+            Path(quant_output_path).write_bytes(b"int8")
+            return quant_output_path
+
+        monkeypatch.setattr(exporter_module, "export_onnx", fake_export_onnx)
+        monkeypatch.setattr(
+            exporter_module, "quantize_onnx_int8", fake_quantize_onnx_int8
+        )
+
+        result = exporter._export(
+            wrapper.model,
+            torch.zeros(1, 3, 32, 32),
+            output_path=str(output_path),
+            metadata={},
+            calibration_data=object(),
+            half=False,
+            int8=True,
+            dynamic=False,
+            opset=13,
+            simplify=False,
+        )
+
+        assert result == str(output_path)
+        assert Path(captured["fp32_export"]["output_path"]).name == "model_fp32.onnx"
+        assert captured["fp32_export"]["half"] is False
+        assert captured["quantize"]["output_path"] == str(output_path)
+        assert captured["quantize"]["metadata"]["precision"] == "int8"
+        assert captured["quantize"]["metadata"]["half"] == "False"
+
+    def test_onnx_backend_reads_rectangular_metadata(self, tmp_path):
+        pytest.importorskip("onnx")
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        output_path = tmp_path / "rectangular.onnx"
+
+        OnnxExporter(wrapper)(
+            output_path=str(output_path),
+            imgsz=(16, 32),
+            simplify=False,
+            dynamic=False,
+            device="cpu",
+        )
+
+        from libreyolo.backends.onnx import OnnxBackend
+
+        assert OnnxBackend._read_onnx_metadata(str(output_path), 4)[-1] == (16, 32)
+
+    @pytest.mark.parametrize(
+        "metadata,error_match",
+        [
+            (
+                {"model_family": "yolo9", "imgsz": "32", "imgsz_h": "16"},
+                "both imgsz_h and imgsz_w",
+            ),
+            (
+                {
+                    "model_family": "yolo9",
+                    "imgsz": "32",
+                    "imgsz_h": "bad",
+                    "imgsz_w": "32",
+                },
+                "invalid imgsz_h/imgsz_w",
+            ),
+        ],
+    )
+    def test_onnx_metadata_rejects_malformed_rectangular_imgsz(
+        self, tmp_path, metadata, error_match
+    ):
+        pytest.importorskip("onnx")
+        output_path = tmp_path / "malformed_rectangular.onnx"
+
+        export_onnx(
+            _TinyModel(),
+            torch.zeros(1, 3, 16, 32),
+            output_path=str(output_path),
+            opset=13,
+            simplify=False,
+            dynamic=True,
+            half=False,
+            metadata=metadata,
+        )
+
+        from libreyolo.backends.onnx import OnnxBackend
+
+        with pytest.raises(ValueError, match=error_match):
+            OnnxBackend._read_onnx_metadata(str(output_path), 4)
+
+    def test_onnx_backend_prefers_rectangular_static_shape_over_legacy_scalar(
+        self, tmp_path
+    ):
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+        output_path = tmp_path / "rectangular_stale_scalar.onnx"
+
+        export_onnx(
+            _TinyModel(),
+            torch.zeros(1, 3, 16, 32),
+            output_path=str(output_path),
+            opset=13,
+            simplify=False,
+            dynamic=False,
+            half=False,
+            metadata={
+                "model_family": "yolo9",
+                "imgsz": "32",
+                "nc": "4",
+            },
+        )
+
+        from libreyolo.backends.onnx import OnnxBackend
+
+        backend = OnnxBackend(str(output_path), nb_classes=4)
+        assert backend.imgsz == (16, 32)
+
+    def test_torchscript_backend_reads_rectangular_metadata(self, tmp_path):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        output_path = tmp_path / "rectangular.torchscript"
+
+        TorchScriptExporter(wrapper)(
+            output_path=str(output_path),
+            imgsz=(16, 32),
+            device="cpu",
+        )
+
+        from libreyolo.backends.torchscript import TorchScriptBackend
+
+        backend = TorchScriptBackend(str(output_path), device="cpu")
+        assert backend.imgsz == (16, 32)
+
+    def test_rectangular_int8_calibration_receives_tuple_imgsz(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper(model_name="yolo9", input_size=32)
+        exporter = TensorRTExporter(wrapper)
+        output_path = tmp_path / "model.engine"
+        captured = {}
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+        monkeypatch.setattr(
+            exporter,
+            "_export_intermediate_onnx",
+            lambda *args, **kwargs: str(tmp_path / "model.onnx"),
+        )
+
+        def fake_load_calibration(
+            data,
+            imgsz,
+            batch,
+            fraction,
+            allow_download_scripts=False,
+        ):
+            captured["imgsz"] = imgsz
+            captured["batch"] = batch
+            return object()
+
+        def fake_export(nn_model, dummy, *, output_path, calibration_data, **kwargs):
+            captured["dummy_shape"] = tuple(dummy.shape)
+            captured["calibration_data"] = calibration_data
+            return output_path
+
+        monkeypatch.setattr(exporter, "_load_calibration", fake_load_calibration)
+        monkeypatch.setattr(exporter, "_export", fake_export)
+
+        result = exporter(
+            output_path=str(output_path),
+            imgsz=(16, 32),
+            int8=True,
+            data="data.yaml",
+            batch=2,
+            device="cpu",
+            simplify=False,
+            dynamic=False,
+        )
+
+        assert result == str(output_path)
+        assert captured["imgsz"] == (16, 32)
+        assert captured["batch"] == 2
+        assert captured["dummy_shape"] == (2, 3, 16, 32)
+        assert captured["calibration_data"] is not None
 
 
 class TestExporterValidation:
@@ -300,6 +915,7 @@ class TestExporterValidation:
 class TestOutputPathGeneration:
     def test_auto_path_torchscript(self):
         wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.model_path = "weights/LibreYOLO9t.pt"
         exporter = TorchScriptExporter(wrapper)
         with tempfile.TemporaryDirectory() as tmpdir:
             import os
@@ -308,21 +924,67 @@ class TestOutputPathGeneration:
             try:
                 os.chdir(tmpdir)
                 path = exporter()
-                assert path == str(Path("weights") / "yolo9_t.torchscript")
+                assert path == str(Path("weights") / "LibreYOLO9t.torchscript")
                 assert Path(path).exists()
             finally:
                 os.chdir(orig)
 
+    def test_auto_path_prefers_weight_file_stem(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.model_path = "runs/train/best.pt"
+        exporter = OnnxExporter(wrapper)
+
+        assert exporter._auto_output_path(half=False, int8=False) == str(
+            Path("weights") / "best.onnx"
+        )
+
     def test_auto_path_includes_segmentation_task(self):
         wrapper = _make_wrapper(model_name="rfdetr", size="n")
+        wrapper.FILENAME_PREFIX = "LibreRFDETR"
         wrapper.task = "segment"
         exporter = OnnxExporter(wrapper)
         assert exporter._auto_output_path(half=False, int8=False) == str(
-            Path("weights") / "rfdetr_n_seg.onnx"
+            Path("weights") / "LibreRFDETRn-seg.onnx"
         )
         assert exporter._auto_output_path(half=True, int8=False) == str(
-            Path("weights") / "rfdetr_n_seg_fp16.onnx"
+            Path("weights") / "LibreRFDETRn-seg_fp16.onnx"
         )
+
+    def test_auto_path_includes_obb_task(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.task = "obb"
+        exporter = OnnxExporter(wrapper)
+
+        assert exporter._auto_output_path(half=False, int8=False) == str(
+            Path("weights") / "LibreYOLO9t-obb.onnx"
+        )
+        assert exporter._auto_output_path(half=True, int8=False) == str(
+            Path("weights") / "LibreYOLO9t-obb_fp16.onnx"
+        )
+
+    def test_auto_path_includes_rfdetr_obb_task(self):
+        wrapper = _make_wrapper(model_name="rfdetr", size="n")
+        wrapper.FILENAME_PREFIX = "LibreRFDETR"
+        wrapper.task = "obb"
+        exporter = OnnxExporter(wrapper)
+
+        assert exporter._auto_output_path(half=False, int8=False) == str(
+            Path("weights") / "LibreRFDETRn-obb.onnx"
+        )
+        assert exporter._auto_output_path(half=True, int8=False) == str(
+            Path("weights") / "LibreRFDETRn-obb_fp16.onnx"
+        )
+
+    def test_auto_path_rejects_unknown_task(self):
+        wrapper = _make_wrapper(model_name="yolo9", size="t")
+        wrapper.FILENAME_PREFIX = "LibreYOLO9"
+        wrapper.task = "bad-task"
+        exporter = OnnxExporter(wrapper)
+
+        with pytest.raises(ValueError, match="Unsupported task for auto output naming"):
+            exporter._auto_output_path(half=False, int8=False)
 
     def test_explicit_path(self):
         wrapper = _make_wrapper()
@@ -479,15 +1141,15 @@ class TestTensorRTFormat:
 class TestTensorRTValidation:
     """Test TensorRT export parameter validation."""
 
-    def test_int8_requires_data(self):
-        """INT8 export without data should raise ValueError."""
+    def test_int8_without_data_requires_calibration(self):
+        """TensorRT INT8 export requires explicit calibration data."""
         wrapper = _make_wrapper()
         exporter = TensorRTExporter(wrapper)
 
-        with pytest.raises(ValueError, match="calibration data"):
+        with pytest.raises(ValueError, match="requires calibration data"):
             exporter(int8=True)
 
-    def test_int8_with_data_no_immediate_error(self):
+    def test_int8_with_data_no_immediate_error(self, monkeypatch):
         """INT8 with data parameter should not raise validation error.
 
         Note: Will fail later due to missing TensorRT (or ONNX), but validation should pass.
@@ -501,10 +1163,36 @@ class TestTensorRTValidation:
 
         wrapper = _make_wrapper()
         exporter = TensorRTExporter(wrapper)
+        monkeypatch.setattr(
+            exporter,
+            "_load_calibration",
+            lambda *args, **kwargs: pytest.fail("calibration should not load"),
+        )
 
         # Should fail with ImportError (missing onnx or tensorrt), not ValueError
         with pytest.raises(ImportError):
-            exporter(int8=True, data="coco8.yaml")
+            exporter(int8=True, data="unused-local-calibration.yaml")
+
+    def test_int8_with_data_missing_onnx_does_not_load_calibration(self, monkeypatch):
+        """Missing ONNX should fail before calibration data is resolved."""
+        wrapper = _make_wrapper()
+        exporter = TensorRTExporter(wrapper)
+        original_find_spec = exporter_module.importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "onnx":
+                return None
+            return original_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(exporter_module.importlib.util, "find_spec", fake_find_spec)
+        monkeypatch.setattr(
+            exporter,
+            "_load_calibration",
+            lambda *args, **kwargs: pytest.fail("calibration should not load"),
+        )
+
+        with pytest.raises(ImportError, match="ONNX export requires"):
+            exporter(int8=True, data="unused-local-calibration.yaml")
 
 
 class TestTensorRTImportCheck:
@@ -551,6 +1239,16 @@ class TestCalibrationDataLoader:
         assert hasattr(CalibrationDataLoader, "shape")
         assert hasattr(CalibrationDataLoader, "dtype")
 
+    def test_calibration_loader_shape_accepts_tuple_imgsz(self):
+        """Rectangular INT8 calibration batches must match export input H/W."""
+        from libreyolo.export.calibration import CalibrationDataLoader
+
+        loader = CalibrationDataLoader.__new__(CalibrationDataLoader)
+        loader.batch = 4
+        loader.imgsz = (16, 32)
+
+        assert loader.shape == (4, 3, 16, 32)
+
 
 # ---------------------------------------------------------------------------
 # OpenVINO Export Tests
@@ -573,15 +1271,15 @@ class TestOpenVINOFormat:
 class TestOpenVINOValidation:
     """Test OpenVINO export parameter validation."""
 
-    def test_int8_requires_data(self):
-        """INT8 export without data should raise ValueError."""
+    def test_int8_without_data_requires_calibration(self):
+        """OpenVINO INT8 export requires explicit calibration data."""
         wrapper = _make_wrapper()
         exporter = OpenVINOExporter(wrapper)
 
-        with pytest.raises(ValueError, match="calibration data"):
+        with pytest.raises(ValueError, match="requires calibration data"):
             exporter(int8=True)
 
-    def test_int8_with_data_no_immediate_error(self):
+    def test_int8_with_data_no_immediate_error(self, monkeypatch):
         """INT8 with data parameter should not raise validation error.
 
         Note: Will fail later due to missing OpenVINO (or ONNX), but validation should pass.
@@ -595,10 +1293,36 @@ class TestOpenVINOValidation:
 
         wrapper = _make_wrapper()
         exporter = OpenVINOExporter(wrapper)
+        monkeypatch.setattr(
+            exporter,
+            "_load_calibration",
+            lambda *args, **kwargs: pytest.fail("calibration should not load"),
+        )
 
         # Should fail with ImportError (missing onnx or openvino), not ValueError
         with pytest.raises(ImportError):
-            exporter(int8=True, data="coco8.yaml")
+            exporter(int8=True, data="unused-local-calibration.yaml")
+
+    def test_int8_with_data_missing_onnx_does_not_load_calibration(self, monkeypatch):
+        """Missing ONNX should fail before calibration data is resolved."""
+        wrapper = _make_wrapper()
+        exporter = OpenVINOExporter(wrapper)
+        original_find_spec = exporter_module.importlib.util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "onnx":
+                return None
+            return original_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(exporter_module.importlib.util, "find_spec", fake_find_spec)
+        monkeypatch.setattr(
+            exporter,
+            "_load_calibration",
+            lambda *args, **kwargs: pytest.fail("calibration should not load"),
+        )
+
+        with pytest.raises(ImportError, match="ONNX export requires"):
+            exporter(int8=True, data="unused-local-calibration.yaml")
 
 
 class TestOpenVINOImportCheck:
@@ -654,7 +1378,7 @@ class TestExportPrecisionSuffix:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             try:
-                exporter(half=True, int8=True, data="coco8.yaml")
+                exporter(half=True, int8=True, data="unused-local-calibration.yaml")
             except ImportError:
                 # Expected - TensorRT not installed
                 pass

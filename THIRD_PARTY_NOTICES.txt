@@ -33,6 +33,45 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
+CLIP / OpenCLIP (OpenAI; LAION / ML Foundations)
+--------------------------------------------------------------------
+Source: https://github.com/openai/CLIP, https://github.com/mlfoundations/open_clip
+License: MIT
+Copyright (c) 2021 OpenAI; (c) 2012-2021 OpenCLIP authors
+Used for: the LibreCLIP family (libreyolo/models/clip/). The byte-pair-encoding
+text tokenizer (libreyolo/models/clip/tokenizer.py) and the bundled BPE merge
+table (libreyolo/models/clip/bpe_simple_vocab_16e6.txt.gz) are vendored from the
+CLIP / open_clip tokenizer. The image/text towers are a clean-room native torch
+re-implementation of the standard CLIP architecture (no open_clip at runtime).
+
+The shipped LibreCLIP weights are converted from OpenCLIP LAION-2B checkpoints,
+which are MIT-redistributable. NOTE: the LAION-2B training data has a documented
+CSAM-content history (Stanford, 2023); use Re-LAION-derived weights. See
+libreyolo/models/clip/NOTICE.md for the full data-provenance note.
+
+MIT License
+
+Copyright (c) 2021 OpenAI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
@@ -52,6 +91,25 @@ Used for: YOLO9 model family (libreyolo/models/yolo9/), including the
           loss port in libreyolo/models/yolo9/loss.py.
 
 --------------------------------------------------------------------
+SuperGradients / YOLO-NAS
+--------------------------------------------------------------------
+Source: https://github.com/Deci-AI/super-gradients
+License: Apache License 2.0
+Copyright (c) 2021-2024 Deci AI
+Used for: YOLO-NAS model family and pose training references
+          (libreyolo/models/yolonas/). YOLO-NAS source code is
+          Apache-2.0; published pretrained YOLO-NAS weights may have
+          separate non-commercial terms and are not bundled here.
+
+--------------------------------------------------------------------
+EdgeCrafter
+--------------------------------------------------------------------
+Source: https://github.com/EC-codehub/EdgeCrafter
+License: Apache License 2.0
+Used for: EC model family detection, segmentation, and pose architecture
+          references (libreyolo/models/ec/).
+
+--------------------------------------------------------------------
 RT-DETR (lyuwenyu)
 --------------------------------------------------------------------
 Source: https://github.com/lyuwenyu/RT-DETR
@@ -68,8 +126,15 @@ RF-DETR (Roboflow)
 Source: https://github.com/roboflow/rf-detr
 License: Apache License 2.0
 Copyright (c) 2024-2025 Roboflow, Inc.
-Used for: RF-DETR model family (libreyolo/models/rfdetr/), COCO
-          evaluation glue (libreyolo/data/yolo_coco_api.py).
+Used for: RF-DETR model family (libreyolo/models/rfdetr/), LoRA
+          adapter recipe helpers (libreyolo/training/lora.py), and
+          COCO evaluation glue (libreyolo/data/yolo_coco_api.py).
+          Also the GroupPose-style keypoint/pose head, dual-projector,
+          keypoint decoder token stream, probabilistic (Cholesky)
+          keypoint regression, and keypoint postprocess ported from
+          RF-DETR v1.8.0 into libreyolo/models/rfdetr/. The published
+          RF-DETR keypoint preview weights (Apache-2.0, COCO person
+          pretrained) are redistributed with attribution.
 
 --------------------------------------------------------------------
 DINOv2 (Meta AI / facebookresearch)
@@ -154,10 +219,56 @@ Used for: ResNet_vd pretrained classification backbones loaded by
           ResNet{18,34,50,101}_vd weights that originate here).
 
 --------------------------------------------------------------------
+Depth Anything V2 (DepthAnything / TikTok)
+--------------------------------------------------------------------
+Source: https://github.com/DepthAnything/Depth-Anything-V2
+License: Apache License 2.0
+Copyright (c) 2024 Depth Anything V2 authors.
+Citation: Yang, L., Kang, B., Huang, Z., Zhao, Z., Xu, X., Feng, J.,
+          and Zhao, H. "Depth Anything V2." NeurIPS 2024.
+Used for: Depth Anything V2 model family (DINOv2 encoder + DPT head)
+          vendored under libreyolo/models/depth_anything/_vendor/
+          (dinov2, dinov2_layers, dpt, util/{blocks,transform}). Bundled
+          verbatim except for added package __init__.py files. The
+          LibreYOLO-side wrapper (libreyolo/models/depth_anything/
+          {model,nn,utils}.py) adds internal ImageNet normalization and
+          the depth-task contract; it does not modify the vendored code.
+
+NOTE - code vs. weights: The Apache-2.0 license covers the Depth
+Anything V2 *source code* vendored above. It does NOT cover the
+pretrained weights, which are split: the Small (ViT-S) checkpoint is
+Apache-2.0, while Base/Large/Giant (ViT-B/L/G) are CC-BY-NC-4.0
+(non-commercial). LibreYOLO mirrors the converted checkpoints on its
+Hugging Face org (LibreYOLO/LibreDepthAnythingV2{s,l}-depth) and
+auto-downloads them on demand; each mirror carries the upstream
+license. Users remain responsible for complying with each checkpoint's
+license — in particular, the CC-BY-NC-4.0 checkpoints (Base/Large/
+Giant) are for non-commercial use only. The offline conversion path
+(weights/convert_depth_anything_v2_weights.py) remains available.
+
+--------------------------------------------------------------------
+timm / PyTorch Image Models (Hugging Face)
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/pytorch-image-models
+License: Apache License 2.0
+Copyright (c) Ross Wightman and the timm contributors.
+Used for: the native image-classification model families ported from
+          timm architectures — libreyolo/models/{mobilenetv4,convnext,
+          efficientnetv2,resnet}/. Module/attribute names mirror timm so
+          its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
+          inference is bit-identical. Architecture lineage: ConvNeXt also
+          derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from
+          google/automl (Apache-2.0); ResNet from He et al. 2015. Weights
+          (timm *.in1k / *.fb_in1k / a1_in1k, Apache-2.0) are mirrored on
+          the LibreYOLO Hugging Face org. ConvNeXt-V2 fcmae weights
+          (CC-BY-NC) are NOT used.
+
+--------------------------------------------------------------------
 Apache License 2.0 (full text)
 --------------------------------------------------------------------
-The full text of the Apache License, Version 2.0 is available at
-https://www.apache.org/licenses/LICENSE-2.0 and applies to the
+The full text of the Apache License, Version 2.0 is bundled with this
+distribution at licenses/Apache-2.0.txt (also available at
+https://www.apache.org/licenses/LICENSE-2.0) and applies to the
 Apache-2.0 upstreams listed above.
 
 --------------------------------------------------------------------

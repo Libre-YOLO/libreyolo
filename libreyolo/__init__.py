@@ -15,14 +15,31 @@ from .models import (
     LibreDEIMv2,
     LibreEC,
     LibrePICODET,
-    LibreDAMOYOLO,
     LibreRTDETR,
     LibreRTDETRv2,
     LibreRTDETRv4,
     LibreRTMDet,
     LibreL2CS,
+    LibreFOMO,
+    LibreDepthAnythingV2,
+    LibreMobileNetV4,
+    LibreConvNeXt,
+    LibreEfficientNetV2,
+    LibreResNet,
+    LibreCLIP,
 )
-from .utils.results import Results, Boxes, Masks, Keypoints, Probs, OBB, Gaze
+from .utils.results import (
+    Results,
+    Boxes,
+    Masks,
+    Keypoints,
+    Points,
+    Probs,
+    OBB,
+    Gaze,
+    SemanticMask,
+    DepthMap,
+)
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
 
@@ -61,6 +78,9 @@ def __getattr__(name):
 
     _lazy = {
         "LibreRFDETR": (".models.rfdetr.model", "LibreRFDETR"),
+        "LibreDINOv2": (".models.dinov2.model", "LibreDINOv2"),
+        "LibreEnsemble": (".ensemble", "LibreEnsemble"),
+        "ExternalDetector": (".ensemble", "ExternalDetector"),
         "OnnxBackend": (".backends.onnx", "OnnxBackend"),
         "OpenVINOBackend": (".backends.openvino", "OpenVINOBackend"),
         "TensorRTBackend": (".backends.tensorrt", "TensorRTBackend"),
@@ -70,15 +90,29 @@ def __getattr__(name):
         "DetectionValidator": (".validation", "DetectionValidator"),
         "SegmentationValidator": (".validation", "SegmentationValidator"),
         "PoseValidator": (".validation", "PoseValidator"),
+        "SemanticValidator": (".validation", "SemanticValidator"),
+        "DepthValidator": (".validation", "DepthValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
         "TrackConfig": (".tracking", "TrackConfig"),
+        "OCSortTracker": (".tracking", "OCSortTracker"),
+        "OCSortConfig": (".tracking", "OCSortConfig"),
+        "LibreVLM": (".models.vlm", "LibreVLM"),
+        "LibreLFM2VL": (".models.vlm", "LibreLFM2VL"),
+        "LibreQwen3VL": (".models.vlm", "LibreQwen3VL"),
+        "LibreSmolVLM2": (".models.vlm", "LibreSmolVLM2"),
+        "LibreInternVL3": (".models.vlm", "LibreInternVL3"),
+        "LibreFlorence2": (".models.vlm", "LibreFlorence2"),
+        "LibreKosmos2": (".models.vlm", "LibreKosmos2"),
+        "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
+        "LibreSAM": (".models.sam", "LibreSAM"),
+        "LibreSAM1": (".models.sam", "LibreSAM1"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
     }
-    if name == "LibreRFDETR":
-        # RF-DETR needs dependency check before import
+    if name in ("LibreRFDETR", "LibreDINOv2"):
+        # RF-DETR and DINOv2 share the same transformers dependency check.
         from .models import _ensure_rfdetr
 
         _ensure_rfdetr()
@@ -107,22 +141,49 @@ __all__ = [
     "LibreDEIMv2",
     "LibreEC",
     "LibrePICODET",
-    "LibreDAMOYOLO",
     "LibreRTMDet",
     "LibreL2CS",
+    "LibreFOMO",
+    "LibreDepthAnythingV2",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
+    "LibreCLIP",
+    "LibreDINOv2",
+    # VLM-as-detector tier (optional, requires libreyolo[vlm])
+    "LibreVLM",
+    "LibreLFM2VL",
+    "LibreQwen3VL",
+    "LibreSmolVLM2",
+    "LibreInternVL3",
+    "LibreFlorence2",
+    "LibreKosmos2",
+    "LibreLocateAnything",
+    # Promptable-segmentation tier (optional, requires libreyolo[sam])
+    "LibreSAM",
+    "LibreSAM1",
     # Results
     "Results",
     "Boxes",
     "Masks",
     "Keypoints",
+    "Points",
     "Probs",
     "OBB",
     "Gaze",
+    "SemanticMask",
+    "DepthMap",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
     "ByteTracker",
     "TrackConfig",
+    "OCSortTracker",
+    "OCSortConfig",
+    # Ensembling
+    "LibreEnsemble",
+    "ExternalDetector",
     # Lazy-loaded
     "OnnxBackend",
     "OpenVINOBackend",
@@ -133,6 +194,8 @@ __all__ = [
     "DetectionValidator",
     "SegmentationValidator",
     "PoseValidator",
+    "SemanticValidator",
+    "DepthValidator",
     "ValidationConfig",
     "DATASETS_DIR",
     "load_data_config",

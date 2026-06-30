@@ -12,16 +12,65 @@ Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-D
 Copyright (c) 2020 SenseTime. All Rights Reserved.
 """
 
+import logging
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from .keypoints import compute_l1_keypoint_loss, map_labels_to_keypoint_schema
 from .segmentation import (
     calculate_uncertainty,
     get_uncertain_point_coords_with_randomness,
     point_sample,
 )
 from . import box_ops
+
+logger = logging.getLogger(__name__)
+
+
+def _classic_keypoint_losses(
+    src_keypoints: torch.Tensor,
+    target_keypoints: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-instance keypoint losses for classic RF-DETR pose heads."""
+    if src_keypoints.shape[-1] < 3:
+        raise ValueError("classic RF-DETR keypoints must have x, y, and visibility")
+    if src_keypoints.shape[-2] != target_keypoints.shape[-2]:
+        raise ValueError(
+            "classic RF-DETR keypoint count does not match target keypoint count: "
+            f"{src_keypoints.shape[-2]} vs {target_keypoints.shape[-2]}"
+        )
+
+    target = target_keypoints.to(device=src_keypoints.device, dtype=src_keypoints.dtype)
+    target_xy = target[..., :2]
+    target_vis = target[..., 2]
+
+    finite_xy = torch.isfinite(target_xy).all(dim=-1)
+    finite_vis = torch.isfinite(target_vis)
+    visible = finite_xy & finite_vis & (target_vis > 0)
+    visible_f = visible.to(src_keypoints.dtype)
+    visible_count = visible_f.sum(dim=-1).clamp(min=1.0)
+    loss_l1 = (
+        F.l1_loss(src_keypoints[..., :2], target_xy, reduction="none").sum(dim=-1)
+        * visible_f
+    ).sum(dim=-1) / visible_count
+
+    valid_vis_f = finite_vis.to(src_keypoints.dtype)
+    vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
+    pred_vis_logits = src_keypoints[..., 2]
+    target_findable = (target_vis > 0).to(src_keypoints.dtype)
+    loss_findable = (
+        F.binary_cross_entropy_with_logits(
+            pred_vis_logits,
+            target_findable,
+            reduction="none",
+        )
+        * valid_vis_f
+    ).sum(dim=-1) / vis_count
+    loss_visible = torch.zeros_like(loss_findable)
+    loss_nll = torch.zeros_like(loss_l1)
+    return loss_l1, loss_findable, loss_visible, loss_nll
 
 
 @torch.no_grad()
@@ -172,6 +221,11 @@ class SetCriterion(nn.Module):
         use_position_supervised_loss=False,
         ia_bce_loss=False,
         mask_point_sample_ratio: int = 16,
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # All keypoint state defaults to off so detection/seg/obb criteria are
+        # byte-identical when keypoints are disabled.
+        use_grouppose_keypoints: bool = False,
+        num_keypoints_per_class=None,
     ):
         """Create the criterion.
         Parameters:
@@ -181,6 +235,11 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
             focal_alpha: alpha in Focal Loss
             group_detr: Number of groups to speed detr training. Default is 1.
+            use_grouppose_keypoints: When True, ``loss_keypoints`` uses the GroupPose
+                keypoint criterion (ported from RF-DETR v1.8.0). When False, keypoint
+                loss must not be requested and no keypoint state is constructed.
+            num_keypoints_per_class: Per-class keypoint counts (e.g. ``[0, 17]``) used
+                by the GroupPose keypoint helpers. Required when keypoints are on.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -194,6 +253,9 @@ class SetCriterion(nn.Module):
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        self.use_grouppose_keypoints = use_grouppose_keypoints
+        self.num_keypoints_per_class = list(num_keypoints_per_class) if num_keypoints_per_class else []
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -204,6 +266,20 @@ class SetCriterion(nn.Module):
 
         idx = self._get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head carries one logit column per keypoint-schema
+        # class, and the per-keypoint class-logit boost is added to the
+        # keypoint-bearing column (internal index 1 for ``[0, 17]``). A person-only
+        # dataset labels people as contiguous class 0, which would supervise the
+        # empty schema slot (column 0) instead of the boosted column. Lift the
+        # contiguous label to its schema index so the classification target column
+        # matches where the boost lives. Gated on ``use_grouppose_keypoints`` so
+        # detection/seg/obb are byte-identical (no remap applied).
+        if self.use_grouppose_keypoints:
+            target_classes_o = map_labels_to_keypoint_schema(
+                target_classes_o, self.num_keypoints_per_class
+            )
 
         if self.ia_bce_loss:
             alpha = self.focal_alpha
@@ -378,6 +454,23 @@ class SetCriterion(nn.Module):
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
+    def loss_angles(self, outputs, targets, indices, num_boxes):
+        """Compute periodic OBB angle loss for matched predictions.
+
+        Angles are in radians. Rotated rectangles are equivalent under pi
+        radians, so the loss uses ``cos(2 * delta)`` instead of direct L1.
+        """
+        assert "pred_angles" in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_angles_all = outputs["pred_angles"]
+        if idx[0].numel() == 0:
+            return {"loss_angle": src_angles_all.sum() * 0.0}
+
+        src_angles = src_angles_all[idx].squeeze(-1)
+        target_angles = torch.cat([t["angles"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        loss_angle = 1.0 - torch.cos(2.0 * (src_angles - target_angles))
+        return {"loss_angle": loss_angle.sum() / num_boxes}
+
     def loss_masks(self, outputs, targets, indices, num_boxes):
         """Compute BCE-with-logits and Dice losses for segmentation masks on matched pairs.
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
@@ -394,10 +487,14 @@ class SetCriterion(nn.Module):
             spatial_features = outputs["pred_masks"]["spatial_features"]
             query_features = outputs["pred_masks"]["query_features"]
             bias = outputs["pred_masks"]["bias"]
-            # If there are no matches, return an empty tensor like the Tensor branch does.
             if idx[0].numel() == 0:
-                device = spatial_features.device
-                src_masks = torch.tensor([], device=device)
+                # Return zero losses that ARE connected to the mask head tensors so
+                # every mask-head parameter still receives a (zero) gradient.
+                # torch.tensor([]) has no grad_fn and silently drops those params from
+                # the backward graph, which violates DDP static_graph=True and causes
+                # a "finished reduction" crash whenever a rank sees an all-unlabeled batch.
+                zero = spatial_features.sum() * 0.0 + query_features.sum() * 0.0 + bias.sum() * 0.0
+                return {"loss_mask_ce": zero, "loss_mask_dice": zero}
             else:
                 batched_selected_masks = []
                 per_batch_counts = idx[0].unique(return_counts=True)[1]
@@ -475,6 +572,48 @@ class SetCriterion(nn.Module):
         del target_masks
         return losses
 
+    def loss_keypoints(self, outputs, targets, indices, num_boxes):
+        """Compute RF-DETR keypoint losses on matched prediction/target pairs."""
+        assert "pred_keypoints" in outputs, "pred_keypoints missing in model outputs"
+        idx = self._get_src_permutation_idx(indices)
+        src_keypoints = outputs["pred_keypoints"][idx]
+        target_keypoints = torch.cat([target["keypoints"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+
+        if self.use_grouppose_keypoints:
+            target_classes = torch.cat([target["labels"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+            target_boxes = torch.cat([target["boxes"][j] for target, (_, j) in zip(targets, indices)], dim=0)
+            target_areas = target_boxes[:, 2] * target_boxes[:, 3]
+
+            # Class-index remap at the criterion boundary: lift the LibreYOLO
+            # contiguous pose label (person = 0) to the GroupPose internal schema
+            # class (person = 1 for ``[0, 17]``) before it indexes
+            # ``num_keypoints_per_class`` inside ``compute_l1_keypoint_loss``. Without
+            # this, label 0 selects the empty schema slot (0 keypoints) and the
+            # keypoint loss collapses to zero, so the head never trains.
+            target_classes = map_labels_to_keypoint_schema(
+                target_classes.to(src_keypoints.device), self.num_keypoints_per_class
+            )
+
+            loss_l1, loss_findable, loss_visible, loss_nll = compute_l1_keypoint_loss(
+                all_pred_keypoints=src_keypoints,
+                target_keypoints=target_keypoints.to(src_keypoints.device),
+                target_classes=target_classes,
+                target_areas=target_areas.to(src_keypoints.device),
+                num_keypoints_per_class=self.num_keypoints_per_class,
+            )
+        else:
+            loss_l1, loss_findable, loss_visible, loss_nll = _classic_keypoint_losses(
+                src_keypoints,
+                target_keypoints,
+            )
+
+        return {
+            "loss_keypoints_l1": loss_l1.sum() / num_boxes,
+            "loss_keypoints_findable": loss_findable.sum() / num_boxes,
+            "loss_keypoints_visible": loss_visible.sum() / num_boxes,
+            "loss_keypoints_nll": loss_nll.sum() / num_boxes,
+        }
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -492,7 +631,9 @@ class SetCriterion(nn.Module):
             "labels": self.loss_labels,
             "cardinality": self.loss_cardinality,
             "boxes": self.loss_boxes,
+            "angles": self.loss_angles,
             "masks": self.loss_masks,
+            "keypoints": self.loss_keypoints,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)

@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 
@@ -244,6 +245,22 @@ class TestNMSWrap:
                 model_family="rfdetr",
             )
 
+    def test_rtdetr_raises(self, tmp_path, monkeypatch):
+        _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        with pytest.raises(NotImplementedError, match="RT-DETR"):
+            export_coreml(
+                _DummyModel().eval(),
+                torch.randn(1, 3, 640, 640),
+                output_path=str(tmp_path / "m.mlpackage"),
+                precision="fp32",
+                compute_units="all",
+                nms=True,
+                metadata={"model_family": "rtdetr"},
+                model_family="rtdetr",
+            )
+
     def test_yolox_calls_pipeline(self, tmp_path, monkeypatch):
         fake, mlmodel = _patch_ct(monkeypatch)
 
@@ -364,3 +381,34 @@ class TestCoreMLBackendModule:
         assert parsed[2] == "segment"
         assert parsed[3] == ("detect", "segment")
         assert parsed[4] == "detect"
+
+    def test_backend_parses_rectangular_metadata(self):
+        from libreyolo.backends.coreml import CoreMLBackend
+
+        parsed = CoreMLBackend._parse_metadata(
+            {
+                "model_family": "yolo9",
+                "imgsz": "640",
+                "imgsz_h": "320",
+                "imgsz_w": "640",
+            },
+            default_nb_classes=80,
+        )
+
+        assert parsed[6] == (320, 640)
+
+    def test_backend_preprocess_accepts_rectangular_yolo9_imgsz(self):
+        from libreyolo.backends.coreml import CoreMLBackend
+
+        backend = CoreMLBackend.__new__(CoreMLBackend)
+        backend.model_family = "yolo9"
+
+        tensor, _original_img, original_size, ratio = backend._preprocess(
+            np.zeros((8, 16, 3), dtype=np.uint8),
+            (32, 64),
+            "rgb",
+        )
+
+        assert tuple(tensor.shape) == (1, 3, 32, 64)
+        assert original_size == (16, 8)
+        assert ratio == 1.0

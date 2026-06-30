@@ -305,7 +305,7 @@ def run_video_inference(
     from PIL import Image
     from tqdm import tqdm
 
-    from .drawing import draw_boxes, draw_keypoints, draw_masks
+    from .drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb, draw_points
 
     with VideoSource(source, vid_stride=vid_stride) as video_src:
         writer = None
@@ -338,6 +338,25 @@ def run_video_inference(
                 if save or show:
                     if annotate_fn is not None:
                         annotated_pil = annotate_fn(pil_img, result)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "probs", None) is not None
+                    ):
+                        annotated_pil = pil_img
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "points", None) is not None
+                    ):
+                        if len(result.points) > 0:
+                            annotated_pil = draw_points(
+                                pil_img,
+                                result.points.xy.tolist(),
+                                result.points.conf.tolist(),
+                                result.points.cls.tolist(),
+                                class_names=result.names,
+                            )
+                        else:
+                            annotated_pil = pil_img
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:
@@ -349,13 +368,27 @@ def run_video_inference(
                                 masks_np,
                                 result.boxes.cls.tolist(),
                             )
-                        annotated_pil = draw_boxes(
-                            annotated_pil,
-                            result.boxes.xyxy.tolist(),
-                            result.boxes.conf.tolist(),
-                            result.boxes.cls.tolist(),
-                            class_names=result.names,
-                        )
+                        if result.obb is not None:
+                            annotated_pil = draw_obb(
+                                annotated_pil,
+                                result.obb.xywhr.tolist(),
+                                result.obb.conf.tolist(),
+                                result.obb.cls.tolist(),
+                                class_names=result.names,
+                                track_ids=(
+                                    result.obb.id.tolist()
+                                    if result.obb.id is not None
+                                    else None
+                                ),
+                            )
+                        else:
+                            annotated_pil = draw_boxes(
+                                annotated_pil,
+                                result.boxes.xyxy.tolist(),
+                                result.boxes.conf.tolist(),
+                                result.boxes.cls.tolist(),
+                                class_names=result.names,
+                            )
                         if result.keypoints is not None:
                             kpts_np = result.keypoints.data
                             if isinstance(kpts_np, torch.Tensor):

@@ -338,6 +338,58 @@ class Keypoints(_TensorPayload):
         return conf > 0
 
 
+class Points(_TensorPayload):
+    """Wrap point-localization predictions for a single image.
+
+    Data shape is ``(N, 4)`` with rows ``x, y, class, confidence``.
+    Coordinates are absolute image pixels unless accessed through ``xyn``.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim == 1:
+            if isinstance(data, torch.Tensor):
+                data = data.unsqueeze(0)
+            else:
+                data = data[None, :]
+        if data.ndim != 2 or data.shape[-1] != 4:
+            raise ValueError(
+                f"expected (N, 4) point rows but got shape {tuple(data.shape)}: "
+                "x, y, class, confidence"
+            )
+        super().__init__(data, orig_shape)
+
+    @property
+    def xy(self) -> TensorLike:
+        return self.data[:, :2]
+
+    @property
+    def xyn(self) -> TensorLike:
+        if self.orig_shape is None:
+            raise ValueError("orig_shape is required for normalized point coordinates")
+        h, w = self.orig_shape
+        xy = self.xy
+        if isinstance(xy, torch.Tensor):
+            scale = torch.tensor([w, h], dtype=xy.dtype, device=xy.device)
+        else:
+            scale = np.array([w, h], dtype=xy.dtype)
+        return xy / scale
+
+    @property
+    def cls(self) -> TensorLike:
+        return self.data[:, 2]
+
+    @property
+    def conf(self) -> TensorLike:
+        return self.data[:, 3]
+
+    def __repr__(self) -> str:
+        return (
+            f"Points(n={len(self)}, "
+            f"shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class Probs(_TensorPayload):
     @property
     def top1(self) -> int:
@@ -359,6 +411,111 @@ class Probs(_TensorPayload):
         if isinstance(self.data, torch.Tensor):
             return self.data[torch.tensor(indices, device=self.data.device)]
         return self.data[indices]
+
+    def __getitem__(self, idx):
+        # A classification probability vector is whole-image, not per-detection;
+        # keep it intact so shared Results slicing (e.g. ``result[0]``) cannot
+        # truncate it to a single class. Mirrors SemanticMask/DepthMap.
+        return self.__class__(self.data, self.orig_shape)
+
+
+class SemanticMask(_TensorPayload):
+    """Dense semantic segmentation map for a single image.
+
+    Data shape is ``(H, W)`` integer class IDs on the original image canvas.
+    ``255`` is the ignore/void value and never counts as a class.
+    """
+
+    IGNORE_INDEX = 255
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) semantic class map but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    @property
+    def classes(self) -> List[int]:
+        """Sorted class IDs present in the map, excluding the ignore value."""
+        values = np.unique(_numpy(self.data))
+        return [int(v) for v in values if int(v) != self.IGNORE_INDEX]
+
+    def class_mask(self, class_id: int) -> TensorLike:
+        """Boolean ``(H, W)`` mask selecting the pixels of one class."""
+        return self.data == class_id
+
+    def __getitem__(self, idx):
+        # Instance indexing does not apply to a dense map; keep it intact so
+        # shared Results slicing paths cannot corrupt the (H, W) layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"SemanticMask(shape={tuple(self.data.shape)}, "
+            f"classes={len(self.classes)}, orig_shape={self.orig_shape})"
+        )
+
+
+class DepthMap(_TensorPayload):
+    """Dense relative inverse-depth map for a single image.
+
+    Data shape is ``(H, W)`` float values on the original image canvas. Higher
+    values mean closer to the camera. Values are relative, not metric meters.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) depth map but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    def _finite_values(self) -> np.ndarray:
+        values = np.asarray(_numpy(self.data), dtype=np.float32)
+        return values[np.isfinite(values)]
+
+    @property
+    def min(self) -> float:
+        values = self._finite_values()
+        return float(values.min()) if values.size else 0.0
+
+    @property
+    def max(self) -> float:
+        values = self._finite_values()
+        return float(values.max()) if values.size else 0.0
+
+    @property
+    def mean(self) -> float:
+        values = self._finite_values()
+        return float(values.mean()) if values.size else 0.0
+
+    def normalized(self) -> TensorLike:
+        """Depth map rescaled to ``[0, 1]`` over finite values."""
+        data = self.data
+        lo, hi = self.min, self.max
+        if hi - lo <= 0:
+            return data * 0
+        normalized = (data - lo) / (hi - lo)
+        if isinstance(normalized, torch.Tensor):
+            return torch.where(torch.isfinite(normalized), normalized, torch.zeros_like(normalized))
+        return np.where(np.isfinite(normalized), normalized, np.zeros_like(normalized))
+
+    def __getitem__(self, idx):
+        # Instance indexing does not apply to a dense map; keep it intact so
+        # shared Results slicing paths cannot corrupt the (H, W) layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"DepthMap(shape={tuple(self.data.shape)}, "
+            f"range=({self.min:.4g}, {self.max:.4g}), "
+            f"orig_shape={self.orig_shape})"
+        )
 
 
 class OBB(_TensorPayload):
@@ -533,7 +690,17 @@ class Gaze(_TensorPayload):
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
-    _keys = ("boxes", "masks", "probs", "keypoints", "obb", "gaze")
+    _keys = (
+        "boxes",
+        "masks",
+        "probs",
+        "keypoints",
+        "obb",
+        "gaze",
+        "points",
+        "semantic_mask",
+        "depth_map",
+    )
 
     def __init__(
         self,
@@ -546,6 +713,9 @@ class Results:
         probs: Optional[Probs] = None,
         obb: Optional[OBB] = None,
         gaze: Optional[Gaze] = None,
+        points: Optional[Points] = None,
+        semantic_mask: Optional[SemanticMask] = None,
+        depth_map: Optional[DepthMap] = None,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -554,6 +724,10 @@ class Results:
             boxes = boxes.with_orig_shape(orig_shape)
         if boxes is not None and track_id is not None:
             boxes = boxes.with_id(track_id)
+        if points is not None and points.orig_shape is None:
+            points = Points(points.data, orig_shape)
+        if depth_map is not None and depth_map.orig_shape is None:
+            depth_map = DepthMap(depth_map.data, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -561,6 +735,9 @@ class Results:
         self.probs = probs
         self.obb = obb
         self.gaze = gaze
+        self.points = points
+        self.semantic_mask = semantic_mask
+        self.depth_map = depth_map
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -579,6 +756,9 @@ class Results:
             "probs": self.probs,
             "obb": self.obb,
             "gaze": self.gaze,
+            "points": self.points,
+            "semantic_mask": self.semantic_mask,
+            "depth_map": self.depth_map,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -629,6 +809,9 @@ class Results:
         keypoints: Optional[Keypoints] = None,
         obb: Optional[OBB] = None,
         gaze: Optional[Gaze] = None,
+        points: Optional[Points] = None,
+        semantic_mask: Optional[SemanticMask] = None,
+        depth_map: Optional[DepthMap] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -643,6 +826,12 @@ class Results:
             self.obb = obb
         if gaze is not None:
             self.gaze = gaze
+        if points is not None:
+            self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
+        if semantic_mask is not None:
+            self.semantic_mask = semantic_mask
+        if depth_map is not None:
+            self.depth_map = depth_map
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -651,6 +840,48 @@ class Results:
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
         if self.boxes is None:
+            if self.points is not None:
+                points_np = self.points.numpy()
+                xy_values = points_np.xyn if normalize else points_np.xy
+                rows = []
+                for i in range(len(points_np)):
+                    cls_id = int(points_np.cls[i])
+                    rows.append(
+                        {
+                            "name": self.names.get(cls_id, str(cls_id)),
+                            "class": cls_id,
+                            "confidence": round(float(points_np.conf[i]), decimals),
+                            "point": {
+                                "x": round(float(xy_values[i, 0]), decimals),
+                                "y": round(float(xy_values[i, 1]), decimals),
+                            },
+                        }
+                    )
+                return rows
+            if self.semantic_mask is not None:
+                mask_np = _numpy(self.semantic_mask.data)
+                total = int(mask_np.size)
+                rows = []
+                for cls_id in self.semantic_mask.classes:
+                    count = int((mask_np == cls_id).sum())
+                    rows.append(
+                        {
+                            "name": self.names.get(cls_id, str(cls_id)),
+                            "class": cls_id,
+                            "pixel_count": count,
+                            "pixel_fraction": round(count / total, decimals),
+                        }
+                    )
+                return rows
+            if self.depth_map is not None:
+                return [
+                    {
+                        "name": "depth_map",
+                        "min": round(self.depth_map.min, decimals),
+                        "max": round(self.depth_map.max, decimals),
+                        "mean": round(self.depth_map.mean, decimals),
+                    }
+                ]
             if self.probs is None:
                 return []
             probs_np = _numpy(self.probs.data)
@@ -666,6 +897,9 @@ class Results:
             return rows
 
         boxes_np = self.boxes.numpy()
+        obb_np = None
+        if self.obb is not None:
+            obb_np = self.obb.numpy() if isinstance(self.obb.data, torch.Tensor) else self.obb
         track_ids = _numpy(self.track_id)
         rows = []
         for i in range(len(boxes_np)):
@@ -682,6 +916,29 @@ class Results:
                     "y2": round(float(box_values[3]), decimals),
                 },
             }
+            if obb_np is not None and i < len(obb_np):
+                xywhr = np.asarray(obb_np.xywhr[i], dtype=float).copy()
+                corners = np.asarray(
+                    obb_np.xyxyxyxyn[i] if normalize else obb_np.xyxyxyxy[i],
+                    dtype=float,
+                )
+                if normalize:
+                    h, w = self.orig_shape
+                    xywhr[0] /= w
+                    xywhr[1] /= h
+                    xywhr[2] /= w
+                    xywhr[3] /= h
+                row["obb"] = {
+                    "x_center": round(float(xywhr[0]), decimals),
+                    "y_center": round(float(xywhr[1]), decimals),
+                    "width": round(float(xywhr[2]), decimals),
+                    "height": round(float(xywhr[3]), decimals),
+                    "rotation": round(float(xywhr[4]), decimals),
+                }
+                row["corners"] = {
+                    "x": [round(float(x), decimals) for x in corners[:, 0]],
+                    "y": [round(float(y), decimals) for y in corners[:, 1]],
+                }
             if self.masks is not None:
                 segment = self.masks.xyn[i] if normalize else self.masks.xy[i]
                 row["segments"] = {
@@ -707,7 +964,13 @@ class Results:
     def __len__(self) -> int:
         if self.boxes is not None:
             return len(self.boxes)
+        if self.points is not None:
+            return len(self.points)
         if self.probs is not None:
+            return 1
+        if self.semantic_mask is not None:
+            return 1
+        if self.depth_map is not None:
             return 1
         return 0
 
@@ -717,8 +980,14 @@ class Results:
             f"orig_shape={self.orig_shape}",
             f"boxes={self.boxes}",
         ]
+        if self.points is not None:
+            parts.append(f"points={self.points}")
         if self.masks is not None:
             parts.append(f"masks={self.masks}")
+        if self.semantic_mask is not None:
+            parts.append(f"semantic_mask={self.semantic_mask}")
+        if self.depth_map is not None:
+            parts.append(f"depth_map={self.depth_map}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

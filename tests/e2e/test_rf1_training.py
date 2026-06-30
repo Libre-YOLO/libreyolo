@@ -23,12 +23,11 @@ import yaml
 
 from libreyolo import LibreYOLO
 from .conftest import (
-    ALL_MODEL_WEIGHT_PARAMS,
     ALL_MODELS_WITH_WEIGHTS,
     cuda_cleanup,
-    flagship_nightly_marks,
     make_ids,
     model_cases,
+    rf1_flagship_nightly_marks,
     require_test_weights,
     run_direct_subprocess,
     run_in_subprocess,
@@ -97,13 +96,13 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "RF1 mAP floor on small datasets (skill section 6: fine-tune parity, "
         "not paper parity). Inference parity is verified separately."
     ),
-    "damoyolo": (
-        "DAMO-YOLO training is experimental: GFL+AlignOTA loss and "
-        "trainer plumbing are wired and gradients flow correctly, but "
-        "convergence on RF1's tiny marbles dataset has not been validated "
-        "against the mAP floor. Inference parity is verified separately."
-    ),
 }
+
+RF1_MODEL_WEIGHT_PARAMS = model_cases(
+    ALL_MODELS_WITH_WEIGHTS,
+    with_weights=True,
+    marks_resolver=rf1_flagship_nightly_marks,
+)
 
 
 def skip_if_experimental_training(family: str) -> None:
@@ -166,14 +165,12 @@ def rf1_train_kwargs(family: str, size: str) -> dict:
         }
     if family == "ec":
         return {"allow_experimental": True}
-    if family == "damoyolo":
-        return {"allow_experimental": True}
     return {}
 
 
 @pytest.mark.parametrize(
     "family,size,weights",
-    ALL_MODEL_WEIGHT_PARAMS,
+    RF1_MODEL_WEIGHT_PARAMS,
 )
 def test_rf1_training(family, size, weights, dataset_data_yaml, tmp_path):
     """Train on marbles, verify the model learns and clears a basic mAP floor."""
@@ -419,7 +416,7 @@ _RELOAD_MODELS = [(f, s, w) for f, s, w in ALL_MODELS_WITH_WEIGHTS if f != "rfde
     model_cases(
         _RELOAD_MODELS,
         with_weights=True,
-        marks_resolver=flagship_nightly_marks,
+        marks_resolver=rf1_flagship_nightly_marks,
     ),
     ids=make_ids(_RELOAD_MODELS),
 )
@@ -658,7 +655,7 @@ _RELOAD_RFDETR = [("rfdetr", "n", "LibreRFDETRn.pt")]
     model_cases(
         _RELOAD_RFDETR,
         with_weights=True,
-        marks_resolver=flagship_nightly_marks,
+        marks_resolver=rf1_flagship_nightly_marks,
     ),
     ids=make_ids(_RELOAD_RFDETR),
 )

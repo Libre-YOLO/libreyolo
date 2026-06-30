@@ -12,6 +12,7 @@ from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
 from ..base import BaseModel
+from ...postprocess.rtdetr import postprocess as rtdetr_postprocess
 from ...utils.image_loader import ImageInput
 from .nn import RTDETRModel
 from .config import RTDETRConfig
@@ -236,6 +237,33 @@ class LibreRTDETR(BaseModel):
         return "r50"
 
     @classmethod
+    def convert_upstream_state_dict(cls, weights_dict: dict) -> Optional[dict]:
+        """Remap upstream RT-DETR checkpoints to the v1 key layout.
+
+        Upstream v1 releases already use the native numeric encoder
+        input-projection keys and pass straight through; v2 releases name
+        those submodules (``.conv``/``.norm``) and need the remap. ResNet
+        checkpoints with v2's discrete-sampling buffers belong to
+        LibreRTDETRv2; v2 HGNetv2 checkpoints ship under this v1 family.
+        """
+        from .convert import (
+            V2_SAMPLING_FRAGMENT,
+            convert_to_v1,
+            has_upstream_input_proj_keys,
+        )
+
+        if has_upstream_input_proj_keys(weights_dict):
+            if not cls.can_load(weights_dict):
+                return None
+            is_resnet = any(
+                k.startswith("backbone.res_layers") for k in weights_dict
+            )
+            if is_resnet and any(V2_SAMPLING_FRAGMENT in k for k in weights_dict):
+                return None
+            return convert_to_v1(weights_dict)
+        return super().convert_upstream_state_dict(weights_dict)
+
+    @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> int:
         """Detect number of classes from the classification head."""
         # The classification head is decoder.dec_score_head.{last_layer}.bias
@@ -417,58 +445,18 @@ class LibreRTDETR(BaseModel):
     ) -> Dict:
         """Convert RTDETR outputs to detection results.
 
-        Args:
-            output: dict with pred_logits [1, Q, C] and pred_boxes [1, Q, 4] (cxcywh normalized)
-            conf_thres: confidence threshold
-            iou_thres: IoU threshold (not used for RTDETR - NMS-free)
-            original_size: (width, height)
-            max_det: maximum detections
-            ratio: aspect ratio (1.0 for RTDETR)
-
-        Returns:
-            Dict with boxes, scores, classes, num_detections
+        Delegates to ``libreyolo.postprocess.rtdetr.postprocess`` (extracted
+        verbatim from this method).
         """
-        pred_logits = output["pred_logits"]  # [1, Q, C]
-        pred_boxes = output["pred_boxes"]  # [1, Q, 4] cxcywh normalized
-
-        # Match upstream RTDETRPostProcessor: top-K across the flattened (Q*C)
-        # score matrix, allowing multiple classes per query. The previous
-        # per-query ``scores.max(dim=-1)`` cost ~0.7–0.9 mAP on COCO val2017
-        # because non-argmax classes that would still rank in the top-300
-        # globally were silently discarded before COCO eval saw them.
-        scores_per_class = torch.sigmoid(pred_logits[0])  # [Q, C]
-        num_classes = scores_per_class.shape[-1]
-        flat = scores_per_class.flatten()
-        k = min(max_det, flat.numel())
-        topk_scores, topk_indices = torch.topk(flat, k)
-        query_idx = topk_indices // num_classes
-        class_idx = topk_indices % num_classes
-
-        boxes = pred_boxes[0][query_idx]  # [k, 4] cxcywh normalized
-        scores = topk_scores
-        labels = class_idx
-
-        # Convert cxcywh normalized to xyxy pixel coords
-        orig_w, orig_h = original_size
-        cx, cy, w, h = boxes.unbind(-1)
-        x1 = (cx - w / 2) * orig_w
-        y1 = (cy - h / 2) * orig_h
-        x2 = (cx + w / 2) * orig_w
-        y2 = (cy + h / 2) * orig_h
-        boxes_xyxy = torch.stack([x1, y1, x2, y2], dim=-1)
-
-        # Filter by confidence after top-K (matches upstream + D-FINE).
-        mask = scores > conf_thres
-        scores = scores[mask]
-        labels = labels[mask]
-        boxes_xyxy = boxes_xyxy[mask]
-
-        return {
-            "boxes": boxes_xyxy.cpu(),
-            "scores": scores.cpu(),
-            "classes": labels.cpu(),
-            "num_detections": len(boxes_xyxy),
-        }
+        return rtdetr_postprocess(
+            output,
+            conf_thres,
+            iou_thres,
+            original_size,
+            max_det=max_det,
+            ratio=ratio,
+            **kwargs,
+        )
 
     # =========================================================================
     # Public API
@@ -502,6 +490,7 @@ class LibreRTDETR(BaseModel):
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
         callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the RT-DETR model on a dataset.
@@ -526,6 +515,9 @@ class LibreRTDETR(BaseModel):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
@@ -588,6 +580,7 @@ class LibreRTDETR(BaseModel):
             patience=patience,
             allow_download_scripts=allow_download_scripts,
             callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

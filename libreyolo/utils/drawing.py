@@ -184,6 +184,177 @@ def draw_boxes(
     return img_draw
 
 
+def _xywhr_to_points(row: Sequence[float]) -> List[Tuple[float, float]]:
+    cx, cy, w, h, angle = (float(v) for v in row[:5])
+    half_w = w / 2.0
+    half_h = h / 2.0
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    offsets = (
+        (-half_w, -half_h),
+        (half_w, -half_h),
+        (half_w, half_h),
+        (-half_w, half_h),
+    )
+    return [
+        (cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a)
+        for dx, dy in offsets
+    ]
+
+
+def draw_obb(
+    img: Image.Image,
+    obb: Sequence[Sequence[float]],
+    scores: Sequence[float],
+    classes: Sequence[float],
+    class_names: List[str] | Dict[int, str] | None = None,
+    track_ids: Sequence[float] | None = None,
+) -> Image.Image:
+    """Draw oriented bounding boxes as rotated polygons."""
+    img_draw = img.copy()
+    draw = ImageDraw.Draw(img_draw)
+
+    if class_names is None:
+        class_names = COCO_CLASSES
+
+    img_width, img_height = img.size
+    max_dim = max(img_width, img_height)
+    scale_factor = max_dim / 640.0
+    box_thickness = max(2, int(2 * scale_factor))
+    font_size = max(12, int(12 * scale_factor))
+    label_padding = max(2, int(2 * scale_factor))
+    font = _get_font(font_size)
+    _track_ids = list(track_ids) if track_ids is not None else [None] * len(obb)
+
+    for row, score, cls_id, tid in zip(obb, scores, classes, _track_ids):
+        cls_id_int = int(cls_id)
+        color = (
+            get_class_color(int(tid))
+            if tid is not None
+            else get_class_color(cls_id_int)
+        )
+
+        points = _xywhr_to_points(row)
+        draw.line(points + [points[0]], fill=color, width=box_thickness)
+
+        if tid is not None:
+            label = f"#{int(tid)} {float(score):.2f}"
+        else:
+            class_name = None
+            if isinstance(class_names, dict):
+                class_name = class_names.get(cls_id_int)
+            elif class_names and cls_id_int < len(class_names):
+                class_name = class_names[cls_id_int]
+            label = (
+                f"{class_name}: {float(score):.2f}"
+                if class_name is not None
+                else f"Class {cls_id_int}: {float(score):.2f}"
+            )
+
+        full_bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = full_bbox[2] - full_bbox[0]
+        text_height = full_bbox[3] - full_bbox[1]
+        x_values = [p[0] for p in points]
+        y_values = [p[1] for p in points]
+        x1 = min(x_values)
+        y1 = min(y_values)
+
+        outside = y1 >= text_height + label_padding * 2
+        label_x = min(x1, img_width - text_width - label_padding * 2)
+        label_x = max(0, label_x)
+        if outside:
+            bg_y0 = y1 - text_height - label_padding * 2
+            bg_y1 = y1
+            text_y = y1 - text_height - label_padding
+        else:
+            bg_y0 = y1
+            bg_y1 = y1 + text_height + label_padding * 2
+            text_y = y1 + label_padding
+
+        draw.rectangle(
+            [label_x, bg_y0, label_x + text_width + label_padding * 2, bg_y1],
+            fill=color,
+        )
+        draw.text(
+            (label_x + label_padding, text_y),
+            label,
+            fill="white",
+            font=font,
+        )
+
+    return img_draw
+
+
+def draw_points(
+    img: Image.Image,
+    points: Sequence[Sequence[float]],
+    scores: Sequence[float],
+    classes: Sequence[float],
+    class_names: List[str] | Dict[int, str] | None = None,
+) -> Image.Image:
+    """Draw point-localization predictions as labeled centroids."""
+    img_draw = img.copy()
+    draw = ImageDraw.Draw(img_draw)
+
+    if class_names is None:
+        class_names = COCO_CLASSES
+
+    max_dim = max(img.size)
+    scale = max_dim / 640.0
+    radius = max(3, int(round(4 * scale)))
+    stroke = max(2, int(round(2 * scale)))
+    font = _get_font(max(12, int(12 * scale)))
+    label_padding = max(2, int(2 * scale))
+
+    for point, score, cls_id in zip(points, scores, classes):
+        x, y = float(point[0]), float(point[1])
+        cls_id_int = int(cls_id)
+        color = get_class_color(cls_id_int)
+        draw.ellipse(
+            [x - radius, y - radius, x + radius, y + radius],
+            fill=color,
+            outline=(0, 0, 0),
+            width=stroke,
+        )
+        draw.line([(x - radius * 1.5, y), (x + radius * 1.5, y)], fill=(0, 0, 0), width=1)
+        draw.line([(x, y - radius * 1.5), (x, y + radius * 1.5)], fill=(0, 0, 0), width=1)
+
+        if isinstance(class_names, dict):
+            class_name = class_names.get(cls_id_int)
+        elif class_names and cls_id_int < len(class_names):
+            class_name = class_names[cls_id_int]
+        else:
+            class_name = None
+        label = (
+            f"{class_name}: {float(score):.2f}"
+            if class_name is not None
+            else f"Class {cls_id_int}: {float(score):.2f}"
+        )
+
+        full_bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = full_bbox[2] - full_bbox[0]
+        text_height = full_bbox[3] - full_bbox[1]
+        label_x = min(max(0, x + radius + label_padding), img.width - text_width - label_padding * 2)
+        label_y = min(max(0, y - text_height / 2 - label_padding), img.height - text_height - label_padding * 2)
+        draw.rectangle(
+            [
+                label_x,
+                label_y,
+                label_x + text_width + label_padding * 2,
+                label_y + text_height + label_padding * 2,
+            ],
+            fill=color,
+        )
+        draw.text(
+            (label_x + label_padding, label_y + label_padding),
+            label,
+            fill="white",
+            font=font,
+        )
+
+    return img_draw
+
+
 def draw_masks(
     img: Image.Image,
     masks: np.ndarray,
@@ -219,6 +390,102 @@ def draw_masks(
 
     result = Image.alpha_composite(img_draw, overlay)
     return result.convert("RGB")
+
+
+def draw_semantic_mask(
+    img: Image.Image,
+    semantic_mask: np.ndarray,
+    alpha: float = 0.55,
+    ignore_index: int = 255,
+) -> Image.Image:
+    """
+    Overlay a dense semantic class map on an image.
+
+    Args:
+        img: PIL Image to draw on.
+        semantic_mask: (H, W) integer numpy array of per-pixel class IDs.
+        alpha: Overlay opacity (0 = transparent, 1 = opaque).
+        ignore_index: Class value left unpainted.
+
+    Returns:
+        Annotated PIL Image with the class-color overlay.
+    """
+    mask = np.asarray(semantic_mask)
+    if mask.shape[:2] != (img.height, img.width):
+        mask_img = Image.fromarray(mask.astype(np.int32), mode="I")
+        mask_img = mask_img.resize((img.width, img.height), Image.NEAREST)
+        mask = np.asarray(mask_img)
+
+    img_draw = img.copy().convert("RGBA")
+    overlay = np.zeros((img.height, img.width, 4), dtype=np.uint8)
+    alpha_int = int(alpha * 255)
+    for cls_id in np.unique(mask):
+        cls_id = int(cls_id)
+        if cls_id == ignore_index:
+            continue
+        r, g, b = _get_class_color_rgb(cls_id)
+        overlay[mask == cls_id] = (r, g, b, alpha_int)
+
+    result = Image.alpha_composite(img_draw, Image.fromarray(overlay, mode="RGBA"))
+    return result.convert("RGB")
+
+
+# Anchor colors for the depth colormap, near (warm) to far (cold). Linear
+# interpolation between anchors gives a smooth ramp without a matplotlib
+# dependency.
+_DEPTH_COLOR_ANCHORS: Tuple[Tuple[int, int, int], ...] = (
+    (122, 4, 3),
+    (228, 65, 26),
+    (249, 152, 40),
+    (164, 252, 60),
+    (58, 222, 130),
+    (32, 144, 222),
+    (64, 67, 166),
+    (48, 18, 59),
+)
+
+
+@lru_cache(maxsize=1)
+def _depth_colormap_lut() -> np.ndarray:
+    """256-entry RGB lookup table interpolated between depth anchors."""
+    anchors = np.asarray(_DEPTH_COLOR_ANCHORS, dtype=np.float64)
+    positions = np.linspace(0.0, 1.0, len(anchors))
+    samples = np.linspace(0.0, 1.0, 256)
+    lut = np.stack(
+        [np.interp(samples, positions, anchors[:, c]) for c in range(3)], axis=1
+    )
+    return lut.round().astype(np.uint8)
+
+
+def draw_depth_map(
+    img: Image.Image,
+    depth_map: np.ndarray,
+    alpha: float = 1.0,
+) -> Image.Image:
+    """Render a relative inverse-depth map as a colormapped image."""
+    depth = np.asarray(depth_map, dtype=np.float32)
+    if depth.shape[:2] != (img.height, img.width):
+        depth_img = Image.fromarray(depth, mode="F")
+        depth_img = depth_img.resize((img.width, img.height), Image.BILINEAR)
+        depth = np.asarray(depth_img, dtype=np.float32)
+
+    finite = np.isfinite(depth)
+    normalized = np.zeros_like(depth, dtype=np.float32)
+    if finite.any():
+        values = depth[finite]
+        lo = float(values.min())
+        hi = float(values.max())
+        if hi - lo > 0:
+            normalized[finite] = (values - lo) / (hi - lo)
+    # Higher values are closer; index 0 of the LUT is the near anchor.
+    indices = ((1.0 - normalized) * 255).round().astype(np.uint8)
+    colored = _depth_colormap_lut()[indices]
+    colored[~finite] = 0
+
+    result = Image.fromarray(colored, mode="RGB")
+    if alpha < 1.0:
+        result = Image.blend(img.convert("RGB"), result, alpha)
+    return result
 
 
 # COCO 17-keypoint skeleton + colors (matches super-gradients defaults).

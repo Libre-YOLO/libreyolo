@@ -5,9 +5,13 @@ Tests that COCO evaluator is properly integrated into the validation pipeline
 using mock data (no GPU or real datasets needed).
 """
 
+import json
+import math
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+import torch
 import yaml
 from PIL import Image
 
@@ -43,6 +47,10 @@ class _DummyEvaluator:
     def compute(self, save_json=None):
         self.saved_paths.append(save_json)
         return dict(self.metrics)
+
+
+def _null_val_preprocessor(*, img_size: int) -> None:
+    assert img_size > 0
 
 
 def create_mock_yolo_dataset(tmp_path):
@@ -149,6 +157,317 @@ def test_coco_evaluator_integration(tmp_path):
 
 
 @pytest.mark.unit
+def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    image_dir = tmp_path / "images" / "custom_val"
+    ann_dir = tmp_path / "custom_annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (64, 64), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 64, "height": 64}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [8, 8, 16, 16],
+                        "area": 256,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: images/custom_val\n"
+        "val: images/custom_val\n"
+        "annotations:\n"
+        "  val: custom_annotations/valid.json\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(
+        data=str(yaml_path),
+        data_dir=None,
+        split="val",
+        allow_download_scripts=False,
+        imgsz=64,
+        batch_size=1,
+        num_workers=0,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 64,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.json_file == str(ann_dir / "valid.json")
+    assert loader.dataset.name == str(image_dir)
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+
+
+@pytest.mark.unit
+def test_obb_validator_uses_explicit_coco_json_paths(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.obb_validator import OBBValidator
+
+    image_dir = tmp_path / "images" / "custom_val"
+    ann_dir = tmp_path / "custom_annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    cx, cy = 50.0, 50.0
+    box_w, box_h = 40.0, 20.0
+    angle = math.radians(30.0)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    corners = []
+    for dx, dy in (
+        (-box_w / 2, -box_h / 2),
+        (box_w / 2, -box_h / 2),
+        (box_w / 2, box_h / 2),
+        (-box_w / 2, box_h / 2),
+    ):
+        corners.extend([cx + dx * cos_a - dy * sin_a, cy + dx * sin_a + dy * cos_a])
+    (ann_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": corners,
+                        "area": 800,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: images/custom_val\n"
+        "val: images/custom_val\n"
+        "annotations:\n"
+        "  val: custom_annotations/valid.json\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    validator = OBBValidator.__new__(OBBValidator)
+    validator.config = SimpleNamespace(
+        data=str(yaml_path),
+        data_dir=None,
+        split="val",
+        allow_download_scripts=False,
+        imgsz=100,
+        batch_size=1,
+        num_workers=0,
+        save_json=False,
+        save_plots=False,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 100,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.load_obb is True
+    assert loader.dataset.json_file == str(ann_dir / "valid.json")
+    assert loader.dataset.name == str(image_dir)
+    assert set(validator._gt_by_image) == {10}
+    cls_id, xywhr = validator._gt_by_image[10][0]
+    assert cls_id == 0
+    np.testing.assert_allclose(xywhr, [50.0, 50.0, 40.0, 20.0, angle], atol=1e-5)
+
+    validator.iou_thresholds = (0.50, 0.75)
+    validator._init_metrics()
+    validator._update_metrics(
+        [
+            {
+                "obb": torch.tensor(
+                    [[50.0, 50.0, 40.0, 20.0, angle, 0.9, 0.0]],
+                    dtype=torch.float32,
+                )
+            }
+        ],
+        torch.zeros(1, 1, 6),
+        [(100, 100)],
+        [torch.tensor(10)],
+    )
+    metrics = validator._compute_metrics()
+
+    assert metrics["metrics/mAP50(OBB)"] == pytest.approx(1.0)
+    assert metrics["metrics/mAP50-95(OBB)"] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
+def test_obb_validator_uses_default_coco_images_layout_with_data_dir(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.obb_validator import OBBValidator
+
+    image_dir = tmp_path / "images" / "val2017"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "instances_val2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 1,
+                        "bbox": [10, 20, 40, 20],
+                        "obb": [10, 20, 50, 20, 50, 40, 10, 40],
+                        "area": 800,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 1, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    validator = OBBValidator.__new__(OBBValidator)
+    validator.config = SimpleNamespace(
+        data=None,
+        data_dir=str(tmp_path),
+        split="val",
+        allow_download_scripts=False,
+        imgsz=100,
+        batch_size=1,
+        num_workers=0,
+        save_json=False,
+        save_plots=False,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 100,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.load_obb is True
+    assert loader.dataset.json_file == "instances_val2017.json"
+    assert loader.dataset.name == "images/val2017"
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+    assert set(validator._gt_by_image) == {10}
+
+
+@pytest.mark.unit
+def test_detection_validator_accepts_txt_split_with_discovered_coco_json(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    image_dir = tmp_path / "val2017"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir()
+    ann_dir.mkdir()
+    Image.new("RGB", (64, 64), color="white").save(image_dir / "sample.jpg")
+    (ann_dir / "instances_val2017.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 10, "file_name": "sample.jpg", "width": 64, "height": 64}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 10,
+                        "category_id": 42,
+                        "bbox": [8, 8, 16, 16],
+                        "area": 256,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 42, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "val2017.txt").write_text("val2017/sample.jpg\n", encoding="utf-8")
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "path: " + str(tmp_path).replace("\\", "/") + "\n"
+        "train: val2017.txt\n"
+        "val: val2017.txt\n"
+        "nc: 1\n"
+        "names:\n"
+        "  0: vehicle\n",
+        encoding="utf-8",
+    )
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.config = SimpleNamespace(
+        data=str(yaml_path),
+        data_dir=None,
+        split="val",
+        allow_download_scripts=False,
+        imgsz=64,
+        batch_size=1,
+        num_workers=0,
+    )
+    validator.model = SimpleNamespace(
+        _get_input_size=lambda: 64,
+        _get_val_preprocessor=_null_val_preprocessor,
+    )
+    validator.device = torch.device("cpu")
+    validator.nc = 1
+    validator.class_names = None
+
+    loader = validator._setup_dataloader()
+
+    assert isinstance(loader.dataset, COCODataset)
+    assert loader.dataset.json_file == "instances_val2017.json"
+    assert loader.dataset.name == "val2017"
+    assert loader.dataset._image_path(0) == image_dir / "sample.jpg"
+
+
+@pytest.mark.unit
 def test_coco_evaluator_encodes_masks_json_safe():
     from libreyolo.validation.coco_evaluator import COCOEvaluator
 
@@ -227,6 +546,30 @@ def test_detection_validator_topk_coco_scoring_applies_to_yolo_coco_api(
 
 
 @pytest.mark.unit
+def test_detection_validator_parses_tiny_pixel_xyxy_targets():
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.val_preproc = SimpleNamespace(uses_letterbox=False)
+    validator._actual_imgsz = 640
+    validator.nc = 2
+
+    targets = torch.tensor(
+        [
+            [0.0, 0.0, 1.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    boxes, classes = validator._parse_gt_boxes(targets, orig_h=640, orig_w=640)
+
+    assert boxes.shape == (1, 4)
+    assert boxes[0].tolist() == pytest.approx([0.0, 0.0, 1.0, 1.0])
+    assert classes.tolist() == [0]
+
+
+@pytest.mark.unit
 def test_segmentation_validator_updates_bbox_and_mask_evaluators():
     from types import SimpleNamespace
 
@@ -234,6 +577,7 @@ def test_segmentation_validator_updates_bbox_and_mask_evaluators():
 
     validator = SegmentationValidator.__new__(SegmentationValidator)
     validator.bbox_evaluator = _DummyEvaluator()
+    validator.coco_evaluator = validator.bbox_evaluator  # alias mirrors _init_metrics
     validator.mask_evaluator = _DummyEvaluator()
 
     pred = {"boxes": [], "scores": [], "classes": [], "masks": []}

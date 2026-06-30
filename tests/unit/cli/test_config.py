@@ -80,6 +80,9 @@ class TestDetectFamilyFromName:
         assert detect_family_from_name("yolo9-m") == "yolo9"
         assert detect_family_from_name("yolo9-t") == "yolo9"
 
+    def test_task_alias_family_uses_real_model_family(self):
+        assert detect_family_from_name("rfdetr-n-seg") == "rfdetr"
+
     def test_local_path_returns_none(self):
         assert detect_family_from_name("best.pt") is None
         assert detect_family_from_name("weights/model.pt") is None

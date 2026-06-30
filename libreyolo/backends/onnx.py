@@ -8,7 +8,13 @@ import numpy as np
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend
+from .base import (
+    BaseBackend,
+    ImageSize,
+    MetadataImageSizeError,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,13 @@ class OnnxBackend(BaseBackend):
 
         self.session = ort.InferenceSession(onnx_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
+        self.output_names = [output.name for output in self.session.get_outputs()]
+        try:
+            runtime_metadata = dict(
+                self.session.get_modelmeta().custom_metadata_map or {}
+            )
+        except Exception:
+            runtime_metadata = {}
 
         (
             model_family,
@@ -75,11 +88,32 @@ class OnnxBackend(BaseBackend):
             supported_tasks,
             default_task,
             names,
+            embedded_nms,
             metadata_imgsz,
-        ) = self._read_onnx_metadata(onnx_path, nb_classes)
+        ) = self._read_onnx_metadata(
+            onnx_path, nb_classes, runtime_metadata=runtime_metadata
+        )
+        pose_metadata = self._read_onnx_pose_metadata(
+            onnx_path, runtime_metadata=runtime_metadata
+        )
+        # Models exported with nms=True emit final (1, max_det, 6) detections.
+        # Newer YOLO9 ONNX exports also include a raw auxiliary output so the
+        # LibreYOLO backend can apply native clipping/NMS for non-square images.
+        self.embedded_nms = embedded_nms
+        self.embedded_nms_raw_output_index = (
+            self.output_names.index("raw")
+            if embedded_nms and "raw" in self.output_names
+            else None
+        )
         input_shape = self.session.get_inputs()[0].shape
-        if len(input_shape) == 4 and isinstance(input_shape[2], int):
-            imgsz = input_shape[2]
+        # Dynamic-batch exports carry a symbolic dim ("batch") or None at
+        # axis 0; static exports carry an int.
+        self._dynamic_batch_axis = bool(input_shape) and not isinstance(
+            input_shape[0], int
+        )
+        static_imgsz = self._read_static_input_imgsz(input_shape)
+        if static_imgsz is not None:
+            imgsz = static_imgsz
         elif metadata_imgsz is not None:
             imgsz = metadata_imgsz
         else:
@@ -102,15 +136,35 @@ class OnnxBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=(
+                float(runtime_metadata["crop_pct"])
+                if runtime_metadata.get("crop_pct")
+                else None
+            ),
+            interpolation=runtime_metadata.get("interpolation"),
+            **pose_metadata,
         )
 
     @staticmethod
-    def _read_onnx_metadata(onnx_path: str, default_nb_classes: int):
+    def _read_static_input_imgsz(input_shape) -> ImageSize | None:
+        if len(input_shape) != 4:
+            return None
+        h, w = input_shape[2], input_shape[3]
+        if not isinstance(h, int) or not isinstance(w, int) or h <= 0 or w <= 0:
+            return None
+        return h if h == w else (h, w)
+
+    @staticmethod
+    def _read_onnx_metadata(
+        onnx_path: str,
+        default_nb_classes: int,
+        runtime_metadata: dict | None = None,
+    ):
         """Read libreyolo metadata embedded in an ONNX model file.
 
         Returns:
             Tuple of (model_family, model_size, task, supported_tasks,
-            default_task, names, imgsz).
+            default_task, names, embedded_nms, imgsz).
         """
         model_family = None
         model_size = None
@@ -119,11 +173,14 @@ class OnnxBackend(BaseBackend):
         supported_tasks = ("detect",)
         names = None
         imgsz = None
+        embedded_nms = False
         try:
-            import onnx
+            meta = dict(runtime_metadata or {})
+            if not meta:
+                import onnx
 
-            model_proto = onnx.load(onnx_path)
-            meta = {p.key: p.value for p in model_proto.metadata_props}
+                model_proto = onnx.load(onnx_path)
+                meta = {p.key: p.value for p in model_proto.metadata_props}
             warn_on_metadata_schema_version(
                 meta,
                 artifact=f"ONNX metadata for {onnx_path}",
@@ -134,8 +191,11 @@ class OnnxBackend(BaseBackend):
                 model_family = meta["model_family"]
             if "model_size" in meta or "size" in meta:
                 model_size = meta.get("model_size") or meta.get("size")
-            if "imgsz" in meta:
-                imgsz = int(meta["imgsz"])
+            imgsz = _read_metadata_imgsz(
+                meta,
+                model_family,
+                artifact=f"ONNX metadata for {onnx_path}",
+            )
             if "default_task" in meta:
                 default_task = normalize_task(meta["default_task"], default="detect")
             if "task" in meta:
@@ -159,10 +219,46 @@ class OnnxBackend(BaseBackend):
                     names = {i: n for i, n in enumerate(COCO_CLASSES)}
                 else:
                     names = {i: f"class_{i}" for i in range(nc)}
+
+            embedded_nms = str(meta.get("nms", "")).lower() == "true"
+        except (NotImplementedError, MetadataImageSizeError):
+            raise
         except Exception as e:
             logger.warning("Failed to read ONNX metadata from %s: %s", onnx_path, e)
 
-        return model_family, model_size, task, supported_tasks, default_task, names, imgsz
+        return (
+            model_family,
+            model_size,
+            task,
+            supported_tasks,
+            default_task,
+            names,
+            embedded_nms,
+            imgsz,
+        )
+
+    @staticmethod
+    def _read_onnx_pose_metadata(
+        onnx_path: str,
+        runtime_metadata: dict | None = None,
+    ) -> dict:
+        try:
+            meta = dict(runtime_metadata or {})
+            if not meta:
+                import onnx
+
+                model_proto = onnx.load(onnx_path)
+                meta = {p.key: p.value for p in model_proto.metadata_props}
+        except Exception as e:
+            logger.warning("Failed to read ONNX pose metadata from %s: %s", onnx_path, e)
+            return {}
+
+        return _read_pose_metadata(meta)
+
+    def _supports_batched_inference(self) -> bool:
+        # Embedded-NMS graphs are exported batch-1; everything else with a
+        # dynamic batch axis accepts stacked blobs directly.
+        return self._dynamic_batch_axis and not self.embedded_nms
 
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run ONNX Runtime inference."""

@@ -55,6 +55,46 @@ def _assert_detection_output_is_stable(family, first, second):
     torch.testing.assert_close(first_cls, second_cls, rtol=0, atol=0)
 
 
+def _assert_batched_detection_output_matches_sequential(family, sequential, batched):
+    assert sequential.boxes is not None, f"{family} did not return detection boxes"
+    assert batched.boxes is not None, f"{family} did not return detection boxes"
+    assert sequential.orig_shape == batched.orig_shape
+    assert sequential.names, f"{family} result has no class names"
+    assert len(sequential.boxes) == len(batched.boxes), (
+        f"{family} batched detection count diverged: "
+        f"{len(sequential.boxes)} -> {len(batched.boxes)}"
+    )
+
+    n = min(5, len(sequential.boxes))
+    sequential_boxes = _tensor(sequential.boxes.xyxy[:n])
+    batched_boxes = _tensor(batched.boxes.xyxy[:n])
+    sequential_conf = _tensor(sequential.boxes.conf[:n])
+    batched_conf = _tensor(batched.boxes.conf[:n])
+    sequential_cls = _tensor(sequential.boxes.cls[:n])
+    batched_cls = _tensor(batched.boxes.cls[:n])
+
+    assert torch.isfinite(sequential_boxes).all(), (
+        f"{family} produced non-finite sequential boxes"
+    )
+    assert torch.isfinite(batched_boxes).all(), (
+        f"{family} produced non-finite batched boxes"
+    )
+    assert torch.isfinite(sequential_conf).all(), (
+        f"{family} produced non-finite sequential scores"
+    )
+    assert torch.isfinite(batched_conf).all(), (
+        f"{family} produced non-finite batched scores"
+    )
+
+    # Batch=1 and batch>1 can dispatch different CUDA kernels; with TF32 on
+    # NVIDIA Ampere/L4 this has measured score drift up to ~3e-3. The caller
+    # keeps the test away from threshold-edge detections while this assertion
+    # allows that score drift and still requires retained boxes/classes to match.
+    torch.testing.assert_close(sequential_boxes, batched_boxes, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(sequential_conf, batched_conf, rtol=1e-2, atol=5e-3)
+    torch.testing.assert_close(sequential_cls, batched_cls, rtol=0, atol=0)
+
+
 def _run_l2cs(weights, size):
     from libreyolo import LibreL2CS
 
@@ -97,6 +137,56 @@ def test_native_inference_is_stable(family, size, weights, sample_image):
         first = model(sample_image, conf=0.25)
         second = model(sample_image, conf=0.25)
         _assert_detection_output_is_stable(family, first, second)
+    finally:
+        del model
+        cuda_cleanup()
+
+
+@pytest.mark.parametrize(
+    "family,size,weights",
+    GENERAL_NIGHTLY_INFERENCE_PARAMS,
+)
+def test_batched_list_predict_matches_sequential(family, size, weights, sample_image):
+    """batch>1 over an in-memory list reproduces sequential results (issue #384).
+
+    Real weights keep the check tied to production postprocess behavior. Score
+    parity is TF32-aware because batch=1 and batch>1 may select different CUDA
+    kernels even when batched routing is correct.
+    """
+    if family in ("l2cs", "vlm"):
+        pytest.skip(f"{family} does not use the stacked batched predict path")
+
+    from libreyolo.utils.image_loader import ImageLoader
+
+    weights = require_test_weights(weights, expected_family=family)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = LibreYOLO(weights, size=size, device=device)
+    try:
+        pil = ImageLoader.load(sample_image)
+        images = [pil, pil.rotate(90, expand=True)]
+
+        # This test verifies batched routing, not confidence-threshold boundary
+        # behavior. A slightly higher threshold avoids TF32 nudging marginal
+        # detections across the default 0.25 cutoff on L4-class GPUs.
+        conf = 0.30
+        sequential = model(images, conf=conf, batch=1)
+        batched = model(images, conf=conf, batch=2)
+
+        assert len(sequential) == len(batched) == 2
+        assert len(sequential[0]) > 0, f"{family} returned no detections"
+        for r_seq, r_bat in zip(sequential, batched):
+            # Full box/score/class parity for every image with detections
+            # (the rotated view may legitimately drop to zero for some
+            # families; the count check above still covers it).
+            if len(r_seq) > 0:
+                _assert_batched_detection_output_matches_sequential(
+                    family, r_seq, r_bat
+                )
+            else:
+                assert len(r_bat) == 0, (
+                    f"{family} batched detection count diverged: 0 -> {len(r_bat)}"
+                )
+                assert r_seq.orig_shape == r_bat.orig_shape
     finally:
         del model
         cuda_cleanup()

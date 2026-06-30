@@ -3,8 +3,26 @@
 import pytest
 import torch
 import numpy as np
+from PIL import Image
 
-from libreyolo.utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results
+from libreyolo.models.base.inference import InferenceRunner
+from libreyolo.utils.results import (
+    Boxes,
+    DepthMap,
+    Keypoints,
+    Masks,
+    OBB,
+    Points,
+    Probs,
+    Results,
+    SemanticMask,
+)
+from libreyolo.utils.drawing import (
+    draw_depth_map,
+    draw_obb,
+    draw_points,
+    draw_semantic_mask,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -105,6 +123,26 @@ class TestBoxes:
         assert "n=1" in r
 
 
+class TestPoints:
+    """Tests for point-localization result rows."""
+
+    def test_points_accessors_and_normalization(self):
+        points = Points(
+            torch.tensor([[20.0, 10.0, 2.0, 0.75]]),
+            orig_shape=(100, 200),
+        )
+
+        assert len(points) == 1
+        assert points.xy.tolist() == [[20.0, 10.0]]
+        assert points.cls.tolist() == [2.0]
+        assert points.conf.tolist() == [0.75]
+        torch.testing.assert_close(points.xyn, torch.tensor([[0.1, 0.1]]))
+
+    def test_points_validate_row_shape(self):
+        with pytest.raises(ValueError, match="x, y, class, confidence"):
+            Points(torch.zeros((1, 3)))
+
+
 class TestResults:
     """Tests for the Results class."""
 
@@ -132,6 +170,7 @@ class TestResults:
         assert result.names == {}
         assert result.masks is None
         assert result.keypoints is None
+        assert result.points is None
         assert result.probs is None
         assert result.obb is None
         assert result.speed == {}
@@ -214,6 +253,52 @@ class TestResults:
         assert result.probs.top5conf.tolist() == pytest.approx([0.7, 0.2, 0.1])
         assert result.summary()[0]["name"] == "b"
 
+    def test_classify_probs_survive_result_indexing(self):
+        # Regression: indexing a classification Results (the universal
+        # ``results[0]`` idiom, and what predict() of a single image invites)
+        # must NOT slice the whole-image probs vector down to one class.
+        probs = Probs(torch.tensor([0.1, 0.7, 0.2]))
+        result = Results(
+            boxes=None,
+            orig_shape=(1, 1),
+            probs=probs,
+            names={0: "a", 1: "b", 2: "c"},
+        )
+
+        indexed = result[0]
+
+        assert indexed.probs.data.shape == (3,)
+        assert indexed.probs.top1 == 1
+        assert indexed.probs.top1conf.item() == pytest.approx(0.7)
+        # Probs payload indexing is itself a no-op (mirrors SemanticMask/DepthMap).
+        assert probs[0].data.shape == (3,)
+
+    def test_depth_map_result_ignores_nonfinite_summary_values(self):
+        depth = DepthMap(torch.tensor([[1.0, float("nan")], [float("inf"), 3.0]]))
+        result = Results(
+            boxes=None,
+            orig_shape=(2, 2),
+            depth_map=depth,
+            names={0: "depth"},
+        )
+
+        assert len(result) == 1
+        row = result.summary()[0]
+        assert row["name"] == "depth_map"
+        assert row["min"] == pytest.approx(1.0)
+        assert row["max"] == pytest.approx(3.0)
+        assert row["mean"] == pytest.approx(2.0)
+        assert torch.isfinite(depth.normalized()).all()
+
+    def test_draw_depth_map_handles_nonfinite_values(self):
+        img = Image.new("RGB", (2, 2), color=(0, 0, 0))
+        depth = np.array([[1.0, np.nan], [np.inf, 3.0]], dtype=np.float32)
+
+        rendered = draw_depth_map(img, depth)
+
+        assert rendered.size == img.size
+        assert rendered.mode == "RGB"
+
     def test_keypoints_and_obb_accessors(self):
         keypoints = Keypoints(torch.tensor([[[10.0, 20.0, 0.9]]]), (100, 200))
         obb = OBB(torch.tensor([[10.0, 20.0, 30.0, 40.0, 0.0, 0.8, 2.0]]), (100, 200))
@@ -230,6 +315,52 @@ class TestResults:
         assert obb.xyxyxyxy.shape == (1, 4, 2)
         assert obb.xyxy.shape == (1, 4)
         assert obb.xyxyxyxyn[0, 0, 0].item() == pytest.approx(-0.025)
+
+    def test_point_result_summary_and_json(self):
+        points = Points(torch.tensor([[20.0, 10.0, 1.0, 0.9]]))
+        result = Results(
+            boxes=None,
+            points=points,
+            orig_shape=(100, 200),
+            names={1: "person"},
+        )
+
+        assert len(result) == 1
+        assert result.points.orig_shape == (100, 200)
+
+        row = result.summary(normalize=True, decimals=3)[0]
+
+        assert row == {
+            "name": "person",
+            "class": 1,
+            "confidence": 0.9,
+            "point": {"x": 0.1, "y": 0.1},
+        }
+        assert '"point"' in result.to_json()
+
+    def test_summary_includes_obb_payload(self):
+        boxes = Boxes(
+            torch.tensor([[5.0, 10.0, 35.0, 30.0]]),
+            torch.tensor([0.8]),
+            torch.tensor([2.0]),
+        )
+        obb = OBB(torch.tensor([[20.0, 20.0, 30.0, 10.0, 0.5, 0.8, 2.0]]), (100, 200))
+        result = Results(
+            boxes=boxes,
+            obb=obb,
+            orig_shape=(100, 200),
+            names={2: "ship"},
+        )
+
+        row = result.summary(normalize=True, decimals=4)[0]
+
+        assert row["name"] == "ship"
+        assert row["obb"]["x_center"] == pytest.approx(0.1)
+        assert row["obb"]["y_center"] == pytest.approx(0.2)
+        assert row["obb"]["width"] == pytest.approx(0.15)
+        assert row["obb"]["height"] == pytest.approx(0.1)
+        assert row["obb"]["rotation"] == pytest.approx(0.5)
+        assert len(row["corners"]["x"]) == 4
 
     def test_obb_tracking_and_shape_validation(self):
         obb = OBB(
@@ -250,6 +381,30 @@ class TestResults:
         r = repr(result)
         assert "Results" in r
         assert "test.jpg" in r
+
+
+def test_draw_obb_marks_image_pixels():
+    img = Image.new("RGB", (80, 80), "white")
+
+    out = draw_obb(
+        img,
+        [[40.0, 40.0, 30.0, 12.0, 0.5]],
+        [0.9],
+        [0],
+        class_names={0: "ship"},
+    )
+
+    assert out.size == img.size
+    assert np.asarray(out).sum() < np.asarray(img).sum()
+
+
+def test_draw_points_marks_image_pixels():
+    img = Image.new("RGB", (80, 80), "white")
+
+    out = draw_points(img, [[40.0, 40.0]], [0.9], [0], class_names={0: "person"})
+
+    assert out.size == img.size
+    assert np.asarray(out).sum() < np.asarray(img).sum()
 
 
 class TestClassesFilter:
@@ -277,3 +432,179 @@ class TestClassesFilter:
         mask = cl == 0.0
         filtered = Boxes(b[mask], c[mask], cl[mask])
         assert len(filtered) == 0
+
+    def test_inference_runner_filter_preserves_obb_alignment(self):
+        class DummyModel:
+            names = {0: "car", 1: "truck"}
+
+        runner = InferenceRunner(DummyModel())
+        detections = {
+            "boxes": [[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 40.0, 40.0]],
+            "scores": [0.9, 0.8],
+            "classes": [0, 1],
+            "obb": [
+                [5.0, 5.0, 10.0, 10.0, 0.1, 0.9, 0.0],
+                [30.0, 30.0, 20.0, 20.0, 0.2, 0.8, 1.0],
+            ],
+            "num_detections": 2,
+        }
+
+        result = runner._wrap_results(
+            detections,
+            original_size=(100, 80),
+            image_path=None,
+            classes=[1],
+        )
+
+        assert len(result.boxes) == 1
+        assert result.obb is not None
+        assert result.boxes.cls.tolist() == [1.0]
+        assert result.obb.cls.tolist() == [1.0]
+        torch.testing.assert_close(
+            result.obb.xywhr,
+            torch.tensor([[30.0, 30.0, 20.0, 20.0, 0.2]]),
+        )
+
+    def test_inference_runner_wraps_points_and_filters_classes(self):
+        class DummyModel:
+            names = {0: "cat", 1: "dog"}
+
+        runner = InferenceRunner(DummyModel())
+        detections = {
+            "points": [[5.0, 6.0, 0.0, 0.7], [15.0, 16.0, 1.0, 0.8]],
+            "num_detections": 2,
+        }
+
+        result = runner._wrap_results(
+            detections,
+            original_size=(100, 80),
+            image_path=None,
+            classes=[1],
+        )
+
+        assert result.boxes is None
+        assert result.points is not None
+        assert len(result) == 1
+        torch.testing.assert_close(
+            result.points.data,
+            torch.tensor([[15.0, 16.0, 1.0, 0.8]]),
+        )
+
+    def test_inference_runner_rejects_point_task_augment_before_tta(self):
+        class DummyPointModel:
+            task = "point"
+            TTA_ENABLED = True
+
+            def _predict_augment(self, *args, **kwargs):
+                raise AssertionError("point task should not enter box TTA")
+
+        runner = InferenceRunner(DummyPointModel())
+
+        with pytest.raises(ValueError, match="point-task models"):
+            runner(None, augment=True)
+
+    def test_inference_runner_rejects_box_payload_for_point_task(self):
+        class DummyPointModel:
+            task = "point"
+            names = {0: "person"}
+
+        runner = InferenceRunner(DummyPointModel())
+
+        with pytest.raises(ValueError, match="must return a 'points' payload"):
+            runner._wrap_results(
+                {
+                    "boxes": [[0.0, 0.0, 10.0, 10.0]],
+                    "scores": [0.9],
+                    "classes": [0],
+                    "num_detections": 1,
+                },
+                original_size=(100, 80),
+                image_path=None,
+                classes=None,
+            )
+
+
+class TestSemanticMask:
+    """Tests for the SemanticMask payload and Results wiring."""
+
+    def _mask(self):
+        data = torch.full((8, 10), 255, dtype=torch.uint8)
+        data[:4, :] = 0
+        data[4:, :5] = 2
+        return SemanticMask(data)
+
+    def test_construction_and_classes(self):
+        mask = self._mask()
+        assert mask.orig_shape == (8, 10)
+        assert mask.classes == [0, 2]
+
+    def test_rejects_non_2d_data(self):
+        with pytest.raises(ValueError, match=r"\(H, W\)"):
+            SemanticMask(torch.zeros((2, 8, 10)))
+
+    def test_class_mask_selects_pixels(self):
+        mask = self._mask()
+        selected = mask.class_mask(2)
+        assert bool(selected[5, 0])
+        assert not bool(selected[0, 0])
+        assert int(selected.sum()) == 4 * 5
+
+    def test_numpy_round_trip(self):
+        mask = self._mask().numpy()
+        assert isinstance(mask.data, np.ndarray)
+        assert mask.classes == [0, 2]
+
+    def test_indexing_keeps_dense_map_intact(self):
+        mask = self._mask()
+        sliced = mask[0]
+        assert sliced.data.shape == (8, 10)
+
+    def test_results_wiring(self):
+        mask = self._mask()
+        result = Results(
+            boxes=None,
+            orig_shape=(8, 10),
+            names={0: "road", 2: "sky"},
+            semantic_mask=mask,
+        )
+        assert result.semantic_mask is mask
+        assert len(result) == 1
+        assert "semantic_mask" in repr(result)
+
+        moved = result.cpu()
+        assert moved.semantic_mask.data.shape == (8, 10)
+
+        indexed = result[0]
+        assert indexed.semantic_mask.data.shape == (8, 10)
+
+    def test_results_summary_reports_pixel_fractions(self):
+        result = Results(
+            boxes=None,
+            orig_shape=(8, 10),
+            names={0: "road", 2: "sky"},
+            semantic_mask=self._mask(),
+        )
+        rows = result.summary()
+        assert [row["class"] for row in rows] == [0, 2]
+        assert rows[0]["name"] == "road"
+        assert rows[0]["pixel_count"] == 40
+        assert rows[0]["pixel_fraction"] == 0.5
+        assert rows[1]["pixel_count"] == 20
+
+    def test_results_update_accepts_semantic_mask(self):
+        result = Results(boxes=None, orig_shape=(8, 10))
+        assert result.semantic_mask is None
+        result.update(semantic_mask=self._mask())
+        assert result.semantic_mask is not None
+
+
+def test_draw_semantic_mask_paints_classes_and_skips_ignore():
+    img = Image.new("RGB", (10, 8), color=(0, 0, 0))
+    mask = np.full((8, 10), 255, dtype=np.uint8)
+    mask[:, :5] = 1
+
+    drawn = draw_semantic_mask(img, mask, alpha=1.0)
+    pixels = np.asarray(drawn)
+
+    assert pixels[0, 0].any()  # class-1 half painted
+    assert not pixels[0, 9].any()  # ignore half untouched (still black)

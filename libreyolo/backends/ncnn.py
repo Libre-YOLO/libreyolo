@@ -8,7 +8,7 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend
+from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ class NcnnBackend(BaseBackend):
         imgsz = 640
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
+        pose_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -76,6 +77,7 @@ class NcnnBackend(BaseBackend):
                 imgsz,
                 resolved_nb_classes,
                 names,
+                pose_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -129,6 +131,7 @@ class NcnnBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     @staticmethod
@@ -163,7 +166,7 @@ class NcnnBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names).
+            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
         """
         import yaml
 
@@ -180,7 +183,14 @@ class NcnnBackend(BaseBackend):
         default_task = normalize_task(meta.get("default_task"), default="detect")
         task = normalize_task(meta.get("task"), default=default_task)
         supported_tasks = normalize_supported_tasks(meta.get("supported_tasks", (task,)))
-        imgsz = int(meta["imgsz"]) if "imgsz" in meta else 640
+        imgsz = (
+            _read_metadata_imgsz(
+                meta,
+                model_family,
+                artifact=f"NCNN metadata sidecar {metadata_path}",
+            )
+            or 640
+        )
 
         if nb_classes_override is not None:
             nb_classes = nb_classes_override
@@ -194,10 +204,31 @@ class NcnnBackend(BaseBackend):
         else:
             names = BaseBackend.build_names(nb_classes)
 
-        return model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names
+        return (
+            model_family,
+            model_size,
+            task,
+            supported_tasks,
+            default_task,
+            imgsz,
+            nb_classes,
+            names,
+            _read_pose_metadata(meta),
+        )
 
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run ncnn inference."""
+        if blob.ndim == 4 and blob.shape[0] != 1:
+            # An ncnn extractor runs one image per forward pass. Without this
+            # guard a stacked blob would silently use only blob[0] and return
+            # a single image's outputs for the whole batch (corrupting, e.g.,
+            # batched validation, which relies on failures to trigger its
+            # per-image fallback).
+            raise ValueError(
+                "NCNNBackend runs one image per forward pass; "
+                f"got batch size {blob.shape[0]}."
+            )
+
         import ncnn as _ncnn
 
         # ncnn.Mat expects a C-contiguous (C, H, W) float32 array.

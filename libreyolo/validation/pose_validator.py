@@ -20,18 +20,22 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 import numpy as np
 from tqdm import tqdm
 
-from libreyolo.data import get_img_files, img2label_paths, load_data_config
+from libreyolo.data import (
+    COCO17_OKS_SIGMAS,
+    default_oks_sigmas,
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+    resolve_default_coco_image_dir,
+)
 from libreyolo.data.pose_dataset import parse_yolo_pose_label_line
 
 from .base import BaseValidator
 from .config import ValidationConfig
 
 logger = logging.getLogger(__name__)
-
-_COCO17_OKS_SIGMAS = [
-    0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
-    0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
-]
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
@@ -54,6 +58,9 @@ class PoseValidator(BaseValidator):
         self._predictions: List[dict] = []
         self._num_keypoints: int | None = None
         self._category_id: int = 0
+        self._last_coco_eval = None
+        self._val_sample_records: List[dict] = []
+        self._pose_skeleton: tuple[tuple[int, int], ...] = ()
 
     # PoseValidator runs a per-image loop driven by COCO JSON, so it does not
     # use the BaseValidator dataloader-template path. The required hooks below
@@ -101,6 +108,8 @@ class PoseValidator(BaseValidator):
         self._load_coco_gt()
 
         self._predictions = []
+        self._last_coco_eval = None
+        self._val_sample_records = []
         self.seen = 0
         self.speed = {
             "preprocess": 0.0,
@@ -115,6 +124,12 @@ class PoseValidator(BaseValidator):
 
         metrics = self._evaluate_oks_ap()
         self.config.to_yaml(self.save_dir / "config.yaml")
+
+        if self.config.save_plots:
+            try:
+                self._save_plots(metrics)
+            except Exception as exc:
+                logger.warning("Failed to save validation plots: %s", exc)
 
         if self.seen > 0:
             metrics["speed/total_ms"] = self.speed["total"] / self.seen * 1000
@@ -156,7 +171,44 @@ class PoseValidator(BaseValidator):
                 "PoseValidator requires either YOLO-pose data.yaml via data=... "
                 "or keypoints_json + images_dir."
             )
+        data_cfg = load_data_config(
+            self.config.data,
+            autodownload=True,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        annotation_file = get_coco_annotation_file(data_cfg, self.config.split)
+        if annotation_file:
+            data_root = Path(data_cfg["root"])
+            kpts_json = Path(annotation_file)
+            if not kpts_json.is_absolute():
+                kpts_json = data_root / kpts_json
+            default_image_dir = resolve_default_coco_image_dir(
+                data_root,
+                self.config.split,
+                kpts_json.name,
+            )
+            images_dir = Path(
+                get_coco_image_dir(data_cfg, self.config.split, default_image_dir)
+            )
+            if not images_dir.is_absolute():
+                images_dir = data_root / images_dir
+            if kpts_json.exists() and self._is_coco_keypoints_annotation_file(kpts_json):
+                if not images_dir.is_dir():
+                    raise FileNotFoundError(f"Images dir not found: {images_dir}")
+                self._kpts_json = kpts_json
+                self._images_dir = images_dir
+                return
         self._kpts_json, self._images_dir = self._build_coco_gt_from_yolo()
+
+    @staticmethod
+    def _is_coco_keypoints_annotation_file(path: Path) -> bool:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        categories = data.get("categories") or []
+        if any(cat.get("keypoints") for cat in categories):
+            return True
+        annotations = data.get("annotations") or []
+        return any("keypoints" in ann and "num_keypoints" in ann for ann in annotations)
 
     def _build_coco_gt_from_yolo(self) -> tuple[Path, Path | None]:
         from PIL import Image
@@ -247,6 +299,12 @@ class PoseValidator(BaseValidator):
                 )
                 ann_id += 1
 
+        if images and not annotations:
+            raise FileNotFoundError(
+                "No YOLO pose labels were found for the validation split. "
+                "Provide pose label files or a COCO keypoints annotation JSON."
+            )
+
         coco = {
             "info": {},
             "licenses": [],
@@ -272,12 +330,33 @@ class PoseValidator(BaseValidator):
         from pycocotools.coco import COCO
 
         self._coco_gt = COCO(str(self._kpts_json))
+        cats = self._coco_gt.loadCats(self._coco_gt.getCatIds())
         self._category_id = self._infer_category_id()
+        self._category_ids = [int(cat["id"]) for cat in sorted(cats, key=lambda c: int(c["id"]))]
         self._image_records = self._coco_gt.loadImgs(self._coco_gt.getImgIds())
         if self._num_keypoints is None:
-            cats = self._coco_gt.loadCats(self._coco_gt.getCatIds())
             keypoints = cats[0].get("keypoints", []) if cats else []
             self._num_keypoints = len(keypoints) or None
+        skeleton = cats[0].get("skeleton", []) if cats else []
+        self._pose_skeleton = self._normalize_skeleton(skeleton)
+
+    def _normalize_skeleton(self, skeleton) -> tuple[tuple[int, int], ...]:
+        pairs: list[tuple[int, int]] = []
+        for edge in skeleton or []:
+            if not isinstance(edge, (list, tuple)) or len(edge) != 2:
+                continue
+            try:
+                a, b = int(edge[0]), int(edge[1])
+            except (TypeError, ValueError):
+                continue
+            pairs.append((a, b))
+        if not pairs:
+            return ()
+        min_idx = min(min(a, b) for a, b in pairs)
+        max_idx = max(max(a, b) for a, b in pairs)
+        if self._num_keypoints and min_idx >= 1 and max_idx <= self._num_keypoints:
+            pairs = [(a - 1, b - 1) for a, b in pairs]
+        return tuple((a, b) for a, b in pairs if a >= 0 and b >= 0)
 
     def _infer_category_id(self) -> int:
         cats = self._coco_gt.loadCats(self._coco_gt.getCatIds())
@@ -287,6 +366,14 @@ class PoseValidator(BaseValidator):
             if cat.get("name") == "person":
                 return int(cat["id"])
         return int(cats[0]["id"])
+
+    def _prediction_category_id(self, cls_id: int) -> int:
+        category_ids = getattr(self, "_category_ids", [])
+        if 0 <= cls_id < len(category_ids):
+            return int(category_ids[cls_id])
+        if cls_id in category_ids:
+            return int(cls_id)
+        return int(self._category_id)
 
     # =========================================================================
     # Inference loop
@@ -322,6 +409,40 @@ class PoseValidator(BaseValidator):
             imgsz=self.config.imgsz,
             max_det=self.config.max_det,
         )
+
+        if self.config.save_plots and len(self._val_sample_records) < 8:
+            try:
+                pb = (
+                    result.boxes.xyxy.cpu().numpy()
+                    if len(result) > 0
+                    else np.zeros((0, 4), np.float32)
+                )
+                ps = (
+                    result.boxes.conf.cpu().numpy()
+                    if len(result) > 0
+                    else np.zeros(0, np.float32)
+                )
+                pc = (
+                    result.boxes.cls.cpu().numpy().astype(int)
+                    if len(result) > 0
+                    else np.zeros(0, int)
+                )
+                kp = (
+                    result.keypoints.data.cpu().numpy()
+                    if len(result) > 0 and result.keypoints is not None
+                    else None
+                )
+                self._val_sample_records.append({
+                    "img_path": img_path,
+                    "image_id": image_id,
+                    "pred_boxes": pb,
+                    "pred_scores": ps,
+                    "pred_classes": pc,
+                    "pred_keypoints": kp,
+                })
+            except Exception as exc:
+                logger.warning("Failed to collect pose plot sample data: %s", exc)
+
         if result.keypoints is None or len(result) == 0:
             return
 
@@ -347,7 +468,7 @@ class PoseValidator(BaseValidator):
             self._predictions.append(
                 {
                     "image_id": image_id,
-                    "category_id": int(cls_id),
+                    "category_id": self._prediction_category_id(int(cls_id)),
                     "keypoints": flat,
                     "score": float(score),
                 }
@@ -370,6 +491,13 @@ class PoseValidator(BaseValidator):
                 "metrics/keypoints_mAP50-95": 0.0,
                 "metrics/keypoints_mAP50": 0.0,
                 "metrics/keypoints_mAP75": 0.0,
+                "metrics/keypoints_mAP_M": 0.0,
+                "metrics/keypoints_mAP_L": 0.0,
+                "metrics/keypoints_AR50-95": 0.0,
+                "metrics/keypoints_AR50": 0.0,
+                "metrics/keypoints_AR75": 0.0,
+                "metrics/keypoints_AR_M": 0.0,
+                "metrics/keypoints_AR_L": 0.0,
             }
 
         coco_dt = self._coco_gt.loadRes(str(pred_path))
@@ -380,6 +508,7 @@ class PoseValidator(BaseValidator):
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
+        self._last_coco_eval = coco_eval
 
         stats = coco_eval.stats  # length 10 for keypoints
         return {
@@ -395,6 +524,88 @@ class PoseValidator(BaseValidator):
             "metrics/keypoints_AR_L": float(stats[9]),
         }
 
+    def _save_plots(self, metrics: Dict[str, float]) -> None:
+        from .val_plotter import ValPlotter, _POSE_METRIC_GROUPS  # noqa: PLC0415
+
+        plots_dir = self.save_dir / "plots"
+
+        def _safe(fn, *args, **kwargs):
+            try:
+                fn(*args, **kwargs)
+            except Exception as exc:
+                logger.warning("Plot failed (%s): %s", fn.__name__, exc)
+
+        # Remap keypoints_ keys to the short lookup keys expected by _POSE_METRIC_GROUPS
+        key_map = {
+            "metrics/keypoints_mAP50-95": "kp_map50-95",
+            "metrics/keypoints_mAP50":    "kp_map50",
+            "metrics/keypoints_mAP75":    "kp_map75",
+            "metrics/keypoints_mAP_M":    "kp_map_m",
+            "metrics/keypoints_mAP_L":    "kp_map_l",
+            "metrics/keypoints_AR50-95":  "kp_ar50-95",
+            "metrics/keypoints_AR50":     "kp_ar50",
+            "metrics/keypoints_AR75":     "kp_ar75",
+            "metrics/keypoints_AR_M":     "kp_ar_m",
+            "metrics/keypoints_AR_L":     "kp_ar_l",
+        }
+        pm = {key_map[k]: v for k, v in metrics.items() if k in key_map}
+        if pm:
+            _safe(ValPlotter.plot_metrics_bar, pm,
+                  plots_dir / "pose_metrics.png",
+                  title="Pose Metrics (OKS-AP)",
+                  groups=_POSE_METRIC_GROUPS)
+
+        # PR / P-conf / R-conf curves from the keypoints COCOeval
+        if self._last_coco_eval is not None and self._coco_gt is not None:
+            cat_names = [c.get("name", str(c["id"]))
+                         for c in self._coco_gt.loadCats(self._coco_gt.getCatIds())]
+            _safe(ValPlotter.plot_pr_curves,
+                  self._last_coco_eval, cat_names, plots_dir, "keypoints")
+
+        # Sample images — GT boxes from COCO + pred boxes/keypoints
+        if self._val_sample_records and self._coco_gt is not None:
+            try:
+                import cv2  # noqa: PLC0415
+            except ImportError:
+                logger.warning("opencv-python not found — skipping pose sample images")
+                return
+            samples_dir = plots_dir / "samples"
+            for idx, sample in enumerate(self._val_sample_records):
+                img_bgr = cv2.imread(str(sample["img_path"]))
+                if img_bgr is None:
+                    continue
+                # GT: bounding boxes derived from COCO annotations
+                ann_ids = self._coco_gt.getAnnIds(imgIds=[sample["image_id"]])
+                anns = self._coco_gt.loadAnns(ann_ids)
+                gt_boxes = np.array(
+                    [[a["bbox"][0], a["bbox"][1],
+                      a["bbox"][0] + a["bbox"][2], a["bbox"][1] + a["bbox"][3]]
+                     for a in anns], dtype=np.float32
+                ) if anns else np.zeros((0, 4), np.float32)
+                gt_keypoints = []
+                for ann in anns:
+                    kpts = ann.get("keypoints")
+                    if kpts:
+                        gt_keypoints.append(
+                            np.asarray(kpts, dtype=np.float32).reshape(-1, 3)
+                        )
+                gt_keypoints_arr = (
+                    np.stack(gt_keypoints) if gt_keypoints else None
+                )
+                gt_classes = np.zeros(len(anns), int)
+                _safe(
+                    ValPlotter.plot_val_sample,
+                    img_bgr,
+                    gt_boxes, gt_classes,
+                    sample["pred_boxes"], sample["pred_classes"], sample["pred_scores"],
+                    None,  # class_names — poses are category-agnostic visually
+                    samples_dir / f"val_sample_{idx:02d}.jpg",
+                    gt_keypoints=gt_keypoints_arr,
+                    pred_keypoints=sample.get("pred_keypoints"),
+                    keypoint_edges=self._pose_skeleton,
+                )
+        logger.info("Pose plots saved → %s", plots_dir)
+
     def _log_metrics(self, metrics: Dict[str, float]) -> None:
         for key in (
             "metrics/keypoints_mAP50-95",
@@ -408,7 +619,7 @@ class PoseValidator(BaseValidator):
         if self.config.oks_sigmas:
             return list(self.config.oks_sigmas)
         if self._num_keypoints == 17:
-            return _COCO17_OKS_SIGMAS
+            return list(COCO17_OKS_SIGMAS)
         if self._num_keypoints:
-            return [1.0 / self._num_keypoints] * self._num_keypoints
+            return default_oks_sigmas(self._num_keypoints)
         return None

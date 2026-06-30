@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -16,9 +17,8 @@ from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import YOLONASValPreprocessor
 from .nn import LibreYOLONASModel, LibreYOLONASPoseModel
+from ...postprocess.yolonas import postprocess, postprocess_pose
 from .utils import (
-    postprocess,
-    postprocess_pose,
     preprocess_image,
     preprocess_pose_image,
     unwrap_yolonas_checkpoint,
@@ -41,6 +41,7 @@ class LibreYOLONAS(BaseModel):
         "pose": POSE_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = YOLONASValPreprocessor
 
     _REQUIRED_SIGNATURE_KEYS = (
@@ -65,6 +66,30 @@ class LibreYOLONAS(BaseModel):
         return _POSE_HEAD_KEY in weights_dict
 
     @classmethod
+    def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
+        return "pose" if cls.is_pose_state_dict(weights_dict) else None
+
+    @classmethod
+    def detect_size_from_filename(cls, filename: str) -> Optional[str]:
+        # Accept the LibreYOLO convention (LibreYOLONAS<size>.pt) handled by the
+        # base regex, and also the native Deci filenames the CDN serves
+        # (yolo_nas_<size>_coco.pth / yolo_nas_pose_<size>_coco_pose.pth) so
+        # locally staged native checkpoints resolve to the right model size.
+        size = super().detect_size_from_filename(filename)
+        if size is not None:
+            return size
+        match = re.search(r"yolo_nas(?:_pose)?_([nsml])_coco", filename.lower())
+        return match.group(1) if match else None
+
+    @classmethod
+    def detect_task_from_filename(cls, filename: str) -> Optional[str]:
+        # Native Deci pose checkpoints are named yolo_nas_pose_<size>_coco_pose.pth.
+        # Detect that here so local checkpoints route to the pose architecture.
+        if re.search(r"yolo_nas_pose_[nsml]_coco", filename.lower()):
+            return "pose"
+        return super().detect_task_from_filename(filename)
+
+    @classmethod
     def get_download_url(cls, filename: str) -> Optional[str]:
         # YOLO-NAS weights are under Deci's proprietary license — LibreYOLO
         # links to Deci's public CDN instead of mirroring on its own HF org.
@@ -73,7 +98,11 @@ class LibreYOLONAS(BaseModel):
             return None
         task = cls.detect_task_from_filename(filename)
         if task == "pose":
+            if size not in cls.POSE_INPUT_SIZES:
+                return None
             return f"{cls._DECI_CDN_BASE}/yolo_nas_pose_{size}_coco_pose.pth"
+        if size not in cls.INPUT_SIZES:
+            return None
         return f"{cls._DECI_CDN_BASE}/yolo_nas_{size}_coco.pth"
 
     @classmethod
@@ -142,6 +171,7 @@ class LibreYOLONAS(BaseModel):
         # Default keypoint count; overridden from checkpoint metadata/state
         # before model construction or from dataset kpt_shape in train().
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         if isinstance(model_path, dict):
             model_path = unwrap_yolonas_checkpoint(model_path)
             if resolved_task == "pose":
@@ -304,7 +334,69 @@ class LibreYOLONAS(BaseModel):
     def _strict_loading(self) -> bool:
         return False
 
+    # SHA-256 of the official Deci CDN checkpoints (detection + pose). Auto-downloaded
+    # YOLO-NAS weights are third-party pickles that must be loaded with
+    # weights_only=False, so they are verified against these pins before being
+    # unpickled; a compromised/tampered CDN object then fails closed instead of
+    # executing code during model construction. Locally staged files are the
+    # user's own trust decision and are not re-verified.
+    _DECI_CHECKPOINT_SHA256 = {
+        "yolo_nas_s_coco.pth": "c1b1d9148ab8ae5d5984699547e850955ff9efccaf568c67b3d605acb4bfe1cb",
+        "yolo_nas_m_coco.pth": "b194fc7fa196f76161c6356558bedf04fb99a62325a74a36a4bec3ca8ba48250",
+        "yolo_nas_l_coco.pth": "91a06beaa1ce1a651d6691e3198061da996eafc8890503238dedacbd4c392a32",
+        "yolo_nas_pose_n_coco_pose.pth": "3544cd4bef7a4930e79c2d9a9ec50167be6fa366be834d52d462393edfc3a64f",
+        "yolo_nas_pose_s_coco_pose.pth": "54f0933cb3760c5f9ba47e901c58d6d114cd206718667a586031bea0ab9ea849",
+        "yolo_nas_pose_m_coco_pose.pth": "6d0f92a589fd2f39a9fb92c42894cca76e81eaf2fcb3a00f1cac2e7089fb91ec",
+        "yolo_nas_pose_l_coco_pose.pth": "d05c55157b3eb917e43d3669cc1e99fbe35a8a93c7883b95b93036a81216c5ab",
+    }
+
+    @classmethod
+    def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
+        """Verify a freshly auto-downloaded YOLO-NAS checkpoint before it loads.
+
+        Called by ``download_weights`` for every download (the factory and the
+        direct loader both flow through it), so the gate cannot be bypassed and
+        keys on the *source* filename — the destination may use the LibreYOLO
+        convention (e.g. ``weights/LibreYOLONASs.pt``) while the CDN object is
+        ``yolo_nas_s_coco.pth``.
+        """
+        import hashlib
+        from urllib.parse import urlparse
+
+        name = Path(urlparse(source_url).path).name
+        expected = cls._DECI_CHECKPOINT_SHA256.get(name)
+        if expected is None:
+            Path(local_path).unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Refusing to auto-load YOLO-NAS checkpoint '{name}': no pinned "
+                "checksum is known for it, so this freshly downloaded third-party "
+                "pickle cannot be verified before loading. Download it manually "
+                "from a source you trust and pass its path instead."
+            )
+        digest = hashlib.sha256()
+        with open(local_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != expected:
+            Path(local_path).unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Checksum mismatch for downloaded YOLO-NAS checkpoint '{name}': "
+                f"expected {expected}, got {actual}. Refusing to load a possibly "
+                "tampered file."
+            )
+
     def _load_weights(self, model_path: str):
+        if not Path(model_path).exists():
+            # YOLO-NAS weights are not mirrored on the LibreYOLO HF org (Deci's
+            # proprietary license), so fetch them on demand from Deci's public
+            # CDN — the same auto-download path every other family uses — rather
+            # than hard-failing on a missing file. download_weights checksum-
+            # verifies the fetched pickle (via verify_downloaded_file) before we
+            # unpickle it below.
+            from ...utils.download import download_weights
+
+            download_weights(model_path, self.size)
         if not Path(model_path).exists():
             raise FileNotFoundError(f"Model weights file not found: {model_path}")
 
@@ -379,8 +471,34 @@ class LibreYOLONAS(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
+        """Train the YOLO-NAS model on a YOLO-format dataset.
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train (None uses the task default).
+            batch: Batch size.
+            imgsz: Input image size.
+            lr0: Initial learning rate (None uses the task default).
+            optimizer: Optimizer name ('SGD', 'Adam', 'AdamW').
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers.
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name (None uses the task default).
+            exist_ok: If True, overwrite existing experiment directory.
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training (None uses the
+                task default).
+            patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:
             lr0 = 2e-3 if self.task == "pose" else 5e-4
@@ -406,6 +524,8 @@ class LibreYOLONAS(BaseModel):
                 resume=resume,
                 amp=amp,
                 patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
                 **kwargs,
             )
 
@@ -461,6 +581,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -502,6 +624,8 @@ class LibreYOLONAS(BaseModel):
         resume: bool,
         amp: bool,
         patience: int,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLO-NAS pose head on a YOLO-format keypoint dataset.
@@ -586,6 +710,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

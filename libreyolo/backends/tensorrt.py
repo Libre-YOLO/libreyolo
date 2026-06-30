@@ -11,7 +11,7 @@ import torch
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend
+from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class TensorRTBackend(BaseBackend):
         if not Path(engine_path).exists():
             raise FileNotFoundError(f"TensorRT engine not found: {engine_path}")
 
+        self.model_path = str(engine_path)
         sidecar_path = Path(str(engine_path) + ".json")
         self._metadata = {}
         if sidecar_path.exists():
@@ -78,6 +79,7 @@ class TensorRTBackend(BaseBackend):
         supported_tasks = normalize_supported_tasks(
             self._metadata.get("supported_tasks", (metadata_task,))
         )
+        pose_metadata = _read_pose_metadata(self._metadata)
         self._sidecar_size = self._metadata.get("model_size") or self._metadata.get("size")
 
         sidecar_names = self._metadata.get("names")
@@ -118,7 +120,6 @@ class TensorRTBackend(BaseBackend):
         if self.input_name is None:
             raise RuntimeError("No input tensor found in TensorRT engine")
 
-        imgsz = self.input_shape[2]  # (B, C, H, W); assumes square
         self._dynamic_batch = self.input_shape[0] == -1  # -1 = dynamic batch
         self._max_batch = self._detect_max_batch()
 
@@ -126,6 +127,12 @@ class TensorRTBackend(BaseBackend):
 
         if model_family is None:
             model_family = self._detect_model_family()
+        metadata_imgsz = _read_metadata_imgsz(
+            self._metadata,
+            model_family,
+            artifact=f"TensorRT metadata sidecar {sidecar_path}",
+        )
+        imgsz = self._read_static_input_imgsz(self.input_shape) or metadata_imgsz or 640
         if not self._metadata:
             inferred_task = self._detect_task_from_filename()
             if inferred_task is not None:
@@ -151,11 +158,21 @@ class TensorRTBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     # =========================================================================
     # TensorRT-specific internals
     # =========================================================================
+
+    @staticmethod
+    def _read_static_input_imgsz(input_shape) -> ImageSize | None:
+        if len(input_shape) != 4:
+            return None
+        h, w = input_shape[2], input_shape[3]
+        if isinstance(h, int) and isinstance(w, int) and h > 0 and w > 0:
+            return h if h == w else (h, w)
+        return None
 
     def _allocate_buffers(self, batch_size: int = 1):
         """Allocate CUDA memory for input and output tensors."""
@@ -244,6 +261,8 @@ class TensorRTBackend(BaseBackend):
 
     def _detect_task_from_filename(self) -> Optional[str]:
         stem = Path(self.model_path).stem.lower()
+        if re.search(r"(?:^|[_-])obb(?:[_-]|$)", stem):
+            return "obb"
         if re.search(r"(?:^|[_-])(?:seg|segment)(?:[_-]|$)", stem):
             return "segment"
         if re.search(
@@ -308,13 +327,13 @@ class TensorRTBackend(BaseBackend):
 
     def _process_in_batches(
         self,
-        image_paths: List,
+        images: List,
         batch: int = 1,
         save: bool = False,
         output_path: str | None = None,
         conf: float = 0.25,
         iou: float = 0.45,
-        imgsz: Optional[int] = None,
+        imgsz: Optional[ImageSize] = None,
         classes: Optional[List[int]] = None,
         max_det: int = 300,
         color_format: str = "auto",
@@ -336,7 +355,7 @@ class TensorRTBackend(BaseBackend):
         )
         if not can_batch:
             return super()._process_in_batches(
-                image_paths,
+                images,
                 batch=batch,
                 save=save,
                 output_path=output_path,
@@ -348,58 +367,87 @@ class TensorRTBackend(BaseBackend):
                 color_format=color_format,
             )
 
-        effective_imgsz = imgsz if imgsz is not None else self.imgsz
+        effective_imgsz = self._resolve_predict_imgsz(imgsz)
         results = []
 
-        for i in range(0, len(image_paths), effective_batch):
-            chunk_paths = image_paths[i : i + effective_batch]
+        for i in range(0, len(images), effective_batch):
+            chunk = images[i : i + effective_batch]
 
             tensors = []
             preprocess_info = []
-            for path in chunk_paths:
-                preprocess_out = self._preprocess(path, effective_imgsz, color_format)
+            for offset, image in enumerate(chunk):
+                preprocess_out = self._preprocess(image, effective_imgsz, color_format)
                 if len(preprocess_out) == 4:
                     tensor, orig_img, orig_size, ratio = preprocess_out
                 else:
                     tensor, orig_img, orig_size = preprocess_out
                     ratio = None
                 tensors.append(tensor)
-                preprocess_info.append((orig_img, orig_size, ratio, path))
+                # In-memory images have no path: keep Results.path None and
+                # use an indexed stem so save=True does not overwrite files.
+                image_path = image if isinstance(image, (str, Path)) else None
+                save_name = (
+                    image_path if image_path is not None else f"image{i + offset}"
+                )
+                preprocess_info.append(
+                    (orig_img, orig_size, ratio, image_path, save_name)
+                )
 
             batched_input = np.concatenate(
                 [t.numpy() for t in tensors], axis=0
             )  # (B, C, H, W)
             batch_outputs = self._infer(batched_input)
 
-            for idx, (orig_img, orig_size, ratio, path) in enumerate(preprocess_info):
+            for idx, (
+                orig_img,
+                orig_size,
+                ratio,
+                image_path,
+                save_name,
+            ) in enumerate(preprocess_info):
                 per_image = [
                     batch_outputs[name][idx : idx + 1] for name in self.output_names
                 ]
 
-                boxes, max_scores, class_ids, masks = self._parse_outputs(
-                    per_image,
-                    effective_imgsz,
-                    orig_size,
-                    conf,
-                    ratio=ratio if ratio is not None else 1.0,
-                )
-
                 orig_w, orig_h = orig_size
                 orig_shape = (orig_h, orig_w)
-                result = self._build_result(
-                    boxes,
-                    max_scores,
-                    class_ids,
-                    masks=masks,
-                    orig_shape=orig_shape,
-                    image_path=path,
-                    iou=iou,
-                    classes=classes,
-                    max_det=max_det,
-                )
+                # Mirror _predict_single: classify exports skip the detection
+                # parser, and iou/max_det reach parsers that apply NMS.
+                if self.task == "classify":
+                    result = self._build_classify_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        image_path=image_path,
+                    )
+                else:
+                    parsed = self._parse_outputs(
+                        per_image,
+                        effective_imgsz,
+                        orig_size,
+                        conf,
+                        ratio=ratio if ratio is not None else 1.0,
+                        iou=iou,
+                        max_det=max_det,
+                    )
+                    boxes, max_scores, class_ids, masks, obb, keypoints = (
+                        self._unpack_parsed_outputs(parsed)
+                    )
+                    result = self._build_result(
+                        boxes,
+                        max_scores,
+                        class_ids,
+                        masks=masks,
+                        obb=obb,
+                        keypoints=keypoints,
+                        orig_shape=orig_shape,
+                        image_path=image_path,
+                        iou=iou,
+                        classes=classes,
+                        max_det=max_det,
+                    )
 
                 if save:
-                    self._save_annotated(result, orig_img, path, output_path)
+                    self._save_annotated(result, orig_img, save_name, output_path)
 
                 results.append(result)
 
@@ -449,6 +497,6 @@ class TensorRTBackend(BaseBackend):
             return "ec"
         return "libreyolo"
 
-    def _get_input_size(self) -> int:
+    def _get_input_size(self) -> ImageSize:
         """Return model input size."""
         return self.imgsz

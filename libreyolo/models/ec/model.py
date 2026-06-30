@@ -15,13 +15,8 @@ from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import ECValPreprocessor
 from ..base import BaseModel
 from .nn import LibreECModel, LibreECPoseModel, LibreECSegModel
-from .postprocess import (
-    postprocess,
-    postprocess_pose,
-    postprocess_seg,
-    preprocess_image,
-    unwrap_ec_checkpoint,
-)
+from ...postprocess.ec import postprocess, postprocess_pose, postprocess_seg
+from .postprocess import preprocess_image, unwrap_ec_checkpoint
 
 _POSE_HEAD_KEY = "decoder.keypoint_embedding.weight"
 _SEG_HEAD_KEY = "decoder.decoder.segmentation_head.bias"
@@ -43,6 +38,7 @@ class LibreEC(BaseModel):
         "segment": SEG_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = ECValPreprocessor
 
     _GH_RELEASE_BASE = (
@@ -72,6 +68,10 @@ class LibreEC(BaseModel):
         if cls.is_seg_state_dict(weights_dict):
             return "segment"
         return None
+
+    @classmethod
+    def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
+        return cls.detect_task_from_state_dict(weights_dict)
 
     @classmethod
     def get_download_url(cls, filename: str) -> Optional[str]:
@@ -131,6 +131,10 @@ class LibreEC(BaseModel):
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
+        # Pose is person-only by contract; the loader rejects pose
+        # checkpoints declaring anything but nc=1.
+        if cls.is_pose_state_dict(weights_dict):
+            return 1
         key = "decoder.dec_score_head.0.bias"
         if key in weights_dict:
             return int(weights_dict[key].shape[0])
@@ -156,6 +160,8 @@ class LibreEC(BaseModel):
             # Pose head outputs 2 class logits (person, bg); user-facing single
             # class is "person" with index 0.
             nb_classes = 1
+        self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         super().__init__(
             model_path=model_path,
             size=size,
@@ -239,7 +245,7 @@ class LibreEC(BaseModel):
                 conf_thres=conf_thres,
                 iou_thres=iou_thres,
                 original_size=original_size,
-                max_det=min(max_det, 60),  # ECPose ships with num_queries=60
+                max_det=max_det,
                 num_keypoints=self.POSE_NUM_KEYPOINTS,
             )
         if self.task == "segment":
@@ -282,28 +288,51 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
-        """Fine-tune EC on a YOLO-format dataset.
+        """Fine-tune EC on a YOLO-format dataset (detect / segment / pose).
 
-        **EXPERIMENTAL.** This training path follows upstream EdgeCrafter's
-        published recipe (AdamW, FlatCosine, MAL+L1+GIoU+FGL+DDF, EMA 0.9999,
-        Mosaic+Mixup, all strong augs disabled past stop_epoch) and passes
-        loss-parity vs upstream's criterion at 1e-5 on synthetic input — but
-        a full fine-tune has not been run end-to-end. Pass
+        The task is taken from ``self.task`` (set at load time): ``detect`` and
+        ``segment`` train through this method (the latter via
+        :class:`ECSegTrainer`, adding a point-sampled BCE+Dice mask loss);
+        ``pose`` is delegated to :meth:`_train_pose` (a DETRPose-style Hungarian
+        matcher + OKS/L1 criterion). Segmentation needs YOLO polygon labels;
+        pose needs YOLO keypoint labels with ``kpt_shape`` in the dataset yaml.
+
+        **EXPERIMENTAL.** All three follow upstream EdgeCrafter's recipe (AdamW,
+        FlatCosine, EMA 0.9999, ImageNet-normalized inputs). Detect/seg add
+        MAL+L1+GIoU+FGL+DDF; loss + one-step train are validated on synthetic
+        input, but full-fine-tune convergence has not been run end-to-end. Pass
         ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if self.task == "pose":
-            raise NotImplementedError(
-                "ECPose training is not yet implemented. Use task='detect' for "
-                "EC training, or run pose inference from the pretrained "
-                "ecpose_{s,m,l,x} checkpoints."
-            )
-        if self.task == "segment":
-            raise NotImplementedError(
-                "ECSeg training is not yet implemented. Use task='detect' for "
-                "EC training, or run segmentation inference from the "
-                "pretrained ecseg_{s,m,l,x} checkpoints."
+            return self._train_pose(
+                data=data,
+                allow_experimental=allow_experimental,
+                epochs=epochs,
+                batch=batch,
+                imgsz=imgsz,
+                lr0=lr0,
+                device=device,
+                workers=workers,
+                seed=seed,
+                project=project,
+                name=name,
+                exist_ok=exist_ok,
+                resume=resume,
+                amp=amp,
+                patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
+                **kwargs,
             )
         if not allow_experimental:
             raise RuntimeError(
@@ -318,7 +347,19 @@ class LibreEC(BaseModel):
         from pathlib import Path
 
         from libreyolo.data import load_data_config
-        from .trainer import ECTrainer
+
+        if self.task == "segment":
+            from .seg_trainer import ECSegTrainer as trainer_cls
+        else:
+            from .trainer import ECTrainer as trainer_cls
+
+        native_imgsz = int(self.input_size)
+        if self.task == "segment" and int(imgsz) != native_imgsz:
+            raise ValueError(
+                "EC segmentation fine-tuning currently requires "
+                f"imgsz={native_imgsz}; the ECSeg eval anchor grid is built at "
+                "model construction for the native input size."
+            )
 
         try:
             data_config = load_data_config(data, autodownload=True)
@@ -346,7 +387,7 @@ class LibreEC(BaseModel):
             if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
-        trainer = ECTrainer(
+        trainer = trainer_cls(
             model=self.model,
             wrapper_model=self,
             size=self.size,
@@ -365,6 +406,168 @@ class LibreEC(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
+            **kwargs,
+        )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError("resume=True requires a checkpoint. Load one first.")
+            trainer.setup()
+            trainer.resume(str(self.model_path))
+            return trainer.train()
+
+        results = trainer.train()
+
+        best_ckpt = results.get("best_checkpoint")
+        if best_ckpt and Path(best_ckpt).exists():
+            self.model_path = best_ckpt
+            self._load_weights(best_ckpt)
+
+        self.model.to(self.device)
+        return results
+
+    def _train_pose(
+        self,
+        data: str,
+        *,
+        allow_experimental: bool = False,
+        epochs: int = 74,
+        batch: int = 16,
+        imgsz: int = 640,
+        lr0: float = 5e-4,
+        device: str = "",
+        workers: int = 4,
+        seed: int = 0,
+        project: str = "runs/train",
+        name: str = "ec_pose_exp",
+        exist_ok: bool = False,
+        resume: bool = False,
+        amp: bool = True,
+        patience: int = 50,
+        callbacks=None,
+        loggers=None,
+        **kwargs,
+    ) -> dict:
+        """Fine-tune EdgeCrafter ECPose on a YOLO-format keypoint dataset.
+
+        **EXPERIMENTAL.** ECPose is a DETRPose keypoint transformer; this path
+        follows DETRPose's released recipe — Hungarian matcher (class + keypoint
+        L1 + OKS), VFL classification keyed on OKS, keypoint L1 + OKS losses,
+        GO-LSD union matching, deep supervision over decoder/encoder/pre layers,
+        and contrastive keypoint denoising — on a keypoint-aware (RGB +
+        ImageNet-normalized) data pipeline. Convergence has not been validated
+        end to end; pass ``allow_experimental=True`` to acknowledge. The dataset
+        ``data.yaml`` must declare ``kpt_shape: [num_keypoints, 2|3]``; only the
+        model's native keypoint count is supported (head fixed at construction).
+        """
+        if not allow_experimental:
+            raise RuntimeError(
+                "EC pose training is experimental and has not been validated by "
+                "a full fine-tune. Pass allow_experimental=True to proceed."
+            )
+
+        from pathlib import Path
+
+        from libreyolo.data import load_data_config
+        from .pose_trainer import ECPoseTrainer
+
+        native_imgsz = int(self.input_size)
+        if int(imgsz) != native_imgsz:
+            raise ValueError(
+                "EC pose fine-tuning currently requires "
+                f"imgsz={native_imgsz}; the ECPose eval anchor grid is built at "
+                "model construction for the native input size."
+            )
+
+        flip_idx_override = object()
+        explicit_flip_idx = kwargs.pop("flip_idx", flip_idx_override)
+
+        try:
+            data_config = load_data_config(data, autodownload=True)
+            data = data_config.get("yaml_file", data)
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
+
+        kpt_shape = data_config.get("kpt_shape")
+        if not kpt_shape or len(kpt_shape) < 1:
+            raise ValueError(
+                "Pose training requires 'kpt_shape: [num_keypoints, 2|3]' in the "
+                "dataset data.yaml."
+            )
+        num_keypoints = int(kpt_shape[0])
+        keypoint_dim = int(kpt_shape[1]) if len(kpt_shape) > 1 else 3
+        if keypoint_dim not in (2, 3):
+            raise ValueError(
+                "Pose training requires kpt_shape second value to be 2 or 3 "
+                f"(got {keypoint_dim})."
+            )
+        if num_keypoints != self.POSE_NUM_KEYPOINTS:
+            raise ValueError(
+                f"EC pose fine-tuning supports {self.POSE_NUM_KEYPOINTS} keypoints "
+                f"only (dataset declares {num_keypoints}). EC's keypoint head is "
+                "fixed at construction; train a model built for that count instead."
+            )
+
+        yaml_nc = data_config.get("nc")
+        if yaml_nc is not None and int(yaml_nc) != 1:
+            raise ValueError(
+                "EC pose fine-tuning supports single-class pose datasets only "
+                f"(dataset declares nc={yaml_nc})."
+            )
+
+        yaml_names = data_config.get("names")
+        if yaml_names is not None:
+            if len(yaml_names) != 1:
+                raise ValueError(
+                    "EC pose fine-tuning supports single-class pose datasets only "
+                    f"(dataset declares {len(yaml_names)} names)."
+                )
+            if isinstance(yaml_names, list):
+                yaml_names = {i: n for i, n in enumerate(yaml_names)}
+            self.names = self._sanitize_names(yaml_names, 1)
+
+        flip_idx = (
+            explicit_flip_idx
+            if explicit_flip_idx is not flip_idx_override
+            else data_config.get("flip_idx")
+        )
+
+        if seed > 0:
+            import random as _r
+            import numpy as _np
+
+            _r.seed(seed)
+            _np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        trainer = ECPoseTrainer(
+            model=self.model,
+            wrapper_model=self,
+            size=self.size,
+            num_classes=1,
+            num_keypoints=num_keypoints,
+            keypoint_dim=keypoint_dim,
+            flip_idx=flip_idx,
+            data=data,
+            epochs=epochs,
+            batch=batch,
+            imgsz=imgsz,
+            lr0=lr0,
+            device=device if device else "auto",
+            workers=workers,
+            seed=seed,
+            project=project,
+            name=name,
+            exist_ok=exist_ok,
+            resume=resume,
+            amp=amp,
+            patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -410,11 +613,25 @@ class LibreEC(BaseModel):
                         f"Checkpoint was trained with model_family='{ckpt_family}' "
                         f"but is being loaded into '{own_family}'."
                     )
-                if self.task != "pose":
-                    ckpt_nc = loaded.get("nc")
+                ckpt_nc = loaded.get("nc")
+                ckpt_names = loaded.get("names")
+                if self.task == "pose":
+                    effective_nc = int(ckpt_nc) if ckpt_nc is not None else 1
+                    if effective_nc != 1:
+                        raise RuntimeError(
+                            "EC pose checkpoints must declare nc=1 "
+                            f"(got nc={effective_nc})."
+                        )
+                    if ckpt_names is not None:
+                        if len(ckpt_names) != 1:
+                            raise RuntimeError(
+                                "EC pose checkpoints must carry exactly one class name "
+                                f"(got {len(ckpt_names)})."
+                            )
+                        self.names = self._sanitize_names(ckpt_names, 1)
+                else:
                     if ckpt_nc is not None and ckpt_nc != self.nb_classes:
                         self._rebuild_for_new_classes(int(ckpt_nc))
-                    ckpt_names = loaded.get("names")
                     effective_nc = int(ckpt_nc) if ckpt_nc is not None else self.nb_classes
                     if ckpt_names is not None:
                         self.names = self._sanitize_names(ckpt_names, effective_nc)

@@ -8,7 +8,7 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend
+from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ class OpenVINOBackend(BaseBackend):
         imgsz = 640
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
+        pose_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -72,6 +73,7 @@ class OpenVINOBackend(BaseBackend):
                 imgsz,
                 resolved_nb_classes,
                 names,
+                pose_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -100,6 +102,7 @@ class OpenVINOBackend(BaseBackend):
 
         core = ov.Core()
         ov_model = core.read_model(str(xml_path))
+        self._dynamic_batch_axis = self._detect_dynamic_batch_axis(ov_model)
         self.compiled_model = core.compile_model(ov_model, ov_device)
 
         static_imgsz = self._read_static_input_imgsz(ov_model)
@@ -117,10 +120,26 @@ class OpenVINOBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     @staticmethod
-    def _read_static_input_imgsz(ov_model) -> int | None:
+    def _detect_dynamic_batch_axis(ov_model) -> bool:
+        """True when the model input declares a dynamic batch dimension.
+
+        OpenVINO models converted from dynamic-axes ONNX keep the symbolic
+        batch dim and accept stacked (N, C, H, W) blobs as-is.
+        """
+        try:
+            return bool(ov_model.inputs[0].get_partial_shape()[0].is_dynamic)
+        except Exception:
+            return False
+
+    def _supports_batched_inference(self) -> bool:
+        return self._dynamic_batch_axis and not getattr(self, "embedded_nms", False)
+
+    @staticmethod
+    def _read_static_input_imgsz(ov_model) -> ImageSize | None:
         try:
             input_shape = ov_model.inputs[0].shape
         except RuntimeError:
@@ -128,9 +147,11 @@ class OpenVINOBackend(BaseBackend):
             # use the exported metadata size read before compiling.
             return None
 
-        input_h = input_shape[2] if len(input_shape) == 4 else None
-        if isinstance(input_h, int) and input_h > 0:
-            return input_h
+        if len(input_shape) != 4:
+            return None
+        h, w = input_shape[2], input_shape[3]
+        if isinstance(h, int) and isinstance(w, int) and h > 0 and w > 0:
+            return h if h == w else (h, w)
         return None
 
     @staticmethod
@@ -138,7 +159,7 @@ class OpenVINOBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names).
+            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
         """
         import yaml
 
@@ -155,7 +176,14 @@ class OpenVINOBackend(BaseBackend):
         default_task = normalize_task(meta.get("default_task"), default="detect")
         task = normalize_task(meta.get("task"), default=default_task)
         supported_tasks = normalize_supported_tasks(meta.get("supported_tasks", (task,)))
-        imgsz = int(meta["imgsz"]) if "imgsz" in meta else 640
+        imgsz = (
+            _read_metadata_imgsz(
+                meta,
+                model_family,
+                artifact=f"OpenVINO metadata sidecar {metadata_path}",
+            )
+            or 640
+        )
 
         if nb_classes_override is not None:
             nb_classes = nb_classes_override
@@ -169,7 +197,17 @@ class OpenVINOBackend(BaseBackend):
         else:
             names = BaseBackend.build_names(nb_classes)
 
-        return model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names
+        return (
+            model_family,
+            model_size,
+            task,
+            supported_tasks,
+            default_task,
+            imgsz,
+            nb_classes,
+            names,
+            _read_pose_metadata(meta),
+        )
 
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run OpenVINO inference."""

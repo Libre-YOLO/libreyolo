@@ -15,7 +15,7 @@ from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import PICODETValPreprocessor
 from ..base import BaseModel
 from .nn import LibrePICODETModel
-from .utils import postprocess as _picodet_postprocess
+from ...postprocess.picodet import postprocess as _picodet_postprocess
 from .utils import preprocess_image as _picodet_preprocess
 
 
@@ -73,6 +73,16 @@ class LibrePICODET(BaseModel):
         out_ch = int(weights_dict[key].shape[0])
         nc = out_ch - 32
         return nc if nc > 0 else None
+
+    @classmethod
+    def convert_upstream_state_dict(cls, weights_dict: dict) -> Optional[dict]:
+        """Remap Bo-style mmdet key naming to LibreYOLO's flattened port."""
+        from .convert import convert_upstream, is_upstream_state_dict
+
+        if not is_upstream_state_dict(weights_dict):
+            return None
+        converted = convert_upstream(weights_dict)
+        return converted if cls.can_load(converted) else None
 
     # ---- init ------------------------------------------------------------
 
@@ -173,6 +183,8 @@ class LibrePICODET(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune PICODET on a YOLO-format dataset.
@@ -188,6 +200,12 @@ class LibrePICODET(BaseModel):
         training or accept that small-dataset transfer is rough.
 
         Pass ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if not allow_experimental:
             raise RuntimeError(
@@ -201,8 +219,6 @@ class LibrePICODET(BaseModel):
                 "export. What's NOT validated: small-dataset fine-tune "
                 "convergence, multi-GPU, augmentation policy beyond hflip."
             )
-        from pathlib import Path
-
         from libreyolo.data import load_data_config
 
         from .trainer import PICODETTrainer
@@ -231,7 +247,9 @@ class LibrePICODET(BaseModel):
             import random
             import numpy as np
 
-            random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
             if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
@@ -256,6 +274,8 @@ class LibrePICODET(BaseModel):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 
 from ...data import (
     YOLOPoseDataset,
+    default_oks_sigmas,
     get_img_files,
     img2label_paths,
     load_data_config,
@@ -35,26 +36,12 @@ from .pose_transforms import YOLONASPoseTrainTransform, YOLONASPoseValTransform
 
 logger = logging.getLogger(__name__)
 
-# COCO 17-keypoint OKS sigmas — the upstream defaults.
-_COCO17_OKS_SIGMAS = [
-    0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
-    0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
-]
-
-
 def _pose_worker_init_fn(worker_id: int) -> None:
     cv2.setNumThreads(0)
     torch.set_num_threads(1)
     seed = (torch.initial_seed() + worker_id) % 2**32
     random.seed(seed)
     np.random.seed(seed)
-
-
-def default_oks_sigmas(num_keypoints: int) -> list[float]:
-    """Per-keypoint OKS sigmas for COCO-style pose evaluation."""
-    if num_keypoints == 17:
-        return list(_COCO17_OKS_SIGMAS)
-    return [1.0 / num_keypoints] * num_keypoints
 
 
 class YOLONASPoseTrainer(BaseTrainer):

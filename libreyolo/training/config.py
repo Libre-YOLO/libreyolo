@@ -2,7 +2,7 @@
 
 import logging
 import warnings
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -97,6 +97,17 @@ class TrainConfig:
     ema: bool = True
     ema_decay: float = 0.9998
     amp: bool = True
+    # Layer freezing. An int freezes the first N family-defined freeze groups;
+    # a list freezes explicit group indices or module-name selectors; a string
+    # freezes matching module/parameter names.
+    freeze: Optional[Union[int, str, List[Union[int, str]]]] = None
+    # Parameter-efficient fine-tuning. ``lora=True`` injects LoRA adapters into
+    # the backbone of supported transformer families (currently RF-DETR) and
+    # trains only the adapters plus the projector/decoder/head, for low-VRAM
+    # fine-tuning on a custom dataset. Requires the optional ``peft`` dependency
+    # (``pip install "libreyolo[lora]"``). Families that do not support LoRA
+    # raise a clear error rather than silently ignoring the flag.
+    lora: bool = False
     # Nominal (effective) batch size for gradient accumulation. When set, the
     # trainer accumulates ``round(nbs / batch)`` micro-batches per optimizer
     # step so the effective batch size is ``nbs``.
@@ -110,14 +121,31 @@ class TrainConfig:
     exist_ok: bool = False
     save_period: int = 10
     eval_interval: int = 10
+    save_plots: bool = False
 
     # System
     workers: int = 4
+    # Image caching to speed dataloading across epochs. Accepts False (off),
+    # True/'ram' (decoded images in RAM), or 'disk' (decoded images as .npy
+    # beside each source image). 'disk' is the safest choice with dataloader
+    # workers; default is off.
+    cache: Union[bool, str] = False
     patience: int = 50
     resume: bool = False
     log_interval: int = 10
     seed: int = 0
     allow_download_scripts: bool = False
+
+    # Profiling. When ``profile`` is True the trainer profiles a short window of
+    # real training steps (``profile_warmup`` discarded, then ``profile_steps``
+    # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome
+    # trace (open at https://ui.perfetto.dev), then stops early. Zero overhead
+    # when off. Ignored under distributed training.
+    profile: bool = False
+    profile_warmup: int = 5
+    profile_steps: int = 20
+    profile_trace: bool = True
+    profile_open: bool = True
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -184,6 +212,31 @@ class YOLO9Config(TrainConfig):
     workers: int = 8
     mask_downsample_ratio: int = 4
     sync_bn: bool = False
+
+
+@dataclass(kw_only=True)
+class YOLO9PoseConfig(YOLO9Config):
+    """YOLO9 pose-estimation training defaults."""
+
+    num_classes: int = 1
+    num_keypoints: int = 17
+    keypoint_dim: int = 3
+    oks_sigmas: Optional[List[float]] = None
+    pose_weight: float = 12.0
+    pose_l1_weight: float = 2.0
+    pose_vis_weight: float = 1.0
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    hsv_prob: float = 1.0
+    affine_prob: float = 0.5
+    pose_scale: Tuple[float, float] = (0.75, 1.25)
+    pin_memory: bool = False
+    prefetch_factor: int = 1
+    persistent_workers: bool = True
+    decode_scale: int = 1
+    eval_interval: int = 1
+    name: str = "yolo9_pose_exp"
 
 
 @dataclass(kw_only=True)
@@ -563,6 +616,88 @@ class ECConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class ECSegConfig(ECConfig):
+    """EC segmentation fine-tune defaults (experimental).
+
+    Inherits the EC detect recipe and adds the instance-mask loss knobs. The
+    seg data path reuses RF-DETR's square-resize + polygon-rasterization
+    transform (no mosaic/mixup), so the mosaic probabilities are forced off.
+    Masks are rasterized at ``imgsz`` and the head emits them at
+    ``imgsz / mask_downsample_ratio``; point sampling reconciles the two.
+    """
+
+    # No mosaic/mixup on the seg path (RFDETRSegPassThroughDataset is a
+    # per-sample passthrough — these are ignored, set to 0 for clarity).
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    crop_resize_prob: float = 0.0
+
+    # Mask loss.
+    mask_ce_loss_weight: float = 5.0
+    mask_dice_loss_weight: float = 5.0
+    mask_point_sample_ratio: int = 16
+    mask_downsample_ratio: int = 4
+
+    @classmethod
+    def from_kwargs(cls, **kwargs):
+        cfg = super().from_kwargs(**kwargs)
+        size = str(cfg.size).lower()
+        if size in {"l", "x"}:
+            if "backbone_lr_mult" not in kwargs:
+                cfg.backbone_lr_mult = 0.005
+            if "weight_decay" not in kwargs:
+                cfg.weight_decay = 1.25e-4
+        return cfg
+
+    name: str = "ec_seg_exp"
+
+
+@dataclass(kw_only=True)
+class ECPoseConfig(ECConfig):
+    """EC (DETR-style) pose fine-tune defaults (experimental).
+
+    EdgeCrafter's ECPose is a DETRPose-style keypoint transformer (Hungarian
+    matching + OKS). This config carries the keypoint count / sigmas and the
+    classification / keypoint-L1 / OKS loss weights. The pose data path owns
+    its loader (YOLOPoseDataset + keypoint-aware transforms), so detection-style
+    mosaic/multi-scale settings do not apply.
+    """
+
+    num_classes: int = 1  # user-facing single class ("person")
+    num_keypoints: int = 17
+    keypoint_dim: int = 3
+    oks_sigmas: Optional[List[float]] = None
+    flip_idx: Optional[List[int]] = None
+
+    # Loss weights — DETRPose released recipe (loss_vfl/loss_keypoints/loss_oks).
+    cls_loss_weight: float = 2.0
+    keypoint_l1_loss_weight: float = 10.0
+    oks_loss_weight: float = 4.0
+
+    # Contrastive denoising (DETRPose: dn_number=20, label_noise_ratio=0.5).
+    dn_number: int = 20
+    label_noise_ratio: float = 0.5
+
+    # Keypoint-aware augmentation (matches the YOLO-pose transform knobs).
+    hsv_prob: float = 0.5
+    flip_prob: float = 0.5
+    brightness_contrast_prob: float = 0.5
+    affine_prob: float = 0.75
+    degrees: float = 5.0
+    translate: float = 0.1
+    pose_scale: Tuple[float, float] = (0.75, 1.5)
+    affine_interpolation: str = "linear"
+
+    pin_memory: bool = False
+    prefetch_factor: int = 1
+    persistent_workers: bool = True
+    decode_scale: int = 1
+
+    eval_interval: int = 5
+    name: str = "ec_pose_exp"
+
+
+@dataclass(kw_only=True)
 class YOLONASConfig(TrainConfig):
     """YOLO-NAS-specific training defaults."""
 
@@ -639,46 +774,6 @@ class YOLONASPoseConfig(YOLONASConfig):
     amp: bool = True
     eval_interval: int = 1
     name: str = "yolonas_pose_exp"
-
-
-@dataclass(kw_only=True)
-class DAMOYOLOConfig(TrainConfig):
-    """DAMO-YOLO-specific training defaults.
-
-    Upstream T config (``configs/damoyolo_tinynasL20_T.py``):
-    - SGD, base_lr_per_img=0.01/64 (so eff. lr scales with batch), momentum 0.9, wd 5e-4
-    - 300 epochs, no_aug 16, warmup 5, min_lr_ratio 0.05
-    - Mosaic + mixup (mixup_prob 0.15), degrees 10, shear 2.0, mosaic_scale (0.1, 2.0)
-    - Image input 640x640, no keep_ratio, RGB float32 [0, 255], no normalisation
-
-    LibreYOLO v1: SGD + cosine + mosaic+mixup + hflip. SADA box-level
-    autoaugment is *not* ported.
-    """
-
-    optimizer: str = "sgd"
-    lr0: float = 0.01
-    momentum: float = 0.9
-    weight_decay: float = 5e-4
-
-    scheduler: str = "yoloxwarmcos"
-    warmup_epochs: int = 5
-    warmup_lr_start: float = 0.0
-    no_aug_epochs: int = 16
-    min_lr_ratio: float = 0.05
-
-    mosaic_prob: float = 1.0
-    mixup_prob: float = 0.15
-    hsv_prob: float = 1.0
-    flip_prob: float = 0.5
-    degrees: float = 10.0
-    translate: float = 0.2
-    shear: float = 2.0
-    mosaic_scale: Tuple[float, float] = (0.1, 2.0)
-
-    ema_decay: float = 0.9998
-    epochs: int = 300
-    amp: bool = True
-    name: str = "damoyolo_exp"
 
 
 @dataclass(kw_only=True)
@@ -767,3 +862,42 @@ class RTMDetConfig(TrainConfig):
     epochs: int = 300
     amp: bool = True
     name: str = "rtmdet_exp"
+
+
+@dataclass(kw_only=True)
+class FOMOConfig(TrainConfig):
+    """FOMO point-localizer training defaults."""
+
+    optimizer: str = "adam"
+    lr0: float = 3e-4
+    weight_decay: float = 0.0
+
+    fg_weight: float = 100.0
+
+    scheduler: str = "cos"
+    warmup_epochs: int = 0
+    warmup_lr_start: float = 0.0
+    no_aug_epochs: int = 0
+    min_lr_ratio: float = 0.05
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
+    flip_prob: float = 0.0
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+
+    ema: bool = False
+    amp: bool = False
+
+    epochs: int = 40
+    batch: int = 32
+    eval_interval: int = 1
+
+    conf_thresholds: Tuple[float, ...] = (0.25, 0.35, 0.50, 0.65, 0.80, 0.90)
+    nms_radii: Tuple[int, ...] = (1, 2)
+    distance_tolerance: float = 1.5
+
+    name: str = "fomo_exp"
+

@@ -3,6 +3,7 @@
 Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
+import contextlib
 import logging
 import math
 import sys
@@ -27,6 +28,7 @@ from .callbacks import (
     TrainStartEvent,
 )
 from .config import TrainConfig
+from .loggers import resolve_loggers
 from .distributed import (
     barrier,
     get_local_rank,
@@ -43,8 +45,16 @@ from .distributed import (
     wants_distributed,
 )
 from .ema import ModelEMA
+from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
-from ..data import load_data_config, get_img_files, img2label_paths
+from ..data import (
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+    resolve_default_coco_image_dir,
+)
 from ..utils.serialization import (
     SCHEMA_VERSION,
     build_class_names,
@@ -66,18 +76,24 @@ class BaseTrainer(ABC):
 
     best_metric_key: str = "metrics/mAP50-95"
     artifact_model_families: Tuple[str, ...] = ()
+    # Whether this family supports ``lora=True`` fine-tuning. Overridden to True
+    # by trainers with LoRA-amenable (transformer/nn.Linear) backbones.
+    supports_lora: bool = False
 
     def __init__(
         self,
         model: nn.Module,
         wrapper_model: Optional[Any] = None,
         callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
+        for logger_callback in resolve_loggers(loggers):
+            self.callbacks.append(logger_callback)
         self.artifact_callbacks = TrainCallbackList(
             TrainingArtifactsCallback(enabled_families=self.artifact_model_families)
         )
@@ -123,8 +139,14 @@ class BaseTrainer(ABC):
         self.lr_scheduler = None
         self.scaler = None
         self.ema_model = None
+        self.freeze_summary = None
+        self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+
+        # Profiling (opt-in via config.profile). None = disabled, zero overhead.
+        self._profiler = None
+        self._stop_training = False
 
     # =========================================================================
     # Config
@@ -204,6 +226,17 @@ class BaseTrainer(ABC):
 
     def on_setup(self):
         """Called after model is on device, before data setup (e.g. bias init)."""
+
+    def get_freeze_groups(self) -> List[FreezeGroup]:
+        """Return integer-addressable freeze groups for this family."""
+        return default_freeze_groups(self.model)
+
+    def preserve_freeze_param(self, name: str, param: nn.Parameter) -> bool:
+        """Return True for trainable params that freezing must not disable."""
+        return False
+
+    def on_num_classes_resolved(self):
+        """Called before on_setup() for trainers that pre-sync class counts."""
 
     def on_mosaic_disable(self):
         """Called when mosaic is disabled for final no-aug epochs."""
@@ -304,40 +337,54 @@ class BaseTrainer(ABC):
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         pg0, pg1, pg2 = [], [], []
+
+        def add_if_trainable(group: list, param: Optional[nn.Parameter]) -> None:
+            if isinstance(param, nn.Parameter) and param.requires_grad:
+                group.append(param)
+
         # Catch every batch-norm flavour, including SyncBN: BatchNorm{1,2,3}d
         # and SyncBatchNorm are all siblings under ``_BatchNorm``. The naive
         # ``isinstance(v, nn.BatchNorm2d)`` check would silently put SyncBN
         # weights into the weight-decay group post sync_bn conversion.
         bn_types = nn.modules.batchnorm._BatchNorm
         for _k, v in self.model.named_modules():
-            if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
-                pg2.append(v.bias)
+            if hasattr(v, "bias"):
+                add_if_trainable(pg2, v.bias)
             if isinstance(v, bn_types):
-                pg0.append(v.weight)
-            elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
-                pg1.append(v.weight)
+                add_if_trainable(pg0, v.weight)
+            elif hasattr(v, "weight"):
+                add_if_trainable(pg1, v.weight)
 
         lr = self.effective_lr
         opt_name = self.config.optimizer
+        param_groups = []
+        if pg0:
+            param_groups.append({"params": pg0, "lr": lr})
+        if pg1:
+            param_groups.append(
+                {"params": pg1, "lr": lr, "weight_decay": self.config.weight_decay}
+            )
+        if pg2:
+            param_groups.append({"params": pg2, "lr": lr})
+        if not param_groups:
+            raise ValueError(
+                "No trainable parameters remain after layer freezing; "
+                "reduce the freeze value or choose a narrower selector."
+            )
 
         if opt_name == "sgd":
             optimizer = torch.optim.SGD(
-                pg0,
+                param_groups,
                 lr=lr,
                 momentum=self.config.momentum,
                 nesterov=self.config.nesterov,
             )
         elif opt_name == "adam":
-            optimizer = torch.optim.Adam(pg0, lr=lr)
+            optimizer = torch.optim.Adam(param_groups, lr=lr)
         elif opt_name == "adamw":
-            optimizer = torch.optim.AdamW(pg0, lr=lr)
+            optimizer = torch.optim.AdamW(param_groups, lr=lr)
         else:
             raise ValueError(f"Unknown optimizer: {opt_name}")
-
-        optimizer.add_param_group(
-            {"params": pg1, "lr": lr, "weight_decay": self.config.weight_decay}
-        )
-        optimizer.add_param_group({"params": pg2, "lr": lr})
 
         if is_main_process():
             logger.info(f"Optimizer: {opt_name}")
@@ -345,6 +392,29 @@ class BaseTrainer(ABC):
             logger.info(f"  - pg1 (Conv, wd={self.config.weight_decay}): {len(pg1)} params")
             logger.info(f"  - pg2 (Bias): {len(pg2)} params")
         return optimizer
+
+    def _apply_freeze_config(self) -> None:
+        summary = apply_freeze(
+            self.model,
+            getattr(self.config, "freeze", None),
+            freeze_groups=self.get_freeze_groups(),
+            preserve_trainable_param=self.preserve_freeze_param,
+        )
+        self.freeze_summary = summary
+        self._frozen_bn_modules = summary.frozen_bn_modules if summary else ()
+        if summary is not None and is_main_process():
+            logger.info(
+                "Layer freezing: selectors=%s, tensors=%d, params=%d, trainable=%d/%d",
+                list(summary.selectors),
+                summary.frozen_tensor_count,
+                summary.frozen_param_count,
+                summary.trainable_param_count,
+                summary.total_param_count,
+            )
+
+    def _enforce_frozen_bn_eval(self) -> None:
+        for module in getattr(self, "_frozen_bn_modules", ()):
+            module.eval()
 
     def _get_save_dir(self) -> Path:
         project = Path(self.config.project)
@@ -361,9 +431,19 @@ class BaseTrainer(ABC):
         return save_dir
 
     def _setup_data(self):
+        wrapper_task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        if wrapper_task == "classify":
+            return self._setup_classify_data()
+        if wrapper_task == "semantic":
+            return self._setup_semantic_data()
+        if wrapper_task == "depth":
+            return self._setup_depth_data()
+
         img_size = self.input_size
         preproc, MosaicDatasetClass = self.create_transforms()
-        load_segments = getattr(self.wrapper_model, "task", "detect") == "segment"
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+        load_segments = task == "segment"
+        load_obb = task == "obb"
 
         if self.config.data:
             data_cfg = load_data_config(
@@ -371,30 +451,62 @@ class BaseTrainer(ABC):
                 allow_scripts=self.config.allow_download_scripts,
             )
             data_dir = data_cfg["root"]
-            self.num_classes = data_cfg.get("nc", self.config.num_classes)
+            data_nc = data_cfg.get("nc")
+            if data_nc is None and data_cfg.get("names") is not None:
+                data_nc = len(data_cfg["names"])
+            self.num_classes = (
+                int(data_nc) if data_nc is not None else self.config.num_classes
+            )
 
             ann_file = Path(data_dir) / "annotations" / "instances_train2017.json"
+            coco_ann_file = get_coco_annotation_file(data_cfg, "train")
 
             # Prefer pre-resolved file lists from load_data_config (.txt format)
             img_files = data_cfg.get("train_img_files")
             label_files = data_cfg.get("train_label_files")
 
-            if img_files:
+            if coco_ann_file:
+                default_image_dir = resolve_default_coco_image_dir(
+                    data_dir,
+                    "train",
+                    coco_ann_file,
+                )
+                train_dataset = COCODataset(
+                    data_dir=data_dir,
+                    json_file=coco_ann_file,
+                    name=get_coco_image_dir(data_cfg, "train", default_image_dir),
+                    img_size=img_size,
+                    preproc=preproc,
+                    load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
+                )
+            elif img_files:
                 train_dataset = YOLODataset(
                     img_files=img_files,
                     label_files=label_files,
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes if load_obb else None,
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -418,6 +530,8 @@ class BaseTrainer(ABC):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes if load_obb else None,
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
@@ -427,10 +541,16 @@ class BaseTrainer(ABC):
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
                 )
             else:
                 train_dataset = YOLODataset(
@@ -439,23 +559,36 @@ class BaseTrainer(ABC):
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes if load_obb else None,
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")
 
+        self.config.num_classes = int(self.num_classes)
+
+        mosaic_enabled = not load_obb
+        if load_obb and is_main_process():
+            logger.info(
+                "Disabling mosaic/mixup for OBB training until corner-aware "
+                "OBB augmentation is implemented."
+            )
+
+        train_dataset.enable_image_cache(getattr(self.config, "cache", False))
+
         train_dataset = MosaicDatasetClass(
             dataset=train_dataset,
             img_size=img_size,
-            mosaic=True,
+            mosaic=mosaic_enabled,
             preproc=preproc,
             degrees=self.config.degrees,
             translate=self.config.translate,
             mosaic_scale=self.config.mosaic_scale,
             mixup_scale=self.config.mixup_scale,
             shear=self.config.shear,
-            enable_mixup=self.config.mixup_prob > 0,
-            mosaic_prob=self.config.mosaic_prob,
-            mixup_prob=self.config.mixup_prob,
+            enable_mixup=mosaic_enabled and self.config.mixup_prob > 0,
+            mosaic_prob=self.config.mosaic_prob if mosaic_enabled else 0.0,
+            mixup_prob=self.config.mixup_prob if mosaic_enabled else 0.0,
         )
 
         # ``batch`` is the global batch under DDP. Each rank's loader is built
@@ -490,6 +623,337 @@ class BaseTrainer(ABC):
             )
         return train_dataset
 
+    def _setup_classify_data(self):
+        """Build the classification train dataloader from an ImageFolder root.
+
+        Classification bypasses the detection mosaic/letterbox pipeline: ``data``
+        is a dataset root (or known name) with ``train``/``val`` splits, each a
+        folder-per-class. The class count is the source of truth here, so the
+        wrapper head is (re)built to match before the optimizer is created.
+        """
+        from torch.utils.data import DataLoader
+
+        from ..data.classify_dataset import (
+            ClassifyDataset,
+            classify_collate_fn,
+            get_class_names,
+            resolve_classify_data,
+        )
+
+        dataset_root = resolve_classify_data(self.config.data)
+        classes = get_class_names(dataset_root, split="train")
+        num_classes = len(classes)
+        self.num_classes = num_classes
+        self.config.num_classes = num_classes
+        class_to_idx = {name: i for i, name in enumerate(classes)}
+
+        wrapper = self.wrapper_model
+        if wrapper is not None:
+            if (
+                getattr(wrapper, "nb_classes", None) != num_classes
+                and hasattr(wrapper, "_rebuild_for_new_classes")
+            ):
+                wrapper._rebuild_for_new_classes(num_classes)
+                self.model = wrapper.model.to(self.device)
+            wrapper.nb_classes = num_classes
+            wrapper.names = {i: name for i, name in enumerate(classes)}
+
+        imgsz = self.config.imgsz
+        train_dataset = ClassifyDataset(
+            dataset_root=dataset_root,
+            split="train",
+            imgsz=imgsz,
+            augment=True,
+            class_to_idx=class_to_idx,
+            crop_pct=getattr(wrapper, "crop_pct", 0.875),
+            interpolation=getattr(wrapper, "interpolation", "bilinear"),
+        )
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        if per_rank_batch < 2:
+            raise ValueError(
+                "Classification training needs an effective per-rank batch size >= 2 "
+                f"(got {per_rank_batch} from batch={self.config.batch}, "
+                f"world_size={self.world_size}). A batch of 1 breaks the BatchNorm in "
+                "the pooled classifier head (e.g. MobileNetV4/EfficientNetV2 norm_head). "
+                "Increase batch (or reduce world_size)."
+            )
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        # Under DDP each rank only sees ``len(sampler)`` samples, so base the
+        # drop_last decision on the per-rank visible count. Otherwise a small
+        # dataset split across ranks could drop every rank's only partial
+        # batch and leave zero iterations.
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=classify_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info(
+                "Classification dataset: %d images, %d classes",
+                len(train_dataset),
+                num_classes,
+            )
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
+    def _setup_semantic_data(self):
+        """Build the semantic-segmentation train dataloader from a dataset YAML.
+
+        Dense masks bypass the detection mosaic/letterbox pipeline. The
+        dataset's class space (including the background class appended for
+        polygon-derived masks) is the source of truth, so the wrapper head is
+        (re)built to match before the optimizer is created.
+        """
+        from torch.utils.data import DataLoader
+
+        from ..data.semantic_dataset import (
+            SemanticDataset,
+            resolve_semantic_data,
+            semantic_collate_fn,
+        )
+
+        if not self.config.data:
+            raise ValueError("Semantic training requires data= (a dataset YAML).")
+        data_config = resolve_semantic_data(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        resize_mode = getattr(self.wrapper_model, "semantic_resize_mode", "letterbox")
+        divisor = getattr(self.wrapper_model, "semantic_imgsz_divisor", None)
+        if divisor and self.config.imgsz % int(divisor):
+            raise ValueError(
+                f"Semantic training imgsz={self.config.imgsz} must be divisible "
+                f"by {int(divisor)} for this model family."
+            )
+        train_dataset = SemanticDataset(
+            data_config,
+            split="train",
+            imgsz=self.config.imgsz,
+            augment=True,
+            resize_mode=resize_mode,
+        )
+
+        num_classes = train_dataset.nc
+        self.num_classes = num_classes
+        self.config.num_classes = num_classes
+
+        wrapper = self.wrapper_model
+        if wrapper is not None:
+            if (
+                getattr(wrapper, "nb_classes", None) != num_classes
+                and hasattr(wrapper, "_rebuild_for_new_classes")
+            ):
+                wrapper._rebuild_for_new_classes(num_classes)
+                self.model = wrapper.model.to(self.device)
+            wrapper.nb_classes = num_classes
+            wrapper.names = dict(train_dataset.names)
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=semantic_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info(
+                "Semantic dataset: %d images, %d classes",
+                len(train_dataset),
+                num_classes,
+            )
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
+    def _setup_depth_data(self):
+        """Build the depth train dataloader from a dataset YAML."""
+        from torch.utils.data import DataLoader
+
+        from ..data.depth_dataset import (
+            DepthDataset,
+            depth_collate_fn,
+            resolve_depth_data,
+        )
+
+        if not self.config.data:
+            raise ValueError("Depth training requires data= (a dataset YAML).")
+        data_config = resolve_depth_data(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        resize_mode = getattr(self.wrapper_model, "depth_resize_mode", "letterbox")
+        divisor = getattr(self.wrapper_model, "depth_imgsz_divisor", None)
+        if divisor and self.config.imgsz % int(divisor):
+            raise ValueError(
+                f"Depth training imgsz={self.config.imgsz} must be divisible "
+                f"by {int(divisor)} for this model family."
+            )
+        train_dataset = DepthDataset(
+            data_config,
+            split="train",
+            imgsz=self.config.imgsz,
+            augment=True,
+            resize_mode=resize_mode,
+        )
+
+        self.num_classes = 1
+        self.config.num_classes = 1
+        if self.wrapper_model is not None:
+            self.wrapper_model.nb_classes = 1
+            self.wrapper_model.names = {0: "depth"}
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=depth_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info("Depth dataset: %d images", len(train_dataset))
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
+    def _resolve_num_classes_from_data_config(self) -> int:
+        """Resolve dataset class count before criterion construction."""
+        resolved = int(self.config.num_classes)
+        if self.config.data:
+            # Only the YAML's class count is needed here; the dataset itself is
+            # downloaded later in _setup_data.
+            data_cfg = load_data_config(
+                self.config.data,
+                autodownload=False,
+                allow_scripts=self.config.allow_download_scripts,
+            )
+            resolved = int(data_cfg.get("nc", resolved))
+
+        self.num_classes = resolved
+        self.config.num_classes = resolved
+        return resolved
+
+    def _infer_model_num_classes(self) -> Optional[int]:
+        """Best-effort class-count introspection for detector heads."""
+        model = unwrap_model(self.model)
+        for obj in (getattr(model, "decoder", None), getattr(model, "head", None), model):
+            value = getattr(obj, "num_classes", None)
+            if value is not None:
+                return int(value)
+        return None
+
+    def _sync_wrapped_model_num_classes(self, num_classes: int) -> None:
+        """Rebuild wrapper-owned heads or fail before criterion/head desync."""
+        num_classes = int(num_classes)
+        self.num_classes = num_classes
+        self.config.num_classes = num_classes
+
+        wrapper = self.wrapper_model
+        model_nc = self._infer_model_num_classes()
+        wrapper_nc = getattr(wrapper, "nb_classes", None) if wrapper is not None else None
+        needs_rebuild = (
+            (model_nc is not None and model_nc != num_classes)
+            or (wrapper_nc is not None and int(wrapper_nc) != num_classes)
+        )
+
+        if not needs_rebuild:
+            return
+
+        if wrapper is None or not hasattr(wrapper, "_rebuild_for_new_classes"):
+            raise RuntimeError(
+                f"{self.get_model_family()} trainer resolved num_classes={num_classes}, "
+                f"but the model head exposes num_classes={model_nc}. Pass a "
+                "wrapper_model with _rebuild_for_new_classes() or construct the "
+                "raw model with the resolved class count."
+            )
+
+        wrapper._rebuild_for_new_classes(num_classes)
+        self.model = wrapper.model.to(self.device)
+        wrapper.device = self.device
+
+        rebuilt_nc = self._infer_model_num_classes()
+        if rebuilt_nc is not None and rebuilt_nc != num_classes:
+            raise RuntimeError(
+                f"{self.get_model_family()} wrapper rebuild did not sync the model "
+                f"head to num_classes={num_classes}; got {rebuilt_nc}."
+            )
+
     # =========================================================================
     # Setup / train / epoch
     # =========================================================================
@@ -498,11 +962,20 @@ class BaseTrainer(ABC):
         if self._is_setup:
             return
 
+        if getattr(self.config, "lora", False) and not self.supports_lora:
+            family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"
+            raise ValueError(
+                f"LoRA fine-tuning (lora=True) is not supported for {family}. "
+                "LoRA targets transformer backbones with nn.Linear layers (e.g. RF-DETR)."
+            )
+
         if is_main_process():
             logger.info("Setting up training...")
         self.model.to(self.device)
         if self.wrapper_model is not None:
             self.wrapper_model.device = self.device
+
+        self.on_num_classes_resolved()
 
         # SyncBatchNorm conversion: only meaningful under DDP. Single-GPU
         # runs skip this regardless of the flag so single-GPU is unchanged.
@@ -528,6 +1001,7 @@ class BaseTrainer(ABC):
                 logger.info("AutoBatch: resolved global batch size = %d", self.config.batch)
 
         self._setup_data()
+        self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
         self.lr_scheduler = self.create_scheduler(self._scheduler_steps_per_epoch())
 
@@ -601,6 +1075,48 @@ class BaseTrainer(ABC):
 
         # Wait for rank 0 to finish dir creation before any rank proceeds.
         barrier()
+
+        # Optional training-step profiler (opt-in via config.profile). Built on
+        # the main process; emits the breakdown + Chrome trace into save_dir.
+        # Disabled under DDP (its early-stop would desync ranks).
+        if getattr(self.config, "profile", False):
+            if self.is_distributed:
+                if is_main_process():
+                    logger.warning("profile=True is ignored under distributed training.")
+            elif is_main_process():
+                from libreyolo.training.profiler import TrainStepProfiler
+
+                profile_warmup = getattr(self.config, "profile_warmup", 5)
+                profile_steps = getattr(self.config, "profile_steps", 20)
+                accum_steps = self._accum_steps
+                if accum_steps > 1:
+                    profile_warmup = math.ceil(profile_warmup / accum_steps) * accum_steps
+                    profile_steps = math.ceil(profile_steps / accum_steps) * accum_steps
+                    logger.info(
+                        "profile window rounded to accumulation boundaries "
+                        "(warmup=%d, steps=%d, accum=%d)",
+                        profile_warmup,
+                        profile_steps,
+                        accum_steps,
+                    )
+                self._profiler = TrainStepProfiler(
+                    device=self.device,
+                    warmup=profile_warmup,
+                    active=profile_steps,
+                    trace=getattr(self.config, "profile_trace", True),
+                    open_report=getattr(self.config, "profile_open", True),
+                    save_dir=self.save_dir,
+                    logger=logger,
+                    meta={
+                        "model": self.get_model_tag(),
+                        "device": str(self.device),
+                        "batch": self.config.batch,
+                        "imgsz": self.config.imgsz,
+                        "amp": bool(self.config.amp),
+                        "workers": self.config.workers,
+                    },
+                )
+
         self._is_setup = True
 
     def _ddp_find_unused_parameters(self) -> bool:
@@ -689,8 +1205,12 @@ class BaseTrainer(ABC):
                 self.epoch_losses.append(epoch_loss)
 
                 is_best = self._update_best_state(epoch, val_metrics)
+                periodic_save_due = (
+                    self.config.save_period > 0
+                    and (epoch + 1) % self.config.save_period == 0
+                )
                 should_save = (
-                    (epoch + 1) % self.config.save_period == 0
+                    periodic_save_due
                     or epoch == self.config.epochs - 1
                     or is_best
                 )
@@ -729,11 +1249,19 @@ class BaseTrainer(ABC):
                     _dist.broadcast(flag, src=0)
                     should_stop = bool(flag.item())
                 if should_stop:
+                    if (
+                        bool(getattr(self.config, "save_plots", False))
+                        and not self._is_final_epoch(epoch)
+                    ):
+                        self._validate_epoch(epoch, save_plots=True)
                     if is_main_process():
                         logger.info(
                             f"Early stopping triggered after {epoch + 1} epochs "
                             f"(patience={self.config.patience}, no improvement for {self.patience_counter} epochs)"
                         )
+                    break
+
+                if getattr(self, "_stop_training", False):
                     break
 
             total_time = time.time() - start_time
@@ -795,13 +1323,14 @@ class BaseTrainer(ABC):
             "total_epochs": self.config.epochs,
             "model_family": self.get_model_family(),
             "model_size": getattr(self.config, "size", None),
-            "task": getattr(self.wrapper_model, "task", "detect"),
+            "task": getattr(getattr(self, "wrapper_model", None), "task", "detect"),
             "save_dir": str(getattr(self, "save_dir", "")),
         }
 
     def _build_train_start_event(self) -> TrainStartEvent:
         return TrainStartEvent(
             start_epoch=self.start_epoch + 1,
+            config=self.config.to_dict(),
             **self._event_context(),
         )
 
@@ -963,7 +1492,7 @@ class BaseTrainer(ABC):
             total_epochs=self.config.epochs,
             model_family=self.get_model_family(),
             model_size=getattr(self.config, "size", None),
-            task=getattr(self.wrapper_model, "task", "detect"),
+            task=getattr(getattr(self, "wrapper_model", None), "task", "detect"),
             save_dir=str(self.save_dir),
             train_loss=float(train_loss),
             train_loss_items=self._scalar_mapping(train_loss_items),
@@ -1051,10 +1580,16 @@ class BaseTrainer(ABC):
             max_norm,
         )
 
+    def _prof_phase(self, name: str):
+        """Profiler phase context manager (no-op when profiling is disabled)."""
+        prof = getattr(self, "_profiler", None)
+        return prof.phase(name) if prof is not None else contextlib.nullcontext()
+
     def _train_epoch(
         self, epoch: int
     ) -> Tuple[float, Optional[Dict[str, Any]], Dict[str, float], Dict[str, float]]:
         self.model.train()
+        self._enforce_frozen_bn_eval()
 
         # Gradient accumulation is opt-in. When enabled, delegate to the
         # accumulation loop; otherwise fall through to the standard
@@ -1081,7 +1616,9 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
-        for batch_idx, batch in enumerate(pbar):
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1089,8 +1626,9 @@ class BaseTrainer(ABC):
                 polygons = None
             self.current_iter = epoch * len(self.train_loader) + batch_idx
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1103,25 +1641,31 @@ class BaseTrainer(ABC):
             # so that backward() gradient averaging produces the same
             # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                loss = scale_loss_for_ddp(total_loss_raw)
+                self.optimizer.zero_grad()
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                    if self._should_clip_gradients():
+                        self.scaler.unscale_(self.optimizer)
+                        self._clip_gradients()
+                with self._prof_phase("optimizer"):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                if self._should_clip_gradients():
-                    self.scaler.unscale_(self.optimizer)
+                with self._prof_phase("backward"):
+                    loss.backward()
                     self._clip_gradients()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = scale_loss_for_ddp(total_loss_raw)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self._clip_gradients()
-                self.optimizer.step()
+                with self._prof_phase("optimizer"):
+                    self.optimizer.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1148,6 +1692,12 @@ class BaseTrainer(ABC):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    self._stop_training = True
+                    break
+
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
             name: value / max(num_batches, 1)
@@ -1158,10 +1708,7 @@ class BaseTrainer(ABC):
 
         # Validation
         val_metrics = None
-        if (
-            self.config.eval_interval > 0
-            and (epoch + 1) % self.config.eval_interval == 0
-        ):
+        if self._should_validate_epoch(epoch):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -1178,6 +1725,7 @@ class BaseTrainer(ABC):
         per optimizer step. Reached only when ``_accum_steps > 1``.
         """
         self.model.train()
+        self._enforce_frozen_bn_eval()
 
         if is_distributed() and hasattr(self.train_loader, "sampler"):
             sampler = self.train_loader.sampler
@@ -1200,7 +1748,9 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
-        for batch_idx, batch in enumerate(pbar):
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1211,8 +1761,9 @@ class BaseTrainer(ABC):
             opt_step = epoch * steps_per_epoch + batch_idx // accum
             self.current_iter = opt_step
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1232,27 +1783,33 @@ class BaseTrainer(ABC):
             # gradient averaging composes correctly with the division-by-
             # window scheme.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                        loss = total_loss_raw / actual_window
+                loss = scale_loss_for_ddp(loss)
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                if is_opt_step:
+                    with self._prof_phase("optimizer"):
+                        if self._should_clip_gradients():
+                            self.scaler.unscale_(self.optimizer)
+                            self._clip_gradients()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
-                self.scaler.scale(loss).backward()
+                with self._prof_phase("backward"):
+                    loss.backward()
                 if is_opt_step:
-                    if self._should_clip_gradients():
-                        self.scaler.unscale_(self.optimizer)
+                    with self._prof_phase("optimizer"):
                         self._clip_gradients()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = total_loss_raw / actual_window
-                loss = scale_loss_for_ddp(loss)
-                loss.backward()
-                if is_opt_step:
-                    self._clip_gradients()
-                    self.optimizer.step()
+                        self.optimizer.step()
 
             if is_opt_step:
                 # EMA
@@ -1277,6 +1834,12 @@ class BaseTrainer(ABC):
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
 
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    self._stop_training = True
+                    break
+
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
             name: value / max(num_batches, 1)
@@ -1287,10 +1850,7 @@ class BaseTrainer(ABC):
 
         # Validation
         val_metrics = None
-        if (
-            self.config.eval_interval > 0
-            and (epoch + 1) % self.config.eval_interval == 0
-        ):
+        if self._should_validate_epoch(epoch):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -1299,7 +1859,23 @@ class BaseTrainer(ABC):
     # Validation
     # =========================================================================
 
-    def _validate_epoch(self, epoch: int) -> Optional[Dict[str, Any]]:
+    def _should_validate_epoch(self, epoch: int) -> bool:
+        scheduled = (
+            self.config.eval_interval > 0
+            and (epoch + 1) % self.config.eval_interval == 0
+        )
+        final_plot = (
+            bool(getattr(self.config, "save_plots", False))
+            and self._is_final_epoch(epoch)
+        )
+        return scheduled or final_plot
+
+    def _is_final_epoch(self, epoch: int) -> bool:
+        return (epoch + 1) >= self.config.epochs
+
+    def _validate_epoch(
+        self, epoch: int, *, save_plots: bool | None = None
+    ) -> Optional[Dict[str, Any]]:
         # First-cut policy: validation runs on rank 0 only. Non-zero ranks
         # barrier-wait so the next epoch's set_epoch fires in lockstep.
         # Rank 0 barriers once at the bottom regardless of outcome.
@@ -1307,20 +1883,44 @@ class BaseTrainer(ABC):
             barrier()
             return None
         try:
-            return self._run_validation(epoch)
+            return self._run_validation(epoch, save_plots=save_plots)
         finally:
             if self.is_distributed:
                 barrier()
 
-    def _run_validation(self, epoch: int) -> Optional[Dict[str, Any]]:
+    def _run_validation(
+        self, epoch: int, *, save_plots: bool | None = None
+    ) -> Optional[Dict[str, Any]]:
+        validation_task = getattr(
+            getattr(self, "wrapper_model", None), "task", "detect"
+        )
+        if validation_task == "classify":
+            return self._run_classify_validation(epoch)
+        if validation_task == "semantic":
+            return self._run_semantic_validation(epoch)
+        if validation_task == "depth":
+            return self._run_depth_validation(epoch)
         try:
             from libreyolo.validation import (
                 DetectionValidator,
+                OBBValidator,
+                PointValidator,
                 SegmentationValidator,
                 ValidationConfig,
             )
 
             logger.info(f"Running validation for epoch {epoch + 1}")
+
+            # Only save plots on the final epoch when explicitly requested.
+            is_final_epoch = self._is_final_epoch(epoch)
+            val_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False)) and is_final_epoch
+            )
+            val_save_dir = (
+                str(self.save_dir / "val") if val_save_plots else None
+            )
 
             val_config = ValidationConfig(
                 data=self.config.data,
@@ -1332,6 +1932,8 @@ class BaseTrainer(ABC):
                 half=self.config.amp and self.device.type == "cuda",
                 verbose=False,
                 num_workers=self.config.workers,
+                save_plots=val_save_plots,
+                save_dir=val_save_dir,
             )
 
             if self.wrapper_model is None:
@@ -1339,7 +1941,6 @@ class BaseTrainer(ABC):
                     "Validation requires wrapper_model to be provided to trainer"
                 )
                 return None
-
             # Validator wants the un-DDP-wrapped module.
             eval_pytorch_model = (
                 self.ema_model.ema if self.ema_model else unwrap_model(self.model)
@@ -1348,11 +1949,15 @@ class BaseTrainer(ABC):
             self.wrapper_model.model = eval_pytorch_model
 
             try:
-                validator_cls = (
-                    SegmentationValidator
-                    if getattr(self.wrapper_model, "task", "detect") == "segment"
-                    else DetectionValidator
-                )
+                task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+                if task == "segment":
+                    validator_cls = SegmentationValidator
+                elif task == "obb":
+                    validator_cls = OBBValidator
+                elif task == "point":
+                    validator_cls = PointValidator
+                else:
+                    validator_cls = DetectionValidator
                 validator = validator_cls(model=self.wrapper_model, config=val_config)
                 results = validator.run()
             finally:
@@ -1360,13 +1965,20 @@ class BaseTrainer(ABC):
 
             raw_metrics = self._scalar_mapping(results)
             best_key = getattr(self, "best_metric_key", "metrics/mAP50-95")
+            if task == "point" and best_key == "metrics/mAP50-95":
+                best_key = "fitness"
             best_metric = raw_metrics.get(
                 best_key, raw_metrics.get("metrics/mAP50-95", 0.0)
             )
-            metrics = {
-                "mAP50": raw_metrics.get(
+            if task == "point":
+                primary_th = getattr(validator, "_primary_threshold", 0.01)
+                mAP50 = raw_metrics.get(f"metrics/mAP@{primary_th:.2f}", 0.0)
+            else:
+                mAP50 = raw_metrics.get(
                     "metrics/mAP50", raw_metrics.get("metrics/mAP50(B)", 0.0)
-                ),
+                )
+            metrics = {
+                "mAP50": mAP50,
                 "mAP50_95": best_metric,
                 "best_metric": best_metric,
                 "best_metric_key": best_key,
@@ -1385,6 +1997,163 @@ class BaseTrainer(ABC):
 
         except Exception as e:
             logger.error(f"Validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_classify_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the classification head (top-1/top-5) on the val split."""
+        try:
+            from libreyolo.validation import ClassifyValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running classification validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=self.config.batch,
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = ClassifyValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            top1 = raw_metrics.get("metrics/accuracy_top1", 0.0)
+            top5 = raw_metrics.get("metrics/accuracy_top5", 0.0)
+            logger.info("Validation - top1: %.4f, top5: %.4f", top1, top5)
+            return {
+                "mAP50": top1,
+                "mAP50_95": top1,
+                "best_metric": top1,
+                "best_metric_key": "metrics/accuracy_top1",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Classification validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_semantic_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the semantic head (mIoU / pixel accuracy) on the val split."""
+        try:
+            from libreyolo.validation import SemanticValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running semantic validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=self.config.batch,
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = SemanticValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            miou = raw_metrics.get("metrics/mIoU", 0.0)
+            accuracy = raw_metrics.get("metrics/pixel_accuracy", 0.0)
+            logger.info("Validation - mIoU: %.4f, pixel accuracy: %.4f", miou, accuracy)
+            return {
+                "mAP50": miou,
+                "mAP50_95": miou,
+                "best_metric": miou,
+                "best_metric_key": "metrics/mIoU",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Semantic validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_depth_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the depth head (AbsRel / delta1) on the val split."""
+        try:
+            from libreyolo.validation import DepthValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running depth validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=self.config.batch,
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+                allow_download_scripts=self.config.allow_download_scripts,
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = DepthValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            delta1 = raw_metrics.get("metrics/delta1", 0.0)
+            abs_rel = raw_metrics.get("metrics/abs_rel", 0.0)
+            logger.info("Validation - delta1: %.4f, AbsRel: %.4f", delta1, abs_rel)
+            return {
+                "mAP50": delta1,
+                "mAP50_95": delta1,
+                "best_metric": delta1,
+                "best_metric_key": "metrics/delta1",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Depth validation failed: {e}")
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
@@ -1424,8 +2193,9 @@ class BaseTrainer(ABC):
         names = (
             self.wrapper_model.names
             if self.wrapper_model is not None and hasattr(self.wrapper_model, "names")
-            else build_class_names(self.config.num_classes)
+            else build_class_names(int(getattr(self, "num_classes", self.config.num_classes)))
         )
+        checkpoint_nc = int(getattr(self, "num_classes", self.config.num_classes))
         checkpoint_imgsz = getattr(self.config, "imgsz", None)
         if checkpoint_imgsz is None and self.wrapper_model is not None:
             get_input_size = getattr(self.wrapper_model, "_get_input_size", None)
@@ -1442,8 +2212,8 @@ class BaseTrainer(ABC):
             model_to_save.state_dict(),
             model_family=self.get_model_family(),
             size=self.config.size,
-            task=getattr(self.wrapper_model, "task", "detect"),
-            nc=self.config.num_classes,
+            task=getattr(getattr(self, "wrapper_model", None), "task", "detect"),
+            nc=checkpoint_nc,
             names=names,
             imgsz=int(checkpoint_imgsz),
             epoch=epoch,
@@ -1482,7 +2252,7 @@ class BaseTrainer(ABC):
                 f"{metric_key}={metric_value:.4f}"
             )
 
-        if (epoch + 1) % self.config.save_period == 0:
+        if self.config.save_period > 0 and (epoch + 1) % self.config.save_period == 0:
             epoch_path = weights_dir / f"epoch_{epoch + 1}.pt"
             torch.save(checkpoint, epoch_path)
 

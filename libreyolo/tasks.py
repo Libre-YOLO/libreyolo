@@ -7,8 +7,28 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 
-TaskType = Literal["detect", "segment", "pose", "classify", "gaze"]
-TASKS = ("detect", "segment", "pose", "classify", "gaze")
+TaskType = Literal[
+    "detect",
+    "segment",
+    "semantic",
+    "pose",
+    "classify",
+    "gaze",
+    "obb",
+    "point",
+    "depth",
+]
+TASKS = (
+    "detect",
+    "segment",
+    "semantic",
+    "pose",
+    "classify",
+    "gaze",
+    "obb",
+    "point",
+    "depth",
+)
 
 TASK_ALIASES = {
     "detect": "detect",
@@ -17,6 +37,11 @@ TASK_ALIASES = {
     "segment": "segment",
     "segmentation": "segment",
     "seg": "segment",
+    "semantic": "semantic",
+    "semantic-segmentation": "semantic",
+    "semantic_segmentation": "semantic",
+    "semseg": "semantic",
+    "sem": "semantic",
     "pose": "pose",
     "keypoint": "pose",
     "keypoints": "pose",
@@ -27,13 +52,24 @@ TASK_ALIASES = {
     "gaze": "gaze",
     "gaze-estimation": "gaze",
     "gaze_estimation": "gaze",
+    "obb": "obb",
+    "point": "point",
+    "depth": "depth",
+    "depth-estimation": "depth",
+    "depth_estimation": "depth",
+    "monodepth": "depth",
+    "monocular-depth": "depth",
 }
 
 TASK_TO_SUFFIX = {
     "segment": "seg",
+    "semantic": "sem",
     "pose": "pose",
     "classify": "cls",
     "gaze": "gaze",
+    "obb": "obb",
+    "point": "point",
+    "depth": "depth",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

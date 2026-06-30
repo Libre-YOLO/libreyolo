@@ -12,7 +12,8 @@ from ..base import BaseModel
 from ...training.config import YOLOXConfig
 from ...utils.image_loader import ImageInput
 from .nn import LibreYOLOXModel
-from .utils import preprocess_image as _yolox_preprocess, postprocess
+from ...postprocess.yolox import postprocess
+from .utils import preprocess_image as _yolox_preprocess
 from ...validation.preprocessors import YOLOXValPreprocessor
 
 # Single source of truth for training defaults
@@ -88,12 +89,14 @@ class LibreYOLOX(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
-        # Nano-specific BatchNorm settings (must run after weight loading)
-        if self.size == "n":
-            for m in self.model.modules():
-                if isinstance(m, nn.BatchNorm2d):
-                    m.eps = 1e-3
-                    m.momentum = 0.03
+        # Official YOLOX sets BatchNorm eps=1e-3, momentum=0.03 on EVERY size
+        # (Exp.get_model() in yolox_base.py), not just nano. eps is load-bearing
+        # at inference: gating it to "n" left t/s/m/l/x on torch's default 1e-5,
+        # costing ~1-1.5 mAP that grows with depth.
+        for m in self.model.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eps = 1e-3
+                m.momentum = 0.03
 
     # =========================================================================
     # Model lifecycle
@@ -190,6 +193,8 @@ class LibreYOLOX(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLOX model on a dataset.
@@ -211,6 +216,10 @@ class LibreYOLOX(BaseModel):
             resume: If True, resume training from the loaded checkpoint.
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
@@ -270,6 +279,8 @@ class LibreYOLOX(BaseModel):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

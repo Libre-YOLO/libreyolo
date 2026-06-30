@@ -39,6 +39,17 @@ class BaseValPreprocessor(ABC):
         """Whether this preprocessor uses letterbox (aspect-preserving) resize."""
         return False
 
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        """Return (r, off_x, off_y) needed to invert the letterbox coordinate transform.
+
+        Default: top-left padding — uniform scale r, zero offsets.
+        Override for center-padded preprocessors (e.g. YOLO-NAS).
+        """
+        r = min(imgsz / orig_h, imgsz / orig_w)
+        return r, 0.0, 0.0
+
     @property
     def wants_unresized_image(self) -> bool:
         """If True, the dataset should hand over the original-resolution image
@@ -282,6 +293,18 @@ class YOLONASValPreprocessor(YOLO9ValPreprocessor):
         # frame and we'd double-resize with the wrong ratio.
         return True
 
+    def letterbox_scale(
+        self, orig_h: int, orig_w: int, imgsz: int
+    ) -> Tuple[float, float, float]:
+        # YOLO-NAS resizes to YOLO_NAS_RESIZE_SIZE first, then center-pads to imgsz.
+        from ..models.yolonas.utils import YOLO_NAS_RESIZE_SIZE
+        r = min(YOLO_NAS_RESIZE_SIZE / orig_h, YOLO_NAS_RESIZE_SIZE / orig_w)
+        new_w = int(round(orig_w * r))
+        new_h = int(round(orig_h * r))
+        off_x = (imgsz - new_w) // 2
+        off_y = (imgsz - new_h) // 2
+        return r, float(off_x), float(off_y)
+
     def __call__(
         self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -434,31 +457,6 @@ class DEIMv2DINOValPreprocessor(DEIMv2ValPreprocessor):
         chw = chw / 255.0
         chw = (chw - self._IMAGENET_MEAN) / self._IMAGENET_STD
         return chw.astype(np.float32), padded_targets
-
-
-class DAMOYOLOValPreprocessor(StandardValPreprocessor):
-    """DAMO-YOLO val preprocessor: simple stretch resize, BGR→RGB, 0-255 float32.
-
-    Mirrors upstream's inference pipeline (``damo/utils/demo_utils.py``):
-    PIL.convert("RGB") + ``T.Resize(image_max_range=(640,640), keep_ratio=False)`` +
-    ``T.ToTensor()`` + ``T.Normalize(mean=[0,0,0], std=[1,1,1])`` (no-op).
-    """
-
-    @property
-    def normalize(self) -> bool:
-        return False  # already in 0-255 range, validator must NOT divide by 255
-
-    @property
-    def wants_unresized_image(self) -> bool:
-        return True  # avoid the dataset's letterbox-then-stretch double resize
-
-    def __call__(
-        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        # super() does the simple resize + target rescaling. Pass an
-        # RGB-converted copy because upstream loads via PIL ('RGB').
-        chw, padded_targets = super().__call__(img[:, :, ::-1].copy(), targets, input_size)
-        return chw, padded_targets
 
 
 class PICODETValPreprocessor(StandardValPreprocessor):
@@ -637,3 +635,49 @@ class RTMDetValPreprocessor(BaseValPreprocessor):
             padded_targets[:n] = np.asarray(targets[:n], dtype=np.float32)
 
         return normed, padded_targets
+
+
+class FOMOValPreprocessor(BaseValPreprocessor):
+    """FOMO validation preprocessor: direct RGB stretch-resize + [-1, 1] normalisation."""
+
+    MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+    STD = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+
+    @property
+    def normalize(self) -> bool:
+        return False
+
+    @property
+    def custom_normalization(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+
+        rgb_img = img[:, :, ::-1]
+        pil_img = Image.fromarray(rgb_img)
+        resized_pil = pil_img.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        resized = np.array(resized_pil, dtype=np.float32) / 255.0
+        resized = (resized - self.MEAN) / self.STD
+        resized = np.ascontiguousarray(resized.transpose(2, 0, 1), dtype=np.float32)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets) > 0:
+            targets = np.array(targets).copy()
+            n = min(len(targets), self.max_labels)
+            scale_x = target_w / orig_w
+            scale_y = target_h / orig_h
+            targets[:n, 0] *= scale_x
+            targets[:n, 1] *= scale_y
+            targets[:n, 2] *= scale_x
+            targets[:n, 3] *= scale_y
+            padded_targets[:n] = targets[:n]
+
+        return resized, padded_targets

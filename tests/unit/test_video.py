@@ -11,6 +11,7 @@ from libreyolo.utils.video import (
     _codec_candidates,
     collect_video_results,
     is_video_file,
+    run_video_inference,
 )
 
 pytestmark = pytest.mark.unit
@@ -294,6 +295,64 @@ class TestResultsFrameIdx:
         boxes = Boxes(torch.zeros((0, 4)), torch.zeros((0,)), torch.zeros((0,)))
         result = Results(boxes=boxes, orig_shape=(480, 640))
         assert "frame_idx" not in repr(result)
+
+
+class TestRunVideoInference:
+    def test_save_classification_results_without_boxes(self, sample_video, tmp_path):
+        import torch
+
+        from libreyolo.utils.results import Probs, Results
+
+        def predict_frame(pil_img):
+            width, height = pil_img.size
+            return Results(
+                boxes=None,
+                orig_shape=(height, width),
+                names={0: "a", 1: "b"},
+                probs=Probs(torch.tensor([0.7, 0.3])),
+            )
+
+        output_path = tmp_path / "classified.mp4"
+        results = list(
+            run_video_inference(
+                sample_video,
+                predict_frame,
+                save=True,
+                output_path=str(output_path),
+                progress=False,
+            )
+        )
+
+        assert len(results) == 10
+        assert output_path.exists()
+
+    def test_save_point_results_without_boxes(self, sample_video, tmp_path):
+        import torch
+
+        from libreyolo.utils.results import Points, Results
+
+        def predict_frame(pil_img):
+            width, height = pil_img.size
+            return Results(
+                boxes=None,
+                orig_shape=(height, width),
+                names={0: "person"},
+                points=Points(torch.tensor([[width / 2, height / 2, 0.0, 0.9]])),
+            )
+
+        output_path = tmp_path / "points.mp4"
+        results = list(
+            run_video_inference(
+                sample_video,
+                predict_frame,
+                save=True,
+                output_path=str(output_path),
+                progress=False,
+            )
+        )
+
+        assert len(results) == 10
+        assert output_path.exists()
 
 
 class TestCollectVideoResults:

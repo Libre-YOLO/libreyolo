@@ -31,20 +31,89 @@ Required field meanings:
 - `model_family`: registered LibreYOLO family, such as `yolo9`, `rfdetr`,
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
-- `task`: canonical task, one of `detect`, `segment`, `pose`, `classify`, or
-  `gaze`.
+- `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
+  `classify`, `gaze`, `obb`, `point`, or `depth`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
   legacy sparse mappings, but out-of-range keys are invalid.
 - `imgsz`: positive integer square input resolution.
 
+Pose checkpoints additionally include:
+
+- `num_keypoints`: positive integer keypoint count used by the pose head.
+- `keypoint_dim`: pose label dimension from the dataset contract, either `2`
+  for `x,y` labels or `3` for `x,y,visibility` labels. Model outputs always
+  expose keypoints as `x,y,visibility`.
+- `oks_sigmas`: optional list of per-keypoint OKS sigmas. When omitted, loaders
+  and validators use the task default for `num_keypoints`.
+- `num_keypoints_per_class`: optional list of per-class keypoint counts for
+  GroupPose-style heads whose exported keypoint tensor is padded by class. Use
+  `0` for classes without keypoints. Runtime backends use this schema to select
+  the active keypoints for the predicted class.
+
+Depth checkpoints use the task string `depth`, `nc: 1`, and
+`names: {0: "depth"}`. The single class-like slot exists only for checkpoint
+schema compatibility; depth predictions are dense float maps, not classes.
+
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and
 `task`; nesting the metadata would increase migration risk before release.
 The top-level `model` value is deliberately a `state_dict`, matching existing
-LibreYOLO behavior. This differs from Ultralytics checkpoints, where `model`
-may hold a model object.
+LibreYOLO behavior. Other checkpoint formats may differ.
+
+## Export Runtime Metadata
+
+The checkpoint schema above remains square-only. Exported runtime artifacts may
+also carry metadata for graph tracing and backend loading. For rectangular
+graph exports, exporters may dual-write `imgsz_h` and `imgsz_w` next to the
+legacy scalar `imgsz`; readers that do not understand the rectangular fields
+must not silently treat the scalar as a square runtime contract.
+
+Backend support for rectangular runtime metadata is family- and format-scoped.
+YOLO9-family exports may use non-square `imgsz_h/imgsz_w` in supported runtime
+formats; families or formats without explicit rectangular support must reject
+the metadata instead of preprocessing those artifacts as square inputs.
+
+Embedded-NMS runtime exports may also write these flat metadata keys:
+
+- `nms`: string boolean. `"true"` means the exported graph includes an
+  embedded post-processing output.
+- `nms_conf`: confidence threshold baked into the embedded NMS graph output.
+- `nms_iou`: IoU threshold baked into the embedded NMS graph output.
+- `max_det`: maximum number of post-NMS detection rows emitted by the embedded
+  graph output.
+- `nms_raw_output`: string boolean. `"true"` means the exported graph also
+  exposes an auxiliary raw detector output for LibreYOLO backend parsing.
+
+Pose runtime exports may also write these flat metadata keys:
+
+- `num_keypoints`: positive integer keypoint count used by the exported pose
+  head.
+- `keypoint_dim`: pose output dimension. Common values are `2` for xy-only
+  exports and `3` for xy+visibility. GroupPose-style raw runtime exports may
+  use larger values, such as `8`, when the tensor includes precision or
+  class-logit fields consumed by LibreYOLO postprocessing.
+- `num_keypoints_per_class`: optional JSON-encoded list of per-class keypoint
+  counts for GroupPose-style heads. Readers must preserve zero-keypoint class
+  slots because they define the class-to-keypoint schema.
+
+Classification runtime exports (MobileNetV4 / ConvNeXt / EfficientNetV2 /
+ResNet) may also write these flat metadata keys so that exported-backend
+preprocessing reproduces the native model's resize/crop and the logits stay
+bit-identical:
+
+- `crop_pct`: float center-crop ratio. The pre-crop resize target is
+  `round(imgsz / crop_pct)`. Readers default to `0.875` when the key is absent.
+- `interpolation`: resize filter, `"bilinear"` or `"bicubic"`. Readers default
+  to `"bilinear"` when the key is absent.
+
+For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
+standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
+`max_det` values. When `nms_raw_output=true`, output `1` / `raw` is reserved for
+LibreYOLO backends so they can apply native original-canvas clipping and runtime
+`predict(conf=..., iou=..., max_det=...)` semantics. Third-party consumers that
+want graph-embedded NMS should use the first output.
 
 ## Training Checkpoints
 
@@ -89,6 +158,26 @@ When metadata is missing or incomplete:
 - Foreign upstream checkpoints are not loaded by `LibreYOLO(...)` as LibreYOLO
   checkpoints. Convert them with the appropriate `weights/convert_*.py` script
   before loading.
+
+### RF-DETR COCO normalization
+
+Upstream RF-DETR checkpoints expose a 91-output `class_embed` head
+(`raw_nc = 90`, COCO's 90 classes + background). Auto-conversion normalizes a
+*COCO* RF-DETR to LibreYOLO's COCO-80 convention (`nc = 80`, with the COCO
+remap applied at post-process). A checkpoint is treated as COCO when it:
+
+- carries exactly 80 names, **or**
+- declares an explicit class count of 80 (`nc` / `args.num_classes`), **or**
+- has a `coco` dataset hint, **or**
+- has **no** class or dataset metadata at all — a bare upstream state-dict is
+  the canonical Roboflow COCO-pretrained checkpoint (the only metadata-less
+  91-output RF-DETR in distribution).
+
+A genuine custom 90-class RF-DETR is preserved as `nc = 90`. It is identified
+by a `names`/`class_names` list, an explicit non-80 class count, or a non-COCO
+dataset hint (e.g. `args.dataset_file`), so the bare-checkpoint COCO fallback
+does not fire for it. Empty placeholders (`""`, `{}`, `[]`) are ignored when
+deciding whether a dataset hint is present.
 
 Schema helpers live in `libreyolo/utils/serialization.py`:
 

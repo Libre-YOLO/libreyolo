@@ -49,6 +49,11 @@ file = name + ".pt"
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
 | RTMDet | `LibreRTMDet` | `LibreRTMDets.pt` |
 | YOLONAS | `LibreYOLONAS` | `LibreYOLONASs.pt` |
+| MobileNetV4 | `LibreMobileNetV4` | `LibreMobileNetV4s-cls.pt` |
+| ConvNeXt | `LibreConvNeXt` | `LibreConvNeXtt-cls.pt` |
+| EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
+| ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
+| CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 
 **Ask the user** if: the size code isn't obvious, the family isn't one of the above, or the filename doesn't match what the loader at `libreyolo/models/base/model.py:get_download_url` builds. Do not guess.
 
@@ -103,8 +108,31 @@ LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt,
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
 LibreECx-pose.pt, LibreECs-seg.pt, LibreECm-seg.pt,
-LibreECl-seg.pt, LibreECx-seg.pt
+LibreECl-seg.pt, LibreECx-seg.pt,
+
+LibreMobileNetV4s-cls.pt, LibreMobileNetV4m-cls.pt,
+LibreMobileNetV4l-cls.pt,
+
+LibreConvNeXtt-cls.pt, LibreConvNeXts-cls.pt, LibreConvNeXtb-cls.pt,
+
+LibreEfficientNetV2b0-cls.pt, LibreEfficientNetV2b1-cls.pt,
+LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
+
+LibreResNet18-cls.pt, LibreResNet34-cls.pt,
+LibreResNet50-cls.pt, LibreResNet101-cls.pt,
+
+LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt
 ```
+
+Classification (`-cls`) repos use `pipeline_tag: image-classification`,
+`datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
+tracks detection only). The architecture is a native timm-derived port; weights
+are Apache-2.0 ImageNet-1k and load bit-identically (`max_abs_diff == 0`).
+
+LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
+`pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
+data-provenance note** (see `libreyolo/models/clip/NOTICE.md`), and omit the VA
+Benchmarks section (zero-shot, not a trained-on-COCO detector).
 
 Common rule violations to reject before upload:
 
@@ -144,11 +172,59 @@ State-dict key remapping only. Learned parameters are unchanged.
 See `weights/convert_<family>_weights.py` in the
 [LibreYOLO source repository](https://github.com/LibreYOLO/libreyolo).
 
+## Benchmarks
+
+Independent, verified accuracy and speed benchmarks for this model:
+[visionanalysis.org/model/<va-slug>](https://www.visionanalysis.org/model/<va-slug>)
+
 ## License
 
 <Apache License 2.0 | MIT License>. See the [`LICENSE`](./LICENSE)
 and [`NOTICE`](./NOTICE) files in this repository.
 ```
+
+## Vision Analysis benchmark link (`<va-slug>`)
+
+Detect weight repos link to the model's page on the benchmark site
+[visionanalysis.org](https://www.visionanalysis.org). The URL is deterministic —
+derive it from `(FAMILY, size)`, never search for it or guess:
+
+```
+https://www.visionanalysis.org/model/<va-slug>
+```
+
+1. Map the family id: `yolo9` → `yolov9`. Every other family id is used as-is
+   (`yolox`, `rfdetr`, `rtdetr`, `rtdetrv2`, `rtdetrv4`, `dfine`, `deim`,
+   `deimv2`, `picodet`, `yolonas`, `ec`).
+2. Map the size — YOLOX only: `n` → `nano`, `t` → `tiny`. All other sizes are
+   used as-is (including `r50`-style RT-DETR codes and DEIMv2's
+   `atto`/`femto`/`pico`).
+3. Join: `yolov9` concatenates with no separator; every other family joins
+   with a hyphen.
+
+| Weight file | `<va-slug>` |
+|---|---|
+| `LibreYOLOXn.pt` | `yolox-nano` |
+| `LibreYOLOXs.pt` | `yolox-s` |
+| `LibreYOLO9s.pt` | `yolov9s` |
+| `LibreDFINEm.pt` | `dfine-m` |
+| `LibreRTDETRr50.pt` | `rtdetr-r50` |
+| `LibreDEIMv2atto.pt` | `deimv2-atto` |
+
+Rules:
+
+- **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
+  section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
+- **No slug exists** for `yolo9_e2e`, `l2cs`, RTMDet, or the VLM tier — omit
+  the section and tell the user.
+- **The page may lag the upload.** Model pages are generated from
+  `website/src/data/metadata/models.json` in
+  [LibreYOLO/vision-analysis](https://github.com/LibreYOLO/vision-analysis);
+  a page goes live on the next site deploy after the model is added there,
+  with or without benchmark runs. The derived URL never changes, so include
+  the link at upload time regardless — but check the slug exists in
+  `models.json` and, if it doesn't, tell the user to add the model entry so
+  the page resolves.
 
 ## LICENSE + NOTICE
 
@@ -184,7 +260,9 @@ Add via HF UI or `huggingface_hub.add_collection_item(collection_slug, item_id=<
 
 ## Upload workflow
 
-1. Build the 5 files locally in a clean directory.
+1. Build the 5 files locally in a clean directory. For detect repos, derive
+   the Vision Analysis `<va-slug>` (section above) and fill in the README
+   Benchmarks link.
 2. Verify canonical filename matches `BaseModel.get_download_url()` output for this family + size.
 3. **Cross-check the filename against the whitelist above.** If it isn't in the list, halt and ask the user — don't paper over it with a manual override.
 4. Validate the `.pt` against the current LibreYOLO checkpoint metadata schema before upload. The source of truth is `docs/checkpoint_schema.md` and the helpers in `libreyolo/utils/serialization.py`; do not duplicate the schema in this skill. A simple load smoke test is not enough.
@@ -202,6 +280,8 @@ One commit per file if iterating — easier to revert than a batch commit.
 - A file with the same name already exists on the target repo (overwrite is destructive).
 - The repo is a new task type and no collection fits.
 - The upstream has a non-standard license (neither Apache-2.0 nor MIT).
+- The model's `<va-slug>` is missing from vision-analysis `models.json` (the
+  benchmark link will 404 until the model entry is added and deployed).
 
 ## Common traps
 

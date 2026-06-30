@@ -8,12 +8,14 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
 
 logger = logging.getLogger(__name__)
 
 COCO_TOPK_FAMILIES = {"dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"}
+_N_VAL_SAMPLES = 8  # maximum sample images stored for visualisation
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
@@ -85,7 +87,13 @@ class DetectionValidator(BaseValidator):
 
         Supports directory-based datasets, .txt file format, and COCO JSON.
         """
-        from libreyolo.data import load_data_config, get_img_files, img2label_paths
+        from libreyolo.data import (
+            get_coco_annotation_file,
+            get_coco_image_dir,
+            get_img_files,
+            img2label_paths,
+            load_data_config,
+        )
         from libreyolo.data.dataset import YOLODataset, COCODataset
         from torch.utils.data import DataLoader
 
@@ -98,6 +106,7 @@ class DetectionValidator(BaseValidator):
         label_files = None
         split_name = self.config.split
         data_cfg = None
+        explicit_coco_annotation = None
 
         if self.config.data:
             data_cfg = load_data_config(
@@ -105,7 +114,7 @@ class DetectionValidator(BaseValidator):
                 allow_scripts=self.config.allow_download_scripts,
             )
             data_dir = data_cfg["root"]
-            self.nc = data_cfg.get("nc", self.nc)
+            self.nc = int(data_cfg.get("nc", self.nc))
 
             names = data_cfg.get("names", None)
             if isinstance(names, dict):
@@ -116,6 +125,10 @@ class DetectionValidator(BaseValidator):
             # Check for pre-resolved file lists (from .txt format)
             img_files_key = f"{self.config.split}_img_files"
             label_files_key = f"{self.config.split}_label_files"
+            explicit_coco_annotation = get_coco_annotation_file(
+                data_cfg,
+                self.config.split,
+            )
 
             if img_files_key in data_cfg:
                 img_files = data_cfg[img_files_key]
@@ -164,13 +177,31 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id = None
         self._yolo_coco_img_files = None
         self._yolo_coco_label_files = None
-        coco_annotation_file = self._find_coco_annotation_file(data_path)
+        coco_annotation_file = (
+            Path(explicit_coco_annotation)
+            if explicit_coco_annotation
+            else self._find_coco_annotation_file(data_path)
+        )
 
         if coco_annotation_file is not None:
             # Prefer official COCO JSON when it is present. This preserves
             # COCO image ids, category ids, crowd annotations, and area ranges.
-            json_file = coco_annotation_file.name
-            split_name = self._resolve_coco_image_dir(data_path, json_file)
+            json_file = (
+                str(coco_annotation_file)
+                if explicit_coco_annotation
+                else coco_annotation_file.name
+            )
+            if explicit_coco_annotation and data_cfg is not None:
+                split_name = get_coco_image_dir(
+                    data_cfg,
+                    self.config.split,
+                    self._resolve_coco_image_dir(data_path, coco_annotation_file.name),
+                )
+            else:
+                split_name = self._resolve_coco_image_dir(
+                    data_path,
+                    coco_annotation_file.name,
+                )
 
             dataset = COCODataset(
                 data_dir=str(data_path),
@@ -178,13 +209,14 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
             self._coco_annotation_file = coco_annotation_file
-            self._coco_label_to_category_id = {
-                label: category_id
-                for label, category_id in enumerate(dataset.class_ids)
-            }
+            self._coco_label_to_category_id = dict(
+                getattr(dataset, "label_to_category_id", {})
+            )
         elif img_files is not None:
             # File list mode (.txt format)
             dataset = YOLODataset(
@@ -192,6 +224,7 @@ class DetectionValidator(BaseValidator):
                 label_files=label_files,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
                 **dataset_kwargs,
             )
         elif (data_path / "annotations").exists():
@@ -212,6 +245,8 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
         else:
@@ -260,14 +295,9 @@ class DetectionValidator(BaseValidator):
         return None
 
     def _resolve_coco_image_dir(self, data_path: Path, json_file: str) -> str:
-        split_name = (
-            f"{self.config.split}2017"
-            if f"{self.config.split}2017" in json_file
-            else self.config.split
-        )
-        if (data_path / "images" / split_name).exists():
-            return f"images/{split_name}"
-        return split_name
+        from libreyolo.data import resolve_default_coco_image_dir
+
+        return resolve_default_coco_image_dir(data_path, self.config.split, json_file)
 
     def _init_metrics(self) -> None:
         from libreyolo.data import load_data_config
@@ -282,6 +312,13 @@ class DetectionValidator(BaseValidator):
                 "config.data must be set to a yaml path or registry name "
                 "to initialize the COCO evaluator."
             )
+
+        # Always initialise plot-tracking state before any early returns
+        self._confusion_matrix = None
+        self._val_samples: List[Dict] = []
+        if self.config.save_plots:
+            from .val_plotter import ConfusionMatrix  # noqa: PLC0415
+            self._confusion_matrix = ConfusionMatrix(nc=self.nc)
 
         if self._coco_annotation_file is not None:
             try:
@@ -385,34 +422,7 @@ class DetectionValidator(BaseValidator):
 
     def _slice_batch_predictions(self, preds: Any, batch_idx: int) -> Any:
         """Extract predictions for a single image from batched model output."""
-        if isinstance(preds, dict):
-            sliced = {}
-            for key, value in preds.items():
-                if isinstance(value, dict):
-                    sliced[key] = {
-                        k: v[batch_idx : batch_idx + 1]
-                        if isinstance(v, torch.Tensor)
-                        else v
-                        for k, v in value.items()
-                    }
-                elif isinstance(value, torch.Tensor):
-                    sliced[key] = value[batch_idx : batch_idx + 1]
-                else:
-                    sliced[key] = value
-            return sliced
-        elif isinstance(preds, torch.Tensor):
-            return preds[batch_idx : batch_idx + 1]
-        elif isinstance(preds, (list, tuple)):
-            # Recurse so nested list-of-tensor outputs (e.g. PICODET's per-level
-            # ``(List[cls_scores], List[bbox_preds])``) are sliced too. Without
-            # this every per-image postprocess gets the full batch's tensors
-            # and ``[0]``-indexing yields the first image's slice for every
-            # image in the batch.
-            return type(preds)(
-                self._slice_batch_predictions(p, batch_idx) for p in preds
-            )
-        else:
-            return preds
+        return slice_batch_outputs(preds, batch_idx)
 
     def _det_from_result(self, result) -> Dict[str, torch.Tensor]:
         """Convert a Results object (from _predict_augment) to a detection dict."""
@@ -608,6 +618,247 @@ class DetectionValidator(BaseValidator):
         for i in range(len(preds)):
             self.coco_evaluator.update(preds[i], img_ids[i])
 
+        cfg = getattr(self, "config", None)
+        if getattr(cfg, "save_plots", False):
+            try:
+                self._track_plots_data(preds, targets, img_info, img_ids)
+            except Exception as exc:
+                logger.warning("Failed to collect validation plot data: %s", exc)
+
+    def _parse_gt_boxes(
+        self, gt_row: torch.Tensor, orig_h: int, orig_w: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Parse a padded GT target row into xyxy pixel boxes and class indices.
+
+        Two formats are auto-detected from the value range:
+          YOLO  — [cls, cx_norm, cy_norm, w_norm, h_norm]  all coords in [0, 1]
+          COCO  — [x1_scaled, y1_scaled, x2_scaled, y2_scaled, cls]  pixel coords
+                  pre-scaled by the dataset letterbox ratio
+        """
+        arr = gt_row.cpu().numpy().astype(np.float32)
+
+        # The validator dataloaders emit [x1, y1, x2, y2, cls] rows in scaled
+        # pixel space. Prefer that schema whenever it forms a valid box so
+        # tiny boxes near the origin are not mistaken for normalized YOLO rows.
+        cls_col = arr[:, 4]
+        class_like = (
+            (cls_col >= 0)
+            & (cls_col < self.nc)
+            & np.isclose(cls_col, np.round(cls_col))
+        )
+        valid_xyxy = (
+            class_like & (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
+        )
+        vgt_xyxy = arr[valid_xyxy]
+        if len(vgt_xyxy):
+            uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
+            if uses_lb:
+                r, off_x, off_y = self.val_preproc.letterbox_scale(
+                    orig_h, orig_w, self._actual_imgsz
+                )
+                coords = vgt_xyxy[:, :4].copy()
+                coords[:, [0, 2]] -= off_x
+                coords[:, [1, 3]] -= off_y
+                gt_boxes = (coords / r).astype(np.float32)
+            else:
+                sx = self._actual_imgsz / orig_w
+                sy = self._actual_imgsz / orig_h
+                gt = vgt_xyxy[:, :4].copy()
+                gt[:, [0, 2]] /= sx  # x1, x2
+                gt[:, [1, 3]] /= sy  # y1, y2
+                gt_boxes = gt.astype(np.float32)
+            gt_classes = np.clip(vgt_xyxy[:, 4].astype(int), 0, self.nc - 1)
+            return gt_boxes, gt_classes
+
+        # If any value in columns 1-4 exceeds 1.5 the coords must be pixels
+        is_coco_xyxy = (len(arr) > 0) and (float(np.abs(arr[:, 1:5]).max()) > 1.5)
+
+        if is_coco_xyxy:
+            # COCO [x1, y1, x2, y2, cls] — zero-padded rows have all zeros
+            valid = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
+            vgt = arr[valid]
+            if len(vgt) == 0:
+                return np.zeros((0, 4), np.float32), np.zeros(0, int)
+            # Undo the coordinate transform applied by the val preprocessor.
+            # Letterbox preprocessors (e.g. YOLO9) scale uniformly by
+            #   r = min(imgsz/orig_h, imgsz/orig_w).
+            # Non-letterbox preprocessors (e.g. RF-DETR, Standard) stretch
+            # each axis independently: x *= imgsz/orig_w, y *= imgsz/orig_h.
+            uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
+            if uses_lb:
+                r, off_x, off_y = self.val_preproc.letterbox_scale(orig_h, orig_w, self._actual_imgsz)
+                coords = vgt[:, :4].copy()
+                coords[:, [0, 2]] -= off_x
+                coords[:, [1, 3]] -= off_y
+                gt_boxes = (coords / r).astype(np.float32)
+            else:
+                sx = self._actual_imgsz / orig_w
+                sy = self._actual_imgsz / orig_h
+                gt = vgt[:, :4].copy()
+                gt[:, [0, 2]] /= sx  # x1, x2
+                gt[:, [1, 3]] /= sy  # y1, y2
+                gt_boxes = gt.astype(np.float32)
+            gt_classes = np.clip(vgt[:, 4].astype(int), 0, self.nc - 1)
+        else:
+            # YOLO [cls, cx_norm, cy_norm, w_norm, h_norm]
+            valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
+            vgt = arr[valid]
+            if len(vgt) == 0:
+                return np.zeros((0, 4), np.float32), np.zeros(0, int)
+            cx = vgt[:, 1] * orig_w
+            cy = vgt[:, 2] * orig_h
+            bw = vgt[:, 3] * orig_w
+            bh = vgt[:, 4] * orig_h
+            gt_boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1).astype(np.float32)
+            gt_classes = np.clip(vgt[:, 0].astype(int), 0, self.nc - 1)
+
+        return gt_boxes, gt_classes
+
+    def _track_plots_data(
+        self,
+        preds: List[Dict[str, torch.Tensor]],
+        targets: torch.Tensor,
+        img_info: List,
+        img_ids: List,
+    ) -> None:
+        """Accumulate confusion-matrix entries and collect sample images."""
+        for i, pred in enumerate(preds):
+            orig_h, orig_w = img_info[i]
+
+            gt_boxes, gt_classes = self._parse_gt_boxes(targets[i], orig_h, orig_w)
+
+            # --- prediction arrays ---
+            pb = pred["boxes"].cpu().numpy() if len(pred["boxes"]) else np.zeros((0, 4), np.float32)
+            ps = pred["scores"].cpu().numpy() if len(pred["scores"]) else np.zeros(0, np.float32)
+            pc = pred["classes"].cpu().numpy().astype(int) if len(pred["classes"]) else np.zeros(0, int)
+
+            # Confusion matrix
+            if self._confusion_matrix is not None:
+                self._confusion_matrix.process_image(pb, pc, ps, gt_boxes, gt_classes)
+
+            # Sample images (first _N_VAL_SAMPLES only)
+            if len(self._val_samples) < _N_VAL_SAMPLES:
+                global_idx = self.seen + i
+                img_path = self._resolve_img_path(
+                    self.dataloader.dataset, global_idx, img_ids[i]
+                )
+                pm = None
+                masks_t = pred.get("masks")
+                if masks_t is not None and len(masks_t) > 0:
+                    pm = masks_t.cpu().numpy()
+                self._val_samples.append({
+                    "img_path": img_path,
+                    "img_id": img_ids[i],
+                    "gt_boxes": gt_boxes,
+                    "gt_classes": gt_classes,
+                    "pred_boxes": pb,
+                    "pred_classes": pc,
+                    "pred_scores": ps,
+                    "pred_masks": pm,
+                })
+
+    def _save_plots(self, metrics: Dict[str, float]) -> None:
+        from .val_plotter import ValPlotter  # noqa: PLC0415
+
+        plots_dir = self.save_dir / "plots"
+        _raw = self.class_names or []
+        names = [_raw[i] if i < len(_raw) else str(i) for i in range(self.nc)]
+
+        def _safe(fn, *args, **kwargs):
+            try:
+                fn(*args, **kwargs)
+            except Exception as exc:
+                logger.warning("Plot failed (%s): %s", fn.__name__, exc)
+
+        last_eval = getattr(self.coco_evaluator, "_last_coco_eval", None)
+
+        # Box metrics bar chart — for segmentation only include (B) keys
+        if self.task == "segment":
+            bm = {
+                k.replace("(B)", ""): v
+                for k, v in metrics.items()
+                if "(B)" in k and not k.startswith("speed/")
+            }
+        else:
+            bm = {k: v for k, v in metrics.items() if not k.startswith("speed/")}
+
+        # Inject per-IoU-threshold P/R; fallback to aggregate P/R when unavailable
+        bm["p50-95"] = bm.get("metrics/precision", 0.0)
+        bm["r50-95"] = bm.get("metrics/recall", 0.0)
+        if last_eval is not None and getattr(last_eval, "eval", None):
+            prec_arr = last_eval.eval.get("precision")   # (T, R, K, A, M)
+            rec_arr  = last_eval.eval.get("recall")       # (T, K, A, M)
+            if prec_arr is not None:
+                def _mp(t, _pa=prec_arr):
+                    p = _pa[t, :, :, 0, -1]
+                    v = p[p > -1]
+                    return float(v.mean()) if len(v) else 0.0
+                bm["p50-95"] = float(np.mean([_mp(t) for t in range(prec_arr.shape[0])]))
+                bm["p50"]    = _mp(0)
+                bm["p75"]    = _mp(5)  # IoU thresholds: [.50,.55,.60,.65,.70,.75,...]; index 5 = 0.75
+            if rec_arr is not None:
+                def _mr(t, _ra=rec_arr):
+                    r = _ra[t, :, 0, -1]
+                    v = r[r > -1]
+                    return float(v.mean()) if len(v) else 0.0
+                bm["r50-95"] = float(np.mean([_mr(t) for t in range(rec_arr.shape[0])]))
+                bm["r50"]    = _mr(0)
+                bm["r75"]    = _mr(5)  # index 5 = IoU 0.75
+
+        if bm:
+            _safe(ValPlotter.plot_metrics_bar, bm, plots_dir / "box_metrics.png",
+                  title="Box Metrics")
+
+        # Per-class box AP and Recall (sorted desc)
+        if last_eval is not None:
+            _safe(ValPlotter.plot_per_class_ap, last_eval, names,
+                  plots_dir / "per_class_ap_box.png", "Box")
+            _safe(ValPlotter.plot_per_class_recall, last_eval, names,
+                  plots_dir / "per_class_recall_box.png", "Box")
+
+        # PR / P-conf / R-conf curves
+        if last_eval is not None:
+            _safe(ValPlotter.plot_pr_curves, last_eval, names, plots_dir, "box")
+
+        # Confusion matrix
+        if self._confusion_matrix is not None:
+            _safe(ValPlotter.plot_confusion_matrix,
+                  self._confusion_matrix.matrix, names,
+                  plots_dir / "confusion_matrix.png")
+
+        # Sample images → plots/samples/
+        if self._val_samples:
+            try:
+                import cv2  # noqa: PLC0415
+            except ImportError:
+                logger.warning("opencv-python not found — skipping sample image plots")
+                return
+            samples_dir = plots_dir / "samples"
+            for idx, sample in enumerate(self._val_samples):
+                if sample["img_path"] is None:
+                    continue
+                img_bgr = cv2.imread(str(sample["img_path"]))
+                if img_bgr is None:
+                    continue
+                _safe(
+                    ValPlotter.plot_val_sample,
+                    img_bgr,
+                    sample["gt_boxes"],
+                    sample["gt_classes"],
+                    sample["pred_boxes"],
+                    sample["pred_classes"],
+                    sample["pred_scores"],
+                    self.class_names,
+                    samples_dir / f"val_sample_{idx:02d}.jpg",
+                    sample.get("pred_masks"),
+                    self._get_gt_masks_for_sample(sample, img_bgr),
+                )
+
+    def _get_gt_masks_for_sample(
+        self, sample: Dict, img_bgr: np.ndarray
+    ) -> Optional[np.ndarray]:
+        return None
+
     def _compute_metrics(self) -> Dict[str, float]:
         if self.config.verbose:
             logger.info("Computing COCO metrics...")
@@ -651,6 +902,46 @@ class SegmentationValidator(DetectionValidator):
     def _coco_api_kwargs(self) -> Dict[str, Any]:
         return {"load_segments": True}
 
+    def _get_gt_masks_for_sample(
+        self, sample: Dict, img_bgr: np.ndarray
+    ) -> Optional[np.ndarray]:
+        """Fetch GT segmentation masks from the COCO API for a sample image."""
+        img_id = sample.get("img_id")
+        coco_gt = getattr(self.coco_evaluator, "coco_gt", None)
+        if img_id is None or coco_gt is None:
+            return None
+        try:
+            from pycocotools import mask as mask_utils  # noqa: PLC0415
+            ann_ids = coco_gt.getAnnIds(imgIds=[int(img_id)], iscrowd=False)
+            anns = coco_gt.loadAnns(ann_ids)
+            if not anns:
+                return None
+            im_info = coco_gt.loadImgs(int(img_id))[0]
+            orig_h, orig_w = im_info["height"], im_info["width"]
+            masks = []
+            for ann in anns:
+                seg = ann.get("segmentation")
+                if not seg:
+                    continue
+                if isinstance(seg, list):
+                    rle = mask_utils.frPyObjects(seg, orig_h, orig_w)
+                    rle = mask_utils.merge(rle)
+                else:
+                    rle = seg
+                m = mask_utils.decode(rle).astype(bool)
+                # Resize to the loaded image's dimensions if they differ
+                h, w = img_bgr.shape[:2]
+                if m.shape != (h, w):
+                    import cv2  # noqa: PLC0415
+                    m = cv2.resize(
+                        m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST
+                    ).astype(bool)
+                masks.append(m)
+            return np.stack(masks) if masks else None
+        except Exception as exc:
+            logger.debug("GT mask fetch failed for img_id=%s: %s", img_id, exc)
+            return None
+
     def _init_metrics(self) -> None:
         from libreyolo.validation import COCOEvaluator
 
@@ -669,14 +960,78 @@ class SegmentationValidator(DetectionValidator):
         img_info: List,
         img_ids: List | None = None,
     ) -> None:
+        # super() updates bbox_evaluator (== self.coco_evaluator) + tracks plots data
+        super()._update_metrics(preds, targets, img_info, img_ids)
         if img_ids is None:
-            raise RuntimeError(
-                "img_ids are required for COCO evaluation but were not provided "
-                "by the dataloader."
-            )
+            return
         for i in range(len(preds)):
-            self.bbox_evaluator.update(preds[i], img_ids[i])
             self.mask_evaluator.update(preds[i], img_ids[i])
+
+    def _save_plots(self, metrics: Dict[str, float]) -> None:
+        from .val_plotter import ValPlotter  # noqa: PLC0415
+
+        super()._save_plots(metrics)  # box metrics, CM, PR curves, sample images
+
+        plots_dir = self.save_dir / "plots"
+        _raw = self.class_names or []
+        names = [_raw[i] if i < len(_raw) else str(i) for i in range(self.nc)]
+
+        def _safe(fn, *args, **kwargs):
+            try:
+                fn(*args, **kwargs)
+            except Exception as exc:
+                logger.warning("Plot failed (%s): %s", fn.__name__, exc)
+
+        last_mask_eval = getattr(self.mask_evaluator, "_last_coco_eval", None)
+
+        # Mask metrics bar chart — primary (no-suffix) keys are mask metrics;
+        # precision/recall only exist with (M) suffix so merge both.
+        mm: Dict[str, float] = {}
+        for k, v in metrics.items():
+            if k.startswith("speed/") or "(B)" in k:
+                continue
+            if "(M)" in k:
+                mm[k.replace("(M)", "")] = v
+            else:
+                mm[k] = v
+
+        # Inject per-IoU P/R for mask metrics
+        mm["p50-95"] = mm.get("metrics/precision", 0.0)
+        mm["r50-95"] = mm.get("metrics/recall", 0.0)
+        if last_mask_eval is not None and getattr(last_mask_eval, "eval", None):
+            prec_arr = last_mask_eval.eval.get("precision")
+            rec_arr  = last_mask_eval.eval.get("recall")
+            if prec_arr is not None:
+                def _mmp(t, _pa=prec_arr):
+                    p = _pa[t, :, :, 0, -1]
+                    v = p[p > -1]
+                    return float(v.mean()) if len(v) else 0.0
+                mm["p50-95"] = float(np.mean([_mmp(t) for t in range(prec_arr.shape[0])]))
+                mm["p50"]    = _mmp(0)
+                mm["p75"]    = _mmp(5)  # IoU thresholds: [.50,.55,...,.75,...]; index 5 = 0.75
+            if rec_arr is not None:
+                def _mmr(t, _ra=rec_arr):
+                    r = _ra[t, :, 0, -1]
+                    v = r[r > -1]
+                    return float(v.mean()) if len(v) else 0.0
+                mm["r50-95"] = float(np.mean([_mmr(t) for t in range(rec_arr.shape[0])]))
+                mm["r50"]    = _mmr(0)
+                mm["r75"]    = _mmr(5)  # index 5 = IoU 0.75
+
+        if mm:
+            _safe(ValPlotter.plot_metrics_bar, mm, plots_dir / "mask_metrics.png",
+                  title="Mask Metrics")
+
+        # Per-class mask AP and Recall (sorted desc)
+        if last_mask_eval is not None:
+            _safe(ValPlotter.plot_per_class_ap, last_mask_eval, names,
+                  plots_dir / "per_class_ap_mask.png", "Mask")
+            _safe(ValPlotter.plot_per_class_recall, last_mask_eval, names,
+                  plots_dir / "per_class_recall_mask.png", "Mask")
+
+        # PR / P-conf / R-conf curves for masks
+        if last_mask_eval is not None:
+            _safe(ValPlotter.plot_pr_curves, last_mask_eval, names, plots_dir, "mask")
 
     def _compute_metrics(self) -> Dict[str, float]:
         if self.config.verbose:

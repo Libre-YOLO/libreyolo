@@ -12,7 +12,18 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Dict, Generator, List, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
 import torch
 import torch.nn as nn
@@ -30,6 +41,7 @@ from ...training.config import TrainConfig, load_train_cfg
 from ...utils.general import COCO_CLASSES
 from ...utils.image_loader import ImageInput
 from ...utils.logging import ensure_default_logging
+from ...utils.model_info import build_model_info, format_model_info
 from ...utils.results import Results
 from ...utils.serialization import (
     REQUIRED_CHECKPOINT_METADATA_KEYS,
@@ -92,6 +104,7 @@ class BaseModel(ABC):
         INPUT_SIZES: Mapping of size code to input resolution.
         TRAIN_CONFIG: TrainConfig subclass with family-specific defaults.
         val_preprocessor_class: Preprocessor class for validation.
+        validator_class: Override the validator used by val(); defaults to task-based dispatch.
     """
 
     # Class-level model metadata — subclasses override these
@@ -101,9 +114,20 @@ class BaseModel(ABC):
     INPUT_SIZES: ClassVar[dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
+    # When True, the task suffix is mandatory in weight filenames (e.g. a
+    # classify-only family requires ``-cls``); detect families leave it optional.
+    REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
     TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {}
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
+    validator_class: ClassVar[Optional[type]] = None
+    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
+
+    # Batched-predict policy: True when ``_preprocess`` yields stackable
+    # (1, C, H, W) tensors and every tensor in the ``_forward`` output keeps
+    # a leading batch dim (the contract batched validation already relies
+    # on). Set False where that does not hold (e.g. generative VLMs).
+    SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = True
 
     # TTA policy — subclasses may override
     TTA_ENABLED: ClassVar[bool] = True
@@ -163,6 +187,10 @@ class BaseModel(ABC):
             else:
                 self.device = torch.device("cpu")
         else:
+            if isinstance(device, int):
+                device = f"cuda:{device}"
+            if isinstance(device, str) and device.isdigit():
+                device = f"cuda:{device}"
             self.device = torch.device(device)
 
         self.size = size
@@ -194,7 +222,9 @@ class BaseModel(ABC):
             self.model_path = None
         elif isinstance(model_path, dict):
             self.model_path = None
-            self.model.load_state_dict(model_path, strict=self._strict_loading())
+            state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
+            self._validate_loaded_state_dict_for_task(state_dict, model_path)
+            self.model.load_state_dict(state_dict, strict=self._strict_loading())
         else:
             self.model_path = model_path
 
@@ -310,6 +340,29 @@ class BaseModel(ABC):
         """
         return state_dict
 
+    def _adapt_checkpoint_num_classes(
+        self,
+        ckpt_nc: int | None,
+        checkpoint_task: str | None = None,
+    ) -> int | None:
+        """Return the class count to use when adapting checkpoint weights."""
+        return ckpt_nc
+
+    def _filter_incoming_state_dict(
+        self,
+        state_dict: dict,
+        *,
+        loaded: dict | None = None,
+        checkpoint_task: str | None = None,
+    ) -> dict:
+        """Filter checkpoint tensors before loading.
+
+        Families can override this when a permitted cross-task load keeps the
+        reusable backbone/neck tensors but drops incompatible task-specific
+        heads.
+        """
+        return state_dict
+
     def _rebuild_for_new_classes(self, new_nb_classes: int):
         """Rebuild model with a new class count, preserving weights where shapes match."""
         old_state = self.model.state_dict()
@@ -332,6 +385,18 @@ class BaseModel(ABC):
         self.model.load_state_dict(new_state)
         self.model.to(self.device)
 
+    def _rebuild_for_checkpoint_classes(self, new_nb_classes: int, state_dict: dict):
+        """Rebuild for checkpoint class count before loading its state dict."""
+        self._rebuild_for_new_classes(new_nb_classes)
+
+    def _validate_loaded_state_dict_for_task(
+        self,
+        state_dict: dict,
+        checkpoint: dict | None = None,
+    ) -> None:
+        """Validate task-specific state-dict shape before non-strict loading."""
+        return None
+
     @classmethod
     def _filename_regex(cls) -> Optional[re.Pattern]:
         """Compile regex for matching weight filenames with optional task suffix."""
@@ -345,10 +410,15 @@ class BaseModel(ABC):
         prefix = cls.FILENAME_PREFIX.lower()
         ext = re.escape(cls.WEIGHT_EXT)
         suffixes = task_suffix_pattern(cls.SUPPORTED_TASKS)
-        suffix_group = rf"(?P<task>{suffixes})?" if suffixes else ""
-        return re.compile(
-            rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}"
-        )
+        if suffixes:
+            # Families with no suffixless (detect) task can require the task
+            # suffix so that e.g. ``LibreResNet50.pt`` is not accepted as a
+            # classify checkpoint -- only ``LibreResNet50-cls.pt`` is canonical.
+            optional = "" if getattr(cls, "REQUIRE_TASK_SUFFIX", False) else "?"
+            suffix_group = rf"(?P<task>{suffixes}){optional}"
+        else:
+            suffix_group = ""
+        return re.compile(rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}")
 
     @classmethod
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
@@ -372,6 +442,23 @@ class BaseModel(ABC):
         return None
 
     @classmethod
+    def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
+        """Return this family's native tensor dict for a recognized upstream layout.
+
+        Called by :mod:`libreyolo.models.autoconvert` on metadata-less
+        checkpoints. The default claims layouts whose keys already match the
+        native port (``can_load``). Families whose upstream key naming differs
+        from the native port override this with a remap, and return ``None``
+        for layouts they do not recognize.
+        """
+        return dict(state_dict) if cls.can_load(state_dict) else None
+
+    @classmethod
+    def detect_checkpoint_task(cls, state_dict: dict) -> Optional[str]:
+        """Infer the task from task-specific head keys, or ``None`` if unknown."""
+        return None
+
+    @classmethod
     def get_download_url(cls, filename: str) -> Optional[str]:
         """Return the Hugging Face download URL for the given weight filename."""
         size = cls.detect_size_from_filename(filename)
@@ -382,6 +469,28 @@ class BaseModel(ABC):
         suffix = f"-{task_suffix}" if task_suffix else ""
         name = f"{cls.FILENAME_PREFIX}{size}{suffix}"
         return f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
+
+    @classmethod
+    def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
+        """Return an optional warning shown before auto-downloading weights."""
+        if Path(filename).name.lower() not in cls.EXPERIMENTAL_WEIGHT_FILENAMES:
+            return None
+        return (
+            f"{Path(filename).name} is an EXTREMELY experimental preview checkpoint. "
+            "It is provided for early pose-estimation testing and may change without "
+            "compatibility guarantees."
+        )
+
+    @classmethod
+    def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
+        """Verify a freshly auto-downloaded weight file before it is loaded.
+
+        Hook called by ``download_weights`` after a successful download. The
+        default trusts LibreYOLO's own Hugging Face mirror and does nothing;
+        families that fetch third-party objects (e.g. YOLO-NAS from Deci's CDN)
+        override this to checksum-pin the download and fail closed on mismatch.
+        """
+        return None
 
     def _get_val_preprocessor(self, img_size: int | None = None):
         """Return the validation preprocessor for this model."""
@@ -465,7 +574,9 @@ class BaseModel(ABC):
                 else:
                     state_dict = loaded
 
-                state_dict = self._strip_ddp_prefix(state_dict)
+                state_dict = self._prepare_state_dict(
+                    self._strip_ddp_prefix(state_dict)
+                )
 
                 # Reject cross-family loading
                 own_family = self._get_model_name()
@@ -477,10 +588,13 @@ class BaseModel(ABC):
                         f"Use the correct model class for this checkpoint."
                     )
 
+                normalized_ckpt_task = None
                 ckpt_task = loaded.get("task")
                 if ckpt_task is not None:
                     normalized_ckpt_task = normalize_task(ckpt_task)
-                    if normalized_ckpt_task != self.task:
+                    if normalized_ckpt_task != self.task and not self._allow_checkpoint_task_mismatch(
+                        normalized_ckpt_task
+                    ):
                         raise RuntimeError(
                             f"Checkpoint was trained for task='{normalized_ckpt_task}' "
                             f"but this model was initialized for task='{self.task}'. "
@@ -498,20 +612,36 @@ class BaseModel(ABC):
                 if ckpt_nc is None and hasattr(self, "detect_nb_classes"):
                     ckpt_nc = self.detect_nb_classes(state_dict)
 
+                ckpt_nc = self._adapt_checkpoint_num_classes(
+                    ckpt_nc,
+                    normalized_ckpt_task,
+                )
+                state_dict = self._filter_incoming_state_dict(
+                    state_dict,
+                    loaded=loaded,
+                    checkpoint_task=normalized_ckpt_task,
+                )
+
                 if ckpt_nc is not None and ckpt_nc != self.nb_classes:
-                    self._rebuild_for_new_classes(ckpt_nc)
+                    self._rebuild_for_checkpoint_classes(ckpt_nc, state_dict)
 
                 effective_nc = ckpt_nc if ckpt_nc is not None else self.nb_classes
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
+                self._validate_loaded_state_dict_for_task(state_dict, loaded)
             else:
-                state_dict = loaded
+                state_dict = self._prepare_state_dict(loaded)
 
             self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self.model.to(self.device).eval()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load model weights from {model_path}: {e}"
             ) from e
+
+    def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
+        """Return whether a family permits loading a checkpoint from another task."""
+        return False
 
     # =========================================================================
     # Public API
@@ -520,6 +650,21 @@ class BaseModel(ABC):
     def get_available_layer_names(self) -> List[str]:
         """Get list of available layer names."""
         return sorted(self._get_available_layers().keys())
+
+    def info(self, detailed: bool = False, verbose: bool = True) -> Dict[str, Any]:
+        """Return model metadata and lightweight architecture counts.
+
+        Args:
+            detailed: Include per-parameter rows.
+            verbose: Log a human-readable summary.
+
+        Returns:
+            JSON-friendly model information dictionary.
+        """
+        data = build_model_info(self, detailed=detailed)
+        if verbose:
+            logger.info(format_model_info(data))
+        return data
 
     @property
     def _runner(self):
@@ -539,7 +684,7 @@ class BaseModel(ABC):
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """Alias for __call__ method."""
         return self(*args, **kwargs)
-    
+
     def _predict_augment(
         self,
         image,
@@ -556,6 +701,32 @@ class BaseModel(ABC):
         Scales are read from TTA_SCALES (class variable); each scale x 2 flips
         = one batch of passes. TTA_FIXED_SIZE models always use flip-only.
         """
+        if getattr(self, "task", "detect") == "obb":
+            raise ValueError(
+                "Test-time augmentation does not support oriented boxes yet. "
+                "Use augment=False for OBB models."
+            )
+        if getattr(self, "task", "detect") == "pose":
+            raise ValueError(
+                "Test-time augmentation does not support pose keypoints yet. "
+                "Use augment=False for pose models."
+            )
+        if getattr(self, "task", "detect") == "point":
+            raise ValueError(
+                "Test-time augmentation does not support point-task models yet. "
+                "Use augment=False for point models."
+            )
+        if getattr(self, "task", "detect") == "semantic":
+            raise ValueError(
+                "Test-time augmentation does not support semantic segmentation yet. "
+                "Use augment=False for semantic models."
+            )
+        if getattr(self, "task", "detect") == "depth":
+            raise ValueError(
+                "Test-time augmentation does not support depth estimation yet. "
+                "Use augment=False for depth models."
+            )
+
         from PIL import Image as PILImage
         from ...utils.image_loader import ImageLoader
 
@@ -576,7 +747,11 @@ class BaseModel(ABC):
                     PILImage.Resampling.BILINEAR,
                 )
             for is_flipped in (False, True):
-                src = scaled.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT) if is_flipped else scaled
+                src = (
+                    scaled.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT)
+                    if is_flipped
+                    else scaled
+                )
                 tensor, _, orig_size, ratio = self._preprocess(
                     src, color_format, input_size=effective_imgsz
                 )
@@ -587,7 +762,38 @@ class BaseModel(ABC):
                 )
                 aug_dets.append((det, orig_size, is_flipped, scale))
 
+        if getattr(self, "task", "detect") == "classify":
+            return self._merge_classify_tta(aug_dets, image_path, (orig_w, orig_h))
+
         return self._merge_tta(aug_dets, iou, image_path, (orig_w, orig_h), classes)
+
+    def _merge_classify_tta(
+        self,
+        aug_dets: list,
+        image_path,
+        original_size: Tuple[int, int],
+    ) -> Results:
+        """Merge classification TTA by averaging probability vectors."""
+        from ...utils.results import Probs, Results
+
+        probs = [
+            torch.as_tensor(det["probs"], dtype=torch.float32)
+            for det, _, _, _ in aug_dets
+            if "probs" in det
+        ]
+        avg_probs = (
+            torch.stack(probs, dim=0).mean(dim=0)
+            if probs
+            else torch.zeros(0, dtype=torch.float32)
+        )
+        orig_w, orig_h = original_size
+        return Results(
+            boxes=None,
+            orig_shape=(orig_h, orig_w),
+            path=str(image_path) if image_path else None,
+            names=self.names,
+            probs=Probs(avg_probs),
+        )
 
     def _merge_tta(
         self,
@@ -719,7 +925,6 @@ class BaseModel(ABC):
             masks=masks_obj,
         )
 
-
     def track(
         self,
         source: str | Path,
@@ -733,22 +938,28 @@ class BaseModel(ABC):
         show: bool = False,
         vid_stride: int = 1,
         output_path: Optional[str] = None,
+        tracker: str = "bytetrack",
         tracker_config=None,
         augment: bool = False,
         **tracker_kwargs,
     ) -> Generator[Results, None, None]:
         """Track objects across video frames.
 
-        Runs detection on each frame and associates detections across time
-        using the ByteTrack algorithm. Yields one Results per frame with
-        ``track_id`` set.
+        Runs detection on each frame and associates detections across time.
+        Two motion-based trackers are available via ``tracker``: ByteTrack
+        (default) and OC-SORT, which is more robust to occlusion and
+        non-linear motion. Yields one Results per frame with ``track_id`` set.
 
         Args:
             source: Path to a video file.
             track_conf: Confidence threshold for the tracker's first
-                association stage (``track_high_thresh``). The detector
-                runs at the lower ``track_low_thresh`` internally so
-                ByteTrack can use low-confidence detections for recovery.
+                association stage — ``track_high_thresh`` for ByteTrack,
+                ``det_thresh`` for OC-SORT. The detector runs at a lower
+                threshold internally so low-confidence detections remain
+                available for recovery. For ByteTrack it must be >=
+                ``track_low_thresh`` (default 0.1). Ignored when *tracker_config*
+                is given, or when the matching key is passed explicitly in
+                ``tracker_kwargs``.
             iou: IoU threshold for NMS during detection.
             imgsz: Override input image size.
             classes: Filter to specific class IDs.
@@ -758,27 +969,77 @@ class BaseModel(ABC):
             vid_stride: Process every N-th frame.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4``.
-            tracker_config: A ``TrackConfig`` instance, or None to build
-                one from **tracker_kwargs.
-            **tracker_kwargs: Forwarded to ``TrackConfig.from_kwargs``.
+            tracker: Which tracker to use: ``"bytetrack"`` or ``"ocsort"``.
+                Ignored when *tracker_config* is given (the config type
+                selects the tracker).
+            tracker_config: A ``TrackConfig`` (ByteTrack) or ``OCSortConfig``
+                (OC-SORT) instance, or None to build one from **tracker_kwargs.
+            **tracker_kwargs: Forwarded to the selected tracker's
+                ``from_kwargs`` (``TrackConfig`` or ``OCSortConfig``).
 
         Yields:
             Results with ``track_id`` attribute set as an (N,) int tensor.
         """
-        from ...tracking import ByteTracker, TrackConfig
+        task = getattr(self, "task", "detect")
+        if task == "classify":
+            raise NotImplementedError(
+                "Tracking does not support classification models. Use predict()."
+            )
+        if task == "obb":
+            raise NotImplementedError(
+                "Tracking does not support oriented boxes yet. "
+                "Use predict() for OBB models."
+            )
+        if task == "point":
+            raise NotImplementedError(
+                "Tracking does not support point results yet. "
+                "Use predict() for point models."
+            )
+        if task == "depth":
+            raise NotImplementedError(
+                "Tracking does not support depth maps yet. "
+                "Use predict() for depth models."
+            )
+
+        from ...tracking import (
+            ByteTracker,
+            OCSortConfig,
+            OCSortTracker,
+            TrackConfig,
+        )
         from ...utils.drawing import draw_boxes, draw_masks
         from ...utils.video import run_video_inference
 
-        if tracker_config is None:
-            tracker_config = TrackConfig.from_kwargs(**tracker_kwargs)
+        # A provided config picks the tracker; otherwise honour the selector.
+        if isinstance(tracker_config, OCSortConfig):
+            tracker = "ocsort"
+        elif isinstance(tracker_config, TrackConfig):
+            tracker = "bytetrack"
+        tracker = (tracker or "bytetrack").lower()
+
+        if tracker == "ocsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("det_thresh", track_conf)
+                tracker_config = OCSortConfig.from_kwargs(**tracker_kwargs)
+            # OC-SORT consumes low-score detections (>0.1) for recovery.
+            effective_conf = min(0.1, tracker_config.det_thresh)
+            tracker_obj = OCSortTracker(config=tracker_config)
+        elif tracker == "bytetrack":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("track_high_thresh", track_conf)
+                tracker_config = TrackConfig.from_kwargs(**tracker_kwargs)
+            # ByteTrack needs to see low-confidence detections.
+            effective_conf = tracker_config.track_low_thresh
+            tracker_obj = ByteTracker(config=tracker_config)
+        else:
+            raise ValueError(
+                f"Unknown tracker {tracker!r}; choose 'bytetrack' or 'ocsort'."
+            )
 
         source = Path(source)
         if not source.exists():
             raise FileNotFoundError(f"Video file not found: {source}")
 
-        # ByteTrack needs to see low-confidence detections.
-        effective_conf = tracker_config.track_low_thresh
-        tracker = ByteTracker(config=tracker_config)
         model_names = self.names
 
         def predict_and_track(pil_img):
@@ -791,7 +1052,7 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
-            return tracker.update(result)
+            return tracker_obj.update(result)
 
         def annotate_tracked(pil_img, result):
             if len(result) == 0:
@@ -839,7 +1100,7 @@ class BaseModel(ABC):
 
         Args:
             format: Target format ("onnx", "torchscript", "tensorrt",
-                "openvino", "ncnn").
+                "openvino", "ncnn", "tflite").
             **kwargs: Format-specific parameters forwarded to the exporter.
 
         Returns:
@@ -863,6 +1124,8 @@ class BaseModel(ABC):
         augment: bool = False,
         save_json: bool = False,
         verbose: bool = True,
+        *,
+        plots: bool | None = None,
         **kwargs,
     ) -> Dict:
         """Run validation on a dataset.
@@ -878,6 +1141,7 @@ class BaseModel(ABC):
             device: Device to use (default: same as model).
             split: Dataset split ("val", "test").
             save_json: Save predictions in COCO JSON format.
+            plots: Alias for save_plots.
             verbose: Print detailed metrics.
 
         Returns:
@@ -885,14 +1149,46 @@ class BaseModel(ABC):
             metrics/mAP50, metrics/mAP50-95.
         """
         from libreyolo.validation import (
+            ClassifyValidator,
+            DepthValidator,
             DetectionValidator,
+            OBBValidator,
+            PointValidator,
             PoseValidator,
             SegmentationValidator,
+            SemanticValidator,
             ValidationConfig,
         )
 
         if imgsz is None:
             imgsz = self._get_input_size()
+        if plots is not None and "save_plots" not in kwargs:
+            kwargs["save_plots"] = plots
+        if augment and self.task == "obb":
+            raise ValueError(
+                "Augmented validation does not support oriented boxes yet. "
+                "Use augment=False for OBB models."
+            )
+        if augment and self.task == "pose":
+            raise ValueError(
+                "Augmented validation does not support pose keypoints yet. "
+                "Use augment=False for pose models."
+            )
+        if augment and self.task == "point":
+            raise ValueError(
+                "Augmented validation does not support point-task models yet. "
+                "Use augment=False for point models."
+            )
+        if augment and self.task == "semantic":
+            raise ValueError(
+                "Augmented validation does not support semantic segmentation "
+                "yet. Use augment=False for semantic models."
+            )
+        if augment and self.task == "depth":
+            raise ValueError(
+                "Augmented validation does not support depth estimation yet. "
+                "Use augment=False for depth models."
+            )
 
         config = ValidationConfig(
             data=data,
@@ -916,10 +1212,22 @@ class BaseModel(ABC):
                 "is out of scope for LibreYOLO. Evaluate upstream at "
                 "https://github.com/Ahmednull/L2CS-Net."
             )
-        if self.task == "pose":
+        if self.validator_class is not None:
+            validator_cls = self.validator_class
+        elif self.task == "pose":
             validator_cls = PoseValidator
+        elif self.task == "point":
+            validator_cls = PointValidator
         elif self.task == "segment":
             validator_cls = SegmentationValidator
+        elif self.task == "semantic":
+            validator_cls = SemanticValidator
+        elif self.task == "depth":
+            validator_cls = DepthValidator
+        elif self.task == "classify":
+            validator_cls = ClassifyValidator
+        elif self.task == "obb":
+            validator_cls = OBBValidator
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)

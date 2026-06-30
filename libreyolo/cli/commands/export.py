@@ -18,14 +18,22 @@ from ..output import OutputHandler
 def export_cmd(
     model: str = typer.Option(..., help="Model weights (.pt)"),
     format: str = typer.Option(
-        "onnx", help="Export format: onnx, torchscript, tensorrt, openvino, ncnn"
+        "onnx",
+        help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite, coreml",
     ),
-    imgsz: Optional[int] = typer.Option(None, help="Input image size"),
+    imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
     dynamic: bool = typer.Option(False, help="Dynamic input shapes (ONNX)"),
     simplify: bool = typer.Option(True, help="ONNX graph simplification"),
+    nms: bool = typer.Option(
+        False,
+        help="Embed NMS in the model (ONNX YOLO9 detection or CoreML)",
+    ),
+    conf: float = typer.Option(0.25, help="Confidence threshold for embedded NMS"),
+    iou: float = typer.Option(0.45, help="IoU threshold for embedded NMS"),
+    max_det: int = typer.Option(300, help="Maximum detections for ONNX embedded NMS"),
     opset: Optional[int] = typer.Option(
         None, help="ONNX opset version (auto if omitted)"
     ),
@@ -57,13 +65,26 @@ def export_cmd(
     if fmt == "engine":
         fmt = "tensorrt"
 
-    # Validate precision conflict
     if half and int8:
+        out.warning("Both half and int8 were requested. Using INT8 precision.")
+        half = False
+
+    if nms and fmt not in {"onnx", "coreml"}:
         exit_with_error(
             out,
-            "config_conflict",
-            "Cannot use both half (FP16) and int8 simultaneously.",
-            suggestion="Choose one: half or int8",
+            "nms_unsupported_format",
+            "Embedded NMS (--nms) is only supported for ONNX and CoreML, "
+            f"not {fmt!r}.",
+        )
+    if nms and fmt == "onnx" and dynamic:
+        out.warning("Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False.")
+        dynamic = False
+    if nms and fmt == "coreml" and max_det != 300:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "max_det is only supported for ONNX embedded NMS; CoreML embedded "
+            "NMS does not expose max_det.",
         )
 
     model_path = resolve_model_or_exit(out, model)
@@ -89,10 +110,29 @@ def export_cmd(
         "device": device,
         "verbose": verbose,
     }
+    if nms:
+        export_kwargs["nms"] = True
+        export_kwargs["conf"] = conf
+        export_kwargs["iou"] = iou
+        if fmt == "onnx":
+            export_kwargs["max_det"] = max_det
     if imgsz is not None:
-        export_kwargs["imgsz"] = imgsz
+        if "," in imgsz:
+            parts = imgsz.split(",")
+            if len(parts) != 2:
+                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.")
+            try:
+                export_kwargs["imgsz"] = (int(parts[0]), int(parts[1]))
+            except ValueError:
+                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz values: {imgsz}. Use integer dimensions.")
+        else:
+            try:
+                export_kwargs["imgsz"] = int(imgsz)
+            except ValueError:
+                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
     if data is not None:
         export_kwargs["data"] = data
+    if data is not None or int8:
         export_kwargs["fraction"] = fraction
         export_kwargs["allow_download_scripts"] = allow_download_scripts
 
@@ -112,6 +152,8 @@ def export_cmd(
             exit_stage_error(out, stage="Export", detail=e)
     except ImportError as e:
         exit_with_error(out, "export_dep_missing", str(e))
+    except NotImplementedError as e:
+        exit_with_error(out, "format_precision_unsupported", str(e))
     except Exception as e:
         exit_stage_error(out, stage="Export", detail=e)
 
@@ -126,13 +168,18 @@ def export_cmd(
     else:
         size_mb = 0.0
 
-    input_size = (
-        loaded_model._get_input_size()
-        if hasattr(loaded_model, "_get_input_size")
-        else loaded_model.INPUT_SIZES.get(loaded_model.size, 640)
-    )
-    if imgsz is not None:
-        input_size = imgsz
+    if imgsz is not None and "," in imgsz:
+        parts = imgsz.split(",")
+        input_h, input_w = int(parts[0]), int(parts[1])
+    elif imgsz is not None:
+        input_h = input_w = int(imgsz)
+    else:
+        native = (
+            loaded_model._get_input_size()
+            if hasattr(loaded_model, "_get_input_size")
+            else loaded_model.INPUT_SIZES.get(loaded_model.size, 640)
+        )
+        input_h = input_w = native
 
     data_out = {
         "source_model": model,
@@ -140,17 +187,18 @@ def export_cmd(
         "format": fmt,
         "output_path": str(output_path),
         "file_size_mb": round(size_mb, 1),
-        "input_shape": [batch, 3, input_size, input_size],
+        "input_shape": [batch, 3, input_h, input_w],
         "dynamic": dynamic,
         "half": half,
+        "int8": int8,
     }
 
     if not json_output:
         data_out["_human_text"] = (
             f"Exported {loaded_model.FAMILY}-{loaded_model.size} to {fmt.upper()}: "
             f"{output_path} ({size_mb:.1f} MB)\n"
-            f"  Input: [{batch}, 3, {input_size}, {input_size}], "
-            f"dynamic={dynamic}, half={half}"
+            f"  Input: [{batch}, 3, {input_h}, {input_w}], "
+            f"dynamic={dynamic}, half={half}, int8={int8}"
         )
 
     out.result(data_out)

@@ -84,6 +84,10 @@ def download_weights(model_path: str, size: str):
     if url is None:
         raise ValueError(f"Could not determine download URL for '{path.name}'.")
 
+    notice = cls.get_download_notice(path.name, url)
+    if notice:
+        logger.warning(notice)
+
     logger.info(
         "Model weights not found at %s. Attempting download from %s...",
         model_path,
@@ -132,3 +136,10 @@ def download_weights(model_path: str, size: str):
         if path.exists():
             path.unlink()
         raise RuntimeError(f"Failed to download weights from {url}: {e}") from e
+
+    # Let the matched family verify the freshly downloaded file before anything
+    # loads it (e.g. checksum-pin a third-party CDN object). This runs for every
+    # download path — the LibreYOLO(...) factory and the per-family loaders all
+    # funnel through here — so the check cannot be bypassed. HF-hosted LibreYOLO
+    # weights use the trusting default and this is a no-op.
+    cls.verify_downloaded_file(str(path), url)

@@ -18,7 +18,8 @@ from libreyolo.cli.command_utils import (
     get_loaded_model_input_size,
 )
 from libreyolo.cli.parsing import KeyValueCommand
-from libreyolo.utils.results import Boxes, Masks, Results
+from libreyolo.utils.model_info import build_model_info, format_model_info
+from libreyolo.utils.results import Boxes, Masks, OBB, Results
 from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = pytest.mark.unit
@@ -61,7 +62,28 @@ def test_predict_missing_source_exits_with_data_error_code():
     assert data["error"] == "source_not_found"
 
 
-def test_export_precision_conflict_exits_with_usage_error_code():
+def test_export_precision_conflict_lets_int8_win(monkeypatch, tmp_path):
+    captured = {}
+
+    class _ExportModel:
+        FAMILY = "yolo9"
+        size = "t"
+        INPUT_SIZES = {"t": 640}
+
+        def export(self, **kwargs):
+            captured.update(kwargs)
+            out = tmp_path / "model_int8.onnx"
+            out.write_bytes(b"onnx")
+            return str(out)
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.load_model_or_exit",
+        lambda *args, **kwargs: _ExportModel(),
+    )
     app = _make_app(
         [
             ("predict", predict.predict_cmd),
@@ -81,9 +103,100 @@ def test_export_precision_conflict_exits_with_usage_error_code():
         ],
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 0
+    assert captured["half"] is False
+    assert captured["int8"] is True
+    assert captured["fraction"] == 1.0
     data = json.loads(result.stdout)
-    assert data["error"] == "config_conflict"
+    assert data["half"] is False
+    assert data["int8"] is True
+
+
+def test_export_int8_forwards_fraction_without_explicit_data(monkeypatch, tmp_path):
+    captured = {}
+
+    class _ExportModel:
+        FAMILY = "yolo9"
+        size = "t"
+        INPUT_SIZES = {"t": 640}
+
+        def export(self, **kwargs):
+            captured.update(kwargs)
+            out = tmp_path / "model_int8.onnx"
+            out.write_bytes(b"onnx")
+            return str(out)
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.load_model_or_exit",
+        lambda *args, **kwargs: _ExportModel(),
+    )
+    app = _make_app(
+        [
+            ("predict", predict.predict_cmd),
+            ("export", export.export_cmd),
+            ("info", special.info_cmd),
+        ]
+    )
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "model=yolox-s",
+            "format=onnx",
+            "int8=true",
+            "fraction=0.25",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["int8"] is True
+    assert captured["fraction"] == 0.25
+    assert captured["allow_download_scripts"] is False
+    assert "data" not in captured
+
+
+def test_export_unsupported_precision_uses_export_error_code(monkeypatch):
+    class _ExportModel:
+        def export(self, **kwargs):
+            raise NotImplementedError(
+                "ONNX INT8 export currently supports YOLO9 detection models only."
+            )
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.load_model_or_exit",
+        lambda *args, **kwargs: _ExportModel(),
+    )
+    app = _make_app(
+        [
+            ("predict", predict.predict_cmd),
+            ("export", export.export_cmd),
+            ("info", special.info_cmd),
+        ]
+    )
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "model=yolox-s",
+            "format=onnx",
+            "int8=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 5
+    data = json.loads(result.stdout)
+    assert data["error"] == "format_precision_unsupported"
+    assert "YOLO9 detection" in data["message"]
 
 
 def test_info_unknown_model_exits_with_model_error_code():
@@ -309,6 +422,124 @@ def test_val_json_reports_segmentation_metric_groups(monkeypatch):
     }
 
 
+def test_val_json_reports_obb_metric_group(monkeypatch):
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+
+    class _OBBModel:
+        FAMILY = "yolo9"
+        size = "t"
+        device = "cpu"
+
+        def val(self, **kwargs):
+            return {
+                "metrics/mAP50": 0.65,
+                "metrics/mAP50-95": 0.42,
+                "metrics/precision": 0.72,
+                "metrics/recall": 0.58,
+                "metrics/precision(OBB)": 0.72,
+                "metrics/recall(OBB)": 0.58,
+                "metrics/mAP50(OBB)": 0.65,
+                "metrics/mAP50-95(OBB)": 0.42,
+            }
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.load_model_or_exit",
+        lambda out, model, model_path, device: _OBBModel(),
+    )
+    monkeypatch.setattr(
+        "libreyolo.utils.general.increment_path",
+        lambda path, exist_ok=False, mkdir=False: Path(path),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=uav-obb.yaml",
+            "model=LibreYOLO9t-obb.pt",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "yolo9"
+    assert data["metrics"] == {
+        "mAP50": 0.65,
+        "mAP50_95": 0.42,
+        "precision": 0.72,
+        "recall": 0.58,
+    }
+    assert data["obb_metrics"] == {
+        "mAP50": 0.65,
+        "mAP50_95": 0.42,
+        "precision": 0.72,
+        "recall": 0.58,
+    }
+
+
+def test_val_json_reports_classification_metrics(monkeypatch):
+    app = _make_app([("val", val.val_cmd), ("info", special.info_cmd)])
+    captured = {}
+
+    class _ClassifyModel:
+        FAMILY = "yolo9"
+        task = "classify"
+        size = "t"
+        device = "cpu"
+
+        def val(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "metrics/accuracy_top1": 0.81234,
+                "metrics/accuracy_top5": 0.98765,
+            }
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.val.load_model_or_exit",
+        lambda out, model, model_path, device: _ClassifyModel(),
+    )
+    monkeypatch.setattr(
+        "libreyolo.utils.general.increment_path",
+        lambda path, exist_ok=False, mkdir=False: Path(path),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "val",
+            "data=imagenet10",
+            "model=LibreYOLO9t-cls.pt",
+            "imgsz=224",
+            "batch=8",
+            "workers=0",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["data"] == "imagenet10"
+    assert captured["imgsz"] == 224
+    assert captured["batch"] == 8
+    assert captured["workers"] == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "yolo9"
+    assert data["metrics"] == {
+        "accuracy_top1": 0.8123,
+        "accuracy_top5": 0.9877,
+    }
+    assert "mAP50" not in data["metrics"]
+    assert "box_metrics" not in data
+
+
 def test_export_runtime_error_includes_stage_context(failing_app):
     result = runner.invoke(
         failing_app,
@@ -352,6 +583,48 @@ def test_export_cli_leaves_opset_auto_by_default(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert captured["opset"] is None
+
+
+def test_export_cli_forwards_rectangular_imgsz(monkeypatch, tmp_path):
+    captured = {}
+
+    class _ExportModel:
+        FAMILY = "yolo9"
+        size = "t"
+        INPUT_SIZES = {"t": 640}
+
+        def export(self, **kwargs):
+            captured.update(kwargs)
+            out = tmp_path / "model.onnx"
+            out.write_bytes(b"onnx")
+            return str(out)
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.export.load_model_or_exit",
+        lambda *args, **kwargs: _ExportModel(),
+    )
+    app = _make_app([("export", export.export_cmd), ("info", special.info_cmd)])
+
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "model=yolo9-t",
+            "format=onnx",
+            "imgsz=320,640",
+            "batch=2",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["imgsz"] == (320, 640)
+    data = json.loads(result.stdout)
+    assert data["input_shape"] == [2, 3, 320, 640]
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +718,93 @@ def test_info_accepts_known_weight_filename(monkeypatch):
     assert data["model_family"] == "yolox"
 
 
+def test_info_command_uses_loaded_model_info(monkeypatch):
+    app = _make_app([("version", special.version_cmd), ("info", special.info_cmd)])
+    captured = {}
+
+    class _DummyModel:
+        def info(self, *, detailed=False, verbose=True):
+            captured["detailed"] = detailed
+            captured["verbose"] = verbose
+            return {
+                "model_family": "yolo9",
+                "size": "t",
+                "task": "detect",
+                "input_size": [640, 640],
+                "num_classes": 80,
+                "class_names": {},
+                "parameters": 123,
+                "trainable_parameters": 100,
+                "non_trainable_parameters": 23,
+                "layers": 7,
+                "device": "cpu",
+                "model_path": "weights/LibreYOLO9t.pt",
+                "details": [{"name": "head.weight", "parameters": 12}],
+            }
+
+    monkeypatch.setattr("libreyolo.LibreYOLO", lambda *args, **kwargs: _DummyModel())
+
+    result = runner.invoke(
+        app,
+        ["info", "model=LibreYOLO9t.pt", "--detailed", "--json"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert captured == {"detailed": True, "verbose": False}
+    assert data["model"] == "LibreYOLO9t.pt"
+    assert data["parameters"] == 123
+    assert data["details"][0]["name"] == "head.weight"
+
+
+def test_build_model_info_counts_torch_module_parameters():
+    class _Wrapper:
+        FAMILY = "dummy"
+        size = "n"
+        task = "detect"
+        nb_classes = 3
+        names = {0: "a", 1: "b", 2: "c"}
+        device = "cpu"
+        model_path = "dummy.pt"
+        model = torch.nn.Sequential(torch.nn.Linear(4, 2), torch.nn.ReLU())
+
+        def _get_input_size(self):
+            return 32
+
+    _Wrapper.model[0].bias.requires_grad_(False)
+
+    data = build_model_info(_Wrapper(), detailed=True)
+
+    assert data["model_family"] == "dummy"
+    assert data["input_size"] == [32, 32]
+    assert data["parameters"] == 10
+    assert data["trainable_parameters"] == 8
+    assert data["non_trainable_parameters"] == 2
+    assert data["layers"] == 2
+    assert data["details"][0]["name"] == "0.weight"
+
+
+def test_build_model_info_supports_backend_metadata_only():
+    class _BackendLike:
+        model_family = "yolo9"
+        model_size = "t"
+        task = "detect"
+        nb_classes = 80
+        names = {0: "person"}
+        imgsz = (320, 640)
+        device = "cpu"
+        model_path = "model.onnx"
+
+    data = build_model_info(_BackendLike())
+
+    assert data["model_family"] == "yolo9"
+    assert data["size"] == "t"
+    assert data["input_size"] == [320, 640]
+    assert data["parameters"] is None
+    assert data["layers"] is None
+    assert "Input size: 320x640" in format_model_info(data)
+
+
 def test_loaded_model_metadata_supports_wrappers_and_backends():
     class _Wrapper:
         FAMILY = "yolox"
@@ -455,10 +815,15 @@ def test_loaded_model_metadata_supports_wrappers_and_backends():
         model_family = "yolox"
         imgsz = 320
 
+    class _RectBackend:
+        model_family = "yolo9"
+        imgsz = (320, 640)
+
     assert get_loaded_model_family(_Wrapper()) == "yolox"
     assert get_loaded_model_input_size(_Wrapper()) == 640
     assert get_loaded_model_family(_Backend()) == "yolox"
     assert get_loaded_model_input_size(_Backend()) == 320
+    assert get_loaded_model_input_size(_RectBackend()) == (320, 640)
     assert get_loaded_model_input_size(_Wrapper(), imgsz=416) == 416
 
 
@@ -508,6 +873,51 @@ def test_predict_json_supports_exported_backend_metadata(monkeypatch):
     assert data["model_family"] == "yolox"
     assert data["image_size"] == [320, 320]
     assert data["results"][0]["detections"][0]["class"] == "person"
+
+
+def test_predict_json_reports_rectangular_backend_imgsz(monkeypatch):
+    app = _make_app([("predict", predict.predict_cmd), ("info", special.info_cmd)])
+
+    class _BackendLike:
+        model_family = "yolo9"
+        imgsz = (320, 640)
+        device = "cpu"
+
+        def __call__(self, source, **kwargs):
+            return Results(
+                boxes=Boxes(
+                    torch.zeros((0, 4)),
+                    torch.zeros((0,)),
+                    torch.zeros((0,)),
+                ),
+                orig_shape=(10, 20),
+                path=source,
+                names={},
+            )
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.predict.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.predict.load_model_or_exit",
+        lambda out, model, model_path, device: _BackendLike(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "predict",
+            "source=libreyolo/assets/parkour.jpg",
+            "model=model.onnx",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "yolo9"
+    assert data["image_size"] == [320, 640]
 
 
 def test_predict_exported_backend_does_not_receive_native_only_kwargs(monkeypatch):
@@ -627,6 +1037,64 @@ def test_predict_json_reports_segmentation_masks(monkeypatch):
         "count": 1,
         "shape": [1, 10, 20],
     }
+
+
+def test_predict_json_reports_obb_payload(monkeypatch):
+    app = _make_app([("predict", predict.predict_cmd), ("info", special.info_cmd)])
+
+    class _OBBBackendLike:
+        model_family = "yolo9"
+        imgsz = 64
+        device = "cpu"
+
+        def __call__(self, source, **kwargs):
+            boxes = Boxes(
+                torch.tensor([[8.0, 4.0, 12.0, 6.0]]),
+                torch.tensor([0.9]),
+                torch.tensor([0]),
+            )
+            obb = OBB(
+                torch.tensor([[10.0, 5.0, 4.0, 2.0, 0.0, 0.9, 0.0]]),
+                (10, 20),
+            )
+            return Results(
+                boxes=boxes,
+                obb=obb,
+                orig_shape=(10, 20),
+                path=source,
+                names={0: "vehicle"},
+            )
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.predict.resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.predict.load_model_or_exit",
+        lambda out, model, model_path, device: _OBBBackendLike(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "predict",
+            "source=libreyolo/assets/parkour.jpg",
+            "model=LibreYOLO9t-obb.onnx",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    detection = data["results"][0]["detections"][0]
+    assert detection["class"] == "vehicle"
+    assert detection["obb"]["xywhr"] == [10.0, 5.0, 4.0, 2.0, 0.0]
+    assert detection["obb"]["corners"] == [
+        [8.0, 4.0],
+        [12.0, 4.0],
+        [12.0, 6.0],
+        [8.0, 6.0],
+    ]
 
 
 @pytest.mark.parametrize(
