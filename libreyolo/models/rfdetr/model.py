@@ -1,5 +1,7 @@
 """LibreRFDETR implementation for LibreYOLO."""
 
+from libreyolo.training import TrainCallbacks
+
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -1109,7 +1111,7 @@ class LibreRFDETR(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume: str | Path | bool | None = None,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> Dict:

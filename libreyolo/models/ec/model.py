@@ -1,6 +1,7 @@
 """LibreEC — BaseModel wrapper for the EC (EdgeCrafter detection) family."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -288,7 +289,7 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

@@ -1,5 +1,7 @@
 """LibreYOLO9 inference and training wrapper."""
 
+from libreyolo.training import TrainCallbacks
+
 import logging
 import re
 from pathlib import Path
@@ -438,7 +440,7 @@ class LibreYOLO9(BaseModel):
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
         pretrained: bool | str | Path | None = None,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

@@ -9,6 +9,7 @@ Inference is bit-equivalent to upstream mmdet on the same checkpoint.
 """
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -209,7 +210,7 @@ class LibreRTMDet(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
     ) -> dict:

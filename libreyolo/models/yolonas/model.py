@@ -1,6 +1,7 @@
 """LibreYOLO YOLO-NAS wrapper (detect + pose)."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import logging
 import re
@@ -471,7 +472,7 @@ class LibreYOLONAS(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

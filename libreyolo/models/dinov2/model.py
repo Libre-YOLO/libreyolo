@@ -25,6 +25,7 @@ checkpoints are not loaded (retrain/republish as ``LibreDINOv2*-cls``).
 """
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import logging
 from pathlib import Path
@@ -581,6 +582,7 @@ class LibreDINOv2(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume=None,
+        callbacks: TrainCallbacks = None,
         **kwargs,
     ) -> Dict:
         """Fine-tune LibreDINOv2 for semantic segmentation or classification.
@@ -635,6 +637,7 @@ class LibreDINOv2(BaseModel):
             exist_ok=exist_ok,
             resume=resume,
             device=str(self.device),
+            callbacks=callbacks,
             **train_kwargs,
         )
 

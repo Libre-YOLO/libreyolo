@@ -1,6 +1,7 @@
 """LibreResNet: BaseModel subclass wiring ResNet classification into the factory."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -207,6 +208,7 @@ class LibreResNet(BaseModel):
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
+        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune the classifier on an ImageFolder-style dataset.
@@ -241,6 +243,7 @@ class LibreResNet(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
             **kwargs,
         )
 

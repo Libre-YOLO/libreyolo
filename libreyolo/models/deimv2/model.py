@@ -1,6 +1,7 @@
 """LibreDEIMv2 — BaseModel wrapper for the DEIMv2 detection family."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 from functools import partial
 import re
@@ -215,7 +216,7 @@ class LibreDEIMv2(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

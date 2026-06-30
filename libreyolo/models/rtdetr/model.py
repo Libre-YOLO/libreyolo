@@ -1,5 +1,7 @@
 """LibreRTDETR implementation for LibreYOLO."""
 
+from libreyolo.training import TrainCallbacks
+
 import os
 import re
 from pathlib import Path
@@ -489,7 +491,7 @@ class LibreRTDETR(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

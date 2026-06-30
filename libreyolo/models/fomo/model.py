@@ -1,6 +1,7 @@
 """LibreFOMO — FOMO point-localizer family wrapper."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import logging
 from pathlib import Path
@@ -182,7 +183,7 @@ class LibreFOMO(BaseModel):
         data: str,
         *,
         allow_experimental: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
     ) -> Dict:

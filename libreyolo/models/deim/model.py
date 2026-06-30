@@ -1,6 +1,7 @@
 """LibreDEIM — BaseModel wrapper for the DEIM native detection family."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -196,7 +197,7 @@ class LibreDEIM(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

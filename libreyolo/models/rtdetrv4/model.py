@@ -1,6 +1,7 @@
 """LibreRTDETRv4 — RT-DETRv4 student detectors."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -84,7 +85,7 @@ class LibreRTDETRv4(LibreDFINE):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

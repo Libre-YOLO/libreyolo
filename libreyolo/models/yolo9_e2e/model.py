@@ -11,6 +11,8 @@ Color space: RGB 0–1 (same as standard YOLOv9).
 Sizes: t / s / m / c (same backbone configs as yolo9).
 """
 
+from libreyolo.training import TrainCallbacks
+
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -186,7 +188,7 @@ class LibreYOLO9E2E(LibreYOLO9):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
         loggers=None,
         **kwargs,
     ) -> dict:

@@ -1,6 +1,7 @@
 """LibreDFINE — BaseModel wrapper for the D-FINE native detection family."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 import re
 from pathlib import Path
@@ -194,7 +195,7 @@ class LibreDFINE(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

@@ -1,6 +1,7 @@
 """LibrePICODET: BaseModel subclass wiring PICODET into the LibreYOLO factory."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -183,7 +184,7 @@ class LibrePICODET(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
         loggers=None,
         **kwargs: Any,
     ) -> dict:

@@ -1,6 +1,7 @@
 """LibreConvNeXt: BaseModel subclass wiring ConvNeXt classification into the factory."""
 
 from __future__ import annotations
+from libreyolo.training import TrainCallbacks
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -191,6 +192,7 @@ class LibreConvNeXt(BaseModel):
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
+        callbacks: TrainCallbacks = _TRAIN_DEFAULTS.callbacks,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune the classifier on an ImageFolder-style dataset.
@@ -225,6 +227,7 @@ class LibreConvNeXt(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
             **kwargs,
         )
 
