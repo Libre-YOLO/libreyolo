@@ -9,6 +9,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...data import load_data_config
 from ...tasks import normalize_task
@@ -1109,7 +1110,7 @@ class LibreRFDETR(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume: str | Path | bool | None = None,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> Dict:

@@ -5,7 +5,6 @@ import warnings
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
-
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -135,7 +134,6 @@ class TrainConfig:
     log_interval: int = 10
     seed: int = 0
     allow_download_scripts: bool = False
-
     # Profiling. When ``profile`` is True the trainer profiles a short window of
     # real training steps (``profile_warmup`` discarded, then ``profile_steps``
     # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome

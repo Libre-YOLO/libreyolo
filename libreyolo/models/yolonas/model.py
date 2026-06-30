@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
@@ -471,7 +472,7 @@ class LibreYOLONAS(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

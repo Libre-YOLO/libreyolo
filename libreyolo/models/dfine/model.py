@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import DFINEValPreprocessor
 from ..base import BaseModel
@@ -194,7 +195,7 @@ class LibreDFINE(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

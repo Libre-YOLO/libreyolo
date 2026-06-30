@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ...training.callbacks import TrainCallbacks
 from ..base.model import BaseModel
 from .nn import CONFIGS, LibreFOMOModel, detect_size_from_state_dict
 from .utils import postprocess as postprocess_fomo
@@ -182,7 +183,7 @@ class LibreFOMO(BaseModel):
         data: str,
         *,
         allow_experimental: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
     ) -> Dict:

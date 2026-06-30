@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...utils.image_loader import ImageInput
 from ...training.config import DEIMConfig
 from ...validation.preprocessors import DEIMValPreprocessor
@@ -196,7 +197,7 @@ class LibreDEIM(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

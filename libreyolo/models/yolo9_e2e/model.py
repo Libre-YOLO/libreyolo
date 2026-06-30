@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ..yolo9.model import LibreYOLO9
 from .config import YOLO9E2EConfig
 from .nn import LibreYOLO9E2EModel
@@ -186,7 +187,7 @@ class LibreYOLO9E2E(LibreYOLO9):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

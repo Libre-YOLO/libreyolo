@@ -18,6 +18,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import RTMDetConfig
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import RTMDetValPreprocessor
@@ -209,7 +210,7 @@ class LibreRTMDet(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs: Any,
     ) -> dict:
