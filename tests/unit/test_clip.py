@@ -12,6 +12,11 @@ import pytest
 import torch
 from PIL import Image
 
+# LibreCLIP's tokenizer needs the optional ``clip`` extra (ftfy + regex).
+# Skip cleanly instead of erroring when it isn't installed.
+pytest.importorskip("ftfy", reason="LibreCLIP tokenizer needs the 'clip' extra")
+pytest.importorskip("regex", reason="LibreCLIP tokenizer needs the 'clip' extra")
+
 from libreyolo.models.base.model import BaseModel
 from libreyolo.models.clip import nn as clip_nn
 from libreyolo.models.clip.model import LibreCLIP
