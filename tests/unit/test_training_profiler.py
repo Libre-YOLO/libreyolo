@@ -173,18 +173,25 @@ def test_trainstepprofiler_runs_without_trace(tmp_path):
 
 
 def test_profiler_real_timing_excludes_warmup_work(tmp_path):
+    # Use a large warmup sleep vs. a negligible active sleep so the assertion is
+    # relative to the warmup cost, not a tight absolute wall-clock budget: the
+    # "real" step time must reflect only the active steps and therefore stay well
+    # below the warmup sleep, even on slow/loaded CI runners (the previous fixed
+    # 30ms threshold flaked on macOS where sleep/scheduling jitter alone neared it).
+    warmup_sleep_s = 0.3
     prof = TrainStepProfiler(
         device=torch.device("cpu"), warmup=1, active=2, trace=False,
         open_report=False, save_dir=tmp_path, meta={"model": "t", "batch": 1},
     )
     for idx, _ in enumerate(prof.wrap_loader(range(3))):
-        time.sleep(0.05 if idx == 0 else 0.005)
+        time.sleep(warmup_sleep_s if idx == 0 else 0.001)
         prof.step()
         if prof.finished:
             break
 
     assert prof.summary is not None
-    assert prof.summary["real"]["step_ms"] < 30.0
+    # Warmup excluded -> real step time is far below the warmup sleep.
+    assert prof.summary["real"]["step_ms"] < warmup_sleep_s * 1000 / 2
 
 
 def test_analyze_trace_host_overhead_and_schema(tmp_path):
