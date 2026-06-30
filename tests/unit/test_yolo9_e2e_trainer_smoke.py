@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from libreyolo import LibreYOLO9E2E
+from libreyolo.training.callbacks import TrainEpochEvent
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +43,44 @@ def test_trainer_metadata():
     assert trainer.get_model_family() == "yolo9_e2e"
     assert trainer.get_model_tag() == "YOLOv9-E2E-t"
     assert trainer._config_class() is YOLO9E2EConfig
+
+
+def test_trainer_train_emits_epoch_callback(monkeypatch, tmp_path):
+    """Smoke the real family trainer through BaseTrainer.train()."""
+    wrapper = LibreYOLO9E2E(None, size="t", device="cpu")
+    received = []
+    trainer = _build_trainer(
+        wrapper,
+        callbacks=received.append,
+        epochs=1,
+        patience=0,
+    )
+
+    def setup():
+        trainer.save_dir = tmp_path
+        trainer.optimizer = torch.optim.SGD(trainer.model.parameters(), lr=0.01)
+        trainer._is_setup = True
+
+    monkeypatch.setattr(trainer, "setup", setup)
+    monkeypatch.setattr(
+        trainer,
+        "_train_epoch",
+        lambda epoch: (
+            1.0,
+            None,
+            {"box": torch.tensor(0.1), "cls": 0.2},
+            {"group0": 0.01},
+        ),
+    )
+    monkeypatch.setattr(trainer, "_save_checkpoint", lambda *args, **kwargs: None)
+
+    results = trainer.train()
+
+    assert results["final_loss"] == pytest.approx(1.0)
+    assert len(received) == 1
+    assert isinstance(received[0], TrainEpochEvent)
+    assert received[0].model_family == "yolo9_e2e"
+    assert received[0].train_loss == pytest.approx(1.0)
 
 
 def test_trainer_forward_returns_dual_branch_loss():

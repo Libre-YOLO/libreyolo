@@ -465,8 +465,18 @@ class LibreYOLONAS(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
+        """Train the YOLO-NAS model on a YOLO-format dataset.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:
             lr0 = 2e-3 if self.task == "pose" else 5e-4
@@ -492,6 +502,8 @@ class LibreYOLONAS(BaseModel):
                 resume=resume,
                 amp=amp,
                 patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
                 **kwargs,
             )
 
@@ -547,6 +559,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -588,6 +602,8 @@ class LibreYOLONAS(BaseModel):
         resume: bool,
         amp: bool,
         patience: int,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLO-NAS pose head on a YOLO-format keypoint dataset.
@@ -672,6 +688,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

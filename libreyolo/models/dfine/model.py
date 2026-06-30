@@ -194,12 +194,20 @@ class LibreDFINE(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune or train D-FINE on a YOLO-format dataset config.
 
         For v1 inference-only usage, just don't call this. To fine-tune from
         upstream weights, pass ``data="coco128.yaml"`` (or your own data yaml).
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 
@@ -250,6 +258,8 @@ class LibreDFINE(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

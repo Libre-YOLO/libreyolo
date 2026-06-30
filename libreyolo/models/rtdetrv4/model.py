@@ -84,8 +84,18 @@ class LibreRTDETRv4(LibreDFINE):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
+        """Fine-tune or train RT-DETRv4 on a YOLO-format dataset config.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         from libreyolo.data import load_data_config
 
         from .trainer import RTDETRv4Trainer
@@ -135,6 +145,8 @@ class LibreRTDETRv4(LibreDFINE):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

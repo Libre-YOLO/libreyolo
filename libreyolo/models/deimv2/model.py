@@ -215,9 +215,18 @@ class LibreDEIMv2(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
-        """Fine-tune DEIMv2 on a YOLO-format dataset config."""
+        """Fine-tune DEIMv2 on a YOLO-format dataset config.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         from libreyolo.data import load_data_config
 
         from .trainer import DEIMv2Trainer
@@ -262,6 +271,8 @@ class LibreDEIMv2(BaseModel):
             "exist_ok": exist_ok,
             "resume": resume,
             "patience": patience,
+            "callbacks": callbacks,
+            "loggers": loggers,
             **kwargs,
         }
         optional = {

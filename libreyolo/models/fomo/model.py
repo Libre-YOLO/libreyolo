@@ -180,9 +180,18 @@ class LibreFOMO(BaseModel):
         data: str,
         *,
         allow_experimental: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs: Any,
     ) -> Dict:
-        """Train LibreFOMO."""
+        """Train LibreFOMO.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         if not allow_experimental:
             raise NotImplementedError(
                 "LibreFOMO training is experimental in this version. "
@@ -222,6 +231,8 @@ class LibreFOMO(BaseModel):
             model=self.model,
             wrapper_model=self,
             data=data,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
         if kwargs.get("resume"):
