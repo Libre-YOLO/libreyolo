@@ -186,6 +186,8 @@ class LibreYOLO9E2E(LibreYOLO9):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLOv9 E2E model on a dataset.
@@ -207,6 +209,10 @@ class LibreYOLO9E2E(LibreYOLO9):
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             allow_download_scripts: Allow embedded Python in dataset YAML downloads.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
@@ -265,6 +271,8 @@ class LibreYOLO9E2E(LibreYOLO9):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

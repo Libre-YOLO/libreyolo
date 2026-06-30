@@ -1109,9 +1109,24 @@ class LibreRFDETR(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume: str | Path | bool | None = None,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> Dict:
-        """Fine-tune RF-DETR through LibreYOLO's native trainer."""
+        """Fine-tune RF-DETR through LibreYOLO's native trainer.
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train.
+            batch_size: Batch size (alias of ``batch=`` passed via kwargs).
+            lr: Initial learning rate (alias of ``lr0=`` passed via kwargs).
+            output_dir: Directory for training runs and checkpoints.
+            resume: Checkpoint path, or True to resume the loaded checkpoint.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         output_path = Path(output_dir)
         train_kwargs = dict(kwargs)
         project = train_kwargs.pop("project", None)
@@ -1225,7 +1240,13 @@ class LibreRFDETR(BaseModel):
             ) and self._resume_checkpoint_uses_lora(resume_path):
                 train_kwargs["lora"] = True
 
-        trainer = RFDETRTrainer(self.model, wrapper_model=self, **train_kwargs)
+        trainer = RFDETRTrainer(
+            self.model,
+            wrapper_model=self,
+            callbacks=callbacks,
+            loggers=loggers,
+            **train_kwargs,
+        )
         if resume:
             trainer.setup()
             trainer.resume(str(resume_path))

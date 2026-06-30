@@ -471,8 +471,34 @@ class LibreYOLONAS(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
+        """Train the YOLO-NAS model on a YOLO-format dataset.
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train (None uses the task default).
+            batch: Batch size.
+            imgsz: Input image size.
+            lr0: Initial learning rate (None uses the task default).
+            optimizer: Optimizer name ('SGD', 'Adam', 'AdamW').
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers.
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name (None uses the task default).
+            exist_ok: If True, overwrite existing experiment directory.
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training (None uses the
+                task default).
+            patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         # Task-specific defaults for arguments left unset by the caller.
         if lr0 is None:
             lr0 = 2e-3 if self.task == "pose" else 5e-4
@@ -498,6 +524,8 @@ class LibreYOLONAS(BaseModel):
                 resume=resume,
                 amp=amp,
                 patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
                 **kwargs,
             )
 
@@ -553,6 +581,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -594,6 +624,8 @@ class LibreYOLONAS(BaseModel):
         resume: bool,
         amp: bool,
         patience: int,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLO-NAS pose head on a YOLO-format keypoint dataset.
@@ -678,6 +710,8 @@ class LibreYOLONAS(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

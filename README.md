@@ -50,6 +50,9 @@ and receive the heaviest testing:
 ## Compatibility
 
 `✓` supported, `exp` experimental. Empty cells are not currently supported.
+All trainable families in the Training column accept universal training
+hooks via `callbacks=` and built-in experiment loggers via `loggers=`
+(`tensorboard`, `mlflow`, `wandb`).
 <table>
   <thead>
     <tr>

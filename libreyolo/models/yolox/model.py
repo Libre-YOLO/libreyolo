@@ -193,6 +193,8 @@ class LibreYOLOX(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Train the YOLOX model on a dataset.
@@ -214,6 +216,10 @@ class LibreYOLOX(BaseModel):
             resume: If True, resume training from the loaded checkpoint.
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
 
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
@@ -273,6 +279,8 @@ class LibreYOLOX(BaseModel):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

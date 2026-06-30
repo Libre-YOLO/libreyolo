@@ -288,6 +288,8 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune EC on a YOLO-format dataset (detect / segment / pose).
@@ -304,6 +306,12 @@ class LibreEC(BaseModel):
         MAL+L1+GIoU+FGL+DDF; loss + one-step train are validated on synthetic
         input, but full-fine-tune convergence has not been run end-to-end. Pass
         ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if self.task == "pose":
             return self._train_pose(
@@ -322,6 +330,8 @@ class LibreEC(BaseModel):
                 resume=resume,
                 amp=amp,
                 patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
                 **kwargs,
             )
         if not allow_experimental:
@@ -396,6 +406,8 @@ class LibreEC(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -434,6 +446,8 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune EdgeCrafter ECPose on a YOLO-format keypoint dataset.
@@ -552,6 +566,8 @@ class LibreEC(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
