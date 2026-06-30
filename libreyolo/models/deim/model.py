@@ -206,6 +206,20 @@ class LibreDEIM(BaseModel):
         upstream weights, pass ``data="coco128.yaml"`` (or your own data yaml).
 
         Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train.
+            batch: Batch size.
+            imgsz: Input image size.
+            lr0: Initial learning rate.
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers.
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name.
+            exist_ok: If True, overwrite existing experiment directory.
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training.
+            patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a name
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger

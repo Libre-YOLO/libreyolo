@@ -1480,6 +1480,12 @@ class LibreRFDETR(BaseModel):
         """Fine-tune RF-DETR through LibreYOLO's native trainer.
 
         Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train.
+            batch_size: Batch size (alias of ``batch=`` passed via kwargs).
+            lr: Initial learning rate (alias of ``lr0=`` passed via kwargs).
+            output_dir: Directory for training runs and checkpoints.
+            resume: Checkpoint path, or True to resume the loaded checkpoint.
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a name
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger
