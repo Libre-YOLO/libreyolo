@@ -107,6 +107,8 @@ def __getattr__(name):
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
+        "LibreSAM2": (".models.sam", "LibreSAM2"),
+        "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
@@ -163,6 +165,8 @@ __all__ = [
     # Promptable-segmentation tier (optional, requires libreyolo[sam])
     "LibreSAM",
     "LibreSAM1",
+    "LibreSAM2",
+    "LibreMobileSAM",
     # Results
     "Results",
     "Boxes",

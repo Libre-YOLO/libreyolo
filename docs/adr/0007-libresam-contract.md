@@ -40,15 +40,21 @@ shape:
 - A base class `LibreSAMModel(BaseModel)` that does **not** define `can_load`,
   keeping the family out of the detector `_registry` and the `LibreYOLO`
   factory.
-- Loads through the permissive `transformers` `SamModel` / `SamProcessor` API;
-  ships no model source. SAM-1 code and weights are Apache-2.0, so the default
-  family is clean MIT with no license gate.
+- SAM-1 and SAM-2 load through the permissive `transformers` APIs and ship no
+  model source. MobileSAM uses a native Apache-2.0 port because its TinyViT
+  image encoder is not representable as a `transformers` SAM-1/2 checkpoint.
 - Returns the same `Results` (with `masks`, plus tight `boxes` derived from the
   masks via `masks_to_boxes`, class id `0` = `"object"`), so downstream code is
   unchanged.
 
-The default family is **SAM-1** (`facebook/sam-vit-base` / `-large` / `-huge`),
-autodownloaded on first use.
+The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
+`-huge`), autodownloaded on first use.
+
+| Family | API entry | Weight source | Notes |
+|---|---|---|---|
+| SAM-1 | `LibreSAM("base")`, `LibreSAM1("base")` | `facebook/sam-vit-*` | Default promptable family. |
+| SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `facebook/sam2.1-hiera-*` | Image segmentation only in v1. |
+| MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
 
 ## Public API
 
@@ -90,11 +96,12 @@ r.boxes.xyxy      # tight boxes derived from masks
 / `__call__` directly rather than driving `InferenceRunner` — the promptless
 preprocess/forward/postprocess hooks have no meaning here and raise. The
 encode-once lifecycle lives in `set_image()` (caches image embeddings) and is
-reused by every later `predict()` until `reset_image()` or a device change.
+reused by every later `predict()` until `reset_image()`. A `device=` switch moves
+cached embeddings when possible so interactive sessions survive device changes.
 
 | Field             | Meaning                                              |
 |-------------------|------------------------------------------------------|
-| `FAMILY`          | family id (`sam`)                                    |
+| `FAMILY`          | family id (`sam`, `sam2`, `mobilesam`)               |
 | `FILENAME_PREFIX` | `Libre`-prefixed weights-dir prefix                  |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload            |
 | `INPUT_SIZES`     | `{size: nominal_px}` (1024; the processor owns resize)|
@@ -107,15 +114,19 @@ unsupported — promptable masks have no fixed class set to score against.
 
 ## Licensing
 
-SAM-1 code and weights are Apache-2.0; no gate, no notice. SAM-3's custom "SAM
-License" is gated (download requires accepting Meta's terms) and would follow
-the existing LibreVLM license-notice pattern when added — never vendoring the
-SAM-licensed modeling code.
+SAM-1 and SAM-2 code and weights are Apache-2.0 and are loaded from their
+upstream Hugging Face repositories. MobileSAM code and weights are Apache-2.0;
+LibreYOLO carries a native port plus a NOTICE, and the converted checkpoint is
+hosted separately as `LibreMobileSAM.pt`.
+
+SAM-3's custom "SAM License" is gated (download requires accepting Meta's
+terms) and would follow the existing LibreVLM license-notice pattern when added;
+the tier must not vendor SAM-licensed modeling code.
 
 ## Out Of Scope (v1)
 
-- SAM-2 (Hiera backbone, video/memory) and SAM-3 (concept/open-vocab seg,
-  gated). Both slot onto this same tier later.
+- SAM-2 video/memory and SAM-3 (concept/open-vocab seg, gated). Both slot onto
+  this same tier later.
 - Mask prompts (`masks=`), `train()`, `val()`, `export()`, and `track()` raise.
 - "Segment everything" is a simplified grid AMG (predicted-IoU threshold +
   box-IoU dedup); it omits stability-score filtering, multi-crop, and mask-IoU

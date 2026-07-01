@@ -69,14 +69,16 @@ For these checkpoint-emitting detector families the casing rule is uniform:
 **every family prefix is all-caps after `Libre`**, with the only mixed-case
 fragment being the lowercase version suffix `DEIMv2`.
 
-The VLM tier is a separate category and does not follow this rule. Its
-weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`,
-`LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`, `LocateAnything`) are not
-registered into the detector factory and do not emit `Libre<FAMILY><size>.pt`
+The VLM and promptable SAM tiers are separate categories and do not follow this
+rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
+`LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
+`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreMobileSAM`) are not registered
+into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
-downloaded Hugging Face snapshot, so upstream brand casing (CamelCase) is
-intentionally preserved. See
-[`librevlm_design.md`](librevlm_design.md).
+downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand
+casing (CamelCase) is intentionally preserved. See
+[`librevlm_design.md`](librevlm_design.md) and
+[`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
 
 ## Size codes
 
@@ -103,6 +105,14 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
+
+Promptable SAM tier size aliases:
+
+| Family | Size codes |
+|---|---|
+| `sam` | `base`, `large`, `huge` |
+| `sam2` | `tiny`, `small`, `base-plus`, `large` |
+| `mobilesam` | `tiny` (the default and only shipped size) |
 
 Notes:
 
