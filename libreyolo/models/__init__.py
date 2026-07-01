@@ -62,6 +62,8 @@ from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
@@ -477,6 +479,13 @@ def LibreYOLO(
             f"Registered model families: {', '.join(registered)}."
         )
 
+    if matched_cls.FAMILY == "pidnet" and not has_v1_metadata:
+        raise ValueError(
+            "Raw upstream PIDNet checkpoints must be converted before loading. "
+            "Use weights/convert_pidnet_weights.py to create a LibreYOLO "
+            "checkpoint with Cityscapes semantic metadata."
+        )
+
     # Auto-detect size
     if size is None:
         if matched_cls.FAMILY == "rfdetr":
@@ -510,8 +519,8 @@ def LibreYOLO(
     # the fresh model init too early. This matters for YOLO9-t where the class
     # branch width depends on COCO-vs-custom ``nc`` during construction.
     if nb_classes is None:
-        if matched_cls.FAMILY in ("rfdetr", "dinov2"):
-            # RF-DETR / DINOv2 build their heads to the checkpoint's class width.
+        if matched_cls.FAMILY in ("rfdetr", "dinov2", "eomt"):
+            # Transformer dense heads build to the checkpoint's class width.
             # The 80 default below is a YOLO9-family convention that would
             # mis-size the head for a metadata-wrapped checkpoint.
             nb_classes = matched_cls.detect_nb_classes(weights_dict)
@@ -622,6 +631,8 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreEoMT",
+    "LibrePIDNet",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",

@@ -91,6 +91,17 @@ Used for: YOLO9 model family (libreyolo/models/yolo9/), including the
           loss port in libreyolo/models/yolo9/loss.py.
 
 --------------------------------------------------------------------
+PIDNet (XuJiacong)
+--------------------------------------------------------------------
+Source: https://github.com/XuJiacong/PIDNet
+License: MIT
+Copyright (c) 2022 Jiacong Xu
+Used for: PIDNet semantic segmentation family
+          (libreyolo/models/pidnet/). Converted Cityscapes weights are
+          MIT-licensed PIDNet weights; the Cityscapes dataset itself is not
+          redistributed by LibreYOLO.
+
+--------------------------------------------------------------------
 SuperGradients / YOLO-NAS
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients
@@ -155,6 +166,24 @@ Used for: DINOv2-with-Registers reference implementation that
           libreyolo/models/rfdetr/dinov2.py adapts to add windowed
           self-attention. Also a runtime dependency loaded via
           AutoBackbone for the non-windowed DinoV2 path.
+
+--------------------------------------------------------------------
+EoMT (Mobile Perception Systems Lab at TU/e)
+--------------------------------------------------------------------
+Source: https://github.com/tue-mps/eomt
+License: MIT
+Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
+Citation: Kerssies, T., Cavagnero, N., Hermans, A., Norouzi, N.,
+          Averta, G., Leibe, B., Dubbelman, G., and de Geus, D.
+          "Your ViT is Secretly an Image Segmentation Model." CVPR 2025.
+Used for: LibreEoMT semantic segmentation family
+          (libreyolo/models/eomt/). Runtime execution uses the Apache-2.0
+          Hugging Face Transformers EoMT implementation with converted
+          MIT-licensed DINOv2 EoMT-L ADE20K weights.
+
+NOTE - code vs. weights: LibreYOLO ships only the DINOv2-based ADE20K
+semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
+they depend on gated non-commercial DINOv3 weights.
 
 --------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
