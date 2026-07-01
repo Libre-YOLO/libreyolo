@@ -182,3 +182,99 @@ def test_obb_roundtrip(tmp_path):
     assert anns[0]["type"] == "poly" and len(anns[0]["points"]) == 8
     lines = (tmp_path / "labels" / "train" / "a.txt").read_text().strip().splitlines()
     assert len(lines) == 1 and len(lines[0].split()) == 9  # cls + 8 coords (oriented box)
+
+
+def test_upload_never_overwrites(tmp_path):
+    # Uploads run BEFORE the create-project guard, so they must refuse to touch
+    # an existing dataset or an existing file (labels would describe wrong pixels).
+    from libreyolo.label.dataset import save_uploaded_image
+
+    dst = tmp_path / "proj"
+    save_uploaded_image(str(dst), "a.jpg", b"xx")
+    with pytest.raises(FileExistsError):
+        save_uploaded_image(str(dst), "a.jpg", b"yy")
+    assert (dst / "images" / "train" / "a.jpg").read_bytes() == b"xx"
+
+    taken = tmp_path / "taken"
+    taken.mkdir()
+    (taken / "data.yaml").write_text("train: .\n", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        save_uploaded_image(str(taken), "b.jpg", b"zz")
+
+
+def _make_nested_dataset(tmp_path):
+    # Two same-named images in different subfolders (train: . scans recursively).
+    from PIL import Image
+
+    root = tmp_path / "ds"
+    for sub in ("a", "b"):
+        (root / sub).mkdir(parents=True)
+        Image.new("RGB", (16, 12), (60, 60, 60)).save(root / sub / "0001.jpg")
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: .\nnc: 1\nnames:\n  0: thing\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_export_uniquifies_same_basenames(tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.export import export_dataset
+
+    root = _make_nested_dataset(tmp_path)
+    ds = DatasetSession(str(root / "data.yaml"))
+    ds.write_label(0, [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.5, "h": 0.5}])
+    ds.write_label(1, [{"cls": 0, "cx": 0.25, "cy": 0.25, "w": 0.2, "h": 0.2}])
+
+    out = tmp_path / "out"
+    res = export_dataset(ds, dst=str(out), formats=("yolo",), split="none")
+    assert res["counts"]["train"] == 2
+    imgs = sorted(p.name for p in (out / "images" / "train").iterdir())
+    lbls = sorted(p.name for p in (out / "labels" / "train").iterdir())
+    assert len(imgs) == 2 and len(set(imgs)) == 2      # no silent overwrite
+    assert {p.rsplit(".", 1)[0] for p in imgs} == {p.rsplit(".", 1)[0] for p in lbls}
+
+
+def test_export_refuses_nonempty_destination(tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.export import export_dataset
+
+    root = _make_nested_dataset(tmp_path)
+    ds = DatasetSession(str(root / "data.yaml"))
+    out = tmp_path / "out"
+    export_dataset(ds, dst=str(out), formats=("yolo",), split="none")
+    with pytest.raises(ValueError, match="not empty"):
+        export_dataset(ds, dst=str(out), formats=("yolo",), split="none")
+
+
+def test_inplace_export_uniquifies_same_basenames(tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.export import export_dataset
+
+    root = _make_nested_dataset(tmp_path)
+    ds = DatasetSession(str(root / "data.yaml"))
+    res = export_dataset(ds, in_place=True, split="none")
+    assert res["in_place"] is True
+    imgs = sorted(p.name for p in (root / "images" / "train").iterdir())
+    assert len(imgs) == 2 and len(set(imgs)) == 2      # both survived the flatten
+
+
+def test_shared_label_file_makes_session_read_only(tmp_path):
+    # a.jpg and a.png both derive labels/a.txt: saving one would clobber the other.
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+
+    root = tmp_path / "ds"
+    root.mkdir()
+    Image.new("RGB", (16, 12), (10, 10, 10)).save(root / "a.jpg")
+    Image.new("RGB", (16, 12), (20, 20, 20)).save(root / "a.png")
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: .\nnc: 1\nnames:\n  0: thing\n",
+        encoding="utf-8",
+    )
+    ds = DatasetSession(str(root / "data.yaml"))
+    assert ds.writable is False
+    assert "same label file" in ds.reason
+    with pytest.raises(RuntimeError):
+        ds.write_label(0, [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])

@@ -2537,7 +2537,7 @@ function mapSelect(ids){
 
 // ===== Project home: list projects, open/switch, reset per-project state =====
 function wireHome(){
-  // Landing is now New project + Try the example + your projects grid; the old
+  // Landing is New project + your projects grid; the old
   // inline open-row / create-panel were removed, so every binding is guarded.
   const ht=$("#hometheme"); if(ht) ht.onclick = toggleTheme;
   wireWizard();

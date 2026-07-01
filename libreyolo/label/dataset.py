@@ -205,7 +205,11 @@ def trash_project(data: str) -> str:
 def save_uploaded_image(dst: str, name: str, data: bytes) -> str:
     """Write one browser-uploaded image into ``<dst>/images/train/`` (created on
     demand). The name is reduced to a safe basename and only known image
-    extensions are accepted, so an upload can never escape the destination."""
+    extensions are accepted, so an upload can never escape the destination.
+    Refuses to write into an existing dataset or over an existing file: uploads
+    happen *before* the create-project guard runs, so without this a mistaken
+    destination would silently overwrite images (whose labels then describe the
+    wrong pixels)."""
     safe = Path(str(name)).name.strip()
     if not safe:
         raise ValueError("empty filename")
@@ -213,9 +217,15 @@ def save_uploaded_image(dst: str, name: str, data: bytes) -> str:
         raise ValueError(f"unsupported file type: {safe}")
     if not data:
         raise ValueError("empty file")
+    if folder_yaml(dst):
+        raise FileExistsError(
+            "That folder is already a dataset (it has a data.yaml) - open it instead, "
+            "or pick an empty folder for the new project.")
     out_dir = Path(dst) / "images" / "train"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / safe
+    if out.exists():
+        raise FileExistsError(f"{safe} already exists in that folder - not overwriting it.")
     tmp = out.with_suffix(out.suffix + ".uptmp")
     tmp.write_bytes(data)
     os.replace(tmp, out)
@@ -300,8 +310,9 @@ class DatasetSession:
             str(Path(self.yaml_file).parent))
 
         self._items: List[Tuple[Path, Path, str]] = []
-        seen: set = set()
+        seen: dict = {}                # normalized label path -> normalized image path
         self._path_splits: dict = {}   # normalized label path -> {splits it appears in}
+        label_clash: Optional[Tuple[str, str]] = None   # two DIFFERENT images, one label file
         for split in ("train", "val", "test"):
             imgs = cfg.get(f"{split}_img_files") or []
             labels = cfg.get(f"{split}_label_files") or img2label_paths(
@@ -312,10 +323,17 @@ class DatasetSession:
                 # once so a single image can't be saved twice under two ids -- but
                 # remember every split it was in, for exact-overlap leakage detection.
                 key = os.path.normcase(os.path.normpath(str(lp)))
+                ikey = os.path.normcase(os.path.normpath(str(ip)))
                 self._path_splits.setdefault(key, set()).add(split)
                 if key in seen:
+                    # Same label file again. Same image -> split overlap (leakage,
+                    # handled by insights). DIFFERENT image (a.jpg + a.png) -> both
+                    # would round-trip through one .txt, silently clobbering each
+                    # other; remember it so the session goes read-only below.
+                    if label_clash is None and seen[key] != ikey:
+                        label_clash = (Path(seen[key]).name, Path(ip).name)
                     continue
-                seen.add(key)
+                seen[key] = ikey
                 self._items.append((Path(ip), Path(lp), split))
 
         # Raw split sources (resolved paths/lists) so the duplicate fixer can
@@ -324,6 +342,13 @@ class DatasetSession:
             s: cfg.get(s) for s in ("train", "val", "test") if cfg.get(s)
         }
         self.writable, self.reason = self._check_writable()
+        if self.writable and label_clash:
+            self.writable = False
+            self.reason = (
+                "Two different images resolve to the same label file "
+                f"({label_clash[0]} and {label_clash[1]} share a name): saving one "
+                "would overwrite the other's labels. Rename one and reopen."
+            )
         # Pose (kpt_shape), semantic-seg (masks_dir) and depth datasets store dense
         # labels LibreLabel can't edit; writing YOLO boxes would pollute them. The
         # `task:` key alone is enough to know -- a depth yaml may omit depths_dir

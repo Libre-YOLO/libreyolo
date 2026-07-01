@@ -143,6 +143,24 @@ def _zip_dir(src: Path, zip_path: str):
                 z.write(p, p.relative_to(src.parent))
 
 
+def _uniquifier():
+    """Per-split unique basenames: nested source dirs can hold same-named images
+    (``a/0001.jpg`` + ``b/0001.jpg``), and flattening into ``images/<split>/``
+    would otherwise silently overwrite one with the other."""
+    used = {sp: set() for sp in ("train", "val", "test")}
+
+    def unique(sp: str, name: str) -> str:
+        stem, ext = Path(name).stem, Path(name).suffix
+        cand, n = name, 1
+        while cand.lower() in used[sp]:
+            n += 1
+            cand = f"{stem}_{n}{ext}"
+        used[sp].add(cand.lower())
+        return cand
+
+    return unique
+
+
 def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
                    split: str = "trainval", val_frac: float = 0.2,
                    test_frac: float = 0.0, seed: int = 1234,
@@ -159,17 +177,23 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
 
     if in_place:
         base = Path(session.root or Path(session.yaml_file).parent).resolve()
+        unique = _uniquifier()
         for (ip, lp), sp in zip(items, splits):
             ip = Path(ip)
             if not ip.exists():
                 continue
             dest_img = base / "images" / sp / ip.name
-            dest_img.parent.mkdir(parents=True, exist_ok=True)
-            if ip.resolve() != dest_img.resolve():
+            if ip.resolve() == dest_img.resolve():
+                unique(sp, ip.name)          # already in place: just reserve its name
+                dest_name = ip.name
+            else:
+                dest_name = unique(sp, ip.name)
+                dest_img = base / "images" / sp / dest_name
+                dest_img.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(ip), str(dest_img))
             lp = Path(lp)
             if lp.exists():
-                dest_lbl = base / "labels" / sp / (ip.stem + ".txt")
+                dest_lbl = base / "labels" / sp / (Path(dest_name).stem + ".txt")
                 dest_lbl.parent.mkdir(parents=True, exist_ok=True)
                 if lp.resolve() != dest_lbl.resolve():
                     shutil.move(str(lp), str(dest_lbl))
@@ -180,23 +204,29 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
     if not dst:
         raise ValueError("A destination folder is required for a copy export.")
     dstp = Path(dst)
+    if dstp.is_dir() and any(dstp.iterdir()):
+        # A previous export's leftovers would be rescanned by the generated
+        # data.yaml (stale images/labels silently joining the new dataset).
+        raise ValueError("The destination folder is not empty - pick a new or empty "
+                         "folder so stale files can't mix into the export.")
     dstp.mkdir(parents=True, exist_ok=True)
     fmts = {f.lower() for f in formats} or {"yolo"}
     need_dims = bool(fmts & {"coco", "voc"})
     coco = {sp: _coco_init(names) for sp in ("train", "val", "test")}
     cstate = {sp: {"img": 0, "ann": 0} for sp in ("train", "val", "test")}
 
+    unique = _uniquifier()
     for (ip, lp), sp in zip(items, splits):
         ip = Path(ip)
         if not ip.exists():
             continue
-        img_out = dstp / "images" / sp / ip.name
+        img_out = dstp / "images" / sp / unique(sp, ip.name)
         img_out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(ip), str(img_out))
         txt = Path(lp).read_text(encoding="utf-8") if Path(lp).exists() else ""
         anns = parse_annotations(txt)
         if "yolo" in fmts:
-            lo = dstp / "labels" / sp / (ip.stem + ".txt")
+            lo = dstp / "labels" / sp / (img_out.stem + ".txt")
             lo.parent.mkdir(parents=True, exist_ok=True)
             lo.write_text(txt, encoding="utf-8")
         if need_dims:

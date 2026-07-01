@@ -392,7 +392,7 @@ class _Handler(BaseHTTPRequestHandler):
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/new",
                         "/api/upload", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
                         "/api/export",
-                        "/api/projects/forget", "/api/pick-folder", "/api/example", "/api/classes", "/api/insights/fix",
+                        "/api/projects/forget", "/api/pick-folder", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
                 self._send(403, {"error": "This action (create / switch project, edit classes, "
@@ -403,12 +403,22 @@ class _Handler(BaseHTTPRequestHandler):
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/create", "/api/projects/new", "/api/upload",
                     "/api/projects/inspect", "/api/projects/forget", "/api/projects/rename",
-                    "/api/projects/delete", "/api/pick-folder", "/api/example"):
+                    "/api/projects/delete", "/api/pick-folder"):
                 self._send(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
                     and not self.state.engine.enabled:
                 self._send(403, {"error": "AI assist is disabled (started with --no-assist)."})
+                return
+            # OBB projects: the assist stack emits axis-aligned boxes (prelabel /
+            # autolabel / Radar / Boost) or free polygons (SAM) -- both would corrupt
+            # 9-field oriented-box labels, so refuse them for task: obb outright.
+            if (path.startswith(("/api/assist/prelabel", "/api/assist/segment"))
+                    or path in ("/api/assist/autolabel", "/api/assist/radar", "/api/boost")) \
+                    and self.state.session is not None \
+                    and getattr(self.state.session, "_task", "") == "obb":
+                self._send(409, {"error": "AI assist works with boxes and masks, not oriented "
+                                          "boxes - it is disabled for OBB projects."})
                 return
             if path == "/api/projects/open":
                 payload = self._read_json()
@@ -554,25 +564,6 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(200, {"folder": None, "unavailable": True})
                 else:
                     self._send(200, {"folder": folder or None})
-            elif path == "/api/example":
-                # Open the bundled example project (128 CC0 demo images), fetching it
-                # from Hugging Face on first use. Host-admin only (it writes to a local
-                # cache + opens a project); allowed before any project is open.
-                self._read_json()
-                try:
-                    folder = _example_dir()
-                    existing = folder_yaml(folder)
-                    target = existing or scaffold_data_yaml(
-                        folder, ["person", "dog", "cat", "car", "bicycle"])
-                    meta = self.state.open_project(target)
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
-                    meta["created"] = existing is None
-                    self._send(200, meta)
-                except Exception as exc:  # noqa: BLE001 - no network / hf missing / bad cache
-                    logger.exception("open example failed")
-                    self._send(400, {"error": str(exc).splitlines()[0][:160]
-                                     or "Could not open the example project."})
             elif path == "/api/projects/forget":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None
@@ -622,6 +613,12 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(payload, dict):
                     self._send(400, {"error": "bad payload"})
                     return
+                ep = payload.get("epoch")
+                if ep is not None and int(ep) != self.state.epoch:
+                    # A stale tab must not copy or (worse) re-split in place a project
+                    # that was switched from another tab.
+                    self._send(409, {"error": "project changed - reload before exporting"})
+                    return
                 try:
                     from . import export as _export
                     res = _export.export_dataset(
@@ -668,7 +665,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif path == "/api/assist/radar":
                 self._handle_radar_stream(parse_qs(parsed.query))
             elif path == "/api/embeddings":
-                self._handle_embeddings_stream()
+                self._handle_embeddings_stream(parse_qs(parsed.query))
             elif path == "/api/insights/fix":
                 payload = self._read_json()
                 ids = payload.get("ids", []) if isinstance(payload, dict) else []
@@ -765,8 +762,18 @@ class _Handler(BaseHTTPRequestHandler):
             conf = 0.25
         return model, conf
 
+    def _stale_epoch(self, qs: dict) -> bool:
+        """True when the client sent an ``epoch`` that no longer matches -- a stale
+        tab whose project was switched elsewhere must not run dataset-wide actions
+        (prelabel/radar/embeddings/export) against the newly current project."""
+        ep = (qs.get("epoch") or [None])[0]
+        return ep is not None and int(ep) != self.state.epoch
+
     def _handle_prelabel(self, idx: int, qs: dict) -> None:
         self._read_json()  # drain any body
+        if self._stale_epoch(qs):
+            self._send(409, {"error": "project changed - reload before auto-labeling"})
+            return
         model, conf = self._model_conf(qs)
         # Snapshot the session up front: the predict below is slow, and if the user
         # switches projects mid-flight we must not store these suggestions into the
@@ -790,7 +797,8 @@ class _Handler(BaseHTTPRequestHandler):
                 )
         except Exception as exc:  # noqa: BLE001 - model load/inference problem
             logger.exception("prelabel failed")
-            self._send(503, {"error": str(exc)})
+            # PIL/torch errors embed absolute image paths; redact for LAN clients.
+            self._send(503, {"error": str(exc) if self._local_admin() else _redact_paths(str(exc))})
             return
         if not self.state.store_pending(idx, sugg, sess):   # atomic with project switch
             self._send(409, {"error": "project changed; reopen and retry"})
@@ -820,7 +828,8 @@ class _Handler(BaseHTTPRequestHandler):
             poly = self.state.sam.segment(self.state.session.image_path(idx), **kw)
         except Exception as exc:  # noqa: BLE001 - SAM load/inference problem
             logger.exception("segment failed")
-            self._send(503, {"error": str(exc)})
+            # PIL/torch errors embed absolute image paths; redact for LAN clients.
+            self._send(503, {"error": str(exc) if self._local_admin() else _redact_paths(str(exc))})
             return
         self._send(200, {"polygon": poly})
 
@@ -900,6 +909,9 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length:
             self.rfile.read(length)
+        if self._stale_epoch(qs):
+            self._send(409, {"error": "project changed - reload before running Radar"})
+            return
         model, conf = self._model_conf(qs)
         if not self.state.engine.status().get("available"):
             self._send(503, {"error": "No model available for Radar "
@@ -918,11 +930,14 @@ class _Handler(BaseHTTPRequestHandler):
             logger.exception("radar scan failed")
             emit({"type": "error", "error": str(exc)})
 
-    def _handle_embeddings_stream(self) -> None:
+    def _handle_embeddings_stream(self, qs: dict) -> None:
         """Embed every image and stream the 2-D PCA scatter (``{id,x,y}``)."""
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length:
             self.rfile.read(length)
+        if self._stale_epoch(qs):
+            self._send(409, {"error": "project changed - reload before mapping"})
+            return
         if not self.state.embed.available():
             self._send(503, {"error": "Embeddings unavailable (assist disabled)."})
             return
@@ -936,41 +951,6 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             logger.exception("embeddings failed")
             emit({"type": "error", "error": str(exc)})
-
-
-def _example_dir() -> str:
-    """Return a writable local folder of the LibreLabel example images, fetching it
-    on first use. Resolution order: an existing local cache (so labels drawn in the
-    example persist) -> a folder named by LIBRELABEL_EXAMPLE_DIR (dev / pre-upload)
-    -> a Hugging Face dataset download. Raises if none can be obtained."""
-    import shutil
-
-    name = "tutorial-128"
-    cache = Path.home() / ".librelabel" / "examples" / name
-    if cache.is_dir() and any(cache.glob("*.jpg")):
-        return str(cache)                       # already fetched -> reuse (keeps any labels)
-    cache.mkdir(parents=True, exist_ok=True)
-
-    src = os.environ.get("LIBRELABEL_EXAMPLE_DIR")
-    if src and Path(src).is_dir():
-        for f in Path(src).iterdir():
-            if f.suffix.lower() in (".jpg", ".jpeg", ".png"):
-                shutil.copy2(f, cache / f.name)
-        if any(cache.glob("*.jpg")) or any(cache.glob("*.png")):
-            return str(cache)
-
-    repo = os.environ.get("LIBRELABEL_EXAMPLE_REPO", "LibreYOLO/librelabel-tutorial-128")
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise RuntimeError("huggingface_hub is required to download the example "
-                           "dataset; install it or set LIBRELABEL_EXAMPLE_DIR.") from exc
-    logger.info("Downloading example dataset %s -> %s ...", repo, cache)
-    snapshot_download(repo, repo_type="dataset", local_dir=str(cache),
-                      allow_patterns=["*.jpg", "*.jpeg", "*.png"])
-    if not (any(cache.glob("*.jpg")) or any(cache.glob("*.png"))):
-        raise FileNotFoundError(f"Example dataset {repo} has no images.")
-    return str(cache)
 
 
 def _native_pick_folder() -> str:
