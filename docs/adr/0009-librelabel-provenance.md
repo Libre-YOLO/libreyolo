@@ -1,4 +1,4 @@
-# 0007 — LibreLabel provenance & clean-room policy
+# 0009 — LibreLabel provenance & clean-room policy
 
 Status: accepted
 Date: 2026-06-15
@@ -98,3 +98,13 @@ not from any third-party annotation or active-learning tool:
 Net: still **zero new runtime dependencies** (numpy/torch/opencv/PIL already ship with
 `libreyolo`), and still no third-party labelling, active-learning, embedding, project-
 management, or collaboration code — all original, built on LibreYOLO's own surfaces.
+
+## Addendum — in-app feedback button (2026-07-01)
+
+The page carries a small **first-party** feedback control (a button + textarea,
+written for this repo under MIT like the rest of `page.py` — an earlier vendored
+widget was removed and re-implemented clean-room). Submitting POSTs the message to
+LibreYOLO's feedback endpoint, which files it as a `feedback`-labelled GitHub issue
+on `LibreYOLO/libreyolo`. It sends only what the user typed plus the page path and
+user agent — never image data, labels, or filesystem paths — and only when the user
+explicitly presses Send. The label tool itself remains fully offline.

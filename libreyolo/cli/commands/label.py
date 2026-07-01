@@ -42,6 +42,15 @@ def label_cmd(
     from libreyolo.label.server import _lan_ip, serve
 
     bind_host = "0.0.0.0" if share else host
+    if not share and bind_host not in ("127.0.0.1", "::1", "localhost", "0.0.0.0", "::", ""):
+        # A concrete NIC bind makes the host itself indistinguishable from a LAN
+        # client, so EVERY client gets admin (switch/delete projects, run compute).
+        # --share (wildcard bind) is the safe way to let teammates join.
+        out.progress(
+            "WARNING: binding to a specific interface (host=%s) gives every LAN "
+            "client full admin over projects and files. Prefer --share, which "
+            "keeps admin on this machine." % bind_host
+        )
     httpd = None
     url = ""
     session = None
