@@ -28,6 +28,7 @@ def _assert_detection_smoke(result, expected_names):
     assert all(0 <= class_id < len(expected_names) for class_id in cls)
 
 
+@pytest.mark.general_nightly
 def test_grounding_dino_tiny_predict_smoke():
     pytest.importorskip("transformers")
     from libreyolo import LibreOpenVocab

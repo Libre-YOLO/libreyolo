@@ -175,6 +175,11 @@ class TestCallDefaults:
         with pytest.warns(UserWarning, match="iou=.+ignored"):
             assert m("image.jpg", iou=0.7) == "ok"
 
+    def test_track_raises_in_v1(self):
+        m = _bare(LibreOWLv2)
+        with pytest.raises(NotImplementedError, match="tracking is out of scope"):
+            m.track("video.mp4")
+
 
 class TestGroundingDinoPhraseMapping:
     def test_exact_match(self):
@@ -258,3 +263,19 @@ class TestOWLv2Mapping:
         det = m._postprocess(object(), 0.1, 0.45, (20, 20))
         assert det["num_detections"] == 1
         assert det["classes"].tolist() == [1]
+
+
+class TestDetectionDict:
+    def test_outputs_are_normalized_to_cpu_tensors(self):
+        m = _bare(LibreOWLv2)
+        det = m._detections_to_dict(
+            torch.tensor([[1.0, 2.0, 10.0, 12.0]]),
+            torch.tensor([0.9]),
+            [0],
+            conf_thres=0.1,
+            original_size=(20, 20),
+            max_det=10,
+        )
+        assert det["boxes"].device.type == "cpu"
+        assert det["scores"].device.type == "cpu"
+        assert det["classes"].device.type == "cpu"

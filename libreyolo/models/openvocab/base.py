@@ -365,9 +365,9 @@ class LibreOpenVocabDetector(BaseModel):
         max_det: int,
         classes: Optional[List[int]] = None,
     ) -> Dict:
-        boxes_t = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
-        scores_t = torch.as_tensor(scores, dtype=torch.float32).reshape(-1)
-        class_t = torch.as_tensor(class_ids, dtype=torch.int64).reshape(-1)
+        boxes_t = self._as_cpu_tensor(boxes, torch.float32).reshape(-1, 4)
+        scores_t = self._as_cpu_tensor(scores, torch.float32).reshape(-1)
+        class_t = self._as_cpu_tensor(class_ids, torch.int64).reshape(-1)
         n = min(boxes_t.shape[0], scores_t.shape[0], class_t.shape[0])
         boxes_t, scores_t, class_t = boxes_t[:n], scores_t[:n], class_t[:n]
         if n == 0:
@@ -400,6 +400,12 @@ class LibreOpenVocabDetector(BaseModel):
         }
 
     @staticmethod
+    def _as_cpu_tensor(value: Any, dtype: torch.dtype) -> torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            return value.detach().to(device="cpu", dtype=dtype)
+        return torch.as_tensor(value, dtype=dtype)
+
+    @staticmethod
     def _empty_detections() -> Dict:
         return {
             "boxes": torch.zeros((0, 4), dtype=torch.float32),
@@ -411,6 +417,12 @@ class LibreOpenVocabDetector(BaseModel):
     # ---------------------------------------------------------------------
     # Out of scope for v1
     # ---------------------------------------------------------------------
+
+    def track(self, *args, **kwargs):
+        raise NotImplementedError(
+            f"{type(self).__name__} tracking is out of scope for the v1 "
+            "open-vocabulary detector tier. Use predict() per frame."
+        )
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

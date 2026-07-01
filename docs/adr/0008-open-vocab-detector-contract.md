@@ -69,6 +69,7 @@ existing metric assembly.
 - Custom validation in v1.
 - OWLv2 image-guided detection.
 - True batched forward speedups.
+- Tracking.
 - CLI alias resolution.
 
 ## Licensing
