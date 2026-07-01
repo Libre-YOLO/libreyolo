@@ -115,8 +115,15 @@ def mirror(image, boxes, prob=0.5):
     return image, boxes
 
 
-def preproc(img, input_size, swap=(2, 0, 1)):
-    """Letterbox resize + pad (114) + HWC→CHW transpose."""
+def letterbox_preproc(img, input_size, swap=(2, 0, 1), *, to_rgb=False, scale=False):
+    """Letterbox resize + pad (114) + HWC→CHW transpose.
+
+    The historical per-family ``preproc`` copies differed only in two finalize
+    flags, exposed here as parameters:
+
+    - ``to_rgb=False, scale=False`` — YOLOX/PicoDet/RTMDet (BGR, raw 0-255)
+    - ``to_rgb=True, scale=True``   — YOLO9/RT-DETR/YOLO-NAS (RGB, /255)
+    """
     if len(img.shape) == 3:
         padded_img = np.ones((input_size[0], input_size[1], 3), dtype=np.uint8) * 114
     else:
@@ -130,6 +137,16 @@ def preproc(img, input_size, swap=(2, 0, 1)):
     ).astype(np.uint8)
     padded_img[: int(img.shape[0] * r), : int(img.shape[1] * r)] = resized_img
 
+    if to_rgb:
+        padded_img = padded_img[:, :, ::-1]
+
     padded_img = padded_img.transpose(swap)
     padded_img = np.ascontiguousarray(padded_img, dtype=np.float32)
+    if scale:
+        padded_img = padded_img / 255.0
     return padded_img, r
+
+
+def preproc(img, input_size, swap=(2, 0, 1)):
+    """YOLOX-flavor letterbox (BGR, unscaled) — the historical shared default."""
+    return letterbox_preproc(img, input_size, swap)
