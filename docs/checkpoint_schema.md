@@ -32,7 +32,7 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
-  `classify`, `gaze`, `obb`, `point`, or `depth`.
+  `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -56,6 +56,15 @@ Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
 
+Restore checkpoints use the task string `restore`, `nc: 1`, and
+`names: {0: "image"}`. The single class-like slot exists only for checkpoint
+schema compatibility; restoration predictions are dense RGB images, not
+classes. Restoration checkpoints may also include:
+
+- `degradation`: optional short label for the corruption type, such as
+  `deblur` or `denoise`.
+- `dataset`: optional dataset/provenance label, such as `GoPro`.
+
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and
 `task`; nesting the metadata would increase migration risk before release.
@@ -71,9 +80,16 @@ legacy scalar `imgsz`; readers that do not understand the rectangular fields
 must not silently treat the scalar as a square runtime contract.
 
 Backend support for rectangular runtime metadata is family- and format-scoped.
-YOLO9-family exports may use non-square `imgsz_h/imgsz_w` in supported runtime
-formats; families or formats without explicit rectangular support must reject
-the metadata instead of preprocessing those artifacts as square inputs.
+YOLO9-family and NAFNet exports may use non-square `imgsz_h/imgsz_w` in
+supported runtime formats; families or formats without explicit rectangular
+support must reject the metadata instead of preprocessing those artifacts as
+square inputs.
+
+NAFNet restore runtime exports use a fixed-resolution v1 contract. ONNX exports
+emit one dense `restored` output tensor and force `dynamic=false`; backend
+prediction pads images that fit inside the exported canvas without resizing,
+then crops the restored RGB result back to the original image shape. Dynamic
+spatial restore export and tiled exported-runtime inference are deferred.
 
 Embedded-NMS runtime exports may also write these flat metadata keys:
 

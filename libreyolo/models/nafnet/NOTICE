@@ -1,0 +1,20 @@
+LibreNAFNet includes code ported from NAFNet:
+
+Source: https://github.com/megvii-research/NAFNet
+License: MIT for NAFNet code; Apache-2.0 for BasicSR-derived utilities.
+Copyright (c) 2022 megvii-model.
+Copyright 2018-2020 BasicSR Authors.
+
+NAFNet citation:
+Liangyu Chen, Xiaojie Chu, Xiangyu Zhang, and Jian Sun.
+"Simple Baselines for Image Restoration." ECCV 2022.
+
+The GoPro deblurring weights are trained on the GoPro dataset:
+Seungjun Nah, Tae Hyun Kim, and Kyoung Mu Lee. "Deep Multi-scale
+Convolutional Neural Network for Dynamic Scene Deblurring." CVPR 2017.
+The GoPro dataset is distributed under CC BY 4.0 and requires attribution.
+
+The original NAFNet source published pretrained GoPro weights without an
+explicit standalone weights license. LibreYOLO mirrors converted checkpoints
+with this provenance stated in the model card and notices.
+

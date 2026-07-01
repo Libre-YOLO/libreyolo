@@ -41,6 +41,12 @@ project the weights were derived from. Per-family summary:
     ResNet   (LibreResNet{18,34,50,101}-cls)           Apache-2.0
              upstream: timm (a1_in1k "ResNet Strikes Back" recipe), ImageNet-1k
 
+    NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
+             upstream code: megvii-research/NAFNet (MIT)
+             Some published GoPro-trained checkpoint files do not carry an
+             explicit standalone weights license. Convert only weights that
+             you have the right to use and redistribute.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the

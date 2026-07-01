@@ -79,6 +79,18 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+NAFNet (MIT License)
+    Path:    libreyolo/models/nafnet/
+    License: libreyolo/models/nafnet/NOTICE  (MIT)
+    Source:  https://github.com/megvii-research/NAFNet
+
+    The NAFNet restoration architecture (libreyolo/models/nafnet/nn.py) is a
+    native PyTorch implementation derived from Megvii Research's NAFNet
+    (MIT). LibreYOLO does not bundle NAFNet pretrained checkpoint files. Some
+    published GoPro-trained NAFNet weights do not carry an explicit standalone
+    weights license; convert only weights that you have the right to use and
+    redistribute.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------

@@ -48,6 +48,7 @@ classify-only:
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
+| `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 
 Casing rules observed in the table:
 
@@ -112,6 +113,7 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
+| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
 
 Promptable SAM tier size aliases:
 
@@ -151,6 +153,7 @@ From `libreyolo/tasks.py`:
 | `obb`         | `-obb` |
 | `point`       | `-point` |
 | `depth`       | `-depth` |
+| `restore`     | `-restore` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -171,6 +174,12 @@ pixel accuracy) instead of box/mask mAP.
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
+
+`restore` is the task for paired image restoration, including deblurring and
+denoising. Models expose `Results.restored`, a uint8 RGB `(H, W, 3)` image on
+the original image canvas. Canonical restore filenames must carry the
+`-restore` suffix; task aliases such as `deblur`, `denoise`, and `restoration`
+resolve to `restore` at the API boundary.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -195,6 +204,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
+| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -252,6 +262,10 @@ LibreDepthAnythingV2s-depth.pt   # ViT-S (Apache-2.0 weights)
 LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
+
+# nafnet — NAFNet restoration (restore-only)
+LibreNAFNets-restore.pt
+LibreNAFNetl-restore.pt
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)

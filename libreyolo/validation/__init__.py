@@ -9,6 +9,7 @@ from .coco_evaluator import COCOEvaluator
 from .pose_validator import PoseValidator
 from .point_validator import PointValidator
 from .depth_validator import DepthValidator
+from .restore_validator import RestoreValidator
 from .semantic_validator import SemanticValidator
 from .fomo_validator import FOMOValidator
 from .val_plotter import ValPlotter, ConfusionMatrix
@@ -24,6 +25,7 @@ __all__ = [
     "PointValidator",
     "FOMOValidator",
     "DepthValidator",
+    "RestoreValidator",
     "SemanticValidator",
     "COCOEvaluator",
     "ValPlotter",

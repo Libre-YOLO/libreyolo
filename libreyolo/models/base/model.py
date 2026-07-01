@@ -734,6 +734,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support depth estimation yet. "
                 "Use augment=False for depth models."
             )
+        if getattr(self, "task", "detect") == "restore":
+            raise ValueError(
+                "Test-time augmentation does not support restoration models yet. "
+                "Use augment=False for restore models."
+            )
 
         from PIL import Image as PILImage
         from ...utils.image_loader import ImageLoader
@@ -1163,6 +1168,7 @@ class BaseModel(ABC):
             OBBValidator,
             PointValidator,
             PoseValidator,
+            RestoreValidator,
             SegmentationValidator,
             SemanticValidator,
             ValidationConfig,
@@ -1196,6 +1202,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if augment and self.task == "restore":
+            raise ValueError(
+                "Augmented validation does not support restoration models yet. "
+                "Use augment=False for restore models."
             )
 
         config = ValidationConfig(
@@ -1232,6 +1243,8 @@ class BaseModel(ABC):
             validator_cls = SemanticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "restore":
+            validator_cls = RestoreValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

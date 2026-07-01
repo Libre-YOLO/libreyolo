@@ -1,0 +1,20 @@
+# GoPro paired image-deblurring dataset layout.
+#
+# Place or symlink the dataset under DATASETS_DIR/gopro (or set an absolute
+# path below). LibreYOLO does not auto-download this dataset.
+
+path: gopro
+
+train: inputs/train
+val: inputs/val
+test: inputs/test
+
+input_dir: inputs
+target_dir: targets
+
+nc: 1
+names:
+  0: image
+
+degradation: deblur
+dataset: GoPro

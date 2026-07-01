@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "nafnet"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",
@@ -287,6 +287,14 @@ class BaseExporter(ABC):
                 "Add a depth-aware export/runtime contract (dense float "
                 "output plus backend parsing) before exporting depth models."
             )
+        if getattr(self.model, "task", "detect") == "restore" and dynamic:
+            warnings.warn(
+                "Restore export uses a fixed-resolution runtime contract in "
+                "v1; forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
         half, int8 = self._validate(half, int8, data)
         self._preflight(half=half, int8=int8, data=data, **kwargs)
         data = self._resolve_calibration_data(int8, data)
@@ -460,6 +468,13 @@ class BaseExporter(ABC):
                 "DEIMv2 export uses fixed decoder anchors; imgsz must match "
                 f"the native size {native_imgsz}, got {imgsz}."
             )
+        if model_name == "nafnet":
+            padder_size = int(getattr(self.model.model, "padder_size", 16))
+            if imgsz[0] % padder_size or imgsz[1] % padder_size:
+                raise ValueError(
+                    "NAFNet export imgsz must be divisible by the network "
+                    f"downsample factor {padder_size}, got {imgsz}."
+                )
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "

@@ -441,6 +441,8 @@ class BaseTrainer(ABC):
             return self._setup_semantic_data()
         if wrapper_task == "depth":
             return self._setup_depth_data()
+        if wrapper_task == "restore":
+            return self._setup_restore_data()
 
         img_size = self.input_size
         preproc, MosaicDatasetClass = self.create_transforms()
@@ -887,6 +889,73 @@ class BaseTrainer(ABC):
 
         if is_main_process():
             logger.info("Depth dataset: %d images", len(train_dataset))
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
+    def _setup_restore_data(self):
+        """Build the restoration train dataloader from a paired dataset YAML."""
+        from torch.utils.data import DataLoader
+
+        from ..data.restore_dataset import (
+            RestoreDataset,
+            resolve_restore_data,
+            restore_collate_fn,
+        )
+
+        if not self.config.data:
+            raise ValueError("Restore training requires data= (a dataset YAML).")
+        data_config = resolve_restore_data(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        train_dataset = RestoreDataset(
+            data_config,
+            split="train",
+            imgsz=self.config.imgsz,
+            augment=True,
+        )
+
+        self.num_classes = 1
+        self.config.num_classes = 1
+        if self.wrapper_model is not None:
+            self.wrapper_model.nb_classes = 1
+            self.wrapper_model.names = {0: "image"}
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=restore_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info("Restore dataset: %d image pairs", len(train_dataset))
             logger.info(
                 "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
                 len(self.train_loader),
@@ -1903,6 +1972,8 @@ class BaseTrainer(ABC):
             return self._run_semantic_validation(epoch)
         if validation_task == "depth":
             return self._run_depth_validation(epoch)
+        if validation_task == "restore":
+            return self._run_restore_validation(epoch)
         try:
             from libreyolo.validation import (
                 DetectionValidator,
@@ -2157,6 +2228,59 @@ class BaseTrainer(ABC):
             }
         except Exception as e:
             logger.error(f"Depth validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_restore_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the restoration model (PSNR / SSIM) on the val split."""
+        try:
+            from libreyolo.validation import RestoreValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running restore validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=self.config.batch,
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+                allow_download_scripts=self.config.allow_download_scripts,
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = RestoreValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            psnr = raw_metrics.get("metrics/PSNR", 0.0)
+            ssim = raw_metrics.get("metrics/SSIM", 0.0)
+            logger.info("Validation - PSNR: %.4f, SSIM: %.4f", psnr, ssim)
+            return {
+                "mAP50": psnr,
+                "mAP50_95": psnr,
+                "best_metric": psnr,
+                "best_metric_key": "metrics/PSNR",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Restore validation failed: {e}")
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
