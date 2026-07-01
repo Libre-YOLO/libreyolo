@@ -80,6 +80,13 @@ casing (CamelCase) is intentionally preserved. See
 [`librevlm_design.md`](librevlm_design.md) and
 [`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
 
+The open-vocabulary detector tier is also separate from the checkpoint factory.
+Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`) identify
+downloaded Hugging Face snapshots, not `Libre<FAMILY><size>.pt` checkpoints.
+These models are discriminative text-conditioned detectors with calibrated
+scores; they are not VLMs. Upstream brand casing is intentionally preserved.
+See [`openvocab_design.md`](openvocab_design.md).
+
 ## Size codes
 
 Sizes are family-specific. The table below records what each family currently
@@ -113,6 +120,13 @@ Promptable SAM tier size aliases:
 | `sam` | `base`, `large`, `huge` |
 | `sam2` | `tiny`, `small`, `base-plus`, `large` |
 | `mobilesam` | `tiny` (the default and only shipped size) |
+
+Open-vocabulary detector snapshot families use their own size codes:
+
+| Family | Size codes |
+|---|---|
+| `grounding_dino` | `t` (Swin-T), `b` (Swin-B) |
+| `owlv2` | `b16` (base patch-16 ensemble), `l14` (large patch-14 ensemble) |
 
 Notes:
 
@@ -248,6 +262,18 @@ LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
 LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
+```
+
+### Open-vocabulary detection (inference-only snapshot tier)
+
+```text
+# grounding_dino - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreGroundingDINOt/
+weights/LibreGroundingDINOb/
+
+# owlv2 - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOWLv2b16/
+weights/LibreOWLv2l14/
 ```
 
 ### Gaze (inference-only)

@@ -89,6 +89,18 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
                 f"VLM family export did not resolve to a class: {family!r}"
             )
 
+    # The open-vocabulary detector tier follows the same lazy-import rule.
+    from libreyolo import LibreGroundingDINO, LibreOpenVocab, LibreOWLv2
+
+    if not callable(LibreOpenVocab):
+        raise AssertionError("LibreOpenVocab import did not resolve to a callable")
+    for family in (LibreGroundingDINO, LibreOWLv2):
+        if not isinstance(family, type):
+            raise AssertionError(
+                "Open-vocabulary detector export did not resolve to a class: "
+                f"{family!r}"
+            )
+
     package_version = importlib.metadata.version("libreyolo")
     if package_version != libreyolo.__version__:
         raise AssertionError(

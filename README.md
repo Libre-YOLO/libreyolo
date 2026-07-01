@@ -18,9 +18,31 @@ MIT-licensed computer vision library with inference and training support for a v
 
 ## Installation & Quick start
 
+`pip install libreyolo` covers most users. It comes with the YOLOv9 flagship
+and the other detection models, plus training and inference. Now and then you'll
+add an extra: for a model family with a heavier dependency (for example RF-DETR,
+which needs the large `transformers` library), or for an export backend when you
+need to export a model:
+
 ```bash
 pip install libreyolo
+
+# Add an extra in brackets when you need one (comma-separate to combine),
+# e.g. pip install "libreyolo[rfdetr,onnx]":
+#   export:    onnx, tensorrt, openvino, ncnn, tflite, coreml
+#   models:    rfdetr, vlm, sam, openvocab, clip, gaze
+#   training:  lora, plots, tensorboard, mlflow, wandb
+#   or all:    pip install "libreyolo[all]"
 ```
+
+```python
+from libreyolo import LibreYOLO, SAMPLE_IMAGE
+
+model = LibreYOLO("LibreYOLO9t.pt")
+result = model(SAMPLE_IMAGE, save=True)
+```
+
+For the full list of extras and per-backend notes, see the [docs](https://www.libreyolo.com/docs#installation).
 
 To install from source in editable mode (for development or to track unreleased changes):
 
@@ -28,15 +50,6 @@ To install from source in editable mode (for development or to track unreleased 
 git clone https://github.com/LibreYOLO/libreyolo.git
 cd libreyolo
 pip install -e .
-```
-
-For optional runtime and export dependencies such as ONNX Runtime, OpenVINO, TensorRT, NCNN, and RF-DETR, see the [full docs](https://www.libreyolo.com/docs).
-
-```python
-from libreyolo import LibreYOLO, SAMPLE_IMAGE
-
-model = LibreYOLO("LibreYOLO9t.pt")
-result = model(SAMPLE_IMAGE, save=True)
 ```
 
 ## Flagship models

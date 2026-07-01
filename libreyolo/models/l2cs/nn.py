@@ -94,11 +94,12 @@ class L2CS(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return the raw head outputs ``(fc_yaw_gaze(x), fc_pitch_gaze(x))``.
 
-        Each has shape ``(B, num_bins)``. NOTE: per upstream L2CS-Net training
-        (``train.py``), ``fc_yaw_gaze`` is supervised on pitch labels and
-        ``fc_pitch_gaze`` on yaw labels — the head names are swapped relative
-        to the angle each one actually predicts. Callers that need
-        ``(pitch, yaw)`` must account for this; see
+        Each has shape ``(B, num_bins)``. The head names are honest:
+        ``fc_yaw_gaze`` predicts yaw and ``fc_pitch_gaze`` predicts pitch
+        (confirmed empirically by a horizontal-flip symmetry test on the
+        Gaze360 checkpoint — only the ``fc_yaw_gaze`` output negates under
+        mirroring). Callers that need ``(pitch, yaw)`` should therefore read
+        position 0 as yaw and position 1 as pitch; see
         ``GazeInferenceRunner._run_gaze``.
         """
         x = self.conv1(x)
