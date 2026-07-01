@@ -73,7 +73,7 @@ class TestEoMTMetadata:
         assert LibreEoMT.DEFAULT_TASK == "semantic"
         assert LibreEoMT.REQUIRE_TASK_SUFFIX
         assert LibreEoMT.INPUT_SIZES == {"l": 512}
-        assert LibreEoMT.semantic_resize_mode == "stretch"
+        assert LibreEoMT.semantic_resize_mode == "split"
         assert LibreEoMT.semantic_imgsz_divisor == 16
 
     def test_registered_in_factory(self):
@@ -150,6 +150,30 @@ class TestEoMTMetadata:
 
 
 class TestEoMTPredict:
+    def test_preprocess_splits_wide_image_like_hf_processor(
+        self,
+        fake_eomt_net,
+        tmp_path,
+    ):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "wide.jpg"
+        Image.new("RGB", (640, 480), color=(50, 90, 130)).save(img_path)
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=3, device="cpu"
+        )
+
+        tensor, _, original_size, _ = model._preprocess(
+            str(img_path),
+            color_format="rgb",
+            input_size=512,
+        )
+
+        assert tuple(tensor.shape) == (2, 3, 512, 512)
+        assert original_size == (640, 480)
+        assert model._last_eomt_resized_shape == (512, 682)
+        assert model._last_eomt_patch_offsets == [(0, 0, 512), (0, 170, 682)]
+
     def test_predict_returns_semantic_mask(self, fake_eomt_net, tmp_path):
         from libreyolo.models.eomt.model import LibreEoMT
 
@@ -203,7 +227,7 @@ class TestEoMTPredict:
             model.export(format="onnx")
 
 
-def test_val_smoke_uses_semantic_validator(fake_eomt_net, tmp_path):
+def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
     from libreyolo.models.eomt.model import LibreEoMT
 
     for i in range(2):
@@ -236,12 +260,30 @@ def test_val_smoke_uses_semantic_validator(fake_eomt_net, tmp_path):
         data=str(yaml_path),
         imgsz=512,
         batch=2,
-        workers=0,
+        workers=4,
+        save_dir=str(tmp_path / "val_out"),
+        save_plots=True,
+        data_dir=None,
+        max_det=300,
+        half=False,
         verbose=False,
     )
 
     assert "metrics/mIoU" in metrics
     assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
+    assert "speed/preprocess_ms" in metrics
+    assert (tmp_path / "val_out" / "config.yaml").exists()
+
+
+def test_val_rejects_unknown_kwargs(fake_eomt_net):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+    )
+
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        model.val(unused_option=True)
 
 
 def test_checkpoint_round_trip_through_factory(fake_eomt_net, tmp_path):
