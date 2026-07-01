@@ -66,6 +66,12 @@ OWLv2 does not have this threshold and rejects `text_threshold=`.
 Grounding DINO postprocessing returns decoded text phrases. LibreYOLO maps
 those phrases back to the current `set_classes()` vocabulary.
 
+Grounding DINO's text encoder has a shorter model limit than the tokenizer's
+nominal maximum. LibreYOLO chunks long vocabularies, including the default
+COCO-80 vocabulary, into multiple text prompts that fit `max_text_len`, runs one
+forward per chunk, and merges the detections before applying the global
+`max_det` cap.
+
 The mapping is deliberately conservative:
 
 - Exact normalized match wins.

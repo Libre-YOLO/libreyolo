@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -229,6 +231,90 @@ class TestGroundingDinoPhraseMapping:
         )
         assert det["num_detections"] == 1
         assert det["classes"].tolist() == [0]
+
+
+class TestGroundingDinoPromptChunking:
+    class Processor:
+        class Tokenizer:
+            def __call__(self, text, add_special_tokens=True, truncation=False):
+                import re
+
+                tokens = re.findall(r"[a-z0-9]+", text.lower())
+                if add_special_tokens:
+                    tokens = ["[CLS]", *tokens, "[SEP]"]
+                return {"input_ids": tokens}
+
+        tokenizer = Tokenizer()
+
+        def __call__(self, *, images, text, return_tensors):
+            return {"text": text, "input_ids": torch.tensor([[1]])}
+
+    def _model(self, names):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(names)
+        m.processor = self.Processor()
+        m.model = SimpleNamespace(config=SimpleNamespace(max_text_len=6))
+        m._text_threshold = 0.25
+        return m
+
+    def test_chunks_prompt_to_model_max_text_len(self):
+        m = self._model(["cat", "dog", "bus", "boat", "kite"])
+
+        chunks = m._prompt_chunks()
+
+        assert chunks == ["a cat. a dog.", "a bus. a boat.", "a kite."]
+        assert all(m._token_count(prompt) <= 6 for prompt in chunks)
+
+    def test_rejects_single_prompt_that_exceeds_model_max_text_len(self):
+        m = self._model(["very long class name"])
+
+        with pytest.raises(ValueError, match="exceeds max_text_len=6"):
+            m._prompt_chunks()
+
+    def test_build_inputs_returns_runner_compatible_chunk_payload(self):
+        m = self._model(["cat", "dog", "bus"])
+
+        payload = m._build_inputs(object())
+
+        assert len(payload) == 2
+        assert hasattr(payload, "to")
+        assert payload.to("cpu") is payload
+        assert [item["text"] for item in payload] == ["a cat. a dog.", "a bus."]
+
+    def test_postprocess_merges_chunk_outputs_before_global_sort(self):
+        m = self._model(["cat", "dog"])
+
+        class Processor(self.Processor):
+            def post_process_grounded_object_detection(self, outputs, *args, **kwargs):
+                if outputs == "cat-output":
+                    return [
+                        {
+                            "boxes": torch.tensor([[1.0, 2.0, 10.0, 12.0]]),
+                            "scores": torch.tensor([0.8]),
+                            "text_labels": ["cat"],
+                        }
+                    ]
+                return [
+                    {
+                        "boxes": torch.tensor([[3.0, 4.0, 9.0, 11.0]]),
+                        "scores": torch.tensor([0.9]),
+                        "text_labels": ["dog"],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(
+            [
+                {"outputs": "cat-output", "input_ids": torch.tensor([[1]])},
+                {"outputs": "dog-output", "input_ids": torch.tensor([[2]])},
+            ],
+            0.1,
+            0.45,
+            (20, 20),
+        )
+
+        assert det["num_detections"] == 2
+        assert det["classes"].tolist() == [1, 0]
 
 
 class TestOWLv2Mapping:
