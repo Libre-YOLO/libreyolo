@@ -22,6 +22,7 @@ from .models import (
     LibreL2CS,
     LibreFOMO,
     LibreDepthAnythingV2,
+    LibreNAFNet,
     LibreEoMT,
     LibrePIDNet,
     LibreMobileNetV4,
@@ -41,6 +42,7 @@ from .utils.results import (
     Gaze,
     SemanticMask,
     DepthMap,
+    RestoredImage,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -152,6 +154,7 @@ __all__ = [
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreNAFNet",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
@@ -189,6 +192,7 @@ __all__ = [
     "Gaze",
     "SemanticMask",
     "DepthMap",
+    "RestoredImage",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking

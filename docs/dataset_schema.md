@@ -141,6 +141,40 @@ Float `.npy` maps are used as-is and do not apply `depth_scale`.
 
 Canonical loader: `libreyolo.data.DepthDataset`.
 
+## restore
+
+Image restoration pairs each degraded input image with a clean RGB target image
+instead of a `.txt` label file:
+
+```text
+inputs/.../image.jpg -> targets/.../image.jpg
+```
+
+Restore rules:
+
+- input and target images are RGB-compatible image files;
+- input and target resolution must match exactly;
+- validation keeps native resolution and pads only enough to stack a batch;
+- metrics are computed on the original image canvas;
+- training applies coupled crop and horizontal flip to the input/target pair.
+
+YAML adds these optional keys on top of the common split contract:
+
+- `input_dir`: degraded-input directory name used in split paths
+  (default `inputs`).
+- `target_dir`: clean-target directory name substituted for `input_dir`
+  (default `targets`).
+- `target_stem_suffix`: optional suffix appended to the input image stem before
+  target extension lookup.
+- `target_stem_suffixes`: list form of `target_stem_suffix`.
+- `degradation`: optional metadata label such as `deblur` or `denoise`.
+- `dataset`: optional dataset/provenance label such as `GoPro`.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: image}`. Restore models expose `Results.restored`, not detections.
+
+Canonical loader: `libreyolo.data.RestoreDataset`.
+
 ## pose
 
 YAML adds:

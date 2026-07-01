@@ -276,6 +276,28 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+NAFNet (Megvii Research)
+--------------------------------------------------------------------
+Source: https://github.com/megvii-research/NAFNet
+License: MIT
+Copyright (c) 2022 Megvii Inc.
+Citation: Chen, L., Chu, X., Zhang, X., and Sun, J. "Simple Baselines
+          for Image Restoration." ECCV 2022.
+Used for: NAFNet restoration model family (libreyolo/models/nafnet/),
+          including the NAFBlock architecture and test-time local
+          converter logic. The LibreYOLO wrapper adds the restore-task
+          contract, paired train/validation plumbing, fixed-resolution
+          ONNX export metadata, and Results.restored payload.
+
+NOTE - code vs. weights/data: The NAFNet source code is MIT licensed.
+LibreYOLO does not bundle NAFNet pretrained checkpoint files. Some
+published GoPro-trained NAFNet weights do not carry an explicit
+standalone weights license; convert only weights that you have the
+right to use and redistribute. The GoPro deblurring dataset is separate
+from the NAFNet code and carries its own terms; users are responsible
+for dataset compliance.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models

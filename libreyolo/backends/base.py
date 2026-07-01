@@ -36,13 +36,13 @@ from ..utils.general import (
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
 from ..utils.predict_args import normalize_predict_kwargs
-from ..utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results
+from ..utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results, RestoredImage
 from ..utils.video import collect_video_results, is_video_file, run_video_inference
 
 logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
-_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e"}
+_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "nafnet"}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
 # one of these must fail loudly instead of being silently parsed as YOLO9.
@@ -112,7 +112,7 @@ def _read_metadata_imgsz(
         ):
             raise NotImplementedError(
                 "Rectangular exported-backend inference is currently supported "
-                "for YOLO9-family exports only. "
+                "for YOLO9-family and NAFNet exports only. "
                 f"{artifact} declares model_family={model_family or 'unknown'!r}."
             )
         return imgsz
@@ -376,6 +376,8 @@ class BaseBackend(ABC):
         Returns:
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
+        if self.task == "restore" or self.model_family == "nafnet":
+            return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "classify":
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.model_family == "yolox":
@@ -463,6 +465,45 @@ class BaseBackend(ABC):
         )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_restore(image, input_size, color_format):
+        """Restoration preprocessing for fixed-shape exported runtimes.
+
+        Native NAFNet prediction runs at the input image's own resolution and
+        reflect-pads only to the network stride. Exported runtimes use a fixed
+        graph shape, so backend prediction accepts images that fit inside the
+        exported canvas, pads bottom/right without resizing, and crops the
+        restored output back to the original canvas.
+        """
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        orig_w, orig_h = original_size
+        if orig_h > input_h or orig_w > input_w:
+            raise ValueError(
+                "Restoration exported-runtime inference is fixed-resolution. "
+                f"Input image is {orig_w}x{orig_h}, but the exported canvas is "
+                f"{input_w}x{input_h}. Use a native .pt model for native-size "
+                "large-image prediction, or export a matching fixed size."
+            )
+
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        pad_h = input_h - orig_h
+        pad_w = input_w - orig_w
+        if pad_h or pad_w:
+            mode = (
+                "reflect"
+                if orig_h > 1
+                and orig_w > 1
+                and pad_h < orig_h
+                and pad_w < orig_w
+                else "edge"
+            )
+            arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+        img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
+        return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
 
     @staticmethod
     def _preprocess_rfdetr(image, input_size, color_format, task=None):
@@ -1748,6 +1789,23 @@ class BaseBackend(ABC):
         logits_t = torch.from_numpy(logits).float()
         return torch.softmax(logits_t, dim=1)[0]
 
+    @staticmethod
+    def _parse_restore_output(all_outputs, original_size: Tuple[int, int]) -> np.ndarray:
+        """Decode backend restoration output to HWC uint8 RGB on original size."""
+        restored = np.asarray(all_outputs[0])
+        if restored.ndim == 4:
+            restored = restored[0]
+        if restored.ndim == 3 and restored.shape[0] == 3:
+            restored = np.transpose(restored, (1, 2, 0))
+        if restored.ndim != 3 or restored.shape[-1] != 3:
+            raise ValueError(
+                "Restoration backend output must have shape [B, 3, H, W] "
+                f"or [H, W, 3], got {tuple(restored.shape)}."
+            )
+        orig_w, orig_h = original_size
+        restored = restored[:orig_h, :orig_w, :]
+        return (np.clip(restored, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+
     def _build_classify_result(
         self,
         all_outputs,
@@ -1758,6 +1816,23 @@ class BaseBackend(ABC):
         return Results(
             boxes=None,
             probs=Probs(self._parse_classify_probs(all_outputs)),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _build_restore_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        restored = self._parse_restore_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            restored=RestoredImage(torch.from_numpy(restored), orig_shape),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
@@ -1897,6 +1972,8 @@ class BaseBackend(ABC):
         annotated_img = original_img
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass
+        elif result.boxes is None and getattr(result, "restored", None) is not None:
+            annotated_img = Image.fromarray(result.restored.array, mode="RGB")
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2019,7 +2096,7 @@ class BaseBackend(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz backend inference is currently supported "
-                "for YOLO9-family exports only."
+                "for YOLO9-family and NAFNet exports only."
             )
         return effective
 
@@ -2083,6 +2160,12 @@ class BaseBackend(ABC):
         outputs = self._as_numpy_outputs(output)
         if self.task == "classify":
             return {"probs": self._parse_classify_probs(outputs)}
+        if self.task == "restore":
+            restored = np.asarray(outputs[0])
+            if restored.ndim == 4:
+                orig_w, orig_h = original_size
+                restored = restored[:, :, :orig_h, :orig_w]
+            return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
         parsed = self._parse_outputs(
             outputs,
             effective_imgsz,
@@ -2147,6 +2230,7 @@ class BaseBackend(ABC):
             OBBValidator,
             PointValidator,
             PoseValidator,
+            RestoreValidator,
             SegmentationValidator,
             ValidationConfig,
         )
@@ -2195,6 +2279,8 @@ class BaseBackend(ABC):
             validator_cls = PoseValidator
         elif self.task == "obb":
             validator_cls = OBBValidator
+        elif self.task == "restore":
+            validator_cls = RestoreValidator
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
@@ -2239,6 +2325,21 @@ class BaseBackend(ABC):
             result = self._build_classify_result(
                 all_outputs,
                 orig_shape=orig_shape,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "restore":
+            result = self._build_restore_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
                 image_path=image_path,
             )
             if save:
@@ -2455,6 +2556,13 @@ class BaseBackend(ABC):
                     orig_shape=orig_shape,
                     image_path=image_path,
                 )
+            elif self.task == "restore":
+                result = self._build_restore_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
             else:
                 parsed = self._parse_outputs(
                     per_image,
@@ -2626,6 +2734,13 @@ class BaseBackend(ABC):
                 return self._build_classify_result(
                     all_outputs,
                     orig_shape=orig_shape,
+                    image_path=str(source),
+                )
+            if self.task == "restore":
+                return self._build_restore_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
                     image_path=str(source),
                 )
             parsed = self._parse_outputs(

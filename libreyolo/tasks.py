@@ -17,6 +17,7 @@ TaskType = Literal[
     "obb",
     "point",
     "depth",
+    "restore",
 ]
 TASKS = (
     "detect",
@@ -28,6 +29,7 @@ TASKS = (
     "obb",
     "point",
     "depth",
+    "restore",
 )
 
 TASK_ALIASES = {
@@ -59,6 +61,10 @@ TASK_ALIASES = {
     "depth_estimation": "depth",
     "monodepth": "depth",
     "monocular-depth": "depth",
+    "restore": "restore",
+    "restoration": "restore",
+    "deblur": "restore",
+    "denoise": "restore",
 }
 
 TASK_TO_SUFFIX = {
@@ -70,6 +76,7 @@ TASK_TO_SUFFIX = {
     "obb": "obb",
     "point": "point",
     "depth": "depth",
+    "restore": "restore",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}
