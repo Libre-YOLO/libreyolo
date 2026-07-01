@@ -21,10 +21,11 @@ async function enterLabeler(d){
   const cb=$("#classesbtn"); if(cb) cb.style.display = (DS.writable!==false) ? "" : "none";
   renderPalette();
   const isObb = DS.task==="obb";   // OBB projects: only the oriented-box tool makes valid rows
+  const isSeg = DS.task==="segment";   // segment projects: polygons only (a box row corrupts seg labels)
   { const tO=$("#toolObb"); if(tO) tO.style.display=isObb?"":"none";
-    const tb=$("#toolBox"); if(tb) tb.style.display=isObb?"none":"";
+    const tb=$("#toolBox"); if(tb) tb.style.display=(isObb||isSeg)?"none":"";
     const tp=$("#toolPoly"); if(tp) tp.style.display=isObb?"none":""; }
-  setTool(isObb ? "obb" : (DS.task==="segment" ? "poly" : "box"));
+  setTool(isObb ? "obb" : (isSeg ? "poly" : "box"));
   const imgs = (await jget("/api/images")).images;
   if(gen!==loadSeq) return;            // another project opened while we were fetching
   IMAGES = imgs;
@@ -86,6 +87,7 @@ function setTool(t){
   const isObb = DS && DS.task==="obb";
   if(isObb && t!=="obb") return;
   if(!isObb && t==="obb" && DS) return;
+  if(DS && DS.task==="segment" && t==="box") return;   // a 5-field box row corrupts a segment dataset
   if(t==="seg" && !(assist && assist.sam)) return;
   if(tool==="poly" && t!=="poly" && polyDraft) cancelPolyDraft();
   tool = t;

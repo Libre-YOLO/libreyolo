@@ -278,3 +278,22 @@ def test_shared_label_file_makes_session_read_only(tmp_path):
     assert "same label file" in ds.reason
     with pytest.raises(RuntimeError):
         ds.write_label(0, [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_wizard_segment_project_polygon_roundtrip(tmp_path):
+    # The wizard can now create task: segment projects; polygons must round-trip.
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession, create_uploaded_project
+
+    dst = tmp_path / "segproj"
+    (dst / "images" / "train").mkdir(parents=True)
+    Image.new("RGB", (32, 24), (40, 40, 40)).save(dst / "images" / "train" / "a.jpg")
+    yaml_path = create_uploaded_project(str(dst), name="Seg", classes=["blob"], task="segment")
+    ds = DatasetSession(yaml_path)
+    assert ds.meta()["task"] == "segment"
+    assert ds.writable
+    ds.write_label(0, [{"type": "poly", "cls": 0,
+                        "points": [0.1, 0.1, 0.6, 0.15, 0.4, 0.7]}])
+    back, editable = ds.read_label(0)
+    assert editable and back[0]["type"] == "poly" and len(back[0]["points"]) == 6

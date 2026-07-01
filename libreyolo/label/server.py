@@ -410,15 +410,24 @@ class _Handler(BaseHTTPRequestHandler):
                     and not self.state.engine.enabled:
                 self._send(403, {"error": "AI assist is disabled (started with --no-assist)."})
                 return
-            # OBB projects: the assist stack emits axis-aligned boxes (prelabel /
-            # autolabel / Radar / Boost) or free polygons (SAM) -- both would corrupt
-            # 9-field oriented-box labels, so refuse them for task: obb outright.
-            if (path.startswith(("/api/assist/prelabel", "/api/assist/segment"))
-                    or path in ("/api/assist/autolabel", "/api/assist/radar", "/api/boost")) \
-                    and self.state.session is not None \
-                    and getattr(self.state.session, "_task", "") == "obb":
+            # Task-gate the assist stack. OBB: everything it emits (axis-aligned
+            # boxes from prelabel/autolabel/Radar/Boost, free polygons from SAM)
+            # would corrupt 9-field oriented-box labels -> refuse all of it.
+            # Segment: the BOX producers (prelabel/autolabel/Boost) would write
+            # 5-field rows into a polygon dataset -> refuse those; SAM (polygons)
+            # and Radar (read-only audit) stay available.
+            task = getattr(self.state.session, "_task", "") if self.state.session else ""
+            if task == "obb" and (
+                    path.startswith(("/api/assist/prelabel", "/api/assist/segment"))
+                    or path in ("/api/assist/autolabel", "/api/assist/radar", "/api/boost")):
                 self._send(409, {"error": "AI assist works with boxes and masks, not oriented "
                                           "boxes - it is disabled for OBB projects."})
+                return
+            if task == "segment" and (
+                    path.startswith("/api/assist/prelabel")
+                    or path in ("/api/assist/autolabel", "/api/boost")):
+                self._send(409, {"error": "Box auto-label is disabled for segmentation projects "
+                                          "- use SAM (S) or the polygon tool instead."})
                 return
             if path == "/api/projects/open":
                 payload = self._read_json()

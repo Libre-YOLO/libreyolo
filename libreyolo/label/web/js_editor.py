@@ -226,6 +226,14 @@ async function initAssist(){
   const ar=$("#aradar"); if(ar){ ar.style.display="inline-flex"; ar.onclick=()=>runRadar(); }
   const mb=$("#mapbtn"); if(mb && assist.embed) mb.style.display="grid";
   const bb=$("#boostbtn"); if(bb && assist.boost) bb.style.display="grid";
+  if(DS && DS.task==="segment"){
+    // Segment projects: the server refuses the BOX producers (prelabel /
+    // autolabel / Boost); keep SAM, Radar, the Map, and the conf/model fields.
+    assist.boost=false;
+    const hide=["#aautolabel","#aprelabel","#boostbtn"];
+    hide.forEach(s=>{ const el=$(s); if(el) el.style.display="none"; });
+    if(toolAi) toolAi.style.display="none";
+  }
   updateEngineUI();
 }
 function updateEngineUI(){
@@ -259,7 +267,7 @@ function showGhosts(list){
 }
 async function prelabelCurrent(){
   if(!assist || !assist.available || idx<0 || !imgOk) return;
-  if(DS && DS.task==="obb") return;   // box suggestions would corrupt oriented-box labels
+  if(DS && (DS.task==="obb" || DS.task==="segment")) return;   // box suggestions would corrupt these labels
   if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - auto-label is disabled."); return; }
   const myGen = loadSeq; setSave("running model…");
   try{
