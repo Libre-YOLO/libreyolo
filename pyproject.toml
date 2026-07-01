@@ -293,5 +293,6 @@ markers = [
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
+    "overfit: overfit convergence gate (cheapest 'training is not broken' catch-all, all families)",
     "slow: slow tests that may take several minutes",
 ]
