@@ -1,0 +1,334 @@
+"""Unit tests for the LibreEoMT semantic segmentation family."""
+
+from __future__ import annotations
+
+import importlib
+import sys
+from pathlib import Path
+
+import pytest
+import torch
+import torch.nn as nn
+import yaml
+from PIL import Image
+
+pytestmark = pytest.mark.unit
+
+
+def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
+    return {
+        "embeddings.patch_embeddings.projection.weight": torch.zeros(
+            hidden, 3, 16, 16
+        ),
+        "query.weight": torch.zeros(100, hidden),
+        "mask_head.fc1.weight": torch.zeros(hidden, hidden),
+        "mask_head.fc2.weight": torch.zeros(hidden, hidden),
+        "mask_head.fc3.weight": torch.zeros(hidden, hidden),
+        "class_predictor.weight": torch.zeros(nc + 1, hidden),
+    }
+
+
+class _FakeEoMTNet(nn.Module):
+    def __init__(self, config: str = "l", nb_classes: int = 150, image_size: int = 512):
+        super().__init__()
+        if config != "l":
+            raise ValueError("test fake supports only EoMT-L")
+        self.nb_classes = int(nb_classes)
+        self.image_size = int(image_size)
+        self.proj = nn.Conv2d(3, self.nb_classes, 1)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"semantic_logits": self.proj(x)}
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        from torch.nn.modules.module import _IncompatibleKeys
+
+        self.loaded_state_dict = dict(state_dict)
+        return _IncompatibleKeys([], [])
+
+
+@pytest.fixture
+def fake_eomt_net(monkeypatch):
+    import libreyolo.models.eomt.model as eomt_model
+
+    monkeypatch.setattr(eomt_model, "LibreEoMTNet", _FakeEoMTNet)
+    return _FakeEoMTNet
+
+
+def _load_converter_module():
+    weights_dir = Path(__file__).resolve().parents[2] / "weights"
+    weights_path = str(weights_dir)
+    if weights_path not in sys.path:
+        sys.path.insert(0, weights_path)
+    return importlib.import_module("convert_eomt_weights")
+
+
+class TestEoMTMetadata:
+    def test_task_and_size_metadata(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        assert LibreEoMT.FAMILY == "eomt"
+        assert LibreEoMT.FILENAME_PREFIX == "LibreEoMT"
+        assert LibreEoMT.SUPPORTED_TASKS == ("semantic",)
+        assert LibreEoMT.DEFAULT_TASK == "semantic"
+        assert LibreEoMT.REQUIRE_TASK_SUFFIX
+        assert LibreEoMT.INPUT_SIZES == {"l": 512}
+        assert LibreEoMT.semantic_resize_mode == "stretch"
+        assert LibreEoMT.semantic_imgsz_divisor == 16
+
+    def test_registered_in_factory(self):
+        from libreyolo.models import LibreEoMT
+        from libreyolo.models.base import BaseModel
+
+        assert LibreEoMT in BaseModel._registry
+
+    def test_can_load_detects_signature_size_and_classes(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        state = _synthetic_eomt_state(nc=150)
+        assert LibreEoMT.can_load(state)
+        assert LibreEoMT.detect_size(state) == "l"
+        assert LibreEoMT.detect_nb_classes(state) == 150
+        assert LibreEoMT.detect_checkpoint_task(state) == "semantic"
+
+    def test_can_load_handles_common_prefixes(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        state = {f"module.model.eomt.{k}": v for k, v in _synthetic_eomt_state().items()}
+        assert LibreEoMT.can_load(state)
+        assert LibreEoMT.detect_size(state) == "l"
+
+    def test_can_load_rejects_other_dense_families(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        dinov2_state = {
+            "backbone.encoder.proj.weight": torch.zeros(1),
+            "predict.weight": torch.zeros(150, 8, 1, 1),
+        }
+        depth_state = {
+            "pretrained.cls_token": torch.zeros(1),
+            "depth_head.scratch.output_conv1.weight": torch.zeros(1),
+        }
+        assert not LibreEoMT.can_load(dinov2_state)
+        assert not LibreEoMT.can_load(depth_state)
+
+    def test_filename_and_download_url(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        filename = "LibreEoMTl-sem.pt"
+        assert LibreEoMT.detect_size_from_filename(filename) == "l"
+        assert LibreEoMT.detect_task_from_filename(filename) == "semantic"
+        assert LibreEoMT.detect_size_from_filename("LibreEoMTl.pt") is None
+        assert LibreEoMT.get_download_url(filename) == (
+            "https://huggingface.co/LibreYOLO/LibreEoMTl-sem/resolve/main/"
+            "LibreEoMTl-sem.pt"
+        )
+
+    def test_wrong_task_raises(self, fake_eomt_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        with pytest.raises(ValueError, match="semantic"):
+            LibreEoMT(model_path=None, size="l", task="detect", device="cpu")
+
+
+class TestEoMTPredict:
+    def test_predict_returns_semantic_mask(self, fake_eomt_net, tmp_path):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=3, device="cpu"
+        )
+        result = model.predict(str(img_path), imgsz=512)
+
+        assert result.boxes is None
+        assert result.masks is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+        assert set(torch.unique(result.semantic_mask.data).tolist()) <= {0, 1, 2}
+
+    def test_predict_rejects_non_patch_imgsz(self, fake_eomt_net, tmp_path):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (64, 64), color=(10, 20, 30)).save(img_path)
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+        )
+
+        with pytest.raises(ValueError, match="divisible by 16"):
+            model.predict(str(img_path), imgsz=66)
+
+    def test_predict_rejects_non_native_imgsz(self, fake_eomt_net, tmp_path):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (64, 64), color=(10, 20, 30)).save(img_path)
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+        )
+
+        with pytest.raises(ValueError, match="requires imgsz=512"):
+            model.predict(str(img_path), imgsz=64)
+
+    def test_train_and_export_out_of_scope(self, fake_eomt_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+        )
+        with pytest.raises(NotImplementedError):
+            model.train(data="ade20k.yaml")
+        with pytest.raises(NotImplementedError):
+            model.export(format="onnx")
+
+
+def test_val_smoke_uses_semantic_validator(fake_eomt_net, tmp_path):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    for i in range(2):
+        img_dir = tmp_path / "images" / "val"
+        mask_dir = tmp_path / "masks" / "val"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 64), color=(20 + i, 30, 40)).save(
+            img_dir / f"img{i}.jpg"
+        )
+        Image.new("L", (64, 64), color=i % 2).save(mask_dir / f"img{i}.png")
+
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val",
+                "masks_dir": "masks",
+                "nc": 2,
+                "names": {0: "left", 1: "right"},
+            }
+        )
+    )
+    model = LibreEoMT(
+        model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+    )
+
+    metrics = model.val(
+        data=str(yaml_path),
+        imgsz=512,
+        batch=2,
+        workers=0,
+        verbose=False,
+    )
+
+    assert "metrics/mIoU" in metrics
+    assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
+
+
+def test_checkpoint_round_trip_through_factory(fake_eomt_net, tmp_path):
+    from libreyolo import LibreYOLO
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    ckpt = wrap_libreyolo_checkpoint(
+        _synthetic_eomt_state(nc=150),
+        model_family="eomt",
+        size="l",
+        task="semantic",
+        nc=150,
+        names={i: f"ade_{i}" for i in range(150)},
+        imgsz=512,
+    )
+    ckpt_path = tmp_path / "LibreEoMTl-sem.pt"
+    torch.save(ckpt, str(ckpt_path))
+
+    loaded = LibreYOLO(str(ckpt_path), device="cpu")
+    assert loaded.FAMILY == "eomt"
+    assert loaded.task == "semantic"
+    assert loaded.size == "l"
+    assert loaded.nb_classes == 150
+    assert loaded.names[0] == "ade_0"
+
+
+def test_raw_state_dict_load_requires_converter(fake_eomt_net):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    with pytest.raises(RuntimeError, match="Convert the approved DINOv2 ADE20K"):
+        LibreEoMT(
+            model_path=_synthetic_eomt_state(),
+            size="l",
+            task="semantic",
+            nb_classes=150,
+            device="cpu",
+        )
+
+
+def test_converter_wraps_metadata(monkeypatch, tmp_path):
+    converter = _load_converter_module()
+
+    def _fake_load(source, *, allow_unverified_source=False):
+        assert source == converter.DEFAULT_HF_REPO
+        assert allow_unverified_source is False
+        return _synthetic_eomt_state(nc=150)
+
+    monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+    out_path = tmp_path / "LibreEoMTl-sem.pt"
+
+    ckpt = converter.convert_weights(converter.DEFAULT_HF_REPO, str(out_path))
+
+    assert out_path.exists()
+    assert ckpt["model_family"] == "eomt"
+    assert ckpt["size"] == "l"
+    assert ckpt["task"] == "semantic"
+    assert ckpt["nc"] == 150
+    assert ckpt["imgsz"] == 512
+    assert ckpt["names"][0] == "wall"
+    assert ckpt["names"][149] == "flag"
+    assert set(
+        [
+            "model",
+            "schema_version",
+            "libreyolo_version",
+            "model_family",
+            "size",
+            "task",
+            "nc",
+            "names",
+            "imgsz",
+        ]
+    ).issubset(ckpt)
+
+
+def test_converter_rejects_dinov3_even_with_override(tmp_path):
+    converter = _load_converter_module()
+
+    with pytest.raises(ValueError, match="DINOv3"):
+        converter.convert_weights(
+            "tue-mps/eomt-dinov3-ade-semantic-large-512",
+            str(tmp_path / "bad.pt"),
+            allow_unverified_source=True,
+        )
+
+
+def test_converter_rejects_unverified_local_source(tmp_path):
+    converter = _load_converter_module()
+    local = tmp_path / "model.safetensors"
+    local.write_bytes(b"not used")
+
+    with pytest.raises(ValueError, match="not provenance-verifiable"):
+        converter.convert_weights(str(local), str(tmp_path / "bad.pt"))
+
+
+def test_builtin_ade20k_config_is_complete():
+    from libreyolo.data import load_data_config
+
+    config = load_data_config("ade20k", autodownload=False)
+
+    assert config["nc"] == 150
+    assert config["masks_dir"] == "annotations"
+    assert config["ignore_index"] == 255
+    assert len(config["names"]) == 150
+    assert config["names"][0] == "wall"
+    assert config["names"][149] == "flag"
+    assert config["label_mapping"][1] == 0
+    assert config["label_mapping"][150] == 149

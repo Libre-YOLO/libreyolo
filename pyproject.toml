@@ -47,6 +47,9 @@ onnx = [
 rfdetr = [
     "transformers>=5.1.0",
 ]
+eomt = [
+    "transformers>=5.1.0",
+]
 lora = [
     # LoRA / PEFT fine-tuning (lora=True) for transformer backbones (RF-DETR).
     "libreyolo[rfdetr]",
@@ -135,6 +138,7 @@ wandb = [
 all = [
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
+    "libreyolo[eomt]",
     "libreyolo[lora]",
     "libreyolo[plots]",
     "libreyolo[tensorrt]",
