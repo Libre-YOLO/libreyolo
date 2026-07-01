@@ -190,7 +190,7 @@ class SemanticDataset(Dataset):
         self.imgsz = int(imgsz)
         self.augment = augment
         self.resize_mode = resize_mode
-        self.ignore_index = int(ignore_index)
+        self.ignore_index = int(data_config.get("ignore_index", ignore_index))
         self.scale_jitter = scale_jitter
 
         split_value = data_config.get(split)

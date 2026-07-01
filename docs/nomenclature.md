@@ -23,9 +23,9 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; the
-`mobilenetv4` / `convnext` / `efficientnetv2` / `resnet` families are
-classify-only:
+separate category, covered in the note below). Most are detectors; `eomt` and
+`pidnet` are semantic-only; the `mobilenetv4` / `convnext` /
+`efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -39,6 +39,8 @@ classify-only:
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
+| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
+| `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -105,6 +107,8 @@ ships:
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
+| `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
+| `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -199,6 +203,8 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
+| `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
+| `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -251,6 +257,14 @@ LibreRFDETRn-obb.pt        # obb
 # dinov2 — DINOv2 backbone + task head (NOT the RF-DETR detector)
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
+
+# eomt - EoMT-L semantic segmentation on ADE20K only
+LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
+
+# pidnet - real-time semantic segmentation
+LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
+LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
+LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)
