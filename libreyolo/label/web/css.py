@@ -25,6 +25,7 @@ PART = r"""  :root{
     --acg1:#22c3e0; --acg2:#0891b2; --glass:rgba(255,253,247,.85);
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}   /* author display rules must not undo the hidden attribute (wizard panes/footer) */
   html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);
     font:13.5px/1.55 "Outfit",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}

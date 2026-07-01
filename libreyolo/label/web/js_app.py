@@ -38,8 +38,9 @@ async function enterLabeler(d){
   if(IMAGES.length) await load(0);
   else { idx=-1; imgOk=false; stageMsg = "No images found - check the dataset paths"; setSave("no images"); draw(); }
   // Project instructions (Settings): shown once on open, unless a warning banner
-  // (read-only reason, ...) is already up.
-  if(gen===loadSeq && DS.instructions && $("#banner").style.display!=="flex")
+  // (read-only reason, ...) is already up. DS===d detects a superseding open
+  // (loadSeq can't: load(0) itself bumps it).
+  if(DS===d && DS.instructions && $("#banner").style.display!=="flex")
     banner("Instructions: " + DS.instructions);
 }
 function wireChrome(){

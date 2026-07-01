@@ -258,7 +258,7 @@ PART = r"""</style>
           <div class="wz-tasks" id="wztasks">
             <button class="wz-task on" data-task="detect">Bounding boxes</button>
             <button class="wz-task" data-task="obb">Oriented boxes</button>
-            <button class="wz-task" data-task="segment" disabled>Segmentation <span class="soon">soon</span></button>
+            <button class="wz-task" data-task="segment">Segmentation</button>
             <button class="wz-task" data-task="classify" disabled>Classification <span class="soon">soon</span></button>
           </div>
           <label class="wz-lbl">Classes <span class="wz-hint">optional, you can add or rename them anytime while labeling</span></label>
