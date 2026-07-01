@@ -93,9 +93,11 @@ from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers fa
 
 
 def _ensure_rfdetr():
-    """Lazily register RF-DETR and LibreDINOv2 if their dependencies are installed."""
-    if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry) and any(
-        c.__name__ == "LibreDINOv2" for c in BaseModel._registry
+    """Lazily register RF-DETR families and LibreDINOv2 if their dependencies are installed."""
+    if (
+        any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry)
+        and any(c.__name__ == "LibreRFDETRSO" for c in BaseModel._registry)
+        and any(c.__name__ == "LibreDINOv2" for c in BaseModel._registry)
     ):
         return
     import importlib.util
@@ -107,6 +109,10 @@ def _ensure_rfdetr():
             "RF-DETR support requires extra dependencies.\n"
             "Install with: pip install libreyolo[rfdetr]"
         )
+    # NOTE: LibreRFDETRSO must register before LibreRFDETR — SO checkpoints
+    # also match the broad RF-DETR can_load patterns, so the SO discriminator
+    # (backbone.0.ssa_sde / backbone.0.pbm3) must win first.
+    from .rfdetr_so.model import LibreRFDETRSO  # noqa: F401  (import triggers registration)
     from .rfdetr.model import LibreRFDETR  # noqa: F401  (import triggers registration)
     # LibreDINOv2 shares the same transformers dependency (DINOv2 backbone).
     from .dinov2.model import LibreDINOv2  # noqa: F401  (import triggers registration)

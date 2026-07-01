@@ -47,6 +47,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `rtdetrv4`  | `LibreRTDETRv4` | All-caps acronym + lowercase version |
 | `rtmdet`    | `LibreRTMDet`   | Upstream brand casing preserved (`RTMDet`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
+| `rfdetr_so` | `LibreRFDETRSO` | All-caps acronym + variant (SO = small object) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
@@ -130,6 +131,7 @@ ships:
 | `rtdetrv4`  | `s`, `m`, `l`, `x` |
 | `rtmdet`    | `t`, `s`, `m`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
+| `rfdetr_so` | `s` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
@@ -267,6 +269,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `rtmdet`    | `("detect",)` (default)             | detect | detect-only; training is gated experimental (`allow_experimental=True`) |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr_so` | `("detect",)`                       | detect | detect-only small-object variant (SSA + PBM) |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
 | `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
