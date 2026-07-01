@@ -38,6 +38,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
+| `rfdetr_so` | `LibreRFDETRSO` | All-caps acronym + variant (SO = small object) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
@@ -106,6 +107,7 @@ ships:
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
+| `rfdetr_so` | `s` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
@@ -202,6 +204,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr_so` | `("detect",)`                       | detect | detect-only small-object variant (SSA + PBM) |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
 | `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |

@@ -203,6 +203,10 @@ class LibreRFDETR(BaseModel):
     TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
     val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
     TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op
+    # Additional checkpoint model_family values accepted when loading weights
+    # (subclass hook; e.g. rfdetr_so accepts base rfdetr checkpoints, which it
+    # remaps onto its 3-level layout at load time).
+    TRANSFER_COMPATIBLE_FAMILIES: ClassVar[tuple[str, ...]] = ()
 
     # CLI parameters intentionally ignored by native RF-DETR training.
     UNSUPPORTED_TRAIN_PARAMS: ClassVar[set[str]] = {
@@ -227,6 +231,13 @@ class LibreRFDETR(BaseModel):
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
         keys_lower = [k.lower() for k in weights_dict]
+        # Explicitly exclude RF-DETR-SO checkpoints (SSA/PBM small-object
+        # modules) so LibreRFDETRSO.can_load wins first in the registry.
+        if any(
+            k.startswith("backbone.0.ssa_sde.") or k.startswith("backbone.0.pbm3.")
+            for k in weights_dict
+        ):
+            return False
         if any(
             "detr" in k
             or "dinov2" in k
@@ -641,6 +652,10 @@ class LibreRFDETR(BaseModel):
     def _strict_loading(self) -> bool:
         return False
 
+    def _trainer_class(self):
+        """Trainer class used by ``train()`` (subclass hook)."""
+        return RFDETRTrainer
+
     # =========================================================================
     # Inference pipeline
     # =========================================================================
@@ -849,7 +864,11 @@ class LibreRFDETR(BaseModel):
                 raise TypeError("RF-DETR checkpoints must be dictionaries")
 
             ckpt_family = loaded.get("model_family", "")
-            if ckpt_family and ckpt_family != self.FAMILY:
+            allowed_families = {
+                self.FAMILY,
+                *getattr(self, "TRANSFER_COMPATIBLE_FAMILIES", ()),
+            }
+            if ckpt_family and ckpt_family not in allowed_families:
                 raise RuntimeError(
                     f"Checkpoint was trained with model_family='{ckpt_family}' "
                     f"but is being loaded into '{self.FAMILY}'."
@@ -1241,7 +1260,7 @@ class LibreRFDETR(BaseModel):
             ) and self._resume_checkpoint_uses_lora(resume_path):
                 train_kwargs["lora"] = True
 
-        trainer = RFDETRTrainer(
+        trainer = self._trainer_class()(
             self.model,
             wrapper_model=self,
             callbacks=callbacks,

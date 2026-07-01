@@ -221,6 +221,7 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deimv2",
         "ec",
         "rfdetr",
+        "rfdetr_so",
         "rtdetr",
         "rtdetrv2",
         "rtdetrv4",
@@ -392,7 +393,7 @@ class BaseBackend(ABC):
             return yolonas_preprocess_image(
                 image, input_size=effective_imgsz, color_format=color_format
             )
-        elif self.model_family == "rfdetr":
+        elif self.model_family in ("rfdetr", "rfdetr_so"):
             tensor, img, size = self._preprocess_rfdetr(
                 image,
                 effective_imgsz,
@@ -695,7 +696,7 @@ class BaseBackend(ABC):
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio=ratio
             )
             return boxes, scores, cls, None
-        elif self.model_family == "rfdetr":
+        elif self.model_family in ("rfdetr", "rfdetr_so"):
             return self._parse_rfdetr(
                 all_outputs,
                 orig_w,
@@ -2077,6 +2078,7 @@ class BaseBackend(ABC):
             "ec": ECValPreprocessor,
             "picodet": PICODETValPreprocessor,
             "rfdetr": RFDETRValPreprocessor,
+            "rfdetr_so": RFDETRValPreprocessor,
             "rtdetr": RTDETRValPreprocessor,
             "rtdetrv2": RTDETRv2ValPreprocessor,
             "rtdetrv4": DFINEValPreprocessor,
