@@ -253,13 +253,46 @@ async function doDelete(){
   if(!deleteTarget){ closeDelete(); return; }
   const btn=$("#delconfirm"), t=btn.textContent; btn.disabled=true; btn.textContent="Moving…";
   try{
+    const wasOpen = DS && (deleteTarget===DS.yaml || deleteTarget===DS.root);
     const r=await fetch("/api/projects/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:deleteTarget})});
     const dd=await r.json().catch(()=>({})); if(!r.ok||!dd.ok){ $("#delerr").textContent=(dd&&dd.error)||"Delete failed."; return; }
-    closeDelete(); renderProjects();
+    closeDelete();
+    if(wasOpen){   // deleted the live project (e.g. from Settings): the session is gone
+      resetClientState(); DS=null;
+      try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
+      showHome();
+    } else renderProjects();
   }catch(e){ $("#delerr").textContent="Delete failed."; }
   finally{ btn.disabled=false; btn.textContent=t; }
 }
 async function editClassesFromCard(data){ if(await openProject(data)) openClassEdit(); }
+// ===== Project settings (open project only: name / description / instructions) =====
+function openSettings(){
+  if(!DS){ banner("Open a project first."); return; }
+  $("#setname").value = DS.name || "";
+  $("#setdesc").value = DS.description || "";
+  $("#setinstr").value = DS.instructions || "";
+  $("#seterr").textContent = "";
+  $("#settingsmodal").classList.add("show");
+  setTimeout(()=>{ const n=$("#setname"); if(n) n.focus(); }, 30);
+}
+function closeSettings(){ const m=$("#settingsmodal"); if(m) m.classList.remove("show"); }
+async function saveSettings(){
+  const name=($("#setname").value||"").trim();
+  if(!name){ $("#seterr").textContent="Enter a project name."; return; }
+  const btn=$("#setsave"), t=btn.textContent; btn.disabled=true; btn.textContent="Saving…";
+  try{
+    const r=await fetch("/api/projects/meta",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name, description:$("#setdesc").value, instructions:$("#setinstr").value,
+                           epoch:(DS&&DS.epoch)||0})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ $("#seterr").textContent=(d&&d.error)||"Could not save settings."; return; }
+    DS.name=d.name; DS.description=d.description; DS.instructions=d.instructions;
+    $("#dsname").textContent = DS.name || (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
+    closeSettings();
+  }catch(e){ $("#seterr").textContent="Could not save settings."; }
+  finally{ btn.disabled=false; btn.textContent=t; }
+}
 // ===== Export (YOLO / COCO / Pascal VOC, with split) =====
 function openExport(){
   if(!DS){ banner("Open a project first."); return; }
@@ -316,6 +349,16 @@ function wireProjectActions(){
   $("#deletemodal").addEventListener("click",e=>{ if(e.target.id==="deletemodal") closeDelete(); });
   $("#helpclose").onclick=toggleHelp;
   $("#help").addEventListener("click",e=>{ if(e.target.id==="help") toggleHelp(); });
+  const sb=$("#settingsbtn"); if(sb) sb.onclick=openSettings;
+  $("#setclose").onclick=closeSettings; $("#setcancel").onclick=closeSettings; $("#setsave").onclick=saveSettings;
+  $("#settingsmodal").addEventListener("click",e=>{ if(e.target.id==="settingsmodal") closeSettings(); });
+  $("#setclasses").onclick=()=>{ closeSettings(); openClassEdit(); };
+  $("#setforget").onclick=async()=>{
+    if(!DS) return; closeSettings();
+    try{ await fetch("/api/projects/forget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:DS.yaml||DS.root})}); }catch(e){}
+    backToHome();
+  };
+  $("#setdelete").onclick=()=>{ if(!DS) return; closeSettings(); openDeleteConfirm(DS.yaml||DS.root||""); };
   const eb=$("#exportbtn"); if(eb) eb.onclick=openExport;
   $("#expclose").onclick=closeExport; $("#expcancel").onclick=closeExport; $("#expgo").onclick=doExport;
   $("#exportmodal").addEventListener("click",e=>{ if(e.target.id==="exportmodal") closeExport(); });

@@ -46,6 +46,7 @@ from .dataset import (
     set_sidecar_name,
     trash_project,
     update_class_names,
+    update_sidecar,
 )
 from .embed import EmbedEngine
 from .page import INDEX_HTML
@@ -393,7 +394,7 @@ class _Handler(BaseHTTPRequestHandler):
             # CPU training job) for every teammate -- gate them to the loopback host.
             if path in ("/api/projects/open", "/api/projects/create", "/api/projects/new",
                         "/api/upload", "/api/projects/inspect", "/api/projects/rename", "/api/projects/delete",
-                        "/api/export",
+                        "/api/projects/meta", "/api/export",
                         "/api/projects/forget", "/api/pick-folder", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
@@ -593,6 +594,44 @@ class _Handler(BaseHTTPRequestHandler):
                 if data:
                     projects.forget(str(data))
                 self._send(200, {"ok": True})
+            elif path == "/api/projects/meta":
+                # Project Settings for the OPEN project: display name, description,
+                # and labeling instructions -- all sidecar-only (data.yaml untouched).
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    self._send(400, {"error": "bad payload"})
+                    return
+                ep = payload.get("epoch")
+                if ep is not None and int(ep) != self.state.epoch:
+                    self._send(409, {"error": "project changed - reopen it before editing settings"})
+                    return
+                name = payload.get("name")
+                if name is not None and not str(name).strip():
+                    self._send(400, {"error": "the project name can't be empty"})
+                    return
+                try:
+                    sess = self.state.session
+                    target = self.state._data or sess.yaml_file
+                    fields = {k: (str(payload[k]).strip() if k == "name" else str(payload[k]))
+                              for k in ("name", "description", "instructions")
+                              if payload.get(k) is not None}
+                    update_sidecar(str(target), **fields)
+                    if isinstance(sess._sidecar, dict):
+                        sess._sidecar.update(fields)
+                    else:
+                        sess._sidecar = dict(fields)
+                    if "name" in fields:
+                        try:
+                            projects.rename(str(target), fields["name"])
+                        except Exception:  # noqa: BLE001 - registry is convenience only
+                            pass
+                    meta = sess.meta()
+                    meta["open"] = True
+                    meta["epoch"] = self.state.epoch
+                    self._send(200, meta)
+                except Exception as exc:  # noqa: BLE001 - unwritable sidecar
+                    logger.exception("settings update failed")
+                    self._send(400, {"error": str(exc).splitlines()[0][:140] or "could not save settings"})
             elif path == "/api/projects/rename":
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None

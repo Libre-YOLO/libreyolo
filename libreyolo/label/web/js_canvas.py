@@ -380,6 +380,7 @@ cv.addEventListener("wheel", e=>{
 // in one place means Escape always works and no overlay can be left unclosable.
 function closeTopOverlay(){
   if($("#wizard").classList.contains("show")){ closeWizard(); return true; }
+  if($("#settingsmodal").classList.contains("show")){ closeSettings(); return true; }
   if($("#exportmodal").classList.contains("show")){ closeExport(); return true; }
   if($("#renamemodal").classList.contains("show")){ closeRename(); return true; }
   if($("#deletemodal").classList.contains("show")){ closeDelete(); return true; }

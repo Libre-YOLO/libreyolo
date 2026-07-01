@@ -35,8 +35,12 @@ async function enterLabeler(d){
   renderStats();
   resizeCanvas();
   initAssist();
-  if(IMAGES.length) load(0);
+  if(IMAGES.length) await load(0);
   else { idx=-1; imgOk=false; stageMsg = "No images found - check the dataset paths"; setSave("no images"); draw(); }
+  // Project instructions (Settings): shown once on open, unless a warning banner
+  // (read-only reason, ...) is already up.
+  if(gen===loadSeq && DS.instructions && $("#banner").style.display!=="flex")
+    banner("Instructions: " + DS.instructions);
 }
 function wireChrome(){
   $("#classchip").onclick = togglePicker;

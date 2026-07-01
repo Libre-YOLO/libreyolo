@@ -10,6 +10,7 @@ PART = r"""</style>
     <span class="ds" id="dsname"></span>
     <span class="counter" id="counter"></span>
     <button class="insbtn" id="classesbtn" title="Edit classes - rename or add" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0l-7-7A2 2 0 0 1 3 12.2V5a2 2 0 0 1 2-2h7.2a2 2 0 0 1 1.4.6l7 7a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/></svg></button>
+    <button class="insbtn" id="settingsbtn" title="Project settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"/></svg></button>
     <span class="grow"></span>
     <span class="ai" id="assistbar" style="display:none">
       <button class="btn btn-primary" id="aautolabel"><svg class="ic" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2.5l1.6 4.4 4.4 1.6-4.4 1.6-1.6 4.4-1.6-4.4-4.4-1.6 4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>Auto-label all</button>
@@ -165,6 +166,26 @@ PART = r"""</style>
       <button class="btn btn-ghost ce-add" id="ceadd">+ Add class</button>
       <div class="ce-err" id="ceerr"></div>
       <div class="ce-actions"><button class="btn btn-ghost" id="cecancel">Cancel</button><button class="btn btn-primary" id="cesave">Save</button></div>
+    </div>
+  </div></div>
+  <div class="modal" id="settingsmodal"><div class="mcard cecard">
+    <div class="mhead"><h3>Project settings</h3><button class="mx" id="setclose">&times;</button></div>
+    <div class="mbody">
+      <label class="wz-lbl">Name</label>
+      <input id="setname" class="wz-in" placeholder="Project name" spellcheck="false" autocomplete="off">
+      <label class="wz-lbl">Description <span class="wz-hint">optional</span></label>
+      <textarea id="setdesc" class="wz-in wz-ta" placeholder="What this dataset is for…"></textarea>
+      <label class="wz-lbl">Labeling instructions <span class="wz-hint">shown when the project opens</span></label>
+      <textarea id="setinstr" class="wz-in wz-ta" placeholder="e.g. Draw tight boxes; skip blurry frames."></textarea>
+      <label class="wz-lbl">Classes</label>
+      <button class="btn btn-ghost btn-sm" id="setclasses">Edit classes…</button>
+      <label class="wz-lbl" style="color:var(--danger)">Danger zone</label>
+      <div style="display:flex;gap:9px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" id="setforget" title="Remove from the project list; nothing on disk changes">Forget project</button>
+        <button class="btn btn-sm" id="setdelete" style="background:var(--danger);color:#fff;border:1px solid var(--danger)">Move to trash…</button>
+      </div>
+      <div class="ce-err" id="seterr"></div>
+      <div class="ce-actions"><button class="btn btn-ghost" id="setcancel">Cancel</button><button class="btn btn-primary" id="setsave">Save</button></div>
     </div>
   </div></div>
   <div class="modal" id="renamemodal"><div class="mcard cecard">

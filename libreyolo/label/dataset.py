@@ -181,9 +181,18 @@ def _project_root(data: str) -> Path:
 def set_sidecar_name(data: str, name: str) -> str:
     """Update (or create) the project display name in the ``librelabel.json``
     sidecar next to ``data.yaml``. Returns the project root path."""
+    return update_sidecar(data, name=str(name))
+
+
+def update_sidecar(data: str, **fields) -> str:
+    """Merge ``fields`` (name / description / instructions / ...) into the
+    ``librelabel.json`` sidecar next to ``data.yaml``; ``None`` values are
+    ignored. Returns the project root path."""
     root = _project_root(data)
     sc = load_sidecar(str(root)) or {}
-    sc["name"] = str(name)
+    for k, v in fields.items():
+        if v is not None:
+            sc[k] = v
     try:
         _write_json_atomic(root / "librelabel.json", sc)
     except OSError:
@@ -512,6 +521,8 @@ class DatasetSession:
             "source": (self._sidecar.get("source") or "") if self.linked else "",
             "has_val": any(s in ("val", "test") for _, _, s in self._items),
             "name": (self._sidecar.get("name") or "") if isinstance(self._sidecar, dict) else "",
+            "description": (self._sidecar.get("description") or "") if isinstance(self._sidecar, dict) else "",
+            "instructions": (self._sidecar.get("instructions") or "") if isinstance(self._sidecar, dict) else "",
             "colors": [
                 (self._sidecar.get("class_colors", {}) or {}).get(n)
                 for n in self.names

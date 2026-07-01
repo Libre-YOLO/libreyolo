@@ -361,3 +361,15 @@ def test_linked_project_refuses_source_mutations(tmp_path):
     res = export_dataset(ds, dst=str(out), formats=("yolo",), split="none")
     assert res["counts"]["train"] == 2
     assert (out / "data.yaml").exists()
+
+
+def test_sidecar_settings_roundtrip(tmp_path):
+    from libreyolo.label.dataset import DatasetSession, update_sidecar
+
+    yaml_path = _make_dataset(tmp_path)
+    update_sidecar(str(yaml_path), name="Cats", description="cat photos",
+                   instructions="tight boxes only")
+    meta = DatasetSession(str(yaml_path)).meta()
+    assert meta["name"] == "Cats"
+    assert meta["description"] == "cat photos"
+    assert meta["instructions"] == "tight boxes only"
