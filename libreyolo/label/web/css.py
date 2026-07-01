@@ -404,6 +404,9 @@ PART = r"""  :root{
   .wz-task.on{border-color:var(--ac);background:color-mix(in srgb,var(--ac) 12%,var(--s2));color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset}
   .wz-task[disabled]{opacity:.5}
   .wz-task .soon{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
+  .wz-storage{display:grid;grid-template-columns:1fr;gap:8px}
+  .wz-storage .wz-task{display:block}
+  .wz-storage .sub{display:block;font-size:11px;color:var(--tx3);font-weight:400;margin-top:3px;line-height:1.45}
   .wz-classes{display:flex;flex-direction:column;gap:8px}
   .wz-clsrow{display:flex;align-items:center;gap:9px}
   .wz-clsrow input[type=color]{flex:none;width:34px;height:34px;padding:2px;border:1px solid var(--line2);border-radius:9px;background:var(--s2);cursor:pointer}

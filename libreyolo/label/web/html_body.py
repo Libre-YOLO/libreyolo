@@ -178,7 +178,7 @@ PART = r"""</style>
   <div class="modal" id="deletemodal"><div class="mcard cecard">
     <div class="mhead"><h3>Delete dataset</h3><button class="mx" id="delclose">&times;</button></div>
     <div class="mbody">
-      <p class="ce-note">This moves the whole project folder to LibreLabel's trash (<code>~/.librelabel/trash</code>). It is recoverable, but your images move with it. Nothing is erased.</p>
+      <p class="ce-note">This moves the whole project folder to LibreLabel's trash (<code>~/.librelabel/trash</code>). It is recoverable, but images inside the project folder move with it. Nothing is erased. (Linked projects: your source images are outside the project folder and are not affected.)</p>
       <p class="ce-note" id="delpath" style="color:var(--tx);font:12px ui-monospace,monospace;word-break:break-all"></p>
       <div class="ce-err" id="delerr"></div>
       <div class="ce-actions"><button class="btn btn-ghost" id="delcancel">Cancel</button><button class="btn" id="delconfirm" style="background:var(--danger);color:#fff;border:1px solid var(--danger)">Move to trash</button></div>
@@ -263,7 +263,12 @@ PART = r"""</style>
           </div>
           <div class="wz-tabpane" data-tabpane="existing" hidden>
             <div class="wz-folder"><input id="wzexist" class="wz-in" placeholder="Folder of images, or a data.yaml…" spellcheck="false" autocomplete="off"><button class="btn btn-ghost" id="wzexistbrowse">Browse</button></div>
-            <p class="wz-note">LibreLabel labels the images where they already are and writes the dataset config for you. Nothing is copied or moved.</p>
+            <label class="wz-lbl" style="margin-top:14px">Storage</label>
+            <div class="wz-storage" id="wzstorage">
+              <button class="wz-task on" data-link="0">Label in place<span class="sub">Writes data.yaml and labels next to your images - trains directly, nothing copied.</span></button>
+              <button class="wz-task" data-link="1">Linked - don't touch my folder<span class="sub">Nothing is written to your folder. Config and labels live in LibreLabel's project folder; Export builds the training copy.</span></button>
+            </div>
+            <p class="wz-note">A folder that already contains a data.yaml opens as-is.</p>
           </div>
         </section>
         <section class="wz-pane" data-pane="2" hidden>

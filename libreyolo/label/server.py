@@ -38,6 +38,7 @@ from .boost import BoostEngine
 from .dataset import (
     DatasetSession,
     count_images,
+    create_linked_project,
     create_uploaded_project,
     folder_yaml,
     save_uploaded_image,
@@ -282,6 +283,7 @@ class _Handler(BaseHTTPRequestHandler):
                         meta.pop("root", None)
                         meta.pop("yaml", None)
                         meta.pop("reason", None)
+                        meta.pop("source", None)   # a linked project's source is a host path
                     self._send(200, meta)
             elif path == "/api/images":
                 self._send(200, {"images": self.state.session.list_images()})
@@ -463,12 +465,16 @@ class _Handler(BaseHTTPRequestHandler):
                                  "yaml": yp, "has_yaml": yp is not None})
             elif path == "/api/projects/create":
                 # The keystone of the cold start: a folder of images becomes a project.
-                # scaffold_data_yaml writes a minimal data.yaml beside the images (the
-                # exact layout the trainer reads), then we open it like any other.
+                # Default: scaffold_data_yaml writes a minimal data.yaml beside the
+                # images (the exact layout the trainer reads). With ``link: true`` the
+                # source folder is never written to at all -- config + labels live in
+                # a managed project dir under ~/.librelabel/projects.
                 payload = self._read_json()
                 folder = payload.get("folder") if isinstance(payload, dict) else None
                 classes = payload.get("classes") if isinstance(payload, dict) else None
                 task = payload.get("task") if isinstance(payload, dict) else None
+                link = bool(payload.get("link")) if isinstance(payload, dict) else False
+                name = payload.get("name") if isinstance(payload, dict) else None
                 if task not in ("detect", "segment", "obb", "classify"):
                     task = None   # ignore anything unexpected -> default detection
                 if not folder:
@@ -476,7 +482,15 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 try:
                     existing = folder_yaml(str(folder))   # don't clobber a real dataset
-                    target = existing or scaffold_data_yaml(str(folder), classes or [], task=task)
+                    if existing:
+                        target = existing
+                    elif link:
+                        target = create_linked_project(str(folder), name=name or None,
+                                                       classes=classes or [],
+                                                       colors=payload.get("colors") or [],
+                                                       task=task)
+                    else:
+                        target = scaffold_data_yaml(str(folder), classes or [], task=task)
                     meta = self.state.open_project(target)
                     meta["open"] = True
                     meta["epoch"] = self.state.epoch

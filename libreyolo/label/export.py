@@ -175,6 +175,9 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
     task = getattr(session, "_task", None) or "detect"
     splits = _assign_splits(len(items), split, val_frac, test_frac, seed)
 
+    if in_place and getattr(session, "linked", False):
+        raise ValueError("Linked projects never modify the source folder - "
+                         "use a copy export instead of re-splitting in place.")
     if in_place:
         base = Path(session.root or Path(session.yaml_file).parent).resolve()
         unique = _uniquifier()

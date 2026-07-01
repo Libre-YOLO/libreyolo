@@ -17,7 +17,8 @@ async function enterLabeler(d){
   CLSCOL = Array.isArray(d.colors) ? d.colors.slice() : [];   // custom per-class colors from the sidecar
   try{ sessionStorage.removeItem("ll-home"); }catch(e){}
   if(active>=(DS.names||[]).length) active=0;        // stale class index from a prior project
-  $("#dsname").textContent = (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
+  $("#dsname").textContent = DS.name || (DS.root||"").split(/[\\/]/).filter(Boolean).pop() || "dataset";
+  $("#dsname").title = DS.linked ? ("Linked project - images stay in " + (DS.source||"their folder") + "; nothing is written there") : (DS.root||"");
   const cb=$("#classesbtn"); if(cb) cb.style.display = (DS.writable!==false) ? "" : "none";
   renderPalette();
   const isObb = DS.task==="obb";   // OBB projects: only the oriented-box tool makes valid rows

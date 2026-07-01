@@ -8,9 +8,11 @@ them. No database; the filesystem dataset is the store.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import time
 from pathlib import Path
@@ -294,6 +296,65 @@ def create_uploaded_project(dst: str, *, name: Optional[str] = None,
     return str(base / "data.yaml")
 
 
+def create_linked_project(src: str, *, name: Optional[str] = None,
+                          classes: Optional[List[str]] = None,
+                          colors: Optional[List[str]] = None,
+                          task: Optional[str] = None,
+                          projects_dir: Optional[str] = None) -> str:
+    """Create a LINKED project: label a folder of images without writing anything
+    into it -- not even ``data.yaml``. The project (config, labels, sidecar) lives
+    in ``~/.librelabel/projects/<slug>``; the images are referenced through an
+    absolute-path manifest and never copied, moved, or annotated in place.
+
+    The tradeoff (documented in the yaml comment): because the labels are not
+    next to the images, training needs a copy Export first. Returns the path to
+    the managed ``data.yaml``."""
+    srcp = Path(src)
+    if not srcp.is_dir():
+        raise FileNotFoundError(f"Not a folder: {src}")
+    imgs = sorted(str(Path(i).resolve()) for i in get_img_files(srcp))
+    if not imgs:
+        raise FileNotFoundError(f"No images found in {src}")
+
+    base_dir = Path(projects_dir) if projects_dir else Path.home() / ".librelabel" / "projects"
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", srcp.name).strip("-") or "project"
+    proj = base_dir / f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    n = 1
+    while proj.exists():
+        n += 1
+        proj = base_dir / f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}-{n}"
+    proj.mkdir(parents=True)
+
+    manifest = proj / "images.txt"
+    _atomic_write_text(manifest, "\n".join(Path(i).as_posix() for i in imgs) + "\n")
+
+    cls = [str(c).strip() for c in (classes or []) if str(c).strip()]
+    cfg = {"path": proj.resolve().as_posix(), "train": "images.txt",
+           "names": cls, "nc": len(cls)}
+    t = str(task or "").strip().lower()
+    if t and t != "detect":
+        cfg["task"] = t
+    text = (
+        "# LibreLabel LINKED project -- the images stay in place, untouched:\n"
+        f"#   {srcp.resolve().as_posix()}\n"
+        "# Labels live here (labels/), NOT next to the images, so training this\n"
+        "# yaml directly finds no labels: use LibreLabel's Export to produce a\n"
+        "# self-contained training copy.\n\n"
+        + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+    )
+    _atomic_write_text(proj / "data.yaml", text)
+
+    cols = list(colors or [])
+    sidecar = {
+        "name": name or srcp.name,
+        "linked": True,
+        "source": str(srcp.resolve()),
+        "class_colors": {cls[i]: cols[i] for i in range(min(len(cls), len(cols))) if cols[i]},
+    }
+    _write_json_atomic(proj / "librelabel.json", sidecar)
+    return str(proj / "data.yaml")
+
+
 class DatasetSession:
     """An open dataset: ordered images across train/val/test + label R/W."""
 
@@ -308,6 +369,11 @@ class DatasetSession:
         # Optional wizard sidecar: project display name + per-class colors.
         self._sidecar = load_sidecar(str(self.root)) or load_sidecar(
             str(Path(self.yaml_file).parent))
+        # Linked project: images stay in their source folder; every label lives
+        # under the managed project dir instead of being derived from the image
+        # path (the hash suffix keeps same-named images from sharing a file).
+        self.linked = bool(isinstance(self._sidecar, dict) and self._sidecar.get("linked"))
+        _linked_lab = Path(self.yaml_file).parent / "labels"
 
         self._items: List[Tuple[Path, Path, str]] = []
         seen: dict = {}                # normalized label path -> normalized image path
@@ -319,6 +385,11 @@ class DatasetSession:
                 [Path(i) for i in imgs]
             )
             for ip, lp in zip(imgs, labels, strict=True):
+                if self.linked:
+                    h = hashlib.sha1(
+                        os.path.normcase(os.path.normpath(str(ip))).encode("utf-8")
+                    ).hexdigest()[:8]
+                    lp = _linked_lab / split / f"{Path(ip).stem}-{h}.txt"
                 # A yaml may reuse a folder across splits; expose each label file
                 # once so a single image can't be saved twice under two ids -- but
                 # remember every split it was in, for exact-overlap leakage detection.
@@ -379,6 +450,8 @@ class DatasetSession:
         derives a wrong label path and would silently corrupt the dataset.
         Detect the ambiguity up front and make the session read-only.
         """
+        if self.linked:
+            return True, ""   # labels live in the managed dir; no derivation traps apply
         root = None
         if self.root:
             try:
@@ -435,6 +508,8 @@ class DatasetSession:
             "writable": self.writable,
             "reason": self.reason,
             "task": self._task or "detect",
+            "linked": self.linked,
+            "source": (self._sidecar.get("source") or "") if self.linked else "",
             "has_val": any(s in ("val", "test") for _, _, s in self._items),
             "name": (self._sidecar.get("name") or "") if isinstance(self._sidecar, dict) else "",
             "colors": [
@@ -628,6 +703,10 @@ class DatasetSession:
 
         if not self.writable:
             raise RuntimeError(self.reason)
+        if self.linked:
+            raise RuntimeError(
+                "This is a linked project: the source images are never moved or "
+                "deleted. Fix duplicates in the source folder, or export a copy.")
         valid = [i for i in dict.fromkeys(ids)
                  if 0 <= i < len(self._items) and i not in self._deleted]
         if len(valid) < 2:

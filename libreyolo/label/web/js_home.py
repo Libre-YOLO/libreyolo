@@ -12,10 +12,11 @@ PART = r"""function wireHome(){
 const WZPRESET = ["#06b6d4","#10b981","#f59e0b","#ef4444","#a855f7","#ec4899","#14b8a6","#3b82f6"];
 let WZ = null;
 function openWizard(){
-  WZ = {step:1, mode:"upload", task:"detect",
+  WZ = {step:1, mode:"upload", task:"detect", link:false,
         dst:"", uploaded:0, files:[], classes:[{name:"",color:WZPRESET[0]}]};
   $("#wzname").value=""; $("#wzdst").value=""; $("#wzexist").value="";
   document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.classList.toggle("on", b.dataset.task==="detect"));
+  document.querySelectorAll("#wzstorage .wz-task").forEach(b=>b.classList.toggle("on", b.dataset.link==="0"));
   renderWzClasses(); renderWzFiles(); wzSetTab("upload"); wzGoto(1);
   $("#wizard").classList.add("show"); setTimeout(()=>{ const n=$("#wzname"); if(n) n.focus(); },30);
 }
@@ -108,7 +109,9 @@ async function wzCreate(){
       const r=await fetch("/api/projects/new",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
     } else {
-      const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:WZ.dst, classes:cp.names, task})});
+      const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({folder:WZ.dst, classes:cp.names, colors:cp.colors, task,
+                             link:!!WZ.link, name:$("#wzname").value.trim()})});
       d=await r.json(); if(!r.ok||!d.open){ wzErr((d&&d.error)||"Could not create the project."); return; }
     }
     closeWizard(); resetClientState(); await enterLabeler(d);
@@ -132,6 +135,8 @@ function wireWizard(){
   document.querySelectorAll("#wizard .wz-tab").forEach(b=>b.onclick=()=>wzSetTab(b.dataset.tab));
   document.querySelectorAll("#wztasks .wz-task").forEach(b=>b.onclick=()=>{ if(b.disabled) return; WZ.task=b.dataset.task;
     document.querySelectorAll("#wztasks .wz-task").forEach(x=>x.classList.toggle("on",x===b)); });
+  document.querySelectorAll("#wzstorage .wz-task").forEach(b=>b.onclick=()=>{ WZ.link = b.dataset.link==="1";
+    document.querySelectorAll("#wzstorage .wz-task").forEach(x=>x.classList.toggle("on",x===b)); });
   $("#wzbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f){ $("#wzdst").value=f; renderWzFiles(); } };
   $("#wzexistbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f) $("#wzexist").value=f; };
   $("#wzdst").oninput=renderWzFiles;

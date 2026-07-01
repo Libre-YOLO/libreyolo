@@ -2,6 +2,8 @@
 
 import pytest
 
+from pathlib import Path
+
 from libreyolo.label.labelio import (
     format_label_text,
     parse_label_text,
@@ -297,3 +299,65 @@ def test_wizard_segment_project_polygon_roundtrip(tmp_path):
                         "points": [0.1, 0.1, 0.6, 0.15, 0.4, 0.7]}])
     back, editable = ds.read_label(0)
     assert editable and back[0]["type"] == "poly" and len(back[0]["points"]) == 6
+
+
+def _tree(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_linked_project_never_touches_source(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession, create_linked_project
+
+    src = tmp_path / "photos"
+    for sub in ("a", "b"):
+        (src / sub).mkdir(parents=True)
+        Image.new("RGB", (16, 12), (70, 70, 70)).save(src / sub / "0001.jpg")
+    before = _tree(src)
+
+    yaml_path = create_linked_project(
+        str(src), name="My photos", classes=["cat"],
+        projects_dir=str(tmp_path / "managed"))
+    assert Path(yaml_path).is_relative_to(tmp_path / "managed")
+
+    ds = DatasetSession(yaml_path)
+    meta = ds.meta()
+    assert meta["linked"] is True and meta["name"] == "My photos"
+    assert ds.writable and len(ds) == 2
+
+    ds.write_label(0, [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.4, "h": 0.4}])
+    ds.write_label(1, [{"cls": 0, "cx": 0.3, "cy": 0.3, "w": 0.2, "h": 0.2}])
+    # labels landed in the managed dir with unique names, source untouched
+    labs = list((Path(yaml_path).parent / "labels" / "train").glob("*.txt"))
+    assert len(labs) == 2 and len({p.name for p in labs}) == 2
+    assert _tree(src) == before
+
+    back, editable = ds.read_label(0)
+    assert editable and back[0]["cls"] == 0
+
+
+def test_linked_project_refuses_source_mutations(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession, create_linked_project
+    from libreyolo.label.export import export_dataset
+
+    src = tmp_path / "photos"
+    src.mkdir()
+    for i in range(2):
+        Image.new("RGB", (16, 12), (i * 40,) * 3).save(src / f"im{i}.jpg")
+    yaml_path = create_linked_project(str(src), classes=["cat"],
+                                      projects_dir=str(tmp_path / "managed"))
+    ds = DatasetSession(yaml_path)
+
+    with pytest.raises(RuntimeError, match="linked"):
+        ds.resolve_duplicates([0, 1])
+    with pytest.raises(ValueError, match="[Ll]inked"):
+        export_dataset(ds, in_place=True, split="none")
+
+    # ...but a copy export produces a normal trainable dataset
+    out = tmp_path / "out"
+    res = export_dataset(ds, dst=str(out), formats=("yolo",), split="none")
+    assert res["counts"]["train"] == 2
+    assert (out / "data.yaml").exists()
