@@ -17,12 +17,17 @@ from libreyolo.models.mobilesam.preprocess import (
     postprocess_masks,
     preprocess_tensor,
 )
+from libreyolo.utils.serialization import load_untrusted_torch_file
 
 pytestmark = [pytest.mark.unit, pytest.mark.sam]
 
 
 def _load_state_dict(path: Path):
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    # weights_only=True (via the shared helper): the upstream checkpoint path is
+    # supplied by whoever runs the gated test, so avoid the pickle-exec vector.
+    checkpoint = load_untrusted_torch_file(
+        path, context="upstream MobileSAM parity checkpoint"
+    )
     if isinstance(checkpoint, dict):
         for key in ("state_dict", "model"):
             if key in checkpoint and isinstance(checkpoint[key], dict):
