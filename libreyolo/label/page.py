@@ -292,18 +292,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .home-brand .ic{width:34px;height:34px;color:var(--ac)}
   .home-brand b{color:var(--ac)}
   .home-tag{color:var(--tx2);font-size:14px;margin:12px auto 0;max-width:540px}
-  .home-open{display:flex;align-items:center;gap:11px;background:var(--s1);border:1px solid var(--line2);
-    border-radius:14px;padding:9px 9px 9px 16px;box-shadow:var(--sh);max-width:660px;margin:0 auto}
-  .home-open:focus-within{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent),var(--sh)}
-  .home-open .ic{width:19px;height:19px;color:var(--tx3);flex:none}
-  .home-open input{flex:1;background:transparent;border:0;outline:none;color:var(--tx);font-size:14px}
-  .home-open .btn{height:38px;padding:0 18px}
-  .home-err{max-width:660px;margin:9px auto 0;color:var(--danger);font-size:12.5px;text-align:center;min-height:16px}
-  .home-alt{max-width:660px;margin:14px auto 0;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 14px;border-radius:12px;border:1px dashed var(--line2);background:var(--s1)}
-  .home-alt .ha-l{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx2);text-align:left}
-  .home-alt .ha-l .ic{width:19px;height:19px;color:var(--ac);flex:none}
-  .home-alt .ha-l b{color:var(--tx)}
-  .home-alt .btn{flex:none}
   .home-sec{max-width:840px;margin:32px auto 12px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
   .home-grid{max-width:840px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(244px,1fr));gap:12px}
   .prj{position:relative;text-align:left;background:var(--s1);border:1px solid var(--line2);border-radius:13px;padding:15px 15px 14px;transition:.14s;width:100%;box-shadow:var(--shs)}
@@ -350,16 +338,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .urlrow button{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--s3);border:1px solid var(--line2);color:var(--tx2)}
   .urlrow button:hover{color:var(--tx)}
   .urlrow button.copied{color:var(--ok);border-color:rgba(16,185,129,.4)}
-  .home-hint{max-width:660px;margin:10px auto 0;color:var(--tx3);font-size:12.5px;text-align:center}
-  .home-create{max-width:660px;margin:14px auto 0;background:var(--s1);border:1px solid var(--line2);border-radius:14px;padding:16px 18px;box-shadow:var(--sh);text-align:left}
-  .hc-head{color:var(--tx2);font-size:13px;margin-bottom:12px}
-  .hc-head b{color:var(--tx)}
-  .hc-head code{background:var(--s3);border-radius:6px;padding:1px 6px;color:var(--tx);font:12px ui-monospace,monospace;word-break:break-all}
-  .hc-lbl{display:block;color:var(--tx);font-size:13px;font-weight:600;margin-bottom:6px}
-  .hc-lbl .hc-hint{color:var(--tx3);font-weight:400}
-  #hcclasses{width:100%;box-sizing:border-box;resize:vertical;min-height:84px;background:var(--s2);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;color:var(--tx);font:13px ui-monospace,monospace;outline:none}
-  #hcclasses:focus{border-color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent)}
-  .hc-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
   .cecard{width:min(460px,92vw)}
   .ce-note{color:var(--tx2);font-size:12.5px;line-height:1.5;margin:0 0 14px}
   .ce-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
@@ -389,12 +367,6 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .submitbtn:disabled{opacity:.45;cursor:default;filter:none}
   .submitbtn .ic{width:16px;height:16px}
   .submitbtn kbd{background:rgba(255,255,255,.22);border-radius:5px;padding:1px 6px;font:11px ui-monospace,monospace}
-  .tasksel{display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 14px}
-  .taskopt{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:9px;background:var(--s1);border:1px solid var(--line2);color:var(--tx2);font-size:12.5px;font-weight:560;transition:.1s}
-  .taskopt:hover:not([disabled]){border-color:var(--ac);color:var(--tx)}
-  .taskopt.on{border-color:var(--ac);background:var(--s3);color:var(--tx);box-shadow:0 0 0 1px var(--ac) inset}
-  .taskopt[disabled]{opacity:.5;cursor:default}
-  .taskopt .soon{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--tx3);background:var(--s3);border-radius:4px;padding:1px 5px}
   /* ===== New Project wizard ===== */
   .wz{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
     background:rgba(6,6,8,.66);backdrop-filter:blur(6px)}
@@ -463,13 +435,26 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .exp-ratios input:focus{border-color:var(--ac)}
   .exp-fmts{display:flex;gap:18px;flex-wrap:wrap;margin-top:2px}
   .exp-result{font-size:12px;color:var(--ok);margin-top:8px;word-break:break-all;line-height:1.5}
-  /* home: primary New project CTA + divider */
-  .home-new{display:flex;justify-content:center;margin:0 auto 4px;max-width:660px}
-  .home-new .btn{height:46px;padding:0 28px;font-size:14.5px;font-weight:640;border-radius:12px}
-  .home-or{max-width:660px;margin:22px auto 12px;display:flex;align-items:center;gap:14px;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.7px}
-  .home-or::before,.home-or::after{content:"";flex:1;height:1px;background:var(--line)}
   .home-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:6px auto 0}
   .home-actions .btn{height:46px;padding:0 24px;font-size:14px;font-weight:640;border-radius:12px}
+  /* in-app feedback (first-party) */
+  .fb{position:fixed;right:16px;bottom:14px;z-index:70}
+  .fb-btn{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-radius:999px;
+    color:var(--tx2);font-size:12.5px;font-weight:560;box-shadow:var(--sh)}
+  .fb-btn:hover{color:var(--tx);border-color:var(--ac)}
+  .fb-btn .ic{width:15px;height:15px}
+  .fb-panel{position:absolute;right:0;bottom:44px;width:300px;display:none;background:var(--s1);
+    border:1px solid var(--line2);border-radius:13px;box-shadow:var(--sh);padding:13px 14px}
+  .fb-panel.show{display:block}
+  .fb-head{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:640;margin-bottom:9px}
+  .fb-panel textarea{width:100%;box-sizing:border-box;min-height:88px;resize:vertical;background:var(--s2);
+    border:1px solid var(--line2);border-radius:9px;padding:9px 11px;color:var(--tx);font:12.5px/1.5 inherit;outline:none}
+  .fb-panel textarea:focus{border-color:var(--ac)}
+  .fb-foot{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-top:9px}
+  .fb-status{flex:1;font-size:11.5px;color:var(--tx3);min-height:14px}
+  .fb-status.ok{color:var(--ok)} .fb-status.err{color:var(--danger)}
+  .fb-status a{color:inherit;font-weight:600}
+  .fb-note{margin-top:8px;font-size:10.5px;color:var(--tx3)}
 </style>
 </head>
 <body>
@@ -695,6 +680,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       </div>
       <div class="home-actions">
         <button class="btn btn-primary" id="homenew"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>New project</button>
+        <span id="homeresume" style="display:none"><button class="btn btn-ghost" id="homeresumebtn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>Resume current project</button></span>
       </div>
       <div class="home-err" id="homeerr"></div>
       <div class="home-sec">Your projects</div>
@@ -765,7 +751,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 const $ = s => document.querySelector(s);
 const cv = $("#cv"), ctx = cv.getContext("2d");
 let DS = null, IMAGES = [], idx = -1;
-let pendingFolder = null, ceRows = [];   // home create-flow folder + class-editor working rows
+let ceRows = [];              // class-editor working rows
 let autosaveTimer = null, saveInFlight = false;   // crash-proof periodic flush of the manual loop
 let img = new Image(), imgOk = false;
 let boxes = [], editable = true, dirty = false;
@@ -952,6 +938,13 @@ function wireChrome(){
   const si=$("#imgsearch"); if(si) si.oninput = e=>{ imgQuery=(e.target.value||"").trim().toLowerCase(); renderList(); };
 }
 function setTool(t){
+  // Task gating: an OBB project authors oriented boxes ONLY (a plain box or free
+  // polygon would write a wrong-shaped row), and only OBB projects author them
+  // (a 4-corner quad in a taskless dataset makes the file OBB-ambiguous ->
+  // read-only on the next load). Applies to shortcuts too, not just the toolbar.
+  const isObb = DS && DS.task==="obb";
+  if(isObb && t!=="obb") return;
+  if(!isObb && t==="obb" && DS) return;
   if(t==="seg" && !(assist && assist.sam)) return;
   if(tool==="poly" && t!=="poly" && polyDraft) cancelPolyDraft();
   tool = t;
@@ -1155,10 +1148,13 @@ function passFilter(im){
   if(listFilter==="review") return im.status==="suggested";
   return true;
 }
+let listLimit = 400;   // windowed sidebar: big datasets (10k+ images) must not build 10k DOM nodes
 function renderList(){
-  const el = $("#list"); el.innerHTML = ""; let shown=0;
-  IMAGES.forEach(im=>{
-    if(!passFilter(im)) return; shown++;
+  const el = $("#list"); el.innerHTML = "";
+  const visible = IMAGES.filter(passFilter);
+  const curPos = visible.findIndex(im=>im.id===idx);
+  if(curPos>=listLimit) listLimit = curPos+200;   // the open image is always in the window
+  visible.slice(0, listLimit).forEach(im=>{
     const r = document.createElement("button");
     r.className = "card" + (im.id===idx?" sel":""); r.dataset.id = im.id;
     r.innerHTML = `<img class="thumb" loading="lazy" src="/api/thumb/${im.id}?e=${(DS&&DS.epoch)||0}" alt="">`+
@@ -1167,13 +1163,25 @@ function renderList(){
     r.onclick = ()=> load(im.id);
     el.appendChild(r);
   });
-  if(!shown){ const lbl = listFilter==="todo"?"to-do ":listFilter==="review"?"review ":"";
+  if(visible.length > listLimit){
+    const more = document.createElement("button");
+    more.className = "card"; more.style.justifyContent = "center";
+    more.textContent = `Show more (${visible.length-listLimit} hidden)`;
+    more.onclick = ()=>{ listLimit += 400; renderList(); };
+    el.appendChild(more);
+    if(window.IntersectionObserver){   // auto-extend as the user scrolls near the end
+      new IntersectionObserver((es,obs)=>{ if(es.some(x=>x.isIntersecting)){ obs.disconnect(); listLimit += 400; renderList(); } },
+        {root:el, rootMargin:"600px"}).observe(more);
+    }
+  }
+  if(!visible.length){ const lbl = listFilter==="todo"?"to-do ":listFilter==="review"?"review ":"";
     el.innerHTML = `<div class="empty">No ${lbl}images${imgQuery?" match the filter":""}</div>`; }
 }
 function markRow(){
   document.querySelectorAll("#list .card").forEach(r=> r.classList.toggle("sel", +r.dataset.id===idx));
   const cur = document.querySelector(`#list .card[data-id="${idx}"]`);
   if(cur) cur.scrollIntoView({block:"nearest"});
+  else if(idx>=0 && IMAGES[idx] && passFilter(IMAGES[idx])) scheduleRelist();   // beyond the window -> extend it
 }
 let _relistTimer = null;
 function scheduleRelist(){   // coalesce many status changes (e.g. a bulk run) into one re-render
@@ -1544,6 +1552,14 @@ async function initAssist(){
   try{ assist = await jget("/api/assist/status"); }catch(e){ assist = null; }
   const bar = $("#assistbar"), toolAi = $("#toolAi");
   if(!assist || !assist.available){ if(bar) bar.style.display="none"; if(toolAi) toolAi.style.display="none"; return; }
+  if(DS && DS.task==="obb"){
+    // The server refuses prelabel/autolabel/SAM/Radar/Boost for OBB projects (their
+    // box/mask outputs would corrupt oriented-box labels); offer only the Map.
+    assist.sam=false; assist.boost=false;
+    if(bar) bar.style.display="none"; if(toolAi) toolAi.style.display="none";
+    const mb=$("#mapbtn"); if(mb && assist.embed) mb.style.display="grid";
+    return;
+  }
   assistModel = assist.default;
   const sel = $("#amodel"); sel.innerHTML = "";
   if(assist.locate){ const o=document.createElement("option"); o.value="__locate__"; o.textContent="Locate Anything (text)"; sel.appendChild(o); }
@@ -1595,6 +1611,7 @@ function showGhosts(list){
 }
 async function prelabelCurrent(){
   if(!assist || !assist.available || idx<0 || !imgOk) return;
+  if(DS && DS.task==="obb") return;   // box suggestions would corrupt oriented-box labels
   if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - auto-label is disabled."); return; }
   const myGen = loadSeq; setSave("running model…");
   try{
@@ -1680,6 +1697,7 @@ function hitGhost(mx,my){
 function acceptGhost(i){
   const g=ghosts[i]; if(!g) return;
   if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - suggestions can't be accepted."); return; }
+  if(g.cls==null && !(DS.names||[]).length){ banner("Add a class first - unmatched suggestions take the active class."); openClassEdit(); return; }
   // Unmatched suggestion (no dataset class): honour the UI's promise and apply the
   // active palette class the user selected, so open-vocab / custom-name detections
   // are acceptable instead of impossible to take without redrawing.
@@ -1702,6 +1720,7 @@ function rejectGhost(i){ if(ghosts[i]){ ghosts.splice(i,1); draw(); if(!ghosts.l
 function acceptAllGhosts(){
   if(!editable || (DS && !DS.writable)){ banner("This image/dataset is read-only - suggestions can't be accepted."); return; }
   if(!ghosts.length) return;
+  if(ghosts.some(g=>g.cls==null) && !(DS.names||[]).length){ banner("Add a class first - unmatched suggestions take the active class."); openClassEdit(); return; }
   // Matched ghosts keep their mapped class; unmatched ones take the active palette
   // class (same fallback as acceptGhost), so keyboard accept-all works on
   // open-vocab / custom-name datasets where no suggestion maps by name.
@@ -2030,7 +2049,28 @@ cv.addEventListener("pointermove", e=>{
   if(mode==="resize"){ resizeBox(drag.b, drag.k, ix(mx), iy(my)); markDirty(); draw(); return; }
   if(mode==="movepoly"){ const dx=ix(mx)-ix(drag.mx), dy=iy(my)-iy(drag.my); const p=polys[selPoly];
     for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=drag.pts[k]+dx; p.pts[k+1]=drag.pts[k+1]+dy; } markDirty(); draw(); return; }
-  if(mode==="vertex"){ const p=polys[selPoly]; p.pts[drag.vi*2]=ix(mx); p.pts[drag.vi*2+1]=iy(my); markDirty(); draw(); return; }
+  if(mode==="vertex"){
+    const p=polys[selPoly];
+    if(DS && DS.task==="obb" && p.pts.length===8){
+      // Oriented boxes must STAY rectangles (the 9-field contract): resize along
+      // the rect's own axes from the fixed opposite corner instead of free-dragging.
+      const vi=drag.vi, o=(vi+2)%4, a=(vi+1)%4, b=(vi+3)%4;
+      const ox=p.pts[o*2], oy=p.pts[o*2+1];
+      let ux=p.pts[a*2]-ox, uy=p.pts[a*2+1]-oy;
+      let vx=p.pts[b*2]-ox, vy=p.pts[b*2+1]-oy;
+      const ul=Math.hypot(ux,uy), vl=Math.hypot(vx,vy);
+      if(ul>1e-6 && vl>1e-6){
+        ux/=ul; uy/=ul; vx/=vl; vy/=vl;
+        const dx=ix(mx)-ox, dy=iy(my)-oy;
+        const su=dx*ux+dy*uy, sv=dx*vx+dy*vy;   // drag point in the rect's local frame
+        p.pts[a*2]=ox+ux*su; p.pts[a*2+1]=oy+uy*su;
+        p.pts[b*2]=ox+vx*sv; p.pts[b*2+1]=oy+vy*sv;
+        p.pts[vi*2]=ox+ux*su+vx*sv; p.pts[vi*2+1]=oy+uy*su+vy*sv;
+      }
+      markDirty(); draw(); return;
+    }
+    p.pts[drag.vi*2]=ix(mx); p.pts[drag.vi*2+1]=iy(my); markDirty(); draw(); return;
+  }
   if(mode==="segbox"){ segRect={x0:drag.x0, y0:drag.y0, x1:ix(mx), y1:iy(my)}; draw(); return; }
   if(mode==="obbnew"){ obbRect.x1=ix(mx); obbRect.y1=iy(my); draw(); return; }
   if(mode==="rotpoly"){
@@ -2087,6 +2127,18 @@ cv.addEventListener("dblclick", e=>{
   if(best>=0 && Math.hypot(sx(bx)-mx, sy(by)-my)<14){ pushUndo(); p.pts.splice(2*(best+1),0, bx, by); markDirty(); draw(); }
 });
 function clipPoly(p){ if(!imgOk||!p) return; const iw=img.naturalWidth, ih=img.naturalHeight;
+  if(DS && DS.task==="obb" && p.pts.length===8){
+    // Clamping corners individually would shear the rectangle; translate the whole
+    // quad back inside instead (per-corner clamp only if it simply can't fit).
+    let mnx=1e18,mxx=-1e18,mny=1e18,mxy=-1e18;
+    for(let k=0;k<p.pts.length;k+=2){ mnx=Math.min(mnx,p.pts[k]); mxx=Math.max(mxx,p.pts[k]);
+      mny=Math.min(mny,p.pts[k+1]); mxy=Math.max(mxy,p.pts[k+1]); }
+    if(mxx-mnx<=iw && mxy-mny<=ih){
+      const dx=Math.max(0,-mnx)-Math.max(0,mxx-iw), dy=Math.max(0,-mny)-Math.max(0,mxy-ih);
+      if(dx||dy) for(let k=0;k<p.pts.length;k+=2){ p.pts[k]+=dx; p.pts[k+1]+=dy; }
+      return;
+    }
+  }
   for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=Math.max(0,Math.min(p.pts[k],iw)); p.pts[k+1]=Math.max(0,Math.min(p.pts[k+1],ih)); } }
 function normalizeRect(b){ if(b.w<0){b.x+=b.w;b.w=-b.w;} if(b.h<0){b.y+=b.h;b.h=-b.h;} }
 function clipToImage(b){
@@ -2112,9 +2164,33 @@ cv.addEventListener("wheel", e=>{
 }, {passive:false});
 
 // ---- keyboard ----
+// Close the top-most open overlay; returns false when none was open. Keeping this
+// in one place means Escape always works and no overlay can be left unclosable.
+function closeTopOverlay(){
+  if($("#wizard").classList.contains("show")){ closeWizard(); return true; }
+  if($("#exportmodal").classList.contains("show")){ closeExport(); return true; }
+  if($("#renamemodal").classList.contains("show")){ closeRename(); return true; }
+  if($("#deletemodal").classList.contains("show")){ closeDelete(); return true; }
+  if($("#classedit").classList.contains("show")){ closeClassEdit(); return true; }
+  if($("#radar").classList.contains("show")){ closeRadar(); return true; }
+  if($("#mapmodal").classList.contains("show")){ closeMap(); return true; }
+  if($("#insights").classList.contains("show")){ closeInsights(); return true; }
+  if($("#sharepop").classList.contains("show")){ $("#sharepop").classList.remove("show"); return true; }
+  if($("#picker").classList.contains("show")){ closePicker(); return true; }
+  if($("#help").style.display==="flex"){ $("#help").style.display="none"; return true; }
+  return false;
+}
+function overlayOpen(){
+  return !!document.querySelector(".modal.show") || $("#wizard").classList.contains("show")
+    || $("#home").classList.contains("show") || $("#help").style.display==="flex";
+}
 window.addEventListener("keydown", e=>{
   const t=(e.target&&e.target.tagName)||"";
-  if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); if($("#classedit").classList.contains("show")) closeClassEdit(); } return; }
+  if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); closeTopOverlay(); } return; }
+  if(overlayOpen()){   // a dialog (or Home) is up: canvas hotkeys must not fire behind it
+    if(e.key==="Escape") closeTopOverlay();
+    return;
+  }
   if(e.key===" "){ spaceDown=true; cv.style.cursor="grab"; e.preventDefault(); return; }
   if((e.ctrlKey||e.metaKey) && (e.key==="s"||e.key==="S")){ e.preventDefault(); save(); return; }
   if((e.ctrlKey||e.metaKey) && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); applyHistory(undoStack, redoStack); return; }
@@ -2160,15 +2236,9 @@ window.addEventListener("keydown", e=>{
   if(e.key==="?"){ toggleHelp(); return; }
   if(e.key==="Escape"){
     if(polyDraft){ cancelPolyDraft(); return; }
-    if($("#sharepop").classList.contains("show")){ $("#sharepop").classList.remove("show"); }
-    else if($("#radar").classList.contains("show")){ closeRadar(); }
-    else if($("#mapmodal").classList.contains("show")){ closeMap(); }
-    else if($("#insights").classList.contains("show")){ closeInsights(); }
-    else if($("#classedit").classList.contains("show")){ closeClassEdit(); }
-    else if($("#picker").classList.contains("show")){ closePicker(); }
+    if(closeTopOverlay()){ }
     else if(radarFindings.length){ radarFindings=[]; $("#banner").style.display="none"; draw(); }
     else if(ghosts.length){ clearGhosts(); }
-    else if($("#help").style.display==="flex"){ $("#help").style.display="none"; }
     else if(mode==="new"){ boxes.pop(); sel=-1; mode=null; gestureSnap=null; draw(); }
     else { selBoxes.clear(); sel=-1; selPoly=-1; draw(); }
   }
@@ -2183,11 +2253,12 @@ function getCss(v){ if(_cssCache[v]!=null) return _cssCache[v]; const c=(getComp
 function dsname(c){ return (DS && DS.names && DS.names[c]!=null) ? DS.names[c] : c; }
 
 // ---- Label-Error Radar: audit accepted labels with the model ----
-function radarQuery(){ const m=(assistModel==="__locate__")?(assist.default||""):assistModel; return "model="+encodeURIComponent(m||"")+"&conf="+conf; }
+function radarQuery(){ const m=(assistModel==="__locate__")?(assist.default||""):assistModel; return "model="+encodeURIComponent(m||"")+"&conf="+conf+"&epoch="+((DS&&DS.epoch)||0); }
 function openRadar(){ $("#radar").classList.add("show"); }
 function closeRadar(){ $("#radar").classList.remove("show"); }
 async function runRadar(){
   if(!assist || !assist.available) return;
+  if(DS && DS.task==="obb"){ banner("Radar compares box predictions - it is disabled for oriented-box projects."); return; }
   if(dirty && idx>=0 && !(await save())){ banner("Save the current image first, then run Radar."); return; }
   if(dirty){ banner("You edited while saving - press → to save before running Radar."); return; }   // in-flight edits: don't audit stale on-disk labels
   const myEpoch = DS && DS.epoch;   // project-scoped: image navigation must not abort the dataset-wide scan
@@ -2392,7 +2463,7 @@ async function runEmbeddings(){
   const myEpoch = DS && DS.epoch;   // project-scoped: image navigation must not abort the dataset-wide embed
   const hint=$("#maphint"); hint.textContent="Embedding your images… (first run loads a tiny model)";
   try{
-    const r=await fetch("/api/embeddings",{method:"POST"});
+    const r=await fetch("/api/embeddings?epoch="+((DS&&DS.epoch)||0),{method:"POST"});
     if(!r.ok){ const e=await r.json().catch(()=>({})); hint.textContent="Embedding unavailable: "+(e.error||r.status); return; }
     const reader=r.body.getReader(), dec=new TextDecoder(); let buf="";
     for(;;){ const {value,done}=await reader.read(); if(done) break;
@@ -2468,15 +2539,7 @@ function mapSelect(ids){
 function wireHome(){
   // Landing is now New project + Try the example + your projects grid; the old
   // inline open-row / create-panel were removed, so every binding is guarded.
-  const he=$("#homeexample"); if(he) he.onclick = openExample;
   const ht=$("#hometheme"); if(ht) ht.onclick = toggleTheme;
-  const ho=$("#homeopen"); if(ho) ho.onclick = ()=> smartOpen(($("#homepath")||{value:""}).value.trim());
-  const hb=$("#homebrowse"); if(hb) hb.onclick = browseFolder;
-  const hp=$("#homepath");
-  if(hp){ hp.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); smartOpen(hp.value.trim()); } });
-          hp.addEventListener("input", ()=>{ homeError(""); hideCreate(); }); }
-  const hcc=$("#hccancel"); if(hcc) hcc.onclick = hideCreate;
-  const hcr=$("#hccreate"); if(hcr) hcr.onclick = doCreate;
   wireWizard();
   wireProjectActions();
 }
@@ -2620,87 +2683,9 @@ function wireWizard(){
       if(fs.length) wzUpload(fs); });
   }
 }
-function looksLikeYaml(s){ return /\.ya?ml$/i.test(s); }
-// One smart input: a data.yaml opens directly; any other path is inspected so we
-// can open an existing dataset, or offer to *create* one from a bare image folder.
-// Native "choose folder" dialog (pops on the host via the server's tkinter) so you
-// don't have to paste a path. Falls back to the text input if no GUI is available.
-async function browseFolder(){
-  const btn=$("#homebrowse"); if(btn) btn.disabled=true;
-  try{
-    const r=await fetch("/api/pick-folder",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok){ homeError(d.error||"Couldn't open the folder dialog - paste the path instead."); return; }
-    if(d.unavailable){ homeError("No folder dialog available on this machine - paste the path instead."); return; }
-    if(d.folder){ const hp=$("#homepath"); if(hp) hp.value=d.folder; smartOpen(d.folder); }
-  }catch(e){ homeError("Couldn't open the folder dialog - paste the path instead."); }
-  finally{ if(btn) btn.disabled=false; }
-}
-async function smartOpen(p){
-  if(!p){ homeError("Paste a folder of images, or a data.yaml."); return; }
-  if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
-  if(dirty){ homeError("You edited while saving - save before switching projects."); return; }
-  homeError(""); hideCreate();
-  if(looksLikeYaml(p)) return openProject(p);
-  const btn=$("#homeopen"), t=btn.textContent; btn.disabled=true; btn.textContent="Checking…";
-  let info;
-  try{
-    const r=await fetch("/api/projects/inspect",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:p})});
-    info=await r.json(); if(!r.ok) throw new Error(info.error||"inspect failed");
-  }catch(e){ homeError("Couldn't read that path."); return; }
-  finally{ btn.disabled=false; btn.textContent=t; }
-  if(info.has_yaml) return openProject(info.yaml||p);
-  if(!info.is_dir){ homeError("That path isn't a folder or a data.yaml."); return; }
-  if(info.images>0){ showCreate(p, info.images); return; }
-  homeError("No images found in that folder.");
-}
-function showCreate(folder, n){
-  pendingFolder = folder;
-  $("#hcfolder").textContent = folder;
-  $("#hccount").textContent = n;
-  $("#hcclasses").value = "";
-  document.querySelectorAll("#tasksel .taskopt").forEach(x=>x.classList.toggle("on", x.dataset.task==="detect"));
-  $("#homecreate").style.display = "";
-  $("#hcclasses").focus();
-}
-function hideCreate(){ const c=$("#homecreate"); if(c) c.style.display="none"; pendingFolder=null; }
-async function openExample(){
-  homeError(""); hideCreate();
-  const btn=$("#homeexample"), t=btn?btn.textContent:"";
-  if(btn){ btn.disabled=true; btn.textContent="Fetching example…"; }
-  try{
-    const r=await fetch("/api/example",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
-    const d=await r.json();
-    if(!r.ok || !d.open){ homeError(d.error||"Could not open the example project."); return; }
-    resetClientState(); await enterLabeler(d);
-    const hp=$("#homepath"); if(hp) hp.value="";
-  }catch(e){ homeError("Could not open the example project."); }
-  finally{ if(btn){ btn.disabled=false; btn.textContent=t; } }
-}
-async function doCreate(){
-  const folder = pendingFolder; if(!folder) return;
-  const seen=new Set(), classes=[];
-  for(const raw of $("#hcclasses").value.split(/\r?\n/)){
-    const c=raw.trim(); if(!c) continue;
-    const k=c.toLowerCase(); if(seen.has(k)){ homeError("Class names must be unique."); return; }
-    seen.add(k); classes.push(c);
-  }
-  homeError("");
-  const taskEl=document.querySelector("#tasksel .taskopt.on");
-  const task=(taskEl&&taskEl.dataset.task)||"detect";
-  const btn=$("#hccreate"), t=btn.textContent; btn.disabled=true; btn.textContent="Creating…";
-  try{
-    const r=await fetch("/api/projects/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder, classes, task})});
-    const d=await r.json();
-    if(!r.ok || !d.open){ homeError(d.error||"Could not create that project."); return; }
-    hideCreate(); resetClientState(); await enterLabeler(d);
-    const hp=$("#homepath"); if(hp) hp.value="";
-  }catch(e){ homeError("Could not create that project."); }
-  finally{ btn.disabled=false; btn.textContent=t; }
-}
 function showHome(openMeta){
   $("#home").classList.add("show");
-  hideCreate(); homeError("");
+  homeError("");
   // Offer a way back into the already-open session. Crucial on a --share server,
   // where a LAN teammate can't open a project (admin-only) and would otherwise be
   // stranded on Home once ll-home is set; resume needs no admin -- just the live session.
@@ -2727,7 +2712,7 @@ async function renderProjects(){
   let d; try{ d = await jget("/api/projects"); }
   catch(e){ grid.innerHTML = `<div class="home-empty">Could not load projects.</div>`; return; }
   const list = d.projects||[];
-  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet - click <b>New project</b> to get started, or <b>Try the example</b>.</div>`; return; }
+  if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet - click <b>New project</b> to get started.</div>`; return; }
   const dots = `<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`;
   grid.innerHTML = list.map(p=>{
     const n=p.count||0, l=p.labeled||0, pct = n? Math.round(100*l/n) : 0; const dd=esc(p.data);
@@ -2800,7 +2785,7 @@ async function doDelete(){
   }catch(e){ $("#delerr").textContent="Delete failed."; }
   finally{ btn.disabled=false; btn.textContent=t; }
 }
-async function editClassesFromCard(data){ await openProject(data); if(DS) openClassEdit(); }
+async function editClassesFromCard(data){ if(await openProject(data)) openClassEdit(); }
 // ===== Export (YOLO / COCO / Pascal VOC, with split) =====
 function openExport(){
   if(!DS){ banner("Open a project first."); return; }
@@ -2823,10 +2808,14 @@ function expSyncMode(){
 }
 async function doExport(){
   if(!DS){ return; }
+  // /api/export reads label files from disk: flush the canvas first so an export
+  // right after drawing can't silently omit the newest annotations.
+  if(dirty && idx>=0 && !(await save())){ $("#experr").textContent="Couldn't save the current image - fix that first."; return; }
+  if(dirty){ $("#experr").textContent="You edited while saving - save before exporting."; return; }
   const inplace=$("#expinplace").checked;
   const splitEl=document.querySelector("#expsplit button.on"); const split=(splitEl&&splitEl.dataset.s)||"trainval";
   const body={ split, val_frac:((+$("#expval").value)||20)/100, test_frac:((+$("#exptest").value)||0)/100,
-    seed:(+$("#expseed").value)||1234, in_place:inplace };
+    seed:(+$("#expseed").value)||1234, in_place:inplace, epoch:(DS&&DS.epoch)||0 };
   const yamlp=(DS&&DS.yaml)||"";
   if(!inplace){
     const fmts=[]; if($("#expyolo").checked)fmts.push("yolo"); if($("#expcoco").checked)fmts.push("coco"); if($("#expvoc").checked)fmts.push("voc");
@@ -2839,7 +2828,7 @@ async function doExport(){
     const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json(); if(!r.ok||!d.ok){ $("#experr").textContent=(d&&d.error)||"Export failed."; return; }
     const c=d.counts||{}; const sp=`train ${c.train||0}, val ${c.val||0}${c.test?(", test "+c.test):""}`;
-    if(d.in_place){ banner("Re-split in place ("+sp+")."); closeExport(); if(yamlp) openProject(yamlp); }
+    if(d.in_place){ banner("Re-split in place ("+sp+")."); closeExport(); const y=d.yaml||yamlp; if(y) openProject(y); }
     else { $("#expresult").innerHTML=`Exported (${sp}) to<br><b>${esc(d.out)}</b>`+(d.zip?`<br>zip: ${esc(d.zip)}`:""); }
   }catch(e){ $("#experr").textContent="Export failed."; }
   finally{ btn.disabled=false; btn.textContent=t; }
@@ -2861,23 +2850,21 @@ function wireProjectActions(){
   $("#expbrowse").onclick=async()=>{ const f=await wzPickFolder(); if(f) $("#expdst").value=f; };
 }
 async function openProject(data){
-  if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return; }
+  if(!data){ homeError("Enter a path to a data.yaml or a dataset folder."); return false; }
   // Persist the open image's edits before swapping projects: resetClientState()
   // zeroes `dirty` and clears boxes/polys, so without this the work is lost silently
   // (not even the beforeunload warning fires). Same guard as backToHome/fixDuplicate.
-  if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return; }
-  if(dirty){ homeError("You edited while saving - save before switching projects."); return; }
+  if(dirty && idx>=0 && !(await save())){ homeError("Save the current image before switching projects."); return false; }
+  if(dirty){ homeError("You edited while saving - save before switching projects."); return false; }
   homeError("");
-  const btn=$("#homeopen"); const t=btn?btn.textContent:""; if(btn){ btn.disabled=true; btn.textContent="Opening…"; }
   try{
     const r = await fetch("/api/projects/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data})});
     const d = await r.json();
-    if(!r.ok || !d.open){ homeError(d.error||"Could not open that dataset"); return; }
+    if(!r.ok || !d.open){ homeError(d.error||"Could not open that dataset"); return false; }
     resetClientState();
     await enterLabeler(d);
-    const hp=$("#homepath"); if(hp) hp.value="";
-  }catch(e){ showHome(); homeError("Could not open that dataset"); }
-  finally{ if(btn){ btn.disabled=false; btn.textContent=t; } }
+    return true;
+  }catch(e){ showHome(); homeError("Could not open that dataset"); return false; }
 }
 function resetClientState(){
   loadSeq++;            // invalidate any in-flight load()/poll/stream from the previous project
@@ -2888,7 +2875,7 @@ function resetClientState(){
   undoStack=[]; redoStack=[]; gestureSnap=null; dirty=false; imgOk=false; gradData=null; assist=null; assistModel=null;
   CLSCOL=[];
   setTool("box");
-  imgQuery=""; const si=$("#imgsearch"); if(si) si.value="";
+  imgQuery=""; listLimit=400; const si=$("#imgsearch"); if(si) si.value="";
   document.querySelectorAll("#filter button").forEach(x=>x.classList.toggle("on", x.dataset.f==="all"));
   const bc=$("#boostchip"); if(bc) bc.className="chip";
   ["#radar","#mapmodal","#insights","#sharepop","#picker"].forEach(s=>{ const m=$(s); if(m) m.classList.remove("show"); });
@@ -2927,61 +2914,46 @@ async function toggleShare(){
 init().catch(err=>{ document.body.insertAdjacentHTML("afterbegin",
   `<div style="padding:14px;color:#f5b13d">LibreLabel failed to start: ${err.message}</div>`); });
 </script>
-<!-- in-app feedback -> GitHub issue via issue-creator (LibreYOLO/libreyolo, app=librelabel) -->
-<script data-endpoint="https://issue-creator.xuban-ceccon.workers.dev" data-repo="LibreYOLO/libreyolo" data-app="librelabel">
-/* issue-creator widget - https://github.com/EHxuban11/issue-creator */
-"use strict";(()=>{var x=document.currentScript;(function(){let t=h(x);if(!t){console.error("[issue-creator] widget needs data-endpoint and data-repo on its <script> tag.");return}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",()=>b(t)):b(t)})();function h(e){if(!e)return null;let t=e.getAttribute("data-endpoint"),o=e.getAttribute("data-repo");if(!t||!o)return null;let n=t.replace(/\/+$/,"");return{url:n.endsWith("/feedback")?n:`${n}/feedback`,repo:o,app:e.getAttribute("data-app")||void 0,version:e.getAttribute("data-version")||void 0}}function b(e){let t=document.createElement("div");t.setAttribute("data-issue-creator","");let o=t.attachShadow({mode:"open"});o.innerHTML=k(),document.body.appendChild(t);let n=s=>o.querySelector(s),g=n(".launcher"),d=n(".panel"),l=n("textarea"),c=n(".submit"),r=n(".status"),f=()=>{d.classList.add("open"),r.innerHTML="",l.focus()},p=()=>d.classList.remove("open");g.addEventListener("click",()=>d.classList.contains("open")?p():f()),n(".close").addEventListener("click",p),c.addEventListener("click",async()=>{let s=l.value.trim();if(!s){i(r,"Please write something first.","err");return}c.disabled=!0,i(r,"Sending…","");try{let u=await fetch(e.url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({repo:e.repo,message:s,app:e.app,meta:m(e)})}),a=await u.json().catch(()=>({}));u.ok&&a.ok&&a.url?(i(r,`Filed → <a href="${v(a.url)}" target="_blank" rel="noopener">view issue</a>`,"ok"),l.value=""):i(r,a.error||`Something went wrong (HTTP ${u.status}).`,"err")}catch{i(r,"Network error - could not reach the feedback service.","err")}finally{c.disabled=!1}})}function m(e){let t={url:location.href,userAgent:navigator.userAgent};return e.version&&(t.version=e.version),t}function i(e,t,o){e.className=`status ${o}`.trim(),e.innerHTML=t}function v(e){return e.replace(/"/g,"%22")}function k(){return`
-    <style>
-      :host { all: initial; }
-      * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-      .launcher {
-        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
-        border: none; border-radius: 9999px; padding: 12px 18px; cursor: pointer;
-        background: #1f2937; color: #fff; font-size: 14px; font-weight: 600;
-        box-shadow: 0 6px 20px rgba(0,0,0,.25);
-      }
-      .launcher:hover { background: #111827; }
-      .panel {
-        position: fixed; bottom: 76px; right: 20px; z-index: 2147483647;
-        width: 320px; max-width: calc(100vw - 40px);
-        background: #fff; color: #111827; border-radius: 12px;
-        box-shadow: 0 12px 40px rgba(0,0,0,.25); border: 1px solid #e5e7eb;
-        display: none; overflow: hidden;
-      }
-      .panel.open { display: block; }
-      .head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid #f0f0f0; }
-      .title { font-size: 14px; font-weight: 700; }
-      .close { border: none; background: none; cursor: pointer; font-size: 18px; line-height: 1; color: #6b7280; }
-      .body { padding: 14px; }
-      textarea {
-        width: 100%; min-height: 110px; resize: vertical; padding: 10px;
-        border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; color: #111827;
-      }
-      textarea:focus { outline: 2px solid #2563eb; border-color: transparent; }
-      .submit {
-        margin-top: 10px; width: 100%; border: none; border-radius: 8px; padding: 10px;
-        background: #2563eb; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
-      }
-      .submit:hover { background: #1d4ed8; }
-      .submit:disabled { opacity: .6; cursor: default; }
-      .status { margin-top: 10px; font-size: 13px; min-height: 18px; }
-      .status.ok { color: #047857; }
-      .status.err { color: #b91c1c; }
-      .status a { color: inherit; font-weight: 600; }
-    </style>
-    <button class="launcher" type="button">Feedback</button>
-    <div class="panel" role="dialog" aria-label="Send feedback">
-      <div class="head">
-        <span class="title">Send feedback</span>
-        <button class="close" type="button" aria-label="Close">\xD7</button>
-      </div>
-      <div class="body">
-        <textarea placeholder="Describe the bug or idea…"></textarea>
-        <button class="submit" type="button">Send</button>
-        <div class="status"></div>
-      </div>
-    </div>
-  `}})();
+<!-- In-app feedback -> GitHub issue. First-party LibreLabel code (MIT, written for
+     this repo); it only POSTs the message to LibreYOLO's feedback endpoint, which
+     files it as a `feedback`-labelled issue on LibreYOLO/libreyolo. -->
+<div class="fb" id="fb">
+  <button class="fb-btn glass" id="fbbtn" title="Send feedback - files a GitHub issue"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.7-.8L3 20l1-4.1a8.3 8.3 0 0 1-1-4.4 8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 9 8.4z"/></svg>Feedback</button>
+  <div class="fb-panel" id="fbpanel">
+    <div class="fb-head">Send feedback<button class="mx" id="fbclose">&times;</button></div>
+    <textarea id="fbtext" placeholder="A bug, a missing feature, anything…"></textarea>
+    <div class="fb-foot"><span class="fb-status" id="fbstatus"></span><button class="btn btn-primary btn-sm" id="fbsend">Send</button></div>
+    <div class="fb-note">Posted publicly as a GitHub issue on LibreYOLO/libreyolo.</div>
+  </div>
+</div>
+<script>
+"use strict";
+(function(){
+  const q = s => document.querySelector(s);
+  const btn=q("#fbbtn"), panel=q("#fbpanel"), text=q("#fbtext"), send=q("#fbsend"), status=q("#fbstatus");
+  const open = ()=>{ panel.classList.add("show"); status.textContent=""; text.focus(); };
+  const close = ()=>panel.classList.remove("show");
+  btn.onclick = ()=> panel.classList.contains("show") ? close() : open();
+  q("#fbclose").onclick = close;
+  text.addEventListener("keydown", e=>{ if(e.key==="Escape"){ e.stopPropagation(); close(); } });
+  send.onclick = async ()=>{
+    const message = text.value.trim();
+    if(!message){ status.textContent="Write something first."; status.className="fb-status err"; return; }
+    send.disabled = true; status.textContent="Sending…"; status.className="fb-status";
+    try{
+      const r = await fetch("https://issue-creator.xuban-ceccon.workers.dev/feedback", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({repo:"LibreYOLO/libreyolo", app:"librelabel", message,
+                              meta:{url:location.pathname, userAgent:navigator.userAgent}})});
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d.ok && d.url){
+        status.innerHTML = 'Filed - <a href="'+d.url.replace(/"/g,"%22")+'" target="_blank" rel="noopener">view issue</a>';
+        status.className="fb-status ok"; text.value="";
+      } else { status.textContent = d.error || ("Something went wrong (HTTP "+r.status+")."); status.className="fb-status err"; }
+    }catch(e){ status.textContent="Network error - could not reach the feedback service."; status.className="fb-status err"; }
+    finally{ send.disabled=false; }
+  };
+})();
 </script>
 </body>
 </html>
