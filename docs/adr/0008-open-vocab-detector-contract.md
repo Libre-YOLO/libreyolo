@@ -28,7 +28,8 @@ Add a separate `LibreOpenVocab` tier:
 - It does not define `can_load`, so it stays out of `BaseModel._registry` and
   the `LibreYOLO(...)` checkpoint factory.
 - It downloads Hugging Face snapshots into `weights/<FILENAME_PREFIX><size>/`,
-  using the original upstream repositories.
+  using LibreYOLO-hosted mirror repositories whose cards attribute the original
+  upstream source and license.
 - It exposes `set_classes([...])` as the sticky open-vocabulary class list.
 - It returns standard detection `Results` with `boxes`, `scores`, and `classes`.
 
@@ -75,5 +76,7 @@ existing metric assembly.
 ## Licensing
 
 LibreYOLO consumes the Apache-2.0 `transformers` implementations and downloads
-Apache-2.0 model weights from the original Hugging Face repositories. It does
-not vendor upstream source or rehost weights.
+Apache-2.0 model weights from LibreYOLO-owned Hugging Face mirror repositories.
+Those repos preserve the upstream snapshot files needed by `transformers`, add
+LibreYOLO-specific README/LICENSE/NOTICE files, and attribute the original
+upstream model repos. LibreYOLO does not vendor upstream source code.

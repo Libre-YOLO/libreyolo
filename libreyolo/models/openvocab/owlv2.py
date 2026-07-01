@@ -16,8 +16,8 @@ class LibreOWLv2(LibreOpenVocabDetector):
     FAMILY = "owlv2"
     FILENAME_PREFIX = "LibreOWLv2"
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "b16": "google/owlv2-base-patch16-ensemble",
-        "l14": "google/owlv2-large-patch14-ensemble",
+        "b16": "LibreYOLO/LibreOWLv2b16",
+        "l14": "LibreYOLO/LibreOWLv2l14",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"b16": 960, "l14": 960}
     DEFAULT_CONF: ClassVar[float] = 0.1

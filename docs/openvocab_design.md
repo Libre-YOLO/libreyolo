@@ -23,6 +23,15 @@ labels directly.
 The authoritative alias table is `_ALIASES` in
 `libreyolo/models/openvocab/__init__.py`.
 
+Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
+
+- `LibreYOLO/LibreGroundingDINOt`
+- `LibreYOLO/LibreGroundingDINOb`
+- `LibreYOLO/LibreOWLv2b16`
+- `LibreYOLO/LibreOWLv2l14`
+
+The model cards in those repos record the original upstream source repos.
+
 ## Class Vocabulary
 
 The vocabulary is sticky:

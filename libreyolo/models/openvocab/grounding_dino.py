@@ -21,8 +21,8 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
     FAMILY = "grounding_dino"
     FILENAME_PREFIX = "LibreGroundingDINO"
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "t": "IDEA-Research/grounding-dino-tiny",
-        "b": "IDEA-Research/grounding-dino-base",
+        "t": "LibreYOLO/LibreGroundingDINOt",
+        "b": "LibreYOLO/LibreGroundingDINOb",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 800, "b": 800}
     DEFAULT_CONF: ClassVar[float] = 0.25
