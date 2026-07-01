@@ -47,6 +47,7 @@ _METADATA_CONVERSION_HELP = (
 from .ec.model import LibreEC  # noqa: E402
 from .yolox.model import LibreYOLOX  # noqa: E402
 from .yolo9_e2e.model import LibreYOLO9E2E  # noqa: E402
+from .yolo9_p2.model import LibreYOLO9P2  # noqa: E402  (must precede LibreYOLO9: P2 checkpoints also match the base backbone/neck patterns)
 from .yolo9.model import LibreYOLO9  # noqa: E402
 from .yolonas.model import LibreYOLONAS  # noqa: E402
 from .deimv2.model import LibreDEIMv2  # noqa: E402
@@ -574,7 +575,9 @@ def LibreYOLO(
         supported_tasks=matched_cls.SUPPORTED_TASKS,
     )
     family_kwargs = (
-        {"reg_max": reg_max} if matched_cls.FAMILY in ("yolo9", "yolo9_e2e") else {}
+        {"reg_max": reg_max}
+        if matched_cls.FAMILY in ("yolo9", "yolo9_e2e", "yolo9_p2")
+        else {}
     )
     if matched_cls.FAMILY == "yolo9" and resolved_task == "pose":
         detected_keypoints = matched_cls.detect_num_keypoints(weights_dict)
@@ -620,6 +623,7 @@ __all__ = [
     "LibreYOLOX",
     "LibreYOLO9",
     "LibreYOLO9E2E",
+    "LibreYOLO9P2",
     "LibreYOLONAS",
     "LibreDFINE",
     "LibreDEIM",

@@ -244,6 +244,10 @@ class YOLO9Config(TrainConfig):
     workers: int = 8
     mask_downsample_ratio: int = 4
     sync_bn: bool = False
+    # Per-image ground-truth cap in the train transforms. Dense datasets
+    # (e.g. aerial imagery) exceed the historical 100-box default; boxes
+    # beyond the cap are silently dropped, so raise it for such data.
+    max_labels: int = 100
 
 
 @dataclass(kw_only=True)

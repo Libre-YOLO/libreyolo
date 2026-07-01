@@ -42,7 +42,7 @@ from ..utils.video import collect_video_results, is_video_file, run_video_infere
 logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
-_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "nafnet"}
+_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
 # one of these must fail loudly instead of being silently parsed as YOLO9.
@@ -2083,6 +2083,7 @@ class BaseBackend(ABC):
             "rtmdet": RTMDetValPreprocessor,
             "yolo9": YOLO9ValPreprocessor,
             "yolo9_e2e": YOLO9E2EValPreprocessor,
+            "yolo9_p2": YOLO9ValPreprocessor,
             "yolonas": YOLONASValPreprocessor,
             "yolox": YOLOXValPreprocessor,
         }.get(self.model_family, StandardValPreprocessor)

@@ -32,6 +32,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `yolox`     | `LibreYOLOX`    | All-caps acronym |
 | `yolo9`     | `LibreYOLO9`    | All-caps acronym + version digit |
 | `yolo9_e2e` | `LibreYOLO9E2E` | All-caps acronym + version + variant |
+| `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
 | `yolonas`   | `LibreYOLONAS`  | All-caps acronym (hyphen dropped from `YOLO-NAS`) |
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
@@ -100,6 +101,7 @@ ships:
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
 | `yolo9`     | `t`, `s`, `m`, `c` |
 | `yolo9_e2e` | `t`, `s`, `m`, `c` (inherited from yolo9) |
+| `yolo9_p2`  | `t`, `s` |
 | `yolonas`   | `s`, `m`, `l` |
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
@@ -196,6 +198,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
 | `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
+| `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
 | `dfine`     | `("detect",)` (default)             | detect | detect-only |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
