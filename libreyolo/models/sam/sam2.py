@@ -15,12 +15,16 @@ class LibreSAM2(LibreSAMModel):
     FAMILY = "sam2"
     FILENAME_PREFIX = "LibreSAM2"
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "tiny": "facebook/sam2.1-hiera-tiny",
-        "small": "facebook/sam2.1-hiera-small",
-        "base-plus": "facebook/sam2.1-hiera-base-plus",
-        "large": "facebook/sam2.1-hiera-large",
+        "tiny": "LibreYOLO/LibreSAM2tiny",
+        "small": "LibreYOLO/LibreSAM2small",
+        "base-plus": "LibreYOLO/LibreSAM2base-plus",
+        "large": "LibreYOLO/LibreSAM2large",
     }
     INPUT_SIZES: ClassVar[Dict[str, int]] = {size: 1024 for size in HF_REPOS}
+    SNAPSHOT_IGNORE_PATTERNS: ClassVar[tuple[str, ...]] = (
+        *LibreSAMModel.SNAPSHOT_IGNORE_PATTERNS,
+        "*.pt",
+    )
 
     def _load_pretrained(self, snapshot_dir: str) -> tuple:
         try:

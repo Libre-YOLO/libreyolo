@@ -124,6 +124,16 @@ def test_aliases_resolve_to_sam2_without_download():
     assert _ALIASES["base"][0] is not LibreSAM2
 
 
+def test_sam2_uses_libreyolo_mirrors_without_downloading_raw_pt():
+    assert LibreSAM2.HF_REPOS == {
+        "tiny": "LibreYOLO/LibreSAM2tiny",
+        "small": "LibreYOLO/LibreSAM2small",
+        "base-plus": "LibreYOLO/LibreSAM2base-plus",
+        "large": "LibreYOLO/LibreSAM2large",
+    }
+    assert "*.pt" in LibreSAM2.SNAPSHOT_IGNORE_PATTERNS
+
+
 def test_invalid_size_raises_before_weight_loading():
     with pytest.raises(ValueError, match="Invalid size"):
         LibreSAM2("medium", device="cpu")

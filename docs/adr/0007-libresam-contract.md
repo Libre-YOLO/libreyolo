@@ -41,7 +41,8 @@ shape:
   keeping the family out of the detector `_registry` and the `LibreYOLO`
   factory.
 - SAM-1 and SAM-2 load through the permissive `transformers` APIs and ship no
-  model source. MobileSAM uses a native Apache-2.0 port because its TinyViT
+  model source. SAM-2 weights are mirrored in the LibreYOLO Hugging Face org.
+  MobileSAM uses a native Apache-2.0 port because its TinyViT
   image encoder is not representable as a `transformers` SAM-1/2 checkpoint.
 - Returns the same `Results` (with `masks`, plus tight `boxes` derived from the
   masks via `masks_to_boxes`, class id `0` = `"object"`), so downstream code is
@@ -53,7 +54,7 @@ The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
 | Family | API entry | Weight source | Notes |
 |---|---|---|---|
 | SAM-1 | `LibreSAM("base")`, `LibreSAM1("base")` | `facebook/sam-vit-*` | Default promptable family. |
-| SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `facebook/sam2.1-hiera-*` | Image segmentation only in v1. |
+| SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `LibreYOLO/LibreSAM2*` | Image segmentation only in v1. |
 | MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
 
 ## Public API
@@ -114,10 +115,11 @@ unsupported — promptable masks have no fixed class set to score against.
 
 ## Licensing
 
-SAM-1 and SAM-2 code and weights are Apache-2.0 and are loaded from their
-upstream Hugging Face repositories. MobileSAM code and weights are Apache-2.0;
-LibreYOLO carries a native port plus a NOTICE, and the converted checkpoint is
-hosted separately as `LibreMobileSAM.pt`.
+SAM-1 and SAM-2 code and weights are Apache-2.0. SAM-1 loads from the upstream
+Hugging Face repositories; SAM-2 loads from LibreYOLO Hugging Face mirrors of
+the upstream Transformers-compatible snapshots. MobileSAM code and weights are
+Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
+checkpoint is hosted separately as `LibreMobileSAM.pt`.
 
 SAM-3's custom "SAM License" is gated (download requires accepting Meta's
 terms) and would follow the existing LibreVLM license-notice pattern when added;
