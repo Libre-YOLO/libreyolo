@@ -37,7 +37,11 @@ from ...tasks import (
     task_suffix_pattern,
     task_to_suffix,
 )
-from ...training.config import TrainConfig, load_train_cfg
+from ...training.config import (
+    TrainConfig,
+    check_distillation_not_implemented,
+    load_train_cfg,
+)
 from ...utils.general import COCO_CLASSES
 from ...utils.image_loader import ImageInput
 from ...utils.logging import ensure_default_logging
@@ -81,11 +85,15 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
         if cfg is None:
+            # Reserved-but-unimplemented distillation API: fail fast before any
+            # dataset resolution (which may autodownload) when a teacher is set.
+            check_distillation_not_implemented(user_kwargs.get("distill_model"))
             return train_fn(self, *args, **user_kwargs)
         cfg_kwargs = load_train_cfg(cfg)
         consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
         merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
         merged.update(user_kwargs)
+        check_distillation_not_implemented(merged.get("distill_model"))
         return train_fn(self, *args, **merged)
 
     wrapper._libreyolo_cfg_wrapped = True  # type: ignore[attr-defined]
@@ -104,6 +112,7 @@ class BaseModel(ABC):
         INPUT_SIZES: Mapping of size code to input resolution.
         TRAIN_CONFIG: TrainConfig subclass with family-specific defaults.
         val_preprocessor_class: Preprocessor class for validation.
+        validator_class: Override the validator used by val(); defaults to task-based dispatch.
     """
 
     # Class-level model metadata — subclasses override these
@@ -113,9 +122,13 @@ class BaseModel(ABC):
     INPUT_SIZES: ClassVar[dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
+    # When True, the task suffix is mandatory in weight filenames (e.g. a
+    # classify-only family requires ``-cls``); detect families leave it optional.
+    REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
     TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {}
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
+    validator_class: ClassVar[Optional[type]] = None
     EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
 
     # Batched-predict policy: True when ``_preprocess`` yields stackable
@@ -405,7 +418,14 @@ class BaseModel(ABC):
         prefix = cls.FILENAME_PREFIX.lower()
         ext = re.escape(cls.WEIGHT_EXT)
         suffixes = task_suffix_pattern(cls.SUPPORTED_TASKS)
-        suffix_group = rf"(?P<task>{suffixes})?" if suffixes else ""
+        if suffixes:
+            # Families with no suffixless (detect) task can require the task
+            # suffix so that e.g. ``LibreResNet50.pt`` is not accepted as a
+            # classify checkpoint -- only ``LibreResNet50-cls.pt`` is canonical.
+            optional = "" if getattr(cls, "REQUIRE_TASK_SUFFIX", False) else "?"
+            suffix_group = rf"(?P<task>{suffixes}){optional}"
+        else:
+            suffix_group = ""
         return re.compile(rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}")
 
     @classmethod
@@ -713,6 +733,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if getattr(self, "task", "detect") == "restore":
+            raise ValueError(
+                "Test-time augmentation does not support restoration models yet. "
+                "Use augment=False for restore models."
             )
 
         from PIL import Image as PILImage
@@ -1143,6 +1168,7 @@ class BaseModel(ABC):
             OBBValidator,
             PointValidator,
             PoseValidator,
+            RestoreValidator,
             SegmentationValidator,
             SemanticValidator,
             ValidationConfig,
@@ -1177,6 +1203,11 @@ class BaseModel(ABC):
                 "Augmented validation does not support depth estimation yet. "
                 "Use augment=False for depth models."
             )
+        if augment and self.task == "restore":
+            raise ValueError(
+                "Augmented validation does not support restoration models yet. "
+                "Use augment=False for restore models."
+            )
 
         config = ValidationConfig(
             data=data,
@@ -1200,7 +1231,9 @@ class BaseModel(ABC):
                 "is out of scope for LibreYOLO. Evaluate upstream at "
                 "https://github.com/Ahmednull/L2CS-Net."
             )
-        if self.task == "pose":
+        if self.validator_class is not None:
+            validator_cls = self.validator_class
+        elif self.task == "pose":
             validator_cls = PoseValidator
         elif self.task == "point":
             validator_cls = PointValidator
@@ -1210,6 +1243,8 @@ class BaseModel(ABC):
             validator_cls = SemanticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "restore":
+            validator_cls = RestoreValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

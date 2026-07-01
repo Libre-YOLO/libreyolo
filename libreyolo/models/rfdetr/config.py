@@ -50,9 +50,12 @@ class RFDETRConfig(TrainConfig):
     num_keypoints: int = 17
     keypoint_dim: int = 3
     oks_sigmas: List[float] | None = None
-    keypoint_l1_loss_coef: float = 10.0
-    keypoint_oks_loss_coef: float = 4.0
-    keypoint_vis_loss_coef: float = 1.0
+    # GroupPose keypoint loss coefficients (ported from RF-DETR v1.8.0
+    # KeypointTrainConfig; all default 1.0).
+    keypoint_l1_loss_coef: float = 1.0
+    keypoint_findable_loss_coef: float = 1.0
+    keypoint_visible_loss_coef: float = 1.0
+    keypoint_nll_loss_coef: float = 1.0
     pin_memory: bool = False
     prefetch_factor: int = 1
     persistent_workers: bool = True

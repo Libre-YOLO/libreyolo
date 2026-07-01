@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
@@ -38,6 +39,7 @@ class LibreEC(BaseModel):
         "segment": SEG_INPUT_SIZES,
     }
     POSE_NUM_KEYPOINTS = 17
+    KEYPOINT_DIM = 3
     val_preprocessor_class = ECValPreprocessor
 
     _GH_RELEASE_BASE = (
@@ -159,6 +161,8 @@ class LibreEC(BaseModel):
             # Pose head outputs 2 class logits (person, bg); user-facing single
             # class is "person" with index 0.
             nb_classes = 1
+        self.num_keypoints = self.POSE_NUM_KEYPOINTS
+        self.keypoint_dim = self.KEYPOINT_DIM
         super().__init__(
             model_path=model_path,
             size=size,
@@ -242,7 +246,7 @@ class LibreEC(BaseModel):
                 conf_thres=conf_thres,
                 iou_thres=iou_thres,
                 original_size=original_size,
-                max_det=min(max_det, 60),  # ECPose ships with num_queries=60
+                max_det=max_det,
                 num_keypoints=self.POSE_NUM_KEYPOINTS,
             )
         if self.task == "segment":
@@ -285,6 +289,8 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune EC on a YOLO-format dataset (detect / segment / pose).
@@ -301,6 +307,12 @@ class LibreEC(BaseModel):
         MAL+L1+GIoU+FGL+DDF; loss + one-step train are validated on synthetic
         input, but full-fine-tune convergence has not been run end-to-end. Pass
         ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if self.task == "pose":
             return self._train_pose(
@@ -319,6 +331,8 @@ class LibreEC(BaseModel):
                 resume=resume,
                 amp=amp,
                 patience=patience,
+                callbacks=callbacks,
+                loggers=loggers,
                 **kwargs,
             )
         if not allow_experimental:
@@ -393,6 +407,8 @@ class LibreEC(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 
@@ -431,6 +447,8 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
+        callbacks=None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune EdgeCrafter ECPose on a YOLO-format keypoint dataset.
@@ -549,6 +567,8 @@ class LibreEC(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

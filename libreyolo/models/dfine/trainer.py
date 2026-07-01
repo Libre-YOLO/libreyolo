@@ -37,7 +37,13 @@ import torch
 from torch.amp import autocast
 from tqdm import tqdm
 
-from ...data import get_img_files, img2label_paths, load_data_config
+from ...data import (
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+)
 from ...data.dataset import COCODataset, YOLODataset
 from ...training.config import DFINEConfig, TrainConfig
 from ...training.scheduler import FlatCosineScheduler
@@ -287,10 +293,21 @@ class DFINETrainer(BaseTrainer):
             self.num_classes = data_cfg.get("nc", self.config.num_classes)
 
             ann_file = Path(data_dir) / "annotations" / "instances_train2017.json"
+            coco_ann_file = get_coco_annotation_file(data_cfg, "train")
             img_files = data_cfg.get("train_img_files")
             label_files = data_cfg.get("train_label_files")
 
-            if img_files:
+            if coco_ann_file:
+                train_dataset = COCODataset(
+                    data_dir=data_dir,
+                    json_file=coco_ann_file,
+                    name=get_coco_image_dir(data_cfg, "train", "train2017"),
+                    img_size=img_size,
+                    preproc=preproc,
+                    num_classes=int(self.num_classes),
+                    names=data_cfg.get("names"),
+                )
+            elif img_files:
                 train_dataset = YOLODataset(
                     img_files=img_files,
                     label_files=label_files,
@@ -304,6 +321,8 @@ class DFINETrainer(BaseTrainer):
                     name="train2017",
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -330,6 +349,7 @@ class DFINETrainer(BaseTrainer):
                     name="train2017",
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
                 )
             else:
                 train_dataset = YOLODataset(

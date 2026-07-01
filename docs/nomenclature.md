@@ -22,8 +22,10 @@ Libre<FAMILY><size>[-<task>].pt
 
 ## Family prefixes
 
-The 12 detector families registered into the model factory (the VLM tier is a
-separate category, covered in the note below):
+The model families registered into the model factory (the VLM tier is a
+separate category, covered in the note below). Most are detectors; `eomt` and
+`pidnet` are semantic-only; the `mobilenetv4` / `convnext` /
+`efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
@@ -36,9 +38,19 @@ separate category, covered in the note below):
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
+| `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
+| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
+| `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
+| `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
+| `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
+| `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
+| `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
+| `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
+| `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
+| `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 
 Casing rules observed in the table:
 
@@ -60,21 +72,30 @@ For these checkpoint-emitting detector families the casing rule is uniform:
 **every family prefix is all-caps after `Libre`**, with the only mixed-case
 fragment being the lowercase version suffix `DEIMv2`.
 
-The VLM tier is a separate category and does not follow this rule. Its
-weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`, `LibreSmolVLM2`,
-`LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`, `LocateAnything`) are not
-registered into the detector factory and do not emit `Libre<FAMILY><size>.pt`
+The VLM and promptable SAM tiers are separate categories and do not follow this
+rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
+`LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
+`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreMobileSAM`) are not registered
+into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
-downloaded Hugging Face snapshot, so upstream brand casing (CamelCase) is
-intentionally preserved. See
-[`librevlm_design.md`](librevlm_design.md).
+downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand
+casing (CamelCase) is intentionally preserved. See
+[`librevlm_design.md`](librevlm_design.md) and
+[`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
+
+The open-vocabulary detector tier is also separate from the checkpoint factory.
+Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`) identify
+downloaded Hugging Face snapshots, not `Libre<FAMILY><size>.pt` checkpoints.
+These models are discriminative text-conditioned detectors with calibrated
+scores; they are not VLMs. Upstream brand casing is intentionally preserved.
+See [`openvocab_design.md`](openvocab_design.md).
 
 ## Size codes
 
 Sizes are family-specific. The table below records what each family currently
 ships:
 
-| Family | Size codes (detect) |
+| Family | Size codes |
 |---|---|
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
 | `yolo9`     | `t`, `s`, `m`, `c` |
@@ -85,9 +106,33 @@ ships:
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
+| `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
+| `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
+| `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
+| `fomo`      | `s`, `m`, `l` |
+| `mobilenetv4` | `s`, `m`, `l` (conv-Small/Medium/Large) |
+| `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
+| `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
+| `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
+| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
+
+Promptable SAM tier size aliases:
+
+| Family | Size codes |
+|---|---|
+| `sam` | `base`, `large`, `huge` |
+| `sam2` | `tiny`, `small`, `base-plus`, `large` |
+| `mobilesam` | `tiny` (the default and only shipped size) |
+
+Open-vocabulary detector snapshot families use their own size codes:
+
+| Family | Size codes |
+|---|---|
+| `grounding_dino` | `t` (Swin-T), `b` (Swin-B) |
+| `owlv2` | `b16` (base patch-16 ensemble), `l14` (large patch-14 ensemble) |
 
 Notes:
 
@@ -112,6 +157,7 @@ From `libreyolo/tasks.py`:
 | `obb`         | `-obb` |
 | `point`       | `-point` |
 | `depth`       | `-depth` |
+| `restore`     | `-restore` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -133,6 +179,12 @@ pixel accuracy) instead of box/mask mAP.
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
 
+`restore` is the task for paired image restoration, including deblurring and
+denoising. Models expose `Results.restored`, a uint8 RGB `(H, W, 3)` image on
+the original image canvas. Canonical restore filenames must carry the
+`-restore` suffix; task aliases such as `deblur`, `denoise`, and `restoration`
+resolve to `restore` at the API boundary.
+
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
 only when it appears in that family's `SUPPORTED_TASKS`.
@@ -142,22 +194,31 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | Family    | `SUPPORTED_TASKS`                   | Default | Notes |
 |---|---|---|---|
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
-| `yolo9`     | `("detect", "segment", "semantic", "pose", "classify", "obb")` | detect | native grid, classifier, and dense-decoder heads |
+| `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `dfine`     | `("detect",)` (default)             | detect | detect-only |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
-| `rfdetr`    | `("detect", "segment", "semantic", "pose", "classify", "obb", "depth")` | detect | classify uses 224; semantic/depth use 518; seg uses smaller sizes; pose/OBB use detect sizes |
+| `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
+| `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
+| `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
+| `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
+| `fomo`      | `("point",)`                        | point  | point-only localizer model |
+| `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
+| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
+| `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
-No in-tree model family ships `point` weights yet; point-localization families
-must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
+LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-downloadable for this family; see `libreyolo/models/fomo/model.py`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
 
 ## Examples by family + task
 
@@ -166,10 +227,6 @@ must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
 ```text
 LibreYOLOXn.pt
 LibreYOLO9s.pt
-LibreYOLO9t-seg.pt
-LibreYOLO9t-pose.pt
-LibreYOLO9t-cls.pt
-LibreYOLO9t-obb.pt
 LibreYOLO9E2Es.pt
 LibreYOLONASm.pt
 LibreDFINEl.pt
@@ -177,7 +234,6 @@ LibreDEIMx.pt
 LibreDEIMv2s.pt
 LibreRTDETRr50.pt
 LibreRFDETRn.pt
-LibreRFDETRn-cls.pt
 LibrePICODETs.pt
 LibreECs.pt
 ```
@@ -192,27 +248,60 @@ LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
 
-# yolo9 - detect + segment + semantic + pose + classify + obb
-LibreYOLO9t.pt             # detect (default)
-LibreYOLO9t-seg.pt         # segment
-LibreYOLO9t-sem.pt         # semantic
-LibreYOLO9t-pose.pt        # pose
-LibreYOLO9t-cls.pt         # classify
-LibreYOLO9t-obb.pt         # obb
-
-# rfdetr - detect + segment + semantic + pose + classify + obb + depth
+# rfdetr - detect + segment + pose + obb
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
-LibreRFDETRn-sem.pt        # semantic
-LibreRFDETRn-pose.pt       # pose
-LibreRFDETRn-cls.pt        # classify
+LibreRFDETRx-pose.pt       # pose (preview; only size x ships)
 LibreRFDETRn-obb.pt        # obb
-LibreRFDETRn-depth.pt      # depth
+
+# dinov2 — DINOv2 backbone + task head (NOT the RF-DETR detector)
+LibreDINOv2n.pt            # semantic (default task; dense head at 518)
+LibreDINOv2n-cls.pt        # classify (linear probe at 224)
+
+# eomt - EoMT-L semantic segmentation on ADE20K only
+LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
+
+# pidnet - real-time semantic segmentation
+LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
+LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
+LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)
 LibreECs-pose.pt        # pose
 LibreECs-seg.pt         # segment
+
+# depth_anything — Depth Anything V2 (depth-only)
+LibreDepthAnythingV2s-depth.pt   # ViT-S (Apache-2.0 weights)
+LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
+LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
+LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
+
+# nafnet — NAFNet restoration (restore-only)
+LibreNAFNets-restore.pt
+LibreNAFNetl-restore.pt
+```
+
+### Zero-shot / open-vocabulary classify (inference-only)
+
+```text
+# clip — CLIP zero-shot, open-vocabulary (set_classes); no fixed label set.
+# Defaults to ImageNet-1k labels; classify task suffix `-cls`.
+LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
+LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
+LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
+```
+
+### Open-vocabulary detection (inference-only snapshot tier)
+
+```text
+# grounding_dino - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreGroundingDINOt/
+weights/LibreGroundingDINOb/
+
+# owlv2 - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOWLv2b16/
+weights/LibreOWLv2l14/
 ```
 
 ### Gaze (inference-only)
@@ -221,10 +310,66 @@ LibreECs-seg.pt         # segment
 LibreL2CSr50.pt           # L2CS gaze estimation (ResNet-50, Gaze360 weights)
 ```
 
+### Point (object-localizer)
+
+```text
+LibreFOMOs-point.pt       # FOMO point-localizer (size s, point task)
+LibreFOMOm-point.pt       # FOMO point-localizer (size m, point task)
+LibreFOMOl-point.pt       # FOMO point-localizer (size l, point task)
+```
+
+These are the canonical filenames for LibreFOMO checkpoints. Pretrained weights
+are not currently auto-downloadable; pass a local checkpoint path or train from
+scratch. See `libreyolo/models/fomo/model.py` for details.
+
 `gaze` is L2CS's only task, so — like `detect` for the detection families —
 it carries no suffix in the canonical filename; `-gaze` is accepted but
 redundant. L2CS weights are not hosted by LibreYOLO (the Gaze360 dataset
 license forbids redistribution); see `libreyolo/models/l2cs/model.py`.
+
+### Classification (classifier-only)
+
+```text
+LibreMobileNetV4s-cls.pt   # MobileNetV4-conv-Small  (224, ImageNet-1k)
+LibreMobileNetV4m-cls.pt   # MobileNetV4-conv-Medium (224, ImageNet-1k)
+LibreMobileNetV4l-cls.pt   # MobileNetV4-conv-Large  (256, ImageNet-1k)
+
+LibreConvNeXtt-cls.pt      # ConvNeXt-V1-Tiny        (224, ImageNet-1k)
+LibreConvNeXts-cls.pt      # ConvNeXt-V1-Small       (224, ImageNet-1k)
+LibreConvNeXtb-cls.pt      # ConvNeXt-V1-Base        (224, ImageNet-1k)
+
+LibreEfficientNetV2b0-cls.pt   # EfficientNetV2-base-b0 (224, ImageNet-1k)
+LibreEfficientNetV2b1-cls.pt   # EfficientNetV2-base-b1 (240, ImageNet-1k)
+LibreEfficientNetV2b2-cls.pt   # EfficientNetV2-base-b2 (260, ImageNet-1k)
+LibreEfficientNetV2b3-cls.pt   # EfficientNetV2-base-b3 (300, ImageNet-1k)
+
+LibreResNet18-cls.pt       # ResNet-18  (224, ImageNet-1k, a1 recipe)
+LibreResNet34-cls.pt       # ResNet-34  (224, ImageNet-1k, a1 recipe)
+LibreResNet50-cls.pt       # ResNet-50  (224, ImageNet-1k, a1 recipe)
+LibreResNet101-cls.pt      # ResNet-101 (224, ImageNet-1k, a1 recipe)
+```
+
+Unlike `gaze`/`point` (which carry their suffix despite being single-task),
+`classify` keeps its `-cls` suffix to match the ecosystem-wide convention. The
+`mobilenetv4` family is a native port of MobileNetV4 (the speed tier); the
+`convnext` family is a native port of ConvNeXt V1; the `efficientnetv2` family
+is a native port of EfficientNetV2-base (the accuracy tier). All are derived
+from timm (Apache-2.0); weights are Apache-2.0 ImageNet-1k and load
+bit-identically (see each family's `NOTICE`, e.g.
+`libreyolo/models/efficientnetv2/NOTICE`, `libreyolo/models/convnext/NOTICE`).
+Only ConvNeXt **V1** ships — ConvNeXt-V2's small checkpoints are CC-BY-NC and
+are excluded; EfficientNetV2 ships only the ImageNet-1k checkpoints, as the
+`.in21k`/JFT variants carry extra-data terms.
+
+**Eval resolution is a deliberate choice.** The classify families evaluate at a
+real-time-friendly default (224 for MobileNetV4 s/m, ConvNeXt, ResNet; 256 for
+MobileNetV4-l; 224/240/260/300 for EfficientNetV2 b0–b3) rather than timm's
+larger *test* resolutions (e.g. 256/288/320), which trade ~1.6–2× compute for a
+few tenths of a percent top-1. This does **not** affect parity — given the same
+input tensor the logits are bit-identical to timm — only the headline ImageNet
+number, which sits a hair below the test-size figure. Each family threads its
+`crop_pct`/`interpolation` through `predict()`, `val()`, and exported-backend
+inference so all three agree.
 
 ## Resolution precedence
 

@@ -9,15 +9,20 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...data import load_data_config
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
-from .nn import LibreRFDETRModel, RFDETR_CONFIGS, RFDETR_SEG_CONFIGS
+from .nn import (
+    LibreRFDETRModel,
+    RFDETR_CONFIGS,
+    RFDETR_SEG_CONFIGS,
+)
 from .config import RFDETRConfig
 from ...postprocess.rfdetr import postprocess
-from .utils import preprocess_numpy
+from .utils import IMAGENET_MEAN, IMAGENET_STD, preprocess_numpy
 from .trainer import RFDETRTrainer
 from ...validation.preprocessors import RFDETRValPreprocessor
 
@@ -167,46 +172,37 @@ class LibreRFDETR(BaseModel):
     autobatch_fraction: float = 0.45
 
     # Class-level metadata
-    FAMILY = "rfdetr"
-    FILENAME_PREFIX = "LibreRFDETR"
-    INPUT_SIZES = {"n": 384, "s": 512, "m": 576, "l": 704}
-    SEG_INPUT_SIZES = {"n": 312, "s": 384, "m": 432, "l": 504, "x": 624, "xx": 768}
-    # Classification runs the DINOv2 backbone at 224 (divisible by patch_size 14).
-    CLS_INPUT_SIZES = {"n": 224, "s": 224, "m": 224, "l": 224}
-    # Semantic runs the DINOv2 backbone at its native pretrained 518 square
-    # (37 positional tokens * patch_size 14).
-    SEM_INPUT_SIZES = {"n": 518, "s": 518, "m": 518, "l": 518}
-    # Depth uses the same DINOv2-native patch grid as semantic segmentation.
-    DEPTH_INPUT_SIZES = {"n": 518, "s": 518, "m": 518, "l": 518}
-    SUPPORTED_TASKS = (
+    FAMILY: ClassVar[str] = "rfdetr"
+    FILENAME_PREFIX: ClassVar[str] = "LibreRFDETR"
+    INPUT_SIZES: ClassVar[dict[str, int]] = {"n": 384, "s": 512, "m": 576, "l": 704}
+    SEG_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "n": 312,
+        "s": 384,
+        "m": 432,
+        "l": 504,
+        "x": 624,
+        "xx": 768,
+    }
+    # Pose checkpoints use the dedicated RFDETR_POSE_CONFIGS resolutions.
+    POSE_INPUT_SIZES: ClassVar[dict[str, int]] = {
+        "x": 576,
+    }
+    SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = (
         "detect",
         "segment",
-        "semantic",
         "pose",
-        "classify",
         "obb",
-        "depth",
     )
-    TASK_INPUT_SIZES = {
+    TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {
         "detect": INPUT_SIZES,
         "segment": SEG_INPUT_SIZES,
-        "semantic": SEM_INPUT_SIZES,
-        "pose": INPUT_SIZES,
-        "classify": CLS_INPUT_SIZES,
+        "pose": POSE_INPUT_SIZES,
         "obb": INPUT_SIZES,
-        "depth": DEPTH_INPUT_SIZES,
     }
-    # DETR-family preprocessing stretches to a fixed square (no letterbox).
-    semantic_resize_mode = "stretch"
-    depth_resize_mode = "stretch"
-    # Semantic inputs must align with the DINOv2-native patch grid
-    # (patch_size 14 x num_windows 1) used by the semantic backbone.
-    semantic_imgsz_divisor = 14
-    depth_imgsz_divisor = 14
-    EXPERIMENTAL_WEIGHT_FILENAMES = frozenset({"librerfdetrn-pose.pt"})
-    TRAIN_CONFIG = RFDETRConfig
-    val_preprocessor_class = RFDETRValPreprocessor
-    TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
+    EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
+    TRAIN_CONFIG: ClassVar[type[RFDETRConfig]] = RFDETRConfig
+    val_preprocessor_class: ClassVar[type[RFDETRValPreprocessor]] = RFDETRValPreprocessor
+    TTA_FIXED_SIZE: ClassVar[bool] = True  # fixed square; multi-scale TTA is a no-op
 
     # CLI parameters intentionally ignored by native RF-DETR training.
     UNSUPPORTED_TRAIN_PARAMS: ClassVar[set[str]] = {
@@ -242,21 +238,29 @@ class LibreRFDETR(BaseModel):
             for k in keys_lower
         ):
             return True
-        # Classification checkpoints carry only the DINOv2 backbone + a linear
-        # head, so they lack the detection/decoder markers above. Recognize the
-        # backbone-plus-linear-head signature so the factory can route them.
-        if "linear.weight" in weights_dict and any(
-            k.startswith("backbone.") for k in weights_dict
-        ):
+        # Classification (linear head on the DINOv2 backbone) now lives in the
+        # LibreDINOv2 family, so RF-DETR no longer claims those checkpoints.
+        return False
+
+    @staticmethod
+    def _has_grouppose_markers(weights_dict: dict, checkpoint: dict[str, Any]) -> bool:
+        if "_kp_active_mask" in weights_dict:
+            try:
+                return bool(torch.as_tensor(weights_dict["_kp_active_mask"]).any().item())
+            except Exception:
+                return bool(np.asarray(weights_dict["_kp_active_mask"]).any())
+        if any("keypoint" in k for k in weights_dict if k.startswith("transformer.")):
             return True
-        if "depth_head.weight" in weights_dict and any(
-            k.startswith("backbone.") for k in weights_dict
-        ):
+        schema = checkpoint.get("num_keypoints_per_class")
+        if schema:
             return True
-        # Semantic checkpoints carry the backbone + dense decoder.
-        return "predict.weight" in weights_dict and any(
-            k.startswith("backbone.") for k in weights_dict
-        )
+        args = checkpoint.get("args")
+        if args is None:
+            return False
+        if isinstance(args, dict):
+            schema = args.get("num_keypoints_per_class")
+            return bool(schema)
+        return bool(getattr(args, "num_keypoints_per_class", None))
 
     @classmethod
     def detect_size(
@@ -266,8 +270,14 @@ class LibreRFDETR(BaseModel):
         if isinstance(full_ckpt, dict) and isinstance(full_ckpt.get("size"), str):
             return full_ckpt["size"]
         is_seg = any(k.startswith("segmentation_head") for k in weights_dict)
+        is_grouppose = cls._has_grouppose_markers(weights_dict, full_ckpt)
 
-        RESOLUTION_TO_SIZE = {384: "n", 512: "s", 576: "m", 704: "l"}
+        RESOLUTION_TO_SIZE = {
+            384: "n",
+            512: "s",
+            576: "x" if is_grouppose else "m",
+            704: "l",
+        }
         SEG_RESOLUTION_TO_SIZE = {
             312: "n",
             384: "s",
@@ -307,7 +317,7 @@ class LibreRFDETR(BaseModel):
                 else {
                     24 * 24 + 1: "n",
                     32 * 32 + 1: "s",
-                    36 * 36 + 1: "m",
+                    36 * 36 + 1: "x" if is_grouppose else "m",
                     44 * 44 + 1: "l",
                 }
             )
@@ -317,10 +327,6 @@ class LibreRFDETR(BaseModel):
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
-        if "linear.weight" in weights_dict:
-            return int(weights_dict["linear.weight"].shape[0])
-        if "depth_head.weight" in weights_dict:
-            return 1
         # RF-DETR class_embed has (num_classes + 1) outputs (includes background)
         if "class_embed.bias" in weights_dict:
             detected = int(weights_dict["class_embed.bias"].shape[0]) - 1
@@ -372,23 +378,18 @@ class LibreRFDETR(BaseModel):
         resolved_task = task
         if resolved_task is None and segmentation:
             resolved_task = "segment"
-        if normalize_task(resolved_task) in ("pose", "depth") and nb_classes == 80:
+        if normalize_task(resolved_task) == "pose" and nb_classes == 80:
             nb_classes = 1
         self.num_keypoints = int(num_keypoints)
         self.keypoint_dim = int(keypoint_dim)
         if size is None and (
             model_path is None or (isinstance(model_path, dict) and not model_path)
         ):
-            size = "s"
+            # Pose has a single GroupPose preset (adapted from RF-DETR v1.8.0);
+            # detection/seg/etc. fall back to the small default.
+            size = "x" if normalize_task(resolved_task) == "pose" else "s"
 
         if isinstance(model_path, dict) and not model_path:
-            weight_source = None
-        elif (
-            normalize_task(resolved_task) in ("classify", "semantic", "depth")
-            and model_path is None
-        ):
-            # Classification and dense heads build their own pretrained DINOv2
-            # backbone; the detection checkpoints do not apply.
             weight_source = None
         elif normalize_task(resolved_task) == "pose" and model_path is None:
             weight_source = None
@@ -442,9 +443,6 @@ class LibreRFDETR(BaseModel):
                         f"but task={requested_task!r} was requested."
                     )
 
-        if normalize_task(resolved_task) == "depth":
-            nb_classes = 1
-
         self._model_num_classes = nb_classes
         if isinstance(weight_source, dict):
             weight_state = _checkpoint_model_state(weight_source)
@@ -475,13 +473,7 @@ class LibreRFDETR(BaseModel):
         if weight_source is not None:
             self._load_weights(weight_source)
             self.model.eval()
-            if self._is_depth:
-                self.nb_classes = 1
-                self.names = {0: "depth"}
-        elif self._is_depth:
-            self.nb_classes = 1
-            self.names = {0: "depth"}
-        elif self._is_pose and self.nb_classes == 1 and self.names.get(0) == "class_0":
+        if self._is_pose and self.nb_classes == 1 and self.names.get(0) == "class_0":
             self.names = {0: "person"}
 
     @property
@@ -493,18 +485,6 @@ class LibreRFDETR(BaseModel):
     def _is_pose(self) -> bool:
         """Adapter flag derived from the canonical task state."""
         return getattr(self, "task", "detect") == "pose"
-
-    @property
-    def _is_classification(self) -> bool:
-        return self.task == "classify"
-
-    @property
-    def _is_semantic(self) -> bool:
-        return self.task == "semantic"
-
-    @property
-    def _is_depth(self) -> bool:
-        return self.task == "depth"
 
     @property
     def _is_obb(self) -> bool:
@@ -565,17 +545,13 @@ class LibreRFDETR(BaseModel):
             return filename_task
 
         state = _checkpoint_model_state(ckpt) if isinstance(ckpt, dict) else {}
-        if "linear.weight" in state and any(k.startswith("backbone.") for k in state):
-            return "classify"
-        if "depth_head.weight" in state and any(
-            k.startswith("backbone.") for k in state
-        ):
-            return "depth"
-        if "predict.weight" in state and any(k.startswith("backbone.") for k in state):
-            return "semantic"
         if any(k.startswith("segmentation_head") for k in state):
             return "segment"
-        if any(k.startswith("keypoint_head") for k in state):
+        # Pose: legacy clean-room keypoint_head.* weights, or the GroupPose
+        # transformer keypoint markers ported from RF-DETR v1.8.0.
+        if any(k.startswith("keypoint_head") for k in state) or any(
+            "keypoint" in k for k in state if k.startswith("transformer.")
+        ):
             return "pose"
         return None
 
@@ -613,7 +589,9 @@ class LibreRFDETR(BaseModel):
             if isinstance(ckpt, dict) and ckpt.get("task") is not None:
                 return normalize_task(ckpt.get("task")) == "pose"
             state = _checkpoint_model_state(ckpt)
-            return any(k.startswith("keypoint_head") for k in state)
+            return any(k.startswith("keypoint_head") for k in state) or any(
+                "keypoint" in k for k in state if k.startswith("transformer.")
+            )
         except Exception:
             return False
 
@@ -628,44 +606,12 @@ class LibreRFDETR(BaseModel):
             device=str(self.device),
             segmentation=self._is_segmentation,
             pose=self._is_pose,
-            classification=self._is_classification,
             obb=self._is_obb,
-            semantic=self._is_semantic,
-            depth=self._is_depth,
             num_keypoints=self.num_keypoints,
         )
 
     def _rebuild_for_new_classes(self, new_nc: int):
-        """Swap the classifier head (classify) or rebuild the detector head."""
-        if self._is_classification:
-            self.nb_classes = new_nc
-            self._model_num_classes = new_nc
-            classifier = self.model.classifier
-            in_features = classifier.linear.in_features
-            classifier.linear = nn.Linear(in_features, new_nc)
-            classifier.nb_classes = new_nc
-            self.model.nb_classes = new_nc
-            self.model.to(self.device)
-            self.names = {i: f"class_{i}" for i in range(new_nc)}
-            return
-        if self._is_semantic:
-            self.nb_classes = new_nc
-            self._model_num_classes = new_nc
-            segmenter = self.model.segmenter
-            in_channels = segmenter.predict.in_channels
-            segmenter.predict = nn.Conv2d(in_channels, new_nc, 1)
-            segmenter.nb_classes = new_nc
-            self.model.nb_classes = new_nc
-            self.model.to(self.device)
-            self.names = {i: f"class_{i}" for i in range(new_nc)}
-            return
-        if self._is_depth:
-            if int(new_nc) != 1:
-                raise ValueError("RF-DETR depth models require exactly one output channel")
-            self.nb_classes = 1
-            self._model_num_classes = 1
-            self.names = {0: "depth"}
-            return
+        """Rebuild the detector head for a new class count."""
         super()._rebuild_for_new_classes(new_nc)
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
@@ -718,36 +664,30 @@ class LibreRFDETR(BaseModel):
         orig_w, orig_h = img.size
         orig_size = (orig_w, orig_h)
 
-        if self._is_classification:
-            from ...data.classify_dataset import build_classify_transforms
+        if self._is_pose:
+            # GroupPose keypoint preprocess (adapted from RF-DETR v1.8.0). The
+            # official keypoint pipeline is ``Compose([ToTensor, Resize((R, R),
+            # bilinear, antialias=True), Normalize(ImageNet)])`` — it resizes the
+            # float tensor with antialiasing, which differs from the PIL
+            # bilinear (no antialias) resize used by the detection path. The
+            # difference is sub-pixel but enough to flip a borderline detection
+            # at threshold; align the pose path so keypoint pixel coordinates and
+            # scores are bit-exact with the official outputs. Detection/seg/obb
+            # preprocess is intentionally left on ``preprocess_numpy``.
+            import torch.nn.functional as F  # local import; hot path only
 
-            transform = build_classify_transforms(effective_res, augment=False)
-            img_tensor = transform(img).unsqueeze(0)
-            return img_tensor, img, orig_size, 1.0
-
-        if self._is_semantic:
-            # Stretch-resize to the square input; the semantic module applies
-            # ImageNet normalization internally, so hand it [0, 1] floats —
-            # the same contract SemanticDataset uses for training batches.
-            if effective_res % self.semantic_imgsz_divisor:
-                raise ValueError(
-                    f"RF-DETR semantic imgsz={effective_res} must be divisible "
-                    f"by {self.semantic_imgsz_divisor} (DINOv2 patch grid)."
-                )
-            resized = img.resize((effective_res, effective_res), Image.BILINEAR)
-            arr = np.asarray(resized, dtype=np.float32) / 255.0
-            img_tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-            return img_tensor, img, orig_size, 1.0
-
-        if self._is_depth:
-            if effective_res % self.depth_imgsz_divisor:
-                raise ValueError(
-                    f"RF-DETR depth imgsz={effective_res} must be divisible "
-                    f"by {self.depth_imgsz_divisor} (DINOv2 patch grid)."
-                )
-            resized = img.resize((effective_res, effective_res), Image.BILINEAR)
-            arr = np.asarray(resized, dtype=np.float32) / 255.0
-            img_tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            arr = np.asarray(img, dtype=np.float32) / 255.0
+            chw = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+            chw = F.interpolate(
+                chw,
+                size=(effective_res, effective_res),
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            mean = torch.tensor(IMAGENET_MEAN, dtype=torch.float32).view(1, 3, 1, 1)
+            std = torch.tensor(IMAGENET_STD, dtype=torch.float32).view(1, 3, 1, 1)
+            img_tensor = (chw - mean) / std
             return img_tensor, img, orig_size, 1.0
 
         img_chw, _ = preprocess_numpy(np.array(img), effective_res)
@@ -767,38 +707,6 @@ class LibreRFDETR(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
-        if self._is_classification:
-            logits = output
-            if isinstance(logits, dict):
-                logits = logits.get("logits", logits.get("predictions"))
-            probs = torch.softmax(logits.float(), dim=1)[0]
-            return {"probs": probs}
-        if self._is_semantic:
-            logits = output
-            if isinstance(logits, dict):
-                logits = logits.get("semantic_logits", logits.get("predictions"))
-            # Stretch preprocessing means no padding to crop: resize the
-            # logits straight back to the original canvas and take argmax.
-            orig_w, orig_h = original_size
-            logits = torch.nn.functional.interpolate(
-                logits.float(),
-                size=(orig_h, orig_w),
-                mode="bilinear",
-                align_corners=False,
-            )
-            return {"semantic": logits.argmax(dim=1)[0].cpu()}
-        if self._is_depth:
-            depth = output
-            if isinstance(depth, dict):
-                depth = depth.get("depth", depth.get("predictions"))
-            orig_w, orig_h = original_size
-            depth = torch.nn.functional.interpolate(
-                depth.float(),
-                size=(orig_h, orig_w),
-                mode="bilinear",
-                align_corners=False,
-            )
-            return {"depth": depth[0, 0].cpu()}
         if isinstance(output, tuple):
             tuple_output = output
             output = {"pred_boxes": tuple_output[0], "pred_logits": tuple_output[1]}
@@ -810,8 +718,29 @@ class LibreRFDETR(BaseModel):
                 else:
                     output["pred_masks"] = tuple_output[2]
 
+        # GroupPose keypoint schema (e.g. [0, 17]) ported from RF-DETR v1.8.0.
+        # When present, the postprocessor selects the predicted-class keypoint
+        # slot, so logits must keep all class columns and topk runs over every
+        # (query x class) pair exactly like the official PostProcess.
+        #
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # Derive the schema from the inner LWDETR's live ``_kp_active_mask``
+        # (the single source of truth, always kept current by
+        # ``reinitialize_keypoint_head``) so a post-resize schema (e.g. a non-17
+        # keypoint count from a fine-tune) cannot diverge from the 2*K keypoint
+        # slots the model emits. Fall back to the wrapper attribute when the inner
+        # model is unavailable.
+        inner_model = getattr(self.model, "model", None)
+        if inner_model is not None and getattr(inner_model, "use_grouppose_keypoints", False):
+            num_keypoints_per_class = list(inner_model.get_num_keypoints_per_class())
+        else:
+            num_keypoints_per_class = list(
+                getattr(self.model, "num_keypoints_per_class", []) or []
+            )
+        is_grouppose = self._is_pose and len(num_keypoints_per_class) > 0
+
         logits = output["pred_logits"]
-        if self._is_pose and logits.shape[-1] > self.nb_classes:
+        if self._is_pose and not is_grouppose and logits.shape[-1] > self.nb_classes:
             output = dict(output)
             output["pred_logits"] = logits[..., : self.nb_classes]
             logits = output["pred_logits"]
@@ -826,7 +755,15 @@ class LibreRFDETR(BaseModel):
         orig_w, orig_h = original_size
         target_sizes = torch.tensor([(orig_h, orig_w)], device=self.device)
 
-        results = postprocess(output, target_sizes, num_select=num_select)
+        # trace_alpha defaults to RF-DETR's 0.2; allow override via the model.
+        trace_alpha = float(getattr(self.model, "postprocess_trace_alpha", 0.2))
+        results = postprocess(
+            output,
+            target_sizes,
+            num_select=num_select,
+            num_keypoints_per_class=num_keypoints_per_class if is_grouppose else None,
+            trace_alpha=trace_alpha,
+        )
 
         result = results[0]
         scores = result["scores"]
@@ -834,6 +771,7 @@ class LibreRFDETR(BaseModel):
         boxes = result["boxes"]
         masks = result.get("masks")  # (K, H, W) bool or None
         keypoints = result.get("keypoints")
+        keypoint_precision = result.get("keypoint_precision_cholesky")
         obb = result.get("obb")
 
         keep = scores > conf_thres
@@ -844,6 +782,8 @@ class LibreRFDETR(BaseModel):
             masks = masks[keep]
         if keypoints is not None:
             keypoints = keypoints[keep]
+        if keypoint_precision is not None:
+            keypoint_precision = keypoint_precision[keep]
         if obb is not None:
             obb = obb[keep]
 
@@ -863,6 +803,8 @@ class LibreRFDETR(BaseModel):
                 masks = masks[valid]
             if keypoints is not None:
                 keypoints = keypoints[valid]
+            if keypoint_precision is not None:
+                keypoint_precision = keypoint_precision[valid]
             if obb is not None:
                 obb = obb[valid]
                 obb[:, 5] = scores
@@ -878,6 +820,8 @@ class LibreRFDETR(BaseModel):
             det["masks"] = masks.cpu()
         if keypoints is not None:
             det["keypoints"] = keypoints.cpu()
+        if keypoint_precision is not None:
+            det["keypoint_precision_cholesky"] = keypoint_precision.cpu()
         if obb is not None:
             det["obb"] = obb.cpu().tolist()
         return det
@@ -886,176 +830,7 @@ class LibreRFDETR(BaseModel):
     # Weights
     # =========================================================================
 
-    def _load_classify_weights(self, model_path: str | dict[str, Any]) -> None:
-        """Load a LibreYOLO classification checkpoint into the classifier head."""
-        if isinstance(model_path, str):
-            loaded = load_trusted_torch_file(
-                model_path,
-                map_location="cpu",
-                context="RF-DETR classify weights",
-            )
-        else:
-            loaded = model_path
-        if not isinstance(loaded, dict):
-            raise TypeError("RF-DETR classification checkpoints must be dictionaries")
-
-        # Guard against loading a detection/segmentation checkpoint into the
-        # classifier: its keys would silently fail to match (strict=False),
-        # leaving a randomly initialized head that "loads" successfully.
-        ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "classify":
-            raise RuntimeError(
-                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
-                "but is being loaded into an RF-DETR classification model. "
-                "Load it with the matching task."
-            )
-
-        ckpt_nc = loaded.get("nc")
-        if ckpt_nc is None:
-            names = loaded.get("names")
-            ckpt_nc = len(names) if names else None
-        if ckpt_nc is None:
-            ckpt_nc = self.detect_nb_classes(_checkpoint_model_state(loaded))
-        if ckpt_nc is not None and ckpt_nc != self.nb_classes:
-            self._rebuild_for_new_classes(int(ckpt_nc))
-
-        # LibreRFDETRModel.load_state_dict (classification branch) unwraps the
-        # checkpoint's "model" payload before loading into the classifier.
-        result = self.model.load_state_dict(loaded, strict=False)
-        missing = list(getattr(result, "missing_keys", []) or [])
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        # The linear head must have been populated; if it is missing (or the
-        # archive is full of detection-only keys), this is not a classifier.
-        if any(k.startswith("linear.") for k in missing) or any(
-            ("class_embed" in k or "transformer" in k or "query" in k)
-            for k in unexpected
-        ):
-            raise RuntimeError(
-                "Checkpoint does not look like an RF-DETR classification model "
-                "(its weights do not match the backbone + linear classifier). "
-                "Load a classification checkpoint or the correct task."
-            )
-
-        ckpt_names = loaded.get("names")
-        if ckpt_names is not None:
-            self.names = self._sanitize_names(ckpt_names, self.nb_classes)
-        self.model.to(self.device)
-
-    def _load_semantic_weights(self, model_path: str | dict[str, Any]) -> None:
-        """Load a LibreYOLO semantic checkpoint into the dense segmenter."""
-        if isinstance(model_path, str):
-            loaded = load_trusted_torch_file(
-                model_path,
-                map_location="cpu",
-                context="RF-DETR semantic weights",
-            )
-        else:
-            loaded = model_path
-        if not isinstance(loaded, dict):
-            raise TypeError("RF-DETR semantic checkpoints must be dictionaries")
-
-        # Guard against loading a detection/segmentation checkpoint into the
-        # dense segmenter: its keys would silently fail to match (strict=False),
-        # leaving a randomly initialized decoder that "loads" successfully.
-        ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "semantic":
-            raise RuntimeError(
-                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
-                "but is being loaded into an RF-DETR semantic model. "
-                "Load it with the matching task."
-            )
-
-        ckpt_nc = loaded.get("nc")
-        if ckpt_nc is None:
-            names = loaded.get("names")
-            ckpt_nc = len(names) if names else None
-        if ckpt_nc is None:
-            state = _checkpoint_model_state(loaded)
-            predict_weight = state.get("predict.weight")
-            ckpt_nc = int(predict_weight.shape[0]) if predict_weight is not None else None
-        if ckpt_nc is not None and ckpt_nc != self.nb_classes:
-            self._rebuild_for_new_classes(int(ckpt_nc))
-
-        result = self.model.load_state_dict(loaded, strict=False)
-        missing = list(getattr(result, "missing_keys", []) or [])
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        if any(k.startswith("predict.") for k in missing) or any(
-            ("class_embed" in k or "transformer" in k or "query" in k)
-            for k in unexpected
-        ):
-            raise RuntimeError(
-                "Checkpoint does not look like an RF-DETR semantic model "
-                "(its weights do not match the backbone + dense decoder). "
-                "Load a semantic checkpoint or the correct task."
-            )
-
-        ckpt_names = loaded.get("names")
-        if ckpt_names is not None:
-            self.names = self._sanitize_names(ckpt_names, self.nb_classes)
-        self.model.to(self.device)
-
-    def _load_depth_weights(self, model_path: str | dict[str, Any]) -> None:
-        """Load a LibreYOLO depth checkpoint into the dense depth estimator."""
-        if isinstance(model_path, str):
-            loaded = load_trusted_torch_file(
-                model_path,
-                map_location="cpu",
-                context="RF-DETR depth weights",
-            )
-        else:
-            loaded = model_path
-        if not isinstance(loaded, dict):
-            raise TypeError("RF-DETR depth checkpoints must be dictionaries")
-
-        ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "depth":
-            raise RuntimeError(
-                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
-                "but is being loaded into an RF-DETR depth model. "
-                "Load it with the matching task."
-            )
-
-        ckpt_nc = loaded.get("nc")
-        if ckpt_nc is None:
-            names = loaded.get("names")
-            ckpt_nc = len(names) if names else None
-        if ckpt_nc is None:
-            state = _checkpoint_model_state(loaded)
-            ckpt_nc = 1 if state.get("depth_head.weight") is not None else None
-        if ckpt_nc is not None and int(ckpt_nc) != 1:
-            raise RuntimeError(
-                f"RF-DETR depth checkpoints must declare nc=1, got nc={ckpt_nc}."
-            )
-
-        result = self.model.load_state_dict(loaded, strict=False)
-        missing = list(getattr(result, "missing_keys", []) or [])
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        if any(k.startswith("depth_head.") for k in missing) or any(
-            ("class_embed" in k or "transformer" in k or "query" in k)
-            for k in unexpected
-        ):
-            raise RuntimeError(
-                "Checkpoint does not look like an RF-DETR depth model "
-                "(its weights do not match the backbone + dense depth decoder). "
-                "Load a depth checkpoint or the correct task."
-            )
-
-        self.nb_classes = 1
-        ckpt_names = loaded.get("names")
-        self.names = (
-            self._sanitize_names(ckpt_names, 1)
-            if ckpt_names is not None
-            else {0: "depth"}
-        )
-        self.model.to(self.device)
-
     def _load_weights(self, model_path: str | dict[str, Any]):
-        if self._is_classification:
-            return self._load_classify_weights(model_path)
-        if self._is_semantic:
-            return self._load_semantic_weights(model_path)
-        if self._is_depth:
-            return self._load_depth_weights(model_path)
         try:
             if isinstance(model_path, str):
                 if not Path(model_path).exists():
@@ -1113,7 +888,18 @@ class LibreRFDETR(BaseModel):
             )
 
             loaded_state = _checkpoint_model_state(loaded)
-            pose_checkpoint = any(k.startswith("keypoint_head.") for k in loaded_state)
+            # A pose checkpoint is recognised either by the legacy clean-room
+            # ``keypoint_head.*`` weights or by the GroupPose markers ported from
+            # RF-DETR v1.8.0 (the released keypoint preview carries its keypoint
+            # parameters under ``transformer.*keypoint*`` and drops the vestigial
+            # ``keypoint_head.keypoint_proj.*`` keys at conversion time).
+            pose_checkpoint = any(
+                k.startswith("keypoint_head.") for k in loaded_state
+            ) or any(
+                "keypoint" in k
+                for k in loaded_state
+                if k.startswith("transformer.")
+            ) or bool(loaded.get("num_keypoints_per_class"))
             detect_pose_transfer = (
                 self._is_pose
                 and normalized_ckpt_task == "detect"
@@ -1232,7 +1018,18 @@ class LibreRFDETR(BaseModel):
                     ignored.append("keypoint_head.")
                 if self._allow_detect_to_obb_transfer:
                     ignored.append("angle_embed.")
-                important = [k for k in missing if not k.startswith(tuple(ignored))]
+                inner = getattr(self.model, "model", None)
+                uses_grouppose = bool(
+                    getattr(inner, "use_grouppose_keypoints", False)
+                )
+                ignored_exact = set()
+                if not uses_grouppose:
+                    ignored_exact.add("_kp_active_mask")
+                important = [
+                    k
+                    for k in missing
+                    if k not in ignored_exact and not k.startswith(tuple(ignored))
+                ]
                 if important:
                     raise RuntimeError(
                         f"Missing RF-DETR checkpoint keys: {sorted(important)[:10]}"
@@ -1313,9 +1110,24 @@ class LibreRFDETR(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume: str | Path | bool | None = None,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs,
     ) -> Dict:
-        """Fine-tune RF-DETR through LibreYOLO's native trainer."""
+        """Fine-tune RF-DETR through LibreYOLO's native trainer.
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train.
+            batch_size: Batch size (alias of ``batch=`` passed via kwargs).
+            lr: Initial learning rate (alias of ``lr0=`` passed via kwargs).
+            output_dir: Directory for training runs and checkpoints.
+            resume: Checkpoint path, or True to resume the loaded checkpoint.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         output_path = Path(output_dir)
         train_kwargs = dict(kwargs)
         project = train_kwargs.pop("project", None)
@@ -1367,6 +1179,16 @@ class LibreRFDETR(BaseModel):
                 self.model.model.reinitialize_keypoint_head(num_keypoints)
                 self.model.num_keypoints = num_keypoints
                 self.model.args.num_keypoints = num_keypoints
+                # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+                # reinitialize_keypoint_head resizes the inner model's GroupPose
+                # schema (e.g. [0, 17] -> [0, K]); propagate the resized schema to
+                # the wrapper and args so the grouppose postprocess (which reads
+                # the schema) and the criterion build (from args) match the new
+                # 2*K keypoint slots instead of the stale [0, 17].
+                if getattr(self.model.model, "use_grouppose_keypoints", False):
+                    resized_schema = list(self.model.model.get_num_keypoints_per_class())
+                    self.model.num_keypoints_per_class = resized_schema
+                    self.model.args.num_keypoints_per_class = resized_schema
             self.num_keypoints = num_keypoints
             self.keypoint_dim = keypoint_dim
             self.nb_classes = 1
@@ -1419,7 +1241,13 @@ class LibreRFDETR(BaseModel):
             ) and self._resume_checkpoint_uses_lora(resume_path):
                 train_kwargs["lora"] = True
 
-        trainer = RFDETRTrainer(self.model, wrapper_model=self, **train_kwargs)
+        trainer = RFDETRTrainer(
+            self.model,
+            wrapper_model=self,
+            callbacks=callbacks,
+            loggers=loggers,
+            **train_kwargs,
+        )
         if resume:
             trainer.setup()
             trainer.resume(str(resume_path))

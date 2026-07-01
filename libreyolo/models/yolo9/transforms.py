@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from libreyolo.data.obb import normalize_obb_angle
+from libreyolo.training.augment import random_affine
 
 
 def augment_hsv(img, hgain=5, sgain=30, vgain=30):
@@ -512,12 +513,31 @@ class YOLO9MosaicMixupDataset:
             label_dim = getattr(self.preproc, "output_label_dim", None) or 5
             mosaic_labels = np.zeros((0, label_dim))
 
-        # Resize mosaic to target size
-        mosaic_img = cv2.resize(mosaic_img, (input_w, input_h))
-        mosaic_labels[:, :4] = mosaic_labels[:, :4] / 2
         if has_segments:
+            # Segment polygons are not affine-warped yet, so the mask path keeps
+            # the plain 2x -> 1x resize. Affine support for segments is a
+            # follow-up (see issue #432).
+            mosaic_img = cv2.resize(mosaic_img, (input_w, input_h))
+            mosaic_labels[:, :4] = mosaic_labels[:, :4] / 2
             mosaic_segments = _transform_segments(
                 mosaic_segments, scale=0.5, width=input_w, height=input_h
+            )
+        else:
+            # Apply random affine (rotation / translation / scale / shear) on the
+            # assembled 2x mosaic, warping it down to the target size. This
+            # matches the shared MosaicMixupDataset used by the other detection
+            # families and restores the geometric augmentation that YOLO9 was
+            # silently dropping: degrees/translate/mosaic_scale/shear were passed
+            # in but never applied (issue #432). random_affine also performs the
+            # 2x -> 1x downscale, so it replaces the manual resize here.
+            mosaic_img, mosaic_labels = random_affine(
+                mosaic_img,
+                mosaic_labels,
+                target_size=(input_w, input_h),
+                degrees=self.degrees,
+                translate=self.translate,
+                scales=self.scale,
+                shear=self.shear,
             )
 
         # Filter small boxes

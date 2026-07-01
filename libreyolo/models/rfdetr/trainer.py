@@ -87,13 +87,11 @@ class RFDETRTrainer(BaseTrainer):
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if task == "pose":
             self.best_metric_key = "metrics/keypoints_mAP50-95"
-        elif task == "depth":
-            self.best_metric_key = "metrics/delta1"
         # Classification resolves its class count from the ImageFolder dataset
         # in _setup_classify_data; semantic resolves it from the mask dataset
         # in _setup_semantic_data (including the polygon-fallback background
         # class) — neither reads a detection YAML here.
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             return
         if self.config.data:
             data_cfg = load_data_config(
@@ -159,28 +157,6 @@ class RFDETRTrainer(BaseTrainer):
             head = getattr(segmenter, "predict", None)
             if head is not None:
                 groups.append(("head", head))
-            return groups or super().get_freeze_groups()
-
-        depth_estimator = (
-            getattr(self.model, "depth_estimator", None) if core_model is None else None
-        )
-        if depth_estimator is not None:
-            self._append_backbone_freeze_groups(
-                groups,
-                getattr(depth_estimator, "backbone", None),
-            )
-            head_modules = tuple(
-                module
-                for module in (
-                    getattr(depth_estimator, "laterals", None),
-                    getattr(depth_estimator, "refine", None),
-                    getattr(depth_estimator, "output_refine", None),
-                    getattr(depth_estimator, "depth_head", None),
-                )
-                if module is not None
-            )
-            if head_modules:
-                groups.append(("head", head_modules))
             return groups or super().get_freeze_groups()
 
         backbone = getattr(core_model, "backbone", None)
@@ -379,7 +355,6 @@ class RFDETRTrainer(BaseTrainer):
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (
             "classify",
             "semantic",
-            "depth",
         ):
             return imgs, targets, polygons
         scales = self._multi_scale_scales()
@@ -582,7 +557,7 @@ class RFDETRTrainer(BaseTrainer):
         # and size it from their datasets in _setup_classify_data /
         # _setup_semantic_data — no detection criterion or head
         # reinitialization is needed.
-        if task in ("semantic", "depth") and getattr(self.config, "lora", False):
+        if task == "semantic" and getattr(self.config, "lora", False):
             # LoRA injection targets the detection transformer; silently
             # fine-tuning the full semantic model while config says LoRA
             # would misrepresent the run.
@@ -591,9 +566,30 @@ class RFDETRTrainer(BaseTrainer):
                 "Use freeze='backbone.encoder' for parameter-efficient "
                 f"{task} fine-tuning."
             )
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             return
-        if self.model.nb_classes != self.config.num_classes:
+        # --- GroupPose keypoint additions (adapted from RF-DETR v1.8.0). ---
+        # The GroupPose detection head must keep one logit column per keypoint
+        # class (``out_features == len(num_keypoints_per_class)``, e.g. 2 for
+        # ``[0, 17]``). LibreRFDETRModel widens ``nb_classes`` to that schema
+        # length, but ``config.num_classes`` is the contiguous person-only count
+        # (1). Collapsing the head to ``config.num_classes`` would drop the
+        # keypoint class-logit-boost column, so size the pose head from the
+        # schema and only reinit when the live head width actually differs.
+        is_grouppose = bool(getattr(self.model.model, "use_grouppose_keypoints", False))
+        if task == "pose" and is_grouppose:
+            schema = list(self.model.model.get_num_keypoints_per_class())
+            schema_width = len(schema)
+            current_width = int(self.model.model.class_embed.out_features)
+            if current_width != schema_width:
+                self.model.model.reinitialize_detection_head(schema_width)
+            # Keep the wrapper/args consistent with the 2-logit schema head:
+            # ``nb_classes`` is the head width, ``args.num_classes`` the
+            # head-width-minus-one count ``build_criterion_and_postprocessors``
+            # adds back (``num_classes + 1``) so SetCriterion sees the full width.
+            self.model.nb_classes = schema_width
+            self.model.args.num_classes = max(0, schema_width - 1)
+        elif self.model.nb_classes != self.config.num_classes:
             head_outputs = (
                 self.config.num_classes
                 if task == "pose"
@@ -611,10 +607,21 @@ class RFDETRTrainer(BaseTrainer):
                 self.model.model.reinitialize_keypoint_head(self.config.num_keypoints)
                 self.model.num_keypoints = self.config.num_keypoints
             self.model.args.num_keypoints = self.config.num_keypoints
+            # reinitialize_keypoint_head updates the model's GroupPose schema, but
+            # the criterion/matcher are built below from ``self.model.args``. Sync
+            # the args schema to the model's live schema so the keypoint loss/cost
+            # index ``num_keypoints_per_class`` correctly (otherwise a stale
+            # schema makes the keypoint head never train).
+            if getattr(self.model.model, "use_grouppose_keypoints", False):
+                self.model.args.num_keypoints_per_class = (
+                    self.model.model.get_num_keypoints_per_class()
+                )
             self.model.args.oks_sigmas = self._resolve_oks_sigmas()
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
             self.model.args.keypoint_l1_loss_coef = self.config.keypoint_l1_loss_coef
-            self.model.args.keypoint_oks_loss_coef = self.config.keypoint_oks_loss_coef
-            self.model.args.keypoint_vis_loss_coef = self.config.keypoint_vis_loss_coef
+            self.model.args.keypoint_findable_loss_coef = self.config.keypoint_findable_loss_coef
+            self.model.args.keypoint_visible_loss_coef = self.config.keypoint_visible_loss_coef
+            self.model.args.keypoint_nll_loss_coef = self.config.keypoint_nll_loss_coef
 
         if getattr(self.config, "lora", False):
             from ...training.lora import apply_lora_to_rfdetr
@@ -646,7 +653,6 @@ class RFDETRTrainer(BaseTrainer):
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (
             "classify",
             "semantic",
-            "depth",
         ):
             # The DINOv2 backbone + projector is LayerNorm-only (no BatchNorm),
             # so the shared BN/conv/bias grouping leaves an empty first group.
@@ -843,9 +849,9 @@ class RFDETRTrainer(BaseTrainer):
         polygons: Optional[List] = None,
     ) -> Dict:
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
-        if task in ("classify", "semantic", "depth"):
+        if task in ("classify", "semantic"):
             # ``targets`` are class indices [B] (classify) or dense class maps
-            # [B, H, W] (semantic/depth); the model head returns the loss dict
+            # [B, H, W] (semantic); the model head returns the loss dict
             # directly.
             return self.model(imgs, targets=targets)
 
@@ -884,11 +890,6 @@ class RFDETRTrainer(BaseTrainer):
         if loss_task == "semantic":
             value = outputs.get("sem", 0)
             return {"sem": value.item() if isinstance(value, torch.Tensor) else float(value)}
-        if loss_task == "depth":
-            value = outputs.get("depth", 0)
-            return {
-                "depth": value.item() if isinstance(value, torch.Tensor) else float(value)
-            }
 
         def _sum_with_prefix(prefix: str) -> float:
             total = 0.0
@@ -906,9 +907,11 @@ class RFDETRTrainer(BaseTrainer):
             components["mask_ce"] = _sum_with_prefix("loss_mask_ce")
             components["mask_dice"] = _sum_with_prefix("loss_mask_dice")
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") == "pose":
+            # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
             components["keypoints_l1"] = _sum_with_prefix("loss_keypoints_l1")
-            components["keypoints_oks"] = _sum_with_prefix("loss_keypoints_oks")
-            components["keypoints_vis"] = _sum_with_prefix("loss_keypoints_vis")
+            components["keypoints_findable"] = _sum_with_prefix("loss_keypoints_findable")
+            components["keypoints_visible"] = _sum_with_prefix("loss_keypoints_visible")
+            components["keypoints_nll"] = _sum_with_prefix("loss_keypoints_nll")
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") == "obb":
             components["angle"] = _sum_with_prefix("loss_angle")
         return components
@@ -1045,7 +1048,7 @@ class RFDETRTrainer(BaseTrainer):
 
 def train_rfdetr(
     data: str,
-    size: str = "s",
+    size: str | None = None,
     epochs: int = 100,
     batch_size: int = 4,
     lr: float = 1e-4,
@@ -1059,9 +1062,20 @@ def train_rfdetr(
     """Compatibility helper around :class:`LibreRFDETR.train`."""
     from .model import LibreRFDETR
 
+    # Detection/seg keep the historical default: None -> small. Pose defaults to
+    # the x GroupPose preview only when no checkpoint is available to identify a
+    # concrete pose architecture.
+    resolved_size = size
+    if resolved_size is None:
+        if pose:
+            if pretrain_weights is None:
+                resolved_size = "x"
+        else:
+            resolved_size = "s"
+
     model = LibreRFDETR(
         model_path=pretrain_weights,
-        size=size,
+        size=resolved_size,
         device=kwargs.pop("device", "auto"),
         segmentation=segmentation,
         task="pose" if pose else None,

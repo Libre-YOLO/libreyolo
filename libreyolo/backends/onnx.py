@@ -8,7 +8,13 @@ import numpy as np
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, MetadataImageSizeError, _read_metadata_imgsz
+from .base import (
+    BaseBackend,
+    ImageSize,
+    MetadataImageSizeError,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +93,9 @@ class OnnxBackend(BaseBackend):
         ) = self._read_onnx_metadata(
             onnx_path, nb_classes, runtime_metadata=runtime_metadata
         )
+        pose_metadata = self._read_onnx_pose_metadata(
+            onnx_path, runtime_metadata=runtime_metadata
+        )
         # Models exported with nms=True emit final (1, max_det, 6) detections.
         # Newer YOLO9 ONNX exports also include a raw auxiliary output so the
         # LibreYOLO backend can apply native clipping/NMS for non-square images.
@@ -127,6 +136,13 @@ class OnnxBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=(
+                float(runtime_metadata["crop_pct"])
+                if runtime_metadata.get("crop_pct")
+                else None
+            ),
+            interpolation=runtime_metadata.get("interpolation"),
+            **pose_metadata,
         )
 
     @staticmethod
@@ -220,6 +236,24 @@ class OnnxBackend(BaseBackend):
             embedded_nms,
             imgsz,
         )
+
+    @staticmethod
+    def _read_onnx_pose_metadata(
+        onnx_path: str,
+        runtime_metadata: dict | None = None,
+    ) -> dict:
+        try:
+            meta = dict(runtime_metadata or {})
+            if not meta:
+                import onnx
+
+                model_proto = onnx.load(onnx_path)
+                meta = {p.key: p.value for p in model_proto.metadata_props}
+        except Exception as e:
+            logger.warning("Failed to read ONNX pose metadata from %s: %s", onnx_path, e)
+            return {}
+
+        return _read_pose_metadata(meta)
 
     def _supports_batched_inference(self) -> bool:
         # Embedded-NMS graphs are exported batch-1; everything else with a

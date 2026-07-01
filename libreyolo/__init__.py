@@ -15,12 +15,21 @@ from .models import (
     LibreDEIMv2,
     LibreEC,
     LibrePICODET,
-    LibreDAMOYOLO,
     LibreRTDETR,
     LibreRTDETRv2,
     LibreRTDETRv4,
     LibreRTMDet,
     LibreL2CS,
+    LibreFOMO,
+    LibreDepthAnythingV2,
+    LibreNAFNet,
+    LibreEoMT,
+    LibrePIDNet,
+    LibreMobileNetV4,
+    LibreConvNeXt,
+    LibreEfficientNetV2,
+    LibreResNet,
+    LibreCLIP,
 )
 from .utils.results import (
     Results,
@@ -33,6 +42,7 @@ from .utils.results import (
     Gaze,
     SemanticMask,
     DepthMap,
+    RestoredImage,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -72,6 +82,7 @@ def __getattr__(name):
 
     _lazy = {
         "LibreRFDETR": (".models.rfdetr.model", "LibreRFDETR"),
+        "LibreDINOv2": (".models.dinov2.model", "LibreDINOv2"),
         "LibreEnsemble": (".ensemble", "LibreEnsemble"),
         "ExternalDetector": (".ensemble", "ExternalDetector"),
         "OnnxBackend": (".backends.onnx", "OnnxBackend"),
@@ -100,12 +111,17 @@ def __getattr__(name):
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
+        "LibreSAM2": (".models.sam", "LibreSAM2"),
+        "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
+        "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
+        "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
+        "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
     }
-    if name == "LibreRFDETR":
-        # RF-DETR needs dependency check before import
+    if name in ("LibreRFDETR", "LibreDINOv2"):
+        # RF-DETR and DINOv2 share the same transformers dependency check.
         from .models import _ensure_rfdetr
 
         _ensure_rfdetr()
@@ -134,9 +150,19 @@ __all__ = [
     "LibreDEIMv2",
     "LibreEC",
     "LibrePICODET",
-    "LibreDAMOYOLO",
     "LibreRTMDet",
     "LibreL2CS",
+    "LibreFOMO",
+    "LibreDepthAnythingV2",
+    "LibreNAFNet",
+    "LibreEoMT",
+    "LibrePIDNet",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
+    "LibreCLIP",
+    "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
     "LibreLFM2VL",
@@ -149,6 +175,12 @@ __all__ = [
     # Promptable-segmentation tier (optional, requires libreyolo[sam])
     "LibreSAM",
     "LibreSAM1",
+    "LibreSAM2",
+    "LibreMobileSAM",
+    # Open-vocabulary detector tier (optional, requires libreyolo[openvocab])
+    "LibreOpenVocab",
+    "LibreGroundingDINO",
+    "LibreOWLv2",
     # Results
     "Results",
     "Boxes",
@@ -160,6 +192,7 @@ __all__ = [
     "Gaze",
     "SemanticMask",
     "DepthMap",
+    "RestoredImage",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking

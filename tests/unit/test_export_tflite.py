@@ -75,12 +75,15 @@ def test_tflite_family_support_scaffold():
         supported_tflite_exports,
     )
 
-    assert supported_tflite_exports() == (("yolo9", "detect"),)
+    exports = supported_tflite_exports()
+    assert ("yolo9", "detect") in exports
+    assert ("rfdetr", "detect") in exports
+    assert ("rfdetr", "seg") in exports
+    assert ("rfdetr", "pose") in exports
     ensure_tflite_family_supported("yolo9", "detect")
+    ensure_tflite_family_supported("rfdetr", "detect")
     with pytest.raises(NotImplementedError, match="task 'segment'"):
         ensure_tflite_family_supported("yolo9", "segment")
-    with pytest.raises(NotImplementedError, match="RF-DETR"):
-        ensure_tflite_family_supported("rfdetr", "detect")
 
 
 def test_tflite_rejects_dynamic_export():
@@ -104,7 +107,7 @@ def test_tflite_rejects_fp16_export():
         exporter(output_path="unused.tflite", half=True)
 
 
-@pytest.mark.parametrize("family", ["rfdetr", "yolox", "yolo9_e2e", "dfine"])
+@pytest.mark.parametrize("family", ["yolox", "yolo9_e2e", "dfine"])
 def test_tflite_blocks_unvalidated_families_before_onnx_export(family):
     exporter = TFLiteExporter(_make_wrapper(model_name=family))
 

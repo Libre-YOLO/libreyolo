@@ -11,7 +11,7 @@ import torch
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz
+from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class TensorRTBackend(BaseBackend):
         supported_tasks = normalize_supported_tasks(
             self._metadata.get("supported_tasks", (metadata_task,))
         )
+        pose_metadata = _read_pose_metadata(self._metadata)
         self._sidecar_size = self._metadata.get("model_size") or self._metadata.get("size")
 
         sidecar_names = self._metadata.get("names")
@@ -157,6 +158,7 @@ class TensorRTBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     # =========================================================================

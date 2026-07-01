@@ -9,8 +9,10 @@ from PIL import Image
 from libreyolo.data.utils import (
     BUILTIN_DATASETS_DIR,
     get_img_files,
+    get_coco_image_dir,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 
 pytestmark = pytest.mark.unit
@@ -133,6 +135,64 @@ def test_load_data_config_resolves_directory_test_split(tmp_path):
     assert config["test"] == str(images_dir)
     assert config["test_img_files"] == [image_path]
     assert config["test_label_files"] == [label_path]
+
+
+def test_load_data_config_resolves_coco_annotation_paths(tmp_path):
+    dataset_root = tmp_path / "dataset"
+    (dataset_root / "annotations").mkdir(parents=True)
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(dataset_root),
+                "train": "images/train",
+                "val": "images/val",
+                "annotations": {
+                    "train": "annotations/train.json",
+                    "val": str(dataset_root / "annotations" / "valid.json"),
+                },
+                "names": ["marble"],
+                "nc": 1,
+            }
+        )
+    )
+
+    config = load_data_config(str(yaml_path), autodownload=False)
+
+    assert config["train_annotation_file"] == str(
+        dataset_root / "annotations" / "train.json"
+    )
+    assert config["val_annotation_file"] == str(
+        dataset_root / "annotations" / "valid.json"
+    )
+
+
+@pytest.mark.parametrize("split_value", [["images/a", "images/b"], "train.txt", "TRAIN.TXT"])
+def test_coco_image_dir_requires_single_directory(split_value):
+    with pytest.raises(ValueError, match="Native COCO JSON loading expects"):
+        get_coco_image_dir({"train": split_value}, "train", "train2017")
+
+
+def test_resolve_default_coco_image_dir_prefers_standard_images_layout(tmp_path):
+    dataset_root = tmp_path / "dataset"
+    (dataset_root / "images" / "train2017").mkdir(parents=True)
+
+    assert (
+        resolve_default_coco_image_dir(
+            dataset_root,
+            "train",
+            "instances_train2017.json",
+        )
+        == "images/train2017"
+    )
+    assert (
+        resolve_default_coco_image_dir(
+            dataset_root,
+            "val",
+            "instances_val2017.json",
+        )
+        == "val2017"
+    )
 
 
 @pytest.mark.parametrize(

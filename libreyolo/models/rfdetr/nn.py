@@ -35,6 +35,7 @@ class RFDETRSizeConfig:
     pretrain_weights: str | None = None
     segmentation_head: bool = False
     mask_downsample_ratio: int = 4
+    grouppose_head: bool = False
     license: str = "Apache-2.0"
 
 
@@ -136,6 +137,29 @@ RFDETR_SEG_CONFIGS: dict[str, RFDETRSizeConfig] = {
 }
 
 
+RFDETR_POSE_CONFIGS: dict[str, RFDETRSizeConfig] = {
+    "x": RFDETRSizeConfig(
+        encoder="dinov2_windowed_small",
+        hidden_dim=256,
+        patch_size=12,
+        num_windows=2,
+        dec_layers=4,
+        sa_nheads=8,
+        ca_nheads=16,
+        dec_n_points=2,
+        num_queries=100,
+        num_select=100,
+        projector_scale=("P4",),
+        out_feature_indexes=(3, 6, 9, 12),
+        resolution=576,
+        positional_encoding_size=48,
+        pretrain_weights="rf-detr-keypoint-preview-xlarge.pth",
+        segmentation_head=False,
+        grouppose_head=True,
+    ),
+}
+
+
 _PE_KEY_SUFFIX = "embeddings.position_embeddings"
 
 
@@ -177,6 +201,17 @@ def _make_args(
     obb: bool = False,
     num_keypoints: int = 17,
     oks_sigmas=None,
+    dual_projector: bool = False,
+    dual_projector_kp_only: bool = False,
+    # GroupPose keypoint construction flags ported from RF-DETR v1.8.0 (keypoint
+    # preview). Defaults disable keypoints so detection/seg/obb namespaces are
+    # unchanged; the keypoint path passes use_grouppose_keypoints=True and a
+    # concrete num_keypoints_per_class schema (e.g. [0, 17]).
+    use_grouppose_keypoints: bool = False,
+    num_keypoints_per_class: "list[int] | None" = None,
+    grouppose_keypoint_dim_downscale: int = 1,
+    keypoint_cross_attn: bool = True,
+    inter_instance_kp_attn: bool = False,
 ) -> SimpleNamespace:
     cfg_values = {
         f.name: list(getattr(cfg, f.name)) if isinstance(getattr(cfg, f.name), tuple) else getattr(cfg, f.name)
@@ -196,6 +231,19 @@ def _make_args(
         bbox_reparam=True,
         cls_loss_coef=5.0 if segmentation else 1.0,
         decoder_norm="LN",
+        # Dual-projector flags ported from RF-DETR v1.8.0 (keypoint preview).
+        # Default False so detection/seg/obb args namespaces are unchanged; the
+        # keypoint path passes dual_projector=True / dual_projector_kp_only=True.
+        dual_projector=dual_projector,
+        dual_projector_kp_only=dual_projector_kp_only,
+        # GroupPose keypoint flags ported from RF-DETR v1.8.0 (keypoint preview).
+        use_grouppose_keypoints=use_grouppose_keypoints,
+        num_keypoints_per_class=list(num_keypoints_per_class)
+        if num_keypoints_per_class is not None
+        else [],
+        grouppose_keypoint_dim_downscale=grouppose_keypoint_dim_downscale,
+        keypoint_cross_attn=keypoint_cross_attn,
+        inter_instance_kp_attn=inter_instance_kp_attn,
         dim_feedforward=2048,
         drop_path=0.0,
         dropout=0.0,
@@ -216,9 +264,12 @@ def _make_args(
         mask_ce_loss_coef=5.0,
         mask_dice_loss_coef=5.0,
         mask_point_sample_ratio=16,
-        keypoint_l1_loss_coef=10.0,
-        keypoint_oks_loss_coef=4.0,
-        keypoint_vis_loss_coef=1.0,
+        # Keypoint losses feed both the criterion weight_dict and matcher cost.
+        # GroupPose adds the NLL term; classic pose heads emit (x, y, visibility).
+        keypoint_l1_loss_coef=1.0 if pose else 0.0,
+        keypoint_findable_loss_coef=1.0 if pose else 0.0,
+        keypoint_visible_loss_coef=1.0 if pose else 0.0,
+        keypoint_nll_loss_coef=1.0 if use_grouppose_keypoints else 0.0,
         num_keypoints=int(num_keypoints),
         oks_sigmas=oks_sigmas,
         num_channels=3,
@@ -567,203 +618,6 @@ class RFDETRSemanticSegmenter(nn.Module):
         )
 
 
-class RFDETRDepthEstimator(nn.Module):
-    """Dense monocular-depth model: RF-DETR's DINOv2 backbone + decoder.
-
-    The model predicts relative inverse depth: higher values mean closer to
-    the camera. It keeps RF-DETR's DINOv2 encoder/projector and replaces the
-    query decoder with a dense top-down decoder. Training targets are plain
-    depth maps where ``0``/non-finite pixels are invalid.
-    """
-
-    _PATCH_SIZE = 14
-    _POS_ENC_SIZE = 37  # 37 * 14 == 518, DINOv2's pretrained image_size
-    _NUM_WINDOWS = 1
-
-    _TRIM_RATIO = 0.2
-    _GRAD_SCALES = 4
-    _GRAD_WEIGHT = 0.5
-
-    def __init__(
-        self,
-        config: str = "s",
-        device: str = "cpu",
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-        if config not in RFDETR_CONFIGS:
-            raise ValueError(
-                f"Invalid RF-DETR size: {config}. Must be one of {sorted(RFDETR_CONFIGS)}"
-            )
-        cfg = RFDETR_CONFIGS[config]
-        self.config_name = config
-        self.hidden_dim = cfg.hidden_dim
-        self.patch_size = self._PATCH_SIZE
-        self.num_windows = self._NUM_WINDOWS
-        self.resolution = self._POS_ENC_SIZE * self._PATCH_SIZE
-
-        joiner = self._build_backbone(cfg, device)
-        self.backbone = joiner[0]
-
-        num_levels = len(cfg.projector_scale)
-        self.laterals = nn.ModuleList(
-            nn.Conv2d(self.hidden_dim, self.hidden_dim, 1) for _ in range(num_levels)
-        )
-        self.refine = nn.ModuleList(
-            self._make_refine_block(self.hidden_dim) for _ in range(num_levels)
-        )
-        self.output_refine = nn.Sequential(
-            nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
-            nn.GroupNorm(32, self.hidden_dim),
-            nn.GELU(),
-            nn.Conv2d(self.hidden_dim, self.hidden_dim, 3, padding=1),
-            nn.GroupNorm(32, self.hidden_dim),
-            nn.GELU(),
-        )
-        self.drop = nn.Dropout2d(p=dropout)
-        self.depth_head = nn.Conv2d(self.hidden_dim, 1, 1)
-        self.depth_activation = nn.Softplus(beta=1.0, threshold=20.0)
-
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-        self.register_buffer("pixel_mean", mean, persistent=False)
-        self.register_buffer("pixel_std", std, persistent=False)
-
-    @staticmethod
-    def _make_refine_block(channels: int) -> nn.Sequential:
-        return nn.Sequential(
-            nn.Conv2d(channels, channels, 3, padding=1),
-            nn.GroupNorm(32, channels),
-            nn.GELU(),
-            nn.Conv2d(channels, channels, 3, padding=1),
-            nn.GroupNorm(32, channels),
-            nn.GELU(),
-        )
-
-    def _build_backbone(self, cfg: RFDETRSizeConfig, device: str):
-        kwargs = dict(
-            encoder=cfg.encoder,
-            vit_encoder_num_layers=12,
-            pretrained_encoder=None,
-            window_block_indexes=None,
-            drop_path=0.0,
-            out_channels=cfg.hidden_dim,
-            out_feature_indexes=list(cfg.out_feature_indexes),
-            projector_scale=list(cfg.projector_scale),
-            use_cls_token=False,
-            hidden_dim=cfg.hidden_dim,
-            position_embedding="sine",
-            freeze_encoder=False,
-            layer_norm=True,
-            target_shape=(self.resolution, self.resolution),
-            rms_norm=False,
-            backbone_lora=False,
-            force_no_pretrain=False,
-            gradient_checkpointing=False,
-            patch_size=self._PATCH_SIZE,
-            num_windows=self._NUM_WINDOWS,
-            positional_encoding_size=self._POS_ENC_SIZE,
-        )
-        try:
-            return build_backbone(load_dinov2_weights=True, **kwargs)
-        except Exception as exc:  # pragma: no cover - offline / hub failure
-            logger = __import__("logging").getLogger(__name__)
-            logger.warning(
-                "Could not load pretrained DINOv2 weights (%s); building the "
-                "depth backbone from random init.",
-                exc,
-            )
-            return build_backbone(load_dinov2_weights=False, **kwargs)
-
-    @staticmethod
-    def _normalize(values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
-        flat = values[valid]
-        shift = flat.median()
-        scale = (flat - shift).abs().mean().clamp_min(1e-6)
-        return (values - shift) / scale
-
-    def _ssi_loss_single(
-        self, pred: torch.Tensor, gt_depth: torch.Tensor
-    ) -> torch.Tensor | None:
-        valid = (gt_depth > 0) & torch.isfinite(gt_depth) & torch.isfinite(pred)
-        if int(valid.sum()) < 2:
-            return None
-
-        gt_inverse = torch.zeros_like(gt_depth)
-        gt_inverse[valid] = 1.0 / gt_depth[valid]
-        pred_n = self._normalize(pred, valid)
-        gt_n = self._normalize(gt_inverse, valid)
-
-        residuals = (pred_n - gt_n).abs()[valid]
-        keep = max(1, int(residuals.numel() * (1.0 - self._TRIM_RATIO)))
-        if keep < residuals.numel():
-            residuals, _ = torch.sort(residuals)
-            residuals = residuals[:keep]
-        data_term = residuals.mean()
-
-        residual_map = pred_n - gt_n
-        valid_map = valid
-        grad_term = pred.new_zeros(())
-        for _ in range(self._GRAD_SCALES):
-            grad_x = (residual_map[:, 1:] - residual_map[:, :-1]).abs()
-            mask_x = valid_map[:, 1:] & valid_map[:, :-1]
-            grad_y = (residual_map[1:, :] - residual_map[:-1, :]).abs()
-            mask_y = valid_map[1:, :] & valid_map[:-1, :]
-            denom = mask_x.sum() + mask_y.sum()
-            if int(denom) > 0:
-                grad_term = grad_term + (
-                    grad_x[mask_x].sum() + grad_y[mask_y].sum()
-                ) / denom.clamp_min(1)
-            if min(residual_map.shape) < 4:
-                break
-            residual_map = residual_map[::2, ::2]
-            valid_map = valid_map[::2, ::2]
-
-        return data_term + self._GRAD_WEIGHT * grad_term
-
-    def _decode_features(self, feats) -> torch.Tensor:
-        fused = self.laterals[-1](feats[-1].tensors)
-        fused = self.refine[-1](fused)
-        for idx in range(len(feats) - 2, -1, -1):
-            lateral = self.laterals[idx](feats[idx].tensors)
-            fused = F.interpolate(
-                fused, size=lateral.shape[-2:], mode="bilinear", align_corners=False
-            )
-            fused = self.refine[idx](fused + lateral)
-        return self.output_refine(fused)
-
-    def forward(self, x: torch.Tensor, targets=None):
-        b, _, h, w = x.shape
-        x = (x - self.pixel_mean) / self.pixel_std
-        mask = torch.zeros((b, h, w), dtype=torch.bool, device=x.device)
-        feats = self.backbone(NestedTensor(x, mask))
-
-        fused = self._decode_features(feats)
-        pred = self.depth_activation(self.depth_head(self.drop(fused)))
-
-        if self.training and targets is not None:
-            pred = F.interpolate(
-                pred, size=targets.shape[-2:], mode="bilinear", align_corners=False
-            )[:, 0]
-            losses = [
-                loss
-                for loss in (
-                    self._ssi_loss_single(pred[i], targets[i].float())
-                    for i in range(pred.shape[0])
-                )
-                if loss is not None
-            ]
-            if losses:
-                loss = torch.stack(losses).mean()
-            else:
-                loss = pred.sum() * 0.0
-            return {"total_loss": loss, "depth": loss}
-
-        return F.interpolate(
-            pred, size=(h, w), mode="bilinear", align_corners=False
-        )
-
-
 class LibreRFDETRModel(nn.Module):
     """RF-DETR model built from LibreYOLO-local RF-DETR modules."""
 
@@ -776,22 +630,20 @@ class LibreRFDETRModel(nn.Module):
         pose: bool = False,
         classification: bool = False,
         obb: bool = False,
-        semantic: bool = False,
-        depth: bool = False,
         num_keypoints: int = 17,
         oks_sigmas=None,
+        num_keypoints_per_class: "list[int] | None" = None,
     ):
         super().__init__()
 
         if (
-            sum(bool(x) for x in (segmentation, pose, classification, obb, semantic, depth))
+            sum(bool(x) for x in (segmentation, pose, classification, obb))
             > 1
         ):
             raise ValueError("RF-DETR can enable only one task head at a time")
 
         self.classification = classification
-        self.semantic = semantic
-        self.depth = depth
+        self.semantic = False
         if classification:
             # Backbone-only classification path: no detection decoder/criterion.
             self.config_name = config
@@ -809,51 +661,50 @@ class LibreRFDETRModel(nn.Module):
             self.postprocess = None
             return
 
-        if semantic:
-            # Backbone-only dense path: no detection decoder/criterion.
-            self.config_name = config
-            self.config = RFDETR_CONFIGS[config]
-            self.nb_classes = nb_classes
-            self.segmentation = False
-            self.segmenter = RFDETRSemanticSegmenter(
-                config=config, nb_classes=nb_classes, device=device
-            )
-            self.resolution = self.segmenter.resolution
-            self.hidden_dim = self.segmenter.hidden_dim
-            self.patch_size = self.segmenter.patch_size
-            self.num_windows = self.segmenter.num_windows
-            self.model = None
-            self.postprocess = None
-            return
-
-        if depth:
-            # Backbone-only dense path: no detection decoder/criterion.
-            self.config_name = config
-            self.config = RFDETR_CONFIGS[config]
-            self.nb_classes = 1
-            self.segmentation = False
-            self.depth_estimator = RFDETRDepthEstimator(config=config, device=device)
-            self.resolution = self.depth_estimator.resolution
-            self.hidden_dim = self.depth_estimator.hidden_dim
-            self.patch_size = self.depth_estimator.patch_size
-            self.num_windows = self.depth_estimator.num_windows
-            self.model = None
-            self.postprocess = None
-            return
-
         configs = RFDETR_SEG_CONFIGS if segmentation else RFDETR_CONFIGS
-        if pose or obb:
+        if obb:
             configs = RFDETR_CONFIGS
+        if pose:
+            # Pose selects from the dedicated GroupPose table (adapted from
+            # RF-DETR v1.8.0); its presets differ from every detection size.
+            configs = RFDETR_POSE_CONFIGS
         if config not in configs:
             raise ValueError(f"Invalid RF-DETR size: {config}. Must be one of {sorted(configs)}")
 
         self.config_name = config
-        self.config = configs[config]
-        self.nb_classes = nb_classes
         self.segmentation = segmentation
         self.pose = pose
         self.obb = obb
         self.num_keypoints = int(num_keypoints)
+
+        # Only GroupPose configs use the [0, num_keypoints] keypoint-class schema.
+        # The n/s/m/l pose checkpoints carry normal keypoint_head.* tensors.
+        self.num_keypoints_per_class = (
+            list(num_keypoints_per_class)
+            if num_keypoints_per_class is not None
+            else ([0, int(num_keypoints)] if pose and configs[config].grouppose_head else [])
+        )
+        # The GroupPose detection head must keep one logit column per keypoint
+        # class (``class_embed.out_features == len(schema)``); ``_make_args``
+        # builds ``out_features == nb_classes`` for pose, so widen ``nb_classes``
+        # to the schema length when callers derive a narrower count from the
+        # checkpoint's contiguous-class interface (e.g. nc=1 for person-only).
+        if pose and self.num_keypoints_per_class:
+            nb_classes = max(int(nb_classes), len(self.num_keypoints_per_class))
+        self.config = configs[config]
+        self.nb_classes = nb_classes
+        kp_kwargs = {}
+        if pose and self.config.grouppose_head:
+            kp_kwargs = dict(
+                use_grouppose_keypoints=True,
+                num_keypoints_per_class=self.num_keypoints_per_class,
+                grouppose_keypoint_dim_downscale=1,
+                keypoint_cross_attn=True,
+                inter_instance_kp_attn=False,
+                dual_projector=True,
+                dual_projector_kp_only=True,
+            )
+
         self.args = _make_args(
             self.config,
             nb_classes=nb_classes,
@@ -863,6 +714,7 @@ class LibreRFDETRModel(nn.Module):
             obb=obb,
             num_keypoints=num_keypoints,
             oks_sigmas=oks_sigmas,
+            **kp_kwargs,
         )
 
         self.resolution = self.config.resolution
@@ -880,8 +732,6 @@ class LibreRFDETRModel(nn.Module):
             return self.classifier(x, targets=targets)
         if self.semantic:
             return self.segmenter(x, targets=targets)
-        if self.depth:
-            return self.depth_estimator(x, targets=targets)
         return self.model(x, targets=targets)
 
     def build_criterion_and_postprocess(self):
@@ -892,16 +742,11 @@ class LibreRFDETRModel(nn.Module):
             return self.classifier.load_state_dict(
                 _unwrap_state_dict(state_dict), strict=strict
             )
-        if self.semantic:
-            return self.segmenter.load_state_dict(
-                _unwrap_state_dict(state_dict), strict=strict
-            )
-        if self.depth:
-            return self.depth_estimator.load_state_dict(
-                _unwrap_state_dict(state_dict), strict=strict
-            )
 
         checkpoint_args = state_dict.get("args") if isinstance(state_dict, dict) else None
+        checkpoint_num_keypoints = (
+            state_dict.get("num_keypoints") if isinstance(state_dict, dict) else None
+        )
         state_dict = _unwrap_state_dict(state_dict)
 
         class_bias = state_dict.get("class_embed.bias")
@@ -914,13 +759,30 @@ class LibreRFDETRModel(nn.Module):
             else:
                 self.nb_classes = out_features - 1
                 self.args.num_classes = self.nb_classes
-        keypoint_weight = state_dict.get("keypoint_head.layers.2.weight")
-        if keypoint_weight is not None and self.model.keypoint_head is not None:
-            ckpt_k = int(keypoint_weight.shape[0]) // 3
-            if ckpt_k != self.num_keypoints:
-                self.model.reinitialize_keypoint_head(ckpt_k)
-                self.num_keypoints = ckpt_k
-                self.args.num_keypoints = ckpt_k
+        # --- GroupPose keypoint additions (ported from RF-DETR v1.8.0). ---
+        # The GroupPose head's keypoint schema lives in the ``_kp_active_mask``
+        # buffer (shape (num_classes_kp, max_K)); reinitialize schema-dependent
+        # state to match the checkpoint when it differs from the built schema.
+        if getattr(self.model, "use_grouppose_keypoints", False):
+            ckpt_schema = self.model.get_num_keypoints_per_class_from_checkpoint(state_dict)
+            if ckpt_schema is not None and ckpt_schema != self.model.get_num_keypoints_per_class():
+                self.model.reinitialize_keypoint_head(ckpt_schema)
+                self.num_keypoints_per_class = ckpt_schema
+                self.args.num_keypoints_per_class = ckpt_schema
+        elif self.pose:
+            ckpt_num_keypoints = checkpoint_num_keypoints
+            if ckpt_num_keypoints is None:
+                final_weight = state_dict.get("keypoint_head.layers.2.weight")
+                if final_weight is not None and final_weight.shape[0] % 3 == 0:
+                    ckpt_num_keypoints = int(final_weight.shape[0] // 3)
+            if (
+                ckpt_num_keypoints is not None
+                and int(ckpt_num_keypoints) != self.model.num_keypoints
+            ):
+                num_keypoints = int(ckpt_num_keypoints)
+                self.model.reinitialize_keypoint_head(num_keypoints)
+                self.num_keypoints = num_keypoints
+                self.args.num_keypoints = num_keypoints
 
         for key in ("refpoint_embed.weight", "query_feat.weight"):
             if key in state_dict:
@@ -937,10 +799,6 @@ class LibreRFDETRModel(nn.Module):
     def state_dict(self, *args, **kwargs):
         if self.classification:
             return self.classifier.state_dict(*args, **kwargs)
-        if self.semantic:
-            return self.segmenter.state_dict(*args, **kwargs)
-        if self.depth:
-            return self.depth_estimator.state_dict(*args, **kwargs)
         return self.model.state_dict(*args, **kwargs)
 
 
@@ -973,9 +831,9 @@ def create_rfdetr_model(
     segmentation: bool = False,
     pose: bool = False,
     obb: bool = False,
-    depth: bool = False,
     num_keypoints: int = 17,
     oks_sigmas=None,
+    num_keypoints_per_class: "list[int] | None" = None,
 ) -> LibreRFDETRModel:
     return LibreRFDETRModel(
         config=config,
@@ -984,20 +842,20 @@ def create_rfdetr_model(
         segmentation=segmentation,
         pose=pose,
         obb=obb,
-        depth=depth,
         num_keypoints=num_keypoints,
         oks_sigmas=oks_sigmas,
+        num_keypoints_per_class=num_keypoints_per_class,
     )
 
 
 __all__ = [
     "LibreRFDETRModel",
     "RFDETRClassifier",
-    "RFDETRDepthEstimator",
     "RFDETRSemanticSegmenter",
     "RFDETRExportWrapper",
     "RFDETR_CONFIGS",
     "RFDETR_SEG_CONFIGS",
+    "RFDETR_POSE_CONFIGS",
     "RFDETRSizeConfig",
     "LWDETR",
     "MLP",

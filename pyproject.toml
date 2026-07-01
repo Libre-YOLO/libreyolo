@@ -1,6 +1,6 @@
 [project]
 name = "libreyolo"
-version = "1.2.0.dev0"
+version = "1.3.0.dev0"
 description = "Libre YOLO - An open source YOLO library with MIT license."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -10,6 +10,7 @@ license-files = [
     "NOTICE",
     "THIRD_PARTY_NOTICES.txt",
     "weights/LICENSE_NOTICE.txt",
+    "licenses/Apache-2.0.txt",
 ]
 authors = [
     {name = "LibreYOLO Team"}
@@ -46,6 +47,9 @@ onnx = [
 rfdetr = [
     "transformers>=5.1.0",
 ]
+eomt = [
+    "transformers>=5.1.0",
+]
 lora = [
     # LoRA / PEFT fine-tuning (lora=True) for transformer backbones (RF-DETR).
     "libreyolo[rfdetr]",
@@ -66,8 +70,13 @@ vlm = [
     "peft>=0.12.0",
 ]
 sam = [
-    # Promptable-segmentation families (SAM) load through transformers
-    # (SamModel/SamProcessor); huggingface_hub ships with it.
+    # Promptable-segmentation families (SAM/SAM-2) load through transformers
+    # (SamModel/SamProcessor, Sam2Model/Sam2Processor); huggingface_hub ships with it.
+    "transformers>=5.3.0",
+]
+openvocab = [
+    # Discriminative open-vocabulary detectors load through transformers
+    # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection).
     "transformers>=5.1.0",
 ]
 label = [
@@ -90,8 +99,13 @@ ncnn = [
 ]
 tflite = [
     "libreyolo[onnx]",
-    # onnx2tf 2.4.x requires Python 3.12+.
-    "onnx2tf>=2.4.1; python_version >= '3.12'",
+    # onnx2tf 2.4.3 includes the RF-DETR conversion fixes required by this path.
+    # Requires Python 3.12+ (onnx2tf 2.4.x wheel constraint).
+    "onnx2tf>=2.4.3; python_version >= '3.12'",
+    # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
+    "onnx-graphsurgeon>=0.3.27",
+    # Required for RF-DETR onnxsim preprocessing step.
+    "onnx-simplifier>=0.4.36",
 ]
 tracking = []
 rtdetr = []
@@ -100,6 +114,19 @@ gaze = [
     # the official Google Drive (large-file confirm-token handling). Without
     # it, LibreL2CS prints manual download instructions instead.
     "gdown>=5.1.0",
+]
+clip = [
+    # LibreCLIP towers are native torch (no open_clip at runtime). Only the
+    # vendored BPE text tokenizer needs these to reproduce CLIP's exact token
+    # IDs (Unicode \p{L}/\p{N} classes + ftfy text fixing).
+    "regex>=2023.0.0",
+    "ftfy>=6.0.0",
+]
+clip-convert = [
+    # Convert-/parity-only: re-host OpenCLIP LAION-2B weights as LibreCLIP
+    # checkpoints (weights/convert_clip_weights.py) and run the parity tests.
+    "libreyolo[clip]",
+    "open_clip_torch>=2.24.0",
 ]
 coreml = [
     "coremltools>=8.0",
@@ -116,18 +143,22 @@ wandb = [
 all = [
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
+    "libreyolo[eomt]",
     "libreyolo[lora]",
     "libreyolo[plots]",
     "libreyolo[tensorrt]",
+    "libreyolo[tflite]",
     "libreyolo[openvino]",
     "libreyolo[ncnn]",
     "libreyolo[tracking]",
     "libreyolo[rtdetr]",
     "libreyolo[gaze]",
+    "libreyolo[clip]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
     "libreyolo[label]",
+    "libreyolo[openvocab]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
@@ -148,6 +179,12 @@ libreyolo = [
     "assets/*.jpg",
     "config/**/*.yaml",
     "training/*.yaml",
+    "data/*.json",
+    "models/clip/*.gz",
+    "models/clip/data/*.json",
+    "models/**/NOTICE",
+    "models/**/LICENSE",
+    "models/**/*.md",
 ]
 
 [tool.setuptools.packages.find]
@@ -265,11 +302,13 @@ markers = [
     "rtdetrv2: tests covering the RT-DETRv2 model family",
     "rtdetrv4: tests covering the RT-DETRv4 model family",
     "picodet: tests covering the PICODET model family",
-    "damoyolo: tests covering the DAMO-YOLO model family",
     "rtmdet: tests covering the RTMDet model family",
     "l2cs: tests covering the L2CS gaze estimation family",
+    "fomo: tests covering the LibreFOMO point-localizer family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
+    "openvocab: tests covering the LibreOpenVocab detector tier",
+    "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",

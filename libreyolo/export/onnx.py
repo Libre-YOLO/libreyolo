@@ -1,7 +1,10 @@
 """ONNX export implementation."""
 
 import importlib.util
+import platform
+import re
 import warnings
+from importlib import metadata as importlib_metadata
 
 import torch
 
@@ -51,6 +54,32 @@ def _set_metadata(model_proto, metadata: dict) -> None:
         entry.value = value
 
 
+def _package_version(name: str) -> tuple[int, int, int] | None:
+    try:
+        raw_version = importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", raw_version)
+    return tuple(int(part or 0) for part in match.groups()) if match else None
+
+
+def _should_skip_onnx_simplify() -> bool:
+    """Avoid the known onnxsim macOS-arm crash before it can abort Python."""
+    if platform.system() != "Darwin" or platform.machine().lower() not in {
+        "arm64",
+        "aarch64",
+    }:
+        return False
+    onnx_version = _package_version("onnx")
+    onnxsim_version = _package_version("onnxsim")
+    return (
+        onnx_version is not None
+        and onnx_version >= (1, 22, 0)
+        and onnxsim_version is not None
+        and onnxsim_version <= (0, 6, 5)
+    )
+
+
 def _postprocess_onnx(
     path: str,
     *,
@@ -66,6 +95,15 @@ def _postprocess_onnx(
         return
 
     model_proto = onnx.load(path)
+
+    if simplify and _should_skip_onnx_simplify():
+        warnings.warn(
+            "Skipping ONNX simplification: onnx>=1.22 with onnxsim<=0.6.5 "
+            "can crash Python on macOS arm64.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        simplify = False
 
     if simplify:
         try:
@@ -167,26 +205,30 @@ def export_onnx(
     # to output count heuristic for direct export_onnx() calls. For known
     # DETR detection families we already know the output schema, so skip
     # the probe forward pass entirely and reuse the count below.
-    is_seg = metadata.get("segmentation") == "true"
+    task = metadata.get("task")
+    is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_seg = (
         metadata.get("model_family") == "yolo9"
-        and metadata.get("task") == "segment"
+        and task == "segment"
     )
     is_yolo9_pose = (
         metadata.get("model_family") == "yolo9"
-        and metadata.get("task") == "pose"
+        and task == "pose"
     )
     is_rfdetr_pose = (
         metadata.get("model_family") == "rfdetr"
-        and metadata.get("task") == "pose"
+        and task == "pose"
     )
-    is_obb = metadata.get("task") == "obb"
-    is_classify = metadata.get("task") == "classify"
+    is_ec_pose = metadata.get("model_family") == "ec" and task == "pose"
+    is_yolonas_pose = metadata.get("model_family") == "yolonas" and task == "pose"
+    is_obb = task == "obb"
+    is_classify = task == "classify"
+    is_restore = task == "restore"
     known_detr_detection = _uses_dfine_style_export_wrapper(
         metadata.get("model_family")
     )
     num_outputs = None
-    if not is_seg and not known_detr_detection:
+    if not is_seg and not known_detr_detection and not is_restore:
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
 
@@ -197,6 +239,11 @@ def export_onnx(
         output_names = ["output"]
         dynamic_axes = (
             {input_name: {0: "batch"}, "output": {0: "batch"}} if dynamic else None
+        )
+    elif is_restore:
+        output_names = ["restored"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "restored": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_seg:
         output_names = ["predictions", "proto", "mask_coeffs"]
@@ -222,19 +269,50 @@ def export_onnx(
             if dynamic
             else None
         )
+    elif is_ec_pose:
+        output_names = ["pred_logits", "pred_keypoints"]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "pred_logits": {0: "batch", 1: "queries"},
+                "pred_keypoints": {0: "batch", 1: "queries", 2: "keypoint_values"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_yolonas_pose:
+        output_names = [
+            "boxes",
+            "scores",
+            "keypoints_xy",
+            "keypoints_conf",
+        ]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "boxes": {0: "batch", 1: "anchors"},
+                "scores": {0: "batch", 1: "anchors"},
+                "keypoints_xy": {0: "batch", 1: "anchors", 2: "keypoints"},
+                "keypoints_conf": {0: "batch", 1: "anchors", 2: "keypoints"},
+            }
+            if dynamic
+            else None
+        )
     elif is_seg and not is_obb:
         output_names = (
             ["dets", "labels", "masks"]
             if model_family == "rfdetr"
+            else ["pred_logits", "pred_boxes", "pred_masks"]
+            if model_family == "ec"
             else ["boxes", "scores", "masks"]
         )
         input_name = "input" if model_family == "rfdetr" else "images"
         dynamic_axes = (
             {
                 input_name: {0: "batch"},
-                output_names[0]: {0: "batch"},
-                output_names[1]: {0: "batch"},
-                output_names[2]: {0: "batch"},
+                output_names[0]: {0: "batch", 1: "queries"},
+                output_names[1]: {0: "batch", 1: "queries"},
+                output_names[2]: {0: "batch", 1: "queries"},
             }
             if dynamic
             else None

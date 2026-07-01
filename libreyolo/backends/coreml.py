@@ -22,7 +22,13 @@ from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.image_loader import ImageLoader
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _imgsz_hw, _read_metadata_imgsz
+from .base import (
+    BaseBackend,
+    ImageSize,
+    _imgsz_hw,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +125,7 @@ class CoreMLBackend(BaseBackend):
             names,
             imgsz,
             has_embedded_nms,
+            pose_metadata,
         ) = self._parse_metadata(
             meta,
             nb_classes,
@@ -144,6 +151,7 @@ class CoreMLBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **pose_metadata,
         )
 
     @staticmethod
@@ -163,6 +171,7 @@ class CoreMLBackend(BaseBackend):
         names: Optional[dict] = None
         imgsz = 640
         has_embedded_nms = False
+        pose_metadata = _read_pose_metadata(meta)
 
         if "names" in meta:
             try:
@@ -206,6 +215,7 @@ class CoreMLBackend(BaseBackend):
             names,
             imgsz,
             has_embedded_nms,
+            pose_metadata,
         )
 
     def _parse_outputs(

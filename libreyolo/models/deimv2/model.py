@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import DEIMv2Config
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
@@ -215,9 +216,33 @@ class LibreDEIMv2(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs,
     ) -> dict:
-        """Fine-tune DEIMv2 on a YOLO-format dataset config."""
+        """Fine-tune DEIMv2 on a YOLO-format dataset config.
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train (None uses the family default).
+            batch: Batch size (None uses the family default).
+            imgsz: Input image size (None uses the family default).
+            lr0: Initial learning rate (None uses the family default).
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers (None uses the family default).
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name (None uses the family default).
+            exist_ok: If True, overwrite existing experiment directory.
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training (None uses the
+                family default).
+            patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
+        """
         from libreyolo.data import load_data_config
 
         from .trainer import DEIMv2Trainer
@@ -262,6 +287,8 @@ class LibreDEIMv2(BaseModel):
             "exist_ok": exist_ok,
             "resume": resume,
             "patience": patience,
+            "callbacks": callbacks,
+            "loggers": loggers,
             **kwargs,
         }
         optional = {

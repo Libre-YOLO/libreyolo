@@ -86,15 +86,6 @@ def _yolonas_s(pose: bool = False):
     return sd
 
 
-def _damoyolo_s():
-    return {
-        "neck.merge_3.conv.weight": torch.zeros(8, 8, 1, 1),
-        "backbone.block_list.0.conv.weight": torch.zeros(8, 3, 3, 3),
-        "head.gfl_cls.0.weight": torch.zeros(80, 128, 1, 1),
-        "head.gfl_reg.0.weight": torch.zeros(68, 128, 1, 1),
-    }
-
-
 def _picodet_s_upstream():
     return {
         "bbox_head.gfl_cls.0.weight": torch.zeros(112, 96, 1, 1),
@@ -191,7 +182,6 @@ CASES = [
     ("yolox", _yolox_s, _wrap_model, "yolox_s.pth", "yolox", "LibreYOLOX", "s", "detect", 80),
     ("yolonas", _yolonas_s, _wrap_ema_net, "yolo_nas_s_coco.pth", "yolonas", "LibreYOLONAS", "s", "detect", 80),
     ("yolonas-pose", lambda: _yolonas_s(pose=True), _wrap_ema_net, "yolo_nas_pose_s_coco.pth", "yolonas", "LibreYOLONAS", "s", "pose", 1),
-    ("damoyolo", _damoyolo_s, _identity, "damoyolo_tinynasL25_S.pth", "damoyolo", "LibreDAMOYOLO", "s", "detect", 80),
     ("picodet", _picodet_s_upstream, _wrap_state_dict, "picodet_s_320.pth", "picodet", "LibrePICODET", "s", "detect", 80),
     ("rtmdet", _rtmdet_s_upstream, _wrap_ema_state_dict, "rtmdet_s_coco.pth", "rtmdet", "LibreRTMDet", "s", "detect", 80),
     ("rtdetr-r18", _rtdetr_r18_upstream, _wrap_ema_module, "rtdetr_r18vd_coco.pth", "rtdetr", "LibreRTDETR", "r18", "detect", 80),

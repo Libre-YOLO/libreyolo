@@ -46,6 +46,7 @@ class TestExitCodes:
             "config_range_error",
             "config_required_key",
             "config_conflict",
+            "invalid_imgsz",
         ):
             assert EXIT_CODES[code] == 2, f"{code} should exit 2"
 
@@ -72,6 +73,7 @@ class TestExitCodes:
             "export_format_unknown",
             "export_dep_missing",
             "format_precision_unsupported",
+            "nms_unsupported_format",
         ):
             assert EXIT_CODES[code] == 5, f"{code} should exit 5"
 
@@ -104,3 +106,54 @@ class TestSuggestKey:
     def test_exact_match(self):
         valid = ["epochs", "batch"]
         assert suggest_key("epochs", valid) == "epochs"
+
+
+class TestEmittedCodesRegistered:
+    """Every error code emitted in the CLI must exist in EXIT_CODES.
+
+    Guards the scriptable exit-code contract: a code passed to
+    ``exit_with_error`` / ``CLIError`` that is not in ``EXIT_CODES`` silently
+    falls back to exit 1 instead of its documented category.
+    """
+
+    @staticmethod
+    def _collect_emitted_codes() -> dict[str, str]:
+        import ast
+        from pathlib import Path
+
+        import libreyolo.cli
+
+        cli_dir = Path(libreyolo.cli.__file__).parent
+        codes: dict[str, str] = {}
+        for path in sorted(cli_dir.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "id", None) or getattr(
+                    node.func, "attr", None
+                )
+                if name == "exit_with_error":
+                    arg = node.args[1] if len(node.args) > 1 else None
+                elif name == "CLIError":
+                    arg = node.args[0] if node.args else None
+                else:
+                    continue
+                if arg is None:
+                    # also handle keyword form, e.g. exit_with_error(out, code="...")
+                    for kw in node.keywords:
+                        if kw.arg == "code":
+                            arg = kw.value
+                            break
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    codes.setdefault(arg.value, f"{path.name}:{arg.lineno}")
+        return codes
+
+    def test_all_emitted_codes_are_registered(self):
+        emitted = self._collect_emitted_codes()
+        # Sanity check the scanner actually found call sites.
+        assert emitted, "no CLI error codes were discovered; scanner is broken"
+        missing = {c: loc for c, loc in emitted.items() if c not in EXIT_CODES}
+        assert not missing, (
+            f"CLI error codes emitted but missing from EXIT_CODES: {missing}"
+        )

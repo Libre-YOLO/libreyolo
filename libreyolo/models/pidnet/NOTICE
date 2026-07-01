@@ -1,0 +1,19 @@
+LibrePIDNet - third-party attribution
+====================================
+
+The PIDNet architecture in this family (``nn.py``) is ported from:
+
+    Original code: https://github.com/XuJiacong/PIDNet
+    Author:        Jiacong Xu
+    License:       MIT License
+
+The block definitions, three-branch PID structure, PagFM/Bag/PAPPM/DAPPM
+modules, and module naming follow upstream so official PIDNet Cityscapes
+weights can be converted into LibreYOLO checkpoints with minimal key changes.
+
+Converted Cityscapes weights are MIT-licensed PIDNet weights. The Cityscapes
+dataset itself has separate research-oriented terms and is not redistributed
+by LibreYOLO.
+
+License text:
+    MIT: https://opensource.org/license/mit/

@@ -31,6 +31,12 @@ from .depth_dataset import (
     img2depth_paths,
     resolve_depth_data,
 )
+from .restore_dataset import (
+    RestoreDataset,
+    img2restore_target_paths,
+    resolve_restore_data,
+    restore_collate_fn,
+)
 from .semantic_dataset import (
     SemanticDataset,
     img2mask_paths,
@@ -40,18 +46,24 @@ from .semantic_dataset import (
 from .utils import (
     DATASETS_DIR,
     check_dataset,
+    get_coco_annotation_file,
+    get_coco_image_dir,
     get_img_files,
     img2label_paths,
     load_data_config,
+    resolve_default_coco_image_dir,
 )
 from .yolo_coco_api import YOLOCocoAPI, create_yolo_coco_api, parse_yolo_label_line
 
 __all__ = [
     "DATASETS_DIR",
     "check_dataset",
+    "get_coco_annotation_file",
+    "get_coco_image_dir",
     "get_img_files",
     "img2label_paths",
     "load_data_config",
+    "resolve_default_coco_image_dir",
     "YOLOCocoAPI",
     "create_yolo_coco_api",
     "parse_yolo_label_line",
@@ -75,6 +87,10 @@ __all__ = [
     "depth_collate_fn",
     "img2depth_paths",
     "resolve_depth_data",
+    "RestoreDataset",
+    "img2restore_target_paths",
+    "resolve_restore_data",
+    "restore_collate_fn",
     "SemanticDataset",
     "img2mask_paths",
     "resolve_semantic_data",

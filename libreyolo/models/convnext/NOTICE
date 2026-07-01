@@ -1,0 +1,32 @@
+LibreConvNeXt — third-party attribution
+=======================================
+
+The ConvNeXt architecture in this family (``nn.py``) is a native
+re-implementation derived from two sources:
+
+    Original code: https://github.com/facebookresearch/ConvNeXt
+    Author:        Zhuang Liu et al. (Meta Platforms, Inc.)
+    License:       MIT License
+
+    timm reference: https://github.com/huggingface/pytorch-image-models
+    File:           timm/models/convnext.py
+    Author:         Ross Wightman and the timm contributors
+    License:        Apache License 2.0
+
+The block definitions, per-variant depths/dims, the channels-first
+``LayerNorm2d``, the layer-scale ``gamma`` parameter, and module/attribute
+naming follow timm so that timm's ImageNet-1k pretrained weights load
+unchanged and produce bit-identical inference output (verified by the parity
+test).
+
+Pretrained weights (convnext_{tiny,small,base}.fb_in1k, ImageNet-1k only —
+no extra data, no distillation) are licensed Apache-2.0 in timm and are
+redistributable for commercial use.
+
+IMPORTANT — scope: only ConvNeXt **V1** is shipped here. ConvNeXt-V2's small
+pretrained checkpoints (atto/femto/pico/nano) are CC-BY-NC 4.0 and are NOT
+redistributable in an MIT/commercial library; they are deliberately excluded.
+
+License texts:
+    MIT:        https://opensource.org/license/mit/
+    Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0

@@ -5,7 +5,6 @@ import warnings
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
-
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,30 @@ def load_train_cfg(path) -> dict:
             f"got {type(raw).__name__}."
         )
     return raw
+
+
+def check_distillation_not_implemented(distill_model) -> None:
+    """Guard for the reserved knowledge-distillation training API.
+
+    ``distill_model`` / ``dis`` are accepted by every trainable family so the
+    public training API surface is stable, but the feature itself is not
+    implemented yet. This guard raises the moment a teacher is actually
+    requested, so training never silently ignores ``distill_model`` and quietly
+    produces an ordinary (non-distilled) model.
+
+    Args:
+        distill_model: The teacher-checkpoint argument as supplied by the user.
+            ``None`` means distillation was not requested (no-op).
+
+    Raises:
+        NotImplementedError: If ``distill_model`` is set.
+    """
+    if distill_model is not None:
+        raise NotImplementedError(
+            "Knowledge distillation (distill_model=...) is not implemented yet. "
+            "The training API reserves the 'distill_model' and 'dis' arguments "
+            "for a future release; remove 'distill_model' to train normally."
+        )
 
 
 @dataclass(kw_only=True)
@@ -115,6 +138,16 @@ class TrainConfig:
     # training is unchanged.
     nbs: Optional[int] = None
 
+    # Knowledge distillation (reserved API — NOT implemented yet). ``distill_model``
+    # is a teacher-checkpoint path; setting it turns distillation on. ``dis`` is the
+    # distillation loss weight. Both are accepted so the public training API stays
+    # stable across families, but ``distill_model`` currently raises
+    # ``NotImplementedError`` via ``check_distillation_not_implemented`` rather than
+    # silently training a normal (non-distilled) model. ``dis`` is inert until the
+    # feature lands.
+    distill_model: Optional[str] = None
+    dis: float = 6.0
+
     # Checkpointing / output
     project: str = "runs/train"
     name: str = "exp"
@@ -135,6 +168,16 @@ class TrainConfig:
     log_interval: int = 10
     seed: int = 0
     allow_download_scripts: bool = False
+    # Profiling. When ``profile`` is True the trainer profiles a short window of
+    # real training steps (``profile_warmup`` discarded, then ``profile_steps``
+    # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome
+    # trace (open at https://ui.perfetto.dev), then stops early. Zero overhead
+    # when off. Ignored under distributed training.
+    profile: bool = False
+    profile_warmup: int = 5
+    profile_steps: int = 20
+    profile_trace: bool = True
+    profile_open: bool = True
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -766,46 +809,6 @@ class YOLONASPoseConfig(YOLONASConfig):
 
 
 @dataclass(kw_only=True)
-class DAMOYOLOConfig(TrainConfig):
-    """DAMO-YOLO-specific training defaults.
-
-    Upstream T config (``configs/damoyolo_tinynasL20_T.py``):
-    - SGD, base_lr_per_img=0.01/64 (so eff. lr scales with batch), momentum 0.9, wd 5e-4
-    - 300 epochs, no_aug 16, warmup 5, min_lr_ratio 0.05
-    - Mosaic + mixup (mixup_prob 0.15), degrees 10, shear 2.0, mosaic_scale (0.1, 2.0)
-    - Image input 640x640, no keep_ratio, RGB float32 [0, 255], no normalisation
-
-    LibreYOLO v1: SGD + cosine + mosaic+mixup + hflip. SADA box-level
-    autoaugment is *not* ported.
-    """
-
-    optimizer: str = "sgd"
-    lr0: float = 0.01
-    momentum: float = 0.9
-    weight_decay: float = 5e-4
-
-    scheduler: str = "yoloxwarmcos"
-    warmup_epochs: int = 5
-    warmup_lr_start: float = 0.0
-    no_aug_epochs: int = 16
-    min_lr_ratio: float = 0.05
-
-    mosaic_prob: float = 1.0
-    mixup_prob: float = 0.15
-    hsv_prob: float = 1.0
-    flip_prob: float = 0.5
-    degrees: float = 10.0
-    translate: float = 0.2
-    shear: float = 2.0
-    mosaic_scale: Tuple[float, float] = (0.1, 2.0)
-
-    ema_decay: float = 0.9998
-    epochs: int = 300
-    amp: bool = True
-    name: str = "damoyolo_exp"
-
-
-@dataclass(kw_only=True)
 class PICODETConfig(TrainConfig):
     """PICODET-specific training defaults.
 
@@ -891,3 +894,42 @@ class RTMDetConfig(TrainConfig):
     epochs: int = 300
     amp: bool = True
     name: str = "rtmdet_exp"
+
+
+@dataclass(kw_only=True)
+class FOMOConfig(TrainConfig):
+    """FOMO point-localizer training defaults."""
+
+    optimizer: str = "adam"
+    lr0: float = 3e-4
+    weight_decay: float = 0.0
+
+    fg_weight: float = 100.0
+
+    scheduler: str = "cos"
+    warmup_epochs: int = 0
+    warmup_lr_start: float = 0.0
+    no_aug_epochs: int = 0
+    min_lr_ratio: float = 0.05
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
+    flip_prob: float = 0.0
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+
+    ema: bool = False
+    amp: bool = False
+
+    epochs: int = 40
+    batch: int = 32
+    eval_interval: int = 1
+
+    conf_thresholds: Tuple[float, ...] = (0.25, 0.35, 0.50, 0.65, 0.80, 0.90)
+    nms_radii: Tuple[int, ...] = (1, 2)
+    distance_tolerance: float = 1.5
+
+    name: str = "fomo_exp"
+

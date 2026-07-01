@@ -269,11 +269,15 @@ class GazeInferenceRunner:
         device = self.model.device
         batch = preprocess_face_crops(crops, device=device)
         with torch.no_grad():
-            # L2CS.forward returns (fc_yaw_gaze, fc_pitch_gaze). Despite the
-            # layer names, upstream training (L2CS-Net train.py) supervises
-            # fc_yaw_gaze on pitch labels and fc_pitch_gaze on yaw labels, so
-            # forward position 0 is the pitch head and position 1 the yaw head.
-            pitch_logits, yaw_logits = self.model.model(batch)
+            # L2CS.forward returns (fc_yaw_gaze(x), fc_pitch_gaze(x)) in that
+            # order, and the head names are honest: fc_yaw_gaze predicts yaw,
+            # fc_pitch_gaze predicts pitch. Verified empirically with a
+            # horizontal-flip symmetry test on the Gaze360 checkpoint — only the
+            # fc_yaw_gaze output negates under mirroring, which is the defining
+            # property of yaw. (An earlier version unpacked these swapped, which
+            # made the rendered gaze arrow point vertically regardless of the
+            # true horizontal gaze direction.)
+            yaw_logits, pitch_logits = self.model.model(batch)
         angles = bin_logits_to_angles(
             yaw_logits,
             pitch_logits,

@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...utils.image_loader import ImageInput
 from ...training.config import DEIMConfig
 from ...validation.preprocessors import DEIMValPreprocessor
@@ -196,12 +197,34 @@ class LibreDEIM(BaseModel):
         resume: bool = False,
         amp: bool = False,
         patience: int = 50,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs,
     ) -> dict:
         """Fine-tune or train DEIM on a YOLO-format dataset config.
 
         For v1 inference-only usage, just don't call this. To fine-tune from
         upstream weights, pass ``data="coco128.yaml"`` (or your own data yaml).
+
+        Args:
+            data: Path to the dataset YAML file.
+            epochs: Number of epochs to train.
+            batch: Batch size.
+            imgsz: Input image size.
+            lr0: Initial learning rate.
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers.
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name.
+            exist_ok: If True, overwrite existing experiment directory.
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training.
+            patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         from libreyolo.data import load_data_config
 
@@ -252,6 +275,8 @@ class LibreDEIM(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

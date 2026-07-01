@@ -292,6 +292,13 @@ def predict_cmd(
                     summary = f"{top['name']} {top['confidence']:.4f}"
                 else:
                     summary = "(no classification)"
+            elif getattr(r, "restored", None) is not None:
+                restored = r.restored.array
+                result_data["restored"] = {
+                    "shape": list(restored.shape),
+                    "dtype": str(restored.dtype),
+                }
+                summary = "restored"
             else:
                 summary = "(no detections)"
 

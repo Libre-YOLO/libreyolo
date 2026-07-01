@@ -3,6 +3,7 @@
 Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
+import contextlib
 import logging
 import math
 import sys
@@ -26,7 +27,7 @@ from .callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
-from .config import TrainConfig
+from .config import TrainConfig, check_distillation_not_implemented
 from .loggers import resolve_loggers
 from .distributed import (
     barrier,
@@ -46,7 +47,14 @@ from .distributed import (
 from .ema import ModelEMA
 from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
-from ..data import load_data_config, get_img_files, img2label_paths
+from ..data import (
+    get_coco_annotation_file,
+    get_coco_image_dir,
+    get_img_files,
+    img2label_paths,
+    load_data_config,
+    resolve_default_coco_image_dir,
+)
 from ..utils.serialization import (
     SCHEMA_VERSION,
     build_class_names,
@@ -81,6 +89,9 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
+        # Reserved-but-unimplemented distillation API: fail loudly the moment a
+        # teacher is requested, for every family, instead of silently ignoring it.
+        check_distillation_not_implemented(getattr(self.config, "distill_model", None))
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -135,6 +146,10 @@ class BaseTrainer(ABC):
         self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+
+        # Profiling (opt-in via config.profile). None = disabled, zero overhead.
+        self._profiler = None
+        self._stop_training = False
 
     # =========================================================================
     # Config
@@ -426,6 +441,8 @@ class BaseTrainer(ABC):
             return self._setup_semantic_data()
         if wrapper_task == "depth":
             return self._setup_depth_data()
+        if wrapper_task == "restore":
+            return self._setup_restore_data()
 
         img_size = self.input_size
         preproc, MosaicDatasetClass = self.create_transforms()
@@ -447,12 +464,30 @@ class BaseTrainer(ABC):
             )
 
             ann_file = Path(data_dir) / "annotations" / "instances_train2017.json"
+            coco_ann_file = get_coco_annotation_file(data_cfg, "train")
 
             # Prefer pre-resolved file lists from load_data_config (.txt format)
             img_files = data_cfg.get("train_img_files")
             label_files = data_cfg.get("train_label_files")
 
-            if img_files:
+            if coco_ann_file:
+                default_image_dir = resolve_default_coco_image_dir(
+                    data_dir,
+                    "train",
+                    coco_ann_file,
+                )
+                train_dataset = COCODataset(
+                    data_dir=data_dir,
+                    json_file=coco_ann_file,
+                    name=get_coco_image_dir(data_cfg, "train", default_image_dir),
+                    img_size=img_size,
+                    preproc=preproc,
+                    load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
+                )
+            elif img_files:
                 train_dataset = YOLODataset(
                     img_files=img_files,
                     label_files=label_files,
@@ -463,18 +498,20 @@ class BaseTrainer(ABC):
                     num_classes=self.num_classes if load_obb else None,
                 )
             elif ann_file.exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
+                    names=data_cfg.get("names"),
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -506,18 +543,19 @@ class BaseTrainer(ABC):
             self.num_classes = self.config.num_classes
 
             if (Path(data_dir) / "annotations").exists():
-                if load_obb:
-                    raise ValueError(
-                        "YOLO9 OBB training expects YOLO OBB txt labels; "
-                        "COCO JSON OBB loading is not implemented."
-                    )
                 train_dataset = COCODataset(
                     data_dir=data_dir,
                     json_file="instances_train2017.json",
-                    name="train2017",
+                    name=resolve_default_coco_image_dir(
+                        data_dir,
+                        "train",
+                        "instances_train2017.json",
+                    ),
                     img_size=img_size,
                     preproc=preproc,
                     load_segments=load_segments,
+                    load_obb=load_obb,
+                    num_classes=self.num_classes,
                 )
             else:
                 train_dataset = YOLODataset(
@@ -632,9 +670,19 @@ class BaseTrainer(ABC):
             imgsz=imgsz,
             augment=True,
             class_to_idx=class_to_idx,
+            crop_pct=getattr(wrapper, "crop_pct", 0.875),
+            interpolation=getattr(wrapper, "interpolation", "bilinear"),
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        if per_rank_batch < 2:
+            raise ValueError(
+                "Classification training needs an effective per-rank batch size >= 2 "
+                f"(got {per_rank_batch} from batch={self.config.batch}, "
+                f"world_size={self.world_size}). A batch of 1 breaks the BatchNorm in "
+                "the pooled classifier head (e.g. MobileNetV4/EfficientNetV2 norm_head). "
+                "Increase batch (or reduce world_size)."
+            )
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -849,6 +897,73 @@ class BaseTrainer(ABC):
             )
         return train_dataset
 
+    def _setup_restore_data(self):
+        """Build the restoration train dataloader from a paired dataset YAML."""
+        from torch.utils.data import DataLoader
+
+        from ..data.restore_dataset import (
+            RestoreDataset,
+            resolve_restore_data,
+            restore_collate_fn,
+        )
+
+        if not self.config.data:
+            raise ValueError("Restore training requires data= (a dataset YAML).")
+        data_config = resolve_restore_data(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        train_dataset = RestoreDataset(
+            data_config,
+            split="train",
+            imgsz=self.config.imgsz,
+            augment=True,
+        )
+
+        self.num_classes = 1
+        self.config.num_classes = 1
+        if self.wrapper_model is not None:
+            self.wrapper_model.nb_classes = 1
+            self.wrapper_model.names = {0: "image"}
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=restore_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info("Restore dataset: %d image pairs", len(train_dataset))
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
     def _resolve_num_classes_from_data_config(self) -> int:
         """Resolve dataset class count before criterion construction."""
         resolved = int(self.config.num_classes)
@@ -1032,6 +1147,48 @@ class BaseTrainer(ABC):
 
         # Wait for rank 0 to finish dir creation before any rank proceeds.
         barrier()
+
+        # Optional training-step profiler (opt-in via config.profile). Built on
+        # the main process; emits the breakdown + Chrome trace into save_dir.
+        # Disabled under DDP (its early-stop would desync ranks).
+        if getattr(self.config, "profile", False):
+            if self.is_distributed:
+                if is_main_process():
+                    logger.warning("profile=True is ignored under distributed training.")
+            elif is_main_process():
+                from libreyolo.training.profiler import TrainStepProfiler
+
+                profile_warmup = getattr(self.config, "profile_warmup", 5)
+                profile_steps = getattr(self.config, "profile_steps", 20)
+                accum_steps = self._accum_steps
+                if accum_steps > 1:
+                    profile_warmup = math.ceil(profile_warmup / accum_steps) * accum_steps
+                    profile_steps = math.ceil(profile_steps / accum_steps) * accum_steps
+                    logger.info(
+                        "profile window rounded to accumulation boundaries "
+                        "(warmup=%d, steps=%d, accum=%d)",
+                        profile_warmup,
+                        profile_steps,
+                        accum_steps,
+                    )
+                self._profiler = TrainStepProfiler(
+                    device=self.device,
+                    warmup=profile_warmup,
+                    active=profile_steps,
+                    trace=getattr(self.config, "profile_trace", True),
+                    open_report=getattr(self.config, "profile_open", True),
+                    save_dir=self.save_dir,
+                    logger=logger,
+                    meta={
+                        "model": self.get_model_tag(),
+                        "device": str(self.device),
+                        "batch": self.config.batch,
+                        "imgsz": self.config.imgsz,
+                        "amp": bool(self.config.amp),
+                        "workers": self.config.workers,
+                    },
+                )
+
         self._is_setup = True
 
     def _ddp_find_unused_parameters(self) -> bool:
@@ -1174,6 +1331,9 @@ class BaseTrainer(ABC):
                             f"Early stopping triggered after {epoch + 1} epochs "
                             f"(patience={self.config.patience}, no improvement for {self.patience_counter} epochs)"
                         )
+                    break
+
+                if getattr(self, "_stop_training", False):
                     break
 
             total_time = time.time() - start_time
@@ -1492,6 +1652,11 @@ class BaseTrainer(ABC):
             max_norm,
         )
 
+    def _prof_phase(self, name: str):
+        """Profiler phase context manager (no-op when profiling is disabled)."""
+        prof = getattr(self, "_profiler", None)
+        return prof.phase(name) if prof is not None else contextlib.nullcontext()
+
     def _train_epoch(
         self, epoch: int
     ) -> Tuple[float, Optional[Dict[str, Any]], Dict[str, float], Dict[str, float]]:
@@ -1523,7 +1688,9 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
-        for batch_idx, batch in enumerate(pbar):
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1531,8 +1698,9 @@ class BaseTrainer(ABC):
                 polygons = None
             self.current_iter = epoch * len(self.train_loader) + batch_idx
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1545,25 +1713,31 @@ class BaseTrainer(ABC):
             # so that backward() gradient averaging produces the same
             # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                loss = scale_loss_for_ddp(total_loss_raw)
+                self.optimizer.zero_grad()
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                    if self._should_clip_gradients():
+                        self.scaler.unscale_(self.optimizer)
+                        self._clip_gradients()
+                with self._prof_phase("optimizer"):
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
-                self.scaler.scale(loss).backward()
-                if self._should_clip_gradients():
-                    self.scaler.unscale_(self.optimizer)
+                with self._prof_phase("backward"):
+                    loss.backward()
                     self._clip_gradients()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = scale_loss_for_ddp(total_loss_raw)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self._clip_gradients()
-                self.optimizer.step()
+                with self._prof_phase("optimizer"):
+                    self.optimizer.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1589,6 +1763,12 @@ class BaseTrainer(ABC):
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
+
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    self._stop_training = True
+                    break
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -1640,7 +1820,9 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
-        for batch_idx, batch in enumerate(pbar):
+        prof = getattr(self, "_profiler", None)
+        loader = prof.wrap_loader(pbar) if prof is not None else pbar
+        for batch_idx, batch in enumerate(loader):
             if len(batch) == 5:
                 imgs, targets, img_infos, img_ids, polygons = batch
             else:
@@ -1651,8 +1833,9 @@ class BaseTrainer(ABC):
             opt_step = epoch * steps_per_epoch + batch_idx // accum
             self.current_iter = opt_step
 
-            imgs = imgs.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
+            with self._prof_phase("to_device"):
+                imgs = imgs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
             if hasattr(self, "_apply_multi_scale_batch"):
                 imgs, targets, polygons = self._apply_multi_scale_batch(
                     imgs,
@@ -1672,27 +1855,33 @@ class BaseTrainer(ABC):
             # gradient averaging composes correctly with the division-by-
             # window scheme.
             if self.scaler is not None:
-                with autocast("cuda"):
+                with self._prof_phase("forward"):
+                    with autocast("cuda"):
+                        outputs = self.on_forward(imgs, targets, polygons=polygons)
+                        total_loss_raw = outputs["total_loss"]
+                        loss = total_loss_raw / actual_window
+                loss = scale_loss_for_ddp(loss)
+                with self._prof_phase("backward"):
+                    self.scaler.scale(loss).backward()
+                if is_opt_step:
+                    with self._prof_phase("optimizer"):
+                        if self._should_clip_gradients():
+                            self.scaler.unscale_(self.optimizer)
+                            self._clip_gradients()
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+            else:
+                with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
-                self.scaler.scale(loss).backward()
+                with self._prof_phase("backward"):
+                    loss.backward()
                 if is_opt_step:
-                    if self._should_clip_gradients():
-                        self.scaler.unscale_(self.optimizer)
+                    with self._prof_phase("optimizer"):
                         self._clip_gradients()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-            else:
-                outputs = self.on_forward(imgs, targets, polygons=polygons)
-                total_loss_raw = outputs["total_loss"]
-                loss = total_loss_raw / actual_window
-                loss = scale_loss_for_ddp(loss)
-                loss.backward()
-                if is_opt_step:
-                    self._clip_gradients()
-                    self.optimizer.step()
+                        self.optimizer.step()
 
             if is_opt_step:
                 # EMA
@@ -1716,6 +1905,12 @@ class BaseTrainer(ABC):
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{lr:.6f}"}
             postfix.update({k: f"{v:.4f}" for k, v in loss_components.items()})
             pbar.set_postfix(postfix)
+
+            if prof is not None:
+                prof.step()
+                if prof.finished:
+                    self._stop_training = True
+                    break
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -1777,6 +1972,8 @@ class BaseTrainer(ABC):
             return self._run_semantic_validation(epoch)
         if validation_task == "depth":
             return self._run_depth_validation(epoch)
+        if validation_task == "restore":
+            return self._run_restore_validation(epoch)
         try:
             from libreyolo.validation import (
                 DetectionValidator,
@@ -2031,6 +2228,59 @@ class BaseTrainer(ABC):
             }
         except Exception as e:
             logger.error(f"Depth validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_restore_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the restoration model (PSNR / SSIM) on the val split."""
+        try:
+            from libreyolo.validation import RestoreValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running restore validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=self.config.batch,
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+                allow_download_scripts=self.config.allow_download_scripts,
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = RestoreValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            psnr = raw_metrics.get("metrics/PSNR", 0.0)
+            ssim = raw_metrics.get("metrics/SSIM", 0.0)
+            logger.info("Validation - PSNR: %.4f, SSIM: %.4f", psnr, ssim)
+            return {
+                "mAP50": psnr,
+                "mAP50_95": psnr,
+                "best_metric": psnr,
+                "best_metric_key": "metrics/PSNR",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Restore validation failed: {e}")
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")

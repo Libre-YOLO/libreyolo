@@ -53,6 +53,7 @@ from ...utils.results import (
     Points,
     Probs,
     Results,
+    RestoredImage,
     SemanticMask,
 )
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
@@ -535,6 +536,10 @@ class InferenceRunner:
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "restored", None) is not None:
+            result.restored.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "points", None) is not None:
             if len(result.points) > 0:
                 annotated_img = draw_points(
@@ -677,6 +682,23 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
+            )
+
+        # Restore: a dense RGB image, no boxes.
+        restored_data = detections.get("restored")
+        if restored_data is not None:
+            orig_w, orig_h = original_size
+            restored_t = (
+                restored_data
+                if isinstance(restored_data, torch.Tensor)
+                else torch.as_tensor(restored_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                restored=RestoredImage(restored_t.to(torch.uint8), (orig_h, orig_w)),
             )
 
         points_data = detections.get("points")

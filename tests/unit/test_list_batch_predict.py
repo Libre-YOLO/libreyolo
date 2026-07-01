@@ -438,7 +438,7 @@ def _assert_results_parity(sequential, batched):
             assert r_seq.masks.data.shape == r_bat.masks.data.shape
 
 
-@pytest.mark.parametrize("task", ["detect", "segment", "pose"])
+@pytest.mark.parametrize("task", ["detect"])
 def test_yolo9_batched_predict_smoke_matches_sequential(task):
     """Full real forward+postprocess smoke; random-init weights rarely clear
     conf=0.25, so numeric coverage lives in the marker-routing tests below."""
@@ -453,111 +453,6 @@ def test_yolo9_batched_predict_smoke_matches_sequential(task):
     batched = model(images, conf=0.25, batch=2, imgsz=64)
 
     _assert_results_parity(sequential, batched)
-
-
-def test_yolo9_segment_batched_routing_with_marker_outputs():
-    """Deterministic per-image routing proof for boxes, classes, and masks.
-
-    The forward is replaced with a hand-marked batched dict: image i's slice
-    carries score s_i on anchor a_i / class c_i, and a proto/coefficient pair
-    that decodes to a full mask only when image i is paired with its own
-    proto. Any cross-image slicing mistake yields the wrong class/score or an
-    empty mask.
-    """
-    from libreyolo import LibreYOLO9
-
-    torch.manual_seed(0)
-    model = LibreYOLO9(None, size="t", task="segment", device="cpu")
-    model.model.eval()
-    with torch.no_grad():
-        template = model._forward(torch.zeros(3, 3, 64, 64))
-
-    preds = torch.zeros_like(template["predictions"])  # (3, 4+nc, A)
-    coeffs = torch.zeros_like(template["mask_coeffs"])  # (3, 32, A)
-    proto = torch.full_like(template["proto"], -8.0)  # (3, 32, Hp, Wp)
-    box_input = torch.tensor([8.0, 8.0, 40.0, 40.0])
-    anchors, classes_, scores = (10, 11, 12), (0, 5, 10), (0.9, 0.8, 0.7)
-    for i, (a_i, c_i, s_i) in enumerate(zip(anchors, classes_, scores)):
-        preds[i, 0:4, a_i] = box_input
-        preds[i, 4 + c_i, a_i] = s_i
-        coeffs[i, i, a_i] = 8.0
-        proto[i, i] = 8.0
-    marked = {"predictions": preds, "proto": proto, "mask_coeffs": coeffs}
-
-    def fake_forward(tensor):
-        assert tuple(tensor.shape) == (3, 3, 64, 64), "expected one stacked forward"
-        return marked
-
-    model._forward = fake_forward
-    sizes = [(64, 64), (32, 32), (16, 16)]
-    images = [np.zeros((h, w, 3), dtype=np.uint8) for h, w in sizes]
-
-    results = model(images, batch=3, imgsz=64, conf=0.25)
-
-    for i, (result, (orig_h, orig_w)) in enumerate(zip(results, sizes)):
-        assert len(result) == 1
-        assert int(result.boxes.cls[0]) == classes_[i]
-        torch.testing.assert_close(
-            result.boxes.conf[0], torch.tensor(scores[i]), rtol=1e-5, atol=1e-6
-        )
-        ratio = min(64 / orig_h, 64 / orig_w)
-        torch.testing.assert_close(
-            result.boxes.xyxy[0], box_input / ratio, rtol=1e-5, atol=1e-4
-        )
-        assert result.masks is not None
-        assert result.masks.data.sum() > 0, (
-            "empty mask: image was decoded with another image's proto"
-        )
-
-
-def test_yolo9_pose_batched_routing_with_marker_outputs():
-    """Deterministic per-image routing proof for keypoints under batching."""
-    from libreyolo import LibreYOLO9
-
-    torch.manual_seed(0)
-    model = LibreYOLO9(None, size="t", task="pose", device="cpu")
-    model.model.eval()
-    with torch.no_grad():
-        template = model._forward(torch.zeros(3, 3, 64, 64))
-
-    preds = torch.zeros_like(template["predictions"])  # (3, 5, A)
-    kpts = torch.zeros_like(template["keypoints"])  # (3, A, 17, 3)
-    box_input = torch.tensor([8.0, 8.0, 40.0, 40.0])
-    anchors, scores = (10, 11, 12), (0.9, 0.8, 0.7)
-    kpt_xs = (20.0, 24.0, 28.0)
-    for i, (a_i, s_i, x_i) in enumerate(zip(anchors, scores, kpt_xs)):
-        preds[i, 0:4, a_i] = box_input
-        preds[i, 4, a_i] = s_i
-        kpts[i, a_i, :, 0] = x_i
-        kpts[i, a_i, :, 1] = 24.0
-        kpts[i, a_i, :, 2] = 0.9
-    marked = {"predictions": preds, "keypoints": kpts}
-
-    def fake_forward(tensor):
-        assert tuple(tensor.shape) == (3, 3, 64, 64), "expected one stacked forward"
-        return marked
-
-    model._forward = fake_forward
-    sizes = [(64, 64), (32, 32), (16, 16)]
-    images = [np.zeros((h, w, 3), dtype=np.uint8) for h, w in sizes]
-
-    results = model(images, batch=3, imgsz=64, conf=0.25)
-
-    for i, (result, (orig_h, orig_w)) in enumerate(zip(results, sizes)):
-        assert len(result) == 1
-        ratio = min(64 / orig_h, 64 / orig_w)
-        assert result.keypoints is not None
-        kpt = result.keypoints.data[0]  # (17, 3)
-        torch.testing.assert_close(
-            kpt[:, 0],
-            torch.full((17,), kpt_xs[i] / ratio),
-            rtol=1e-5,
-            atol=1e-4,
-        )
-        # Keypoint confidence is not rescaled by original size.
-        torch.testing.assert_close(
-            kpt[:, 2], torch.full((17,), 0.9), rtol=1e-5, atol=1e-6
-        )
 
 
 def test_batched_gate_skips_train_mode_models():

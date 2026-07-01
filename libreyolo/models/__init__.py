@@ -10,7 +10,6 @@ All model families register here via ``__init_subclass__``. Adding a new model m
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from .base import BaseModel
@@ -57,14 +56,30 @@ from .deim.model import LibreDEIM  # noqa: E402
 from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
-from .damoyolo.model import LibreDAMOYOLO  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
+from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
+from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
+    LibreDepthAnythingV2,
+)
+from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
+from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
+from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
+from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
+from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+# Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
+# so it registers eagerly. can_load is uniquely keyed on logit_scale +
+# text_projection + visual.conv1, so registration order does not matter.
+from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
-    """Lazily register RF-DETR if its dependencies are installed."""
-    if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry):
+    """Lazily register RF-DETR and LibreDINOv2 if their dependencies are installed."""
+    if any(c.__name__ == "LibreRFDETR" for c in BaseModel._registry) and any(
+        c.__name__ == "LibreDINOv2" for c in BaseModel._registry
+    ):
         return
     import importlib.util
 
@@ -76,6 +91,8 @@ def _ensure_rfdetr():
             "Install with: pip install libreyolo[rfdetr]"
         )
     from .rfdetr.model import LibreRFDETR  # noqa: F401  (import triggers registration)
+    # LibreDINOv2 shares the same transformers dependency (DINOv2 backbone).
+    from .dinov2.model import LibreDINOv2  # noqa: F401  (import triggers registration)
 
 
 def try_ensure_rfdetr():
@@ -215,17 +232,6 @@ def LibreYOLO(
     ensure_default_logging()
     model_path = _resolve_weights_path(model_path)
 
-    if task is not None:
-        filename = Path(model_path).name
-        for cls in BaseModel._registry:
-            if cls.detect_size_from_filename(filename) is not None:
-                resolve_task(
-                    explicit_task=task,
-                    default_task=cls.DEFAULT_TASK,
-                    supported_tasks=cls.SUPPORTED_TASKS,
-                )
-                break
-
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
         from ..backends.onnx import OnnxBackend
@@ -275,6 +281,17 @@ def LibreYOLO(
             return NcnnBackend(
                 model_path, nb_classes=nb_classes, device=device, task=task
             )
+
+    if task is not None:
+        filename = Path(model_path).name
+        for cls in BaseModel._registry:
+            if cls.detect_size_from_filename(filename) is not None:
+                resolve_task(
+                    explicit_task=task,
+                    default_task=cls.DEFAULT_TASK,
+                    supported_tasks=cls.SUPPORTED_TASKS,
+                )
+                break
 
     # Download if missing
     if not Path(model_path).exists():
@@ -403,8 +420,11 @@ def LibreYOLO(
         if isinstance(loaded, dict) and isinstance(loaded.get("model_family"), str)
         else None
     )
-    if metadata_family_for_registration == "rfdetr" or _needs_rfdetr_registration(
+    if metadata_family_for_registration in ("rfdetr", "dinov2") or _needs_rfdetr_registration(
         weights_dict
+    ) or (
+        "predict.weight" in weights_dict
+        and any(k.startswith("backbone.") for k in weights_dict)
     ):
         try:
             _ensure_rfdetr()
@@ -454,9 +474,17 @@ def LibreYOLO(
             matched_cls = matching_classes[0]
 
     if matched_cls is None:
+        registered = sorted({c.FAMILY for c in BaseModel._registry if getattr(c, "FAMILY", "")})
         raise ValueError(
             "Could not detect model architecture from state dict keys.\n"
-            "Supported architectures: YOLOX, YOLOv9, YOLOv9-E2E, YOLO-NAS, RT-DETR, RF-DETR, D-FINE, DEIM, DEIMv2."
+            f"Registered model families: {', '.join(registered)}."
+        )
+
+    if matched_cls.FAMILY == "pidnet" and not has_v1_metadata:
+        raise ValueError(
+            "Raw upstream PIDNet checkpoints must be converted before loading. "
+            "Use weights/convert_pidnet_weights.py to create a LibreYOLO "
+            "checkpoint with Cityscapes semantic metadata."
         )
 
     # Auto-detect size
@@ -492,11 +520,10 @@ def LibreYOLO(
     # the fresh model init too early. This matters for YOLO9-t where the class
     # branch width depends on COCO-vs-custom ``nc`` during construction.
     if nb_classes is None:
-        if matched_cls.FAMILY == "rfdetr":
-            # RF-DETR builds its detection head to the checkpoint's class width
-            # (read from class_embed). The 80 default below is a YOLO9-family
-            # convention that would mis-size the head for a metadata-wrapped
-            # 91-class COCO or fine-tuned RF-DETR checkpoint.
+        if matched_cls.FAMILY in ("rfdetr", "dinov2", "eomt"):
+            # Transformer dense heads build to the checkpoint's class width.
+            # The 80 default below is a YOLO9-family convention that would
+            # mis-size the head for a metadata-wrapped checkpoint.
             nb_classes = matched_cls.detect_nb_classes(weights_dict)
             if nb_classes is None:
                 nb_classes = 80
@@ -516,7 +543,11 @@ def LibreYOLO(
     if checkpoint_task is None and matched_cls.FAMILY == "rfdetr":
         if any(k.startswith("segmentation_head") for k in weights_dict):
             checkpoint_task = "segment"
-        elif any(k.startswith("keypoint_head") for k in weights_dict):
+        elif any(k.startswith("keypoint_head") for k in weights_dict) or any(
+            "keypoint" in k for k in weights_dict if k.startswith("transformer.")
+        ):
+            # Legacy clean-room keypoint_head.* weights or the GroupPose
+            # transformer keypoint markers ported from RF-DETR v1.8.0.
             checkpoint_task = "pose"
     if checkpoint_task is None and matched_cls.FAMILY == "yolonas":
         if "heads.head1.pose_pred.weight" in weights_dict:
@@ -550,8 +581,8 @@ def LibreYOLO(
         if detected_keypoints is not None:
             family_kwargs["num_keypoints"] = detected_keypoints
 
-    if matched_cls.FAMILY == "rfdetr":
-        # RF-DETR always needs the path (handles its own loading internally)
+    if matched_cls.FAMILY in ("rfdetr", "dinov2"):
+        # RF-DETR / DINOv2 always need the path (handle their own loading internally)
         model = matched_cls(
             model_path=model_path,
             size=size,
@@ -595,10 +626,19 @@ __all__ = [
     "LibreDEIMv2",
     "LibreEC",
     "LibrePICODET",
-    "LibreDAMOYOLO",
     "LibreRTMDet",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
+    "LibreFOMO",
+    "LibreDepthAnythingV2",
+    "LibreNAFNet",
+    "LibreEoMT",
+    "LibrePIDNet",
+    "LibreMobileNetV4",
+    "LibreConvNeXt",
+    "LibreEfficientNetV2",
+    "LibreResNet",
+    "LibreCLIP",
     "try_ensure_rfdetr",
 ]

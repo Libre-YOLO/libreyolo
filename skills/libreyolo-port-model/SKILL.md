@@ -5,7 +5,7 @@ description: >-
   family to clone, gives paste-ready templates for the model class, conversion
   script, and trainer subclass, then walks the port as a sequence of
   self-contained commits. Covers detection, pose, and segmentation. Use this
-  for any new family (DAMO-YOLO, RTMDet, MobileDet, PP-YOLOE, a new HF model).
+  for any new family (RTMDet, MobileDet, PP-YOLOE, a new HF model).
 ---
 
 # Port a model into LibreYOLO
@@ -34,9 +34,8 @@ The answers route you through §1 (license gate) → §3 (pick scaffold) → §4
 (per-family ledger entry to clone) → §5 (commit sequence) → §6 (paste-ready
 templates). Reference sections fill in the contract details.
 
-**Three concrete starts**:
+**Two concrete starts**:
 
-- **DAMO-YOLO** → YOLO-grid (TinyNAS+GiraffeNeck+ZeroHead, GFL/DFL loss), detect-only, custom backbone parser, Apache-2.0. **Closest scaffold: PicoDet** (also YOLO-grid + GFL/DFL). Clone `models/picodet/` as starter, swap loss for upstream's, swap backbone parser for TinyNAS `.txt` config reader.
 - **RTMDet** → YOLO-grid (CSPNeXt+Cross-stage SepBN+SimOTA), detect-only or detect+segment, Apache-2.0 (MMDet-based). **Closest scaffold: YOLOX** for detect-only, **EC** for detect+segment. Heavy MMDet decoupling required.
 - **A random model on HF** → Run §1 (license check) first. If permissive, find architecture in §4 ledger; if no row matches, fall back to §3 decision tree.
 
@@ -888,7 +887,13 @@ input modes — exactly one must be set:
 - `data_dir` — detect/segment with a flat dataset.
 - `keypoints_json` + `images_dir` — pose only.
 
-`ClassifyValidator` and `OBBValidator` **do not exist yet**.
+`ClassifyValidator` and `OBBValidator` now exist
+(`libreyolo/validation/classify_validator.py`, `obb_validator.py`). This skill
+does not yet ship a dedicated `classify` scaffold; for a classify-only family
+follow the merged examples — `libreyolo/models/{mobilenetv4,convnext,efficientnetv2}/`
+— which reuse the shared `BaseTrainer` classify path (`_setup_classify_data` /
+`_run_classify_validation`), return `{"probs": ...}` from `_postprocess`, and set
+`best_metric_key = "metrics/accuracy_top1"`.
 
 **Per-task `best_metric_key` override** is mandatory for non-detect
 trainers. `BaseTrainer.best_metric_key = "metrics/mAP50-95"` (`training/trainer.py:35`)

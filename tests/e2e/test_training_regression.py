@@ -49,6 +49,7 @@ def trained_yolo9_model(marbles_yaml, tmp_path_factory):
     """Train yolo9-t on marbles for 3 epochs. Returns (model, results)."""
     tmp = tmp_path_factory.mktemp("training_regression")
     model = LibreYOLO("LibreYOLO9t.pt", size="t")
+    epoch_events = []
     results = model.train(
         data=marbles_yaml,
         epochs=3,
@@ -57,8 +58,23 @@ def trained_yolo9_model(marbles_yaml, tmp_path_factory):
         project=str(tmp),
         name="yolo9_t",
         exist_ok=True,
+        callbacks=epoch_events.append,
     )
+    model._captured_epoch_events = epoch_events
     return model, results
+
+
+@pytest.mark.yolo9
+def test_yolo9_train_fires_epoch_callbacks(trained_yolo9_model):
+    """End-to-end: a user callback fires once per epoch through real training."""
+    from libreyolo.training.callbacks import TrainEpochEvent
+
+    model, _ = trained_yolo9_model
+    events = model._captured_epoch_events
+    assert len(events) == 3
+    assert all(isinstance(e, TrainEpochEvent) for e in events)
+    assert all(e.model_family == "yolo9" for e in events)
+    assert [e.epoch for e in events] == [1, 2, 3]
 
 
 @pytest.mark.yolo9

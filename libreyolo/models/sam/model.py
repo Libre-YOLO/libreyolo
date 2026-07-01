@@ -20,7 +20,7 @@ segmenter with an interactive, encode-once / prompt-many surface:
 
 The default family is SAM-1, whose code and weights are Apache-2.0, loaded
 through the permissive ``transformers`` model API. See
-``docs/adr/0005-libresam-contract.md``.
+``docs/adr/0007-libresam-contract.md``.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Type
 
 from .base import LibreSAMModel
+from .sam2 import LibreSAM2
 
 
 class LibreSAM1(LibreSAMModel):
@@ -44,7 +45,9 @@ class LibreSAM1(LibreSAMModel):
 
 
 # alias -> (family class, size)
-_ALIASES: Dict[str, Tuple[Type[LibreSAMModel], str]] = {
+_MOBILE_SAM = "mobilesam"
+
+_ALIASES: Dict[str, Tuple[Type[LibreSAMModel] | str, str]] = {
     "base": (LibreSAM1, "base"),
     "large": (LibreSAM1, "large"),
     "huge": (LibreSAM1, "huge"),
@@ -57,6 +60,24 @@ _ALIASES: Dict[str, Tuple[Type[LibreSAMModel], str]] = {
     "sam_b": (LibreSAM1, "base"),
     "sam_l": (LibreSAM1, "large"),
     "sam_h": (LibreSAM1, "huge"),
+    "sam2-tiny": (LibreSAM2, "tiny"),
+    "sam2-small": (LibreSAM2, "small"),
+    "sam2-base-plus": (LibreSAM2, "base-plus"),
+    "sam2-baseplus": (LibreSAM2, "base-plus"),
+    "sam2-large": (LibreSAM2, "large"),
+    "sam2-t": (LibreSAM2, "tiny"),
+    "sam2-s": (LibreSAM2, "small"),
+    "sam2-bp": (LibreSAM2, "base-plus"),
+    "sam2-l": (LibreSAM2, "large"),
+    "sam2_t": (LibreSAM2, "tiny"),
+    "sam2_s": (LibreSAM2, "small"),
+    "sam2_bp": (LibreSAM2, "base-plus"),
+    "sam2_l": (LibreSAM2, "large"),
+    "mobilesam": (_MOBILE_SAM, "tiny"),
+    "mobilesam-tiny": (_MOBILE_SAM, "tiny"),
+    "mobilesam_t": (_MOBILE_SAM, "tiny"),
+    "mobile-sam": (_MOBILE_SAM, "tiny"),
+    "mobile-sam-tiny": (_MOBILE_SAM, "tiny"),
 }
 
 _DEFAULT_MODEL = "base"
@@ -68,6 +89,9 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
     Args:
         model: Size alias — ``"base"`` (default), ``"large"``, or ``"huge"``
             (also ``"sam_b"``/``"sam_l"``/``"sam_h"``, or ``"b"``/``"l"``/``"h"``).
+            SAM-2 aliases use an explicit prefix, for example
+            ``"sam2-tiny"`` / ``"sam2_t"``.
+            MobileSAM aliases resolve to its single ``"tiny"`` size.
         **kwargs: Forwarded to the family constructor: ``device``, and
             ``multimask`` (when True, ``predict`` returns all of SAM's ambiguity
             masks per prompt — 3 whole-vs-part masks — instead of the single
@@ -84,7 +108,11 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
             f"{', '.join(sorted(_ALIASES))}."
         )
     family_cls, size = match
+    if family_cls == _MOBILE_SAM:
+        from ..mobilesam import LibreMobileSAM
+
+        family_cls = LibreMobileSAM
     return family_cls(size=size, **kwargs)
 
 
-__all__ = ["LibreSAM", "LibreSAM1"]
+__all__ = ["LibreSAM", "LibreSAM1", "LibreSAM2"]

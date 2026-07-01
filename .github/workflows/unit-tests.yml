@@ -36,7 +36,9 @@ jobs:
         # The onnx extra keeps the ONNX-dependent unit tests (raw export
         # contract, picodet/classification round-trips) from silently
         # skipping in this gate — they importorskip onnx/onnxruntime.
-        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx]"
+        # The clip extra (ftfy + regex) keeps the LibreCLIP tokenizer tests
+        # from erroring on a missing optional tokenizer dependency.
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip]"
 
       - name: Run PR gate tests
         env:

@@ -110,23 +110,29 @@ def postprocess_pose(
     tensor of shape ``(N, num_keypoints, 3)`` with (x, y, vis).
     """
     out_logits = outputs["pred_logits"]
-    out_kpts = outputs["pred_keypoints"]  # (B, Q, K*2) flattened
+    out_kpts = outputs["pred_keypoints"]  # (B, Q, K*2) or (B, Q, K, 2)
     if out_logits.dim() == 3:
         out_logits = out_logits[0]
         out_kpts = out_kpts[0]
 
-    num_classes = out_logits.shape[-1]
-    prob = out_logits.sigmoid()
-    topk_values, topk_indices = torch.topk(prob.view(-1), min(max_det, prob.numel()))
-    scores = topk_values
-    query_idx = topk_indices // num_classes
-    class_idx = topk_indices % num_classes
+    # DETRPose's class head emits ``num_classes`` logits; the published ECPose
+    # COCO checkpoints encode the person class on the LAST logit (index 1 of the
+    # 2-class head) and leave index 0 as an unused background-style slot. Score
+    # the person logit; ``[..., -1]`` also degrades correctly to a 1-logit head.
+    query_scores = out_logits[..., -1].sigmoid()
+    scores, query_idx = torch.topk(
+        query_scores,
+        min(max_det, query_scores.numel()),
+    )
 
-    kpts_xy = out_kpts.unflatten(-1, (num_keypoints, 2))[query_idx]  # (N, K, 2) in [0,1]
+    if out_kpts.dim() >= 3 and out_kpts.shape[-1] == 2:
+        kpts_xy_all = out_kpts
+    else:
+        kpts_xy_all = out_kpts.unflatten(-1, (num_keypoints, 2))
+    kpts_xy = kpts_xy_all[query_idx]  # (N, K, 2) in [0,1]
 
     keep = scores >= conf_thres
     scores = scores[keep]
-    class_idx = class_idx[keep]
     kpts_xy = kpts_xy[keep]
 
     if original_size is not None and kpts_xy.numel() > 0:

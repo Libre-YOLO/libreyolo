@@ -20,12 +20,16 @@ from .encoder import HybridEncoder
 # Pose-specific per-size diffs (overlay on SIZE_CONFIGS' backbone+encoder).
 # All four sizes share num_classes=2 (DETRPose criterion uses 2 classes:
 # person + bg) and num_keypoints=17 (COCO). Decoder layer counts and
-# dim_feedforward differ per size.
+# dim_feedforward differ per size and must match the published ECPose
+# checkpoints exactly: the pose decoder builds ``dec_num_layers`` decoder
+# layers plus one deep-supervision head (class/pose/lqe) per layer, so an
+# over-count leaves the surplus layers and heads randomly initialized and
+# never restored from the checkpoint.
 POSE_SIZE_OVERRIDES: Dict[str, Dict] = {
     "s": {"dec_num_layers": 3, "dec_dim_feedforward": 512},
     "m": {"dec_num_layers": 4, "dec_dim_feedforward": 512},
-    "l": {"dec_num_layers": 6, "dec_dim_feedforward": 1024},
-    "x": {"dec_num_layers": 6, "dec_dim_feedforward": 2048},
+    "l": {"dec_num_layers": 4, "dec_dim_feedforward": 1024},
+    "x": {"dec_num_layers": 4, "dec_dim_feedforward": 2048},
 }
 
 
@@ -280,11 +284,19 @@ class LibreECPoseModel(nn.Module):
 class ECExportWrapper(nn.Module):
     """Tracing-friendly wrapper for ONNX/TorchScript export."""
 
-    def __init__(self, model: LibreECModel):
+    def __init__(self, model: LibreECModel, task: str = "detect"):
         super().__init__()
         self.model = model
+        self.task = task
         self.model.deploy()
 
     def forward(self, x):
         out = self.model(x)
+        if self.task == "segment":
+            return out["pred_logits"], out["pred_boxes"], out["pred_masks"]
+        if self.task == "pose":
+            keypoints = out["pred_keypoints"]
+            if keypoints.dim() == 4:
+                keypoints = keypoints.flatten(-2)
+            return out["pred_logits"], keypoints
         return out["pred_logits"], out["pred_boxes"]

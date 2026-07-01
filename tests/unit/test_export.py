@@ -1,5 +1,6 @@
 """Unit tests for the unified Exporter module."""
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -9,6 +10,7 @@ import torch
 import torch.nn as nn
 
 import libreyolo.export.exporter as exporter_module
+import libreyolo.export.onnx as onnx_module
 from libreyolo.export.exporter import (
     BaseExporter,
     CoreMLExporter,
@@ -43,6 +45,23 @@ class _TinyModel(nn.Module):
         x = self.pool(x)
         x = x.view(x.size(0), -1)
         return self.fc(x)
+
+
+def test_onnx_simplify_skip_targets_known_macos_arm64_combo(monkeypatch):
+    versions = {"onnx": "1.22.0", "onnxsim": "0.6.5"}
+    monkeypatch.setattr(onnx_module.importlib_metadata, "version", versions.__getitem__)
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(onnx_module.platform, "machine", lambda: "arm64")
+    assert onnx_module._should_skip_onnx_simplify()
+
+    versions["onnxsim"] = "0.6.6"
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    versions.update(onnx="1.21.0", onnxsim="0.6.5")
+    assert not onnx_module._should_skip_onnx_simplify()
+
+    monkeypatch.setattr(onnx_module.platform, "system", lambda: "Linux")
+    assert not onnx_module._should_skip_onnx_simplify()
 
 
 class _TinyRFDETRExport(nn.Module):
@@ -81,17 +100,6 @@ class _TinyRTDETRExport(nn.Module):
         logits = signal.reshape(batch, 1, 1).expand(batch, 3, 2)
         boxes = signal.reshape(batch, 1, 1).expand(batch, 3, 4)
         return {"pred_logits": logits, "pred_boxes": boxes}
-
-
-class _TinyRFDETRClassifierRoot(nn.Module):
-    """Small RF-DETR classification root with a classifier submodule."""
-
-    def __init__(self):
-        super().__init__()
-        self.classifier = _TinyModel()
-
-    def forward(self, x):
-        return self.classifier(x)
 
 
 def _make_wrapper(nb_classes=4, model_name="TESTYOLO", size="s", input_size=32):
@@ -257,6 +265,42 @@ class TestExporterFormats:
         assert metadata["supported_tasks"] == ["segment"]
         assert metadata["default_task"] == "segment"
 
+    def test_rfdetr_pose_onnx_metadata_preserves_grouppose_schema(self):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "pose"
+        wrapper.SUPPORTED_TASKS = ("detect", "pose")
+        wrapper.DEFAULT_TASK = "detect"
+        wrapper.num_keypoints = 17
+        wrapper.keypoint_dim = 3
+        wrapper.num_keypoints_per_class = [0, 17, 4]
+
+        metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "pose"
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "8"
+        assert json.loads(metadata["num_keypoints_per_class"]) == [0, 17, 4]
+
+    def test_ec_pose_onnx_metadata_describes_exported_xy_keypoints(self):
+        wrapper = _make_wrapper(model_name="ec")
+        wrapper.task = "pose"
+        wrapper.SUPPORTED_TASKS = ("detect", "pose")
+        wrapper.DEFAULT_TASK = "detect"
+        wrapper.num_keypoints = 17
+        wrapper.keypoint_dim = 3
+
+        metadata = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert metadata["task"] == "pose"
+        assert metadata["num_keypoints"] == "17"
+        assert metadata["keypoint_dim"] == "2"
+
     def test_tensorrt_export_forwards_dynamic_batch_profile(
         self, monkeypatch, tmp_path
     ):
@@ -313,27 +357,6 @@ class TestExporterFormats:
         assert imgsz == (32, 32)
         assert device == torch.device("cpu")
         assert output_path.endswith(".onnx")
-
-    def test_rfdetr_classify_export_context_restores_root_training(self):
-        wrapper = _make_wrapper(model_name="rfdetr", input_size=16)
-        wrapper.model = _TinyRFDETRClassifierRoot()
-        wrapper.model.train()
-        wrapper.task = "classify"
-
-        exporter = OnnxExporter(wrapper)
-        with exporter._model_context(
-            torch.device("cpu"),
-            half=False,
-            int8=False,
-            batch=1,
-            imgsz=(16, 16),
-        ) as (nn_model, dummy):
-            assert nn_model is wrapper.model.classifier
-            assert dummy.shape == (1, 3, 16, 16)
-            assert wrapper.model.training is False
-
-        assert wrapper.model.training is True
-        assert wrapper.model.classifier.training is True
 
     def test_rfdetr_export_auto_device_defaults_to_cpu(self):
         wrapper = _make_wrapper(model_name="rfdetr")

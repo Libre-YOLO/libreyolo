@@ -87,7 +87,13 @@ class DetectionValidator(BaseValidator):
 
         Supports directory-based datasets, .txt file format, and COCO JSON.
         """
-        from libreyolo.data import load_data_config, get_img_files, img2label_paths
+        from libreyolo.data import (
+            get_coco_annotation_file,
+            get_coco_image_dir,
+            get_img_files,
+            img2label_paths,
+            load_data_config,
+        )
         from libreyolo.data.dataset import YOLODataset, COCODataset
         from torch.utils.data import DataLoader
 
@@ -100,6 +106,7 @@ class DetectionValidator(BaseValidator):
         label_files = None
         split_name = self.config.split
         data_cfg = None
+        explicit_coco_annotation = None
 
         if self.config.data:
             data_cfg = load_data_config(
@@ -107,7 +114,7 @@ class DetectionValidator(BaseValidator):
                 allow_scripts=self.config.allow_download_scripts,
             )
             data_dir = data_cfg["root"]
-            self.nc = data_cfg.get("nc", self.nc)
+            self.nc = int(data_cfg.get("nc", self.nc))
 
             names = data_cfg.get("names", None)
             if isinstance(names, dict):
@@ -118,6 +125,10 @@ class DetectionValidator(BaseValidator):
             # Check for pre-resolved file lists (from .txt format)
             img_files_key = f"{self.config.split}_img_files"
             label_files_key = f"{self.config.split}_label_files"
+            explicit_coco_annotation = get_coco_annotation_file(
+                data_cfg,
+                self.config.split,
+            )
 
             if img_files_key in data_cfg:
                 img_files = data_cfg[img_files_key]
@@ -166,13 +177,31 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id = None
         self._yolo_coco_img_files = None
         self._yolo_coco_label_files = None
-        coco_annotation_file = self._find_coco_annotation_file(data_path)
+        coco_annotation_file = (
+            Path(explicit_coco_annotation)
+            if explicit_coco_annotation
+            else self._find_coco_annotation_file(data_path)
+        )
 
         if coco_annotation_file is not None:
             # Prefer official COCO JSON when it is present. This preserves
             # COCO image ids, category ids, crowd annotations, and area ranges.
-            json_file = coco_annotation_file.name
-            split_name = self._resolve_coco_image_dir(data_path, json_file)
+            json_file = (
+                str(coco_annotation_file)
+                if explicit_coco_annotation
+                else coco_annotation_file.name
+            )
+            if explicit_coco_annotation and data_cfg is not None:
+                split_name = get_coco_image_dir(
+                    data_cfg,
+                    self.config.split,
+                    self._resolve_coco_image_dir(data_path, coco_annotation_file.name),
+                )
+            else:
+                split_name = self._resolve_coco_image_dir(
+                    data_path,
+                    coco_annotation_file.name,
+                )
 
             dataset = COCODataset(
                 data_dir=str(data_path),
@@ -180,13 +209,14 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
             self._coco_annotation_file = coco_annotation_file
-            self._coco_label_to_category_id = {
-                label: category_id
-                for label, category_id in enumerate(dataset.class_ids)
-            }
+            self._coco_label_to_category_id = dict(
+                getattr(dataset, "label_to_category_id", {})
+            )
         elif img_files is not None:
             # File list mode (.txt format)
             dataset = YOLODataset(
@@ -194,6 +224,7 @@ class DetectionValidator(BaseValidator):
                 label_files=label_files,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
                 **dataset_kwargs,
             )
         elif (data_path / "annotations").exists():
@@ -214,6 +245,8 @@ class DetectionValidator(BaseValidator):
                 name=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
+                names=data_cfg.get("names") if data_cfg is not None else None,
                 **dataset_kwargs,
             )
         else:
@@ -262,14 +295,9 @@ class DetectionValidator(BaseValidator):
         return None
 
     def _resolve_coco_image_dir(self, data_path: Path, json_file: str) -> str:
-        split_name = (
-            f"{self.config.split}2017"
-            if f"{self.config.split}2017" in json_file
-            else self.config.split
-        )
-        if (data_path / "images" / split_name).exists():
-            return f"images/{split_name}"
-        return split_name
+        from libreyolo.data import resolve_default_coco_image_dir
+
+        return resolve_default_coco_image_dir(data_path, self.config.split, json_file)
 
     def _init_metrics(self) -> None:
         from libreyolo.data import load_data_config

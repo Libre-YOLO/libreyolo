@@ -16,6 +16,8 @@ Applies to `detect`, `segment`, `pose`, and `obb`.
 - `names`: required list or integer-keyed class mapping.
 - `nc`: optional; must match `names` when present.
 - `download`: optional; Python download scripts require explicit opt-in.
+- `annotations`: optional mapping of split names to native COCO JSON files for
+  detection, instance segmentation, and OBB.
 
 `train`, `val`, and `test` may be image directories, image-list `.txt` files,
 or lists of those values. Label paths follow:
@@ -23,6 +25,22 @@ or lists of those values. Label paths follow:
 ```text
 images/.../image.jpg -> labels/.../image.txt
 ```
+
+For native COCO JSON detection/instance-segmentation/OBB datasets, `annotations`
+maps a split to the JSON file and the split path gives the image root:
+
+```yaml
+path: dataset
+train: images/train
+val: images/val
+annotations:
+  train: annotations/train.json
+  val: annotations/val.json
+```
+
+When `names` is present, native COCO JSON category names must match the YAML
+class names; those names define the model label IDs. Without `names`, COCO
+category IDs are sorted and mapped densely to `0..N-1`.
 
 Do not require `task` in dataset YAML. Explicit model/task selection wins.
 
@@ -123,6 +141,40 @@ Float `.npy` maps are used as-is and do not apply `depth_scale`.
 
 Canonical loader: `libreyolo.data.DepthDataset`.
 
+## restore
+
+Image restoration pairs each degraded input image with a clean RGB target image
+instead of a `.txt` label file:
+
+```text
+inputs/.../image.jpg -> targets/.../image.jpg
+```
+
+Restore rules:
+
+- input and target images are RGB-compatible image files;
+- input and target resolution must match exactly;
+- validation keeps native resolution and pads only enough to stack a batch;
+- metrics are computed on the original image canvas;
+- training applies coupled crop and horizontal flip to the input/target pair.
+
+YAML adds these optional keys on top of the common split contract:
+
+- `input_dir`: degraded-input directory name used in split paths
+  (default `inputs`).
+- `target_dir`: clean-target directory name substituted for `input_dir`
+  (default `targets`).
+- `target_stem_suffix`: optional suffix appended to the input image stem before
+  target extension lookup.
+- `target_stem_suffixes`: list form of `target_stem_suffix`.
+- `degradation`: optional metadata label such as `deblur` or `denoise`.
+- `dataset`: optional dataset/provenance label such as `GoPro`.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: image}`. Restore models expose `Results.restored`, not detections.
+
+Canonical loader: `libreyolo.data.RestoreDataset`.
+
 ## pose
 
 YAML adds:
@@ -171,9 +223,16 @@ as `class, x1, y1, x2, y2, angle`, where `xyxy` is a horizontal proxy box for
 assignment and DFL, and `angle` is trained with a separate periodic loss. Do
 not treat that proxy tensor as the general OBB contract for other families.
 
-YOLO9 OBB currently accepts YOLO OBB `.txt` labels only. COCO JSON OBB loading
-is not implemented. Mosaic and mixup are disabled for OBB training until
-corner-aware OBB augmentation is implemented.
+Native COCO JSON OBB loading accepts annotations in this priority order:
+
+- `obb: [x1, y1, x2, y2, x3, y3, x4, y4]` pixel-space corners;
+- `obb: [cx, cy, w, h, angle]`, with `angle` in radians;
+- COCO `segmentation` polygon/RLE, refit to a minimum-area rectangle;
+- COCO `bbox: [x, y, w, h]`, interpreted as an axis-aligned rectangle and
+  canonicalized to LibreYOLO `xywhr`.
+
+Mosaic and mixup are disabled for OBB training until corner-aware OBB
+augmentation is implemented.
 
 ## classify
 

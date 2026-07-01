@@ -338,6 +338,45 @@ def export_tensorrt(
         if builder.platform_has_fast_fp16:
             builder_config.set_flag(trt.BuilderFlag.FP16)
             precision_str = "FP16"
+            # ViT backbones (DINOv2/v3) overflow in FP16 -> NaN. The FP16 builder flag above is
+            # enabled for both half and int8 builds (INT8 still runs FP16-precision layers), so
+            # pin the ViT backbone whenever FP16 is active, not only for half. Detect a ViT
+            # backbone (LayerNorm/Erf under model/backbone) and pin its float compute layers to
+            # FP32 (mixed precision); no-op for CNN backbones.
+            try:
+                import onnx as _onnx
+                _vit = any(
+                    n.op_type in ("LayerNormalization", "Erf")
+                    and "backbone" in (n.name or "")
+                    for n in _onnx.load(onnx_path).graph.node
+                )
+            except Exception:
+                _vit = False
+            if _vit:
+                builder_config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
+                _npin = 0
+                for _i in range(network.num_layers):
+                    _lyr = network.get_layer(_i)
+                    if "backbone" not in (_lyr.name or "") or _lyr.type == trt.LayerType.SHAPE:
+                        continue
+                    try:
+                        _outs = [_lyr.get_output(_j) for _j in range(_lyr.num_outputs)]
+                        if any(o is None or o.dtype not in (trt.float32, trt.float16) for o in _outs):
+                            continue
+                        _lyr.precision = trt.float32
+                        for _j in range(_lyr.num_outputs):
+                            _lyr.set_output_type(_j, trt.float32)
+                        _npin += 1
+                    except Exception:
+                        continue
+                if _npin > 0:
+                    precision_str = "FP16 (FP32 ViT backbone)"
+                    logger.info("ViT backbone: pinned %d float layers to FP32", _npin)
+                else:
+                    logger.warning(
+                        "ViT backbone detected in ONNX but no matching TRT layers found; "
+                        "FP32 pinning skipped"
+                    )
         else:
             warnings.warn("GPU does not support fast FP16. Falling back to FP32.")
 

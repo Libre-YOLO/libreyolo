@@ -6,6 +6,7 @@ Supports both COCO JSON format and YOLO txt format.
 
 import copy
 import logging
+import math
 import os
 import sys
 import time
@@ -23,6 +24,7 @@ from tqdm import tqdm
 from .cache import ImageCacheMixin
 from .utils import polygon_to_cxcywh
 from .obb import (
+    canonicalize_xywhr,
     corners_to_xywhr,
     parse_yolo_obb_label_line,
     xywhr_to_proxy_xyxy,
@@ -140,6 +142,88 @@ def _coco_segmentation_to_rings(
     if rings:
         rings[0] = DenseMaskRing(rings[0], decoded)
     return rings
+
+
+def _points_to_xywhr(points: np.ndarray) -> np.ndarray:
+    """Fit canonical ``xywhr`` to pixel-space points."""
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    if points.shape[0] < 3:
+        raise ValueError("COCO OBB source must provide at least 3 points")
+    (cx, cy), (w, h), angle_deg = cv2.minAreaRect(points)
+    return canonicalize_xywhr((cx, cy, w, h, math.radians(angle_deg)))
+
+
+def _clip_points_to_image(points: np.ndarray, width: int, height: int) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    points[:, 0] = np.clip(points[:, 0], 0.0, float(width))
+    points[:, 1] = np.clip(points[:, 1], 0.0, float(height))
+    return points
+
+
+def _coco_obb_to_xywhr(obj: dict, width: int, height: int) -> np.ndarray | None:
+    """Return pixel-space ``xywhr`` for a COCO-style OBB annotation.
+
+    Preferred source is an ``obb`` field. Segmentation polygons/RLEs are
+    refitted to their minimum-area rectangle. Plain COCO ``bbox`` remains a
+    useful axis-aligned fallback with zero rotation.
+    """
+    obb = obj.get("obb")
+    if isinstance(obb, dict):
+        obb = obb.get("corners", obb.get("xywhr"))
+    if obb is not None:
+        try:
+            values = np.asarray(obb, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError):
+            values = None
+        if values is not None and np.isfinite(values).all():
+            if values.size == 8:
+                corners = _clip_points_to_image(values.reshape(4, 2), width, height)
+                try:
+                    return corners_to_xywhr(corners)
+                except ValueError:
+                    pass
+            elif values.size == 5:
+                cx, cy, box_w, box_h, angle = map(float, values)
+                if box_w > 0.0 and box_h > 0.0:
+                    return canonicalize_xywhr((cx, cy, box_w, box_h, angle))
+
+    segmentation = obj.get("segmentation")
+    if segmentation:
+        rings = _coco_segmentation_to_rings(
+            segmentation,
+            height=height,
+            width=width,
+        )
+        points = [
+            np.asarray(ring, dtype=np.float32).reshape(-1, 2)
+            for ring in rings
+            if ring is not None and len(ring) >= 3
+        ]
+        if points:
+            try:
+                return _points_to_xywhr(
+                    _clip_points_to_image(
+                        np.concatenate(points, axis=0),
+                        width,
+                        height,
+                    )
+                )
+            except ValueError:
+                return None
+
+    bbox = obj.get("bbox")
+    if bbox is None:
+        return None
+    values = np.asarray(bbox, dtype=np.float32).reshape(-1)
+    if values.size != 4 or not np.isfinite(values).all():
+        return None
+    x1 = max(0.0, float(values[0]))
+    y1 = max(0.0, float(values[1]))
+    x2 = min(float(width), x1 + max(0.0, float(values[2])))
+    y2 = min(float(height), y1 + max(0.0, float(values[3])))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return canonicalize_xywhr(((x1 + x2) * 0.5, (y1 + y2) * 0.5, x2 - x1, y2 - y1, 0.0))
 
 
 class YOLODataset(ImageCacheMixin, Dataset):
@@ -511,6 +595,9 @@ class COCODataset(ImageCacheMixin, Dataset):
         img_size: Tuple[int, int] = (640, 640),
         preproc=None,
         load_segments: bool = False,
+        load_obb: bool = False,
+        num_classes: int | None = None,
+        names=None,
     ):
         """
         Initialize COCO dataset.
@@ -522,6 +609,8 @@ class COCODataset(ImageCacheMixin, Dataset):
             img_size: Target image size (height, width)
             preproc: Preprocessing transform
         """
+        if load_segments and load_obb:
+            raise ValueError("COCODataset cannot load segmentation and OBB labels together")
         try:
             from pycocotools.coco import COCO
         except ImportError:
@@ -530,17 +619,20 @@ class COCODataset(ImageCacheMixin, Dataset):
                 "Install with: pip install pycocotools"
             )
 
-        self.data_dir = data_dir
+        self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
         self.img_size = img_size
         self._input_dim = img_size
         self.preproc = preproc
         self.load_segments = load_segments
+        self.load_obb = load_obb
+        self.num_classes = num_classes
+        self.names = names
 
         # Load COCO annotations
-        ann_file = os.path.join(data_dir, "annotations", json_file)
-        self.coco = COCO(ann_file)
+        ann_file = self._annotation_path()
+        self.coco = COCO(str(ann_file))
 
         # Remove useless info to save memory
         self._remove_useless_info()
@@ -548,11 +640,86 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.ids = self.coco.getImgIds()
         self.num_imgs = len(self.ids)
         self.class_ids = sorted(self.coco.getCatIds())
-        self.cats = self.coco.loadCats(self.coco.getCatIds())
-        self._classes = tuple([c["name"] for c in self.cats])
+        self.cats = self.coco.loadCats(self.class_ids)
+        self.category_id_to_label, self.label_to_category_id = (
+            self._build_category_mappings()
+        )
+        if self.names is None:
+            self._classes = tuple([c["name"] for c in self.cats])
+        else:
+            class_names = self._normalized_class_names()
+            class_count = self.num_classes or max(class_names, default=-1) + 1
+            self._classes = tuple(
+                class_names.get(i, f"class_{i}") for i in range(class_count)
+            )
 
         # Pre-load annotations
         self.annotations = self._load_coco_annotations()
+
+    def _annotation_path(self) -> Path:
+        path = Path(self.json_file)
+        if path.is_absolute():
+            return path
+        if path.parent != Path("."):
+            return self.data_dir / path
+        return self.data_dir / "annotations" / path
+
+    def _normalized_class_names(self) -> dict[int, str]:
+        if self.names is None:
+            return {}
+        if isinstance(self.names, dict):
+            out = {}
+            for key, value in self.names.items():
+                try:
+                    index = int(key)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"COCO dataset class name key must be an integer: {key!r}") from exc
+                if index < 0:
+                    raise ValueError(f"COCO dataset class name key must be non-negative: {key!r}")
+                out[index] = str(value)
+            return out
+        return {i: str(name) for i, name in enumerate(self.names)}
+
+    def _build_category_mappings(self) -> tuple[dict[int, int], dict[int, int]]:
+        if self.names is None:
+            category_to_label = {
+                category_id: label for label, category_id in enumerate(self.class_ids)
+            }
+        else:
+            class_names = self._normalized_class_names()
+            name_to_label: dict[str, int] = {}
+            for label, name in class_names.items():
+                if name in name_to_label:
+                    raise ValueError(f"Duplicate class name in dataset YAML: {name!r}")
+                name_to_label[name] = label
+
+            category_to_label = {}
+            for category in self.cats:
+                category_name = str(category.get("name", ""))
+                if category_name not in name_to_label:
+                    raise ValueError(
+                        "COCO category name not found in dataset YAML names: "
+                        f"{category_name!r}"
+                    )
+                category_to_label[int(category["id"])] = name_to_label[category_name]
+
+        if self.num_classes is not None:
+            for category_id, label in category_to_label.items():
+                if label < 0 or label >= self.num_classes:
+                    raise ValueError(
+                        f"COCO category id {category_id} maps to class {label}, "
+                        f"outside configured num_classes={self.num_classes}."
+                    )
+
+        label_to_category = {}
+        for category_id, label in category_to_label.items():
+            if label in label_to_category:
+                raise ValueError(
+                    f"Multiple COCO categories map to class {label}; "
+                    "dataset YAML names must be unique."
+                )
+            label_to_category[label] = category_id
+        return category_to_label, label_to_category
 
     def _remove_useless_info(self):
         """Remove useless info from COCO to save memory."""
@@ -564,7 +731,7 @@ class COCODataset(ImageCacheMixin, Dataset):
             img.pop("coco_url", None)
             img.pop("date_captured", None)
             img.pop("flickr_url", None)
-        if not self.load_segments:
+        if not self.load_segments and not self.load_obb:
             for anno in dataset.get("annotations", []):
                 anno.pop("segmentation", None)
 
@@ -612,11 +779,24 @@ class COCODataset(ImageCacheMixin, Dataset):
         objs = []
         segments = []
         for obj in annotations:
+            try:
+                area = float(obj.get("area", 1.0))
+            except (TypeError, ValueError):
+                area = 0.0
+            if area <= 0.0:
+                continue
+            if self.load_obb:
+                xywhr = _coco_obb_to_xywhr(obj, width, height)
+                if xywhr is None:
+                    continue
+                proxy = xywhr_to_proxy_xyxy(xywhr)
+                objs.append((obj, proxy, float(xywhr[4])))
+                continue
             x1 = max(0, obj["bbox"][0])
             y1 = max(0, obj["bbox"][1])
             x2 = min(width, x1 + max(0, obj["bbox"][2]))
             y2 = min(height, y1 + max(0, obj["bbox"][3]))
-            if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
+            if x2 > x1 and y2 > y1:
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 objs.append(obj)
                 if self.load_segments:
@@ -629,11 +809,19 @@ class COCODataset(ImageCacheMixin, Dataset):
                     )
 
         num_objs = len(objs)
-        res = np.zeros((num_objs, 5), dtype=np.float32)
+        width_out = 6 if self.load_obb else 5
+        res = np.zeros((num_objs, width_out), dtype=np.float32)
         for ix, obj in enumerate(objs):
-            cls = self.class_ids.index(obj["category_id"])
-            res[ix, 0:4] = obj["clean_bbox"]
-            res[ix, 4] = cls
+            if self.load_obb:
+                coco_obj, proxy, angle = obj
+                cls = self.category_id_to_label[coco_obj["category_id"]]
+                res[ix, 0:4] = proxy
+                res[ix, 4] = cls
+                res[ix, 5] = angle
+            else:
+                cls = self.category_id_to_label[obj["category_id"]]
+                res[ix, 0:4] = obj["clean_bbox"]
+                res[ix, 4] = cls
 
         # Scale to target size
         r = min(self.img_size[0] / height, self.img_size[1] / width)
@@ -666,7 +854,10 @@ class COCODataset(ImageCacheMixin, Dataset):
     def _image_path(self, index: int) -> Path:
         """Source image path for given index (used for disk caching)."""
         file_name = self.annotations[index][3]
-        return Path(self.data_dir) / self.name / file_name
+        image_root = Path(self.name)
+        if image_root.is_absolute():
+            return image_root / file_name
+        return self.data_dir / image_root / file_name
 
     def _decode_image(self, index: int) -> np.ndarray:
         """Decode image from disk for given index."""

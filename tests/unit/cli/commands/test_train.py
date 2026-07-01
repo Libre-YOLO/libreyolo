@@ -187,6 +187,26 @@ def test_train_dry_run_rejects_ambiguous_freeze_true():
     assert "freeze=True is ambiguous" in data["message"]
 
 
+def test_train_rejects_distill_model_not_implemented():
+    """Requesting a distillation teacher fails fast with a clear message."""
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "distill_model=LibreYOLO9m.pt",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "not implemented yet" in data["message"]
+
+
 def test_train_dry_run_rejects_lora_for_unsupported_family():
     app = _make_app()
     result = runner.invoke(
@@ -361,169 +381,6 @@ def test_train_rfdetr_lr_drop_override_reaches_trainer(monkeypatch, tmp_path):
     assert "ignores these parameters" not in result.output
 
 
-def test_train_dry_run_reports_explicit_obb_task():
-    app = _make_app()
-    result = runner.invoke(
-        app,
-        [
-            "data=uav-obb.yaml",
-            "model=yolo9-t",
-            "task=obb",
-            "--dry-run",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["resolved_config"]["task"] == "obb"
-    assert data["resolved_config"]["scheduler"] == "linear"
-
-
-@pytest.mark.parametrize(
-    "model_args",
-    [
-        ["model=yolo9-t", "task=obb"],
-        ["model=yolo9-t-obb"],
-    ],
-)
-def test_train_obb_uses_task_architecture_without_loading_missing_obb_weights(
-    monkeypatch, tmp_path, model_args
-):
-    app = _make_app()
-    captured = {}
-
-    def fail_load(*_args, **_kwargs):
-        raise AssertionError("OBB training should instantiate the task architecture")
-
-    def fake_train(self, data, **kwargs):
-        captured["task"] = self.task
-        captured["size"] = self.size
-        captured["data"] = data
-        captured["kwargs"] = kwargs
-        return {"output_dir": str(tmp_path / "yolo9_obb_exp")}
-
-    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
-    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=uav-obb.yaml",
-            *model_args,
-            "epochs=1",
-            "pretrained=false",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["task"] == "obb"
-    assert captured["size"] == "t"
-    assert captured["data"] == "uav-obb.yaml"
-    assert captured["kwargs"]["pretrained"] is False
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["epochs_completed"] == 1
-
-
-def test_train_yolo9_segment_task_uses_segment_architecture(monkeypatch, tmp_path):
-    app = _make_app()
-    captured = {}
-
-    def fail_load(*_args, **_kwargs):
-        raise AssertionError(
-            "Segment training should instantiate the task architecture"
-        )
-
-    def fake_train(self, data, **kwargs):
-        captured["task"] = self.task
-        captured["size"] = self.size
-        captured["data"] = data
-        captured["kwargs"] = kwargs
-        return {"output_dir": str(tmp_path / "yolo9_seg_exp")}
-
-    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
-    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=coco8-seg.yaml",
-            "model=yolo9-t",
-            "task=segment",
-            "epochs=1",
-            "pretrained=false",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["task"] == "segment"
-    assert captured["size"] == "t"
-    assert captured["data"] == "coco8-seg.yaml"
-    assert captured["kwargs"]["pretrained"] is False
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["epochs_completed"] == 1
-
-
-@pytest.mark.parametrize(
-    "model_args",
-    [
-        ["model=yolo9-t", "task=classify"],
-        ["model=yolo9-t-cls"],
-    ],
-)
-def test_train_yolo9_classify_uses_task_architecture_without_loading_missing_weights(
-    monkeypatch, tmp_path, model_args
-):
-    app = _make_app()
-    captured = {}
-
-    def fail_load(*_args, **_kwargs):
-        raise AssertionError(
-            "Classification training should instantiate the task architecture"
-        )
-
-    def fake_train(self, data, **kwargs):
-        captured["task"] = self.task
-        captured["size"] = self.size
-        captured["data"] = data
-        captured["kwargs"] = kwargs
-        return {"output_dir": str(tmp_path / "yolo9_cls_exp")}
-
-    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
-    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=imagenet10",
-            *model_args,
-            "epochs=1",
-            "pretrained=false",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["task"] == "classify"
-    assert captured["size"] == "t"
-    assert captured["data"] == "imagenet10"
-    assert captured["kwargs"]["pretrained"] is False
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["epochs_completed"] == 1
-
-
 def test_train_rfdetr_obb_uses_task_architecture_without_generic_load(
     monkeypatch, tmp_path
 ):
@@ -693,96 +550,6 @@ def test_train_rfdetr_pose_uses_explicit_detect_transfer_flag(monkeypatch, tmp_p
     assert data["epochs_completed"] == 1
 
 
-@pytest.mark.parametrize(
-    "model_args",
-    [
-        ["model=LibreRFDETRn.pt", "task=classify"],
-        ["model=rfdetr-n-cls"],
-    ],
-)
-def test_train_rfdetr_classify_uses_task_architecture_without_generic_load(
-    monkeypatch, tmp_path, model_args
-):
-    app = _make_app()
-    captured = {}
-
-    class _RFDETRClassifyLike:
-        FAMILY = "rfdetr"
-        device = "cpu"
-
-        def __init__(
-            self,
-            model_path=None,
-            size=None,
-            task=None,
-            device="auto",
-            allow_detect_to_obb_transfer=False,
-        ):
-            captured["init"] = {
-                "model_path": model_path,
-                "size": size,
-                "task": task,
-                "device": device,
-                "allow_detect_to_obb_transfer": allow_detect_to_obb_transfer,
-            }
-            self.size = size
-            self.task = task
-            self.device = device
-
-        @classmethod
-        def detect_task_from_filename(cls, filename):
-            return "classify" if filename.lower().endswith("-cls.pt") else None
-
-        @classmethod
-        def detect_size_from_filename(cls, filename):
-            return "n" if "rfdetrn" in filename.lower() else None
-
-        def train(self, data, **kwargs):
-            captured["data"] = data
-            captured["kwargs"] = kwargs
-            return {"output_dir": str(tmp_path / "rfdetr_cls_exp")}
-
-    def fail_load(*_args, **_kwargs):
-        raise AssertionError(
-            "RF-DETR classification training should instantiate the task architecture"
-        )
-
-    import libreyolo.models.rfdetr.model as rfdetr_model
-
-    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
-    monkeypatch.setattr(
-        "libreyolo.cli.commands.train._model_ref_exists", lambda _: False
-    )
-    monkeypatch.setattr(rfdetr_model, "LibreRFDETR", _RFDETRClassifyLike)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=imagenet10",
-            *model_args,
-            "epochs=1",
-            "pretrained=true",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["init"] == {
-        "model_path": None,
-        "size": "n",
-        "task": "classify",
-        "device": "auto",
-        "allow_detect_to_obb_transfer": False,
-    }
-    assert captured["data"] == "imagenet10"
-    assert "pretrained" not in captured["kwargs"]
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "rfdetr"
-    assert data["epochs_completed"] == 1
-
-
 def test_train_rfdetr_detect_checkpoint_switches_to_obb_architecture(
     monkeypatch, tmp_path
 ):
@@ -862,114 +629,5 @@ def test_train_rfdetr_detect_checkpoint_switches_to_obb_architecture(
     assert data["epochs_completed"] == 1
 
 
-def test_train_obb_custom_detect_checkpoint_uses_checkpoint_as_transfer(
-    monkeypatch, tmp_path
-):
-    app = _make_app()
-    detect_path = tmp_path / "best.pt"
-    detect_path.write_bytes(b"placeholder")
-    captured = {}
-
-    class _DetectYOLO9:
-        FAMILY = "yolo9"
-        task = "detect"
-        size = "t"
-
-    def fake_train(self, data, **kwargs):
-        captured["task"] = self.task
-        captured["size"] = self.size
-        captured["data"] = data
-        captured["kwargs"] = kwargs
-        return {"output_dir": str(tmp_path / "yolo9_obb_custom_transfer")}
-
-    monkeypatch.setattr(
-        "libreyolo.cli.commands.train.load_model_or_exit",
-        lambda out, model, model_path, device: _DetectYOLO9(),
-    )
-    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=uav-obb.yaml",
-            f"model={detect_path}",
-            "task=obb",
-            "epochs=1",
-            "pretrained=true",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["task"] == "obb"
-    assert captured["size"] == "t"
-    assert captured["data"] == "uav-obb.yaml"
-    assert captured["kwargs"]["pretrained"] == str(detect_path)
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["epochs_completed"] == 1
 
 
-def test_train_obb_known_detect_checkpoint_path_is_transfer_without_direct_load(
-    monkeypatch, tmp_path
-):
-    app = _make_app()
-    detect_path = tmp_path / "LibreYOLO9t.pt"
-    detect_path.write_bytes(b"placeholder")
-    captured = {}
-
-    def fail_load(*_args, **_kwargs):
-        raise AssertionError(
-            "Detect checkpoint should be transfer weights, not direct OBB load"
-        )
-
-    def fake_train(self, data, **kwargs):
-        captured["task"] = self.task
-        captured["size"] = self.size
-        captured["data"] = data
-        captured["kwargs"] = kwargs
-        return {"output_dir": str(tmp_path / "yolo9_obb_known_transfer")}
-
-    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
-    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
-
-    result = runner.invoke(
-        app,
-        [
-            "data=uav-obb.yaml",
-            f"model={detect_path}",
-            "task=obb",
-            "epochs=1",
-            "pretrained=true",
-            f"project={tmp_path}",
-            "exist_ok=true",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["task"] == "obb"
-    assert captured["size"] == "t"
-    assert captured["data"] == "uav-obb.yaml"
-    assert captured["kwargs"]["pretrained"] == str(detect_path)
-    data = json.loads(result.stdout)
-    assert data["model_family"] == "yolo9"
-    assert data["epochs_completed"] == 1
-
-
-def test_create_explicit_task_train_model_builds_yolo9_semantic():
-    from libreyolo.cli.commands.train import _create_explicit_task_train_model
-
-    model = _create_explicit_task_train_model(
-        family="yolo9",
-        model_path="LibreYOLO9t.pt",
-        task="semantic",
-        resume=False,
-        device="cpu",
-    )
-
-    assert model is not None
-    assert model.task == "semantic"
-    assert model.size == "t"

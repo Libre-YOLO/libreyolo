@@ -13,7 +13,7 @@ LibreYOLO ships no model source and stays MIT, exactly as the LibreVLM tier
 does). Like LibreVLM, this base does NOT define ``can_load``, which keeps the
 family out of the state-dict ``_registry`` and the ``LibreYOLO`` factory.
 
-See ``docs/adr/0005-libresam-contract.md`` for the contract and the
+See ``docs/adr/0007-libresam-contract.md`` for the contract and the
 clean-room API notes.
 """
 
@@ -258,10 +258,8 @@ class LibreSAMModel(BaseModel):
         chaining.
         """
         img = ImageLoader.load(source, color_format=color_format)
-        enc = self.processor(images=img, return_tensors="pt")
-        pixel_values = enc["pixel_values"].to(self.device, dtype=self._model_dtype)
-        with torch.no_grad():
-            self._image_embeddings = self.model.get_image_embeddings(pixel_values)
+        enc = self._encode(img)
+        self._image_embeddings = self._image_embeddings_from_encoding(enc)
         self._image = img
         self._image_path = source if isinstance(source, (str, Path)) else None
         return self
@@ -321,8 +319,7 @@ class LibreSAMModel(BaseModel):
         """
         if masks is not None:
             raise NotImplementedError(
-                "Mask prompts are not supported in LibreSAM v1; "
-                "use points= or bboxes=."
+                "Mask prompts are not supported in LibreSAM v1; use points= or bboxes=."
             )
         if device is not None:
             self._set_device(device)
@@ -371,14 +368,7 @@ class LibreSAMModel(BaseModel):
                 "pair per object."
             )
 
-        proc_kwargs: Dict[str, Any] = {}
-        if npoints is not None:
-            proc_kwargs["input_points"] = [npoints]
-            proc_kwargs["input_labels"] = [nlabels]
-        if nboxes is not None:
-            proc_kwargs["input_boxes"] = [nboxes]
-
-        enc = self.processor(images=img, return_tensors="pt", **proc_kwargs)
+        enc = self._encode(img, points=npoints, labels=nlabels, boxes=nboxes)
         model_inputs = self._build_model_inputs(enc, cached_emb)
         with torch.no_grad():
             outputs = self.model(**model_inputs, multimask_output=multimask)
@@ -390,6 +380,10 @@ class LibreSAMModel(BaseModel):
 
     def __call__(self, source: Optional[ImageInput] = None, **kwargs) -> Results:
         return self.predict(source, **kwargs)
+
+    def _move_embeddings(self, embeddings, device: torch.device):
+        """Move cached image embeddings to ``device``."""
+        return embeddings.to(device)
 
     def _set_device(self, device: str) -> "LibreSAMModel":
         """Move the model to ``device``, keeping any ``set_image()`` session.
@@ -407,7 +401,9 @@ class LibreSAMModel(BaseModel):
             self.device = target
             self.model.to(target)
             if self._image_embeddings is not None:
-                self._image_embeddings = self._image_embeddings.to(target)
+                self._image_embeddings = self._move_embeddings(
+                    self._image_embeddings, target
+                )
         return self
 
     # ---- prediction internals ------------------------------------------------
@@ -423,6 +419,21 @@ class LibreSAMModel(BaseModel):
                 "No image set. Pass source=... or call set_image(...) first."
             )
         return self._image, self._image_path, self._image_embeddings
+
+    def _encode(self, img, *, points=None, labels=None, boxes=None) -> Dict[str, Any]:
+        """Preprocess one image plus optional normalized prompts."""
+        proc_kwargs: Dict[str, Any] = {}
+        if points is not None:
+            proc_kwargs["input_points"] = [points]
+            proc_kwargs["input_labels"] = [labels]
+        if boxes is not None:
+            proc_kwargs["input_boxes"] = [boxes]
+        return self.processor(images=img, return_tensors="pt", **proc_kwargs)
+
+    def _image_embeddings_from_encoding(self, enc):
+        pixel_values = enc["pixel_values"].to(self.device, dtype=self._model_dtype)
+        with torch.no_grad():
+            return self.model.get_image_embeddings(pixel_values)
 
     def _build_model_inputs(self, enc, cached_emb) -> Dict[str, Any]:
         """Assemble model kwargs, reusing cached embeddings when available."""
@@ -549,10 +560,8 @@ class LibreSAMModel(BaseModel):
 
         # Encode the image once even in one-shot mode, so the grid reuses it.
         if cached_emb is None:
-            enc0 = self.processor(images=img, return_tensors="pt")
-            pixel_values = enc0["pixel_values"].to(self.device, dtype=self._model_dtype)
-            with torch.no_grad():
-                cached_emb = self.model.get_image_embeddings(pixel_values)
+            enc0 = self._encode(img)
+            cached_emb = self._image_embeddings_from_encoding(enc0)
 
         grid = build_point_grid(points_per_side)
         pixel_points = [[float(x * width), float(y * height)] for x, y in grid]
@@ -560,11 +569,10 @@ class LibreSAMModel(BaseModel):
         # metadata (original_sizes/reshaped_input_sizes) is identical for every
         # chunk, so only the prompt tensor is sliced below — this avoids
         # re-running the full image preprocessing once per chunk.
-        enc = self.processor(
-            images=img,
-            input_points=[[[p] for p in pixel_points]],  # 1 image, N points, 1 each
-            input_labels=[[[1] for _ in pixel_points]],  # all positive prompts
-            return_tensors="pt",
+        enc = self._encode(
+            img,
+            points=[[p] for p in pixel_points],
+            labels=[[1] for _ in pixel_points],
         )
         full_points = enc["input_points"].to(self.device)  # (1, N, 1, 2)
         full_labels = enc["input_labels"].to(self.device)  # (1, N, 1)

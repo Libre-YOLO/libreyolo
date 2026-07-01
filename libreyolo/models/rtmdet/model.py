@@ -18,6 +18,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import RTMDetConfig
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import RTMDetValPreprocessor
@@ -209,6 +210,8 @@ class LibreRTMDet(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune LibreRTMDet on a YOLO-format dataset.
@@ -229,6 +232,12 @@ class LibreRTMDet(BaseModel):
         val2017 subsets. See the family docstring for the full contract.
 
         Pass ``allow_experimental=True`` to acknowledge.
+
+        Args:
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers: a name
+                ('tensorboard', 'mlflow', 'wandb'), a configured logger
+                instance, or an iterable mixing both.
         """
         if not allow_experimental:
             raise RuntimeError(
@@ -298,6 +307,8 @@ class LibreRTMDet(BaseModel):
             amp=amp,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
             **kwargs,
         )
 

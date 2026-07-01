@@ -451,20 +451,6 @@ class DFL(nn.Module):
         return (weights * project).sum(dim=2)
 
 
-class MaskProto(nn.Module):
-    """Prototype mask branch used by YOLO9 segmentation models."""
-
-    def __init__(self, c1, c_mid=256, c_out=32):
-        super().__init__()
-        self.cv1 = Conv(c1, c_mid, 3)
-        self.up = nn.Upsample(scale_factor=2, mode="nearest")
-        self.cv2 = Conv(c_mid, c_mid, 3)
-        self.cv3 = Conv(c_mid, c_out, 1)
-
-    def forward(self, x):
-        return self.cv3(self.cv2(self.up(self.cv1(x))))
-
-
 class DDetect(nn.Module):
     """
     Decoupled Detection Head for yolo9.
@@ -678,257 +664,6 @@ class DDetect(nn.Module):
             wh = x2y2 - x1y1
             return torch.cat((c_xy, wh), dim)
         return torch.cat((x1y1, x2y2), dim)
-
-
-class DDetectSeg(DDetect):
-    """YOLO9 detection head with YOLACT-style prototype mask prediction."""
-
-    def __init__(
-        self,
-        nc=80,
-        ch=(),
-        reg_max=16,
-        stride=(),
-        use_group=True,
-        num_masks=32,
-        proto_channels=256,
-    ):
-        super().__init__(nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group)
-        self.nm = num_masks
-        self.proto = MaskProto(ch[0], proto_channels, self.nm)
-        self._seg_loss_fn = None
-
-        c4 = max(ch[0] // 4, self.nm)
-        self.cv4 = nn.ModuleList(
-            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1))
-            for x in ch
-        )
-
-    def _get_seg_loss_fn(self, device):
-        if self._seg_loss_fn is None:
-            from .loss import YOLO9SegmentationLoss
-
-            self._seg_loss_fn = YOLO9SegmentationLoss(
-                num_classes=self.nc,
-                reg_max=self.reg_max,
-                strides=self.stride.tolist(),
-                image_size=None,
-                device=device,
-                num_masks=self.nm,
-            )
-        return self._seg_loss_fn
-
-    def forward(self, x, targets=None, img_size=None, masks=None):
-        features = list(x)
-        proto = self.proto(features[0])
-        batch_size = proto.shape[0]
-        mask_coeffs = torch.cat(
-            [
-                self.cv4[i](features[i]).view(batch_size, self.nm, -1)
-                for i in range(self.nl)
-            ],
-            dim=2,
-        )
-
-        det_outputs = super().forward(features, targets=None, img_size=img_size)
-
-        if self.training:
-            if targets is not None:
-                loss_fn = self._get_seg_loss_fn(proto.device)
-                if img_size is not None:
-                    loss_fn.update_anchors(list(img_size))
-                return loss_fn(det_outputs, targets, mask_coeffs, proto, masks)
-            return det_outputs, mask_coeffs, proto
-
-        predictions, raw_outputs = det_outputs
-        if self.export:
-            return predictions, proto, mask_coeffs
-        return predictions, raw_outputs, proto, mask_coeffs
-
-
-class DDetectPose(DDetect):
-    """YOLO9 detection head with COCO-style keypoint regression."""
-
-    def __init__(
-        self,
-        nc=1,
-        ch=(),
-        reg_max=16,
-        stride=(),
-        use_group=True,
-        num_keypoints=17,
-        keypoint_dim=3,
-    ):
-        super().__init__(nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group)
-        if keypoint_dim != 3:
-            raise ValueError("DDetectPose expects keypoint_dim=3")
-        self.num_keypoints = int(num_keypoints)
-        self.keypoint_dim = int(keypoint_dim)
-        self.nk = self.num_keypoints * self.keypoint_dim
-        self._pose_loss_fn = None
-        self._pose_input_channels = [int(c) for c in ch]
-
-        c4 = max(ch[0] // 4, self.nk)
-        self._pose_hidden_channels = c4
-        self.cv4 = nn.ModuleList(
-            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1))
-            for x in ch
-        )
-
-    def replace_num_keypoints(self, num_keypoints: int):
-        """Rebuild the keypoint tower for a new keypoint count."""
-        num_keypoints = int(num_keypoints)
-        if num_keypoints == self.num_keypoints:
-            return
-        new_nk = num_keypoints * self.keypoint_dim
-        c4 = max(self._pose_input_channels[0] // 4, new_nk)
-        ref = next(self.cv4.parameters())
-        self.cv4 = nn.ModuleList(
-            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, new_nk, 1))
-            for x in self._pose_input_channels
-        ).to(device=ref.device, dtype=ref.dtype)
-        self.num_keypoints = num_keypoints
-        self.nk = new_nk
-        self._pose_hidden_channels = c4
-        self._pose_loss_fn = None
-
-    def _get_pose_loss_fn(self, device):
-        if self._pose_loss_fn is None:
-            from .loss import YOLO9PoseLoss
-
-            self._pose_loss_fn = YOLO9PoseLoss(
-                num_classes=self.nc,
-                reg_max=self.reg_max,
-                strides=self.stride.tolist(),
-                image_size=None,
-                device=device,
-                num_keypoints=self.num_keypoints,
-                keypoint_dim=self.keypoint_dim,
-                **getattr(self, "_pose_loss_kwargs", {}),
-            )
-        return self._pose_loss_fn
-
-    def _decode_keypoints(
-        self,
-        keypoints: torch.Tensor,
-        anchors: torch.Tensor | None = None,
-        strides: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Decode raw keypoint tower output to model-input pixel coordinates."""
-        anchors = self.anchors if anchors is None else anchors
-        strides = self.strides if strides is None else strides
-        batch_size = keypoints.shape[0]
-        kpts = keypoints.view(
-            batch_size, self.num_keypoints, self.keypoint_dim, -1
-        ).permute(0, 3, 1, 2)
-        xy = (kpts[..., :2] + anchors.T[None, :, None, :]) * strides.T[
-            None, :, None, :
-        ]
-        vis = kpts[..., 2:3].sigmoid()
-        return torch.cat((xy, vis), dim=-1)
-
-    def forward(self, x, targets=None, img_size=None):
-        features = list(x)
-        batch_size = features[0].shape[0]
-        keypoints = torch.cat(
-            [
-                self.cv4[i](features[i]).view(batch_size, self.nk, -1)
-                for i in range(self.nl)
-            ],
-            dim=2,
-        )
-
-        anchor_features = list(features)
-        det_outputs = super().forward(features, targets=None, img_size=img_size)
-
-        if self.training:
-            if targets is not None:
-                loss_fn = self._get_pose_loss_fn(keypoints.device)
-                if img_size is not None:
-                    loss_fn.update_anchors(list(img_size))
-                return loss_fn(det_outputs, targets, keypoints)
-            return det_outputs, keypoints
-
-        predictions, raw_outputs = det_outputs
-        decode_anchors = decode_strides = None
-        if self.export:
-            decode_anchors, decode_strides = (
-                generated.transpose(0, 1)
-                for generated in self._make_anchors(anchor_features, self.stride, 0.5)
-            )
-        decoded_keypoints = self._decode_keypoints(
-            keypoints,
-            anchors=decode_anchors,
-            strides=decode_strides,
-        )
-        if self.export:
-            return predictions, decoded_keypoints
-        return predictions, raw_outputs, decoded_keypoints
-
-
-class DDetectOBB(DDetect):
-    """YOLO9 detection head with an oriented-box angle branch."""
-
-    angle_channels = 1
-
-    def __init__(self, nc=80, ch=(), reg_max=16, stride=(), use_group=True):
-        super().__init__(nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group)
-        self._obb_loss_fn = None
-
-        c4 = max(ch[0] // 4, self.angle_channels)
-        self.cv4 = nn.ModuleList(
-            nn.Sequential(
-                Conv(x, c4, 3),
-                Conv(c4, c4, 3),
-                nn.Conv2d(c4, self.angle_channels, 1),
-            )
-            for x in ch
-        )
-
-    def _get_obb_loss_fn(self, device):
-        if self._obb_loss_fn is None:
-            from .loss import YOLO9OBBLoss
-
-            self._obb_loss_fn = YOLO9OBBLoss(
-                num_classes=self.nc,
-                reg_max=self.reg_max,
-                strides=self.stride.tolist(),
-                image_size=None,
-                device=device,
-            )
-        return self._obb_loss_fn
-
-    @staticmethod
-    def _angle_logits_to_radians(angle_logits):
-        return (angle_logits.sigmoid() - 0.5) * math.pi
-
-    def forward(self, x, targets=None, img_size=None):
-        features = list(x)
-        angle_logits = [self.cv4[i](features[i]) for i in range(self.nl)]
-
-        det_outputs = super().forward(features, targets=None, img_size=img_size)
-
-        if self.training:
-            if targets is not None:
-                loss_fn = self._get_obb_loss_fn(angle_logits[0].device)
-                if img_size is not None:
-                    loss_fn.update_anchors(list(img_size))
-                return loss_fn(det_outputs, targets, angle_logits)
-            return det_outputs, angle_logits
-
-        predictions, raw_outputs = det_outputs
-        batch_size = predictions.shape[0]
-        angle = torch.cat(
-            [
-                self._angle_logits_to_radians(a).view(batch_size, 1, -1)
-                for a in angle_logits
-            ],
-            dim=2,
-        )
-        predictions = torch.cat((predictions[:, :4], angle, predictions[:, 4:]), dim=1)
-        if self.export:
-            return predictions
-        return predictions, raw_outputs, angle_logits
 
 
 # =============================================================================
@@ -1215,92 +950,6 @@ class Neck9(nn.Module):
         return out_p3, out_p4, out_p5
 
 
-class Classify(nn.Module):
-    """Image-classification head for YOLO9.
-
-    A standard CNN classifier head (the shape shared by most ImageNet
-    backbones): a 1x1 conv lifts the backbone's deepest feature map to a wider
-    embedding, adaptive average pooling collapses the spatial dims, dropout
-    regularizes, and a linear layer produces class logits.
-    """
-
-    def __init__(self, in_channels, num_classes, hidden=1280, dropout=0.2):
-        super().__init__()
-        self.nc = num_classes
-        self.conv = Conv(in_channels, hidden, 1, 1)
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.drop = nn.Dropout(p=dropout)
-        self.linear = nn.Linear(hidden, num_classes)
-
-    def forward(self, x, targets=None):
-        # x is the deepest backbone feature map (B, C, H, W).
-        x = self.conv(x)
-        x = self.pool(x).flatten(1)
-        x = self.drop(x)
-        logits = self.linear(x)
-        if self.training and targets is not None:
-            loss = F.cross_entropy(logits, targets.long())
-            return {"total_loss": loss, "cls": loss}
-        return logits
-
-
-class SemanticDecoder(nn.Module):
-    """Dense semantic-segmentation head for YOLO9.
-
-    Fuses the three neck levels (strides 8/16/32) FPN-style: 1x1 laterals to a
-    shared width, top-down resize-and-sum onto the stride-8 map, a smoothing
-    conv, a 2x upsample to stride 4, then a 1x1 projection to per-class
-    logits. ``forward`` returns logits at the requested output resolution and,
-    when training targets are given, the per-pixel cross-entropy loss.
-    """
-
-    def __init__(self, ch, num_classes, decoder_channels=128, ignore_index=255):
-        super().__init__()
-        self.nc = num_classes
-        self.ignore_index = ignore_index
-        c3, c4, c5 = ch
-        self.lateral3 = Conv(c3, decoder_channels, 1, 1)
-        self.lateral4 = Conv(c4, decoder_channels, 1, 1)
-        self.lateral5 = Conv(c5, decoder_channels, 1, 1)
-        self.smooth = Conv(decoder_channels, decoder_channels, 3, 1)
-        self.up = nn.Upsample(scale_factor=2, mode="nearest")
-        self.refine = Conv(decoder_channels, decoder_channels, 3, 1)
-        self.predict = nn.Conv2d(decoder_channels, num_classes, 1)
-
-    def forward(self, feats, targets=None, out_size=None):
-        n3, n4, n5 = feats
-        size8 = n3.shape[-2:]
-        x = (
-            self.lateral3(n3)
-            + F.interpolate(self.lateral4(n4), size=size8, mode="nearest")
-            + F.interpolate(self.lateral5(n5), size=size8, mode="nearest")
-        )
-        x = self.smooth(x)
-        x = self.refine(self.up(x))
-        logits = self.predict(x)
-
-        if self.training and targets is not None:
-            logits = F.interpolate(
-                logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
-            )
-            targets = targets.long()
-            if bool((targets != self.ignore_index).any()):
-                loss = F.cross_entropy(
-                    logits, targets, ignore_index=self.ignore_index
-                )
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit
-                # a graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
-            return {"total_loss": loss, "sem": loss}
-
-        if out_size is None:
-            out_size = (logits.shape[-2] * 4, logits.shape[-1] * 4)
-        return F.interpolate(
-            logits, size=tuple(out_size), mode="bilinear", align_corners=False
-        )
-
-
 class LibreYOLO9Model(nn.Module):
     """
     Complete LibreYOLO9 model.
@@ -1314,16 +963,6 @@ class LibreYOLO9Model(nn.Module):
         reg_max=16,
         nb_classes=80,
         img_size=640,
-        segmentation=False,
-        pose=False,
-        classification=False,
-        obb=False,
-        semantic=False,
-        num_masks=32,
-        proto_channels=256,
-        num_keypoints=17,
-        keypoint_dim=3,
-        decoder_channels=128,
     ):
         """
         Initialize YOLOv9 model.
@@ -1333,12 +972,6 @@ class LibreYOLO9Model(nn.Module):
             reg_max: Regression max value for DFL
             nb_classes: Number of classes
             img_size: Input image size
-            segmentation: Build the instance-segmentation head.
-            classification: Build an image-classification head (backbone +
-                global-pool + linear). Mutually exclusive with segmentation.
-            semantic: Build the dense semantic-segmentation decoder over the
-                neck features instead of the detection head.
-            decoder_channels: Shared lateral width of the semantic decoder.
         """
         super().__init__()
 
@@ -1351,72 +984,22 @@ class LibreYOLO9Model(nn.Module):
         self.nc = nb_classes
         self.reg_max = reg_max
         self.img_size = img_size
-        self.segmentation = segmentation
-        self.pose = pose
-        self.classification = classification
-        self.obb = obb
-        self.semantic = semantic
-        self.num_keypoints = int(num_keypoints)
-        self.keypoint_dim = int(keypoint_dim)
-        enabled_tasks = sum(
-            bool(v)
-            for v in (
-                self.segmentation,
-                self.pose,
-                self.classification,
-                self.obb,
-                self.semantic,
-            )
-        )
-        if enabled_tasks > 1:
-            raise ValueError("YOLO9 can enable only one task head at a time")
 
         cfg = YOLO9_CONFIGS[config]
 
         self.backbone = Backbone9(config)
-
-        # Classification needs only the backbone's deepest features, so the
-        # detection neck and head are skipped entirely (no unused parameters).
-        if classification:
-            self.neck = None
-            self.head = Classify(cfg["spp_out"], nb_classes)
-            return
-
         self.neck = Neck9(config)
-
-        # Semantic segmentation replaces the detection head with a dense
-        # decoder over the neck pyramid; no anchors, DFL, or NMS involved.
-        if semantic:
-            self.head = SemanticDecoder(
-                cfg["head_channels"], nb_classes, decoder_channels=decoder_channels
-            )
-            return
 
         # Detection head - use exact channels from config
         head_channels = cfg["head_channels"]
-        if pose:
-            head_cls = DDetectPose
-        elif obb:
-            head_cls = DDetectOBB
-        elif segmentation:
-            head_cls = DDetectSeg
-        else:
-            head_cls = DDetect
-        head_kwargs = {
-            "nc": nb_classes,
-            "ch": head_channels,
-            "reg_max": reg_max,
-            "stride": (8, 16, 32),
-        }
-        if segmentation:
-            head_kwargs.update({"num_masks": num_masks, "proto_channels": proto_channels})
-        if pose:
-            head_kwargs.update(
-                {"num_keypoints": num_keypoints, "keypoint_dim": keypoint_dim}
-            )
-        self.head = head_cls(**head_kwargs)
+        self.head = DDetect(
+            nc=nb_classes,
+            ch=head_channels,
+            reg_max=reg_max,
+            stride=(8, 16, 32),
+        )
 
-    def forward(self, x, targets=None, masks=None):
+    def forward(self, x, targets=None):
         """
         Forward pass through backbone, neck, and detection head.
 
@@ -1433,33 +1016,14 @@ class LibreYOLO9Model(nn.Module):
         # Backbone
         p3, p4, p5 = self.backbone(x)
 
-        # Classification: deepest backbone features -> classifier head.
-        if self.classification:
-            return self.head(p5, targets=targets if self.training else None)
-
         # Neck
         n3, n4, n5 = self.neck(p3, p4, p5)
-
-        # Semantic segmentation: dense decoder over the neck pyramid. Returns
-        # the loss dict in training (with targets) or input-resolution logits.
-        if self.semantic:
-            return self.head(
-                [n3, n4, n5],
-                targets=targets if self.training else None,
-                out_size=x.shape[-2:],
-            )
 
         # Detection head
         if self.training and targets is not None:
             # Pass image size for anchor generation
             img_size = (x.shape[3], x.shape[2])  # (W, H)
-            output = self.head(
-                [n3, n4, n5],
-                targets=targets,
-                img_size=img_size,
-                **({"masks": masks} if self.segmentation else {}),
-            )
-            return output
+            return self.head([n3, n4, n5], targets=targets, img_size=img_size)
 
         # Normal forward (training without targets or inference)
         output = self.head([n3, n4, n5])
@@ -1469,41 +1033,19 @@ class LibreYOLO9Model(nn.Module):
             return output
 
         # Inference mode
-        if self.segmentation:
-            if self.head.export:
-                return output
-            y, x_list, proto, mask_coeffs = output
-        elif self.pose:
-            if self.head.export:
-                return output
-            y, x_list, keypoints = output
-        elif self.obb:
-            if self.head.export:
-                return output
-            y, x_list, angle_logits = output
-        else:
-            y, x_list = output
+        y, x_list = output
 
         # Export mode: return only the prediction tensor for ONNX/TorchScript
         if self.head.export:
             return y
 
-        result = {
+        return {
             "predictions": y,  # (batch, 4+nc, total_anchors)
             "raw_outputs": x_list,
             "x8": {"features": n3},
             "x16": {"features": n4},
             "x32": {"features": n5},
         }
-        if self.segmentation:
-            result["proto"] = proto
-            result["mask_coeffs"] = mask_coeffs
-        if self.pose:
-            result["keypoints"] = keypoints
-        if self.obb:
-            result["obb"] = True
-            result["angle_logits"] = angle_logits
-        return result
 
     def fuse(self):
         """Fuse Conv+BN and RepConvN for faster inference."""

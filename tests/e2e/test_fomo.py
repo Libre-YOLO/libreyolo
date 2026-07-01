@@ -1,0 +1,165 @@
+"""End-to-end smoke tests for LibreFOMO."""
+
+from pathlib import Path
+
+import pytest
+
+from libreyolo import LibreYOLO
+
+
+pytestmark = [pytest.mark.e2e, pytest.mark.fomo]
+
+
+@pytest.mark.parametrize("size", ["s", "m", "l"])
+def test_public_checkpoint_name_requires_local_file(
+    size: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FOMO public checkpoint names require a local file; they are not auto-downloaded."""
+    monkeypatch.chdir(tmp_path)
+    model_name = f"LibreFOMO{size}-point.pt"
+
+    with pytest.raises(FileNotFoundError):
+        LibreYOLO(model_name, device="cpu")
+
+
+def _write_tiny_point_dataset(root: Path, imgsz: int = 96) -> Path:
+    from PIL import Image
+    import yaml
+
+    for split in ("train", "val"):
+        img_dir = root / "images" / split
+        lbl_dir = root / "labels" / split
+        img_dir.mkdir(parents=True, exist_ok=True)
+        lbl_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (imgsz, imgsz), color=(128, 64, 32)).save(img_dir / "sample.jpg")
+        (lbl_dir / "sample.txt").write_text("0 0.5 0.5 0.05 0.05\n", encoding="utf-8")
+
+    data_yaml = root / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(root).replace("\\", "/"),
+                "train": "images/train",
+                "val": "images/val",
+                "nc": 1,
+                "names": {0: "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return data_yaml
+
+
+
+def _write_multiclass_point_dataset(root: Path, imgsz: int = 96) -> Path:
+    from PIL import Image
+    import yaml
+
+    for split in ("train", "val"):
+        img_dir = root / "images" / split
+        lbl_dir = root / "labels" / split
+        img_dir.mkdir(parents=True, exist_ok=True)
+        lbl_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (imgsz, imgsz), color=(128, 64, 32)).save(img_dir / "sample.jpg")
+        (lbl_dir / "sample.txt").write_text("0 0.25 0.25 0.05 0.05\n1 0.75 0.75 0.05 0.05\n", encoding="utf-8")
+
+    data_yaml = root / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(root).replace("\\", "/"),
+                "train": "images/train",
+                "val": "images/val",
+                "nc": 2,
+                "names": {0: "person", 1: "dog"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return data_yaml
+
+
+def test_fomo_multiclass_training_e2e(tmp_path: Path) -> None:
+    """Verify that a multiclass LibreFOMO model trains successfully on a synthetic dataset."""
+    from libreyolo import LibreFOMO
+
+    data_yaml = _write_multiclass_point_dataset(tmp_path, imgsz=96)
+
+    model = LibreFOMO(model_path=None, size="s", nb_classes=2, device="cpu")
+
+    results = model.train(
+        allow_experimental=True,
+        data=str(data_yaml),
+        epochs=1,
+        batch=2,
+        imgsz=96,
+        device="cpu",
+        project=str(tmp_path / "runs"),
+        name="fomo_multiclass_e2e_test",
+        exist_ok=True,
+        workers=0,
+        scheduler="cosine",
+        mosaic_prob=1.0,
+        flip_prob=0.5,
+    )
+
+    assert "final_loss" in results
+    assert len(results["epoch_losses"]) == 1
+
+
+def _make_random_fomo(size: str = "s", nc: int = 1):
+    from libreyolo import LibreFOMO
+    return LibreFOMO(model_path=None, size=size, nb_classes=nc, device="cpu")
+
+
+
+@pytest.mark.parametrize("scheduler", ["cosine", "flat_cosine", "linear", "constant"])
+@pytest.mark.parametrize("enable_augmentations", [True, False])
+def test_training_configurations_parameterized(
+    tmp_path: Path, scheduler: str, enable_augmentations: bool
+) -> None:
+    """Verify that all configuration toggles (schedulers, augmentations) train without crashing."""
+    data_yaml = _write_tiny_point_dataset(tmp_path, imgsz=96)
+    model = _make_random_fomo(size="s", nc=1)
+
+    train_kwargs = {
+        "allow_experimental": True,
+        "data": str(data_yaml),
+        "epochs": 1,
+        "batch": 2,
+        "imgsz": 96,
+        "device": "cpu",
+        "project": str(tmp_path / f"runs_{scheduler}_{enable_augmentations}"),
+        "name": "fomo_test",
+        "exist_ok": True,
+        "workers": 0,
+        "scheduler": scheduler,
+    }
+
+    if enable_augmentations:
+        train_kwargs.update({
+            "mosaic_prob": 1.0,
+            "mixup_prob": 0.5,
+            "flip_prob": 0.5,
+            "hsv_prob": 0.5,
+            "degrees": 10.0,
+            "translate": 0.1,
+            "shear": 2.0,
+        })
+    else:
+        train_kwargs.update({
+            "mosaic_prob": 0.0,
+            "mixup_prob": 0.0,
+            "flip_prob": 0.0,
+            "hsv_prob": 0.0,
+            "degrees": 0.0,
+            "translate": 0.0,
+            "shear": 0.0,
+        })
+
+    results = model.train(**train_kwargs)
+    assert "final_loss" in results
+    assert len(results["epoch_losses"]) == 1
+
+
+
