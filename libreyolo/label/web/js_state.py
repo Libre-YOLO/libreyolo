@@ -67,6 +67,33 @@ function toggleTheme(){ applyTheme(document.documentElement.classList.contains("
   if(location.hash==="#light") t="light"; else if(location.hash==="#dark") t="dark";
   if(!t) t=(window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches)?"light":"dark";
   document.documentElement.classList.toggle("light", t==="light"); })();
+
+// ---- remappable hotkeys (persisted in localStorage; edited in the ? modal) ----
+const KEY_ACTIONS = [
+  {id:"prev",          def:"a", label:"Previous image"},
+  {id:"next",          def:"d", label:"Next image"},
+  {id:"nextunlabeled", def:"e", label:"Next unlabeled"},
+  {id:"carry",         def:"c", label:"Copy previous labels"},
+  {id:"prelabel",      def:"r", label:"Auto-label this image"},
+  {id:"toolbox",       def:"b", label:"Box tool"},
+  {id:"toolpoly",      def:"p", label:"Polygon tool"},
+  {id:"toolsam",       def:"s", label:"Smart segment (SAM)"},
+  {id:"toolobb",       def:"o", label:"Oriented-box tool"},
+  {id:"tighten",       def:"t", label:"Tighten box to edges"},
+  {id:"loupe",         def:"l", label:"Loupe magnifier"},
+  {id:"radar",         def:"y", label:"Label-Error Radar"},
+  {id:"flagged",       def:"n", label:"Next flagged"},
+  {id:"map",           def:"m", label:"Embedding map"},
+  {id:"fit",           def:"f", label:"Fit to view"},
+];
+let KEYMAP = {};
+(function(){ try{ const o=JSON.parse(localStorage.getItem("ll-keys")||"{}");
+  if(o && typeof o==="object") KEYMAP=o; }catch(e){} })();
+function keyFor(id){ if(KEYMAP[id]) return KEYMAP[id];
+  const a=KEY_ACTIONS.find(x=>x.id===id); return a?a.def:""; }
+function setKey(id,k){ KEYMAP[id]=k; try{ localStorage.setItem("ll-keys", JSON.stringify(KEYMAP)); }catch(e){} }
+function resetKeys(){ KEYMAP={}; try{ localStorage.removeItem("ll-keys"); }catch(e){} }
+
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 // ---- transforms ----

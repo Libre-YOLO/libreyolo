@@ -106,7 +106,12 @@ function setTool(t){
   else if(t==="obb") banner("Oriented box: drag to draw, then drag the round handle above it to rotate (hold Shift to snap to 15°).");
   else $("#banner").style.display="none";
 }
-function toggleHelp(){ const h=$("#help"); h.style.display = h.style.display==="flex"?"none":"flex"; }
+function toggleHelp(){
+  const h=$("#help"); const opening = h.style.display!=="flex";
+  h.style.display = opening ? "flex" : "none";
+  rebindTarget = null;
+  if(opening) renderHelp();
+}
 
 // ---- class picker ----
 function renderPalette(){

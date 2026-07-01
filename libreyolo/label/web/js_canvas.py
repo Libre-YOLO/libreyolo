@@ -376,6 +376,83 @@ cv.addEventListener("wheel", e=>{
 }, {passive:false});
 
 // ---- keyboard ----
+const KEY_DISPATCH = {   // actions for the remappable keys (tools self-gate by task)
+  prev: e=>{ e.preventDefault(); step(-1); },
+  next: e=>{ e.preventDefault(); step(1); },
+  nextunlabeled: e=>{ e.preventDefault(); nextUnlabeled(e.shiftKey?-1:1); },
+  carry: e=>{ e.preventDefault(); carryForward(); },
+  prelabel: e=>{ e.preventDefault(); prelabelCurrent(); },
+  toolbox: ()=> setTool("box"),
+  toolpoly: ()=> setTool("poly"),
+  toolobb: ()=> setTool("obb"),
+  toolsam: ()=>{ if(assist && assist.sam) setTool("seg"); },
+  tighten: e=>{ e.preventDefault(); tightenSelected(); },
+  loupe: ()=>{ loupeOn=!loupeOn; draw(); },
+  radar: e=>{ e.preventDefault(); runRadar(); },
+  flagged: e=>{ e.preventDefault(); nextFlagged(); },
+  map: e=>{ e.preventDefault(); openMap(); },
+  fit: ()=>{ fit(); draw(); },
+};
+// ---- shortcuts modal: rendered from KEY_ACTIONS so rebinding stays in sync ----
+let rebindTarget = null;   // action id currently capturing a new key
+const HELP_LAYOUT = [
+  ["Drawing & tools", [
+    {label:"Draw a box (active class)", keys:["drag"]},
+    {act:"toolbox"}, {act:"toolpoly"}, {act:"toolsam"}, {act:"toolobb"},
+    {act:"tighten"}, {act:"loupe"},
+  ]],
+  ["Classes", [
+    {label:"Set active class", keys:["1","9","0"]},
+    {label:"Open class search", keys:["/"]},
+  ]],
+  ["Select & edit", [
+    {label:"Select / move / resize", keys:["click"]},
+    {label:"Add / remove from selection", keys:["Shift","click"]},
+    {label:"Select all", keys:["Ctrl","A"]},
+    {label:"Delete selected", keys:["Del"]},
+    {label:"Undo / redo", keys:["Ctrl","Z","Ctrl","Y"]},
+    {label:"Duplicate box", keys:["Ctrl","D"]},
+  ]],
+  ["Navigate", [
+    {act:"prev"}, {act:"next"}, {act:"nextunlabeled"}, {act:"carry"},
+    {label:"Submit & next unlabeled", keys:["Enter"]},
+  ]],
+  ["View", [
+    {label:"Pan", keys:["Space","drag"]},
+    {label:"Zoom", keys:["wheel","+","−"]},
+    {act:"fit"},
+  ]],
+  ["AI assist", [
+    {act:"prelabel"}, {act:"radar"}, {act:"flagged"}, {act:"map"},
+  ]],
+  ["Save", [
+    {label:"Save", keys:["Ctrl","S"]},
+    {label:"Cancel / clear / close", keys:["Esc"]},
+  ]],
+];
+function renderHelp(msg, isErr){
+  const grid=$("#kgrid"); if(!grid) return;
+  grid.innerHTML = HELP_LAYOUT.map(([title, rows])=>{
+    const body = rows.map(r=>{
+      if(r.act){
+        const a=KEY_ACTIONS.find(x=>x.id===r.act); if(!a) return "";
+        const live = rebindTarget===a.id;
+        const shown = live ? "…" : keyFor(a.id).toUpperCase();
+        return `<div class="krow"><span>${esc(a.label)}</span><span class="keys">`+
+          `<kbd class="k-edit${live?" k-live":""}" data-act="${a.id}" title="Click, then press a new key">${esc(shown)}</kbd></span></div>`;
+      }
+      return `<div class="krow"><span>${esc(r.label)}</span><span class="keys">${r.keys.map(k=>`<kbd>${esc(k)}</kbd>`).join("")}</span></div>`;
+    }).join("");
+    return `<div class="kgroup"><h4>${esc(title)}</h4>${body}</div>`;
+  }).join("");
+  grid.querySelectorAll(".k-edit").forEach(el=> el.onclick=()=>{
+    rebindTarget = (rebindTarget===el.dataset.act) ? null : el.dataset.act;
+    renderHelp(rebindTarget ? "Press a letter key (Esc cancels)." : "");
+  });
+  const h=$("#khint");
+  if(h){ h.textContent = msg || "Click a key to change it. Arrow keys always step between images.";
+         h.className = "khint" + (isErr ? " err" : ""); }
+}
 // Close the top-most open overlay; returns false when none was open. Keeping this
 // in one place means Escape always works and no overlay can be left unclosable.
 function closeTopOverlay(){
@@ -398,6 +475,17 @@ function overlayOpen(){
     || $("#home").classList.contains("show") || $("#help").style.display==="flex";
 }
 window.addEventListener("keydown", e=>{
+  if(rebindTarget){   // the ? modal is capturing a new key for an action
+    e.preventDefault(); e.stopPropagation();
+    const k=(e.key||"").toLowerCase();
+    if(k==="escape"){ rebindTarget=null; renderHelp(); return; }
+    if(k.length===1 && k>="a" && k<="z"){
+      const clash = KEY_ACTIONS.find(a=>a.id!==rebindTarget && keyFor(a.id)===k);
+      if(clash){ renderHelp(k.toUpperCase()+" is already used by “"+clash.label+"” - pick another key.", true); return; }
+      setKey(rebindTarget, k); rebindTarget=null; renderHelp("Saved.");
+    }
+    return;
+  }
   const t=(e.target&&e.target.tagName)||"";
   if(t==="INPUT"||t==="SELECT"||t==="TEXTAREA"){ if(e.key==="Escape"){ e.target.blur(); closePicker(); closeTopOverlay(); } return; }
   if(overlayOpen()){   // a dialog (or Home) is up: canvas hotkeys must not fire behind it
@@ -420,20 +508,15 @@ window.addEventListener("keydown", e=>{
   }
   if(e.key>="0" && e.key<="9"){ const i = e.key==="0"?9:(+e.key-1); setActive(i); return; }
   if(e.key==="/"){ e.preventDefault(); togglePicker(); return; }
-  if(e.key==="d"||e.key==="D"||e.key==="ArrowRight"){ e.preventDefault(); step(1); return; }
-  if(e.key==="a"||e.key==="A"||e.key==="ArrowLeft"){ e.preventDefault(); step(-1); return; }
-  if(e.key==="e"||e.key==="E"){ e.preventDefault(); nextUnlabeled(e.shiftKey?-1:1); return; }
-  if(e.key==="c"||e.key==="C"){ e.preventDefault(); carryForward(); return; }
-  if(e.key==="r"||e.key==="R"){ e.preventDefault(); prelabelCurrent(); return; }
-  if(e.key==="b"||e.key==="B"){ if(!(DS&&DS.task==="obb")) setTool("box"); return; }
-  if(e.key==="p"||e.key==="P"){ setTool("poly"); return; }
-  if(e.key==="o"||e.key==="O"){ setTool("obb"); return; }
-  if((e.key==="s"||e.key==="S") && assist && assist.sam){ setTool("seg"); return; }
-  if(e.key==="t"||e.key==="T"){ e.preventDefault(); tightenSelected(); return; }
-  if(e.key==="l"||e.key==="L"){ loupeOn=!loupeOn; draw(); return; }
-  if(e.key==="y"||e.key==="Y"){ e.preventDefault(); runRadar(); return; }
-  if(e.key==="m"||e.key==="M"){ e.preventDefault(); openMap(); return; }
-  if(e.key==="n"||e.key==="N"){ e.preventDefault(); nextFlagged(); return; }
+  if(e.key==="ArrowRight"){ e.preventDefault(); step(1); return; }
+  if(e.key==="ArrowLeft"){ e.preventDefault(); step(-1); return; }
+  if(!e.ctrlKey && !e.metaKey && !e.altKey){   // remappable single-letter actions (see KEY_ACTIONS)
+    const k=(e.key||"").toLowerCase();
+    if(k.length===1 && k>="a" && k<="z"){
+      const hit = KEY_ACTIONS.find(a=>keyFor(a.id)===k);
+      if(hit && KEY_DISPATCH[hit.id]){ KEY_DISPATCH[hit.id](e); return; }
+    }
+  }
   if(e.key==="Delete"||e.key==="Backspace"){
     if(!editable || (DS && !DS.writable)) return;
     if(polyDraft){ if(polyDraft.length>=2) polyDraft.splice(-2,2); draw(); return; }   // undo last vertex

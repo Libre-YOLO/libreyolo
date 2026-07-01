@@ -93,48 +93,9 @@ PART = r"""</style>
           <h3><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keyboard shortcuts</h3>
           <button class="mx" id="helpclose">&times;</button>
         </div>
-        <p class="help-sub">Everything you can do without leaving the canvas.</p>
-        <div class="kgrid">
-          <div class="kgroup"><h4>Drawing &amp; tools</h4>
-            <div class="krow"><span>Draw a box (active class)</span><span class="keys"><kbd>drag</kbd></span></div>
-            <div class="krow"><span>Box / polygon / smart-segment</span><span class="keys"><kbd>B</kbd><kbd>P</kbd><kbd>S</kbd></span></div>
-            <div class="krow"><span>Tighten box to edges</span><span class="keys"><kbd>T</kbd></span></div>
-            <div class="krow"><span>Loupe magnifier</span><span class="keys"><kbd>L</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>Classes</h4>
-            <div class="krow"><span>Set active class</span><span class="keys"><kbd>1</kbd>..<kbd>9</kbd><kbd>0</kbd></span></div>
-            <div class="krow"><span>Open class search</span><span class="keys"><kbd>/</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>Select &amp; edit</h4>
-            <div class="krow"><span>Select / move / resize</span><span class="keys"><kbd>click</kbd></span></div>
-            <div class="krow"><span>Add / remove from selection</span><span class="keys"><kbd>Shift</kbd><kbd>click</kbd></span></div>
-            <div class="krow"><span>Select all</span><span class="keys"><kbd>Ctrl</kbd><kbd>A</kbd></span></div>
-            <div class="krow"><span>Delete selected</span><span class="keys"><kbd>Del</kbd></span></div>
-            <div class="krow"><span>Undo / redo</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd><kbd>Ctrl</kbd><kbd>Y</kbd></span></div>
-            <div class="krow"><span>Duplicate box</span><span class="keys"><kbd>Ctrl</kbd><kbd>D</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>Navigate</h4>
-            <div class="krow"><span>Previous / next image</span><span class="keys"><kbd>A</kbd><kbd>D</kbd></span></div>
-            <div class="krow"><span>Next unlabeled</span><span class="keys"><kbd>E</kbd></span></div>
-            <div class="krow"><span>Copy previous labels</span><span class="keys"><kbd>C</kbd></span></div>
-            <div class="krow"><span>Submit &amp; next unlabeled</span><span class="keys"><kbd>Enter</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>View</h4>
-            <div class="krow"><span>Pan</span><span class="keys"><kbd>Space</kbd><kbd>drag</kbd></span></div>
-            <div class="krow"><span>Zoom</span><span class="keys"><kbd>wheel</kbd><kbd>+</kbd><kbd>−</kbd></span></div>
-            <div class="krow"><span>Fit to view</span><span class="keys"><kbd>F</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>AI assist</h4>
-            <div class="krow"><span>Auto-label this image</span><span class="keys"><kbd>R</kbd></span></div>
-            <div class="krow"><span>Label-Error Radar</span><span class="keys"><kbd>Y</kbd></span></div>
-            <div class="krow"><span>Next flagged</span><span class="keys"><kbd>N</kbd></span></div>
-            <div class="krow"><span>Embedding map</span><span class="keys"><kbd>M</kbd></span></div>
-          </div>
-          <div class="kgroup"><h4>Save</h4>
-            <div class="krow"><span>Save</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
-            <div class="krow"><span>Cancel / clear / close</span><span class="keys"><kbd>Esc</kbd></span></div>
-          </div>
-        </div>
+        <p class="help-sub">Everything you can do without leaving the canvas. Click a highlighted key to rebind it.</p>
+        <div class="kgrid" id="kgrid"></div>
+        <div class="khint-row"><span class="khint" id="khint"></span><button class="btn btn-ghost btn-sm" id="kreset">Reset to defaults</button></div>
       </div></div>
     </div>
     <aside class="regions" id="regionspanel">

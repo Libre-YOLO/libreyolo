@@ -349,6 +349,7 @@ function wireProjectActions(){
   $("#deletemodal").addEventListener("click",e=>{ if(e.target.id==="deletemodal") closeDelete(); });
   $("#helpclose").onclick=toggleHelp;
   $("#help").addEventListener("click",e=>{ if(e.target.id==="help") toggleHelp(); });
+  const kr=$("#kreset"); if(kr) kr.onclick=()=>{ resetKeys(); rebindTarget=null; renderHelp("Shortcuts reset to defaults."); };
   const sb=$("#settingsbtn"); if(sb) sb.onclick=openSettings;
   $("#setclose").onclick=closeSettings; $("#setcancel").onclick=closeSettings; $("#setsave").onclick=saveSettings;
   $("#settingsmodal").addEventListener("click",e=>{ if(e.target.id==="settingsmodal") closeSettings(); });

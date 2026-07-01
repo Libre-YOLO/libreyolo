@@ -224,6 +224,11 @@ PART = r"""  :root{
   .krow:last-child{border-bottom:0}
   .krow .keys{display:flex;align-items:center;gap:4px;flex:none}
   .help kbd{display:inline-block;background:var(--s3);border:1px solid var(--line2);border-bottom-width:2px;border-radius:6px;padding:1px 7px;font:11px ui-monospace,monospace;color:var(--tx)}
+  .help kbd.k-edit{cursor:pointer;min-width:14px;text-align:center;transition:.12s}
+  .help kbd.k-edit:hover{border-color:var(--ac);color:var(--ac)}
+  .help kbd.k-live{border-color:var(--ac);color:var(--ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--ac) 22%,transparent)}
+  .khint-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px}
+  .khint{font-size:12px;color:var(--tx3)} .khint.err{color:var(--danger)}
   :focus-visible{outline:2px solid var(--ac);outline-offset:2px}
   /* --- data-quality + AI superpowers: Radar, Boost, Map, dup-fixer --- */
   .chip{display:none;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;
