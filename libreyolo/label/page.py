@@ -2683,20 +2683,24 @@ function wireWizard(){
       if(fs.length) wzUpload(fs); });
   }
 }
+let homeOpenMeta = null;   // the live session, for the teammate Resume escape hatch
 function showHome(openMeta){
   $("#home").classList.add("show");
   homeError("");
-  // Offer a way back into the already-open session. Crucial on a --share server,
-  // where a LAN teammate can't open a project (admin-only) and would otherwise be
-  // stranded on Home once ll-home is set; resume needs no admin -- just the live session.
-  const rz=$("#homeresume"), btn=$("#homeresumebtn");
-  if(rz && btn){
-    if(openMeta && openMeta.open){
-      rz.style.display="";
-      btn.onclick = async ()=>{ try{ sessionStorage.removeItem("ll-home"); }catch(e){} hideHome(); await enterLabeler(openMeta); };
-    } else { rz.style.display="none"; }
-  }
+  homeOpenMeta = (openMeta && openMeta.open) ? openMeta : null;
+  const rz=$("#homeresume"); if(rz) rz.style.display="none";   // renderProjects decides
   renderProjects();
+}
+// "Resume current project" appears ONLY when there is a live session but no project
+// list to click - i.e. a LAN teammate on a --share server (the registry is
+// admin-only), who otherwise gets stranded on Home. The host has its project cards.
+function maybeOfferResume(projectCount){
+  const rz=$("#homeresume"), btn=$("#homeresumebtn");
+  if(!rz || !btn) return;
+  if(homeOpenMeta && projectCount===0){
+    rz.style.display="";
+    btn.onclick = async ()=>{ try{ sessionStorage.removeItem("ll-home"); }catch(e){} hideHome(); await enterLabeler(homeOpenMeta); };
+  } else rz.style.display="none";
 }
 function hideHome(){ $("#home").classList.remove("show"); }
 async function backToHome(){
@@ -2712,6 +2716,7 @@ async function renderProjects(){
   let d; try{ d = await jget("/api/projects"); }
   catch(e){ grid.innerHTML = `<div class="home-empty">Could not load projects.</div>`; return; }
   const list = d.projects||[];
+  maybeOfferResume(list.length);
   if(!list.length){ grid.innerHTML = `<div class="home-empty">No projects yet - click <b>New project</b> to get started.</div>`; return; }
   const dots = `<svg class="ic" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`;
   grid.innerHTML = list.map(p=>{
