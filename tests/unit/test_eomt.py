@@ -98,6 +98,24 @@ class TestEoMTMetadata:
         assert LibreEoMT.can_load(state)
         assert LibreEoMT.detect_size(state) == "l"
 
+    def test_normalize_strips_compound_prefixes(self):
+        """Regression: compound prefixes (torch.compile + DDP -> _orig_mod.module.)
+        must be fully stripped, not just the outer layer (single-pass bug)."""
+        from libreyolo.models.eomt.nn import normalize_eomt_state_dict
+
+        raw = {
+            "_orig_mod.module.eomt.layers.0.weight": torch.zeros(2),
+            "module.model.class_predictor.bias": torch.zeros(2),
+            "already.clean.key": torch.zeros(2),
+        }
+        out = normalize_eomt_state_dict(raw)
+        assert "layers.0.weight" in out
+        assert "class_predictor.bias" in out
+        assert "already.clean.key" in out
+        assert not any(
+            k.startswith(("module.", "_orig_mod.", "model.", "eomt.")) for k in out
+        )
+
     def test_can_load_rejects_other_dense_families(self):
         from libreyolo.models.eomt.model import LibreEoMT
 

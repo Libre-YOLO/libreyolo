@@ -55,14 +55,25 @@ def _load_transformers_eomt():
 
 
 def normalize_eomt_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
-    """Return tensor keys in the raw HF EoMT layout."""
+    """Return tensor keys in the raw HF EoMT layout.
+
+    Strips wrapper prefixes repeatedly so compound prefixes (e.g. a
+    ``torch.compile`` + DDP ``_orig_mod.module.`` combination) are fully removed
+    in one call, matching LibrePIDNet's while-changed loop. A single pass would
+    strip only the outer prefix and leave the inner one behind.
+    """
+    prefixes = ("module.", "_orig_mod.", "model.", "eomt.")
     normalized = {}
     for key, value in state_dict.items():
         if not isinstance(value, torch.Tensor):
             continue
-        for prefix in ("module.", "_orig_mod.", "model.", "eomt."):
-            if key.startswith(prefix):
-                key = key[len(prefix) :]
+        changed = True
+        while changed:
+            changed = False
+            for prefix in prefixes:
+                if key.startswith(prefix):
+                    key = key[len(prefix) :]
+                    changed = True
         normalized[key] = value
     return normalized
 

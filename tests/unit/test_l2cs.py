@@ -317,19 +317,21 @@ def _craft_l2cs(tmp_path, yaw_bin, pitch_bin, num_bins=90):
 
 
 def test_pitch_yaw_head_assignment(tmp_path):
-    """Finding #2: result.gaze.pitch must come from fc_yaw_gaze (the pitch head).
+    """The L2CS head names are honest: fc_yaw_gaze predicts yaw and
+    fc_pitch_gaze predicts pitch (corrected in #472, fix/l2cs-pitch-yaw-swap).
 
-    Per upstream L2CS-Net training, forward position 0 (fc_yaw_gaze) is
-    supervised on pitch labels and position 1 (fc_pitch_gaze) on yaw labels.
-    So result.gaze.pitch == decode(fc_yaw_gaze) and .yaw == decode(fc_pitch_gaze).
+    L2CS.forward returns ``(fc_yaw_gaze(x), fc_pitch_gaze(x))`` in that order,
+    and inference maps the first output to yaw and the second to pitch. So
+    result.gaze.yaw == decode(fc_yaw_gaze) and .pitch == decode(fc_pitch_gaze).
     """
-    # fc_yaw_gaze -> bin 80 -> 80*4-180 = +140 deg; fc_pitch_gaze -> bin 10 -> -140 deg
+    # fc_yaw_gaze -> bin 80 -> 80*4-180 = +140 deg (yaw)
+    # fc_pitch_gaze -> bin 10 -> 10*4-180 = -140 deg (pitch)
     wp = _craft_l2cs(tmp_path, yaw_bin=80, pitch_bin=10)
     model = LibreL2CS(wp, size="r18", device="cpu")
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
     res = model(img, face_boxes=[(0, 0, 64, 64)])
-    assert float(res.gaze.pitch_deg[0]) == pytest.approx(140.0, abs=1.0)
-    assert float(res.gaze.yaw_deg[0]) == pytest.approx(-140.0, abs=1.0)
+    assert float(res.gaze.pitch_deg[0]) == pytest.approx(-140.0, abs=1.0)
+    assert float(res.gaze.yaw_deg[0]) == pytest.approx(140.0, abs=1.0)
 
 
 def test_28bin_checkpoint_loads_and_decodes(tmp_path):

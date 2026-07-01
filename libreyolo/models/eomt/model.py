@@ -121,6 +121,12 @@ class LibreEoMT(BaseModel):
 
         if weight_source is not None:
             self._load_weights(weight_source)
+            # BaseModel.__init__ received model_path=None (EoMT loads its own
+            # weights above), so it left self.model_path unset. Restore the
+            # resolved path so direct ``LibreEoMT("...")`` construction matches
+            # the factory path, which sets model_path post-construction.
+            if isinstance(weight_source, (str, Path)):
+                self.model_path = str(weight_source)
         self.model.eval()
 
     def _init_model(self) -> nn.Module:
