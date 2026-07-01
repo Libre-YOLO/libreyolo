@@ -107,6 +107,8 @@ def __getattr__(name):
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
+        "LibreSAM2": (".models.sam", "LibreSAM2"),
+        "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
         "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
         "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
         "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
@@ -166,6 +168,8 @@ __all__ = [
     # Promptable-segmentation tier (optional, requires libreyolo[sam])
     "LibreSAM",
     "LibreSAM1",
+    "LibreSAM2",
+    "LibreMobileSAM",
     # Open-vocabulary detector tier (optional, requires libreyolo[openvocab])
     "LibreOpenVocab",
     "LibreGroundingDINO",

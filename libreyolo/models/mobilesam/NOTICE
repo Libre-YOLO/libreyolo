@@ -1,0 +1,25 @@
+LibreMobileSAM - third-party attribution
+========================================
+
+The MobileSAM architecture in this family is a native LibreYOLO port derived
+from:
+
+    Project:  MobileSAM
+    Upstream: https://github.com/ChaoningZhang/MobileSAM
+    License:  Apache License 2.0
+
+The TinyViT image encoder portions preserve the upstream TinyViT module and
+state-dict structure:
+
+    Project:  TinyViT
+    Authors:  Microsoft contributors
+    License:  Apache License 2.0
+
+The prompt encoder, two-way transformer, mask decoder, preprocessing geometry,
+and mask postprocessing follow the MobileSAM v1 implementation so the converted
+checkpoint loads with strict key matching and can be checked for bit-exact
+parity against the upstream Apache-2.0 implementation.
+
+Pretrained weights are converted from the MobileSAM Apache-2.0 checkpoint and
+hosted as LibreMobileSAM.pt under LibreYOLO/LibreMobileSAM. The hosted model
+repo must carry this NOTICE and the Apache-2.0 LICENSE alongside the weights.
