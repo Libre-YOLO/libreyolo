@@ -187,6 +187,26 @@ def test_train_dry_run_rejects_ambiguous_freeze_true():
     assert "freeze=True is ambiguous" in data["message"]
 
 
+def test_train_rejects_distill_model_not_implemented():
+    """Requesting a distillation teacher fails fast with a clear message."""
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=coco8.yaml",
+            "model=LibreYOLO9t.pt",
+            "distill_model=LibreYOLO9m.pt",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    data = json.loads(result.stdout)
+    assert data["error"] == "config_unsupported"
+    assert "not implemented yet" in data["message"]
+
+
 def test_train_dry_run_rejects_lora_for_unsupported_family():
     app = _make_app()
     result = runner.invoke(

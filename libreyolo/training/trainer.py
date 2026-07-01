@@ -27,7 +27,7 @@ from .callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
-from .config import TrainConfig
+from .config import TrainConfig, check_distillation_not_implemented
 from .loggers import resolve_loggers
 from .distributed import (
     barrier,
@@ -89,6 +89,9 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
+        # Reserved-but-unimplemented distillation API: fail loudly the moment a
+        # teacher is requested, for every family, instead of silently ignoring it.
+        check_distillation_not_implemented(getattr(self.config, "distill_model", None))
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
