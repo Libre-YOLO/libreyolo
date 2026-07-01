@@ -1,0 +1,260 @@
+"""Offline tests for the LibreOpenVocab tier."""
+
+from __future__ import annotations
+
+import pytest
+import torch
+
+from libreyolo.models.base.model import BaseModel
+from libreyolo.models.openvocab import LibreOpenVocab
+from libreyolo.models.openvocab.grounding_dino import LibreGroundingDINO
+from libreyolo.models.openvocab.owlv2 import LibreOWLv2
+
+pytestmark = pytest.mark.unit
+
+
+def _bare(cls=LibreOWLv2):
+    m = object.__new__(cls)
+    m.names = {0: "person", 1: "dog"}
+    m.nb_classes = 2
+    m._refresh_name_index()
+    return m
+
+
+class TestSetClasses:
+    def test_builds_names_and_reverse_map(self):
+        m = _bare()
+        m.set_classes(["Pink Car", "Remote Control"])
+        assert m.names == {0: "Pink Car", 1: "Remote Control"}
+        assert m.nb_classes == 2
+        assert m._name_to_id == {"pink car": 0, "remote control": 1}
+
+    def test_rejects_string_scalar_empty_and_blank(self):
+        m = _bare()
+        with pytest.raises(TypeError):
+            m.set_classes("person")
+        with pytest.raises(TypeError):
+            m.set_classes(123)
+        with pytest.raises(ValueError):
+            m.set_classes([])
+        with pytest.raises(ValueError):
+            m.set_classes(["person", "   "])
+
+    def test_duplicate_casefolded_names_raise(self):
+        m = _bare()
+        with pytest.raises(ValueError):
+            m.set_classes(["Boat", "boat"])
+
+
+class TestFactoryAliases:
+    def test_default_resolves_to_grounding_dino_tiny(self):
+        from libreyolo.models.openvocab import _ALIASES, _DEFAULT_MODEL
+
+        assert _DEFAULT_MODEL == "grounding-dino-tiny"
+        assert _ALIASES[_DEFAULT_MODEL] == (LibreGroundingDINO, "t")
+
+    def test_known_aliases_map_to_family_and_size(self):
+        from libreyolo.models.openvocab import _ALIASES
+
+        assert _ALIASES["grounding-dino-base"] == (LibreGroundingDINO, "b")
+        assert _ALIASES["owlv2"] == (LibreOWLv2, "b16")
+        assert _ALIASES["owl-v2-large"] == (LibreOWLv2, "l14")
+
+    def test_unknown_alias_raises_before_loading(self):
+        with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
+            LibreOpenVocab("definitely-not-real")
+
+
+class TestSnapshotComplete:
+    def _mark_complete(self, path, marker=None):
+        import json
+
+        (path / ".libreyolo_snapshot_complete").write_text(json.dumps(marker or {}))
+
+    def test_single_file_complete(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(tmp_path, {"repo": "example/model"})
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is True
+
+    def test_missing_marker_or_config_is_incomplete(self, tmp_path):
+        (tmp_path / "model.safetensors").write_text("x")
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is False
+        self._mark_complete(tmp_path, {"repo": "example/model"})
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is False
+
+    def test_sharded_complete_only_when_all_shards_exist(self, tmp_path):
+        import json
+
+        (tmp_path / "config.json").write_text("{}")
+        self._mark_complete(tmp_path, {"repo": "example/model"})
+        (tmp_path / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": {"a": "s1.safetensors", "b": "s2.safetensors"}})
+        )
+        (tmp_path / "s1.safetensors").write_text("x")
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is False
+        (tmp_path / "s2.safetensors").write_text("x")
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is True
+
+    def test_repo_marker_must_match(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(tmp_path, {"repo": "other/model"})
+        assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is False
+
+
+class TestCallDefaults:
+    def test_owlv2_default_conf_is_injected(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOWLv2)
+        assert m("image.jpg") == "ok"
+        assert captured["conf"] == pytest.approx(0.1)
+
+    def test_explicit_conf_is_preserved(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOWLv2)
+        assert m("image.jpg", conf=0.42) == "ok"
+        assert captured["conf"] == pytest.approx(0.42)
+
+    def test_text_threshold_is_temporary_for_grounding_dino(self, monkeypatch):
+        seen = {}
+
+        def fake_call(self, source=None, **kwargs):
+            seen["during"] = self._text_threshold
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreGroundingDINO)
+        m._text_threshold = 0.25
+
+        assert m("image.jpg", text_threshold=0.4) == "ok"
+
+        assert seen["during"] == pytest.approx(0.4)
+        assert m._text_threshold == pytest.approx(0.25)
+
+    def test_text_threshold_rejected_for_owlv2(self):
+        m = _bare(LibreOWLv2)
+        with pytest.raises(TypeError, match="does not support text_threshold"):
+            m("image.jpg", text_threshold=0.4)
+
+    def test_text_threshold_rejected_for_streaming_call(self):
+        m = _bare(LibreGroundingDINO)
+        m._text_threshold = 0.25
+        with pytest.raises(ValueError, match="stream=True"):
+            m("video.mp4", stream=True, text_threshold=0.4)
+        assert m._text_threshold == pytest.approx(0.25)
+
+    def test_imgsz_is_rejected_instead_of_silently_ignored(self):
+        m = _bare(LibreOWLv2)
+        with pytest.raises(ValueError, match="does not support imgsz"):
+            m("image.jpg", imgsz=320)
+
+    def test_augment_true_is_rejected_instead_of_silently_ignored(self):
+        m = _bare(LibreOWLv2)
+        with pytest.raises(ValueError, match="augment=True"):
+            m("image.jpg", augment=True)
+
+    def test_iou_warns_because_hf_postprocess_has_no_nms(self, monkeypatch):
+        def fake_call(self, source=None, **kwargs):
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOWLv2)
+        with pytest.warns(UserWarning, match="iou=.+ignored"):
+            assert m("image.jpg", iou=0.7) == "ok"
+
+
+class TestGroundingDinoPhraseMapping:
+    def test_exact_match(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["remote control", "cat"])
+        assert m._phrase_to_class_id("a remote control") == 0
+        assert m._phrase_to_class_id("Cat") == 1
+
+    def test_word_boundary_matching_does_not_match_carpet(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["car"])
+        assert m._phrase_to_class_id("red car") == 0
+        assert m._phrase_to_class_id("carpet") is None
+
+    def test_ambiguous_non_exact_match_is_dropped(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["bus", "school"])
+        assert m._phrase_to_class_id("school bus") is None
+
+    def test_exact_match_wins_for_overlapping_label(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["bus", "school bus"])
+        assert m._phrase_to_class_id("school bus") == 1
+
+    def test_postprocess_uses_text_labels_not_integer_labels(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["cat"])
+        m._text_threshold = 0.25
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                return [
+                    {
+                        "boxes": torch.tensor([[1.0, 2.0, 10.0, 12.0]]),
+                        "scores": torch.tensor([0.9]),
+                        "labels": torch.tensor([7]),
+                        "text_labels": ["cat"],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(
+            {"outputs": object(), "input_ids": torch.tensor([[1]])},
+            0.25,
+            0.45,
+            (20, 20),
+        )
+        assert det["num_detections"] == 1
+        assert det["classes"].tolist() == [0]
+
+
+class TestOWLv2Mapping:
+    def test_integer_labels_map_to_query_class_ids(self):
+        m = _bare(LibreOWLv2)
+        m.set_classes(["cat", "dog", "bus"])
+        labels = m._labels_to_class_ids(torch.tensor([2, 0, 99]))
+        assert labels.tolist() == [2, 0, -1]
+
+    def test_prompt_template(self):
+        m = _bare(LibreOWLv2)
+        m.set_classes(["Remote Control", "Cat"])
+        assert m._text_labels() == [["a photo of a remote control", "a photo of a cat"]]
+
+    def test_postprocess_filters_invalid_query_ids(self):
+        m = _bare(LibreOWLv2)
+        m.set_classes(["cat", "dog"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                return [
+                    {
+                        "boxes": torch.tensor(
+                            [[1.0, 2.0, 10.0, 12.0], [3.0, 4.0, 9.0, 11.0]]
+                        ),
+                        "scores": torch.tensor([0.9, 0.8]),
+                        "labels": torch.tensor([1, 5]),
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.1, 0.45, (20, 20))
+        assert det["num_detections"] == 1
+        assert det["classes"].tolist() == [1]

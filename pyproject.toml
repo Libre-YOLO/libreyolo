@@ -71,6 +71,11 @@ sam = [
     # (SamModel/SamProcessor); huggingface_hub ships with it.
     "transformers>=5.1.0",
 ]
+openvocab = [
+    # Discriminative open-vocabulary detectors load through transformers
+    # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection).
+    "transformers>=5.1.0",
+]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
     # [[tool.uv.dependency-metadata]] blocks below.
@@ -143,6 +148,7 @@ all = [
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
+    "libreyolo[openvocab]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
@@ -290,6 +296,7 @@ markers = [
     "fomo: tests covering the LibreFOMO point-localizer family",
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
+    "openvocab: tests covering the LibreOpenVocab detector tier",
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
