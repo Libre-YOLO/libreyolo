@@ -1383,7 +1383,7 @@ class BaseTrainer(ABC):
                 if getattr(self, "_stop_training", False):
                     break
 
-            if self.distiller is not None:
+            if getattr(self, "distiller", None) is not None:
                 self.distiller.cleanup()
 
             total_time = time.time() - start_time
@@ -1738,6 +1738,8 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1760,8 +1762,8 @@ class BaseTrainer(ABC):
                 )
 
             # Teacher forward (no-grad, outside autocast)
-            if self.distiller is not None:
-                self.distiller.teacher_forward(imgs)
+            if distiller is not None:
+                distiller.teacher_forward(imgs)
 
             # Forward + backward. Under DDP we multiply loss by world_size
             # so that backward() gradient averaging produces the same
@@ -1771,8 +1773,8 @@ class BaseTrainer(ABC):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
-                        if self.distiller is not None:
-                            distill_loss = self.distiller.compute_loss()
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
                             total_loss_raw = total_loss_raw + distill_loss
                             self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
@@ -1789,8 +1791,8 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
-                    if self.distiller is not None:
-                        distill_loss = self.distiller.compute_loss()
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
                         total_loss_raw = total_loss_raw + distill_loss
                         self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
@@ -1801,8 +1803,8 @@ class BaseTrainer(ABC):
                 with self._prof_phase("optimizer"):
                     self.optimizer.step()
 
-            if self.distiller is not None:
-                self.distiller.step()
+            if distiller is not None:
+                distiller.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1813,7 +1815,7 @@ class BaseTrainer(ABC):
             # already returns a Python float and detaches from autograd.
             loss_val = float(total_loss_raw.item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
-            if self.distiller is not None:
+            if distiller is not None:
                 loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             for name, value in loss_components.items():
