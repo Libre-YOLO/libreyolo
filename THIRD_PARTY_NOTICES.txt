@@ -91,6 +91,17 @@ Used for: YOLO9 model family (libreyolo/models/yolo9/), including the
           loss port in libreyolo/models/yolo9/loss.py.
 
 --------------------------------------------------------------------
+PIDNet (XuJiacong)
+--------------------------------------------------------------------
+Source: https://github.com/XuJiacong/PIDNet
+License: MIT
+Copyright (c) 2022 Jiacong Xu
+Used for: PIDNet semantic segmentation family
+          (libreyolo/models/pidnet/). Converted Cityscapes weights are
+          MIT-licensed PIDNet weights; the Cityscapes dataset itself is not
+          redistributed by LibreYOLO.
+
+--------------------------------------------------------------------
 SuperGradients / YOLO-NAS
 --------------------------------------------------------------------
 Source: https://github.com/Deci-AI/super-gradients

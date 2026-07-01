@@ -63,6 +63,7 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
     LibreDepthAnythingV2,
 )
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
@@ -478,6 +479,13 @@ def LibreYOLO(
             f"Registered model families: {', '.join(registered)}."
         )
 
+    if matched_cls.FAMILY == "pidnet" and not has_v1_metadata:
+        raise ValueError(
+            "Raw upstream PIDNet checkpoints must be converted before loading. "
+            "Use weights/convert_pidnet_weights.py to create a LibreYOLO "
+            "checkpoint with Cityscapes semantic metadata."
+        )
+
     # Auto-detect size
     if size is None:
         if matched_cls.FAMILY == "rfdetr":
@@ -624,6 +632,7 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreEoMT",
+    "LibrePIDNet",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
