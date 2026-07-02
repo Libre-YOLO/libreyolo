@@ -1790,9 +1790,14 @@ class BaseTrainer(ABC):
                     step=self.current_iter,
                 )
 
-            # Teacher forward (no-grad, outside autocast)
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
-                distiller.teacher_forward(imgs)
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
 
             # Forward + backward. Under DDP we multiply loss by world_size
             # so that backward() gradient averaging produces the same
@@ -1951,9 +1956,14 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad(set_to_none=True)
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
-            # Teacher forward (no-grad, outside autocast)
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
-                distiller.teacher_forward(imgs)
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
 
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the

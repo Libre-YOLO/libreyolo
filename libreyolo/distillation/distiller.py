@@ -226,13 +226,21 @@ class Distiller(nn.Module):
         s_feats = self.s_hooks.get_feature_list()
 
         if len(t_feats) != self.num_scales:
+            missing = [
+                p for p in self.t_hooks.tap_points if p not in self.t_hooks.get_features()
+            ]
             raise RuntimeError(
-                f"Expected {self.num_scales} teacher features, got {len(t_feats)}. "
+                f"Expected {self.num_scales} teacher features, got {len(t_feats)} "
+                f"(missing tap points: {missing}). "
                 f"Did you call teacher_forward() before compute_loss()?"
             )
         if len(s_feats) != self.num_scales:
+            missing = [
+                p for p in self.s_hooks.tap_points if p not in self.s_hooks.get_features()
+            ]
             raise RuntimeError(
-                f"Expected {self.num_scales} student features, got {len(s_feats)}. "
+                f"Expected {self.num_scales} student features, got {len(s_feats)} "
+                f"(missing tap points: {missing}). "
                 f"Did the student forward pass run before compute_loss()?"
             )
 
