@@ -147,5 +147,9 @@ def build_target(
 
     target[:n, 0] = cls[:n]
     target[:n, 1:5] = bboxes_px[:n]
-    target[:n, 5:] = kpts_px[:n].reshape(len(kpts_px), -1)[:n]
+    # Reshape the first ``n`` (capped) instances, not ``len(kpts_px)``: when an
+    # image has more instances than ``max_labels`` the two differ and the old
+    # ``reshape(len(kpts_px), -1)`` raised a shape error (n*K*3 elements can't
+    # fill len(kpts_px) rows).
+    target[:n, 5:] = kpts_px[:n].reshape(n, -1)
     return target
