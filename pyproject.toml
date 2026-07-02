@@ -79,6 +79,11 @@ openvocab = [
     # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection).
     "transformers>=5.1.0",
 ]
+label = [
+    # AI-assist for `libreyolo label`: SAM click-to-mask via the LibreSAM tier.
+    # The manual labeller and model-assisted box auto-label work without this.
+    "libreyolo[sam]",
+]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
     # [[tool.uv.dependency-metadata]] blocks below.
@@ -152,6 +157,7 @@ all = [
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
+    "libreyolo[label]",
     "libreyolo[openvocab]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
