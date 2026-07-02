@@ -43,7 +43,7 @@ def get_relative_position_index(win_h: int, win_w: int) -> torch.Tensor:
 
 
 class WindowAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, window_size: int):
+    def __init__(self, dim: int, num_heads: int, window_size: int, tf_order: bool = False):
         super().__init__()
         self.dim = dim
         self.window_size = (window_size, window_size)
@@ -51,6 +51,9 @@ class WindowAttention(nn.Module):
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim**-0.5
+        # timm scales q pre-matmul; transformers scales the q@k product. Same math,
+        # different fp rounding — must match the source model to stay bit-exact.
+        self.tf_order = tf_order
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size - 1) * (2 * window_size - 1), num_heads)
         )
@@ -72,8 +75,10 @@ class WindowAttention(nn.Module):
         b_, n, c = x.shape
         qkv = self.qkv(x).reshape(b_, n, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
-        q = q * self.scale
-        attn = q @ k.transpose(-2, -1)
+        if self.tf_order:
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+        else:
+            attn = (q * self.scale) @ k.transpose(-2, -1)
         attn = attn + self._rel_pos_bias()
         if mask is not None:
             num_win = mask.shape[0]
@@ -96,12 +101,16 @@ class SwinMlp(nn.Module):
 
 
 class SwinBlock(nn.Module):
-    def __init__(self, dim: int, num_heads: int, window_size: int, shift_size: int, mlp_ratio: float = 4.0):
+    def __init__(self, dim: int, num_heads: int, window_size: int, shift_size: int, mlp_ratio: float = 4.0,
+                 tf_order: bool = False):
         super().__init__()
         self.window_size = window_size
         self.shift_size = shift_size
+        # tf_order=True mirrors transformers Swin (pad THEN shift); False mirrors timm
+        # (shift THEN pad). They diverge when the resolution is not a multiple of window.
+        self.tf_order = tf_order
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = WindowAttention(dim, num_heads, window_size)
+        self.attn = WindowAttention(dim, num_heads, window_size, tf_order=tf_order)
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = SwinMlp(dim, int(dim * mlp_ratio))
 
@@ -122,15 +131,28 @@ class SwinBlock(nn.Module):
     def _forward_attn(self, x: torch.Tensor) -> torch.Tensor:
         b, h, w, c = x.shape
         ws, ss = self.window_size, self.shift_size
-        shifted = torch.roll(x, shifts=(-ss, -ss), dims=(1, 2)) if ss else x
         pad_h = (ws - h % ws) % ws
         pad_w = (ws - w % ws) % ws
-        shifted = F.pad(shifted, (0, 0, 0, pad_w, 0, pad_h))
-        _, hp, wp, _ = shifted.shape
+        if self.tf_order:
+            # transformers: pad first, then cyclic shift
+            x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h))
+            _, hp, wp, _ = x.shape
+            shifted = torch.roll(x, shifts=(-ss, -ss), dims=(1, 2)) if ss else x
+        else:
+            # timm: cyclic shift first, then pad
+            shifted = torch.roll(x, shifts=(-ss, -ss), dims=(1, 2)) if ss else x
+            shifted = F.pad(shifted, (0, 0, 0, pad_w, 0, pad_h))
+            _, hp, wp, _ = shifted.shape
         x_windows = window_partition(shifted, ws).view(-1, ws * ws, c)
         mask = self._attn_mask(hp, wp, x.device, x.dtype)
         attn_windows = self.attn(x_windows, mask=mask).view(-1, ws, ws, c)
-        shifted = window_reverse(attn_windows, ws, hp, wp)[:, :h, :w, :].contiguous()
+        shifted = window_reverse(attn_windows, ws, hp, wp)
+        if self.tf_order:
+            # transformers: reverse cyclic shift on padded, then crop
+            shifted = torch.roll(shifted, shifts=(ss, ss), dims=(1, 2)) if ss else shifted
+            return shifted[:, :h, :w, :].contiguous()
+        # timm: crop, then reverse cyclic shift
+        shifted = shifted[:, :h, :w, :].contiguous()
         return torch.roll(shifted, shifts=(ss, ss), dims=(1, 2)) if ss else shifted
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -156,13 +178,13 @@ class PatchMerging(nn.Module):
 
 
 class SwinStage(nn.Module):
-    def __init__(self, dim, out_dim, depth, num_heads, window_size, downsample):
+    def __init__(self, dim, out_dim, depth, num_heads, window_size, downsample, tf_order=False):
         super().__init__()
         self.downsample = PatchMerging(dim, out_dim) if downsample else nn.Identity()
         shift = window_size // 2
         self.blocks = nn.ModuleList(
             [
-                SwinBlock(out_dim, num_heads, window_size, 0 if i % 2 == 0 else shift)
+                SwinBlock(out_dim, num_heads, window_size, 0 if i % 2 == 0 else shift, tf_order=tf_order)
                 for i in range(depth)
             ]
         )
@@ -201,6 +223,7 @@ class SwinDims:
     window_size: int = 7
     patch_size: int = 4
     out_indices: tuple = (1, 2, 3)
+    tf_order: bool = False  # False = timm convention (OMDet); True = transformers (Grounding DINO)
 
 
 class SwinBackbone(nn.Module):
@@ -215,7 +238,8 @@ class SwinBackbone(nn.Module):
         in_dim = d.embed_dim
         for i, depth in enumerate(d.depths):
             self.layers.append(
-                SwinStage(in_dim, dims[i], depth, d.num_heads[i], d.window_size, downsample=i > 0)
+                SwinStage(in_dim, dims[i], depth, d.num_heads[i], d.window_size,
+                          downsample=i > 0, tf_order=d.tf_order)
             )
             in_dim = dims[i]
 
