@@ -240,8 +240,14 @@ def all_reduce_avg_scalar(
     single-GPU training on the same global batch: with each rank dividing by
     ``global_count / world_size`` and DDP averaging the gradients, the two
     cancel to reproduce the single-GPU gradient exactly (see
-    ``scale_loss_for_ddp``). The result is clamped to ``min_value`` to avoid
-    division by zero on all-background batches.
+    ``scale_loss_for_ddp``).
+
+    The global sum is clamped to ``min_value`` BEFORE dividing by world_size.
+    Clamping after the divide (the upstream-DETR order) breaks exactness
+    whenever the global positive mass is below world_size: an all-background
+    batch would train at exactly 1/world_size gradient — worst on the
+    background-heavy datasets from issue #484. Clamp-first keeps the
+    single-GPU-equivalence exact for every batch, including empty ones.
 
     Outside DDP this is just ``max(value, min_value)`` — single-GPU behavior is
     unchanged (identical numeric value to the previous ``max(sum, 1)``).
@@ -264,7 +270,8 @@ def all_reduce_avg_scalar(
                 "GPU) so the collective can run."
             )
         dist.all_reduce(v)
-        v = v / float(get_world_size())
+        v = v.clamp_min(min_value) / float(get_world_size())
+        return float(v.item())
     return float(v.clamp_min(min_value).item())
 
 
