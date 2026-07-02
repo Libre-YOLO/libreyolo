@@ -1,37 +1,18 @@
-"""Tests for the reserved (not-yet-implemented) knowledge-distillation API.
+"""Tests for the public knowledge-distillation training API.
 
-The ``distill_model`` / ``dis`` training arguments are accepted by every
-trainable family so the public training API surface is stable, but the feature
-itself is not implemented. Requesting a teacher must raise ``NotImplementedError``
-rather than silently training an ordinary (non-distilled) model.
+``distill_model`` (teacher checkpoint path) turns distillation on; ``dis`` is
+the global loss weight (None = per-loss-type default); ``distill_loss_type``
+selects the feature loss. The arguments are accepted by every trainable family;
+families without ``get_distill_config()`` raise a clear error at setup time.
 """
 
 import warnings
 
 import pytest
-import torch.nn as nn
 
-from libreyolo.training.config import (
-    TrainConfig,
-    check_distillation_not_implemented,
-)
+from libreyolo.training.config import TrainConfig
 
 pytestmark = pytest.mark.unit
-
-
-# ---------------------------------------------------------------------------
-# Guard helper
-# ---------------------------------------------------------------------------
-
-
-def test_guard_noop_when_teacher_not_requested():
-    # None means distillation was not requested — must not raise.
-    assert check_distillation_not_implemented(None) is None
-
-
-def test_guard_raises_when_teacher_requested():
-    with pytest.raises(NotImplementedError, match="not implemented yet"):
-        check_distillation_not_implemented("teacher.pt")
 
 
 # ---------------------------------------------------------------------------
@@ -39,40 +20,78 @@ def test_guard_raises_when_teacher_requested():
 # ---------------------------------------------------------------------------
 
 
-def test_config_reserves_distill_fields_with_defaults():
+def test_config_distill_defaults():
     cfg = TrainConfig()
     assert cfg.distill_model is None
-    assert cfg.dis == 6.0
+    assert cfg.dis is None
+    assert cfg.distill_loss_type == "mgd"
+    assert cfg.distill_mask_ratio == 0.65
+    assert cfg.distill_tau == 1.0
 
 
 def test_config_accepts_distill_kwargs_without_unknown_key_warning():
-    # These are real fields now, so from_kwargs must not warn about them.
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        cfg = TrainConfig.from_kwargs(distill_model="teacher.pt", dis=10.0)
+        cfg = TrainConfig.from_kwargs(
+            distill_model="teacher.pt", dis=10.0, distill_loss_type="cwd"
+        )
     assert cfg.distill_model == "teacher.pt"
     assert cfg.dis == 10.0
+    assert cfg.distill_loss_type == "cwd"
 
 
 # ---------------------------------------------------------------------------
-# Trainer wiring (covers every family via BaseTrainer.__init__)
+# Trainer wiring
 # ---------------------------------------------------------------------------
 
 
-def test_trainer_raises_when_teacher_requested():
-    """A real flagship trainer must raise at construction when a teacher is set.
+def test_trainer_accepts_teacher_at_construction():
+    """Constructing a trainer with a teacher no longer raises; the teacher is
+    only loaded at setup() time."""
+    import torch.nn as nn
 
-    The guard is the first line of ``BaseTrainer.__init__`` (all 17 trainable
-    families subclass it), so this fires before any device/model/data work.
-    """
     from libreyolo.models.yolo9.trainer import YOLO9Trainer
 
-    with pytest.raises(NotImplementedError, match="not implemented yet"):
-        YOLO9Trainer(model=nn.Identity(), distill_model="teacher.pt")
+    trainer = YOLO9Trainer(model=nn.Identity(), distill_model="teacher.pt")
+    assert trainer.config.distill_model == "teacher.pt"
+    assert trainer.distiller is None  # not set up until setup()
+
+
+def test_setup_distillation_noop_without_teacher():
+    import torch.nn as nn
+
+    from libreyolo.models.yolo9.trainer import YOLO9Trainer
+
+    trainer = YOLO9Trainer(model=nn.Identity())
+    trainer._setup_distillation()
+    assert trainer.distiller is None
+
+
+def test_setup_distillation_requires_wrapper_model():
+    import torch.nn as nn
+
+    from libreyolo.models.yolo9.trainer import YOLO9Trainer
+
+    trainer = YOLO9Trainer(model=nn.Identity(), distill_model="teacher.pt")
+    assert trainer.wrapper_model is None
+    with pytest.raises(ValueError, match="wrapper_model"):
+        trainer._setup_distillation()
+
+
+def test_unsupported_family_raises_clear_error():
+    """Families without get_distill_config() fail with a message naming them."""
+    from libreyolo.models.base.model import BaseModel
+
+    class _Stub:
+        FAMILY = "stubfamily"
+        get_distill_config = BaseModel.get_distill_config
+
+    with pytest.raises(NotImplementedError, match="stubfamily"):
+        _Stub().get_distill_config()
 
 
 # ---------------------------------------------------------------------------
-# Python-API early guard (every family's train() is auto-wrapped)
+# cfg-yaml passthrough (every family's train() is auto-wrapped)
 # ---------------------------------------------------------------------------
 
 
@@ -80,43 +99,19 @@ class _FakeWrapper:
     pass
 
 
-def _make_fake_train(captured: dict):
-    def train(self, data, *, epochs=10, **kwargs):
-        captured["called"] = True
-        return {"ok": True}
-
-    return train
-
-
-def test_wrapped_train_raises_before_running_body():
-    """The distill guard fires before the family train() body (no data work)."""
-    from libreyolo.models.base.model import _wrap_train_with_cfg
-
-    captured: dict = {}
-    wrapped = _wrap_train_with_cfg(_make_fake_train(captured))
-    with pytest.raises(NotImplementedError, match="not implemented yet"):
-        wrapped(_FakeWrapper(), "data.yaml", distill_model="teacher.pt")
-    assert "called" not in captured  # body never ran
-
-
-def test_wrapped_train_raises_when_teacher_comes_from_cfg_yaml(tmp_path):
-    """A teacher supplied via ``cfg=`` yaml is caught after the merge."""
+def test_wrapped_train_forwards_distill_kwargs_from_cfg_yaml(tmp_path):
     from libreyolo.models.base.model import _wrap_train_with_cfg
 
     cfg = tmp_path / "train.yaml"
-    cfg.write_text("epochs: 50\ndistill_model: teacher.pt\n")
+    cfg.write_text("epochs: 50\ndistill_model: teacher.pt\ndis: 2.0\n")
     captured: dict = {}
-    wrapped = _wrap_train_with_cfg(_make_fake_train(captured))
-    with pytest.raises(NotImplementedError, match="not implemented yet"):
-        wrapped(_FakeWrapper(), "data.yaml", cfg=str(cfg))
-    assert "called" not in captured
 
+    def train(self, data, *, epochs=10, **kwargs):
+        captured.update(kwargs, epochs=epochs)
+        return {"ok": True}
 
-def test_wrapped_train_passes_through_when_no_teacher():
-    """No teacher → guard is a no-op and the body runs normally."""
-    from libreyolo.models.base.model import _wrap_train_with_cfg
-
-    captured: dict = {}
-    wrapped = _wrap_train_with_cfg(_make_fake_train(captured))
-    assert wrapped(_FakeWrapper(), "data.yaml", epochs=5) == {"ok": True}
-    assert captured["called"] is True
+    wrapped = _wrap_train_with_cfg(train)
+    assert wrapped(_FakeWrapper(), "data.yaml", cfg=str(cfg)) == {"ok": True}
+    assert captured["distill_model"] == "teacher.pt"
+    assert captured["dis"] == 2.0
+    assert captured["epochs"] == 50

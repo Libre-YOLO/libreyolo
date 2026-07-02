@@ -2,7 +2,7 @@
 
 Validates the distillation pipeline end-to-end on CPU with tiny synthetic data:
   - load a frozen YOLOv9 teacher (fresh weights),
-  - train a YOLOv9 student with distill=True,
+  - train a YOLOv9 student with distill_model set,
   - verify student loss is finite AND a non-zero distillation loss is logged.
 
 Runs in <30s on a MacBook CPU. No network, no pretrained weights, no large data.
@@ -98,10 +98,9 @@ def test_distillation_training_finishes(tmp_path, loss_type):
         amp=False,
         patience=1,
         # Distillation kwargs forwarded to YOLO9Trainer -> TrainConfig
-        distill=True,
-        distill_teacher=str(teacher_ckpt),
+        distill_model=str(teacher_ckpt),
         distill_loss_type=loss_type,
-        distill_loss_weight=0.5,
+        dis=0.5,
     )
 
     assert "final_loss" in results

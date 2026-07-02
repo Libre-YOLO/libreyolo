@@ -36,30 +36,6 @@ def load_train_cfg(path) -> dict:
     return raw
 
 
-def check_distillation_not_implemented(distill_model) -> None:
-    """Guard for the reserved knowledge-distillation training API.
-
-    ``distill_model`` / ``dis`` are accepted by every trainable family so the
-    public training API surface is stable, but the feature itself is not
-    implemented yet. This guard raises the moment a teacher is actually
-    requested, so training never silently ignores ``distill_model`` and quietly
-    produces an ordinary (non-distilled) model.
-
-    Args:
-        distill_model: The teacher-checkpoint argument as supplied by the user.
-            ``None`` means distillation was not requested (no-op).
-
-    Raises:
-        NotImplementedError: If ``distill_model`` is set.
-    """
-    if distill_model is not None:
-        raise NotImplementedError(
-            "Knowledge distillation (distill_model=...) is not implemented yet. "
-            "The training API reserves the 'distill_model' and 'dis' arguments "
-            "for a future release; remove 'distill_model' to train normally."
-        )
-
-
 @dataclass(kw_only=True)
 class TrainConfig:
     """Base training configuration. Subclasses override defaults per model family."""
@@ -138,15 +114,18 @@ class TrainConfig:
     # training is unchanged.
     nbs: Optional[int] = None
 
-    # Knowledge distillation (reserved API — NOT implemented yet). ``distill_model``
-    # is a teacher-checkpoint path; setting it turns distillation on. ``dis`` is the
-    # distillation loss weight. Both are accepted so the public training API stays
-    # stable across families, but ``distill_model`` currently raises
-    # ``NotImplementedError`` via ``check_distillation_not_implemented`` rather than
-    # silently training a normal (non-distilled) model. ``dis`` is inert until the
-    # feature lands.
+    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path;
+    # setting it turns distillation on. ``dis`` is the global distillation loss
+    # weight; left as None it falls back to the selected loss type's published
+    # default (MGD: 2e-5, CWD: 1.0). ``distill_loss_type`` picks the feature
+    # loss ("mgd" or "cwd"); ``distill_mask_ratio`` (MGD) and ``distill_tau``
+    # (CWD) are the per-loss hyper-parameters. Families without a
+    # ``get_distill_config()`` implementation raise a clear error at setup.
     distill_model: Optional[str] = None
-    dis: float = 6.0
+    dis: Optional[float] = None
+    distill_loss_type: str = "mgd"
+    distill_mask_ratio: float = 0.65
+    distill_tau: float = 1.0
 
     # Checkpointing / output
     project: str = "runs/train"
@@ -155,14 +134,6 @@ class TrainConfig:
     save_period: int = 10
     eval_interval: int = 10
     save_plots: bool = False
-
-    # Distillation
-    distill: bool = False
-    distill_teacher: Optional[str] = None
-    distill_loss_type: str = "mgd"
-    distill_loss_weight: Optional[float] = None
-    distill_mask_ratio: float = 0.65
-    distill_tau: float = 1.0
 
     # System
     workers: int = 4

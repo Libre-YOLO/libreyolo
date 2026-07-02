@@ -27,7 +27,7 @@ from .callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
-from .config import TrainConfig, check_distillation_not_implemented
+from .config import TrainConfig
 from .loggers import resolve_loggers
 from .distributed import (
     barrier,
@@ -89,9 +89,6 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
-        # Reserved-but-unimplemented distillation API: fail loudly the moment a
-        # teacher is requested, for every family, instead of silently ignoring it.
-        check_distillation_not_implemented(getattr(self.config, "distill_model", None))
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -422,24 +419,27 @@ class BaseTrainer(ABC):
             module.eval()
 
     def _setup_distillation(self):
-        """Set up knowledge distillation if enabled in config."""
-        if not self.config.distill:
+        """Set up knowledge distillation when ``config.distill_model`` is set."""
+        if not getattr(self.config, "distill_model", None):
             return
-
-        if not self.config.distill_teacher:
-            raise ValueError(
-                "distill=True requires distill_teacher (path to teacher weights)"
-            )
 
         from ..distillation import Distiller
         from ..models import LibreYOLO
 
+        if self.wrapper_model is None:
+            raise ValueError(
+                "distill_model requires the trainer to be constructed with "
+                "wrapper_model set (the student wrapper provides tap points)."
+            )
+
         # Load teacher via the factory (handles family detection, weight loading)
-        logger.info(f"Loading teacher model: {self.config.distill_teacher}")
-        teacher_wrapper = LibreYOLO(self.config.distill_teacher)
+        logger.info(f"Loading teacher model: {self.config.distill_model}")
+        teacher_wrapper = LibreYOLO(self.config.distill_model)
         teacher_nn = teacher_wrapper.model.to(self.device)
 
-        # Get distillation configs from the models themselves
+        # Get distillation configs from the models themselves. Families that
+        # don't support distillation raise NotImplementedError here with a
+        # message naming the family.
         teacher_cfg = teacher_wrapper.get_distill_config()
         student_cfg = self.wrapper_model.get_distill_config()
 
@@ -449,7 +449,7 @@ class BaseTrainer(ABC):
             teacher_config=teacher_cfg,
             student_config=student_cfg,
             loss_type=self.config.distill_loss_type,
-            loss_weight=self.config.distill_loss_weight,
+            loss_weight=self.config.dis,
             mask_ratio=self.config.distill_mask_ratio,
             tau=self.config.distill_tau,
         )
