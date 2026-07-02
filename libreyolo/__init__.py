@@ -116,6 +116,7 @@ def __getattr__(name):
         "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
         "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
         "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
+        "LibreOMDetTurbo": (".models.openvocab", "LibreOMDetTurbo"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
@@ -181,6 +182,7 @@ __all__ = [
     "LibreOpenVocab",
     "LibreGroundingDINO",
     "LibreOWLv2",
+    "LibreOMDetTurbo",
     # Results
     "Results",
     "Boxes",

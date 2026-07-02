@@ -84,7 +84,8 @@ casing (CamelCase) is intentionally preserved. See
 [`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
 
 The open-vocabulary detector tier is also separate from the checkpoint factory.
-Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`) identify
+Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`,
+`LibreOMDetTurbo`) identify
 downloaded Hugging Face snapshots, not `Libre<FAMILY><size>.pt` checkpoints.
 These models are discriminative text-conditioned detectors with calibrated
 scores; they are not VLMs. Upstream brand casing is intentionally preserved.
@@ -133,6 +134,7 @@ Open-vocabulary detector snapshot families use their own size codes:
 |---|---|
 | `grounding_dino` | `t` (Swin-T), `b` (Swin-B) |
 | `owlv2` | `b16` (base patch-16 ensemble), `l14` (large patch-14 ensemble) |
+| `omdet_turbo` | `t` (Swin-T, the only released checkpoint) |
 
 Notes:
 
@@ -302,6 +304,9 @@ weights/LibreGroundingDINOb/
 # owlv2 - Hugging Face snapshot, no .pt checkpoint filename
 weights/LibreOWLv2b16/
 weights/LibreOWLv2l14/
+
+# omdet_turbo - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOMDetTurbot/
 ```
 
 ### Gaze (inference-only)

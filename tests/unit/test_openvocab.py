@@ -10,6 +10,7 @@ import torch
 from libreyolo.models.base.model import BaseModel
 from libreyolo.models.openvocab import LibreOpenVocab
 from libreyolo.models.openvocab.grounding_dino import LibreGroundingDINO
+from libreyolo.models.openvocab.omdet_turbo import LibreOMDetTurbo
 from libreyolo.models.openvocab.owlv2 import LibreOWLv2
 
 pytestmark = pytest.mark.unit
@@ -61,6 +62,9 @@ class TestFactoryAliases:
         assert _ALIASES["grounding-dino-base"] == (LibreGroundingDINO, "b")
         assert _ALIASES["owlv2"] == (LibreOWLv2, "b16")
         assert _ALIASES["owl-v2-large"] == (LibreOWLv2, "l14")
+        assert _ALIASES["omdet-turbo"] == (LibreOMDetTurbo, "t")
+        assert _ALIASES["omdet"] == (LibreOMDetTurbo, "t")
+        assert _ALIASES["omdet-turbo-swin-tiny"] == (LibreOMDetTurbo, "t")
 
     def test_unknown_alias_raises_before_loading(self):
         with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
@@ -117,6 +121,18 @@ class TestCallDefaults:
         m = _bare(LibreOWLv2)
         assert m("image.jpg") == "ok"
         assert captured["conf"] == pytest.approx(0.1)
+
+    def test_omdet_turbo_default_conf_is_injected(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        assert m("image.jpg") == "ok"
+        assert captured["conf"] == pytest.approx(0.3)
 
     def test_explicit_conf_is_preserved(self, monkeypatch):
         captured = {}
@@ -347,6 +363,81 @@ class TestOWLv2Mapping:
 
         m.processor = Processor()
         det = m._postprocess(object(), 0.1, 0.45, (20, 20))
+        assert det["num_detections"] == 1
+        assert det["classes"].tolist() == [1]
+
+
+class TestOMDetTurboMapping:
+    def test_task_prompt_lists_all_classes(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["person", "remote control"])
+        names = m._class_names()
+        assert names == ["person", "remote control"]
+        assert m._task_prompt(names) == "Detect person, remote control."
+
+    def test_build_inputs_passes_classes_and_task_to_processor(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        captured = {}
+
+        class Processor:
+            def __call__(self, *, images, text, task, return_tensors):
+                captured.update(images=images, text=text, task=task, rt=return_tensors)
+                return {"ok": True}
+
+        m.processor = Processor()
+        sentinel = object()
+        out = m._build_inputs(sentinel)
+        assert out == {"ok": True}
+        assert captured["images"] is sentinel
+        assert captured["text"] == ["cat", "dog"]
+        assert captured["task"] == "Detect cat, dog."
+        assert captured["rt"] == "pt"
+
+    def test_postprocess_maps_text_labels_directly(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                return [
+                    {
+                        "boxes": torch.tensor(
+                            [
+                                [1.0, 2.0, 10.0, 12.0],
+                                [3.0, 4.0, 9.0, 11.0],
+                                [0.0, 0.0, 5.0, 5.0],
+                            ]
+                        ),
+                        "scores": torch.tensor([0.9, 0.8, 0.7]),
+                        # "elephant" is not in the vocabulary -> dropped.
+                        "text_labels": ["dog", "cat", "elephant"],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
+        assert det["num_detections"] == 2
+        assert det["classes"].tolist() == [1, 0]
+
+    def test_postprocess_falls_back_to_classes_key(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                # Older transformers used the integer "classes" key.
+                return [
+                    {
+                        "boxes": torch.tensor([[1.0, 2.0, 10.0, 12.0]]),
+                        "scores": torch.tensor([0.9]),
+                        "classes": torch.tensor([1]),
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
         assert det["num_detections"] == 1
         assert det["classes"].tolist() == [1]
 
