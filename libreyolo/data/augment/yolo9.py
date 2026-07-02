@@ -101,6 +101,19 @@ class YOLO9TrainTransform:
             padded_labels = np.zeros((self.max_labels, label_dim), dtype=np.float32)
             # Fill class with -1 to indicate padding (empty slots)
             padded_labels[:, 0] = -1
+            # Background images get the same photometric/flip augmentation as
+            # labeled images (no label sync needed — there are no labels). The
+            # old early return skipped HSV and flips entirely, so on
+            # background-heavy datasets most of the training data was never
+            # augmented and the model could memorize the exact negatives
+            # (issue #484). Same op order and RNG-draw pattern as the labeled
+            # path below.
+            if random.random() < self.hsv_prob:
+                augment_hsv(image)
+            if random.random() < self.flip_prob:
+                image = image[:, ::-1]
+            if random.random() < self.vertical_flip_prob:
+                image = image[::-1, :]
             image, _ = preproc(image, input_dim)
             if return_masks:
                 return (
