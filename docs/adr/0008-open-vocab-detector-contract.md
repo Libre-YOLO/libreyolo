@@ -37,6 +37,10 @@ The first families are:
 
 - `LibreGroundingDINO`, backed by `GroundingDinoForObjectDetection`.
 - `LibreOWLv2`, backed by `Owlv2ForObjectDetection`.
+- `LibreOMDetTurbo`, backed by `OmDetTurboForObjectDetection`. This is the
+  real-time member of the tier; it decouples class embeddings from a task
+  prompt, so post-processing returns labels that map directly to the queried
+  classes and it runs its own NMS. It does not accept `text_threshold=`.
 
 ## Public API
 

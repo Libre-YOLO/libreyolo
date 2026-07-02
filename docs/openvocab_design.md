@@ -19,9 +19,17 @@ labels directly.
 |---|---|---|---|
 | `grounding-dino`, `grounding-dino-tiny`, `grounding-dino-base` | Grounding DINO | tiny | Apache-2.0 |
 | `owlv2`, `owlv2-base`, `owlv2-large` | OWLv2 | base-patch16 ensemble | Apache-2.0 |
+| `omdet-turbo`, `omdet`, `omdet-turbo-swin-tiny` | OMDet-Turbo | Swin-T | Apache-2.0 |
 
 The authoritative alias table is `_ALIASES` in
 `libreyolo/models/openvocab/__init__.py`.
+
+OMDet-Turbo is the real-time member of the tier. It is an RT-DETR-based
+open-vocabulary detector that decouples class embeddings from a task prompt,
+which lets it cache text embeddings and run its own NMS in post-processing.
+Because the classes are decoupled, its post-processing returns labels that map
+directly back to the queried class list (no phrase disambiguation like Grounding
+DINO). It does not expose `text_threshold=`.
 
 Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 
@@ -29,6 +37,7 @@ Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 - `LibreYOLO/LibreGroundingDINOb`
 - `LibreYOLO/LibreOWLv2b16`
 - `LibreYOLO/LibreOWLv2l14`
+- `LibreYOLO/LibreOMDetTurbot`
 
 The model cards in those repos record the original upstream source repos.
 

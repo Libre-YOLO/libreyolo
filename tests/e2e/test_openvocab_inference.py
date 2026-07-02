@@ -49,6 +49,16 @@ def test_owlv2_base_predict_smoke():
     _assert_detection_smoke(result, {0: "person", 1: "dog", 2: "skateboard"})
 
 
+def test_omdet_turbo_predict_smoke():
+    pytest.importorskip("transformers")
+    from libreyolo import LibreOpenVocab
+
+    model = LibreOpenVocab("omdet-turbo", device="cpu")
+    model.set_classes(["person", "dog", "skateboard"])
+    result = model.predict(_sample_image(), conf=0.3)
+    _assert_detection_smoke(result, {0: "person", 1: "dog", 2: "skateboard"})
+
+
 def test_openvocab_val_raises_in_v1():
     pytest.importorskip("transformers")
     from libreyolo import LibreOpenVocab
