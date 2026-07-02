@@ -132,7 +132,7 @@ class TestDINOv2SemanticSegmenter:
         assert m.task == "semantic"
         assert m.input_size == 518
 
-        result = m.predict(str(img_path), imgsz=70)
+        result = m.predict(str(img_path), imgsz=70)[0]
 
         assert result.boxes is None
         assert result.semantic_mask is not None

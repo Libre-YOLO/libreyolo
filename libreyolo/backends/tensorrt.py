@@ -30,7 +30,7 @@ class TensorRTBackend(BaseBackend):
 
     Example:
         >>> model = TensorRTBackend("model.engine")
-        >>> result = model("image.jpg", save=True)
+        >>> results = model("image.jpg", save=True)  # list[Results], one per image
         >>> print(result.boxes.xyxy)
     """
 

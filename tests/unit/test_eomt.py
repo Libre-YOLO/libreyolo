@@ -183,7 +183,7 @@ class TestEoMTPredict:
         model = LibreEoMT(
             model_path=None, size="l", task="semantic", nb_classes=3, device="cpu"
         )
-        result = model.predict(str(img_path), imgsz=512)
+        result = model.predict(str(img_path), imgsz=512)[0]
 
         assert result.boxes is None
         assert result.masks is None

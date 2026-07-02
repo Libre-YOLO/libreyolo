@@ -116,7 +116,7 @@ class TestSegForwardAndPostprocess:
         from PIL import Image
 
         img = Image.new("RGB", (320, 240), color=(127, 127, 127))
-        result = seg_model(img, conf=0.0, max_det=10)
+        result = seg_model(img, conf=0.0, max_det=10)[0]
         assert result.masks is not None
         # masks (N, H, W) tensor; boxes share the same N
         assert len(result) == result.masks.data.shape[0]

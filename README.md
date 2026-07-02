@@ -39,8 +39,11 @@ pip install libreyolo
 from libreyolo import LibreYOLO, SAMPLE_IMAGE
 
 model = LibreYOLO("LibreYOLO9t.pt")
-result = model(SAMPLE_IMAGE, save=True)
+results = model(SAMPLE_IMAGE, save=True)   # a list of Results, one per image
 ```
+
+`predict()` always returns a `list` of `Results` (one per input image), so a
+single image gives a one-element list — index it with `[0]`.
 
 Image classification works the same way. Load a pretrained ImageNet-1k
 classifier (`MobileNetV4`, `ConvNeXt`, `EfficientNetV2`, or `ResNet`), then
@@ -50,7 +53,7 @@ predict or fine-tune on your own folder-per-class dataset:
 from libreyolo import LibreYOLO
 
 model = LibreYOLO("LibreResNet50-cls.pt")   # weights auto-download on first use
-result = model("image.jpg")                  # a single image -> one Results
+result = model("image.jpg")[0]               # one image -> a one-element list
 print(result.probs.top1, float(result.probs.top1conf))  # class index + confidence
 print(result.probs.top5)                     # indices of the 5 most likely classes
 

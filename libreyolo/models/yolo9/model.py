@@ -43,7 +43,7 @@ class LibreYOLO9(BaseModel):
     Example::
 
         >>> model = LibreYOLO9(model_path="path/to/weights.pt", size="s")
-        >>> detections = model(image=image_path, save=True)
+        >>> results = model(image=image_path, save=True)  # list[Results], one per image
     """
 
     # Class-level metadata

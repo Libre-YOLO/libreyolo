@@ -33,7 +33,7 @@ class LibreYOLOX(BaseModel):
     Examples::
 
         >>> model = LibreYOLO("LibreYOLOXs.pt")
-        >>> detections = model(image="image.jpg", save=True)
+        >>> results = model(image="image.jpg", save=True)  # list[Results], one per image
 
         >>> model = LibreYOLOX(size="s")
         >>> results = model.train(data="coco128.yaml", epochs=100)

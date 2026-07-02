@@ -29,7 +29,7 @@ class OnnxBackend(BaseBackend):
 
     Example:
         >>> model = OnnxBackend("model.onnx")
-        >>> result = model("image.jpg", save=True)
+        >>> results = model("image.jpg", save=True)  # list[Results], one per image
         >>> print(result.boxes.xyxy)
     """
 

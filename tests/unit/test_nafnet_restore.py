@@ -71,7 +71,7 @@ def test_librenafnet_predict_returns_restored_original_shape():
     model.model.eval()
     img = Image.fromarray(np.zeros((5, 7, 3), dtype=np.uint8), mode="RGB")
 
-    result = model(img)
+    result = model(img)[0]
 
     assert result.boxes is None
     assert result.restored is not None

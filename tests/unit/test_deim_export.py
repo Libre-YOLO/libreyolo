@@ -118,7 +118,7 @@ def test_deim_openvino_export_backend_predict(tmp_path):
 
     ov_model = LibreYOLO(exported, device="cpu")
     assert ov_model.model_family == "deim"
-    result = ov_model(SAMPLE_IMAGE, conf=0.5)
+    result = ov_model(SAMPLE_IMAGE, conf=0.5)[0]
     assert len(result.boxes) >= 3
 
 
@@ -154,9 +154,9 @@ def test_deim_onnx_backend_matches_torch_inference(tmp_path):
         "onnx", output_path=str(out_path), simplify=False, dynamic=True, opset=17
     )
 
-    torch_res = torch_m(SAMPLE_IMAGE, conf=0.5)
+    torch_res = torch_m(SAMPLE_IMAGE, conf=0.5)[0]
     onnx_m = LibreYOLO(str(out_path))
-    onnx_res = onnx_m(SAMPLE_IMAGE, conf=0.5)
+    onnx_res = onnx_m(SAMPLE_IMAGE, conf=0.5)[0]
 
     n = min(5, len(torch_res.boxes), len(onnx_res.boxes))
     assert n >= 3, "expected at least 3 confident detections in both"

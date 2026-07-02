@@ -80,13 +80,13 @@ Run `libreyolo formats` for each format's extension and FP16/INT8 support.
 
 ## Reading results
 
-`predict`/`track` return a single `Results` for a single image, or a `list` of
-`Results` for multiple inputs (a directory, a list, or video frames). Index the
-list, not a single `Results` — indexing a `Results` selects one detection.
-Read them programmatically rather than re-parsing saved files:
+`predict`/`track` always return a `list` of `Results` — one per input image, so
+a single image gives a one-element list. Index it with `[0]`. (Indexing a
+`Results` selects one *detection*, not an image.) Read them programmatically
+rather than re-parsing saved files:
 
 ```python
-r = model("img.jpg")          # one Results (single image); use model([...])  / a dir for a list
+r = model("img.jpg")[0]       # list[Results], one per image; [0] = the only image
 len(r)              # number of detections
 r.boxes.xyxy        # (N, 4) boxes; also .xywh, .conf, .cls, .id (tracking)
 r.masks             # segmentation masks (segment task)

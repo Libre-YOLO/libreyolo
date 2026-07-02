@@ -27,7 +27,7 @@ def lfm2_model():
 def test_lfm2_predict_returns_results(lfm2_model):
     from libreyolo import Results, SAMPLE_IMAGE
 
-    result = lfm2_model.predict(SAMPLE_IMAGE)
+    result = lfm2_model.predict(SAMPLE_IMAGE)[0]
 
     assert isinstance(result, Results)
     # Same Results contract as any YOLO model: xyxy boxes with conf and cls.

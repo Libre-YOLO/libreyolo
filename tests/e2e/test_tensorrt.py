@@ -125,7 +125,7 @@ class TestTensorRTRFDETRSegmentation:
         assert metadata["task"] == "segment"
 
         trt_model = LibreYOLO(exported_path, device="cuda")
-        result = trt_model(sample_image, conf=0.25)
+        result = trt_model(sample_image, conf=0.25)[0]
         if len(result) > 0:
             assert result.masks is not None, "TensorRT seg model should return masks"
             assert len(result.masks) == len(result), "One mask per detection"
@@ -188,7 +188,7 @@ class TestTensorRTExportINT8:
         pt_model = load_model(model_type, size, device="cuda")
 
         # Run PyTorch inference
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         # Export to TensorRT (INT8)
         engine_path = str(tmp_path / f"{model_type}_{size}_int8.engine")
@@ -224,7 +224,7 @@ class TestTensorRTExportINT8:
         trt_model = LibreYOLO(exported_path, device="cuda")
 
         # Run TensorRT inference
-        trt_results = trt_model(sample_image, conf=0.25)
+        trt_results = trt_model(sample_image, conf=0.25)[0]
 
         # INT8 may have lower accuracy but should still detect objects
         match_rate, matched, total = match_detections(
@@ -311,7 +311,7 @@ class TestTensorRTExportConfig:
         from libreyolo import LibreYOLO
 
         trt_model = LibreYOLO(exported_path, device="cuda")
-        result = trt_model(sample_image, conf=0.25)
+        result = trt_model(sample_image, conf=0.25)[0]
 
         assert result is not None
 

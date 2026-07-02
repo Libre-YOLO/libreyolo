@@ -94,7 +94,7 @@ class InferenceRunner:
         overlap_ratio: float = 0.2,
         output_file_format: Optional[str] = None,
         **kwargs,
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         """
         Run inference on an image, list of images, directory, or video.
 
@@ -125,7 +125,10 @@ class InferenceRunner:
             **kwargs: Additional arguments for postprocessing.
 
         Returns:
-            Results, list of Results, or generator of Results (video + stream).
+            A list of Results (one per input image), or a generator of Results
+            for a video source with ``stream=True``. A single-image source
+            returns a one-element list, so callers can always index/iterate the
+            result the same way regardless of how many images were passed.
         """
         kwargs = normalize_predict_kwargs(kwargs, passthrough={"num_select"})
         if device is not None:
@@ -213,9 +216,11 @@ class InferenceRunner:
             )
 
 
-        # Use tiled inference if enabled
+        # Single-image sources return a one-element list so predict() always
+        # yields a list[Results] (matching the list/directory/video paths); a
+        # single image is just a batch of one.
         if tiling:
-            return self._predict_tiled(
+            result = self._predict_tiled(
                 source,
                 save=save,
                 output_path=output_path,
@@ -229,7 +234,8 @@ class InferenceRunner:
                 output_file_format=output_file_format,
                 **kwargs,
             )
-        
+            return [result]
+
         if augment and getattr(self.model, "TTA_ENABLED", False):
             result = self.model._predict_augment(
                 source,
@@ -247,9 +253,9 @@ class InferenceRunner:
                 ext = output_file_format or "jpg"
                 save_path = resolve_save_path(output_path, image_path, ext=ext)
                 self._save_annotated_image(result, img_pil, save_path)
-            return result
+            return [result]
 
-        return self._predict_single(
+        result = self._predict_single(
             source,
             save=save,
             output_path=output_path,
@@ -262,6 +268,7 @@ class InferenceRunner:
             output_file_format=output_file_format,
             **kwargs,
         )
+        return [result]
 
     def _set_device(self, device: str) -> None:
         """Move the wrapped model when predict(device=...) is supplied."""

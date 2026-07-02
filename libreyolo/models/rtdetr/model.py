@@ -130,7 +130,7 @@ class LibreRTDETR(BaseModel):
     Example::
 
         >>> model = LibreRTDETR(size="r50")
-        >>> detections = model.predict("path/to/image.jpg")
+        >>> detections = model.predict("path/to/image.jpg")[0]  # list[Results], one per image
     """
 
     # Class-level metadata

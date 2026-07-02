@@ -118,7 +118,7 @@ class TestPIDNetForwardAndPredict:
         model = LibrePIDNet(
             model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
         )
-        result = model.predict(str(img_path), imgsz=64)
+        result = model.predict(str(img_path), imgsz=64)[0]
 
         assert result.boxes is None
         assert result.masks is None

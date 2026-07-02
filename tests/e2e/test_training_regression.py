@@ -81,7 +81,7 @@ def test_yolo9_train_fires_epoch_callbacks(trained_yolo9_model):
 def test_yolo9_predict_after_train(trained_yolo9_model, marbles_yaml):
     model, _ = trained_yolo9_model
     img = next((DATASET_ROOT / "test" / "images").glob("*.jpg"))
-    result = model.predict(str(img), conf=0.1)
+    result = model.predict(str(img), conf=0.1)[0]
     assert hasattr(result, "boxes")
 
 
@@ -120,5 +120,5 @@ def trained_rfdetr_model(marbles_yaml, tmp_path_factory):
 def test_rfdetr_predict_after_train(trained_rfdetr_model, marbles_yaml):
     model, _ = trained_rfdetr_model
     img = next((DATASET_ROOT / "test" / "images").glob("*.jpg"))
-    result = model.predict(str(img), conf=0.1)
+    result = model.predict(str(img), conf=0.1)[0]
     assert hasattr(result, "boxes")

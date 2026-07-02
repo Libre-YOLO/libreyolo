@@ -134,7 +134,7 @@ class TestOpenVINORFDETRSegmentation:
         assert (exported_dir / "model.bin").exists(), "model.bin not found"
 
         ov_model = LibreYOLO(exported_path, device="cpu")
-        result = ov_model(sample_image, conf=0.25)
+        result = ov_model(sample_image, conf=0.25)[0]
         if len(result) > 0:
             assert result.masks is not None, "OpenVINO seg model should return masks"
             assert len(result.masks) == len(result), "One mask per detection"
@@ -266,8 +266,8 @@ class TestOpenVINOModelLoading:
         fp32_model = LibreYOLO(fp32_exported)
         fp16_model = LibreYOLO(fp16_exported)
 
-        fp32_results = fp32_model(sample_image, conf=0.25)
-        fp16_results = fp16_model(sample_image, conf=0.25)
+        fp32_results = fp32_model(sample_image, conf=0.25)[0]
+        fp16_results = fp16_model(sample_image, conf=0.25)[0]
 
         assert fp32_results is not None
         assert fp16_results is not None
@@ -305,8 +305,8 @@ class TestOpenVINOBackend:
         )
 
         ov_model = OpenVINOBackend(exported_path)
-        result_call = ov_model(sample_image, conf=0.25)
-        result_predict = ov_model.predict(sample_image, conf=0.25)
+        result_call = ov_model(sample_image, conf=0.25)[0]
+        result_predict = ov_model.predict(sample_image, conf=0.25)[0]
 
         assert len(result_call) == len(result_predict)
 
@@ -328,7 +328,7 @@ class TestOpenVINOBackend:
 
         save_path = str(tmp_path / "annotated.jpg")
         ov_model = OpenVINOBackend(exported_path)
-        result = ov_model(sample_image, conf=0.25, save=True, output_path=save_path)
+        result = ov_model(sample_image, conf=0.25, save=True, output_path=save_path)[0]
 
         assert Path(save_path).exists(), "Annotated image was not saved"
         assert hasattr(result, "saved_path")
@@ -374,7 +374,7 @@ class TestOpenVINOFactory:
         from libreyolo.backends.openvino import OpenVINOBackend
 
         pt_model = load_model(model_type, size, device="cpu")
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         ov_path = str(tmp_path / f"{model_type}_{size}_openvino")
         exported_path = pt_model.export(
@@ -390,7 +390,7 @@ class TestOpenVINOFactory:
         )
 
         # Run inference and compare
-        factory_results = factory_model(sample_image, conf=0.25)
+        factory_results = factory_model(sample_image, conf=0.25)[0]
         match_rate, matched, total = match_detections(pt_results, factory_results)
         assert results_are_acceptable(
             match_rate, len(pt_results), len(factory_results)
@@ -429,7 +429,7 @@ class TestOpenVINOModelCoverage:
 
             # Verify inference works via backend
             ov_model = LibreYOLO(exported_path)
-            result = ov_model(sample_image, conf=0.25)
+            result = ov_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model
@@ -453,7 +453,7 @@ class TestOpenVINOModelCoverage:
 
             # Verify inference works via backend
             ov_model = LibreYOLO(exported_path)
-            result = ov_model(sample_image, conf=0.25)
+            result = ov_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model
@@ -478,7 +478,7 @@ class TestOpenVINOModelCoverage:
 
             # Verify inference works via backend
             ov_model = LibreYOLO(exported_path)
-            result = ov_model(sample_image, conf=0.25)
+            result = ov_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model

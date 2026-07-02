@@ -64,7 +64,7 @@ class GazeInferenceRunner:
         augment: bool = False,
         tiling: bool = False,
         **_: object,
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         if augment:
             raise ValueError(
                 "TTA (augment=True) is not meaningful for gaze inference; "
@@ -117,7 +117,9 @@ class GazeInferenceRunner:
                 for p in image_paths
             ]
 
-        return self._predict_single(
+        # A single-image source returns a one-element list, matching the
+        # list/directory/video paths so predict() always yields a list[Results].
+        result = self._predict_single(
             source,
             detector=detector,
             face_boxes=face_boxes,
@@ -127,6 +129,7 @@ class GazeInferenceRunner:
             color_format=color_format,
             output_file_format=output_file_format,
         )
+        return [result]
 
     # =========================================================================
     # Single-frame path

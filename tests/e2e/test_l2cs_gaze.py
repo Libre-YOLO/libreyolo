@@ -54,8 +54,8 @@ def test_l2cs_gaze_inference_is_stable():
     try:
         image = Image.new("RGB", (96, 96), color=(128, 128, 128))
         kwargs = {"face_boxes": [(8, 8, 88, 88)]}
-        first = model(image, **kwargs)
-        second = model(image, **kwargs)
+        first = model(image, **kwargs)[0]
+        second = model(image, **kwargs)[0]
 
         assert first.gaze is not None, "l2cs did not return gaze output"
         assert second.gaze is not None, "l2cs did not return gaze output"

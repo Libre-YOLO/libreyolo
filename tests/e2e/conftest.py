@@ -804,7 +804,7 @@ def run_export_compare_test(
     from libreyolo import LibreYOLO
 
     pt_model = load_model(model_type, size, device=device)
-    pt_results = pt_model(sample_image, conf=0.25)
+    pt_results = pt_model(sample_image, conf=0.25)[0]
 
     export_path = str(tmp_path / f"{model_type}_{size}.{format}")
     exported_path = pt_model.export(
@@ -814,7 +814,7 @@ def run_export_compare_test(
     )
 
     exported_model = LibreYOLO(exported_path, device=device)
-    export_results = exported_model(sample_image, conf=0.25)
+    export_results = exported_model(sample_image, conf=0.25)[0]
 
     match_rate, matched, total = match_detections(pt_results, export_results)
     assert results_are_acceptable(

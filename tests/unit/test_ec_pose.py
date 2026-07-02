@@ -295,7 +295,7 @@ class TestPoseForwardAndPostprocess:
         from PIL import Image
 
         img = Image.new("RGB", (320, 240), color=(127, 127, 127))
-        result = pose_model(img, conf=0.0, max_det=10)
+        result = pose_model(img, conf=0.0, max_det=10)[0]
         assert result.keypoints is not None
         assert result.keypoints.data.shape[-2:] == (17, 3)
         # Boxes and keypoints are the same length.

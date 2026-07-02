@@ -104,8 +104,8 @@ def _run_l2cs(weights, size):
     )
     image = Image.new("RGB", (96, 96), color=(128, 128, 128))
     kwargs = {"face_boxes": [(8, 8, 88, 88)]}
-    first = model(image, **kwargs)
-    second = model(image, **kwargs)
+    first = model(image, **kwargs)[0]
+    second = model(image, **kwargs)[0]
 
     assert first.gaze is not None, "l2cs did not return gaze output"
     assert second.gaze is not None, "l2cs did not return gaze output"
@@ -134,8 +134,8 @@ def test_native_inference_is_stable(family, size, weights, sample_image):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = LibreYOLO(weights, size=size, device=device)
     try:
-        first = model(sample_image, conf=0.25)
-        second = model(sample_image, conf=0.25)
+        first = model(sample_image, conf=0.25)[0]
+        second = model(sample_image, conf=0.25)[0]
         _assert_detection_output_is_stable(family, first, second)
     finally:
         del model

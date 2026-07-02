@@ -174,7 +174,7 @@ def test_libre_l2cs_end_to_end_with_byo_bbox(tmp_path):
 
     # 64x64 dummy image, full-frame face box
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    result = model(img, face_boxes=[(0, 0, 64, 64)])
+    result = model(img, face_boxes=[(0, 0, 64, 64)])[0]
 
     assert isinstance(result, Results)
     assert result.gaze is not None
@@ -199,7 +199,7 @@ def test_libre_l2cs_callable_face_detector(tmp_path):
         return [FaceBox(xyxy=(0, 0, w, h), score=0.99)]
 
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    result = model(img, face_detector=fake_detector)
+    result = model(img, face_detector=fake_detector)[0]
     assert calls["n"] == 1
     assert len(result.gaze) == 1
     assert isinstance(model.face_detector, type(None))  # not cached on instance
@@ -230,7 +230,7 @@ def test_libre_l2cs_no_faces_returns_empty(tmp_path):
         face_detector=CallableFaceDetector(fn=lambda img: []),
     )
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    result = model(img)
+    result = model(img)[0]
     assert len(result.boxes) == 0
     assert len(result.gaze) == 0
 
@@ -295,7 +295,7 @@ def test_libre_l2cs_multiface_end_to_end(tmp_path):
     torch.save(sd, wp)
     model = LibreL2CS(str(wp), size="r18", device="cpu")
     img = Image.fromarray(np.zeros((200, 200, 3), dtype=np.uint8))
-    result = model(img, face_boxes=[(10, 10, 90, 150), (100, 20, 180, 90)])
+    result = model(img, face_boxes=[(10, 10, 90, 150), (100, 20, 180, 90)])[0]
     assert len(result.gaze) == 2
     assert result.gaze.data.shape == (2, 2)
     assert torch.isfinite(result.gaze.data).all()
@@ -329,7 +329,7 @@ def test_pitch_yaw_head_assignment(tmp_path):
     wp = _craft_l2cs(tmp_path, yaw_bin=80, pitch_bin=10)
     model = LibreL2CS(wp, size="r18", device="cpu")
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    res = model(img, face_boxes=[(0, 0, 64, 64)])
+    res = model(img, face_boxes=[(0, 0, 64, 64)])[0]
     assert float(res.gaze.pitch_deg[0]) == pytest.approx(-140.0, abs=1.0)
     assert float(res.gaze.yaw_deg[0]) == pytest.approx(140.0, abs=1.0)
 
@@ -344,7 +344,7 @@ def test_28bin_checkpoint_loads_and_decodes(tmp_path):
     assert model.bin_width_deg == 3.0
     assert model.offset_deg == -42.0
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    res = model(img, face_boxes=[(0, 0, 64, 64)])
+    res = model(img, face_boxes=[(0, 0, 64, 64)])[0]
     assert torch.isfinite(res.gaze.data).all()
 
 

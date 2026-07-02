@@ -25,7 +25,7 @@ class NcnnBackend(BaseBackend):
 
     Example:
         >>> model = NcnnBackend("exported_model_dir/")
-        >>> result = model("image.jpg", save=True)
+        >>> results = model("image.jpg", save=True)  # list[Results], one per image
         >>> print(result.boxes.xyxy)
     """
 

@@ -281,7 +281,7 @@ def test_classify_family_train_end_to_end(tmp_path):
     # The saved checkpoint reloads as a 2-class classifier and predicts.
     reloaded = LibreMobileNetV4(str(best), device="cpu")
     assert reloaded.nb_classes == 2
-    result = reloaded(str(tmp_path / "data" / "val" / "c0" / "c0_0.png"))
+    result = reloaded(str(tmp_path / "data" / "val" / "c0" / "c0_0.png"))[0]
     assert result.probs.data.shape[0] == 2
 
 

@@ -44,7 +44,7 @@ class LibreYOLO9E2E(LibreYOLO9):
     Example::
 
         >>> model = LibreYOLO9E2E("LibreYOLO9E2Es.pt", size="s")
-        >>> detections = model(image_path, save=True)
+        >>> results = model(image_path, save=True)  # list[Results], one per image
     """
 
     FAMILY = "yolo9_e2e"

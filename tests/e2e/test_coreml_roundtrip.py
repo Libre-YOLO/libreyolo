@@ -72,7 +72,7 @@ def test_yolox_export_fp32_parity(tmp_path):
     from libreyolo import SAMPLE_IMAGE, LibreYOLO
 
     pt_model = _load_yolox_nano()
-    pt_res = pt_model(SAMPLE_IMAGE)
+    pt_res = pt_model(SAMPLE_IMAGE)[0]
     assert len(pt_res.boxes) >= 1, "PT produced 0 detections — sample image issue"
 
     out_path = tmp_path / "model.mlpackage"
@@ -80,7 +80,7 @@ def test_yolox_export_fp32_parity(tmp_path):
     assert out_path.is_dir()
 
     coreml_model = LibreYOLO(str(out_path))
-    cm_res = coreml_model(SAMPLE_IMAGE)
+    cm_res = coreml_model(SAMPLE_IMAGE)[0]
     _assert_parity(pt_res, cm_res)
 
 
@@ -94,7 +94,7 @@ def test_yolox_export_fp16(tmp_path):
     assert out_path.is_dir()
 
     coreml_model = LibreYOLO(str(out_path))
-    assert len(coreml_model(SAMPLE_IMAGE).boxes) >= 1
+    assert len(coreml_model(SAMPLE_IMAGE)[0].boxes) >= 1
 
 
 def test_yolox_export_with_embedded_nms(tmp_path):
@@ -107,7 +107,7 @@ def test_yolox_export_with_embedded_nms(tmp_path):
     assert out_path.is_dir()
 
     coreml_model = LibreYOLO(str(out_path))
-    assert len(coreml_model(SAMPLE_IMAGE).boxes) >= 1
+    assert len(coreml_model(SAMPLE_IMAGE)[0].boxes) >= 1
 
 
 def test_yolo9_export_fp32_parity(tmp_path):
@@ -115,7 +115,7 @@ def test_yolo9_export_fp32_parity(tmp_path):
     from libreyolo import SAMPLE_IMAGE, LibreYOLO
 
     pt_model = _load_yolo9_tiny()
-    pt_res = pt_model(SAMPLE_IMAGE)
+    pt_res = pt_model(SAMPLE_IMAGE)[0]
     assert len(pt_res.boxes) >= 1
 
     out_path = tmp_path / "model.mlpackage"
@@ -123,7 +123,7 @@ def test_yolo9_export_fp32_parity(tmp_path):
     assert out_path.is_dir()
 
     coreml_model = LibreYOLO(str(out_path))
-    cm_res = coreml_model(SAMPLE_IMAGE)
+    cm_res = coreml_model(SAMPLE_IMAGE)[0]
     _assert_parity(pt_res, cm_res)
 
 

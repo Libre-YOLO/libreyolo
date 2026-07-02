@@ -134,7 +134,7 @@ class TestTorchScriptYOLONAS:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         pt_model = LibreYOLO(str(OFFICIAL_YOLONAS_S), device=device)
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         ts_path = str(tmp_path / "yolonas_s.torchscript")
         exported_path = pt_model.export(
@@ -150,7 +150,7 @@ class TestTorchScriptYOLONAS:
         assert loaded_model.names == pt_model.names
         assert loaded_model.imgsz == pt_model._get_input_size()
 
-        ts_results = loaded_model(sample_image, conf=0.25)
+        ts_results = loaded_model(sample_image, conf=0.25)[0]
 
         match_rate, matched, total = match_detections(pt_results, ts_results)
         assert results_are_acceptable(

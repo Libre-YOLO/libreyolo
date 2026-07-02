@@ -105,7 +105,7 @@ class TestONNXYOLONAS:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         pt_model = LibreYOLO(str(OFFICIAL_YOLONAS_S), device=device)
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         onnx_path = str(tmp_path / "yolonas_s.onnx")
         exported_path = pt_model.export(
@@ -124,7 +124,7 @@ class TestONNXYOLONAS:
         assert loaded_model.nb_classes == pt_model.nb_classes
         assert loaded_model.names == pt_model.names
 
-        onnx_results = loaded_model(sample_image, conf=0.25)
+        onnx_results = loaded_model(sample_image, conf=0.25)[0]
 
         match_rate, matched, total = match_detections(pt_results, onnx_results)
         assert results_are_acceptable(
@@ -283,7 +283,7 @@ class TestONNXSimplification:
         from libreyolo import LibreYOLO
 
         onnx_model = LibreYOLO(onnx_simp_path, device=device)
-        result = onnx_model(sample_image, conf=0.25)
+        result = onnx_model(sample_image, conf=0.25)[0]
         assert result is not None
 
 
@@ -461,7 +461,7 @@ class TestONNXSegmentation:
 
         # Load ONNX backend and run inference
         onnx_model_loaded = LibreYOLO(exported, device=device)
-        onnx_result = onnx_model_loaded(sample_image, conf=0.3)
+        onnx_result = onnx_model_loaded(sample_image, conf=0.3)[0]
 
         # ONNX result should also have masks
         if len(onnx_result) > 0:
@@ -479,13 +479,13 @@ class TestONNXSegmentation:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
         pt_model = LibreYOLO("LibreRFDETRn-seg.pt", device=device)
-        pt_result = pt_model(sample_image, conf=0.3)
+        pt_result = pt_model(sample_image, conf=0.3)[0]
 
         onnx_path = str(tmp_path / "rfdetr_n_seg_compare.onnx")
         pt_model.export(format="onnx", output_path=onnx_path, simplify=False)
 
         onnx_model = LibreYOLO(onnx_path, device=device)
-        onnx_result = onnx_model(sample_image, conf=0.3)
+        onnx_result = onnx_model(sample_image, conf=0.3)[0]
 
         # Detection counts should be close (allow some variance from fp32→onnx)
         pt_count = len(pt_result)
@@ -516,7 +516,7 @@ class TestONNXSegmentation:
         assert input_dims[0] == "batch"
 
         onnx_model_loaded = LibreYOLO(exported, device=device)
-        result = onnx_model_loaded(sample_image, conf=0.25)
+        result = onnx_model_loaded(sample_image, conf=0.25)[0]
 
         if len(result) > 0:
             assert result.masks is not None, "Dynamic ONNX seg model should return masks"

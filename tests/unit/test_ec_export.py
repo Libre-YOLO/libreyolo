@@ -105,8 +105,8 @@ def test_ec_onnx_backend_predict(tmp_path):
     ox = LibreYOLO(str(onnx_path), nb_classes=80)
     assert ox.model_family == "ec"
 
-    pt_r = pt.predict(SAMPLE_IMAGE, conf=0.3)
-    ox_r = ox.predict(SAMPLE_IMAGE, conf=0.3)
+    pt_r = pt.predict(SAMPLE_IMAGE, conf=0.3)[0]
+    ox_r = ox.predict(SAMPLE_IMAGE, conf=0.3)[0]
 
     assert len(pt_r.boxes) == len(ox_r.boxes), (len(pt_r.boxes), len(ox_r.boxes))
 

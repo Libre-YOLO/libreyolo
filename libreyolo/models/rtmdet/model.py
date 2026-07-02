@@ -43,7 +43,7 @@ class LibreRTMDet(BaseModel):
     Examples::
 
         >>> model = LibreYOLO("LibreRTMDett.pt")
-        >>> result = model("image.jpg", save=True)
+        >>> results = model("image.jpg", save=True)  # list[Results], one per image
     """
 
     FAMILY = "rtmdet"

@@ -855,6 +855,16 @@ class Results:
         return self._apply("__getitem__", idx)
 
     def __getitem__(self, idx) -> "Results":
+        # Integer indexing selects detection ``idx``; bound-check it so a
+        # ``Results`` behaves as a proper finite sequence (iterating one, e.g.
+        # ``for det in result``, terminates instead of looping forever).
+        if isinstance(idx, (int, np.integer)) and not isinstance(idx, bool):
+            n = len(self)
+            if idx < -n or idx >= n:
+                raise IndexError(
+                    f"Results index {int(idx)} out of range "
+                    f"(result contains {n} item(s))"
+                )
         return self._select(idx)
 
     def update(

@@ -166,7 +166,7 @@ class LibreRFDETR(BaseModel):
     Example::
 
         >>> model = LibreRFDETR(size="s")
-        >>> detections = model.predict("path/to/image.jpg")
+        >>> detections = model.predict("path/to/image.jpg")[0]  # list[Results], one per image
     """
 
     autobatch_fraction: float = 0.45

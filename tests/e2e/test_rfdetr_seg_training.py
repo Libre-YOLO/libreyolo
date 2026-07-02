@@ -167,7 +167,7 @@ def test_rfdetr_seg_training(dataset, tmp_path, size):
         print(f"Checkpoint has {{len(seg_keys)}} segmentation_head keys")
 
         # 5. Post-training inference still produces masks
-        post_result = model.predict(SAMPLE_IMAGE, conf=0.3)
+        post_result = model.predict(SAMPLE_IMAGE, conf=0.3)[0]
         print(f"Post-training: {{len(post_result)}} detections, "
               f"masks={{post_result.masks is not None}}")
         if post_result.masks is not None:
@@ -209,7 +209,7 @@ def test_rfdetr_seg_inference_only(dataset):
         assert len(test_images) > 0, "No test images found"
 
         for img_path in test_images:
-            result = model.predict(str(img_path), conf=0.25)
+            result = model.predict(str(img_path), conf=0.25)[0]
             print(f"{{img_path.name}}: {{len(result)}} dets, "
                   f"masks={{result.masks is not None}}")
 
@@ -301,7 +301,7 @@ def test_rfdetr_seg_resume_training(dataset, tmp_path):
 
         # Verify model still produces masks after resume
         from libreyolo import SAMPLE_IMAGE
-        r = model2.predict(SAMPLE_IMAGE, conf=0.3)
+        r = model2.predict(SAMPLE_IMAGE, conf=0.3)[0]
         print(f"Post-resume: {{len(r)}} dets, masks={{r.masks is not None}}")
 
         print("PASSED")

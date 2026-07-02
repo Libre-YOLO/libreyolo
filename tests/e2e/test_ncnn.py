@@ -154,7 +154,7 @@ class TestNCNNYOLONAS:
         from libreyolo import LibreYOLO
 
         pt_model = LibreYOLO(str(OFFICIAL_YOLONAS_S), device="cpu")
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         ncnn_path = str(tmp_path / "yolonas_s_ncnn")
         exported_path = pt_model.export(
@@ -172,7 +172,7 @@ class TestNCNNYOLONAS:
         assert loaded_model.nb_classes == pt_model.nb_classes
         assert loaded_model.names == pt_model.names
 
-        ncnn_results = loaded_model(sample_image, conf=0.25)
+        ncnn_results = loaded_model(sample_image, conf=0.25)[0]
 
         match_rate, matched, total = match_detections(pt_results, ncnn_results)
         assert results_are_acceptable(
@@ -290,7 +290,7 @@ class TestNCNNFactory:
         from libreyolo.backends.ncnn import NcnnBackend
 
         pt_model = load_model(model_type, size, device="cpu")
-        pt_results = pt_model(sample_image, conf=0.25)
+        pt_results = pt_model(sample_image, conf=0.25)[0]
 
         ncnn_path = str(tmp_path / f"{model_type}_{size}_ncnn")
         exported_path = pt_model.export(
@@ -306,7 +306,7 @@ class TestNCNNFactory:
         )
 
         # Run inference and compare
-        factory_results = factory_model(sample_image, conf=0.25)
+        factory_results = factory_model(sample_image, conf=0.25)[0]
         match_rate, matched, total = match_detections(pt_results, factory_results)
         assert results_are_acceptable(
             match_rate, len(pt_results), len(factory_results)
@@ -336,8 +336,8 @@ class TestNCNNBackend:
         )
 
         ncnn_model = NcnnBackend(exported_path)
-        result_call = ncnn_model(sample_image, conf=0.25)
-        result_predict = ncnn_model.predict(sample_image, conf=0.25)
+        result_call = ncnn_model(sample_image, conf=0.25)[0]
+        result_predict = ncnn_model.predict(sample_image, conf=0.25)[0]
 
         assert len(result_call) == len(result_predict)
 
@@ -359,7 +359,7 @@ class TestNCNNBackend:
 
         save_path = str(tmp_path / "annotated.jpg")
         ncnn_model = NcnnBackend(exported_path)
-        result = ncnn_model(sample_image, conf=0.25, save=True, output_path=save_path)
+        result = ncnn_model(sample_image, conf=0.25, save=True, output_path=save_path)[0]
 
         assert Path(save_path).exists(), "Annotated image was not saved"
         assert hasattr(result, "saved_path")
@@ -438,7 +438,7 @@ class TestNCNNModelCoverage:
 
             # Verify inference works via backend
             ncnn_model = LibreYOLO(exported_path)
-            result = ncnn_model(sample_image, conf=0.25)
+            result = ncnn_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model
@@ -461,7 +461,7 @@ class TestNCNNModelCoverage:
 
             # Verify inference works via backend
             ncnn_model = LibreYOLO(exported_path)
-            result = ncnn_model(sample_image, conf=0.25)
+            result = ncnn_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model
@@ -486,7 +486,7 @@ class TestNCNNModelCoverage:
 
             # Verify inference works via backend
             ncnn_model = LibreYOLO(exported_path)
-            result = ncnn_model(sample_image, conf=0.25)
+            result = ncnn_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model
@@ -520,7 +520,7 @@ class TestNCNNModelCoverage:
             assert Path(exported_path).is_dir(), f"Failed to export YOLO-NAS-{size}"
 
             ncnn_model = LibreYOLO(exported_path)
-            result = ncnn_model(sample_image, conf=0.25)
+            result = ncnn_model(sample_image, conf=0.25)[0]
             assert result is not None
 
             del pt_model

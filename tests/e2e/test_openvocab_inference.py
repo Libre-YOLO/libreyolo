@@ -35,7 +35,7 @@ def test_grounding_dino_tiny_predict_smoke():
 
     model = LibreOpenVocab("grounding-dino-tiny", device="cpu")
     model.set_classes(["person", "dog", "skateboard"])
-    result = model.predict(_sample_image(), conf=0.2, text_threshold=0.2)
+    result = model.predict(_sample_image(), conf=0.2, text_threshold=0.2)[0]
     _assert_detection_smoke(result, {0: "person", 1: "dog", 2: "skateboard"})
 
 
@@ -45,7 +45,7 @@ def test_owlv2_base_predict_smoke():
 
     model = LibreOpenVocab("owlv2", device="cpu")
     model.set_classes(["person", "dog", "skateboard"])
-    result = model.predict(_sample_image(), conf=0.1)
+    result = model.predict(_sample_image(), conf=0.1)[0]
     _assert_detection_smoke(result, {0: "person", 1: "dog", 2: "skateboard"})
 
 

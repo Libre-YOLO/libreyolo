@@ -150,7 +150,7 @@ class TestForwardAndPredict:
         img_path = tmp_path / "img.jpg"
         Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
 
-        result = da_small.predict(str(img_path), imgsz=70)
+        result = da_small.predict(str(img_path), imgsz=70)[0]
 
         assert result.boxes is None
         assert result.depth_map is not None

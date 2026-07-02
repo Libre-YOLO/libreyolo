@@ -129,9 +129,9 @@ def test_onnx_backend_matches_torch_inference(tmp_path):
     )
 
     # Run torch + onnx on the same image; compare top-5 by class + ~conf.
-    torch_res = torch_m(SAMPLE_IMAGE, conf=0.5)
+    torch_res = torch_m(SAMPLE_IMAGE, conf=0.5)[0]
     onnx_m = LibreYOLO(str(out_path))
-    onnx_res = onnx_m(SAMPLE_IMAGE, conf=0.5)
+    onnx_res = onnx_m(SAMPLE_IMAGE, conf=0.5)[0]
 
     n = min(5, len(torch_res.boxes), len(onnx_res.boxes))
     assert n >= 3, "expected at least 3 confident detections in both"

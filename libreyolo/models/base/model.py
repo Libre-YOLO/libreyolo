@@ -1158,8 +1158,10 @@ class BaseModel(ABC):
             verbose: Print detailed metrics.
 
         Returns:
-            Dictionary with metrics/precision, metrics/recall,
-            metrics/mAP50, metrics/mAP50-95.
+            A Metrics dict (``metrics/*`` keys — e.g. metrics/precision,
+            metrics/recall, metrics/mAP50, metrics/mAP50-95) that also exposes
+            the headline numbers as attributes: ``.top1``/``.top5`` for
+            classification, ``.map``/``.map50`` for detection.
         """
         from libreyolo.validation import (
             ClassifyValidator,
@@ -1252,4 +1254,7 @@ class BaseModel(ABC):
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
-        return validator()
+        from libreyolo.utils.metrics import Metrics
+
+        results = validator()
+        return Metrics(results) if isinstance(results, dict) else results
