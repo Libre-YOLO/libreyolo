@@ -1799,9 +1799,12 @@ class BaseTrainer(ABC):
                 else:
                     distiller.teacher_forward(imgs)
 
-            # Forward + backward. Under DDP we multiply loss by world_size
-            # so that backward() gradient averaging produces the same
-            # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
+            # Forward + backward. Under DDP the loss needs no rescaling:
+            # every family's loss is mean/ratio-normalized, so DDP's gradient
+            # averaging already composes the per-rank gradients into the
+            # single-GPU-equivalent gradient (see scale_loss_for_ddp, #484).
+            # The distiller's adapter grads are averaged the same way in
+            # _sync_distiller_grads, keeping student and distiller consistent.
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with autocast("cuda"):
@@ -1967,10 +1970,10 @@ class BaseTrainer(ABC):
 
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the
-            # window boundary (``is_opt_step``). Under DDP we additionally
-            # multiply the per-micro-batch loss by world_size so DDP's
-            # gradient averaging composes correctly with the division-by-
-            # window scheme.
+            # window boundary (``is_opt_step``). The division by the window
+            # keeps mean semantics across micro-batches; under DDP no further
+            # rescaling is needed (losses are mean-normalized, so DDP's
+            # gradient averaging is already correct — see scale_loss_for_ddp).
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with autocast("cuda"):

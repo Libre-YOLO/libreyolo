@@ -101,6 +101,19 @@ class YOLO9TrainTransform:
             padded_labels = np.zeros((self.max_labels, label_dim), dtype=np.float32)
             # Fill class with -1 to indicate padding (empty slots)
             padded_labels[:, 0] = -1
+            # Background images get the same photometric/flip augmentation as
+            # labeled images (no label sync needed — there are no labels). The
+            # old early return skipped HSV and flips entirely, so on
+            # background-heavy datasets most of the training data was never
+            # augmented and the model could memorize the exact negatives
+            # (issue #484). Same op order and RNG-draw pattern as the labeled
+            # path below.
+            if random.random() < self.hsv_prob:
+                augment_hsv(image)
+            if random.random() < self.flip_prob:
+                image = image[:, ::-1]
+            if random.random() < self.vertical_flip_prob:
+                image = image[::-1, :]
             image, _ = preproc(image, input_dim)
             if return_masks:
                 return (
@@ -464,28 +477,44 @@ class YOLO9MosaicMixupDataset:
         return img, labels, (input_h, input_w), idx
 
     def _mixup(self, img, labels):
-        """Apply mixup augmentation."""
-        # Get another random image
-        idx2 = random.randint(0, len(self.dataset) - 1)
-        img2, labels2, _, _ = self._get_normal_item(idx2)
+        """Apply mixup augmentation.
 
-        # Mix images
+        Both ``labels`` and the second image's labels arrive already padded to
+        ``max_labels`` rows with class ``-1`` marking empty slots (that is what
+        ``YOLO9TrainTransform`` emits). Vstacking the second image's rows after
+        this full block and truncating to ``max_labels`` would keep only the
+        first image's block and silently drop every object from the second
+        image — they land at rows >= max_labels — turning ~50%-opacity objects
+        into unlabeled ghosts the loss punishes as background (issue #484).
+
+        Fix: strip padding from both images, concatenate the *real* objects,
+        then re-pad. Mirrors the shared YOLOX mixup, which merges labels before
+        padding.
+        """
+        # Get another random image (mixup only runs on the non-segment path,
+        # so _get_normal_item returns (img, label, ...); ignore the tail).
+        idx2 = random.randint(0, len(self.dataset) - 1)
+        img2, labels2, *_ = self._get_normal_item(idx2)
+
+        # Mix images (beta(32, 32) ≈ 0.5, so both images are ~equally visible
+        # and both label sets must be kept).
         r = np.random.beta(32.0, 32.0)
         img = (img * r + img2 * (1 - r)).astype(img.dtype)
 
-        # Concatenate labels (from both images)
-        if labels2 is not None and len(labels2) > 0 and labels2[0, 0] >= 0:
-            # Filter padding from labels2
-            mask = labels2[:, 0] >= 0
-            labels2 = labels2[mask]
-            if len(labels2) > 0:
-                # Concatenate and truncate
-                all_labels = np.vstack([labels, labels2])
-                max_labels = (
-                    self.preproc.max_labels
-                    if hasattr(self.preproc, "max_labels")
-                    else 100
-                )
-                labels = all_labels[:max_labels]
+        max_labels = getattr(self.preproc, "max_labels", 100)
+        label_dim = labels.shape[1]
 
-        return img, labels
+        # Drop padding (class == -1) from both, then merge the real objects.
+        real1 = labels[labels[:, 0] >= 0]
+        if labels2 is not None and len(labels2) > 0:
+            real2 = labels2[labels2[:, 0] >= 0]
+        else:
+            real2 = np.zeros((0, label_dim), dtype=labels.dtype)
+        merged = np.vstack([real1, real2])[:max_labels]
+
+        # Re-pad to max_labels with class = -1 (matches YOLO9TrainTransform).
+        padded = np.zeros((max_labels, label_dim), dtype=labels.dtype)
+        padded[:, 0] = -1
+        padded[: len(merged)] = merged
+
+        return img, padded

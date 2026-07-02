@@ -12,6 +12,7 @@ from torch import Tensor, nn
 from torch.nn import BCEWithLogitsLoss
 
 from libreyolo.data import default_oks_sigmas
+from libreyolo.training.distributed import all_reduce_avg_scalar
 from libreyolo.utils.box_ops import compute_iou as calculate_iou
 
 
@@ -562,6 +563,17 @@ class YOLO9Loss:
         if self.vec2box is None or self.vec2box.image_size != image_size:
             self._init_vec2box(image_size)
 
+    @staticmethod
+    def _global_cls_norm(targets_cls: Tensor) -> float:
+        """Global (DDP-reduced) positive count for loss normalization.
+
+        Multi-GPU training must divide by the global count so DDP's gradient
+        averaging matches single-GPU on the same global batch (issue #484).
+        Identical to ``max(targets_cls.sum(), 1)`` outside DDP. Shared by all
+        yolo9 task losses so the normalizer contract lives in one place.
+        """
+        return all_reduce_avg_scalar(targets_cls.sum())
+
     def __call__(
         self, predictions: List[Tensor], targets: Tensor
     ) -> Tuple[Tensor, Dict[str, float]]:
@@ -607,7 +619,7 @@ class YOLO9Loss:
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
         # Compute normalization factors
-        cls_norm = max(targets_cls.sum(), 1)
+        cls_norm = self._global_cls_norm(targets_cls)
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         # Compute losses
@@ -732,7 +744,7 @@ class YOLO9OBBLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        cls_norm = self._global_cls_norm(targets_cls)
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
@@ -915,7 +927,7 @@ class YOLO9SegmentationLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        cls_norm = self._global_cls_norm(targets_cls)
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
@@ -1161,7 +1173,7 @@ class YOLO9PoseLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        cls_norm = self._global_cls_norm(targets_cls)
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
