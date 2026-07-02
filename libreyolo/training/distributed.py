@@ -227,26 +227,54 @@ def broadcast_ema_buffers(ema_module: nn.Module, src: int = 0) -> None:
 # =============================================================================
 
 
-def scale_loss_for_ddp(loss: torch.Tensor) -> torch.Tensor:
-    """Multiply loss by world_size so DDP gradient averaging composes correctly.
+def all_reduce_avg_scalar(
+    value: Union[float, torch.Tensor],
+    *,
+    device: Optional[torch.device] = None,
+    min_value: float = 1.0,
+) -> float:
+    """Average a per-rank scalar count across ranks: ``sum`` then ``/ world_size``.
 
-    DDP all-reduces gradients during ``backward()`` and divides by world_size
-    (an average). For sum-style losses we want the final gradient to be
-    ``sum_r dL_r/dθ``, not ``mean_r dL_r/dθ``. Pre-multiplying by world_size
-    cancels DDP's 1/N averaging exactly:
+    Mirrors the DETR ``num_boxes`` reduction. A mean/ratio-normalized loss must
+    divide by the *global* count of positives to be numerically equivalent to
+    single-GPU training on the same global batch: with each rank dividing by
+    ``global_count / world_size`` and DDP averaging the gradients, the two
+    cancel to reproduce the single-GPU gradient exactly (see
+    ``scale_loss_for_ddp``). The result is clamped to ``min_value`` to avoid
+    division by zero on all-background batches.
 
-        per-rank grad after backward = N * dL_r/dθ
-        DDP-averaged grad            = (1/N) * sum_r (N * dL_r/dθ) = sum_r dL_r/dθ
-
-    For mean-normalized losses (yolo9's cls_norm, DETR's num_boxes) the
-    result diverges slightly from single-GPU semantics. That divergence comes
-    from each rank using its own local normalizer.
-
-    No-op outside DDP.
+    Outside DDP this is just ``max(value, min_value)`` — single-GPU behavior is
+    unchanged (identical numeric value to the previous ``max(sum, 1)``).
     """
-    if not is_distributed():
-        return loss
-    return loss * float(get_world_size())
+    if isinstance(value, torch.Tensor):
+        v = value.detach().float().sum().reshape(())
+    else:
+        v = torch.as_tensor(float(value), dtype=torch.float32, device=device)
+    if is_distributed():
+        v = v.clone()
+        dist.all_reduce(v)
+        v = v / float(get_world_size())
+    return float(v.clamp_min(min_value).item())
+
+
+def scale_loss_for_ddp(loss: torch.Tensor) -> torch.Tensor:
+    """Pass the loss through unchanged — DDP needs no per-loss rescaling here.
+
+    DDP all-reduces gradients during ``backward()`` and **averages** them
+    (divides by world_size). Every LibreYOLO loss is mean/ratio-normalized:
+    each rank already produces a "full-batch magnitude" gradient (normalized by
+    a per-positive / per-box count — globally reduced for yolo9's ``cls_norm``
+    and the DETR ``num_boxes``), so DDP's averaging composes them into the
+    single-GPU-equivalent gradient. Multiplying by world_size on top of that
+    over-counts by ~N and inflates the effective learning rate — this was the
+    root cause of the multi-GPU accuracy gap in issue #484 (4-GPU trained at
+    ~4× LR vs single-GPU).
+
+    Kept as the single, documented seam where a *genuinely sum-reduced* loss
+    (no normalizer) could opt back into ``loss * world_size``. No family
+    currently uses one, so this is the identity in every case, DDP or not.
+    """
+    return loss
 
 
 # =============================================================================

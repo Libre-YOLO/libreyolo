@@ -12,6 +12,7 @@ from torch import Tensor, nn
 from torch.nn import BCEWithLogitsLoss
 
 from libreyolo.data import default_oks_sigmas
+from libreyolo.training.distributed import all_reduce_avg_scalar
 from libreyolo.utils.box_ops import compute_iou as calculate_iou
 
 
@@ -607,7 +608,10 @@ class YOLO9Loss:
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
         # Compute normalization factors
-        cls_norm = max(targets_cls.sum(), 1)
+        # Global (DDP-reduced) positive count so multi-GPU training matches
+        # single-GPU on the same global batch (issue #484). Identical to
+        # ``max(targets_cls.sum(), 1)`` outside DDP.
+        cls_norm = all_reduce_avg_scalar(targets_cls.sum())
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         # Compute losses
@@ -732,7 +736,10 @@ class YOLO9OBBLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        # Global (DDP-reduced) positive count so multi-GPU training matches
+        # single-GPU on the same global batch (issue #484). Identical to
+        # ``max(targets_cls.sum(), 1)`` outside DDP.
+        cls_norm = all_reduce_avg_scalar(targets_cls.sum())
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
@@ -915,7 +922,10 @@ class YOLO9SegmentationLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        # Global (DDP-reduced) positive count so multi-GPU training matches
+        # single-GPU on the same global batch (issue #484). Identical to
+        # ``max(targets_cls.sum(), 1)`` outside DDP.
+        cls_norm = all_reduce_avg_scalar(targets_cls.sum())
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
@@ -1161,7 +1171,10 @@ class YOLO9PoseLoss(YOLO9Loss):
         preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
         targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
 
-        cls_norm = max(targets_cls.sum(), 1)
+        # Global (DDP-reduced) positive count so multi-GPU training matches
+        # single-GPU on the same global batch (issue #484). Identical to
+        # ``max(targets_cls.sum(), 1)`` outside DDP.
+        cls_norm = all_reduce_avg_scalar(targets_cls.sum())
         box_norm = targets_cls.sum(-1)[valid_masks]
 
         loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
