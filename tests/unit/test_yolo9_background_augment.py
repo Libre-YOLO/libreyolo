@@ -48,19 +48,27 @@ def test_background_image_is_horizontally_flipped():
     assert np.all(labels[:, 0] == -1)
 
 
-def test_background_image_gets_hsv_augmentation():
-    """hsv_prob=1 must alter the pixels of an empty-label image."""
+def test_background_image_gets_hsv_augmentation(monkeypatch):
+    """hsv_prob=1 must invoke ``augment_hsv`` on an empty-label image.
+
+    Structural spy check rather than a pixel diff: ``augment_hsv``'s random
+    draws are legitimately a visible no-op ~1/3 of the time (each gain is
+    zeroed with p=0.5, sub-unit draws truncate to 0, and hue shifts are
+    invisible on achromatic pixels), so asserting a pixel change is flaky."""
+    calls = []
+    monkeypatch.setattr(
+        "libreyolo.data.augment.yolo9.augment_hsv",
+        lambda image: calls.append(image.shape),
+    )
     t = YOLO9TrainTransform(
         max_labels=10, flip_prob=0.0, vertical_flip_prob=0.0, hsv_prob=1.0
     )
-    img = _asymmetric_image()
 
-    out, _ = t(img.copy(), _EMPTY, (48, 64))
-    unaugmented, _ = preproc(img, (48, 64))
+    t(_asymmetric_image(), _EMPTY, (48, 64))
 
-    assert not np.array_equal(out, unaugmented), (
-        "empty-label image pixels unchanged with hsv_prob=1 — HSV skipped "
-        "on the background path"
+    assert calls, (
+        "augment_hsv was not invoked on the empty-label path — background "
+        "images are skipping photometric augmentation (issue #484)"
     )
 
 
