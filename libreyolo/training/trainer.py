@@ -465,6 +465,24 @@ class BaseTrainer(ABC):
                 f"Added {len(distill_params)} distillation params to optimizer"
             )
 
+    def _sync_distiller_grads(self):
+        """All-reduce distiller adapter/generator gradients across DDP ranks.
+
+        The distiller's loss modules live outside the DDP-wrapped student, so
+        DDP's reducer never sees their gradients; without an explicit sync each
+        rank would train its own diverging adapters. No-op outside DDP.
+        """
+        distiller = getattr(self, "distiller", None)
+        if distiller is None or not is_distributed():
+            return
+        import torch.distributed as dist
+
+        world_size = float(get_world_size())
+        for param in distiller.loss_modules.parameters():
+            if param.grad is not None:
+                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                param.grad /= world_size
+
     def _get_save_dir(self) -> Path:
         project = Path(self.config.project)
         name = self.config.name
@@ -1781,6 +1799,7 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
+                    self._sync_distiller_grads()
                     if self._should_clip_gradients():
                         self.scaler.unscale_(self.optimizer)
                         self._clip_gradients()
@@ -1799,6 +1818,7 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     loss.backward()
+                    self._sync_distiller_grads()
                     self._clip_gradients()
                 with self._prof_phase("optimizer"):
                     self.optimizer.step()
@@ -1945,6 +1965,7 @@ class BaseTrainer(ABC):
                     self.scaler.scale(loss).backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         if self._should_clip_gradients():
                             self.scaler.unscale_(self.optimizer)
                             self._clip_gradients()
@@ -1964,6 +1985,7 @@ class BaseTrainer(ABC):
                     loss.backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         self._clip_gradients()
                         self.optimizer.step()
 
