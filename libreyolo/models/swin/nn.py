@@ -177,10 +177,18 @@ class SwinStage(nn.Module):
 class PatchEmbed(nn.Module):
     def __init__(self, in_chans: int, embed_dim: int, patch_size: int):
         super().__init__()
+        self.patch_size = patch_size
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.norm = nn.LayerNorm(embed_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # pad H, W up to a multiple of patch_size (matches transformers/timm strict_img)
+        _, _, h, w = x.shape
+        ps = self.patch_size
+        pad_h = (ps - h % ps) % ps
+        pad_w = (ps - w % ps) % ps
+        if pad_h or pad_w:
+            x = F.pad(x, (0, pad_w, 0, pad_h))
         x = self.proj(x).permute(0, 2, 3, 1)  # NCHW -> NHWC
         return self.norm(x)
 
