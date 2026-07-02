@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from ..bert.nn import BertModel
 from ..swin.nn import SwinBackbone, SwinDims
 
-SPECIAL_TOKENS = [101, 102, 1012, 1029]
+SPECIAL_TOKENS = [101, 102, 1012, 1029]  # BERT [CLS], [SEP], '.', '?'
 
 
 def _act(name):

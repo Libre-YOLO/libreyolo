@@ -7,7 +7,7 @@ from PIL import Image
 
 from libreyolo.models.omdet_turbo.nn import OmDetTurboDetectionModel
 
-REPO = "../491-add-omdet-turbo/weights/LibreOMDetTurbot"  # local snapshot
+REPO = "LibreYOLO/LibreOMDetTurbot"  # HF snapshot (Apache-2.0 OMDet-Turbo Swin-T mirror)
 
 
 def remap(sd):

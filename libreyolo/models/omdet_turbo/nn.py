@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 from ..swin.nn import SwinBackbone, SwinDims
 
-ACT = {"silu": nn.SiLU, "relu": nn.ReLU, "gelu": nn.GELU, "quick_gelu": None}
+ACT = {"silu": nn.SiLU, "relu": nn.ReLU, "gelu": nn.GELU}  # conv/csp activations; text uses _act()
 
 
 def _act(name):
@@ -326,7 +326,8 @@ class HybridEncoder(nn.Module):
         for eidx, fidx in enumerate(self.encoder_projection_indices):
             h, w = proj[fidx].shape[2:]
             src = proj[fidx].flatten(2).permute(0, 2, 1)
-            if self.eval_size is None:
+            # upstream recomputes the sincos pos-embed in training even when eval_size is set
+            if self.training or self.eval_size is None:
                 pos = self._pos_embed(w, h, self.encoder_hidden_dim, self.positional_encoding_temperature,
                                       src.device, src.dtype)
             else:
@@ -360,7 +361,7 @@ def _cosine_scaled(a, b, logit_scale):
 
 
 def _class_similarity(kind, cls_feature, class_proj):
-    logit_scale = torch.tensor(1 / 0.07).log()
+    logit_scale = torch.tensor(1 / 0.07).log()  # fixed CLIP temperature (1/0.07), as in upstream
     if kind == "cosine":
         return _cosine_scaled(cls_feature, class_proj, logit_scale)
     return torch.bmm(cls_feature, class_proj)
@@ -537,8 +538,8 @@ class OmDetDecoder(nn.Module):
                 dec_classes.append(_class_similarity(self.class_distance_type, pcf, ocp))
                 dec_bboxes.append(refined)
                 break
-            last_refined = refined
-            reference_points = refined
+            # detach between layers in training (Deformable-DETR look-forward-once); no-op in eval
+            reference_points = refined.detach() if self.training else refined
         return dec_bboxes[-1], dec_classes[-1], encoder_bboxes, enc_sim
 
 
