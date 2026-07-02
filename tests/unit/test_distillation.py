@@ -10,12 +10,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-pytestmark = pytest.mark.unit
-
 from libreyolo.distillation.hooks import FeatureHookManager, _resolve_module
 from libreyolo.distillation.losses import MGDLoss, CWDLoss
 from libreyolo.distillation.distiller import Distiller
 from libreyolo.distillation.configs import get_distill_config, list_supported
+
+pytestmark = pytest.mark.unit
 
 
 # =============================================================================
@@ -673,9 +673,6 @@ class TestModelDistillConfig:
             assert len(cfg["tap_points"]) == 3
 
     def test_unsupported_family_raises(self):
-        """BaseModel default should raise NotImplementedError."""
-        from libreyolo.models.base.model import BaseModel
-
         # BaseModel can't be instantiated directly (ABC), so test via the
         # get_distill_config convenience function with an unknown family
         with pytest.raises(ValueError, match="not yet configured"):
