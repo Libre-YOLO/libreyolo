@@ -290,7 +290,7 @@ class LibreEnsemble:
         batch: int = 1,
         stream: bool = False,
         **kwargs,
-    ) -> Union[Results, List[Results]]:
+    ) -> List[Results]:
         """Run every member on *source* and return fused Results.
 
         ``conf``, ``iou``, ``imgsz``, and ``device`` keep their standard
@@ -330,13 +330,17 @@ class LibreEnsemble:
                 for p in ImageLoader.collect_images(source)
             ]
 
-        return self._predict_one(
-            source, conf_l, iou_l, imgsz_l, device_l,
-            classes=classes, max_det=max_det, augment=augment,
-            save=save, output_path=output_path, color_format=color_format,
-        )
+        # A single-image source returns a one-element list so the ensemble
+        # matches the list[Results] contract of every LibreYOLO model.
+        return [
+            self._predict_one(
+                source, conf_l, iou_l, imgsz_l, device_l,
+                classes=classes, max_det=max_det, augment=augment,
+                save=save, output_path=output_path, color_format=color_format,
+            )
+        ]
 
-    def predict(self, *args, **kwargs) -> Union[Results, List[Results]]:
+    def predict(self, *args, **kwargs) -> List[Results]:
         """Alias for ``__call__``."""
         return self(*args, **kwargs)
 
@@ -376,18 +380,22 @@ class LibreEnsemble:
         member_results: List[Results] = []
         for i, member in enumerate(self.members):
             start = time.perf_counter()
-            member_results.append(
-                member(
-                    img,
-                    conf=conf_l[i],
-                    iou=iou_l[i],
-                    imgsz=imgsz_l[i],
-                    device=device_l[i],
-                    # Members run generously; the ensemble trims once at the end.
-                    max_det=max(300, max_det),
-                    augment=augment,
-                )
+            member_out = member(
+                img,
+                conf=conf_l[i],
+                iou=iou_l[i],
+                imgsz=imgsz_l[i],
+                device=device_l[i],
+                # Members run generously; the ensemble trims once at the end.
+                max_det=max(300, max_det),
+                augment=augment,
             )
+            # Native models return list[Results] (one per image); an
+            # ExternalDetector returns a single Results. Normalize to the one
+            # per-image Results this member produced.
+            if isinstance(member_out, list):
+                member_out = member_out[0]
+            member_results.append(member_out)
             speed[f"member_{i}"] = (time.perf_counter() - start) * 1000.0
 
         boxes, scores, labels, model_ids = self._stack(member_results)

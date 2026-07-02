@@ -2284,7 +2284,10 @@ class BaseBackend(ABC):
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
-        return validator()
+        from libreyolo.utils.metrics import Metrics
+
+        results = validator()
+        return Metrics(results) if isinstance(results, dict) else results
 
     # =========================================================================
     # Inference pipeline
@@ -2625,7 +2628,7 @@ class BaseBackend(ABC):
         output_path: str | None = None,
         color_format: str = "auto",
         **kwargs,
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         """Run inference on an image, list of images, directory, or video."""
         normalize_predict_kwargs(kwargs)
         if device not in (None, "", "auto", self.device):
@@ -2687,7 +2690,9 @@ class BaseBackend(ABC):
                 color_format=color_format,
             )
 
-        return self._predict_single(
+        # A single-image source returns a one-element list so an exported
+        # backend matches the list[Results] contract of native .pt models.
+        result = self._predict_single(
             source,
             save=save,
             output_path=output_path,
@@ -2698,10 +2703,11 @@ class BaseBackend(ABC):
             max_det=max_det,
             color_format=color_format,
         )
+        return [result]
 
     def predict(
         self, *args, **kwargs
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         """Alias for __call__ method."""
         return self(*args, **kwargs)
 

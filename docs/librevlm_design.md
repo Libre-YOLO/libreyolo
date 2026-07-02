@@ -64,7 +64,7 @@ text = model.chat("image.jpg", "Describe the boats and count them.")
 
 # Layer 2, the detection convenience:
 model.set_classes(["boat"])
-results = model.predict("image.jpg")     # -> Results(boxes, cls, conf)
+results = model.predict("image.jpg")     # -> list[Results] (one per image; [0] for a single)
 ```
 
 `predict()` is `chat()` with a canonical detection prompt and a parser bolted

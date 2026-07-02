@@ -82,7 +82,7 @@ def test_rfdetr_keypoint_parity_matches_oracle():
     from libreyolo import LibreYOLO
 
     model = LibreYOLO(str(checkpoint))
-    results = model.predict(str(_PARKOUR), conf=golden["conf"], device="cpu")[0]
+    results = model.predict(str(_PARKOUR), conf=golden["conf"], device="cpu")
     result = results[0] if isinstance(results, (list, tuple)) else results
 
     pred_boxes = np.asarray(result.boxes.xyxy, dtype=np.float64)

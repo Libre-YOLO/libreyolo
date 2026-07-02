@@ -223,8 +223,9 @@ visibility — `Keypoints.has_visible` requires column 3
 
 ### Commit 6 — End-to-end inference
 
-`LibreYOLO("Libre<FAMILY>s.pt").predict("test.jpg")` returns a `Results`
-object with the right slots populated, and `Results._select(idx)` slices
+`LibreYOLO("Libre<FAMILY>s.pt").predict("test.jpg")` returns a `list[Results]`
+(one per image; index `[0]` for a single image) with the right slots
+populated, and `Results._select(idx)` slices
 boxes ↔ masks ↔ keypoints in lockstep. Drawing dispatches on slot presence
 (`if result.keypoints is not None: draw_keypoints(...)`), no task field
 needed.

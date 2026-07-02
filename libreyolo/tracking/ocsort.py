@@ -393,7 +393,7 @@ class OCSortTracker:
 
         tracker = OCSortTracker()
         for frame in frames:
-            result = model(frame, conf=0.1)
+            result = model(frame, conf=0.1)[0]
             tracked = tracker.update(result)
             print(tracked.track_id)
     """

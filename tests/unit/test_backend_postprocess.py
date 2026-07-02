@@ -1642,7 +1642,8 @@ def test_backend_call_accepts_device_kwarg(monkeypatch):
     backend = _DummyBackend("yolo9")
     monkeypatch.setattr(backend, "_predict_single", lambda source, **kwargs: "ok")
 
-    assert backend("image.jpg", device="cpu") == "ok"
+    # A single-image source now returns a one-element list (parity with .pt models).
+    assert backend("image.jpg", device="cpu") == ["ok"]
 
 
 def test_backend_rejects_unsupported_explicit_task():

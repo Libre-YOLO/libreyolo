@@ -8,7 +8,7 @@ is backed by a generative VLM, so the class list is open vocabulary.
     from libreyolo import LibreVLM
     model = LibreVLM()                       # defaults to Qwen3-VL-4B, autodownloads
     model.set_classes(["pink car", "wheel"]) # open vocabulary: any words
-    results = model.predict("image.jpg")     # same Results as a YOLO model
+    results = model.predict("image.jpg")     # list[Results], same as any YOLO model
     results = model.predict("folder/")       # folders, video, track() all work
     text = model.chat("image.jpg", "How many cars are pink?")  # raw escape hatch
 

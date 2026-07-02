@@ -30,11 +30,15 @@ class StubMember:
         self.calls.append({"source": source, **kwargs})
         w, h = source.size
         keep = self.scores > kwargs.get("conf", 0.25)
-        return Results(
-            boxes=Boxes(self.boxes[keep], self.scores[keep], self.cls[keep]),
-            orig_shape=(h, w),
-            names=self.names,
-        )
+        # A native LibreYOLO member returns list[Results] (one per image); model
+        # that here so the ensemble's member-result normalization is exercised.
+        return [
+            Results(
+                boxes=Boxes(self.boxes[keep], self.scores[keep], self.cls[keep]),
+                orig_shape=(h, w),
+                names=self.names,
+            )
+        ]
 
     predict = __call__
 
@@ -114,7 +118,7 @@ class TestNamesUnion:
         )
         ens = LibreEnsemble([a, b])
         assert ens.names == {0: "person", 1: "car"}
-        result = ens(image)
+        result = ens(image)[0]
         assert len(result) == 1
         assert result.boxes.cls.tolist() == [0.0]
         assert result.names[0] == "person"
@@ -134,7 +138,7 @@ class TestNamesUnion:
             {0: "car", 1: "person"}, boxes=[[50, 50, 60, 60]], scores=[0.8], cls=[0]
         )
         ens = LibreEnsemble([a, b], min_votes=2)
-        result = ens(image)
+        result = ens(image)[0]
         assert len(result) == 1
         assert result.names[int(result.boxes.cls[0])] == "car"
 
@@ -145,14 +149,14 @@ class TestNamesUnion:
         b = StubMember(
             {0: "car", 1: "person"}, boxes=[[50, 50, 60, 60]], scores=[0.8], cls=[0]
         )
-        result = LibreEnsemble([a, b])(image)
+        result = LibreEnsemble([a, b])(image)[0]
         assert torch.allclose(result.boxes.conf, torch.tensor([0.8]), atol=1e-5)
 
 
 class TestPredict:
     def test_two_member_fusion(self, image):
         a, b = _pair_members()
-        result = ens_result = LibreEnsemble([a, b])(image)
+        result = ens_result = LibreEnsemble([a, b])(image)[0]
         assert isinstance(ens_result, Results)
         assert len(result) == 1
         assert torch.allclose(
@@ -207,7 +211,7 @@ class TestPredict:
         scores = [0.9 - 0.05 * i for i in range(8)]
         a = StubMember(COCOISH, boxes=boxes, scores=scores, cls=[0] * 8)
         b = StubMember(COCOISH)
-        result = LibreEnsemble([a, b])(image, max_det=3)
+        result = LibreEnsemble([a, b])(image, max_det=3)[0]
         assert a.calls[0]["max_det"] == 300
         assert len(result) == 3
         assert torch.all(result.boxes.conf[:-1] >= result.boxes.conf[1:])
@@ -218,7 +222,7 @@ class TestPredict:
             scores=[0.9, 0.8], cls=[0, 1],
         )
         b = StubMember(COCOISH)
-        result = LibreEnsemble([a, b])(image, classes=[1])
+        result = LibreEnsemble([a, b])(image, classes=[1])[0]
         assert result.boxes.cls.tolist() == [1.0]
 
     def test_min_votes_consensus(self, image):
@@ -227,26 +231,26 @@ class TestPredict:
             scores=[0.9, 0.95], cls=[0, 0],
         )
         b = StubMember(COCOISH, boxes=[[0, 0, 10, 12]], scores=[0.7], cls=[0])
-        result = LibreEnsemble([a, b], min_votes=2)(image)
+        result = LibreEnsemble([a, b], min_votes=2)(image)[0]
         assert len(result) == 1
         assert torch.allclose(
             result.boxes.xyxy[0, 3], torch.tensor(10.875), atol=1e-4
         )
 
     def test_speed_keys(self, image):
-        result = LibreEnsemble(list(_pair_members()))(image)
+        result = LibreEnsemble(list(_pair_members()))(image)[0]
         assert set(result.speed) == {"member_0", "member_1", "fusion"}
         assert all(v >= 0 for v in result.speed.values())
 
     def test_all_members_empty(self, image):
-        result = LibreEnsemble([StubMember(COCOISH), StubMember(COCOISH)])(image)
+        result = LibreEnsemble([StubMember(COCOISH), StubMember(COCOISH)])(image)[0]
         assert len(result) == 0
         assert result.boxes.xyxy.shape == (0, 4)
         assert result.names == COCOISH
 
     def test_one_empty_member_halves_solo_score(self, image):
         a = StubMember(COCOISH, boxes=[[0, 0, 10, 10]], scores=[0.9], cls=[0])
-        result = LibreEnsemble([a, StubMember(COCOISH)])(image)
+        result = LibreEnsemble([a, StubMember(COCOISH)])(image)[0]
         assert torch.allclose(result.boxes.conf, torch.tensor([0.45]), atol=1e-5)
 
     def test_nonfinite_member_rows_dropped(self, image):
@@ -254,7 +258,7 @@ class TestPredict:
             COCOISH, boxes=[[0, 0, 10, 10], [0, 0, float("nan"), 10]],
             scores=[0.9, 0.8], cls=[0, 0],
         )
-        result = LibreEnsemble([a, StubMember(COCOISH)])(image)
+        result = LibreEnsemble([a, StubMember(COCOISH)])(image)[0]
         assert len(result) == 1
         assert torch.isfinite(result.boxes.xyxy).all()
 
@@ -280,7 +284,7 @@ class TestPredict:
             return boxes[keep], scores[keep], labels[keep]
 
         a, b = _pair_members()
-        result = LibreEnsemble([a, b], fusion=first_only)(image)
+        result = LibreEnsemble([a, b], fusion=first_only)(image)[0]
         assert seen["num_models"] == 2
         assert torch.allclose(seen["weights"], torch.ones(2))
         assert set(seen["model_ids"].tolist()) == {0, 1}
@@ -329,7 +333,7 @@ class TestPredict:
         out_dir = tmp_path / "out"
         result = LibreEnsemble(list(_pair_members()))(
             str(src), save=True, output_path=str(out_dir)
-        )
+        )[0]
         from pathlib import Path
 
         assert Path(result.saved_path).exists()
@@ -398,7 +402,7 @@ class TestExternalDetector:
             lambda img: ([[0, 0, 10, 12]], [0.7], [0]), names={0: "person"}
         )
         a = StubMember({0: "person"}, boxes=[[0, 0, 10, 10]], scores=[0.9], cls=[0])
-        result = LibreEnsemble([a, external], min_votes=2)(image)
+        result = LibreEnsemble([a, external], min_votes=2)(image)[0]
         assert len(result) == 1
         assert torch.allclose(result.boxes.conf, torch.tensor([0.8]), atol=1e-5)
 

@@ -383,7 +383,7 @@ class TestNCNNBackend:
         ncnn_model = NcnnBackend(exported_path)
 
         # Run with class filter (class 0 = person in COCO)
-        result = ncnn_model(sample_image, conf=0.25, classes=[0])
+        result = ncnn_model(sample_image, conf=0.25, classes=[0])[0]
 
         if len(result) > 0:
             unique_classes = result.boxes.cls.unique().tolist()

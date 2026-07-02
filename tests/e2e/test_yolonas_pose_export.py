@@ -54,5 +54,5 @@ def test_yolonas_pose_onnx_export_roundtrip(tmp_path):
     loaded = LibreYOLO(str(out_path), device="cpu")
     assert loaded.model_family == "yolonas"
     assert loaded.task == "pose"
-    result = loaded.predict(np.zeros((64, 64, 3), dtype=np.uint8), conf=0.99, imgsz=64)
+    result = loaded.predict(np.zeros((64, 64, 3), dtype=np.uint8), conf=0.99, imgsz=64)[0]
     assert result.keypoints is not None

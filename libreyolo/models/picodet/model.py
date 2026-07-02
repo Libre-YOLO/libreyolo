@@ -29,7 +29,7 @@ class LibrePICODET(BaseModel):
     Examples::
 
         >>> model = LibreYOLO("LibrePICODETs.pt")
-        >>> dets = model(image="image.jpg")
+        >>> results = model(image="image.jpg")  # list[Results], one per image
 
         >>> model = LibrePICODET(size="s")
         >>> model.train(data="coco128.yaml", epochs=10)

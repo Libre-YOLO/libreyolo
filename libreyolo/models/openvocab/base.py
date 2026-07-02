@@ -128,7 +128,7 @@ class LibreOpenVocabDetector(BaseModel):
         conf: float | None = None,
         text_threshold: float | None = None,
         **kwargs,
-    ) -> Union[Results, List[Results], GeneratorType]:
+    ) -> Union[List[Results], GeneratorType]:
         """Run prediction with family-specific defaults.
 
         ``InferenceRunner`` owns predict kwargs and defaults, so this tier

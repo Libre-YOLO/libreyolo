@@ -352,7 +352,7 @@ class TestOpenVINOBackend:
         ov_model = OpenVINOBackend(exported_path)
 
         # Run with class filter (class 0 = person in COCO)
-        result = ov_model(sample_image, conf=0.25, classes=[0])
+        result = ov_model(sample_image, conf=0.25, classes=[0])[0]
 
         if len(result) > 0:
             unique_classes = result.boxes.cls.unique().tolist()

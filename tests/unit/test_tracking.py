@@ -533,3 +533,49 @@ class TestDrawBoxesWithTrackIds:
 
         draw_boxes(img, [[10, 10, 90, 90]], [0.9], [0], track_ids=[1])
         assert np.array_equal(np.array(img), original_arr)
+
+
+@pytest.mark.parametrize("tracker", ["bytetrack", "ocsort"])
+def test_model_track_unwraps_predict_list(tmp_path, monkeypatch, tracker):
+    """``model.track()`` must unwrap ``predict()``'s list before the tracker.
+
+    Regression guard: ``predict()`` now returns a one-element ``list[Results]``
+    per frame. If that list is passed straight to ``tracker.update()`` it raises
+    ``'list' object has no attribute 'boxes'`` on the first frame — for both
+    ByteTrack and OC-SORT. The per-frame runner and the video reader are stubbed
+    so the test needs no real video, weights, or GPU; it drives the real
+    ``predict_and_track`` -> ``tracker.update`` path.
+    """
+    from libreyolo import LibreDEIM
+
+    model = LibreDEIM(None, size="n", device="cpu")
+
+    # predict() contract: one frame -> a one-element list of Results.
+    def fake_runner(source, **kwargs):
+        boxes = Boxes(
+            torch.tensor([[10.0, 10.0, 30.0, 30.0]]),
+            torch.tensor([0.9]),
+            torch.tensor([0.0]),
+        )
+        return [Results(boxes=boxes, orig_shape=(64, 64), names=model.names)]
+
+    model._runner_instance = fake_runner
+
+    frame = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8), mode="RGB")
+
+    def fake_run_video_inference(source, predict_frame, **kwargs):
+        yield predict_frame(frame)
+
+    monkeypatch.setattr(
+        "libreyolo.utils.video.run_video_inference", fake_run_video_inference
+    )
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"")  # track() only checks existence; the reader is stubbed
+
+    results = list(model.track(str(video), tracker=tracker, imgsz=64))
+
+    assert len(results) == 1
+    assert isinstance(results[0], Results)
+    # update() ran and returned a per-frame Results with a track_id slot.
+    assert results[0].track_id is not None

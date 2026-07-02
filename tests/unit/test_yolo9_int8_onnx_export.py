@@ -88,5 +88,5 @@ def test_yolo9_detect_onnx_int8_export_loads_and_predicts(tmp_path):
     assert float(outs[0][0, 4:, :].max()) > 0.25
 
     loaded = LibreYOLO(str(int8_path), device="cpu")
-    result = loaded.predict(np.zeros((64, 64, 3), dtype=np.uint8), conf=0.0, imgsz=64)
+    result = loaded.predict(np.zeros((64, 64, 3), dtype=np.uint8), conf=0.0, imgsz=64)[0]
     assert result.boxes is not None

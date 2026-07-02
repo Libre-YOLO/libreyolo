@@ -118,7 +118,7 @@ def test_nafnet_fixed_onnx_export_roundtrip(tmp_path):
         opset=13,
     )
     backend = OnnxBackend(path, device="cpu")
-    result = backend(Image.fromarray(np.zeros((5, 7, 3), dtype=np.uint8), mode="RGB"))
+    result = backend(Image.fromarray(np.zeros((5, 7, 3), dtype=np.uint8), mode="RGB"))[0]
 
     assert result.boxes is None
     assert result.restored.array.shape == (5, 7, 3)

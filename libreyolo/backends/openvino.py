@@ -25,7 +25,7 @@ class OpenVINOBackend(BaseBackend):
     Example:
         >>> model = OpenVINOBackend("exported_model_dir/")
         >>> results = model("image.jpg", save=True)  # list[Results], one per image
-        >>> print(result.boxes.xyxy)
+        >>> print(results[0].boxes.xyxy)
     """
 
     def __init__(

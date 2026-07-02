@@ -684,12 +684,12 @@ class BaseModel(ABC):
 
     def __call__(
         self, source=None, **kwargs
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         return self._runner(source, **kwargs)
 
     def predict(
         self, *args, **kwargs
-    ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+    ) -> Union[List[Results], Generator[Results, None, None]]:
         """Alias for __call__ method."""
         return self(*args, **kwargs)
 
@@ -1065,7 +1065,8 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
-            return tracker_obj.update(result)
+            # predict() returns a one-element list for a single frame.
+            return tracker_obj.update(result[0])
 
         def annotate_tracked(pil_img, result):
             if len(result) == 0:

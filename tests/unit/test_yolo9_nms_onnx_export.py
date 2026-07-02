@@ -275,7 +275,7 @@ def test_yolo9_detect_onnx_nms_backend_roundtrip(tmp_path):
         imgsz=100,
         max_det=max_det,
         color_format="rgb",
-    )
+    )[0]
     assert result.boxes is not None
     backend_rows = np.concatenate(
         [
