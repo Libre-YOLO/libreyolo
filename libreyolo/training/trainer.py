@@ -455,6 +455,17 @@ class BaseTrainer(ABC):
         )
         self.distiller.to(self.device)
 
+        # resume() may run before setup() — apply deferred adapter state now.
+        deferred_state = getattr(self, "_resume_distiller_state", None)
+        if deferred_state is not None:
+            try:
+                self.distiller.loss_modules.load_state_dict(deferred_state)
+                logger.info("Distiller adapter state restored from resume checkpoint")
+            except Exception as e:
+                logger.warning(f"Could not load deferred distiller state: {e}")
+            finally:
+                self._resume_distiller_state = None
+
         # Add distiller's learnable params (align/generation convs) to optimizer
         distill_params = list(self.distiller.loss_modules.parameters())
         if distill_params:
@@ -2472,6 +2483,10 @@ class BaseTrainer(ABC):
             checkpoint["train_model"] = raw_model.state_dict()
             checkpoint["ema"] = self.ema_model.ema.state_dict()
             checkpoint["ema_updates"] = self.ema_model.updates
+        if getattr(self, "distiller", None) is not None:
+            # Adapter/generator weights live outside the student model; persist
+            # them so resume doesn't restart the distillation projectors cold.
+            checkpoint["distiller"] = self.distiller.loss_modules.state_dict()
         validate_checkpoint_metadata(checkpoint, strict=True)
 
         weights_dir = self.save_dir / "weights"
@@ -2542,6 +2557,18 @@ class BaseTrainer(ABC):
                 # setup() hasn't run yet — defer until the optimizer exists.
                 self._resume_optimizer_state = checkpoint["optimizer"]
                 logger.info("Optimizer state deferred until after setup()")
+
+        if "distiller" in checkpoint:
+            if self.distiller is not None:
+                try:
+                    self.distiller.loss_modules.load_state_dict(checkpoint["distiller"])
+                    logger.info("Distiller adapter state restored")
+                except Exception as e:
+                    logger.warning(f"Could not load distiller state: {e}")
+            else:
+                # setup() hasn't run yet — defer until the distiller exists.
+                self._resume_distiller_state = checkpoint["distiller"]
+                logger.info("Distiller state deferred until after setup()")
 
         if "best_metric_value" in checkpoint or "best_mAP50_95" in checkpoint:
             checkpoint_metric_key = checkpoint.get("best_metric_key", "metrics/mAP50-95")

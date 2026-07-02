@@ -142,6 +142,55 @@ def test_distillation_with_gradient_accumulation(tmp_path):
     assert Path(results["last_checkpoint"]).exists()
 
 
+def test_distillation_resume_restores_adapters(tmp_path, caplog):
+    """Checkpoints persist the distiller adapters and resume restores them."""
+    import logging
+
+    from libreyolo.utils.serialization import load_trusted_torch_file
+
+    data_yaml = _make_tiny_det_dataset(tmp_path / "data", imgsz=128, num_imgs=4)
+    teacher_ckpt = _save_det_checkpoint(tmp_path / "teacher-c.pt", size="c", nb_classes=2)
+    student_ckpt = _save_det_checkpoint(tmp_path / "student-t.pt", size="t", nb_classes=2)
+
+    common = dict(
+        data=str(data_yaml),
+        batch=2,
+        imgsz=128,
+        lr0=0.001,
+        optimizer="SGD",
+        device="cpu",
+        workers=0,
+        project=str(tmp_path / "runs"),
+        name="distill-resume",
+        amp=False,
+        patience=0,
+        distill_model=str(teacher_ckpt),
+        distill_loss_type="mgd",
+        dis=0.5,
+    )
+
+    student = LibreYOLO9(
+        model_path=str(student_ckpt), size="t", nb_classes=2, device="cpu",
+    )
+    results = student.train(epochs=1, **common)
+
+    last = Path(results["last_checkpoint"])
+    checkpoint = load_trusted_torch_file(
+        last, map_location="cpu", context="test checkpoint"
+    )
+    assert "distiller" in checkpoint, "checkpoint must persist distiller adapters"
+    assert len(checkpoint["distiller"]) > 0
+
+    # Resume for one more epoch; the adapters must be restored, not recreated.
+    resumed = LibreYOLO9(model_path=str(last), size="t", nb_classes=2, device="cpu")
+    with caplog.at_level(logging.INFO, logger="libreyolo.training.trainer"):
+        results2 = resumed.train(epochs=2, resume=True, exist_ok=True, **common)
+
+    assert math.isfinite(results2["final_loss"])
+    assert "Distiller adapter state restored" in caplog.text
+    assert "Could not load distiller state" not in caplog.text
+
+
 def test_distiller_module_shapes(tmp_path):
     """Direct Distiller test: teacher.forward → student.forward → compute_loss finite."""
     from libreyolo.distillation import Distiller
