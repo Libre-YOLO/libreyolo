@@ -108,6 +108,40 @@ def test_distillation_training_finishes(tmp_path, loss_type):
     assert Path(results["last_checkpoint"]).exists()
 
 
+def test_distillation_with_gradient_accumulation(tmp_path):
+    """Distillation composes with the gradient-accumulation loop (nbs set)."""
+    data_yaml = _make_tiny_det_dataset(tmp_path / "data", imgsz=128, num_imgs=4)
+
+    teacher_ckpt = _save_det_checkpoint(tmp_path / "teacher-c.pt", size="c", nb_classes=2)
+    student_ckpt = _save_det_checkpoint(tmp_path / "student-t.pt", size="t", nb_classes=2)
+
+    student = LibreYOLO9(
+        model_path=str(student_ckpt), size="t", nb_classes=2, device="cpu",
+    )
+
+    results = student.train(
+        data=str(data_yaml),
+        epochs=1,
+        batch=2,
+        nbs=4,  # accumulate 2 micro-batches per optimizer step
+        imgsz=128,
+        lr0=0.001,
+        optimizer="SGD",
+        device="cpu",
+        workers=0,
+        project=str(tmp_path / "runs"),
+        name="distill-accum",
+        amp=False,
+        patience=1,
+        distill_model=str(teacher_ckpt),
+        distill_loss_type="mgd",
+        dis=0.5,
+    )
+
+    assert math.isfinite(results["final_loss"]), f"loss not finite: {results['final_loss']}"
+    assert Path(results["last_checkpoint"]).exists()
+
+
 def test_distiller_module_shapes(tmp_path):
     """Direct Distiller test: teacher.forward → student.forward → compute_loss finite."""
     from libreyolo.distillation import Distiller

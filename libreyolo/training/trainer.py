@@ -1889,6 +1889,9 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
+
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1917,6 +1920,10 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad(set_to_none=True)
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
+            # Teacher forward (no-grad, outside autocast)
+            if distiller is not None:
+                distiller.teacher_forward(imgs)
+
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the
             # window boundary (``is_opt_step``). Under DDP we additionally
@@ -1928,6 +1935,10 @@ class BaseTrainer(ABC):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                         loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
@@ -1943,6 +1954,10 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
@@ -1951,6 +1966,9 @@ class BaseTrainer(ABC):
                     with self._prof_phase("optimizer"):
                         self._clip_gradients()
                         self.optimizer.step()
+
+            if distiller is not None:
+                distiller.step()
 
             if is_opt_step:
                 # EMA
@@ -1963,6 +1981,8 @@ class BaseTrainer(ABC):
             # Logging uses the raw pre-scale value (single-GPU semantics).
             loss_val = float(total_loss_raw.detach().item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             num_batches += 1
             for name, value in loss_components.items():
