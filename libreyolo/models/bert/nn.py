@@ -23,14 +23,15 @@ class BertEmbeddings(nn.Module):
         self.token_type_embeddings = nn.Embedding(cfg.type_vocab_size, h)
         self.LayerNorm = nn.LayerNorm(h, eps=cfg.layer_norm_eps)
 
-    def forward(self, input_ids, token_type_ids=None):
+    def forward(self, input_ids, token_type_ids=None, position_ids=None):
         n = input_ids.shape[1]
-        pos = torch.arange(n, device=input_ids.device).unsqueeze(0)
+        if position_ids is None:
+            position_ids = torch.arange(n, device=input_ids.device).unsqueeze(0)
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
         emb = (
             self.word_embeddings(input_ids)
-            + self.position_embeddings(pos)
+            + self.position_embeddings(position_ids)
             + self.token_type_embeddings(token_type_ids)
         )
         return self.LayerNorm(emb)
@@ -105,11 +106,19 @@ class BertModel(nn.Module):
         self.encoder = nn.Module()
         self.encoder.layer = nn.ModuleList([BertLayer(cfg) for _ in range(cfg.num_hidden_layers)])
 
-    def forward(self, input_ids, attention_mask=None, token_type_ids=None):
-        x = self.embeddings(input_ids, token_type_ids)
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None):
+        x = self.embeddings(input_ids, token_type_ids, position_ids)
         ext = None
         if attention_mask is not None:
-            ext = (1.0 - attention_mask[:, None, None, :].to(x.dtype)) * torch.finfo(x.dtype).min
+            am = attention_mask.to(x.dtype)
+            if am.dim() == 2:  # [B, S] padding mask -> additive [B,1,1,S]
+                ext = (1.0 - am[:, None, None, :]) * torch.finfo(x.dtype).min
+            else:
+                # Pre-built 4D bool mask (e.g. Grounding DINO's block-diagonal mask):
+                # transformers' create_bidirectional_mask leaves it boolean and the eager
+                # path ADDS it directly (True -> +1, False -> +0), a weak bias rather than
+                # a hard -inf mask. Replicate exactly for parity.
+                ext = am
         for layer in self.encoder.layer:
             x = layer(x, ext)
         return x
