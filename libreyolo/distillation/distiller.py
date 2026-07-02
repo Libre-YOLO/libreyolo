@@ -59,7 +59,7 @@ class Distiller(nn.Module):
             - strides: list of int spatial strides
         student_config: Dict from ``student.get_distill_config()`` (same format).
         loss_type: ``"mgd"`` or ``"cwd"`` (default: ``"mgd"``).
-        loss_weight: Global distillation loss weight (alpha). Default: 2e-5 for MGD, 10.0 for CWD.
+        loss_weight: Global distillation loss weight (alpha). Default: 2e-5 for MGD, 1.0 for CWD.
         mask_ratio: MGD mask ratio (default: 0.65). Ignored for CWD.
         tau: CWD temperature (default: 1.0). Ignored for MGD.
         per_scale_weight: Optional list of per-scale weights. If None, uniform.

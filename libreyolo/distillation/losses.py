@@ -54,8 +54,12 @@ class MGDLoss(nn.Module):
         self.mask_ratio = mask_ratio
         self.loss_weight = loss_weight
 
-        # 1x1 conv to align student channels to teacher channels
-        self.align = nn.Conv2d(student_channels, teacher_channels, kernel_size=1)
+        # 1x1 conv to align student channels to teacher channels; skipped when
+        # the widths already match (e.g. self-distillation or QAT recovery).
+        if student_channels != teacher_channels:
+            self.align = nn.Conv2d(student_channels, teacher_channels, kernel_size=1)
+        else:
+            self.align = None
 
         # Two-layer generation block (from MGD paper)
         self.generation = nn.Sequential(
@@ -68,7 +72,7 @@ class MGDLoss(nn.Module):
         self, student_feat: torch.Tensor, teacher_feat: torch.Tensor
     ) -> torch.Tensor:
         # Align student channels to teacher channels
-        aligned = self.align(student_feat)
+        aligned = self.align(student_feat) if self.align is not None else student_feat
 
         # Generate random spatial mask (same mask for all channels)
         N, C, H, W = aligned.shape

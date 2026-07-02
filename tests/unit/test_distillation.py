@@ -171,6 +171,10 @@ class TestMGDLoss:
         assert loss.shape == ()
         assert loss.item() > 0
 
+    def test_matching_channels_skip_align(self):
+        assert MGDLoss(student_channels=128, teacher_channels=128).align is None
+        assert MGDLoss(student_channels=64, teacher_channels=256).align is not None
+
     def test_identical_features_low_loss(self):
         loss_fn = MGDLoss(student_channels=32, teacher_channels=32, mask_ratio=0.0)
         t = torch.randn(2, 32, 8, 8)
@@ -186,7 +190,7 @@ class TestMGDLoss:
         loss_fn_5 = MGDLoss(student_channels=32, teacher_channels=32, loss_weight=5.0, mask_ratio=0.0)
 
         # Share the same weights so generation output is identical
-        loss_fn_5.align.load_state_dict(loss_fn_1.align.state_dict())
+        # (align is None here: matching channels skip the 1x1 conv)
         loss_fn_5.generation.load_state_dict(loss_fn_1.generation.state_dict())
 
         s = torch.randn(2, 32, 8, 8)
@@ -553,7 +557,7 @@ class TestDistiller:
         loss_fn_full_mask = MGDLoss(student_channels=64, teacher_channels=64, mask_ratio=1.0)
 
         # Share initial weights
-        loss_fn_full_mask.align.load_state_dict(loss_fn_no_mask.align.state_dict())
+        # (align is None here: matching channels skip the 1x1 conv)
         loss_fn_full_mask.generation.load_state_dict(loss_fn_no_mask.generation.state_dict())
 
         # Train each for 30 steps
