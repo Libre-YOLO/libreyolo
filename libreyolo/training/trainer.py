@@ -27,7 +27,7 @@ from .callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
-from .config import TrainConfig, check_distillation_not_implemented
+from .config import TrainConfig
 from .loggers import resolve_loggers
 from .distributed import (
     barrier,
@@ -89,9 +89,6 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
-        # Reserved-but-unimplemented distillation API: fail loudly the moment a
-        # teacher is requested, for every family, instead of silently ignoring it.
-        check_distillation_not_implemented(getattr(self.config, "distill_model", None))
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -146,6 +143,8 @@ class BaseTrainer(ABC):
         self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+        self.distiller = None
+        self._distill_loss_val = 0.0
 
         # Profiling (opt-in via config.profile). None = disabled, zero overhead.
         self._profiler = None
@@ -418,6 +417,82 @@ class BaseTrainer(ABC):
     def _enforce_frozen_bn_eval(self) -> None:
         for module in getattr(self, "_frozen_bn_modules", ()):
             module.eval()
+
+    def _setup_distillation(self):
+        """Set up knowledge distillation when ``config.distill_model`` is set."""
+        if not getattr(self.config, "distill_model", None):
+            return
+
+        from ..distillation import Distiller
+        from ..models import LibreYOLO
+
+        if self.wrapper_model is None:
+            raise ValueError(
+                "distill_model requires the trainer to be constructed with "
+                "wrapper_model set (the student wrapper provides tap points)."
+            )
+
+        # Load teacher via the factory (handles family detection, weight loading)
+        logger.info(f"Loading teacher model: {self.config.distill_model}")
+        teacher_wrapper = LibreYOLO(self.config.distill_model)
+        teacher_nn = teacher_wrapper.model.to(self.device)
+
+        # Get distillation configs from the models themselves. Families that
+        # don't support distillation raise NotImplementedError here with a
+        # message naming the family.
+        teacher_cfg = teacher_wrapper.get_distill_config()
+        student_cfg = self.wrapper_model.get_distill_config()
+
+        self.distiller = Distiller(
+            teacher_model=teacher_nn,
+            student_model=self.model,
+            teacher_config=teacher_cfg,
+            student_config=student_cfg,
+            loss_type=self.config.distill_loss_type,
+            loss_weight=self.config.dis,
+            mask_ratio=self.config.distill_mask_ratio,
+            tau=self.config.distill_tau,
+        )
+        self.distiller.to(self.device)
+
+        # resume() may run before setup() — apply deferred adapter state now.
+        deferred_state = getattr(self, "_resume_distiller_state", None)
+        if deferred_state is not None:
+            try:
+                self.distiller.loss_modules.load_state_dict(deferred_state)
+                logger.info("Distiller adapter state restored from resume checkpoint")
+            except Exception as e:
+                logger.warning(f"Could not load deferred distiller state: {e}")
+            finally:
+                self._resume_distiller_state = None
+
+        # Add distiller's learnable params (align/generation convs) to optimizer
+        distill_params = list(self.distiller.loss_modules.parameters())
+        if distill_params:
+            self.optimizer.add_param_group(
+                {"params": distill_params, "lr": self.effective_lr}
+            )
+            logger.info(
+                f"Added {len(distill_params)} distillation params to optimizer"
+            )
+
+    def _sync_distiller_grads(self):
+        """All-reduce distiller adapter/generator gradients across DDP ranks.
+
+        The distiller's loss modules live outside the DDP-wrapped student, so
+        DDP's reducer never sees their gradients; without an explicit sync each
+        rank would train its own diverging adapters. No-op outside DDP.
+        """
+        distiller = getattr(self, "distiller", None)
+        if distiller is None or not is_distributed():
+            return
+        import torch.distributed as dist
+
+        world_size = float(get_world_size())
+        for param in distiller.loss_modules.parameters():
+            if param.grad is not None:
+                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                param.grad /= world_size
 
     def _get_save_dir(self) -> Path:
         project = Path(self.config.project)
@@ -1075,6 +1150,7 @@ class BaseTrainer(ABC):
         self._setup_data()
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
+        self._setup_distillation()
         self.lr_scheduler = self.create_scheduler(self._scheduler_steps_per_epoch())
 
         # resume() may be called before setup() when the optimizer doesn't exist
@@ -1335,6 +1411,9 @@ class BaseTrainer(ABC):
 
                 if getattr(self, "_stop_training", False):
                     break
+
+            if getattr(self, "distiller", None) is not None:
+                self.distiller.cleanup()
 
             total_time = time.time() - start_time
             if is_main_process():
@@ -1688,6 +1767,8 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1709,6 +1790,15 @@ class BaseTrainer(ABC):
                     step=self.current_iter,
                 )
 
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
+            if distiller is not None:
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
+
             # Forward + backward. Under DDP we multiply loss by world_size
             # so that backward() gradient averaging produces the same
             # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
@@ -1717,10 +1807,15 @@ class BaseTrainer(ABC):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
+                    self._sync_distiller_grads()
                     if self._should_clip_gradients():
                         self.scaler.unscale_(self.optimizer)
                         self._clip_gradients()
@@ -1731,13 +1826,21 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     loss.backward()
+                    self._sync_distiller_grads()
                     self._clip_gradients()
                 with self._prof_phase("optimizer"):
                     self.optimizer.step()
+
+            if distiller is not None:
+                distiller.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1748,6 +1851,8 @@ class BaseTrainer(ABC):
             # already returns a Python float and detaches from autograd.
             loss_val = float(total_loss_raw.item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
@@ -1820,6 +1925,9 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
+
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1848,6 +1956,15 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad(set_to_none=True)
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
+            if distiller is not None:
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
+
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the
             # window boundary (``is_opt_step``). Under DDP we additionally
@@ -1859,12 +1976,17 @@ class BaseTrainer(ABC):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                         loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         if self._should_clip_gradients():
                             self.scaler.unscale_(self.optimizer)
                             self._clip_gradients()
@@ -1874,14 +1996,22 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     loss.backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         self._clip_gradients()
                         self.optimizer.step()
+
+            if distiller is not None:
+                distiller.step()
 
             if is_opt_step:
                 # EMA
@@ -1894,6 +2024,8 @@ class BaseTrainer(ABC):
             # Logging uses the raw pre-scale value (single-GPU semantics).
             loss_val = float(total_loss_raw.detach().item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             num_batches += 1
             for name, value in loss_components.items():
@@ -2361,6 +2493,10 @@ class BaseTrainer(ABC):
             checkpoint["train_model"] = raw_model.state_dict()
             checkpoint["ema"] = self.ema_model.ema.state_dict()
             checkpoint["ema_updates"] = self.ema_model.updates
+        if getattr(self, "distiller", None) is not None:
+            # Adapter/generator weights live outside the student model; persist
+            # them so resume doesn't restart the distillation projectors cold.
+            checkpoint["distiller"] = self.distiller.loss_modules.state_dict()
         validate_checkpoint_metadata(checkpoint, strict=True)
 
         weights_dir = self.save_dir / "weights"
@@ -2431,6 +2567,18 @@ class BaseTrainer(ABC):
                 # setup() hasn't run yet — defer until the optimizer exists.
                 self._resume_optimizer_state = checkpoint["optimizer"]
                 logger.info("Optimizer state deferred until after setup()")
+
+        if "distiller" in checkpoint:
+            if self.distiller is not None:
+                try:
+                    self.distiller.loss_modules.load_state_dict(checkpoint["distiller"])
+                    logger.info("Distiller adapter state restored")
+                except Exception as e:
+                    logger.warning(f"Could not load distiller state: {e}")
+            else:
+                # setup() hasn't run yet — defer until the distiller exists.
+                self._resume_distiller_state = checkpoint["distiller"]
+                logger.info("Distiller state deferred until after setup()")
 
         if "best_metric_value" in checkpoint or "best_mAP50_95" in checkpoint:
             checkpoint_metric_key = checkpoint.get("best_metric_key", "metrics/mAP50-95")
