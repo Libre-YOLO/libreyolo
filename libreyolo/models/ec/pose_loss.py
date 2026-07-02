@@ -30,6 +30,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
+from libreyolo.training.distributed import all_reduce_avg_scalar
+
 COCO17_OKS_SIGMAS = (
     0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
     0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
@@ -307,18 +309,15 @@ class ECPoseCriterion(nn.Module):
         return pad // n_groups, n_groups
 
     def _num_boxes(self, targets, device):
+        # Clamp the GLOBAL sum before dividing by world_size (issue #484):
+        # clamping after the divide under-scaled near-empty batches by up to
+        # 1/world_size under DDP once the outer loss scaling was removed.
         n = sum(len(t["labels"]) for t in targets)
-        n = torch.as_tensor([n], dtype=torch.float, device=device)
-        if _is_dist():
-            torch.distributed.all_reduce(n)
-        return torch.clamp(n / _world_size(), min=1).item()
+        return all_reduce_avg_scalar(float(n), device=device)
 
     def _num_index_pairs(self, indices, device):
         n = sum(len(x[0]) for x in indices)
-        n = torch.as_tensor([n], dtype=torch.float, device=device)
-        if _is_dist():
-            torch.distributed.all_reduce(n)
-        return torch.clamp(n / _world_size(), min=1).item()
+        return all_reduce_avg_scalar(float(n), device=device)
 
     def forward(self, outputs, targets):
         device = outputs["pred_logits"].device

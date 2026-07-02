@@ -18,6 +18,8 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from libreyolo.training.distributed import all_reduce_avg_scalar
+
 from .keypoints import compute_l1_keypoint_loss, map_labels_to_keypoint_schema
 from .segmentation import (
     calculate_uncertainty,
@@ -651,14 +653,18 @@ class SetCriterion(nn.Module):
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
 
-        # Compute the average number of target boxes across all nodes, for normalization purposes
+        # Compute the average number of target boxes across all nodes, for
+        # normalization purposes. all_reduce_avg_scalar clamps the GLOBAL sum
+        # before dividing by world_size so N-GPU stays exact vs single-GPU on
+        # near-empty batches too — clamping after the divide under-scaled
+        # all-background batches by 1/world_size once the outer
+        # loss x world_size compensation was removed (issue #484).
         num_boxes = sum(len(t["labels"]) for t in targets)
         if not self.sum_group_losses:
             num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        num_boxes = all_reduce_avg_scalar(
+            float(num_boxes), device=next(iter(outputs.values())).device
+        )
 
         # Compute all the requested losses
         losses = {}
