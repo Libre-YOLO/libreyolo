@@ -39,7 +39,7 @@ evidence-based, and scoped to the PR under review.
 - Per-rank loaders divide global batch.
 - Python multi-GPU training auto-spawns DDP.
 - Torchrun owns rank and device environment.
-- DDP loss scales by world size.
+- DDP losses are globally normalized; gradient averaging needs no world-size scaling.
 - Rank zero owns side effects.
 - Autobatch returns rank-divisible global batches.
 - Unit tests prove CPU-safe API behavior.

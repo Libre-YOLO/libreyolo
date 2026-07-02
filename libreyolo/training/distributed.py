@@ -245,13 +245,24 @@ def all_reduce_avg_scalar(
 
     Outside DDP this is just ``max(value, min_value)`` — single-GPU behavior is
     unchanged (identical numeric value to the previous ``max(sum, 1)``).
+
+    This is a COLLECTIVE under DDP: every rank must reach it or the callers
+    deadlock. Only call it from code that runs symmetrically on all ranks
+    (the training loss); never from rank-0-only paths like validation.
     """
     if isinstance(value, torch.Tensor):
+        # .sum() materializes a fresh tensor even for 0-dim input, so the
+        # in-place all_reduce below cannot touch the caller's storage.
         v = value.detach().float().sum().reshape(())
     else:
         v = torch.as_tensor(float(value), dtype=torch.float32, device=device)
     if is_distributed():
-        v = v.clone()
+        if v.device.type == "cpu" and dist.get_backend() == "nccl":
+            raise ValueError(
+                "all_reduce_avg_scalar got a CPU scalar under the NCCL "
+                "backend; pass device= (or a tensor already on the right "
+                "GPU) so the collective can run."
+            )
         dist.all_reduce(v)
         v = v / float(get_world_size())
     return float(v.clamp_min(min_value).item())
@@ -269,6 +280,13 @@ def scale_loss_for_ddp(loss: torch.Tensor) -> torch.Tensor:
     over-counts by ~N and inflates the effective learning rate — this was the
     root cause of the multi-GPU accuracy gap in issue #484 (4-GPU trained at
     ~4× LR vs single-GPU).
+
+    This is a CONTRACT each family's loss must satisfy, not a given: a loss
+    that normalizes by a globally-summed count WITHOUT dividing by world_size
+    (as RT-DETR's ``num_boxes`` did before #484 fixed it) under-scales by 1/N
+    once the identity is in place. New families must either use a local
+    normalizer or the ``all_reduce_avg_scalar`` reduction (global sum /
+    world_size) — never a bare global sum.
 
     Kept as the single, documented seam where a *genuinely sum-reduced* loss
     (no normalizer) could opt back into ``loss * world_size``. No family
@@ -397,6 +415,7 @@ def spawn_ddp_train(
 
 __all__ = [
     "DeviceArg",
+    "all_reduce_avg_scalar",
     "barrier",
     "broadcast_ema_buffers",
     "get_local_rank",
