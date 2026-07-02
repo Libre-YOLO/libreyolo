@@ -231,3 +231,57 @@ def test_dinov2_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
     assert model.model.classifier.linear.out_features == 4
 
 
+def test_classify_family_train_end_to_end(tmp_path):
+    """A classify family must actually fine-tune through the shared trainer.
+
+    Regression guard for two integration bugs that unit-level dataset/forward
+    tests never exercised:
+
+    * the trainer built ``ClassifyDataset`` with ``crop_pct=``/``interpolation=``
+      as direct kwargs while the dataset takes them via ``transform_kwargs`` —
+      every ``model.train(...)`` raised ``TypeError`` on setup; and
+    * the classify configs inherited the detection ``eval_interval=10``, so the
+      documented short ``epochs=5`` fine-tune never validated and never wrote a
+      ``best.pt``.
+
+    Uses the smallest family (MobileNetV4-s) on a random-init model + tiny
+    synthetic ImageFolder, so it stays CPU-only and needs no network.
+    """
+    from libreyolo import LibreMobileNetV4
+
+    _make_imagefolder(tmp_path / "data", n_classes=2, n_per=6, size=64)
+
+    model = LibreMobileNetV4(size="s", device="cpu")
+    assert model.nb_classes == 1000
+
+    metrics = model.train(
+        data=str(tmp_path / "data"),
+        epochs=1,
+        batch=4,
+        imgsz=32,
+        workers=0,
+        device="cpu",
+        project=str(tmp_path / "runs"),
+        name="cls_smoke",
+        exist_ok=True,
+    )
+
+    # Head was rebuilt 1000 -> 2 for the dataset's class count.
+    assert model.nb_classes == 2
+
+    # eval_interval=1 => the single epoch validated and produced a best.pt.
+    best = tmp_path / "runs" / "cls_smoke" / "weights" / "best.pt"
+    assert best.exists(), "classification training must save best.pt"
+    epoch_metrics = metrics.get("epoch_metrics", [])
+    assert epoch_metrics and epoch_metrics[-1].get("validated") is True
+    val = epoch_metrics[-1].get("val_metrics") or {}
+    scalars = val.get("metrics", val)
+    assert "metrics/accuracy_top1" in scalars
+
+    # The saved checkpoint reloads as a 2-class classifier and predicts.
+    reloaded = LibreMobileNetV4(str(best), device="cpu")
+    assert reloaded.nb_classes == 2
+    result = reloaded(str(tmp_path / "data" / "val" / "c0" / "c0_0.png"))
+    assert result.probs.data.shape[0] == 2
+
+
