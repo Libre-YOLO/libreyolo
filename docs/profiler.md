@@ -1,9 +1,14 @@
-# Training profiler
+# Profiler (training + inference)
 
-A built-in profiler that answers one question fast: **where does each training
-step's time go, and is the GPU actually busy?** It runs from a single flag,
-prints a diagnosis, opens a self-contained timeline, and exposes a CLI an agent
-can drive to optimise a training loop.
+A built-in profiler that answers one question fast: **where does the time go, and
+is the GPU actually busy?** It runs from a single flag (training) or a single
+command (inference), prints a diagnosis, and exposes a CLI an agent can drive to
+optimise speed. It is a **measurement tool** — it reports the bottleneck and the
+levers; you make the change and re-measure.
+
+Most of this page covers **training** (`model.train(profile=True)` /
+`libreyolo profile run`); the [inference profiler](#inference-profiling--libreyolo-profile-infer)
+(`libreyolo profile infer`) applies the same loop to the predict path.
 
 ## Quick start
 
@@ -84,6 +89,7 @@ stdout and supports `--json`.
 
 ```
 libreyolo profile run     coco128 --weights LibreYOLO9t.pt --size t [--repeat 3 --warmup 5 --steps 20]
+libreyolo profile infer   img_or_dir --weights LibreYOLO9t.pt --size t [--batch 1 --half --runs 100]
 libreyolo profile summary <profile.json>          # util, verdict, host overhead, kernel mix, top kernels
 libreyolo profile get     <profile.json> <field>  # ONE metric (img_per_s, forward_gpu_ms, host_overhead_ms, ...)
 libreyolo profile phases  <profile.json>          # per-phase gpu/wall ms + kernel & op counts
@@ -117,3 +123,39 @@ Train → read → drill → **estimate** (`what-if`) → change → **prove it*
 with significance), until images/sec is maxed. The two things that make this safe
 for an autonomous agent: `--repeat` (so a noisy single run can't lie) and
 `what-if` (so it triages before rewriting code).
+
+## Inference profiling — `libreyolo profile infer`
+
+The same tool also profiles the **predict path**, for deployment/latency tuning.
+It drives the model's `preprocess -> forward -> postprocess` stages directly (no
+edit to inference — zero overhead on normal predict) over a fixed source, and
+emits the **same `profile.json`**, so every lens above (`summary`, `get`,
+`kernels`, `ops`, `phases`, `compare`) works on inference profiles unchanged.
+
+```
+libreyolo profile infer path/to/img.jpg --weights LibreYOLO9t.pt --size t --batch 1
+```
+
+Source defaults to a bundled sample image (so it runs standalone). It reports
+**latency p50/p90/p99**, **throughput** (img/s at `--batch`), and a **stage
+split** — preprocess / forward / postprocess(**NMS**):
+
+```
+latency  p50 4.9 ms | p90 5.4 ms | p99 5.6 ms  |  204 img/s
+stages   preprocess 1.2 ms | forward 3.3 ms | postprocess/NMS 0.4 ms
+>> COMPUTE — forward dominates the step (3.3 ms); GPU ~86% busy
+```
+
+The **inference verdict** is one of:
+
+| verdict | meaning | typical levers |
+|---|---|---|
+| `nms / postprocess` | NMS dominates the step | lower `--max-det`, higher `--conf`, fewer `classes`, or an end-to-end (NMS-free) model |
+| `preprocess` | CPU resize/letterbox dominates | larger `--batch`, faster decode, GPU preprocessing |
+| `compute` | forward dominates (GPU saturated, or CPU) | larger batch, `--half`, a smaller model, or export (ONNX/TensorRT) |
+| `host / launch` | forward dominates but the GPU is underused (CUDA) | larger `--batch`, or a bigger model to fill the GPU |
+
+Knobs that change the measured work: `--batch`, `--imgsz`, `--half` (fp16
+forward, CUDA), `--conf`/`--iou`/`--max-det` (how much NMS runs), and
+`--runs`/`--warmup` (window size). `--repeat N` gives mean±stdev throughput for a
+significant `compare`, aggregated into `infer_repeat.json`.
