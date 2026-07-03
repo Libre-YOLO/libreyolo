@@ -150,9 +150,13 @@ class LibreYOLO9P2Model(LibreYOLO9Model):
                 f"Invalid config: {config}. Must be one of: "
                 f"{list(YOLO9_P2_CONFIGS.keys())}"
             )
-        super().__init__(
-            config=config, reg_max=reg_max, nb_classes=nb_classes, img_size=img_size
-        )
+        # Skip LibreYOLO9Model.__init__: it would build a full 3-scale
+        # backbone/neck/head only for all three to be replaced below.
+        nn.Module.__init__(self)
+        self.config = config
+        self.nc = nb_classes
+        self.reg_max = reg_max
+        self.img_size = img_size
         self.backbone = Backbone9P2(config)
         self.neck = Neck9P2(config)
         self.head = DDetect(
