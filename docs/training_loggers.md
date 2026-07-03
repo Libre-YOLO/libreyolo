@@ -104,3 +104,35 @@ log_checkpoints=False)` — project falls back to `WANDB_PROJECT`, then
 `log_checkpoints=True` uploads `weights/best.pt` as a model artifact.
 
 Run names default to `<family><size>-<task>` (e.g. `yolo9s-detect`).
+
+## Always-on run status (`status.json`, `metrics.jsonl`, `train.log`)
+
+Separate from the opt-in loggers above, every training run (all
+families, no configuration) writes a small set of monitoring artifacts into
+its `save_dir`. They exist so an agent-launched run can be watched cheaply,
+without a third-party account or tailing the full log.
+
+| File | Written | Contents |
+|---|---|---|
+| `status.json` | rewritten atomically every epoch (+ on start/end/failure) | live snapshot: `state` (`running`/`completed`/`failed`), `current_epoch`, `total_epochs`, `progress`, `eta_seconds`, latest `metrics`, `best_metric`/`best_epoch`, and on failure an `error` `{type, message}` |
+| `metrics.jsonl` | appended once per epoch | one JSON row per epoch (same schema as the family `results.csv`), the full history for charts |
+| `train.log` | tee'd live | the run's `libreyolo` console output |
+
+These are produced by `TrainingStatusCallback`, attached automatically
+alongside the family artifact writer. `status.json` is the cheap read for a
+polling agent (a few tokens vs. re-parsing a log); the atomic write means a
+reader never observes a half-written file.
+
+### Live web dashboard
+
+```bash
+libreyolo monitor                     # watch the most recent run under runs/
+libreyolo monitor runs/train/exp      # watch a specific run
+```
+
+`libreyolo monitor` serves a zero-dependency (stdlib HTTP server) browser
+dashboard over the files above: live metric charts, the log tail, and any
+validation/plot images, auto-refreshing while the run is active. It is
+read-only and never touches the training process, so it attaches to a live
+run, re-opens a finished one, or inspects a crashed one, and keeps working
+even if the trainer dies.

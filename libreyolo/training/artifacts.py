@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import math
 import os
 import tempfile
+import time
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,47 @@ from .callbacks import (
     TrainExceptionEvent,
     TrainStartEvent,
 )
+
+logger = logging.getLogger("libreyolo")
+
+
+def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
+    """Write ``value`` to ``path`` atomically (tmp file + ``os.replace``).
+
+    A reader (the monitor UI or a polling agent) therefore never observes a
+    half-written file; it sees either the previous version or the new one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(
+                _json_safe(value), f, allow_nan=False, indent=2, sort_keys=True
+            )
+            f.write("\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 class TrainingArtifactsCallback:
@@ -294,3 +338,221 @@ class TrainingArtifactsCallback:
         if isinstance(value, bool):
             return int(value)
         return value
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+class TrainingStatusCallback:
+    """Write a live, machine-readable ``status.json`` for every training run.
+
+    Unlike :class:`TrainingArtifactsCallback` (which is family-gated and writes
+    the per-epoch ``results.csv``), this callback is always on for every model
+    family. It exists to serve two starved consumers of an agent-launched run:
+
+    - an **agent** polling ``status.json`` answers "what epoch / is it alive /
+      best metric so far / did it crash" in a few tokens instead of tailing a
+      log, and
+    - the ``libreyolo monitor`` **web UI**, which relays the same file to a
+      browser so a human gets live feedback without the agent in the loop.
+
+    The file is rewritten atomically on every epoch and carries ``state``
+    (``running`` / ``completed`` / ``failed``), progress, an ETA derived from
+    mean epoch time, the latest and best metrics, and, on failure, the
+    exception message. It also tees the ``libreyolo`` console log to
+    ``train.log`` in the run directory so the monitor can show the terminal.
+    """
+
+    def __init__(
+        self,
+        *,
+        status_name: str = "status.json",
+        metrics_name: str = "metrics.jsonl",
+        log_name: str = "train.log",
+        write_log: bool = True,
+    ):
+        self.status_name = status_name
+        self.metrics_name = metrics_name
+        self.log_name = log_name
+        self.write_log = write_log
+        self._start_time: float | None = None
+        self._epoch_time_sum = 0.0
+        self._epoch_time_count = 0
+        self._base: dict[str, Any] = {}
+        self._log_handler: logging.Handler | None = None
+        self._log_path: Path | None = None
+        self._prev_log_level: int | None = None
+
+    # -- events ------------------------------------------------------------
+
+    def on_train_start(self, event: TrainStartEvent) -> None:
+        save_dir = self._save_dir(event)
+        self._start_time = time.time()
+        self._epoch_time_sum = 0.0
+        self._epoch_time_count = 0
+        self._base = {
+            "schema_version": 1,
+            "pid": os.getpid(),
+            "model_family": event.model_family,
+            "model_size": event.model_size,
+            "task": event.task,
+            "save_dir": event.save_dir,
+            "total_epochs": event.total_epochs,
+            "start_epoch": event.start_epoch,
+            "started_at": _utcnow_iso(),
+        }
+        # A fresh run (not a resume) starts the universal metric history clean.
+        if event.start_epoch <= 1:
+            metrics_path = save_dir / self.metrics_name
+            if metrics_path.exists():
+                try:
+                    metrics_path.unlink()
+                except OSError:
+                    logger.debug("Could not reset %s", self.metrics_name, exc_info=True)
+        self._open_log(save_dir, fresh=event.start_epoch <= 1)
+        self._write(
+            save_dir,
+            state="running",
+            completed_epochs=max(event.start_epoch - 1, 0),
+            current_epoch=None,
+        )
+
+    def on_train_epoch_end(self, event: TrainEpochEvent) -> None:
+        save_dir = self._save_dir(event)
+        self._epoch_time_sum += event.epoch_seconds
+        self._epoch_time_count += 1
+        mean_epoch = self._epoch_time_sum / max(self._epoch_time_count, 1)
+        completed = event.epoch + 1
+        remaining = max(event.total_epochs - completed, 0)
+        metrics = {
+            name.removeprefix("metrics/"): value
+            for name, value in event.val_metrics.items()
+        }
+        # Append the full epoch row to a universal, chart-ready history. Reuses
+        # the exact schema of the family-gated results.csv so the monitor can
+        # chart every family, gated or not, from a single append-only file.
+        self._append_metrics(save_dir, TrainingArtifactsCallback._epoch_row(event))
+        self._write(
+            save_dir,
+            state="running",
+            current_epoch=event.epoch,
+            completed_epochs=completed,
+            epoch_seconds=event.epoch_seconds,
+            mean_epoch_seconds=mean_epoch,
+            eta_seconds=mean_epoch * remaining,
+            train_loss=event.train_loss,
+            metrics=metrics,
+            validated=event.validated,
+            current_metric=event.current_metric,
+            current_metric_name=event.current_metric_name,
+            best_metric=event.best_metric,
+            best_metric_name=event.best_metric_name,
+            best_epoch=event.best_epoch,
+        )
+
+    def on_train_end(self, event: TrainEndEvent) -> None:
+        save_dir = self._save_dir(event)
+        self._write(
+            save_dir,
+            state="completed",
+            completed_epochs=event.completed_epochs,
+            total_seconds=event.total_seconds,
+            train_loss=event.final_loss,
+            best_metric=event.best_metric,
+            best_epoch=event.best_epoch,
+            checkpoints={
+                "best": event.results.get("best_checkpoint"),
+                "last": event.results.get("last_checkpoint"),
+            },
+        )
+        self._close_log()
+
+    def on_train_exception(self, event: TrainExceptionEvent) -> None:
+        save_dir = self._save_dir(event)
+        self._write(
+            save_dir,
+            state="failed",
+            current_epoch=event.epoch,
+            elapsed_seconds=event.elapsed_seconds,
+            error={
+                "type": event.exception_type,
+                "message": event.exception_message,
+            },
+        )
+        self._close_log()
+
+    # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _save_dir(event: Any) -> Path:
+        save_dir = Path(event.save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        return save_dir
+
+    def _write(self, save_dir: Path, **fields: Any) -> None:
+        payload = dict(self._base)
+        payload.update(fields)
+        if self._start_time is not None:
+            payload.setdefault(
+                "elapsed_seconds", round(time.time() - self._start_time, 3)
+            )
+        total = payload.get("total_epochs") or 0
+        completed = payload.get("completed_epochs") or 0
+        payload["progress"] = (completed / total) if total else 0.0
+        payload["updated_at"] = _utcnow_iso()
+        try:
+            _atomic_write_json(save_dir / self.status_name, payload)
+        except Exception:
+            # Status is best-effort telemetry: never let it break a run.
+            logger.debug("Failed to write %s", self.status_name, exc_info=True)
+
+    def _append_metrics(self, save_dir: Path, row: Mapping[str, Any]) -> None:
+        try:
+            line = json.dumps(_json_safe(row), allow_nan=False)
+            with open(save_dir / self.metrics_name, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            logger.debug("Failed to append %s", self.metrics_name, exc_info=True)
+
+    def _open_log(self, save_dir: Path, *, fresh: bool) -> None:
+        if not self.write_log:
+            return
+        try:
+            self._log_path = save_dir / self.log_name
+            if fresh and self._log_path.exists():
+                self._log_path.unlink()
+            handler = logging.FileHandler(self._log_path, encoding="utf-8")
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(levelname)-8s | %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            lib_logger = logging.getLogger("libreyolo")
+            # The handler only sees records the logger admits, so lift the
+            # logger to INFO if it is quieter (restored in _close_log).
+            if lib_logger.level == logging.NOTSET or lib_logger.level > logging.INFO:
+                self._prev_log_level = lib_logger.level
+                lib_logger.setLevel(logging.INFO)
+            lib_logger.addHandler(handler)
+            self._log_handler = handler
+        except Exception:
+            logger.debug("Failed to open %s", self.log_name, exc_info=True)
+            self._log_handler = None
+
+    def _close_log(self) -> None:
+        handler = self._log_handler
+        if handler is None:
+            return
+        self._log_handler = None
+        try:
+            lib_logger = logging.getLogger("libreyolo")
+            lib_logger.removeHandler(handler)
+            handler.close()
+            if self._prev_log_level is not None:
+                lib_logger.setLevel(self._prev_log_level)
+                self._prev_log_level = None
+        except Exception:
+            logger.debug("Failed to close %s", self.log_name, exc_info=True)

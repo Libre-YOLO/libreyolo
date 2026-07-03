@@ -18,7 +18,7 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from .artifacts import TrainingArtifactsCallback
+from .artifacts import TrainingArtifactsCallback, TrainingStatusCallback
 from .callbacks import (
     TrainCallbackList,
     TrainCallbacks,
@@ -94,8 +94,15 @@ class BaseTrainer(ABC):
         self.callbacks = TrainCallbackList(callbacks)
         for logger_callback in resolve_loggers(loggers):
             self.callbacks.append(logger_callback)
+        # TrainingArtifactsCallback is family-gated (results.csv / summary.json
+        # only for opted-in families). TrainingStatusCallback is universal: every
+        # run gets a live status.json + train.log so agents and the `libreyolo
+        # monitor` web UI can watch any training without extra configuration.
         self.artifact_callbacks = TrainCallbackList(
-            TrainingArtifactsCallback(enabled_families=self.artifact_model_families)
+            [
+                TrainingArtifactsCallback(enabled_families=self.artifact_model_families),
+                TrainingStatusCallback(),
+            ]
         )
 
         # Distributed state. We init the process group eagerly when launched
