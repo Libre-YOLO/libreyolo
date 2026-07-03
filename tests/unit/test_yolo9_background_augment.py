@@ -53,7 +53,13 @@ def test_background_image_gets_hsv_augmentation():
     t = YOLO9TrainTransform(
         max_labels=10, flip_prob=0.0, vertical_flip_prob=0.0, hsv_prob=1.0
     )
-    img = _asymmetric_image()
+    # Use saturated colors (not the grayscale asymmetric image): HSV augments
+    # via hue/saturation/value gains, and a grayscale image (S=0) only responds
+    # to the value gain, which is occasionally a rounding no-op — making the
+    # assertion flaky. Saturated colors respond to all three gains.
+    img = np.zeros((48, 64, 3), dtype=np.uint8)
+    img[:, :32] = (200, 40, 30)
+    img[:, 32:] = (30, 90, 200)
 
     out, _ = t(img.copy(), _EMPTY, (48, 64))
     unaugmented, _ = preproc(img, (48, 64))
