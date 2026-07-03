@@ -82,7 +82,7 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/augment.py).
 
 --------------------------------------------------------------------
-YOLO (MultimediaTechLab, successor to WongKinYiu/YOLO)
+YOLO (MultimediaTechLab/YOLO)
 --------------------------------------------------------------------
 Source: https://github.com/MultimediaTechLab/YOLO
 License: MIT
