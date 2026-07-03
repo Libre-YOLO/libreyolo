@@ -47,6 +47,26 @@ Every path here spends real money the moment a GPU spins up.
 - **Pull/persist checkpoints at milestones** (to HF or a volume) so a crash or
   credit-out never loses the model.
 
+## Where to put the data
+
+Decide this before launching — a slow staging path can cost more than the GPU
+time it delays.
+
+- **Dataset → one tar in a Hugging Face dataset repo** (the default). HF's CDN
+  serves ~100 MB/s to every provider, the same recipe works on Vast, Modal and
+  Beam, and a private repo only needs `HF_TOKEN` in the job env. Pack it once
+  (`tar cf mydata.tar mydata/`), upload
+  (`huggingface-cli upload <you>/<name> mydata.tar --repo-type dataset`), and
+  stage it on-box with `hf_hub_download` — `onstart/train.sh.tmpl` does exactly
+  this.
+- **Don't** scp a dataset up from your home connection, and don't pull from slow
+  origins on the box (cocodataset.org throttles one connection to ~2 MB/s; if you
+  must, `aria2c -x16 -s16 -k1M <url>` recovers it).
+- **Checkpoints / results → push back to HF (or a provider Volume) at
+  milestones**, not just at the end — the box is ephemeral, so a crash,
+  preemption, or running out of credit otherwise loses the run. On Vast, also
+  `pull` a local copy before `destroy`.
+
 ---
 
 ## Provider 1 — Vast.ai (rent + drive + destroy)
@@ -114,8 +134,6 @@ $PY $SK audit                                       # end-of-session: is anythin
 - `onstart/train.sh.tmpl` — training template: installs the tools the bare pytorch
   image lacks (git/aria2/unzip + cv2 libs), stages a dataset from HF, runs your
   `TRAIN_CMD`, writes `/root/JOB_DONE`. Fill the `__ALL_CAPS__` placeholders.
-  Fast dataset tip: HF CDN ≈ 100 MB/s; cocodataset.org throttles one connection to
-  ~2 MB/s, so `aria2c -x16 -s16 -k1M <url>` (≈144 MB/s).
 
 ### Vast gotchas (baked into the helper)
 
