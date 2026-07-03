@@ -213,11 +213,16 @@ def img2label_paths(img_paths: List[Path]) -> List[Path]:
         # Convert path to string for replacement
         path_str = str(img_path)
 
-        # Replace 'images' with 'labels' (handles various positions)
-        # Common patterns: /images/, \images\, /images, images/
+        # Replace an 'images' path segment with 'labels'. Anchor on path
+        # separators so only a whole ``images`` directory component is rewritten
+        # (e.g. ``/data/images_old/x`` must NOT become ``/data/labels_old/x``).
         for sep in (os.sep, "/", "\\"):
+            # Interior segment: /images/ -> /labels/
             path_str = path_str.replace(f"{sep}images{sep}", f"{sep}labels{sep}")
-            path_str = path_str.replace(f"{sep}images", f"{sep}labels")
+            # Trailing segment: .../images -> .../labels (end of string only)
+            suffix = f"{sep}images"
+            if path_str.endswith(suffix):
+                path_str = path_str[: -len(suffix)] + f"{sep}labels"
 
         # Change extension to .txt
         label_path = Path(path_str).with_suffix(".txt")

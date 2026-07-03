@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Type
 
+import numpy as np
 import torch
 
 from ...training.augment import MosaicMixupDataset, TrainTransform
@@ -27,6 +28,33 @@ from ...training.config import RTMDetConfig, TrainConfig
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import RTMDetLoss
+from .utils import _RTMDET_BGR_MEAN, _RTMDET_BGR_STD
+
+
+class RTMDetTrainTransform(TrainTransform):
+    """Training transform that matches RTMDet's inference input distribution.
+
+    The shared YOLOX :class:`TrainTransform` already emits a BGR letterbox at
+    pad 114 — the exact color order and geometry RTMDet infers and validates on
+    (see :func:`libreyolo.models.rtmdet.utils.preprocess_numpy` and
+    ``RTMDetValPreprocessor``). What it does *not* do is apply mmdet's mean/std
+    normalization (``bgr_to_rgb=False``, so mean/std live in 0-255 BGR space).
+
+    Without this step training saw raw 0-255 letterboxes while inference/val saw
+    mean/std-normalized tensors — a train/eval distribution mismatch. Appending
+    the normalization here makes the final training tensor identical in
+    distribution to the eval preprocessor.
+    """
+
+    _MEAN = _RTMDET_BGR_MEAN.reshape(3, 1, 1)
+    _STD = _RTMDET_BGR_STD.reshape(3, 1, 1)
+
+    def __call__(self, image, targets, input_dim):
+        img, labels = super().__call__(image, targets, input_dim)
+        # ``img`` is CHW float32 BGR in 0-255 space (letterbox output). Apply the
+        # mmdet BGR mean/std so it matches RTMDetValPreprocessor / preprocess_numpy.
+        img = (img - self._MEAN) / self._STD
+        return np.ascontiguousarray(img, dtype=np.float32), labels
 
 
 class RTMDetTrainer(BaseTrainer):
@@ -43,7 +71,7 @@ class RTMDetTrainer(BaseTrainer):
         return f"RTMDet-{self.config.size}"
 
     def create_transforms(self):
-        preproc = TrainTransform(
+        preproc = RTMDetTrainTransform(
             max_labels=120,
             flip_prob=self.config.flip_prob,
             hsv_prob=self.config.hsv_prob,

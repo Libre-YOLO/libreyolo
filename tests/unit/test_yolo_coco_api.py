@@ -270,7 +270,8 @@ class TestYOLOCocoAPI:
         # Get annotations for specific image
         img_ids = api.getImgIds()
         ann_ids_img0 = api.getAnnIds(imgIds=img_ids[0])
-        assert len(ann_ids_img0) >= 0  # May have 0 or more annotations
+        # Every mock image has at least one annotation.
+        assert len(ann_ids_img0) > 0
 
 
 class TestCreateYOLOCocoAPI:
@@ -313,7 +314,7 @@ class TestCreateYOLOCocoAPI:
         api = create_yolo_coco_api(str(mock_data_yaml), split="val")
 
         assert api is not None
-        assert len(api.imgs) >= 0  # May have images
+        assert len(api.imgs) == 1  # Fixture creates exactly one val image
         assert len(api.cats) == 3  # Should have 3 classes
 
     def test_create_yolo_coco_api_accepts_list_valued_splits(self, tmp_path):

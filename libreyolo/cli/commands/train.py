@@ -309,6 +309,14 @@ def train_cmd(
         cache_val = cache_str
     elif cache_str in ("true", "1", "yes"):
         cache_val = True
+    elif cache_str in ("false", "0", "no", ""):
+        cache_val = False
+    else:
+        exit_with_error(
+            out,
+            "config_type_error",
+            f"Invalid cache value: {cache}. Use ram, disk, true, or false.",
+        )
 
     # Parse resume (can be "true"/"false" or a path)
     resume_val: bool | str = False
@@ -560,6 +568,10 @@ def train_cmd(
     training_hours = (time.time() - t0) / 3600
 
     # Build output
+    epochs_completed = params["epochs"]
+    epoch_losses = results.get("epoch_losses")
+    if isinstance(epoch_losses, (list, tuple)):
+        epochs_completed = len(epoch_losses)
     best_mAP50 = results.get("best_mAP50", None)
     best_mAP50_95 = results.get("best_mAP50_95", None)
     best_epoch = results.get("best_epoch", None)
@@ -575,7 +587,7 @@ def train_cmd(
         "model_family": loaded_family,
         "data": data,
         "device": str(loaded_model.device),
-        "epochs_completed": params["epochs"],
+        "epochs_completed": epochs_completed,
         "best_epoch": best_epoch,
         "best_metrics": (
             {"mAP50": best_mAP50, "mAP50_95": best_mAP50_95}
@@ -590,7 +602,7 @@ def train_cmd(
 
     if not json_output:
         lines = [
-            f"Training complete: {params['epochs']} epochs in {training_hours:.2f}h",
+            f"Training complete: {epochs_completed} epochs in {training_hours:.2f}h",
         ]
         if best_mAP50 is not None:
             lines.append(

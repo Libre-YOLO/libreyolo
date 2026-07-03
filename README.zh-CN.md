@@ -51,7 +51,6 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
 ## 兼容性
 
 `✓` 表示支持，`exp` 表示实验性支持。空单元格表示当前不支持。
-YOLOv9 OBB（旋转框）支持目前为实验性功能，并使用 YOLO OBB `.txt` 标签。
 
 <table>
   <thead>
@@ -78,7 +77,7 @@ YOLOv9 OBB（旋转框）支持目前为实验性功能，并使用 YOLO OBB `.t
     </tr>
   </thead>
   <tbody>
-    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
     <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>exp</td></tr>
     <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
     <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>

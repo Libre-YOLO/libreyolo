@@ -164,8 +164,8 @@ def postprocess(
         valid_boxes = valid_boxes.clone()
         valid_boxes[:, [0, 2]] *= scale_x
         valid_boxes[:, [1, 3]] *= scale_y
-        valid_boxes[:, [0, 2]].clamp_(0, original_size[0])
-        valid_boxes[:, [1, 3]].clamp_(0, original_size[1])
+        valid_boxes[:, [0, 2]] = valid_boxes[:, [0, 2]].clamp(0, original_size[0])
+        valid_boxes[:, [1, 3]] = valid_boxes[:, [1, 3]].clamp(0, original_size[1])
 
     # Drop zero/negative-area boxes
     bw = valid_boxes[:, 2] - valid_boxes[:, 0]

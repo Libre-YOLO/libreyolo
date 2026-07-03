@@ -158,6 +158,10 @@ class PointValidator(BaseValidator):
         else:
             self._dist_thresholds = tuple(sorted(float(t) for t in raw))
 
+        # Headline precision/recall/F1 are reported at this primary (strictest)
+        # distance threshold, evaluated over predictions that survived
+        # conf_thres (default 0.001). Deliberate design choice — the mAP sweep
+        # averages over all thresholds and is the fitness metric.
         self._primary_threshold: float = self._dist_thresholds[0]
         self._records: List[_ImageRecord] = []
         self.nc: int = getattr(model, "nb_classes", 1)
@@ -555,10 +559,13 @@ class PointValidator(BaseValidator):
             per_class_aps: List[float] = []
             for cls in evaluated_classes:
                 n_gt = cls_n_gt.get(cls, 0)
-                pairs = cls_scored_preds.get(cls, [])
+                # Exclude GT-absent classes from macro-mAP (mirror COCO): a
+                # spurious prediction of a class with no ground truth must not
+                # contribute a 0.0 AP that drags the mean down.
                 if n_gt == 0:
-                    per_class_aps.append(0.0)
-                elif not pairs:
+                    continue
+                pairs = cls_scored_preds.get(cls, [])
+                if not pairs:
                     per_class_aps.append(0.0)
                 else:
                     scores_arr = np.array([s for s, _ in pairs], dtype=np.float64)

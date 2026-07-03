@@ -144,9 +144,16 @@ class YOLONASAffineMixupDataset:
         flip = random.uniform(0, 1) > 0.5
 
         cp_labels = []
-        while len(cp_labels) == 0:
+        cp_index = None
+        for _ in range(20):
             cp_index = random.randint(0, len(self.dataset) - 1)
             cp_labels = self.dataset.load_anno(cp_index)
+            if len(cp_labels) > 0:
+                break
+        else:
+            # Every sampled partner was background; skip mixup rather than
+            # loop forever when the dataset has no foreground labels.
+            return origin_img, origin_labels
 
         img, cp_labels, _, _ = self.dataset.pull_item(cp_index)
         input_dim = self.input_dim

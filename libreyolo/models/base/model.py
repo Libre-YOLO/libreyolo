@@ -1021,6 +1021,15 @@ class BaseModel(ABC):
                 "Tracking does not support depth maps yet. "
                 "Use predict() for depth models."
             )
+        if task == "semantic":
+            raise NotImplementedError(
+                "Tracking does not support semantic segmentation yet. "
+                "Use predict() for semantic models."
+            )
+        if task == "restore":
+            raise NotImplementedError(
+                "Tracking does not support restoration models. Use predict()."
+            )
 
         from ...tracking import (
             ByteTracker,

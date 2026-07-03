@@ -286,10 +286,12 @@ class TestImageLoader:
 
         importlib.reload(libreyolo.utils.image_loader)
 
-        # This test is tricky because requests might be installed
-        # Just verify the URL detection works
-        # The actual request would need network access
-        pass  # URL testing requires mocking or network access
+        # With requests unavailable, resolving a URL source must raise
+        # ImportError before any network access is attempted.
+        with pytest.raises(ImportError, match="requires the 'requests' package"):
+            libreyolo.utils.image_loader.ImageLoader.load(
+                "https://example.com/image.jpg"
+            )
 
 
 @pytest.mark.unit
