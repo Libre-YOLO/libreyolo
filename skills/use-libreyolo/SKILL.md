@@ -97,6 +97,23 @@ r.names             # class-id → label map
 For scripting from the CLI, add `--json` to get machine-readable results on
 stdout.
 
+## Monitoring a training run
+
+Every `train` run writes live monitoring files into its `save_dir`. To check
+on a run, read `status.json` (a few tokens) instead of tailing logs:
+
+```bash
+cat runs/train/exp/status.json   # state (running/completed/failed), epoch,
+                                 # progress, eta_seconds, latest/best metrics,
+                                 # and on failure the error message
+```
+
+The run's console output is tee'd to `train.log`, and `metrics.jsonl` holds
+the full per-epoch history. For a human, `libreyolo monitor [run_or_root]`
+serves a read-only browser dashboard (live charts, log, val images) over
+those files — it works on live, finished, or crashed runs, and one server
+handles every run under the root (`?run=` in the URL selects one).
+
 ## Beyond the four verbs
 
 - **Inference on an exported model** — the same constructor loads an exported
