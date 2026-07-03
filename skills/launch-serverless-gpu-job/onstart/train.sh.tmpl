@@ -32,7 +32,8 @@ from huggingface_hub import hf_hub_download
 p = hf_hub_download(repo_id="$HF_DATASET_REPO", filename="$HF_DATASET_FILE",
                     repo_type="dataset", local_dir="/tmp/dl", token=os.environ.get("HF_TOKEN"))
 os.makedirs("/tmp/data", exist_ok=True)
-with tarfile.open(p) as t: t.extractall("/tmp/data")
+# filter="data" rejects absolute paths / ../ escapes (tarslip); also guards a malformed tar.
+with tarfile.open(p) as t: t.extractall("/tmp/data", filter="data")
 print("STAGED ->", "/tmp/data")
 PY
 
@@ -42,8 +43,14 @@ PY
 # "cannot import name (unknown location)". Installing the wheel (above) sidesteps this.
 mkdir -p /root/out
 echo "TRAIN: $TRAIN_CMD"
-bash -lc "$TRAIN_CMD" 2>&1 | tee /root/out/train.log
-
-echo "JOB_DONE $(date -u +%FT%TZ)" | tee /root/JOB_DONE
+# Only write JOB_DONE on SUCCESS. pipefail makes the pipeline reflect TRAIN_CMD's status
+# (not tee's), so `guard` never tears the box down on a FAILED run before you inspect it.
+if bash -lc "$TRAIN_CMD" 2>&1 | tee /root/out/train.log; then
+  echo "JOB_DONE $(date -u +%FT%TZ)" | tee /root/JOB_DONE
+else
+  rc=$?
+  echo "JOB_FAILED rc=$rc $(date -u +%FT%TZ)" | tee /root/JOB_FAILED
+  exit "$rc"
+fi
 # push best.pt to HF here if you want it to survive teardown, e.g.:
 #   huggingface-cli upload <you>/<run> /root/out/best.pt best.pt --repo-type model

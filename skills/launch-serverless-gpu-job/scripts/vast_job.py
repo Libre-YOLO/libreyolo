@@ -331,6 +331,27 @@ def cmd_audit(a):
     return 1
 
 
+def destroy_verified(iid):
+    """Destroy an instance and CONFIRM it's gone. Returns an exit code:
+    0 = confirmed destroyed, 3 = 2FA gone so it could NOT be actioned/verified
+    (may still bill), 1 = command ran but the box is still present. Money safety
+    depends on never reporting success we didn't verify."""
+    rc, out, err = vast("destroy", "instance", str(iid), "-y", timeout=60)
+    if is_2fa_error(out, err):
+        print(f"FAIL: destroy BLOCKED for {iid} (no 2FA session) - IT MAY STILL BE BILLING. "
+              f"Run `tfa-login --code <TOTP>` then `destroy {iid}`.")
+        return 3
+    st = load_state(); st.pop(str(iid), None); save_state(st)
+    inst, ferr = find_instance(iid)
+    if ferr == "NEED_TFA":
+        print(f"WARN: destroy sent for {iid} but can't verify (2FA session gone). "
+              f"Re-run `tfa-login` then `list` to confirm it's gone.")
+        return 3
+    if inst is None:
+        print(f"destroyed {iid}"); return 0
+    print(f"WARN: {iid} STILL PRESENT ({inst.get('actual_status')}) - retry `destroy {iid}`."); return 1
+
+
 def cmd_ssh(a):
     inst = _resolve(a.id)
     out, err, rc = ssh_run(inst, a.cmd or "hostname && nvidia-smi -L", timeout=a.timeout)
@@ -338,7 +359,7 @@ def cmd_ssh(a):
         print(out)
     if err:
         print(err, file=sys.stderr)
-    return 0
+    return rc  # propagate the remote command's status so callers can gate on it
 
 
 def cmd_exec(a):
@@ -347,7 +368,11 @@ def cmd_exec(a):
     # </dev/null is REQUIRED or the ssh channel hangs on the backgrounded process.
     cmd = f"nohup bash -lc {shlex.quote(a.cmd)} </dev/null >{shlex.quote(log)} 2>&1 & echo EXEC_PID $!"
     out, err, rc = ssh_run(inst, cmd, timeout=90)
-    print((out or err).strip(), f"(log: {log}; watch with `tail {a.id} {log}`)")
+    if rc != 0 or "EXEC_PID" not in out:
+        # No background process was started - don't let automation tail a log that never appears.
+        print(f"FAIL: could not start detached job (ssh rc={rc}): {(err or out).strip()[:160]}")
+        return 1
+    print(out.strip(), f"(log: {log}; watch with `tail {a.id} {log}`)")
     return 0
 
 
@@ -398,32 +423,33 @@ def cmd_guard(a):
     while time.time() < deadline:
         inst, err = find_instance(a.id)
         if inst is None:
+            if err == "NEED_TFA":
+                # Can't observe the box, so we can't guarantee teardown - fail loud, don't assume gone.
+                print(f"WARN: 2FA session expired - guard can no longer observe or destroy {a.id}; "
+                      f"IT MAY STILL BE BILLING. Run `tfa-login` then `destroy {a.id}`.", flush=True)
+                return 3
             print("instance already gone"); return 0
         out, _, _ = ssh_run(inst, f"test -f {shlex.quote(a.done_file)} && echo DONE || echo RUN", tries=3)
         if "DONE" in out:
             print("JOB_DONE seen -> destroying", flush=True)
-            vast("destroy", "instance", str(a.id), "-y", timeout=60); return 0
+            return destroy_verified(a.id)
         time.sleep(a.interval)
     print(f"max-hours reached -> destroying {a.id}", flush=True)
-    vast("destroy", "instance", str(a.id), "-y", timeout=60)
-    return 0
+    return destroy_verified(a.id)
 
 
 def cmd_destroy(a):
-    vast("destroy", "instance", str(a.id), "-y", timeout=60)
-    st = load_state(); st.pop(str(a.id), None); save_state(st)
-    inst, _ = find_instance(a.id)
-    print(f"destroyed {a.id}" if inst is None else f"WARN: {a.id} still present ({inst.get('actual_status')})")
-    return 0
+    return destroy_verified(a.id)
 
 
 def cmd_destroy_all(a):
     d, err = list_instances()
     if d is None:
         print("NEED_TFA"); return 3
-    for i in d:
-        vast("destroy", "instance", str(i["id"]), "-y", timeout=60); print(f"destroyed {i['id']}")
+    failed = [i["id"] for i in d if destroy_verified(i["id"]) != 0]
     save_state({})
+    if failed:
+        print(f"WARN: {len(failed)} instance(s) NOT confirmed destroyed: {failed} - run `audit`."); return 1
     return 0
 
 
