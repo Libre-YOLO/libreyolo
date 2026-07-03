@@ -1,0 +1,49 @@
+#!/bin/bash
+# Training onstart TEMPLATE. Fill the ALL_CAPS placeholders before use.
+# Stdout -> /var/log/onstart.log (read with `vast_job.py logs <id>`).
+# The launching side polls /root/JOB_DONE and destroys the box (or use `guard`).
+set -uo pipefail
+echo "JOB_START $(date -u +%FT%TZ)"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+# --- 0. tools the bare pytorch image lacks (git/aria2/unzip + cv2 system libs) ---
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq git aria2 unzip libgl1 libglib2.0-0 libxcb1 libxrender1 libxext6 libsm6 2>&1 | tail -2
+
+# --- placeholders ---------------------------------------------------------------
+PIP_INSTALL="__PIP_INSTALL__"            # e.g. 'libreyolo[rfdetr]'  OR a git+https url  OR a .whl url
+HF_DATASET_REPO="__HF_DATASET_REPO__"    # e.g. <you>/coco-yolo  (a single tar; fastest, ~100 MB/s)
+HF_DATASET_FILE="__HF_DATASET_FILE__"    # e.g. coco.tar
+TRAIN_CMD="__TRAIN_CMD__"                # runs from the repo/CWD; writes checkpoints to /root/out
+# HF_TOKEN is injected via `--env '-e HF_TOKEN=...'` (needed for private HF datasets).
+# --------------------------------------------------------------------------------
+
+pip install -q huggingface_hub ${PIP_INSTALL:+"$PIP_INSTALL"} 2>&1 | tail -3
+
+# --- 1. stage the dataset to LOCAL ssd -----------------------------------------
+# Preferred: one tar on HF (fast, one clean source). If instead you pull COCO images
+# from cocodataset.org, use aria2 -x16 (single-connection is throttled to ~2 MB/s):
+#   aria2c -x16 -s16 -k1M -d /root/datasets/coco/images http://images.cocodataset.org/zips/train2017.zip
+echo "STAGE: $HF_DATASET_FILE from $HF_DATASET_REPO ..."
+python - <<PY
+import os, tarfile
+from huggingface_hub import hf_hub_download
+p = hf_hub_download(repo_id="$HF_DATASET_REPO", filename="$HF_DATASET_FILE",
+                    repo_type="dataset", local_dir="/tmp/dl", token=os.environ.get("HF_TOKEN"))
+os.makedirs("/tmp/data", exist_ok=True)
+with tarfile.open(p) as t: t.extractall("/tmp/data")
+print("STAGED ->", "/tmp/data")
+PY
+
+# --- 2. train ------------------------------------------------------------------
+# IMPORTANT: if you run a train script from a cloned repo, run it from INSIDE the repo
+# dir, or `import <pkg>` resolves to the repo folder (namespace pkg) and fails with
+# "cannot import name (unknown location)". Installing the wheel (above) sidesteps this.
+mkdir -p /root/out
+echo "TRAIN: $TRAIN_CMD"
+bash -lc "$TRAIN_CMD" 2>&1 | tee /root/out/train.log
+
+echo "JOB_DONE $(date -u +%FT%TZ)" | tee /root/JOB_DONE
+# push best.pt to HF here if you want it to survive teardown, e.g.:
+#   huggingface-cli upload <you>/<run> /root/out/best.pt best.pt --repo-type model
