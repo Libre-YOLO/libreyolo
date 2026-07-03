@@ -846,7 +846,7 @@ class RTMDetConfig(TrainConfig):
     Status: training is NOT yet implemented in LibreYOLO. This config exists so
     callers can introspect intended hyperparameters. ``LibreRTMDet.train()``
     raises ``NotImplementedError`` until the follow-up PR lands the loss,
-    DynamicSoftLabelAssigner, BatchDynamicSoftLabelAssigner, MlvlPointGenerator,
+    DynamicSoftLabelAssigner, MlvlPointGenerator,
     and the 2-stage pipeline-switch hook.
     """
 

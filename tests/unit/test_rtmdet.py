@@ -228,9 +228,9 @@ def test_loss_forward_backward_smoke():
 
 
 def test_assigner_handles_empty_gt():
-    """BatchDynamicSoftLabelAssigner returns sensible output when an image has no GT."""
+    """DynamicSoftLabelAssigner returns sensible output when an image has no GT."""
     from libreyolo.models.rtmdet.loss import (
-        BatchDynamicSoftLabelAssigner,
+        DynamicSoftLabelAssigner,
         MlvlPointGenerator,
     )
 
@@ -243,7 +243,7 @@ def test_assigner_handles_empty_gt():
     gt_labels = torch.zeros(2, 1, 1)
     pad_flag = torch.zeros(2, 1, 1)  # all padding, no real GTs
 
-    assigner = BatchDynamicSoftLabelAssigner(num_classes=80)
+    assigner = DynamicSoftLabelAssigner(num_classes=80)
     out = assigner(pred_bboxes, pred_scores, priors, gt_labels, gt_bboxes, pad_flag)
     # All priors should be background (label = num_classes)
     assert (out["assigned_labels"] == 80).all()
