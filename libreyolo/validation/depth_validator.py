@@ -107,9 +107,16 @@ class DepthValidator(BaseValidator):
         )
 
     def _init_metrics(self) -> None:
-        self._metric_sums = {key: 0.0 for key in _METRIC_KEYS}
-        self._sqerr_sum = 0.0
-        self._valid_pixel_count = 0
+        # Per-image accumulation (Eigen/MiDaS protocol): each metric is the
+        # mean over an image's valid pixels, then averaged over images. RMSE
+        # keeps its own running sum since it is not linear in the pixel terms.
+        self._metric_sums = {
+            "metrics/abs_rel": 0.0,
+            "metrics/delta1": 0.0,
+            "metrics/delta2": 0.0,
+            "metrics/delta3": 0.0,
+        }
+        self._rmse_sum = 0.0
         self._image_count = 0
 
     def _preprocess_batch(self, batch: Any) -> tuple:
@@ -160,25 +167,23 @@ class DepthValidator(BaseValidator):
 
             residual = depth - gt
             ratio = torch.maximum(depth / gt, gt / depth)
-            self._metric_sums["metrics/abs_rel"] += float(
-                (residual.abs() / gt).sum()
-            )
-            self._sqerr_sum += float((residual * residual).sum())
-            self._metric_sums["metrics/delta1"] += float((ratio < 1.25).sum())
-            self._metric_sums["metrics/delta2"] += float((ratio < 1.25**2).sum())
-            self._metric_sums["metrics/delta3"] += float((ratio < 1.25**3).sum())
-            self._valid_pixel_count += valid_count
+            # Per-image means, accumulated for a final average over images.
+            self._metric_sums["metrics/abs_rel"] += float((residual.abs() / gt).mean())
+            self._rmse_sum += float(torch.sqrt((residual * residual).mean()))
+            self._metric_sums["metrics/delta1"] += float((ratio < 1.25).double().mean())
+            self._metric_sums["metrics/delta2"] += float((ratio < 1.25**2).double().mean())
+            self._metric_sums["metrics/delta3"] += float((ratio < 1.25**3).double().mean())
             self._image_count += 1
 
     def _compute_metrics(self) -> Dict[str, float]:
-        if self._image_count == 0 or self._valid_pixel_count == 0:
+        if self._image_count == 0:
             raise ValueError(
                 "Depth validation found no images with at least two valid pixels."
             )
-        count = float(self._valid_pixel_count)
+        count = float(self._image_count)
         metrics = {
             "metrics/abs_rel": self._metric_sums["metrics/abs_rel"] / count,
-            "metrics/rmse": (self._sqerr_sum / count) ** 0.5,
+            "metrics/rmse": self._rmse_sum / count,
             "metrics/delta1": self._metric_sums["metrics/delta1"] / count,
             "metrics/delta2": self._metric_sums["metrics/delta2"] / count,
             "metrics/delta3": self._metric_sums["metrics/delta3"] / count,

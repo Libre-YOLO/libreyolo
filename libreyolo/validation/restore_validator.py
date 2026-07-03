@@ -26,14 +26,20 @@ logger = logging.getLogger(__name__)
 
 _METRIC_KEYS = ("metrics/PSNR", "metrics/SSIM")
 
+# A perfect reconstruction (mse == 0) has infinite PSNR; cap it at a large but
+# finite value so a single perfect image cannot poison the aggregate PSNR /
+# fitness (best-checkpoint selection).
+_MAX_PSNR = 100.0
+
 
 def psnr_rgb(pred: torch.Tensor, target: torch.Tensor, data_range: float = 1.0) -> float:
     """Compute RGB PSNR for tensors with matching ``[C, H, W]`` shape."""
 
     mse = torch.mean((pred.float() - target.float()).pow(2))
     if float(mse) == 0.0:
-        return float("inf")
-    return float(20.0 * math.log10(data_range) - 10.0 * torch.log10(mse).item())
+        return _MAX_PSNR
+    psnr = float(20.0 * math.log10(data_range) - 10.0 * torch.log10(mse).item())
+    return min(psnr, _MAX_PSNR)
 
 
 def _gaussian_window(
@@ -158,12 +164,11 @@ class RestoreValidator(BaseValidator):
     def _compute_metrics(self) -> Dict[str, float]:
         if not self._psnr_values:
             raise ValueError("Restore validation found no paired images.")
+        # PSNR is now capped to a finite value per image (see _MAX_PSNR), but
+        # guard against any stray non-finite value so the aggregate / fitness
+        # never becomes inf/nan and breaks best-checkpoint selection.
         finite_psnr = [value for value in self._psnr_values if math.isfinite(value)]
-        psnr = (
-            float("inf")
-            if len(finite_psnr) != len(self._psnr_values)
-            else sum(finite_psnr) / len(finite_psnr)
-        )
+        psnr = sum(finite_psnr) / len(finite_psnr) if finite_psnr else 0.0
         ssim = sum(self._ssim_values) / len(self._ssim_values)
         return {
             "metrics/PSNR": psnr,

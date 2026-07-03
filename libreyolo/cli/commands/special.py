@@ -7,6 +7,7 @@ from typing import Any, Optional
 import typer
 
 from ..command_utils import load_model_or_exit, resolve_model_or_exit
+from ..errors import CLIError
 from ..output import OutputHandler
 from ...utils.model_info import build_model_info, format_model_info
 
@@ -344,11 +345,12 @@ def metadata_cmd(
     out = _get_output(json_output, quiet)
     checkpoint_path = Path(path)
     if not checkpoint_path.exists():
-        out.error(
-            code="file_not_found",
-            message=f"Checkpoint not found: {path}",
+        err = CLIError(
+            "checkpoint_not_found",
+            f"Checkpoint not found: {path}",
         )
-        raise typer.Exit(1)
+        out.error(err)
+        raise typer.Exit(err.exit_code)
 
     loaded = load_untrusted_torch_file(
         checkpoint_path,

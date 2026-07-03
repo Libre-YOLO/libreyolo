@@ -15,6 +15,28 @@ app = typer.Typer(
 )
 
 
+def _version_callback(value: bool) -> None:
+    """Print the version and exit for the root ``--version`` flag."""
+    if value:
+        from libreyolo import __version__
+
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback(invoke_without_command=True)
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show LibreYOLO version and exit.",
+    ),
+) -> None:
+    """LibreYOLO — open source YOLO detection toolkit."""
+
+
 def _configure_warning_filters() -> None:
     """Suppress only known high-noise dependency deprecations."""
     import warnings
@@ -75,8 +97,13 @@ def entrypoint() -> None:
     _configure_warning_filters()
     argv = list(sys.argv)
     argv = _strip_task_prefix(argv)
-    argv = _normalize_logging_flags(argv)
-    _setup_logging_from_argv(argv)
+    # Normalize key=value bool syntax ONLY for the early logging peek. The args
+    # handed to ``app()`` stay in their raw key=value form so each command's
+    # ``KeyValueCommand`` does the per-command rewrite (it knows whether a flag
+    # has a real ``--no-<flag>`` form). Emitting ``--no-verbose`` here would break
+    # commands whose ``--verbose`` is one-way (e.g. predict) — see issue #490 #41.
+    logging_argv = _normalize_logging_flags(argv)
+    _setup_logging_from_argv(logging_argv)
 
     from .commands import special, predict, train, val, export, ui, doctor, label, profile  # noqa: F401
     from .parsing import KeyValueCommand

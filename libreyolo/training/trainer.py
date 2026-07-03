@@ -339,10 +339,12 @@ class BaseTrainer(ABC):
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         pg0, pg1, pg2 = [], [], []
+        captured_ids: set = set()
 
         def add_if_trainable(group: list, param: Optional[nn.Parameter]) -> None:
             if isinstance(param, nn.Parameter) and param.requires_grad:
                 group.append(param)
+                captured_ids.add(id(param))
 
         # Catch every batch-norm flavour, including SyncBN: BatchNorm{1,2,3}d
         # and SyncBatchNorm are all siblings under ``_BatchNorm``. The naive
@@ -356,6 +358,17 @@ class BaseTrainer(ABC):
                 add_if_trainable(pg0, v.weight)
             elif hasattr(v, "weight"):
                 add_if_trainable(pg1, v.weight)
+
+        # Bare nn.Parameters (LayerScale gamma, NAFNet beta/gamma, YOLO-NAS
+        # alpha, ...) are not exposed as a module ``.weight``/``.bias``
+        # attribute, so the named_modules() sweep above never captures them and
+        # they would silently never join a param group (no gradient updates).
+        # Add any still-uncaptured trainable parameter to the no-weight-decay
+        # group (pg2), matching how biases/norms are handled.
+        for _pk, p in self.model.named_parameters():
+            if p.requires_grad and id(p) not in captured_ids:
+                pg2.append(p)
+                captured_ids.add(id(p))
 
         lr = self.effective_lr
         opt_name = self.config.optimizer
@@ -1353,19 +1366,13 @@ class BaseTrainer(ABC):
                 self.epoch_losses.append(epoch_loss)
 
                 is_best = self._update_best_state(epoch, val_metrics)
-                periodic_save_due = (
-                    self.config.save_period > 0
-                    and (epoch + 1) % self.config.save_period == 0
+                # Write ``last.pt`` every epoch so a crash never costs more than
+                # a single epoch. ``best.pt`` (is_best) and periodic
+                # ``epoch_N.pt`` (save_period) stay gated inside
+                # _save_checkpoint, so those are unaffected.
+                self._save_checkpoint(
+                    epoch, epoch_loss, val_metrics, is_best=is_best
                 )
-                should_save = (
-                    periodic_save_due
-                    or epoch == self.config.epochs - 1
-                    or is_best
-                )
-                if should_save:
-                    self._save_checkpoint(
-                        epoch, epoch_loss, val_metrics, is_best=is_best
-                    )
 
                 event = self._build_train_epoch_event(
                     epoch=epoch,
@@ -1386,9 +1393,17 @@ class BaseTrainer(ABC):
                 # We broadcast the stop flag so every rank exits the loop in
                 # lockstep — otherwise non-rank-0 ranks proceed into the
                 # next epoch's collective backward() and deadlock.
+                # Patience is measured in EPOCHS since the last metric
+                # improvement. ``best_epoch`` is the 1-based epoch of the best
+                # result, so this stays meaningful even when validation only
+                # runs on an interval (unlike counting discrete val events).
+                epochs_since_best = (
+                    (epoch + 1) - self.best_epoch if self.best_epoch else 0
+                )
                 should_stop = (
                     self.config.patience > 0
-                    and self.patience_counter >= self.config.patience
+                    and self.best_epoch > 0
+                    and epochs_since_best >= self.config.patience
                 )
                 if self.is_distributed:
                     import torch.distributed as _dist
@@ -1405,7 +1420,7 @@ class BaseTrainer(ABC):
                     if is_main_process():
                         logger.info(
                             f"Early stopping triggered after {epoch + 1} epochs "
-                            f"(patience={self.config.patience}, no improvement for {self.patience_counter} epochs)"
+                            f"(patience={self.config.patience}, no improvement for {epochs_since_best} epochs)"
                         )
                     break
 
@@ -2133,7 +2148,7 @@ class BaseTrainer(ABC):
 
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -2225,7 +2240,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running classification validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2277,7 +2292,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running semantic validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2329,7 +2344,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running depth validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2382,7 +2397,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running restore validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2500,6 +2515,35 @@ class BaseTrainer(ABC):
             # Adapter/generator weights live outside the student model; persist
             # them so resume doesn't restart the distillation projectors cold.
             checkpoint["distiller"] = self.distiller.loss_modules.state_dict()
+
+        # AMP + RNG state so ``resume()`` continues bit-for-bit instead of
+        # re-warming the GradScaler from 65536 and reseeding the RNGs. All keys
+        # are optional; older checkpoints without them still load fine.
+        if self.scaler is not None:
+            try:
+                checkpoint["scaler"] = self.scaler.state_dict()
+            except Exception:
+                logger.warning("Could not capture GradScaler state for checkpoint")
+        rng_state: Dict[str, Any] = {"torch": torch.get_rng_state()}
+        if torch.cuda.is_available():
+            rng_state["cuda"] = torch.cuda.get_rng_state_all()
+        try:
+            import numpy as _np
+
+            # Store numpy's MT19937 state in a ``weights_only=True``-safe form
+            # (a torch tensor + primitives). The raw ``get_state()`` tuple holds
+            # a numpy ndarray, which the repo's safe checkpoint loader rejects.
+            _keys, _pos, _has_gauss, _cached = _np.random.get_state()[1:]
+            rng_state["numpy"] = {
+                "keys": torch.from_numpy(_keys.astype("int64", copy=True)),
+                "pos": int(_pos),
+                "has_gauss": int(_has_gauss),
+                "cached_gaussian": float(_cached),
+            }
+        except Exception:
+            pass
+        checkpoint["rng_state"] = rng_state
+
         validate_checkpoint_metadata(checkpoint, strict=True)
 
         weights_dir = self.save_dir / "weights"
@@ -2624,6 +2668,43 @@ class BaseTrainer(ABC):
                     logger.warning(f"Could not load EMA weights: {e}")
             self.ema_model.updates = checkpoint["ema_updates"]
             logger.info(f"EMA updates restored: {self.ema_model.updates}")
+
+        # Restore AMP + RNG state when present (backward-compatible: pre-v1.3
+        # checkpoints lack these keys and simply skip this block).
+        if "scaler" in checkpoint and self.scaler is not None:
+            try:
+                self.scaler.load_state_dict(checkpoint["scaler"])
+                logger.info("GradScaler state restored")
+            except Exception as e:
+                logger.warning(f"Could not load GradScaler state: {e}")
+
+        rng_state = checkpoint.get("rng_state")
+        if rng_state:
+            try:
+                torch_state = rng_state.get("torch")
+                if torch_state is not None:
+                    # map_location may have moved the byte tensor to GPU; the
+                    # RNG setters require CPU ByteTensors.
+                    torch.set_rng_state(torch_state.cpu())
+                cuda_state = rng_state.get("cuda")
+                if cuda_state is not None and torch.cuda.is_available():
+                    torch.cuda.set_rng_state_all([s.cpu() for s in cuda_state])
+                np_state = rng_state.get("numpy")
+                if np_state is not None:
+                    import numpy as _np
+
+                    _np.random.set_state(
+                        (
+                            "MT19937",
+                            np_state["keys"].cpu().numpy().astype("uint32"),
+                            int(np_state["pos"]),
+                            int(np_state["has_gauss"]),
+                            float(np_state["cached_gaussian"]),
+                        )
+                    )
+                logger.info("RNG state restored")
+            except Exception as e:
+                logger.warning(f"Could not restore RNG state: {e}")
 
         self.patience_counter = 0
         logger.info(

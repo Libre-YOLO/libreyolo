@@ -704,13 +704,19 @@ class BaseBackend(ABC):
                 max_det=max_det,
             )
         elif self.model_family in ("dfine", "rtdetrv4"):
-            boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
+            boxes, scores, cls = self._parse_dfine(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
             return boxes, scores, cls, None
         elif self.model_family == "deim":
-            boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
+            boxes, scores, cls = self._parse_dfine(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
             return boxes, scores, cls, None
         elif self.model_family == "deimv2":
-            boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
+            boxes, scores, cls = self._parse_dfine(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
             return boxes, scores, cls, None
         elif self.model_family == "ec":
             if self.task == "segment":
@@ -721,10 +727,14 @@ class BaseBackend(ABC):
                 return self._parse_ec_pose(
                     all_outputs, orig_w, orig_h, conf, max_det=max_det
                 )
-            boxes, scores, cls = self._parse_dfine(all_outputs, orig_w, orig_h, conf)
+            boxes, scores, cls = self._parse_dfine(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
             return boxes, scores, cls, None
         elif self.model_family in ("rtdetr", "rtdetrv2"):
-            boxes, scores, cls = self._parse_rtdetr(all_outputs, orig_w, orig_h, conf)
+            boxes, scores, cls = self._parse_rtdetr(
+                all_outputs, orig_w, orig_h, conf, max_det=max_det
+            )
             return boxes, scores, cls, None
         elif self.model_family == "picodet":
             boxes, scores, cls = self._parse_picodet(
@@ -1713,7 +1723,7 @@ class BaseBackend(ABC):
             return boxes, max_scores, class_ids, masks_out, None, keypoints_out
         return boxes, max_scores, class_ids, masks_out
 
-    def _parse_rtdetr(self, all_outputs, orig_w, orig_h, conf):
+    def _parse_rtdetr(self, all_outputs, orig_w, orig_h, conf, max_det: int = 300):
         """Parse RT-DETR output: pred_boxes (B,Q,4) cxcywh [0,1] + pred_logits (B,Q,C).
 
         RTDETR outputs are already in the correct class indices (no COCO 91->80 mapping needed).
@@ -1746,7 +1756,6 @@ class BaseBackend(ABC):
         prob = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
         prob = prob.astype(np.float32)
 
-        max_det = 300
         flat = prob.reshape(-1)
         k = min(max_det, flat.size)
         idx = np.argpartition(-flat, k - 1)[:k]
@@ -1995,6 +2004,7 @@ class BaseBackend(ABC):
                     result.boxes.xyxy.tolist(),
                     result.boxes.conf.tolist(),
                     result.boxes.cls.tolist(),
+                    class_names=self.names,
                 )
             if result.keypoints is not None:
                 kpts_np = result.keypoints.data

@@ -40,6 +40,36 @@ class NAFNetTrainer(BaseTrainer):
     def create_transforms(self):
         return None, None
 
+    def on_setup(self) -> None:
+        # TLC (NAFNetLocal) local pooling is an inference-time technique with a
+        # window fixed by a warm-up forward. Upstream trains the plain
+        # global-average-pool NAFNet and only applies TLC local pooling at test
+        # time, so forwarding training through the fixed-window local pool is a
+        # train/inference mismatch. Switch the model to global pooling for
+        # training (weight-preserving — pooling ops carry no parameters) and
+        # remember the removed TLC modules so inference-time local pooling is
+        # restored in :meth:`train`. The optimizer/EMA are built after this hook,
+        # so they operate on the plain-pooling model.
+        from .nn import use_global_pooling
+
+        self._tlc_restore = use_global_pooling(self.model)
+
+    def _restore_inference_pooling(self) -> None:
+        from .nn import restore_local_pooling
+
+        restore = getattr(self, "_tlc_restore", None)
+        if restore:
+            restore_local_pooling(restore)
+        self._tlc_restore = None
+
+    def train(self) -> Dict[str, Any]:
+        # Train through the plain global-pool model, then re-attach the TLC
+        # local pooling so the (in-place trained) model infers with TLC again.
+        try:
+            return super().train()
+        finally:
+            self._restore_inference_pooling()
+
     def create_scheduler(self, iters_per_epoch: int):
         return WarmupCosineScheduler(
             lr=self.effective_lr,
@@ -58,7 +88,7 @@ class NAFNetTrainer(BaseTrainer):
     ) -> Dict[str, torch.Tensor]:
         del polygons
         pred = self.model(imgs)
-        pred = pred[:, :, : targets.shape[-2], : targets.shape[-1]].clamp(0.0, 1.0)
+        pred = pred[:, :, : targets.shape[-2], : targets.shape[-1]]
         loss = charbonnier_loss(pred, targets)
         mse = torch.mean((pred.detach() - targets.detach()).pow(2)).clamp_min(1e-12)
         psnr = -10.0 * torch.log10(mse)

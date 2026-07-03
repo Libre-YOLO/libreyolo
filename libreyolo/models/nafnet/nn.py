@@ -170,6 +170,38 @@ def replace_adaptive_avg_pool2d(
             )
 
 
+def use_global_pooling(module: nn.Module) -> list:
+    """Replace TLC local :class:`AvgPool2d` with global ``AdaptiveAvgPool2d(1)``.
+
+    Inverse of :func:`replace_adaptive_avg_pool2d`. TLC (Test-time Local
+    Converter) local pooling is an *inference-time* technique; the published
+    NAFNet recipe trains the plain global-average-pool network and only swaps in
+    local pooling at test time. This helper switches a ``NAFNetLocal`` back to
+    global pooling for training.
+
+    Pooling ops carry no parameters, so the switch is weight-preserving and the
+    resulting state_dict stays compatible with the ``NAFNetLocal`` inference
+    model. Returns a list of ``(parent_module, attr_name, original_avgpool)``
+    tuples so the exact TLC pooling can be restored via
+    :func:`restore_local_pooling` after training.
+    """
+    restored: list = []
+    for name, child in module.named_children():
+        if isinstance(child, AvgPool2d):
+            restored.append((module, name, child))
+            setattr(module, name, nn.AdaptiveAvgPool2d(1))
+        elif len(list(child.children())) > 0:
+            restored.extend(use_global_pooling(child))
+    return restored
+
+
+def restore_local_pooling(restored: list) -> None:
+    """Re-attach the TLC :class:`AvgPool2d` modules removed by
+    :func:`use_global_pooling`, restoring inference-time local pooling."""
+    for parent, name, original in restored:
+        setattr(parent, name, original)
+
+
 class NAFBlock(nn.Module):
     """NAFNet residual block."""
 
@@ -346,5 +378,7 @@ __all__ = [
     "NAFNetLocal",
     "SimpleGate",
     "replace_adaptive_avg_pool2d",
+    "restore_local_pooling",
+    "use_global_pooling",
 ]
 
