@@ -1,6 +1,6 @@
 ---
 name: libreyolo-upload-hf-dataset
-description: Prepare and upload a LibreYOLO dataset repo to the HuggingFace LibreYOLO org. Use when publishing a training/eval/smoke dataset (detection, segmentation, pose, semantic, depth, or classification). Covers the redistribution license gate, rebuilding from clean upstreams, the LibreYOLO format for each task, the dataset card, and how to wire auto-download.
+description: Prepare and upload a LibreYOLO dataset repo to the HuggingFace LibreYOLO org. Use when publishing a training/eval/smoke dataset (detection, segmentation, OBB, pose, semantic, depth, restore, or classification). Covers the redistribution license gate, rebuilding from clean upstreams, the LibreYOLO format for each task, the dataset card, and how to wire auto-download.
 ---
 
 # Upload a LibreYOLO dataset repo to HuggingFace
@@ -51,16 +51,23 @@ The dataset must be in the layout the loader expects for its task. Full spec:
 | Detection | `images/**` + `labels/**.txt` (YOLO TXT), **or** COCO JSON | `<class> <cx> <cy> <w> <h>`, normalized |
 | Instance segmentation | polygon `.txt`, **or** COCO JSON | COCO keeps holes/multi-part + RLE; YOLO TXT is one ring per instance |
 | OBB | rotated-box `.txt` (`<class> x1 y1 … x4 y4`), **or** COCO JSON | 8 normalized corner coords |
-| Pose | YOLO TXT + `kpt_shape` / `flip_idx` in the yaml, **or** COCO JSON | box then K keypoints |
+| Pose | YOLO TXT + `kpt_shape` / `flip_idx` in the yaml | box then K keypoints; COCO keypoints JSON has **no** `annotations:` path — convert offline (see below) |
 | Semantic segmentation | `images/**` + `masks_dir/**.png` | single-channel class-ID PNG, `255`=ignore; optional `label_mapping` |
 | Depth | `images/**` + `depths_dir/**` | 16-bit PNG (`depth_scale`, default 256) or `.npy`; `0`=invalid |
+| Restore | `inputs/**` + `targets/**` (paired RGB) | matching stems; `input_dir`/`target_dir` in the yaml; `nc: 1`, `names: {0: image}` placeholders |
 | Classification | ImageFolder `train/<class>/*`, `val/<class>/*` | class = sorted folder name |
 
+Only **detection, instance segmentation, and OBB** accept native COCO JSON via
+an `annotations:` block (`docs/dataset_schema.md`). Pose, semantic, depth, and
+restore have no COCO-JSON loader path — convert to their native layout offline.
+
 **Converting into these** (target on the right):
-- Already COCO JSON → keep it; wire with an `annotations:` block (no conversion).
+- COCO JSON for **detection / instance-seg / OBB** → keep it; wire with an `annotations:` block (no conversion).
+- COCO **keypoints** JSON → there is no `annotations:` path for pose; convert offline to YOLO-pose TXT with `libreyolo.data.convert_coco_keypoints_json_to_yolo_pose` (or `convert_coco_keypoints_splits` for train+val at once), then ship the resulting `labels/` tree.
 - A competitor's YOLO-TXT export → already compatible (`data.yaml` + `labels/`).
 - Roboflow → export as YOLO **or** COCO; both load.
 - Raw class masks → single-channel PNGs under `masks_dir`; remap source IDs with `label_mapping`.
+- Paired degraded/clean images (restore) → `inputs/**` + `targets/**` with matching stems.
 - Folder of labelled images → ImageFolder `train/val/<class>`.
 
 ## The dataset-repo contract
@@ -85,7 +92,9 @@ license (see the gate). Body sections below the `---`:
 ---
 license: apache-2.0
 task_categories:
-  - image-classification        # or object-detection / image-segmentation / depth-estimation
+  - image-classification        # object-detection / image-segmentation /
+                                # keypoint-detection / depth-estimation /
+                                # image-to-image (restore)
 tags:
   - libreyolo
   - <dataset-tag>
@@ -94,6 +103,13 @@ size_categories:
   - 10K<n<100K
 ---
 ```
+
+**`license:` is mandatory — never publish a card without it.** It is the source
+license the gate resolved; if you cannot name one, you have not passed the gate,
+so stop and ask rather than upload. The guard tests check *hosting* only, not
+the license field, so this rule is enforced by you, not by CI. A license-less
+repo shows as "unknown" on HF and downstream users cannot tell whether the data
+is safe to train a shippable model on.
 
 - **# `<Pretty Name>` (LibreYOLO)** — one sentence: what it is, which task, why hosted.
 - **## Provenance** — source URL + org + license; pinned source `sha256`; the
@@ -112,8 +128,8 @@ size_categories:
 
 Two mechanisms — pick by task:
 
-1. **YAML datasets** (detection / seg / pose / semantic / depth) —
-   `libreyolo/config/datasets/<name>.yaml` with a `download:`:
+1. **YAML datasets** (detection / segment / obb / pose / semantic / depth /
+   restore) — `libreyolo/config/datasets/<name>.yaml` with a `download:`:
    - a **single URL** to the HF zip → auto-downloads on first use, OR
    - a `download: |` Python script (multi-line) for multi-step fetch/convert —
      runs only under `allow_download_scripts=True`. Scripts must
@@ -123,6 +139,14 @@ Two mechanisms — pick by task:
 2. **Classification known-names** — add to `_KNOWN_DATASETS` in
    `libreyolo/data/classify_dataset.py`, value = the HF `resolve/main/<name>.zip`
    URL.
+
+**Name is the cache key — new content needs a new name.** Both resolvers cache
+by name (classify under `DATASETS_DIR/<name>`, yaml under the dataset dir) and
+check that cache *before* the URL, so re-pointing a name already in the wild at
+a different artifact silently keeps serving the old bytes to everyone who
+downloaded once. When the data changes, publish under a **new** name (as
+`imagenet10` → `smoke10` did) or a version suffix (`<name>-v2`); never swap the
+artifact behind a name in use.
 
 Both are guarded:
 - `tests/unit/test_data_utils.py::test_builtin_dataset_yamls_do_not_use_ultralytics_assets`
@@ -136,7 +160,9 @@ Run them after wiring; they must stay green.
 2. Fetch the canonical upstream and **pin its `sha256`** (reproducibility + tamper check).
 3. Convert to the LibreYOLO layout for the task; verify counts and a few samples.
 4. Zip with `ZIP_STORED` (images are already compressed — deflate wastes CPU for ~0 gain).
-5. Write the dataset card (provenance + license).
+5. Write the dataset card (provenance + license). **Confirm the `license:`
+   frontmatter field is present and non-empty before uploading** — it is
+   mandatory and unenforced by CI.
 6. Create + upload with `huggingface_hub` (`repo_type="dataset"`), token from env
    only (`HF_TOKEN`), never committed:
 
@@ -176,4 +202,6 @@ one-off commands, so the artifact is reproducible from source.
 - Zipping already-JPEG images with deflate — use `ZIP_STORED`.
 - Renaming class folders — class index is the **sorted folder name**; reordering changes label IDs. Keep upstream naming or document the mapping.
 - Uploading without a card / license — HF flags "no license" and users can't tell if it is safe to use.
+- Re-pointing an existing dataset name at new content — the resolver caches by name and checks the cache *before* the URL, so everyone who already downloaded keeps the old bytes forever. Ship changed data under a new name or version suffix (see "Wiring auto-download").
+- Assuming pose/semantic/depth/restore load COCO JSON — only detection, instance-seg, and OBB have an `annotations:` path; the rest need offline conversion to their native layout.
 - Pointing the classify resolver at a `.tgz` — it extracts `.zip` only; convert first (yaml `download:` scripts can handle either via the `download()` helper).
