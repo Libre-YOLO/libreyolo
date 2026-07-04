@@ -160,6 +160,36 @@ def test_yolo9_p2_prepare_state_dict_passes_p2_checkpoints_through():
     assert set(prepared) == set(own_sd)
 
 
+def test_yolo9_p2_loads_transfer_trained_checkpoint(tmp_path):
+    """A checkpoint fine-tuned after transfer init keeps the SOURCE family's
+    class-tower hidden width, which no fresh P2 build reproduces (e.g. the
+    VisDrone release model: stock yolo9-s width 128 vs P2 nc=10 width 64).
+    Direct construction from such a checkpoint must rebuild the towers to the
+    checkpoint geometry instead of failing with a shape mismatch."""
+    from libreyolo import LibreYOLO9P2
+
+    donor = LibreYOLO9P2(None, size="t", device="cpu")
+    default_hidden = donor.model.state_dict()["head.cv3.0.0.conv.weight"].shape[0]
+    transfer_hidden = default_hidden + 16
+
+    donor.nb_classes = 10
+    donor._align_class_towers_for_transfer(
+        {"head.cv3.0.0.conv.weight": torch.zeros(transfer_hidden, 8, 3, 3)}
+    )
+    ckpt = tmp_path / "LibreYOLO9P2t-visdrone.pt"
+    torch.save({"model": donor.model.state_dict(), "nc": 10}, ckpt)
+
+    loaded = LibreYOLO9P2(str(ckpt), size="t", device="cpu")
+    assert loaded.nb_classes == 10
+    hidden = loaded.model.state_dict()["head.cv3.0.0.conv.weight"].shape[0]
+    assert hidden == transfer_hidden
+
+    loaded.model.eval()
+    with torch.no_grad():
+        out = loaded.model(torch.zeros(1, 3, 640, 640))
+    assert out["predictions"].shape == (1, 14, 34000)
+
+
 def test_yolo9_p2_trainer_metadata():
     from libreyolo.models.yolo9_p2.config import YOLO9P2Config
     from libreyolo.models.yolo9_p2.trainer import YOLO9P2Trainer

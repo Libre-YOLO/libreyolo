@@ -255,6 +255,10 @@ class LibreYOLO9(BaseModel):
             self.names = {i: f"class_{i}" for i in range(new_nc)}
             self.model = self._init_model()
             self.model.to(self.device)
+            # Transfer-trained checkpoints keep the source checkpoint's tower
+            # width, which a fresh build at new_nc may not reproduce (e.g.
+            # yolo9_p2 transfer-initialized from stock yolo9 towers).
+            self._align_class_towers_for_transfer(state_dict)
             return
 
         self._rebuild_for_new_classes(new_nc)
