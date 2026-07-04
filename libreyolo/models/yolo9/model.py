@@ -57,6 +57,9 @@ class LibreYOLO9(BaseModel):
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
     val_preprocessor_class = YOLO9ValPreprocessor
+    # Additional checkpoint model_family values accepted as transfer-learning
+    # sources (subclass hook; e.g. yolo9_p2 accepts base yolo9 checkpoints).
+    TRANSFER_COMPATIBLE_FAMILIES: tuple = ()
 
     # =========================================================================
     # Registry classmethods
@@ -67,6 +70,12 @@ class LibreYOLO9(BaseModel):
         keys_lower = [k.lower() for k in weights_dict]
         # Explicitly exclude E2E checkpoints so LibreYOLO9E2E.can_load wins first.
         if any("one2one_cv2" in k or "one2one_cv3" in k for k in keys_lower):
+            return False
+        # Explicitly exclude P2 checkpoints so LibreYOLO9P2.can_load wins first.
+        if any(
+            k.startswith("neck.elan_up3") or k.startswith("neck.elan_down0")
+            for k in weights_dict
+        ):
             return False
         return any(
             "repncspelan" in k or "adown" in k or "sppelan" in k for k in keys_lower
@@ -246,6 +255,10 @@ class LibreYOLO9(BaseModel):
             self.names = {i: f"class_{i}" for i in range(new_nc)}
             self.model = self._init_model()
             self.model.to(self.device)
+            # Transfer-trained checkpoints keep the source checkpoint's tower
+            # width, which a fresh build at new_nc may not reproduce (e.g.
+            # yolo9_p2 transfer-initialized from stock yolo9 towers).
+            self._align_class_towers_for_transfer(state_dict)
             return
 
         self._rebuild_for_new_classes(new_nc)
@@ -320,7 +333,11 @@ class LibreYOLO9(BaseModel):
                     )
 
             ckpt_family = loaded.get("model_family", "")
-            if ckpt_family and ckpt_family != self._get_model_name():
+            allowed_families = {
+                self._get_model_name(),
+                *getattr(self, "TRANSFER_COMPATIBLE_FAMILIES", ()),
+            }
+            if ckpt_family and ckpt_family not in allowed_families:
                 raise RuntimeError(
                     f"Transfer checkpoint model_family='{ckpt_family}' does not "
                     f"match '{self._get_model_name()}'."
@@ -365,6 +382,12 @@ class LibreYOLO9(BaseModel):
     def _default_transfer_weights_name(self) -> str:
         """Return the matching detect checkpoint filename for transfer learning."""
         return f"{self.FILENAME_PREFIX}{self.size}{self.WEIGHT_EXT}"
+
+    def _trainer_class(self):
+        """Trainer class used by ``train()`` (subclass hook)."""
+        from .trainer import YOLO9Trainer
+
+        return YOLO9Trainer
 
     # =========================================================================
     # Inference pipeline
@@ -487,7 +510,6 @@ class LibreYOLO9(BaseModel):
         Returns:
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
         """
-        from .trainer import YOLO9Trainer
         from libreyolo.data import load_data_config
 
         try:
@@ -570,7 +592,7 @@ class LibreYOLO9(BaseModel):
             loggers=loggers,
             **kwargs,
         )
-        trainer = YOLO9Trainer(**trainer_kwargs)
+        trainer = self._trainer_class()(**trainer_kwargs)
 
         if resume:
             if not self.model_path:

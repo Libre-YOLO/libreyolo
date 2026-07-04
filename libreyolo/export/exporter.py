@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "nafnet"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",

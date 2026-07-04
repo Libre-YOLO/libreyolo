@@ -32,6 +32,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `yolox`     | `LibreYOLOX`    | All-caps acronym |
 | `yolo9`     | `LibreYOLO9`    | All-caps acronym + version digit |
 | `yolo9_e2e` | `LibreYOLO9E2E` | All-caps acronym + version + variant |
+| `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
 | `yolonas`   | `LibreYOLONAS`  | All-caps acronym (hyphen dropped from `YOLO-NAS`) |
 | `dfine`     | `LibreDFINE`    | All-caps acronym (hyphen dropped from `D-FINE`) |
 | `deim`      | `LibreDEIM`     | All-caps acronym |
@@ -100,6 +101,7 @@ ships:
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
 | `yolo9`     | `t`, `s`, `m`, `c` |
 | `yolo9_e2e` | `t`, `s`, `m`, `c` (inherited from yolo9) |
+| `yolo9_p2`  | `t`, `s` |
 | `yolonas`   | `s`, `m`, `l` |
 | `dfine`     | `n`, `s`, `m`, `l`, `x` |
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
@@ -196,6 +198,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
 | `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
+| `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
 | `dfine`     | `("detect",)` (default)             | detect | detect-only |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
@@ -391,9 +394,16 @@ new artifacts.
 `BaseModel._filename_regex` builds the canonical pattern as:
 
 ```
-<prefix>(?P<size>{size_alternation})(?P<task>{task_suffixes})?\.pt
+<prefix>(?P<size>{size_alternation})(?P<task>{task_suffixes})?(?P<variant>-{variants})?\.pt
 ```
 
 with `task_suffixes` derived from `SUPPORTED_TASKS` via
 `libreyolo.tasks.task_suffix_pattern`. This is the single source of truth for
-parsing a filename back into `(family, size, task)`.
+parsing a filename back into `(family, size, task, variant)`.
+
+The `variant` group only exists for families that declare `WEIGHT_VARIANTS`, a
+dataset suffix for published checkpoints trained on a non-default dataset.
+Example: `yolo9_p2` declares `("visdrone",)`, so `LibreYOLO9P2s-visdrone.pt`
+resolves the Hugging Face repo `LibreYOLO/LibreYOLO9P2s-visdrone` (a research
+preview under VisDrone's CC BY-NC-SA license, announced by a download notice).
+Plain COCO-default weights never carry a variant suffix.
