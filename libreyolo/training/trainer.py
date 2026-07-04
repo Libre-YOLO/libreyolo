@@ -717,6 +717,14 @@ class BaseTrainer(ABC):
 
         if is_main_process():
             logger.info(f"Training dataset: {len(train_dataset)} images")
+            _hint_task = getattr(
+                getattr(self, "wrapper_model", None), "task", "detect"
+            )
+            if _hint_task == "detect" and self.config.data:
+                logger.info(
+                    f"Tip: sanity-check your dataset for common issues first with "
+                    f"`libreyolo doctor {self.config.data}`"
+                )
             logger.info(
                 f"Iterations per epoch: {len(self.train_loader)} "
                 f"(batch_per_rank={per_rank_batch}, world_size={self.world_size})"
@@ -1233,6 +1241,10 @@ class BaseTrainer(ABC):
             self.save_dir = self._get_save_dir()
             self.config.to_yaml(self.save_dir / "train_config.yaml")
             logger.info(f"Saving to: {self.save_dir}")
+            logger.info(
+                f"Tip: watch this run live in your browser with "
+                f"`libreyolo monitor {self.save_dir}`"
+            )
         else:
             self.save_dir = Path(self.config.project) / self.config.name
 
