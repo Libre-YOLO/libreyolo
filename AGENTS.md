@@ -65,5 +65,5 @@
   history is easier for reviewers and future readers to follow.
 
 ## General library constraints
-- Generally every user facing API (Python, yamls, etc) has to follow the Ultralytics YOLO standard
+- Generally every user facing API (Python, yamls, etc) has to follow the de-facto YOLO CLI/API conventions
 - The Flagship models of LibreYOLO are YOLO9 (CNNs) and RF-DETR (transformers), and new features have to at least cover this two

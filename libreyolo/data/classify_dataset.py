@@ -1,21 +1,20 @@
 """Image-classification dataset for LibreYOLO.
 
-LibreYOLO classification follows the de-facto folder layout used across the
-ecosystem: a dataset root holding ``train/`` and ``val/`` (optionally
-``test/``) sub-directories, each with one sub-folder per class::
+LibreYOLO classification uses the de-facto ImageFolder layout: a dataset root
+holding ``train/`` and ``val/`` (optionally ``test/``) sub-directories, each
+with one sub-folder per class::
 
-    imagenet10/
+    dataset_root/
         train/
-            n01440764/  *.JPEG
-            n02102040/  *.JPEG
+            class_a/  *.jpg
+            class_b/  *.jpg
             ...
         val/
-            n01440764/  *.JPEG
+            class_a/  *.jpg
             ...
 
-This mirrors the user-facing convention so ``model.train(data="imagenet10")``
-behaves the way users expect. The class list is the sorted set of sub-folder
-names, identical across splits.
+The class list is the sorted set of sub-folder names, identical across splits,
+so ``model.train(data="smoke10")`` behaves the way users expect.
 """
 
 from __future__ import annotations
@@ -43,13 +42,14 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff")
 
-# Small classification datasets that can be fetched by bare name. These are the
-# folder-format sets the wider ecosystem uses for CPU/CI runs and quick checks.
-# ``imagenet10`` is a 10-image-per-split smoke set; ``imagenette160`` is a real
-# 10-class subset (~9k train images at 160px) for accuracy validation.
+# Small classification datasets that can be fetched by bare name, hosted under
+# the LibreYOLO HF org and rebuilt from clean upstream sources (Apache-2.0
+# Imagenette; see scripts/build_imagenette.py). ``smoke10`` is a tiny
+# 2-image-per-class CI smoke set; ``imagenette160`` is the full 10-class subset
+# (~9k train images at 160px) for accuracy validation.
 _KNOWN_DATASETS: Dict[str, str] = {
-    "imagenet10": "https://github.com/ultralytics/assets/releases/download/v0.0.0/imagenet10.zip",
-    "imagenette160": "https://github.com/ultralytics/assets/releases/download/v0.0.0/imagenette160.zip",
+    "smoke10": "https://huggingface.co/datasets/LibreYOLO/smoke10/resolve/main/smoke10.zip",
+    "imagenette160": "https://huggingface.co/datasets/LibreYOLO/imagenette160/resolve/main/imagenette160.zip",
 }
 
 
@@ -115,7 +115,7 @@ def resolve_classify_data(data: str | Path) -> Path:
 
     Accepts:
       - a path to a directory that already contains a ``train`` split,
-      - a known dataset name (e.g. ``"imagenet10"``) that is auto-downloaded,
+      - a known dataset name (e.g. ``"smoke10"``) that is auto-downloaded,
       - a ``.zip`` URL.
 
     Returns the dataset root directory (containing ``train``/``val``).

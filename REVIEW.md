@@ -28,7 +28,7 @@ evidence-based, and scoped to the PR under review.
 - Cross-task checkpoint loads fail.
 - Not every family supports every task.
 - YOLO9 and RF-DETR anchor coverage.
-- Public APIs follow Ultralytics-style conventions.
+- Public APIs follow the de-facto YOLO CLI/API conventions.
 - Explicit user kwargs beat defaults.
 - CLI defaults are family-derived.
 - Config dataclasses define training truth.
