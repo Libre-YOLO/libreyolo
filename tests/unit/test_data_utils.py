@@ -114,8 +114,7 @@ def test_known_classify_datasets_are_libre_hosted():
     offenders = {
         name: url
         for name, url in _KNOWN_DATASETS.items()
-        if "github.com/ultralytics" in url
-        or "huggingface.co/datasets/LibreYOLO" not in url
+        if "huggingface.co/datasets/LibreYOLO" not in url
     }
     assert offenders == {}, f"non-LibreYOLO-hosted known datasets: {offenders}"
 

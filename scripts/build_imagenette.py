@@ -18,8 +18,11 @@ Usage:
   python scripts/build_imagenette.py --out ./build             # build zips only
   HF_TOKEN=... python scripts/build_imagenette.py --out ./build --upload
 
-The ``--upload`` step writes to the ``LibreYOLO`` HF org and requires a token
-with write scope (env ``HF_TOKEN``). The token is never written to disk.
+Reruns are safe: a valid cached download is reused, extraction is redone from
+scratch, and the zips are rebuilt — so ``--upload`` can be retried without a
+fresh ``build``. The ``--upload`` step writes to the ``LibreYOLO`` HF org and
+requires a token with write scope (env ``HF_TOKEN``); the token is never
+written to disk.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import shutil
 import tarfile
 import urllib.request
 import zipfile
@@ -35,6 +39,11 @@ from pathlib import Path
 SOURCE_URL = "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2-160.tgz"
 # Pin the upstream artifact so a silent re-cut is caught.
 SOURCE_SHA256 = "64d0c4859f35a461889e0147755a999a48b49bf38a7e0f9bd27003f10db02fe5"
+
+# Full-set image counts for the pinned archive. An extraction that stops short
+# (disk full, interrupted) would silently pack fewer images, so we assert these
+# after building the full zip.
+EXPECTED_COUNTS = {"train": 9469, "val": 3925}
 
 # WordNet id -> human-readable label (documentation only; folders keep the ids
 # so the class set matches canonical Imagenette).
@@ -55,44 +64,90 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _extractall(tar: tarfile.TarFile, dest: Path) -> None:
+    """Extract ``tar`` into ``dest`` rejecting members that escape it.
+
+    ``filter="data"`` blocks path-traversal / unsafe members and is the default
+    from Python 3.14 (available on 3.12+ and recent 3.8–3.11 patch releases).
+    Fall back to a plain extract only where the kwarg is unavailable.
+    """
+    try:
+        tar.extractall(dest, filter="data")
+    except TypeError:
+        tar.extractall(dest)
+
+
 def download(out: Path) -> Path:
+    """Fetch the pinned upstream tarball into ``out``, verifying its sha256.
+
+    A cached file is reused only if it still matches the pin, and a fresh
+    download lands on a ``.part`` file that is verified before being promoted —
+    so an interrupted or corrupted download self-heals on the next run instead
+    of wedging every future run with a stale mismatching file.
+    """
     tgz = out / "imagenette2-160.tgz"
-    if not tgz.exists():
-        print(f"downloading {SOURCE_URL}")
-        urllib.request.urlretrieve(SOURCE_URL, tgz)  # noqa: S310
-    digest = _sha256(tgz)
+    if tgz.exists() and _sha256(tgz) == SOURCE_SHA256:
+        print(f"sha256 OK (cached): {SOURCE_SHA256}")
+        return tgz
+
+    part = out / "imagenette2-160.tgz.part"
+    print(f"downloading {SOURCE_URL}")
+    urllib.request.urlretrieve(SOURCE_URL, part)  # noqa: S310
+    digest = _sha256(part)
     if digest != SOURCE_SHA256:
+        part.unlink(missing_ok=True)
         raise SystemExit(f"sha256 mismatch: expected {SOURCE_SHA256}, got {digest}")
+    part.replace(tgz)
     print(f"sha256 OK: {digest}")
     return tgz
 
 
 def build(out: Path) -> tuple[Path, Path]:
     tgz = download(out)
-    extract = out / "extract"
-    extract.mkdir(exist_ok=True)
-    with tarfile.open(tgz) as t:
-        t.extractall(extract)
-    root = next(p for p in extract.rglob("train") if p.is_dir()).parent
 
-    def files(split: str):
+    # Extract into a fresh tree each run so a previous (partial or stale)
+    # extraction can never leak files into the published archives.
+    extract = out / "extract"
+    if extract.exists():
+        shutil.rmtree(extract)
+    extract.mkdir(parents=True)
+    with tarfile.open(tgz) as t:
+        _extractall(t, extract)
+
+    train_dirs = [p for p in extract.rglob("train") if p.is_dir()]
+    if not train_dirs:
+        raise SystemExit(
+            f"no 'train/' directory found under {extract} after extraction - "
+            "the upstream archive layout may have changed."
+        )
+    root = train_dirs[0].parent
+
+    def files(split: str, per_class: int | None = None):
         for cls in sorted(d for d in (root / split).iterdir() if d.is_dir()):
-            for f in sorted(cls.glob("*")):
-                if f.is_file():
-                    yield split, cls.name, f
+            members = [f for f in sorted(cls.glob("*")) if f.is_file()]
+            for f in (members[:per_class] if per_class else members):
+                yield cls.name, f
 
     full = out / "imagenette160.zip"
+    counts = {"train": 0, "val": 0}
     with zipfile.ZipFile(full, "w", zipfile.ZIP_STORED) as z:
-        for split, cls, f in list(files("train")) + list(files("val")):
-            z.write(f, arcname=f"{split}/{cls}/{f.name}")
-    print(f"built {full.name}")
+        for split in ("train", "val"):
+            for cls, f in files(split):
+                z.write(f, arcname=f"{split}/{cls}/{f.name}")
+                counts[split] += 1
+    for split, expected in EXPECTED_COUNTS.items():
+        if counts[split] != expected:
+            raise SystemExit(
+                f"{split}: packed {counts[split]} images, expected {expected} - "
+                "extraction looks incomplete; delete the build dir and retry."
+            )
+    print(f"built {full.name} ({counts['train']} train / {counts['val']} val)")
 
     smoke = out / "smoke10.zip"
     with zipfile.ZipFile(smoke, "w", zipfile.ZIP_STORED) as z:
         for split in ("train", "val"):
-            for cls in sorted(WNID):
-                for f in sorted((root / split / cls).glob("*"))[:2]:
-                    z.write(f, arcname=f"{split}/{cls}/{f.name}")
+            for cls, f in files(split, per_class=2):
+                z.write(f, arcname=f"{split}/{cls}/{f.name}")
     print(f"built {smoke.name}")
     return full, smoke
 
@@ -109,7 +164,13 @@ def _card(pretty: str, body: str) -> str:
 
 
 def upload(full: Path, smoke: Path) -> None:
-    from huggingface_hub import HfApi
+    try:
+        from huggingface_hub import HfApi
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "--upload requires the 'huggingface_hub' package "
+            "(pip install huggingface_hub)."
+        ) from exc
 
     token = os.environ.get("HF_TOKEN")
     if not token:
