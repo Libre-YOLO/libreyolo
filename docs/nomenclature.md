@@ -394,9 +394,16 @@ new artifacts.
 `BaseModel._filename_regex` builds the canonical pattern as:
 
 ```
-<prefix>(?P<size>{size_alternation})(?P<task>{task_suffixes})?\.pt
+<prefix>(?P<size>{size_alternation})(?P<task>{task_suffixes})?(?P<variant>-{variants})?\.pt
 ```
 
 with `task_suffixes` derived from `SUPPORTED_TASKS` via
 `libreyolo.tasks.task_suffix_pattern`. This is the single source of truth for
-parsing a filename back into `(family, size, task)`.
+parsing a filename back into `(family, size, task, variant)`.
+
+The `variant` group only exists for families that declare `WEIGHT_VARIANTS`, a
+dataset suffix for published checkpoints trained on a non-default dataset.
+Example: `yolo9_p2` declares `("visdrone",)`, so `LibreYOLO9P2s-visdrone.pt`
+resolves the Hugging Face repo `LibreYOLO/LibreYOLO9P2s-visdrone` (a research
+preview under VisDrone's CC BY-NC-SA license, announced by a download notice).
+Plain COCO-default weights never carry a variant suffix.
