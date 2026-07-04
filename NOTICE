@@ -107,6 +107,17 @@ Darknet YOLOv2 / YOLOv3 / YOLOv4 (public domain)
     copied. Being public domain, these terms impose no obligations on
     LibreYOLO or its downstream users.
 
+YOLOv7 / MultimediaTechLab/YOLO (MIT License)
+    Path:    libreyolo/models/yolo7/
+    Source:  https://github.com/MultimediaTechLab/YOLO
+
+    The LibreYOLO7 family is a native port of YOLOv7 from
+    MultimediaTechLab/YOLO (MIT, (c) 2024 Kin-Yiu Wong & Hao-Tang Tsui) —
+    the authors' own MIT re-release, NOT the GPL-3.0 WongKinYiu/yolov7.
+    Module names mirror upstream so the MIT v7.pt weights load unchanged;
+    the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
+    MIT is MIT-compatible; these terms add only attribution obligations.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------

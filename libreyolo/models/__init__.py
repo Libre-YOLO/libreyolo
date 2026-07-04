@@ -62,6 +62,7 @@ from .rtmdet.model import LibreRTMDet  # noqa: E402
 from .yolo3.model import LibreYOLO3  # noqa: E402
 from .yolo4.model import LibreYOLO4  # noqa: E402
 from .yolo2.model import LibreYOLO2  # noqa: E402
+from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
@@ -635,6 +636,7 @@ __all__ = [
     "LibreYOLO3",
     "LibreYOLO4",
     "LibreYOLO2",
+    "LibreYOLO7",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",

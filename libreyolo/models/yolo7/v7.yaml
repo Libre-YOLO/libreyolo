@@ -1,0 +1,255 @@
+name: v7
+
+anchor:
+  anchor:
+  - [12,16, 19,36, 40,28]  # P5/8
+  - [36,75, 76,55, 72,146]  # P4/16
+  - [142,110, 192,243, 459,401]  # P5/32
+  strides: [8, 16, 32]
+
+model:
+  backbone:
+  - Conv:
+      args: {out_channels: 32, kernel_size: 3}
+      source: 0
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3, stride: 2}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3, stride: 2}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Concat:
+      source: [-1, -3, -5, -6]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Pool:
+      args: {padding: 0}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      source: -3
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3, stride: 2}
+  - Concat:
+      source: [-1, -3]
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Concat:
+      source: [-1, -3, -5, -6]
+      tags: B3
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+  - Pool:
+      args: {padding: 0}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -3
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3, stride: 2}
+  - Concat:
+      source: [-1, -3]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Concat:
+      source: [-1, -3, -5, -6]
+  - Conv:
+      args: {out_channels: 1024, kernel_size: 1}
+      tags: B4
+  - Pool:
+      args: {padding: 0}
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+      source: -3
+  - Conv:
+      args: {out_channels: 512, kernel_size: 3, stride: 2}
+  - Concat:
+      source: [-1, -3]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Concat:
+      source: [-1, -3, -5, -6]
+  - Conv:
+      args: {out_channels: 1024, kernel_size: 1}
+      tags: B5
+  head:
+  - SPPCSPConv:
+      args: {out_channels: 512}
+      tags: N3
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - UpSample:
+      args: {scale_factor: 2}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: B4
+  - Concat:
+      source: [-1, -2]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Concat:
+      source: [-1, -2, -3, -4, -5, -6]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      tags: N2
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+  - UpSample:
+      args: {scale_factor: 2}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      source: B3
+  - Concat:
+      source: [-1, -2]
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 64, kernel_size: 3}
+  - Concat:
+      source: [-1, -2, -3, -4, -5, -6]
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      tags: P3
+  - Pool:
+      args: {padding: 0}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 1}
+      source: -3
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3, stride: 2}
+  - Concat:
+      source: [-1, -3, N2]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 128, kernel_size: 3}
+  - Concat:
+      source: [-1, -2, -3, -4, -5, -6]
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      tags: P4
+  - Pool:
+      args: {padding: 0}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 1}
+      source: -3
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3, stride: 2}
+  - Concat:
+      source: [-1, -3, N3]
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+      source: -2
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Conv:
+      args: {out_channels: 256, kernel_size: 3}
+  - Concat:
+      source: [-1, -2, -3, -4, -5, -6]
+  - Conv:
+      args: {out_channels: 512, kernel_size: 1}
+      tags: P5
+  - RepConv:
+      args: {out_channels: 256}
+      source: P3
+  - RepConv:
+      args: {out_channels: 512}
+      source: P4
+  - RepConv:
+      args: {out_channels: 1024}
+      source: P5
+  - MultiheadDetection:
+      args:
+        version: v7
+      source: [-3, -2, -1]
+      output: True
+      tags: Main

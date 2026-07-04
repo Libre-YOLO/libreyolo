@@ -28,6 +28,11 @@ project the weights were derived from. Per-family summary:
              architectures and the pretrained .weights carry no license
              obligations. Convert with weights/convert_darknet_weights.py.
 
+    YOLOv7   (LibreYOLO7b)                             MIT
+             upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)
+             The authors' MIT re-release, not WongKinYiu/yolov7 (GPL-3.0).
+             Convert v7.pt with weights/convert_yolo7_weights.py.
+
     RF-DETR  (LibreRFDETR{n,s,m,l})                    Apache-2.0
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)
