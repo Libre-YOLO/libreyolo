@@ -3,9 +3,11 @@ name: libreyolo-port-model
 description: >-
   Port a model into LibreYOLO. Executable guide — finds your closest existing
   family to clone, gives paste-ready templates for the model class, conversion
-  script, and trainer subclass, then walks the port as a sequence of
-  self-contained commits. Covers detection, pose, and segmentation. Use this
-  for any new family (RTMDet, MobileDet, PP-YOLOE, a new HF model).
+  script, runtime auto-convert recognizer, and trainer subclass, then walks
+  the port as a sequence of self-contained commits. Covers detection, pose,
+  and segmentation in depth; routes classify / semantic / depth / restore /
+  point / gaze ports to their merged exemplar families. Use this for any new
+  family (RTMO, MobileDet, PP-YOLOE, a new HF model).
 ---
 
 # Port a model into LibreYOLO
@@ -21,14 +23,15 @@ Don't follow it.
 
 ## 0. Read this first — orientation
 
-You have an upstream model. Five questions get you pointed at the right
+You have an upstream model. Six questions get you pointed at the right
 scaffold:
 
-1. **Architecture**: per-anchor head with NMS (YOLO-grid), set-prediction with Hungarian matching (DETR), or one-to-one head with top-K and no NMS (NMS-free YOLO-grid)?
-2. **Tasks shipped**: detect-only, or also pose / segment?
-3. **Backbone source**: standard PyTorch, vendored separately-licensed (e.g. DINOv3), or wrapping an upstream PyPI package?
-4. **License**: code (upstream `LICENSE` file) and weights (HF model card YAML). Both must be permissive (MIT / Apache-2.0 / BSD) for the family to live in core.
-5. **Maturity target**: inference-only, gated experimental training, or production training with e2e parity?
+1. **Tier**: checkpoint-driven (a `BaseModel` factory family — everything below), or prompt-driven (promptable segmentation, open-vocab detection, VLM)? Prompt-driven models join a **sibling factory** (`LibreSAM` / `LibreOpenVocab` / `LibreVLM`), not the `BaseModel` registry — see §4.1.
+2. **Architecture**: per-anchor head with NMS (YOLO-grid), set-prediction with Hungarian matching (DETR), or one-to-one head with top-K and no NMS (NMS-free YOLO-grid)?
+3. **Tasks shipped**: detect / pose / segment (this skill's templates), or classify / semantic / depth / restore / point / gaze (clone the merged exemplar family — §10 lists them)?
+4. **Backbone source**: standard PyTorch, vendored separately-licensed (e.g. DINOv3), or loaded from an optional dependency (e.g. transformers — RF-DETR's DINOv2 backbone)?
+5. **License**: code (upstream `LICENSE` file) and weights (HF model card YAML). Both must be permissive (MIT / Apache-2.0 / BSD) for the family to live in core.
+6. **Maturity target**: inference-only, gated experimental training, or production training with e2e parity?
 
 The answers route you through §1 (license gate) → §3 (pick scaffold) → §4
 (per-family ledger entry to clone) → §5 (commit sequence) → §6 (paste-ready
@@ -36,10 +39,30 @@ templates). Reference sections fill in the contract details.
 
 **Two concrete starts**:
 
-- **RTMDet** → YOLO-grid (CSPNeXt+Cross-stage SepBN+SimOTA), detect-only or detect+segment, Apache-2.0 (MMDet-based). **Closest scaffold: YOLOX** for detect-only, **EC** for detect+segment. Heavy MMDet decoupling required.
+- **RTMO (one-stage pose)** → YOLO-grid pose, Apache-2.0 (MMPose-based). **Closest scaffolds: YOLOX** for the CSPDarknet backbone, **RTMDet** (`models/rtmdet/`) as the worked example of the mm-series route — mm-series upstream, key remap in `models/rtmdet/convert.py`, gated-experimental training. (RTMDet itself used to be the hypothetical example here; it has since shipped following exactly this skill.)
 - **A random model on HF** → Run §1 (license check) first. If permissive, find architecture in §4 ledger; if no row matches, fall back to §3 decision tree.
 
 ## 1. License check — both code and weights
+
+> **Two absolute rules. No exceptions, no "just to check", no exploratory read.**
+>
+> 1. **Never read AGPL code — ever.** Do not open, clone, `curl`, `cat`, or
+>    otherwise view the source of an AGPL-licensed project, not even to
+>    "understand the architecture" or "check a shape". Once you determine a
+>    repo is AGPL (or dual-licensed with AGPL as the open option), stop and
+>    port from a permissive source, the paper, or a clean-room spec instead.
+>    Reading it contaminates the port. This holds even when the AGPL repo is
+>    the most convenient reference.
+> 2. **Never point at another repo's assets — especially an AGPL repo's — for
+>    datasets or weights.** Do not reference, hotlink, download-at-runtime, or
+>    document a URL into a third-party (and above all an AGPL) repository for
+>    dataset files, label files, or checkpoints. Ship dataset config that
+>    resolves to a permissively-licensed source we control or that the user
+>    supplies; if the only copy lives in an AGPL/non-redistributable repo,
+>    treat it as unavailable and surface it as a licensing decision.
+>
+> If either rule would block the port, that is the correct outcome — raise it,
+> don't route around it.
 
 LibreYOLO core is **MIT** and stays MIT-compatible. Check both before writing
 any code.
@@ -69,6 +92,11 @@ license: cc-by-nc-4.0  # ← non-commercial: usually a hard "no"
 - YOLOv9 — MIT, via `MultimediaTechLab/YOLO` (Kin-Yiu Wong & Hao-Tang Tsui). **Not** `WongKinYiu/yolov9` (GPL-3.0). When upstream has multiple forks, pick the permissive one.
 - YOLO-NAS — Apache-2.0 code + Deci CDN weights (non-redistributable) → weights linked, not rehosted.
 - YOLO-World — GPL-3.0 → flagged plugin-only in #108, never merged.
+- L2CS-Net — portable code but redistribution-restricted weights → inference-only family, weights **not** rehosted, and the family is skiplisted in runtime auto-conversion (`_SKIP_FAMILIES` in `models/autoconvert.py`).
+
+If a license problem surfaces mid-port, never "fix" it by rewriting or
+renaming the offending code to obscure where it came from. Surface it as a
+licensing decision — plugin, link-out, or drop.
 
 ### Vendored sub-components with separate licenses
 
@@ -89,9 +117,9 @@ Don't quietly bundle a non-OSI sub-component without these three artifacts.
 
 Pick one and document scope explicitly:
 
-1. **Inference-only.** No trainer wired, or trainer rejects all tasks in `train()`. The user can `model.predict(...)` but not `model.train(...)`. YOLO-NAS pose, EC pose, EC seg, YOLO-NAS detect (overrides `train()` to `NotImplementedError`) are here.
-2. **Gated experimental training.** Trainer exists and `train()` accepts the task, but raises unless the user passes `allow_experimental=True`. Use when loss + assignment match upstream but small-dataset fine-tune convergence is unvalidated. **PicoDet detect** (`models/picodet/model.py:157-201`) and **EC detect** (`models/ec/model.py:269-310`) are gated this way today.
-3. **Production-grade training.** `test_rf1_training` passes; row in `MODEL_CATALOG`; recipe gaps documented in family docstring. YOLOX, YOLOv9, YOLO-NAS detect, D-FINE, DEIM, DEIMv2, RT-DETR, RF-DETR sit here.
+1. **Inference-only.** No trainer wired, or trainer rejects all tasks in `train()`. The user can `model.predict(...)` but not `model.train(...)`. YOLO-NAS pose, EC pose, EC seg, L2CS, CLIP are here.
+2. **Gated experimental training.** Trainer exists and `train()` accepts the task, but raises unless the user passes `allow_experimental=True`. Use when loss + assignment match upstream but small-dataset fine-tune convergence is unvalidated. **PicoDet detect** (`models/picodet/model.py:157-201`), **EC detect** (`models/ec/model.py:269-310`), and **RTMDet detect** (`allow_experimental` in `models/rtmdet/model.py`) are gated this way today.
+3. **Production-grade training.** `test_rf1_training` passes; row in `MODEL_CATALOG`; recipe gaps documented in family docstring. YOLOX, YOLOv9, YOLO-NAS detect, D-FINE, DEIM, DEIMv2, RT-DETR, RF-DETR sit here, plus the classify families (MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet) on the shared classify path.
 
 **Inference-only is a legitimate ship state.** Don't gate the port on a working trainer.
 
@@ -111,8 +139,12 @@ Use this decision tree to pick the family you'll clone as your starting point.
 | DETR — sibling of an existing port (different loss/matcher) | **DEIM** (`models/deim/`) | inherit from D-FINE, override only what differs | loss, matcher |
 | DETR — vendors a separately-licensed backbone | **DEIMv2** (`models/deimv2/`) | safetensors handling, DINOv3 vendoring + LICENSE.md | backbone-specific code |
 | DETR — multi-task (detect + pose + segment) | **EC** (`models/ec/`, ~431 LoC `model.py`) | task-dispatch in `_init_model`/`_postprocess`, `is_pose_state_dict`/`is_seg_state_dict` discriminators | architecture |
-| DETR — wrapper around upstream PyPI package | **RF-DETR** (`models/rfdetr/`, 6 files) | lazy import via `__getattr__`, family-local config, no converter | upstream package name + adapter |
+| DETR — multi-task native port, backbone from an optional dep | **RF-DETR** (`models/rfdetr/`, 18 files) | DINOv2-via-transformers backbone + explicit state-dict transfer (`backbone.py`), lazy registration, family-local config | task heads, matcher |
 | YOLO-grid pretrained on ImageNet w/ heavy backbone | **YOLO-NAS** (`models/yolonas/`) | in-process EMA unwrap (no separate converter), CDN-not-HF weight URL | head + backbone |
+| Classify-only backbone (CNN / hybrid) | **MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet** (`models/<family>/`) | shared `BaseTrainer` classify path, `{"probs": ...}` postprocess, timm-parity test pattern | the backbone itself |
+| Semantic segmentation | **PIDNet** (CNN) / **EoMT** (ViT) | `SemanticValidator` wiring, semantic mask contract | architecture |
+| Dense prediction (depth / restore) | **Depth Anything V2** (`models/depth_anything/`) / **NAFNet** (`models/nafnet/`) | native-resolution inference path, dedicated validator | architecture |
+| Zero-shot / text-conditioned | **CLIP** (`models/clip/`) for classify; the `models/openvocab/` tier for detection (§4.1) | text-tower handling, `set_classes` API | towers |
 
 ### 3.2 By task scope
 
@@ -120,8 +152,11 @@ Use this decision tree to pick the family you'll clone as your starting point.
 |---|---|
 | detect only | any single-task family above; declare `SUPPORTED_TASKS = ("detect",)` |
 | detect + pose | YOLO-NAS (asymmetric sizes — pose has `n`, detect doesn't) |
-| detect + segment | RF-DETR (wrapper-style, multi-task training via `RFDETR_SEG_TRAINERS`) |
+| detect + segment | RF-DETR (native multi-task port; multi-task training via `RFDETR_SEG_TRAINERS`) |
 | detect + pose + segment | EC (3-way dispatch in `_init_model`, three converters via `--task` flag) |
+| classify only | MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet — shared `BaseTrainer` classify path |
+| semantic / depth / restore / point / gaze only | PIDNet + EoMT / Depth Anything V2 / NAFNet / FOMO / L2CS — single-task `BaseModel` families, each with a dedicated validator |
+| open-vocab detect, promptable seg, VLM | not `BaseModel` families — sibling factories `LibreOpenVocab` / `LibreSAM` / `LibreVLM` (§4.1) |
 
 ### 3.3 By non-PyTorch upstream
 
@@ -136,19 +171,55 @@ as your starting scaffold. Each row tells you what's already solved.
 |---|---|---|---|---|---|---|---|
 | **YOLOX** | YOLO-grid (NMS) | n/t/s/m/l/x | detect | production | 6 | none (in-process unwrap) | BGR 0–255 inference; mosaic+mixup; closest to upstream of any family |
 | **YOLOv9** | YOLO-grid (NMS) | t/s/m/c | detect | production | 7 | heavy structural | RGB 0–1; aux head dropped; `xyxy` normalized targets in loss; from-scratch recipe gap (3 param groups at same LR, no backbone-LR split) |
-| **YOLOv9-E2E** | NMS-free YOLO-grid | t/s/m/c | detect | production | 5 | reuses YOLOv9 converter (different `model_family` at wrap) | Inherits from `LibreYOLO9`. Postprocess does top-K only — `del iou_thres`. **NOT in `_is_nms_free_family()` allowlist** today (real silent bug for exported backends) |
+| **YOLOv9-E2E** | NMS-free YOLO-grid | t/s/m/c | detect | production | 5 | reuses YOLOv9 converter (different `model_family` at wrap) | Inherits from `LibreYOLO9`. Postprocess does top-K only — `del iou_thres`. In the `_is_nms_free_family()` allowlist (was a miss for a while — since fixed) |
 | **YOLO-NAS** | YOLO-grid (NMS) | n*/s/m/l (n* pose-only) | detect, pose | detect = production, pose = inference-only | 7 | none (in-process EMA unwrap) | Weights from Deci CDN (license, not LibreYOLO HF). Only family with asymmetric-per-task `INPUT_SIZES` |
 | **PicoDet** | YOLO-grid (NMS) | s/m/l | detect | gated experimental (`allow_experimental=True`) | 6 | light structural (mmcv key remap + EMA drop) | GFL+DFL loss; ESNet backbone; per-size `INPUT_SIZES` (320/416/640) |
 | **D-FINE** | DETR | n/s/m/l/x | detect | production | 16 | metadata-wrap (~50 LoC) | Per-group LR via `lr_mult` in `_setup_optimizer` + `_train_epoch` override; `FlatCosineScheduler` (added by this family); `min_lr_ratio=0.05`; backbone-LR multiplier 0.5× |
-| **DEIM** | DETR (D-FINE sibling) | n/s/m/l/x | detect | production | small | metadata-wrap | Architecturally identical to D-FINE; `min_lr_ratio=0.5`; tie-break in factory at `models/__init__.py:313-323` |
+| **DEIM** | DETR (D-FINE sibling) | n/s/m/l/x | detect | production | small | metadata-wrap | Architecturally identical to D-FINE; `min_lr_ratio=0.5`; tie-break in factory (`models/__init__.py`, search "Ambiguous D-FINE/DEIM") |
 | **DEIMv2** | DETR | atto/femto/pico/n/s/m/l/x | detect | production | small | metadata-wrap + safetensors handling | s/m/l/x **vendor DINOv3** (separate license). Per-size `min_lr_ratio` overrides (`n` = 1.0, others 0.5). Documents `warmup_iters` epoch-override scaling |
 | **EC** | DETR | s/m/l/x | detect, pose, segment | detect = gated experimental, pose/segment = inference-only | many | metadata-wrap multi-task (`--task` flag) | 3-way `_init_model` dispatch; `is_pose_state_dict` / `is_seg_state_dict` discriminators; pose forces `nc=1, names={0:"person"}`; mask head DETR-style (transformer cross-attention, not YOLO proto) |
 | **RT-DETR** | DETR | r18/r34/r50/r50m/r101/l/x | detect | production | medium | light structural | Multi-char size codes (`r50m` vs `r50`) — overrides `detect_size_from_filename` with length-descending sort. **Per-group LR via `lr_ratio` + `_scale_lr` override** — better template than D-FINE for new DETR ports. Pretrained-backbone-download fix prototyped in `bf16a2b` but not in current code |
-| **RF-DETR** | DETR (wrapper) | n/s/m/l | detect, segment | both production (only multi-task **trainer** in repo) | 6 | none (wrapper consumes upstream checkpoints) | Lazy-imported from `libreyolo/__init__.py:74-78` (`_ensure_rfdetr` dep check). Family-local config (`models/rfdetr/config.py`). Multi-task training via compile-time `RFDETR_TRAINERS` vs `RFDETR_SEG_TRAINERS` selection (not runtime `self.task` dispatch). Subprocess isolation in `tests/e2e/test_rf1_training.py`, not the trainer |
+| **RF-DETR** | DETR (native port) | n/s/m/l | detect, segment, pose, obb | detect/segment production; pose ported from official GroupPose (parity gate: `tests/e2e/test_rfdetr_keypoint_parity.py`) | 18 | bespoke autoconvert recognizer (needs the full checkpoint for size detection + COCO class remap) | **No longer a PyPI-package wrapper — full native port.** DINOv2 backbone loaded via transformers `AutoBackbone` with an explicit state-dict transfer (`models/rfdetr/backbone.py`) because `from_pretrained` silently no-ops on the windowed subclass (landmine #37). Lazy-registered behind the `transformers` dep (`_ensure_rfdetr`). Family-local config (`models/rfdetr/config.py`). Multi-task training via compile-time `RFDETR_TRAINERS` vs `RFDETR_SEG_TRAINERS` selection |
 
 **File-count signal**: 6–7 files = single-task YOLO-grid scaffold.
-16+ = a DETR family with non-trivial loss + matcher + transforms. RF-DETR
-gets away with 6 because it delegates to upstream.
+16+ = a DETR family with non-trivial loss + matcher + transforms.
+
+### Families added since the table above was first written
+
+Compact rows — clone these directly for the newer archetypes:
+
+| Family | Pattern | Tasks | Training | Notable |
+|---|---|---|---|---|
+| **RTMDet** (`models/rtmdet/`) | YOLO-grid (NMS) | detect | gated experimental | CSPNeXt; mm-series upstream; runtime auto-convert remap in `models/rtmdet/convert.py` |
+| **RT-DETRv2** | DETR (child of RT-DETR) | detect | inherits RT-DETR | registered **after** v1 so metadata-less checkpoints default to v1 |
+| **RT-DETRv4** | DETR (child of D-FINE) | detect | production | must register **before** D-FINE (more-specific `can_load`); own `models/rtdetrv4/convert.py` |
+| **FOMO** | boxless point head | point | production | `point` task; `PointValidator`; per-size `imgsz` from family `CONFIGS` |
+| **L2CS** | CNN gaze | gaze | inference-only | redistribution-restricted weights → autoconvert skiplist, no HF rehost |
+| **Depth Anything V2** | ViT dense | depth | inference-only | `DepthValidator`; check per-size weight licenses (upstream b/l are CC-BY-NC) |
+| **NAFNet** | encoder-decoder restore | restore | wired (see docstring) | native-resolution path (no letterbox); `RestoreValidator` |
+| **EoMT** | ViT semantic | semantic | see docstring | `SemanticValidator`; unique query/mask keys make `can_load` trivial |
+| **PIDNet** | CNN semantic | semantic | see docstring | 1024-px default input; fusion-key `can_load` |
+| **MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet** | classify backbone | classify | production | shared `BaseTrainer` classify path; parity vs timm is bit-identical (`max_abs_diff == 0`) |
+| **CLIP** | dual-tower zero-shot | classify | inference-only | pure-torch towers (no open_clip at runtime); `set_classes` API; `clip_validator.py` |
+| **DINOv2** | ViT | semantic, classify | via `RFDETRConfig` | lazy-registered together with RF-DETR (transformers dep) |
+
+### 4.1 Sibling factory tiers (not `BaseModel` families)
+
+Prompt-driven models do not join the checkpoint-driven `BaseModel` registry.
+They live in sibling factories with their own contracts:
+
+- **`LibreOpenVocab`** (`models/openvocab/`) — text-conditioned open-vocabulary
+  detectors returning standard detection `Results`: Grounding DINO
+  (`models/grounding_dino/`) and OWLv2 (`models/owlv2/`) are aliased today;
+  the native OMDet-Turbo port (`models/omdet_turbo/`) is built for this tier.
+  Shared towers live in `models/bert/` (text) and `models/swin/` (vision).
+- **`LibreSAM`** — promptable segmentation: SAM (`models/sam/`), MobileSAM
+  (`models/mobilesam/`).
+- **`LibreVLM`** (`models/vlm/`) — vision-language models.
+
+If your port is prompt-driven, clone one of these tiers instead of a factory
+family. The license gate (§1), parity discipline (§12), and HF-upload rules
+(commit 10) still apply in full; the `BaseModel` ABC contract (§8) does not.
 
 ## 5. Walking the port — commit sequence
 
@@ -188,6 +259,35 @@ free disambiguation later.
 Write atomically: `tmp = output.with_suffix(".tmp"); save_checkpoint(wrapped, tmp); tmp.rename(output)`. Print a missing/unexpected-key diff after loading the wrapped dict into a fresh model.
 
 **Verify**: `python weights/convert_<family>_weights.py upstream/x.pth weights/Libre<FAMILY>s.pt --size s` runs and produces a file. `LibreYOLO("weights/Libre<FAMILY>s.pt")` loads without errors.
+
+### Commit 3b — Runtime auto-conversion recognizer
+
+`libreyolo/models/autoconvert.py` makes `LibreYOLO("<upstream_file>.pth")`
+work directly: the factory unwraps the common upstream layouts (`ema.module` /
+`ema` / `net` / `model` / `state_dict` / plain), asks every registered family
+via `BaseModel.convert_upstream_state_dict` whether it recognizes the tensors,
+wraps the winner in v1.0 metadata (size / task / nc read from the tensors), and
+writes `<source>-<Prefix><size>[-task].pt` beside the source.
+
+- The `BaseModel` default (`models/base/model.py::convert_upstream_state_dict`)
+  claims any layout your `can_load` accepts — if upstream keys already match
+  your native port, auto-conversion is free and this commit is just tests.
+- If upstream naming differs, add `models/<family>/convert.py` with
+  `is_upstream_state_dict()` + `convert_upstream()` (shared by the runtime
+  auto-converter **and** your offline `weights/convert_<family>_weights.py`),
+  and override the hook on the model class (template §6.10). Precedents:
+  `models/{yolo9,rtmdet,rtdetr,rtdetrv4,picodet}/convert.py`.
+- Special cases: non-redistributable weights are skiplisted
+  (`_SKIP_FAMILIES` — L2CS); RF-DETR registers a bespoke recognizer in
+  `autoconvert.py` because it needs the full checkpoint (size detection +
+  COCO class remap), not just the tensor dict.
+- Arbitration when several families claim one file: subclass beats base, then
+  registry order (= import order in `libreyolo/models/__init__.py`). The
+  filename is consulted only for the D-FINE/DEIM tensor tie.
+
+**Verify**: `LibreYOLO("<downloaded upstream>.pth")` loads your family end to
+end, AND your recognizer returns `None` for every sibling family's upstream
+checkpoints — a greedy recognizer steals other families' files (landmine #36).
 
 ### Commit 4 — Inference parity proof
 
@@ -242,7 +342,7 @@ For YOLO-grid: 1 output `"output"`, opset 13. For DETR: 2 outputs
 `grid_sample`).
 
 DETR families: add yourself to `BaseBackend._is_nms_free_family()` at
-`libreyolo/backends/base.py:65`. NMS-free YOLO-grid (yolo9_e2e-style)
+`libreyolo/backends/base.py:211`. NMS-free YOLO-grid (yolo9_e2e-style)
 **must** also be added or exported backends will wrongly apply NMS. NCNN
 doesn't work for DETR — block early with `NotImplementedError`.
 
@@ -272,7 +372,7 @@ new `.pt`.
 
 ### Commit 9 — e2e catalog row
 
-Append your family's sizes to `MODEL_CATALOG` in `tests/e2e/conftest.py:419-471`. Run:
+Append your family's sizes to `MODEL_CATALOG` in `tests/e2e/conftest.py:417`. Run:
 
 ```bash
 pytest tests/e2e/test_val_coco128.py -k <family>
@@ -286,6 +386,11 @@ D-FINE both exempt themselves).
 **Verify**: both e2e tests pass for every size.
 
 ### Commit 10 — HuggingFace upload
+
+**Only for redistributable weights** — re-check §1. Permissive-licensed
+weights are rehosted under `LibreYOLO/`; anything else follows the YOLO-NAS
+link-out or L2CS no-rehost path and this commit becomes documentation of
+where the user gets the weights instead.
 
 Follow the `libreyolo-upload-hf-model` skill. Cross-check your filename
 against the whitelist there before uploading. The 5-file contract:
@@ -733,6 +838,57 @@ def test_<sibling>_rejects_<family>_state_dict():
     assert Libre<SIBLING>.can_load(our_sd) is False
 ```
 
+### 6.10 Runtime auto-convert recognizer (only if upstream keys differ)
+
+Skip this when upstream keys already match your native port — the `BaseModel`
+default hook claims `can_load`-matching layouts for free. RTMDet is the
+smallest precedent (`models/rtmdet/convert.py`).
+
+```python
+# models/<family>/convert.py
+"""Upstream <FAMILY> checkpoint key remapping.
+
+Shared by the runtime auto-converter and ``weights/convert_<family>_weights.py``.
+"""
+from __future__ import annotations
+from typing import Dict
+import torch
+
+DROP_PREFIXES = ("data_preprocessor.",)  # TODO: buffers your port doesn't carry
+
+
+def is_upstream_state_dict(state_dict: dict) -> bool:
+    """True ONLY for your upstream's naming — be strict, not greedy."""
+    # TODO: require a conjunction of tokens unique to the upstream layout.
+    return any(k.startswith("bbox_head.") and "rtm_cls" in k for k in state_dict)
+
+
+def convert_upstream(state_dict: dict) -> Dict[str, torch.Tensor]:
+    """Remap upstream keys to the native port's naming."""
+    out: Dict[str, torch.Tensor] = {}
+    for k, v in state_dict.items():
+        if any(k.startswith(p) for p in DROP_PREFIXES):
+            continue
+        # TODO: syntactic renames only — numerics must stay identical.
+        out[k.replace("bbox_head.", "head.", 1)] = v
+    return out
+```
+
+```python
+# in models/<family>/model.py
+    @classmethod
+    def convert_upstream_state_dict(cls, weights_dict: dict) -> Optional[dict]:
+        """Remap upstream naming to Libre<FAMILY>'s, or None if unrecognized."""
+        from .convert import convert_upstream, is_upstream_state_dict
+
+        if not is_upstream_state_dict(weights_dict):
+            return None
+        return convert_upstream(weights_dict)
+```
+
+Pair it with rejection tests mirroring §6.9: feed every sibling family's
+upstream checkpoints through `is_upstream_state_dict` and assert `False`.
+
 ---
 
 # Reference
@@ -757,7 +913,7 @@ end-to-end. Look up what you need.
 - One-to-one head + top-K inference (no NMS).
 - Backbone, neck, training infra inherited from YOLOv9.
 - Postprocess accepts `iou_thres` for API compat but `del`s it (`libreyolo/postprocess/yolo9_e2e.py::postprocess`).
-- **Must add the family to `BaseBackend._is_nms_free_family()`** (`libreyolo/backends/base.py:65`) or exported backends will wrongly apply NMS. yolo9_e2e is the existing miss.
+- **Must add the family to `BaseBackend._is_nms_free_family()`** (`libreyolo/backends/base.py:211`) or exported backends will wrongly apply NMS. Current set: `{dfine, deim, deimv2, ec, rfdetr, rtdetr, rtdetrv2, rtdetrv4, yolo9_e2e}`.
 
 ### 7.3 DETR
 
@@ -787,8 +943,8 @@ Three flavors, different disambiguation rules:
 **Same architecture, different loss/matcher** (D-FINE / DEIM). `can_load` collisions are inevitable. Disambiguate via:
 1. Embed `model_family` in the converted checkpoint (the converter's job).
 2. Use `FILENAME_PREFIX` in `detect_size_from_filename` as fallback.
-3. Order registry imports in `libreyolo/models/__init__.py` so families with most distinctive markers load first; generic fallbacks last. Current order at `libreyolo/models/__init__.py:36-45`: `EC → YOLOX → YOLOv9-E2E → YOLOv9 → YOLO-NAS → DEIMv2 → D-FINE → DEIM → PicoDet → RT-DETR`.
-4. Raise an explicit "ambiguous between {A, B}" error on a true tie. `libreyolo/models/__init__.py:313-323` has the D-FINE/DEIM-tie precedent.
+3. Order registry imports in `libreyolo/models/__init__.py` so families with most distinctive markers load first; generic fallbacks last. Current order at `libreyolo/models/__init__.py:47-75`: `EC → YOLOX → YOLOv9-E2E → YOLOv9 → YOLO-NAS → DEIMv2 → RT-DETRv4 → D-FINE → DEIM → PicoDet → RT-DETR → RT-DETRv2 → RTMDet → L2CS → FOMO → DepthAnythingV2 → NAFNet → EoMT → PIDNet → MobileNetV4 → ConvNeXt → EfficientNetV2 → ResNet → CLIP` (RF-DETR and DINOv2 lazy-register behind the `transformers` dep). The same order arbitrates runtime auto-conversion claims (§ commit 3b).
+4. Raise an explicit "ambiguous between {A, B}" error on a true tie. The D-FINE/DEIM-tie precedent lives in `libreyolo/models/__init__.py` (search "Ambiguous D-FINE/DEIM").
 
 ## 8. `BaseModel` contract
 
@@ -832,15 +988,23 @@ When `LibreYOLO("LibreECs-pose.pt", task=None)` is called:
    - State-dict sniff: family-specific `is_pose_state_dict` / `is_seg_state_dict`.
    - `resolve_task()` validates the resolved task is in `SUPPORTED_TASKS`.
 
-`_filename_regex` (`models/base/model.py:257-272`) compiles
-`{FILENAME_PREFIX}(?P<size>...)(?P<task>-seg|-pose|-cls)?{WEIGHT_EXT}`.
-Task suffix mapping at `libreyolo/tasks.py:29-35`:
+`_filename_regex` (`models/base/model.py`) compiles
+`{FILENAME_PREFIX}(?P<size>...)(?P<task>-<suffix>)?{WEIGHT_EXT}`.
+Task suffix mapping at `libreyolo/tasks.py:70-80`:
 
 ```python
-TASK_TO_SUFFIX = {"segment": "seg", "pose": "pose", "classify": "cls"}
+TASK_TO_SUFFIX = {
+    "segment": "seg", "semantic": "sem", "pose": "pose", "classify": "cls",
+    "gaze": "gaze", "obb": "obb", "point": "point", "depth": "depth",
+    "restore": "restore",
+}
 ```
 
 Detect has **no suffix**.
+
+If nothing recognizes the file as a LibreYOLO checkpoint, the factory
+attempts runtime auto-conversion (`autoconvert_upstream_checkpoint`, called
+from `libreyolo/models/__init__.py`) before failing — see commit 3b.
 
 ## 9. Multi-task internals
 
@@ -872,12 +1036,17 @@ If your model emits keypoints as `(N, K, 2)`, append a column of ones for visibi
 
 ## 10. Validation
 
-`BaseModel.val()` dispatches by `self.task` (`models/base/model.py:629-636`):
+`BaseModel.val()` dispatches by `self.task` (see the validator-selection block
+inside `models/base/model.py::val`; a family can also pin `validator_class`
+directly):
 
 ```text
-detect  -> DetectionValidator     (COCOeval iouType="bbox")
-segment -> SegmentationValidator  (iouType="bbox" + "segm", returns (B) and (M))
-pose    -> PoseValidator          (iouType="keypoints")
+detect   -> DetectionValidator     (COCOeval iouType="bbox")
+segment  -> SegmentationValidator  (iouType="bbox" + "segm", returns (B) and (M))
+pose     -> PoseValidator          (iouType="keypoints")
+classify -> ClassifyValidator      obb   -> OBBValidator
+semantic -> SemanticValidator      point -> PointValidator
+depth    -> DepthValidator         restore -> RestoreValidator
 ```
 
 `ValidationConfig` (`libreyolo/validation/config.py`) exposes one of three
@@ -887,13 +1056,19 @@ input modes — exactly one must be set:
 - `data_dir` — detect/segment with a flat dataset.
 - `keypoints_json` + `images_dir` — pose only.
 
-`ClassifyValidator` and `OBBValidator` now exist
-(`libreyolo/validation/classify_validator.py`, `obb_validator.py`). This skill
-does not yet ship a dedicated `classify` scaffold; for a classify-only family
-follow the merged examples — `libreyolo/models/{mobilenetv4,convnext,efficientnetv2}/`
-— which reuse the shared `BaseTrainer` classify path (`_setup_classify_data` /
-`_run_classify_validation`), return `{"probs": ...}` from `_postprocess`, and set
-`best_metric_key = "metrics/accuracy_top1"`.
+This skill's templates are detect/pose/segment-shaped. For the other tasks,
+clone the merged exemplar family instead of adapting a template:
+
+- **classify** → `models/{mobilenetv4,convnext,efficientnetv2,resnet}/` — reuse
+  the shared `BaseTrainer` classify path (`_setup_classify_data` /
+  `_run_classify_validation`), return `{"probs": ...}` from `_postprocess`,
+  set `best_metric_key = "metrics/accuracy_top1"`.
+- **zero-shot classify** → `models/clip/` (`set_classes`, `clip_validator.py`).
+- **semantic** → `models/pidnet/` (CNN) or `models/eomt/` (ViT).
+- **depth** → `models/depth_anything/`.
+- **restore** → `models/nafnet/` (native-resolution, no letterbox).
+- **point** → `models/fomo/`.
+- **gaze** → `models/l2cs/` (inference-only precedent).
 
 **Per-task `best_metric_key` override** is mandatory for non-detect
 trainers. `BaseTrainer.best_metric_key = "metrics/mAP50-95"` (`training/trainer.py:35`)
@@ -943,7 +1118,11 @@ carry buffers the port doesn't materialize identically (regenerated `anchors`,
 `valid_mask`). EC and D-FINE both return `False` unconditionally for this
 reason — don't conflate it with task-aware logic.
 
-For wrapper integrations (RF-DETR pattern): substitute "import the upstream package and verify it produces the documented outputs."
+For sibling-tier integrations that load upstream implementations from an
+installed dependency (LibreSAM via transformers): substitute "import the
+upstream package and verify it produces the documented outputs." Run the
+parity check against the dependency versions users will actually install —
+see landmine #37 for what silent dep drift does.
 
 For multi-task families: do the parity check **for each task variant**.
 
@@ -975,8 +1154,9 @@ Conditional:
 | `libreyolo/__init__.py` lazy import via `__getattr__` | family has heavy/optional runtime dep (RF-DETR pattern) |
 | `libreyolo/export/exporter.py` | needs `_model_context` branch (D-FINE has one) |
 | `libreyolo/export/onnx.py` | output count differs from 1 or 3 |
-| `weights/convert_<family>_weights.py` | strongly recommended; existing exceptions are YOLOX, YOLO-NAS, YOLOv9-E2E (in-process unwrap), RF-DETR (wrapper) |
-| `pyproject.toml` | mandatory for wrapper integrations (RF-DETR's `[rfdetr]` extra) |
+| `weights/convert_<family>_weights.py` | strongly recommended; existing exceptions are YOLOX, YOLO-NAS, YOLOv9-E2E (in-process unwrap), RF-DETR (bespoke autoconvert recognizer) |
+| `libreyolo/models/<family>/convert.py` | upstream key naming differs from the native port — runtime auto-conversion remap shared with the offline script (commit 3b) |
+| `pyproject.toml` | family needs an optional heavy dep (RF-DETR's `[rfdetr]` extra pulls transformers) |
 
 ## 14. Integration-proof tests
 
@@ -984,6 +1164,7 @@ Conditional:
 |---|---|
 | `tests/e2e/test_val_coco128.py` | Inference loads + runs; preprocessing + class mapping + postprocessing are correct. Asserts mAP50-95 ≥ 0.18 |
 | `tests/e2e/test_rf1_training.py` | Training improves the model on real data (marbles). 10 epochs, asserts post-mAP > pre-mAP and post-mAP ≥ 0.05 |
+| `tests/e2e/test_rf5_training.py` | Broader fine-tune coverage: config-driven training on 5 representative Roboflow100 datasets (opt-in `rf5` marker) |
 
 DETR families: skip the `last_loss < first_loss` assertion (loss too noisy).
 
@@ -1035,17 +1216,28 @@ In priority order. Each line: *[which family hit it]* — what to do.
 27. **Multi-character size codes need length-descending regex sort.** RT-DETR's `r50` vs `r50m` — override `detect_size_from_filename` and sort sizes by length descending. Precedent: `models/rtdetr/model.py:253-270`.
 28. **Pose head with single-class user-facing override.** DETR pose may pair multi-class internal head with single user-facing class. Converter must override `nc=1, names={0:"person"}` for the pose variant. EC: `weights/convert_ec_weights.py:53-55`.
 29. **DETR pose may skip the box head entirely.** Some pose decoders derive boxes from keypoint extents rather than a dedicated regression head (EC: `libreyolo/postprocess/ec.py::postprocess_pose`). Document if yours does.
-30. **NMS-free family not added to backend allowlist.** `BaseBackend._is_nms_free_family()` (`backends/base.py:65`) hardcodes `{"dfine","deim","deimv2","ec","rfdetr","rtdetr"}`. Backends apply NMS post-export to anything not in this set. **YOLOv9-E2E is the existing miss** — exported yolo9_e2e graphs hit this bug today.
+30. **NMS-free family not added to backend allowlist.** `BaseBackend._is_nms_free_family()` (`backends/base.py:211`) hardcodes `{"dfine","deim","deimv2","ec","rfdetr","rtdetr","rtdetrv2","rtdetrv4","yolo9_e2e"}`. Backends apply NMS post-export to anything not in this set. YOLOv9-E2E shipped with this miss and exported graphs were silently wrong until it was fixed — don't be the next entry.
 31. **Sibling-family `can_load` collisions are bidirectional.** Both directions need tests (template §6.9).
 32. **Sniff-key prefix-match collisions across multi-task families.** RF-DETR's `"segmentation_head"` is a shorter prefix than EC's `"decoder.decoder.segmentation_head"` — if a new family puts `segmentation_head.*` at a path not nested under `decoder.decoder.`, RF-DETR steals it.
 33. **`warmup_iters` from upstream is recipe-tuned to a full epoch budget.** When user overrides `epochs`, fall back to `warmup_epochs`. DEIMv2: `models/deimv2/trainer.py:79-90` (commit `22f90518`).
 34. **Asymmetric per-task sizes need explicit error messages.** YOLO-NAS pose ships `n` but YOLO-NAS detect doesn't. The factory's `TASK_INPUT_SIZES[task]` validation needs a per-task error path.
 35. **Single-task families currently inherit `SUPPORTED_TASKS` defaults silently.** §8.1's recommendation is **aspirational** today — D-FINE, DEIM, DEIMv2, PicoDet, RT-DETR, YOLOX, YOLOv9, YOLOv9-E2E all rely on `BaseModel`'s `("detect",)` default. New ports should declare explicitly.
+36. **Greedy `convert_upstream_state_dict` steals other families' upstream checkpoints.** Runtime auto-conversion asks *every* registered family; subclass-beats-base then registry order arbitrates. Recognize on a strict conjunction of upstream-unique tokens, return `None` for everything else, and add rejection tests against sibling families' upstream checkpoints (mirror §6.9).
+37. **Dependency loads that silently no-op leave you training a random backbone.** *(RF-DETR)* `WindowedDinov2WithRegistersBackbone.from_pretrained(...)` silently skipped the weight transfer under recent Transformers releases — classify/seg/depth variants trained on a randomly-initialized ViT and nobody crashed. Fix: explicit reference-model state-dict transfer (`models/rfdetr/backbone.py`, see the NOTE around line 534). Your commit-4 parity gate is the detector — run it against the dependency versions users actually install, not only your lockfile.
+38. **Third-party API drift breaks training while inference stays green.** *(all four timm-derived classify families, #496)* a timm kwarg rename crashed `model.train()` for every shipped classify family while `predict`/`val` stayed perfect, so it shipped broken. Inference parity proves nothing about the training path — run a real `model.train()` smoke per family against current deps before release.
+39. **Augmentation knobs that silently don't fire.** *(YOLO9, #432/#484)* `degrees`/`translate`/`shear`/`scale` were dead no-ops in the mosaic path, and mixup dropped the second image's labels — silently, for a long time. When you wire a training pipeline, unit-test that each documented aug knob measurably changes pixels *and* labels.
 
 ## 16. Cross-references
 
 - **Filename whitelist + HF 5-file contract**: `skills/libreyolo-upload-hf-model/SKILL.md`. Authoritative list of all valid weight names.
 - **Nomenclature**: `docs/nomenclature.md`. Family table, casing, size codes, task suffixes.
+- **Runtime auto-conversion**: `libreyolo/models/autoconvert.py` (its module
+  docstring is the spec); hook default `models/base/model.py::convert_upstream_state_dict`;
+  per-family remaps `models/{yolo9,rtmdet,rtdetr,rtdetrv4,picodet}/convert.py`;
+  skiplist `_SKIP_FAMILIES`; RF-DETR's bespoke recognizer lives in `autoconvert.py` itself.
+- **Sibling tiers (prompt-driven)**: `models/openvocab/` (Grounding DINO, OWLv2,
+  OMDet-Turbo; towers in `models/bert/` + `models/swin/`), `models/sam/` +
+  `models/mobilesam/` (LibreSAM), `models/vlm/` (LibreVLM).
 - **Conversion tier examples**:
   - metadata-wrap (single-task): `weights/convert_dfine_weights.py`, `weights/convert_deim_weights.py`
   - metadata-wrap (multi-task `--task` flag): `weights/convert_ec_weights.py`
@@ -1055,8 +1247,8 @@ In priority order. Each line: *[which family hit it]* — what to do.
 - **Pattern references**:
   - NMS-free YOLO-grid hybrid: `libreyolo/models/yolo9_e2e/`
   - Parent-child sibling: YOLOv9-E2E inheriting from YOLOv9
-  - Same-architecture siblings (D-FINE / DEIM): tie-break at `libreyolo/models/__init__.py:313-323`
-  - Lazy import for optional dep: `libreyolo/__init__.py:74-78` (RF-DETR's `_ensure_rfdetr`)
+  - Same-architecture siblings (D-FINE / DEIM): tie-break in `libreyolo/models/__init__.py` (search "Ambiguous D-FINE/DEIM")
+  - Lazy import for optional dep: `_ensure_rfdetr` in `libreyolo/models/__init__.py` (registers RF-DETR + DINOv2 behind the `transformers` dep)
   - Gated experimental training: `libreyolo/models/picodet/model.py:157-201`, `libreyolo/models/ec/model.py:269-310`
   - Vendored sub-component license: `libreyolo/models/deimv2/engine/backbone/dinov3/`
   - Per-group LR via `lr_ratio` + `_scale_lr` (preferred): `libreyolo/models/rtdetr/trainer.py:185-260`
