@@ -54,6 +54,45 @@ def decode_v7_head(
     return boxes, scores
 
 
+def decode_export(
+    outputs: List[torch.Tensor],
+    anchor_tensors: List[torch.Tensor],
+    strides: Sequence[int],
+    num_classes: int,
+) -> torch.Tensor:
+    """Batched, traceable v7 decode to ``(B, 4+nc, N)`` (xyxy + per-class).
+
+    ``anchor_tensors`` are ``(A, 2)`` device-tracked buffers from the export
+    wrapper. Same output contract as the Darknet exporter — self-contained for
+    every runtime backend via the shared `_parse_yolo9` decode.
+    """
+    rows = []
+    for output, anc, stride in zip(outputs, anchor_tensors, strides):
+        b, c, h, w = output.shape
+        a = anc.shape[0]
+        x = output.view(b, a, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2).sigmoid()
+
+        # Device-agnostic grids (new_ones/cumsum); anchors are buffers.
+        col = (output.new_ones(w).cumsum(0) - 1.0).view(1, 1, 1, w)
+        row = (output.new_ones(h).cumsum(0) - 1.0).view(1, 1, h, 1)
+        aw = anc[:, 0].view(1, a, 1, 1)
+        ah = anc[:, 1].view(1, a, 1, 1)
+
+        cx = (x[..., 0] * 2 - 0.5 + col) * stride
+        cy = (x[..., 1] * 2 - 0.5 + row) * stride
+        bw = (x[..., 2] * 2) ** 2 * aw
+        bh = (x[..., 3] * 2) ** 2 * ah
+        score = x[..., 4].unsqueeze(-1) * x[..., 5:]
+        x1 = (cx - bw / 2).unsqueeze(-1)
+        y1 = (cy - bh / 2).unsqueeze(-1)
+        x2 = (cx + bw / 2).unsqueeze(-1)
+        y2 = (cy + bh / 2).unsqueeze(-1)
+        row_t = torch.cat([x1, y1, x2, y2, score], dim=-1)
+        rows.append(row_t.reshape(b, a * h * w, 4 + num_classes))
+    out = torch.cat(rows, dim=1)
+    return out.permute(0, 2, 1)  # B, 4+nc, N
+
+
 def postprocess(
     outputs: List[torch.Tensor],
     anchors: Sequence[Sequence[float]],

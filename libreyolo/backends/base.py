@@ -435,6 +435,16 @@ class BaseBackend(ABC):
                 image, effective_imgsz, color_format
             )
             return tensor, img, size, ratio
+        elif self.model_family in ("yolo2", "yolo3", "yolo4"):
+            from ..models.darknet.preprocess import preprocess_image as _dk_pre
+
+            sz = effective_imgsz if isinstance(effective_imgsz, int) else max(effective_imgsz)
+            return _dk_pre(image, input_size=sz, color_format=color_format)
+        elif self.model_family == "yolo7":
+            from ..models.yolo7.utils import preprocess_image as _y7_pre
+
+            sz = effective_imgsz if isinstance(effective_imgsz, int) else max(effective_imgsz)
+            return _y7_pre(image, input_size=sz, color_format=color_format)
         else:
             tensor, img, size = preprocess_image(
                 image, input_size=effective_imgsz, color_format=color_format

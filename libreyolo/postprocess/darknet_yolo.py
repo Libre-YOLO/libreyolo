@@ -92,6 +92,64 @@ def decode_head(
     return boxes, scores
 
 
+def decode_export(
+    outputs: List[torch.Tensor],
+    specs: Sequence,
+    anchor_tensors: List[torch.Tensor],
+) -> torch.Tensor:
+    """Batched, traceable decode of all heads to ``(B, 4+nc, N)``.
+
+    Boxes are xyxy in input-image pixels; scores are per-class ``obj * cls``
+    (sigmoid for yolo heads, softmax for region). This is the format the shared
+    backend decode (`_parse_yolo9`) consumes, so an exported graph that ends in
+    this tensor works across every runtime backend (ONNX/NCNN/TorchScript/...).
+
+    ``anchor_tensors`` are ``(A, 2)`` buffers (device-tracked module state)
+    supplied by the export wrapper — passing anchors as constants would bake the
+    trace device into TorchScript and break CPU/GPU portability.
+    """
+    rows = []
+    nc = specs[0].num_classes
+    for output, spec, anchors in zip(outputs, specs, anchor_tensors):
+        b, c, h, w = output.shape
+        a = len(spec.anchors)
+        x = output.view(b, a, 5 + nc, h, w).permute(0, 1, 3, 4, 2)  # B,A,H,W,5+nc
+
+        # Grids from ``output`` (new_ones/cumsum) follow the input device at
+        # runtime; anchors come in as device-tracked buffers for the same reason.
+        col = (output.new_ones(w).cumsum(0) - 1.0).view(1, 1, 1, w)
+        row = (output.new_ones(h).cumsum(0) - 1.0).view(1, 1, h, 1)
+        aw = anchors[:, 0].view(1, a, 1, 1)
+        ah = anchors[:, 1].view(1, a, 1, 1)
+
+        tx = torch.sigmoid(x[..., 0])
+        ty = torch.sigmoid(x[..., 1])
+        obj = torch.sigmoid(x[..., 4])
+        s = spec.scale_x_y
+        if s != 1.0:
+            tx = tx * s - (s - 1.0) / 2.0
+            ty = ty * s - (s - 1.0) / 2.0
+        cx = (tx + col) * spec.stride
+        cy = (ty + row) * spec.stride
+        if spec.kind == "region":
+            bw = torch.exp(x[..., 2]) * aw * spec.stride
+            bh = torch.exp(x[..., 3]) * ah * spec.stride
+            clsp = torch.softmax(x[..., 5:], dim=-1)
+        else:
+            bw = torch.exp(x[..., 2]) * aw
+            bh = torch.exp(x[..., 3]) * ah
+            clsp = torch.sigmoid(x[..., 5:])
+        x1 = (cx - bw / 2).unsqueeze(-1)
+        y1 = (cy - bh / 2).unsqueeze(-1)
+        x2 = (cx + bw / 2).unsqueeze(-1)
+        y2 = (cy + bh / 2).unsqueeze(-1)
+        score = obj.unsqueeze(-1) * clsp
+        row_t = torch.cat([x1, y1, x2, y2, score], dim=-1)  # B,A,H,W,4+nc
+        rows.append(row_t.reshape(b, a * h * w, 4 + nc))
+    out = torch.cat(rows, dim=1)  # B, N, 4+nc
+    return out.permute(0, 2, 1)  # B, 4+nc, N (yolo9-compatible)
+
+
 def postprocess(
     outputs: List[torch.Tensor],
     specs: Sequence,
