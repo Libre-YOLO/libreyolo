@@ -104,6 +104,22 @@ def test_builtin_dataset_yamls_do_not_use_ultralytics_assets():
     assert offenders == {}
 
 
+def test_known_classify_datasets_are_libre_hosted():
+    # Named classification datasets must resolve to LibreYOLO-controlled hosting,
+    # rebuilt from clean upstream sources — never a competitor's release assets.
+    # (The download-script import shim in data.utils is a separate, sanctioned
+    # compatibility layer and is intentionally not covered here.)
+    from libreyolo.data.classify_dataset import _KNOWN_DATASETS
+
+    offenders = {
+        name: url
+        for name, url in _KNOWN_DATASETS.items()
+        if "github.com/ultralytics" in url
+        or "huggingface.co/datasets/LibreYOLO" not in url
+    }
+    assert offenders == {}, f"non-LibreYOLO-hosted known datasets: {offenders}"
+
+
 def test_load_data_config_resolves_directory_test_split(tmp_path):
     dataset_root = tmp_path / "dataset"
     images_dir = dataset_root / "test" / "images"
