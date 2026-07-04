@@ -51,6 +51,8 @@ class LibreYOLO9P2(LibreYOLO9):
     # Base yolo9 detect checkpoints are valid transfer sources (their tensors
     # are remapped by _prepare_state_dict).
     TRANSFER_COMPATIBLE_FAMILIES = ("yolo9",)
+    # Published VisDrone research-preview checkpoint (10 aerial classes).
+    WEIGHT_VARIANTS = ("visdrone",)
 
     # =====================================================================
     # Registry classmethods
@@ -78,6 +80,19 @@ class LibreYOLO9P2(LibreYOLO9):
         first) and misattribute them to yolo9_p2.
         """
         return None
+
+    @classmethod
+    def get_download_notice(cls, filename: str, url: str) -> str | None:
+        if cls.detect_variant_from_filename(filename) == "visdrone":
+            return (
+                f"{filename} is a RESEARCH PREVIEW trained on VisDrone2019-DET "
+                "(AISKYEYE, Tianjin University). VisDrone is licensed "
+                "CC BY-NC-SA 3.0: these weights are for NON-COMMERCIAL use "
+                "only and are not covered by LibreYOLO's permissive license. "
+                "The checkpoint detects the 10 VisDrone aerial classes (not "
+                "COCO) and was trained/evaluated at imgsz=768."
+            )
+        return super().get_download_notice(filename, url)
 
     # =====================================================================
     # Model lifecycle

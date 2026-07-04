@@ -122,6 +122,11 @@ class BaseModel(ABC):
     val_preprocessor_class = StandardValPreprocessor
     validator_class: ClassVar[Optional[type]] = None
     EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
+    # Dataset-variant weight suffixes (e.g. "visdrone" accepts
+    # ``LibreYOLO9P2s-visdrone.pt``). Families that publish checkpoints
+    # trained on a non-default dataset opt in; the variant stays part of the
+    # Hugging Face repo name in ``get_download_url``.
+    WEIGHT_VARIANTS: ClassVar[tuple[str, ...]] = ()
 
     # Batched-predict policy: True when ``_preprocess`` yields stackable
     # (1, C, H, W) tensors and every tensor in the ``_forward`` output keeps
@@ -434,7 +439,15 @@ class BaseModel(ABC):
             suffix_group = rf"(?P<task>{suffixes}){optional}"
         else:
             suffix_group = ""
-        return re.compile(rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}")
+        variant_group = ""
+        if cls.WEIGHT_VARIANTS:
+            variants = "|".join(
+                re.escape(variant.lower()) for variant in cls.WEIGHT_VARIANTS
+            )
+            variant_group = rf"(?P<variant>-(?:{variants}))?"
+        return re.compile(
+            rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{variant_group}{ext}"
+        )
 
     @classmethod
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
@@ -456,6 +469,16 @@ class BaseModel(ABC):
         if task_suffix:
             return normalize_task(task_suffix.lstrip("-"))
         return None
+
+    @classmethod
+    def detect_variant_from_filename(cls, filename: str) -> Optional[str]:
+        """Extract the dataset-variant suffix from a weight filename, if any."""
+        pattern = cls._filename_regex()
+        if pattern is None:
+            return None
+        m = pattern.search(filename.lower())
+        variant = m.groupdict().get("variant") if m else None
+        return variant.lstrip("-") if variant else None
 
     @classmethod
     def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
@@ -483,7 +506,9 @@ class BaseModel(ABC):
         task = cls.detect_task_from_filename(filename)
         task_suffix = task_to_suffix(task)
         suffix = f"-{task_suffix}" if task_suffix else ""
-        name = f"{cls.FILENAME_PREFIX}{size}{suffix}"
+        variant = cls.detect_variant_from_filename(filename)
+        variant_suffix = f"-{variant}" if variant else ""
+        name = f"{cls.FILENAME_PREFIX}{size}{suffix}{variant_suffix}"
         return f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
 
     @classmethod
