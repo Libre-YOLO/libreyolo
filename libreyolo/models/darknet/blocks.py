@@ -144,7 +144,13 @@ class DarknetMaxPool(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.stride == 1 and self.size == 2:
-            x = F.pad(x, (0, 1, 0, 1), mode="constant", value=float("-inf"))
+            # Pad right/bottom before a same-size stride-1 max-pool. Use the
+            # most-negative *finite* value rather than -inf: for max-pooling it
+            # is numerically identical (no activation is smaller, and no window
+            # here is all-padding), but -inf serializes to a literal some export
+            # toolchains reject (e.g. ncnn/pnnx `5=-inf` in the .param).
+            neg = torch.finfo(x.dtype).min
+            x = F.pad(x, (0, 1, 0, 1), mode="constant", value=neg)
             return F.max_pool2d(x, kernel_size=2, stride=1)
         padding = (self.size - 1) // 2
         return F.max_pool2d(x, kernel_size=self.size, stride=self.stride, padding=padding)

@@ -21,6 +21,14 @@ _SUPPORTED_EXPORTS = {
     ("rfdetr", "detect"): "RF-DETR detect",
     ("rfdetr", "segment"): "RF-DETR segmentation",
     ("rfdetr", "pose"): "RF-DETR pose",
+    # Darknet families + YOLOv7 bake the decode into the export graph, so they
+    # go through the same generic onnx2tf path as YOLO9 detect. Verified
+    # end-to-end on yolo3 (native-vs-tflite max_abs_diff ~3e-4); v2/v4/v7 use
+    # the identical wrapper->ONNX->TFLite pipeline.
+    ("yolo2", "detect"): "YOLOv2 detect",
+    ("yolo3", "detect"): "YOLOv3 detect",
+    ("yolo4", "detect"): "YOLOv4 detect",
+    ("yolo7", "detect"): "YOLOv7 detect",
 }
 _UNSUPPORTED_FAMILY_REASONS: dict[str, str] = {}
 
