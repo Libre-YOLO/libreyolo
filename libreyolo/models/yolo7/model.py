@@ -52,6 +52,24 @@ class LibreYOLO7(BaseModel):
                 return int(v.shape[0]) // 3 - 5
         return None
 
+    @classmethod
+    def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
+        """Recognize + remap a raw upstream MMT ``v7.pt`` for auto-conversion.
+
+        Upstream ``v7.pt`` is a flat state dict with numbered keys
+        (``0.conv.weight`` ... ``105.heads.0.implicit_a.implicit``) and no
+        ``layers.`` prefix. The native model nests the graph under ``layers.``,
+        so ``LibreYOLO("v7.pt")`` (metadata-less) must add that prefix here —
+        otherwise the default hook would claim the checkpoint and strict-load
+        the un-prefixed keys, failing with missing/unexpected key errors.
+        """
+        if not any("implicit_a.implicit" in k for k in state_dict):
+            return None
+        # Our own converted checkpoints already carry the layers.* prefix.
+        if any(k.startswith("layers.") for k in state_dict):
+            return dict(state_dict)
+        return {f"layers.{k}": v for k, v in state_dict.items()}
+
     # =====================================================================
     # Init
     # =====================================================================

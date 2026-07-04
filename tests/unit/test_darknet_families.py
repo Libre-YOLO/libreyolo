@@ -109,6 +109,21 @@ def test_reorg_shape_and_channel_expansion():
     assert out.shape == (1, 16, 2, 2)
 
 
+def test_reorg_channel_ordering_golden():
+    # Pins the exact darknet2pytorch (marvis) channel interleaving used to load
+    # real YOLOv2 passthrough weights — a regression guard on the ordering, not
+    # just the shape. (Functional correctness vs Darknet is confirmed by real
+    # LibreYOLO2b detections; OpenCV's Reorg layer is not a valid oracle here.)
+    x = torch.arange(2 * 4 * 4, dtype=torch.float32).view(1, 2, 4, 4)
+    out = Reorg(stride=2)(x)
+    assert out.shape == (1, 8, 2, 2)
+    expected = [
+        0, 2, 8, 10, 16, 18, 24, 26, 1, 3, 9, 11, 17, 19, 25, 27,
+        4, 6, 12, 14, 20, 22, 28, 30, 5, 7, 13, 15, 21, 23, 29, 31,
+    ]
+    assert out.flatten().tolist() == [float(v) for v in expected]
+
+
 # ---------------------------------------------------------------------------
 # net build + weights reader/writer
 # ---------------------------------------------------------------------------

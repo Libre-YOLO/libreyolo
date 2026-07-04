@@ -111,6 +111,39 @@ def test_factory_load_and_predict(tmp_path):
     assert hasattr(r, "boxes")
 
 
+def test_convert_upstream_recognizes_raw_v7():
+    # Native state dict is layers.*-prefixed; strip it to emulate the raw
+    # upstream v7.pt (numbered keys, no prefix).
+    native = YOLOv7Model(num_classes=80).state_dict()
+    raw = {k[len("layers."):]: v for k, v in native.items()}
+    assert not any(k.startswith("layers.") for k in raw)
+
+    conv = LibreYOLO7.convert_upstream_state_dict(raw)
+    assert conv is not None
+    assert all(k.startswith("layers.") for k in conv)
+    assert set(conv) == set(native)  # remap restores the native key set
+
+    # Our own (already-prefixed) checkpoint is claimed unchanged.
+    assert set(LibreYOLO7.convert_upstream_state_dict(native)) == set(native)
+    # A foreign layout is not recognized.
+    assert LibreYOLO7.convert_upstream_state_dict({"backbone.stem.weight": 1}) is None
+
+
+def test_factory_loads_raw_upstream_v7(tmp_path):
+    # Regression for the P1 fix: a metadata-less raw v7.pt (numbered keys) must
+    # auto-convert and load, not fail strict loading on the missing prefix.
+    from libreyolo import LibreYOLO
+
+    native = YOLOv7Model(num_classes=80)
+    raw = {k[len("layers."):]: v for k, v in native.state_dict().items()}
+    path = tmp_path / "v7.pt"
+    torch.save(raw, path)
+
+    m = LibreYOLO(str(path))
+    assert type(m).__name__ == "LibreYOLO7"
+    assert m.nb_classes == 80
+
+
 def test_train_raises():
     m = LibreYOLO7(size="b")
     with pytest.raises(NotImplementedError, match="inference-only"):

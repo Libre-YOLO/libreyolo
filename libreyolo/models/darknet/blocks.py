@@ -180,12 +180,17 @@ class Reorg(nn.Module):
         self.stride = stride
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # WARNING (Gate B): Darknet's reorg channel interleaving is NOT a plain
-        # space-to-depth / pixel_unshuffle. The sequence below reproduces the
-        # community-verified darknet2pytorch ordering, which is the order the
-        # pretrained 1x1 conv after the passthrough concat expects. This MUST be
-        # confirmed layer-by-layer against a Darknet oracle before YOLOv2 ships
-        # with real weights.
+        # Darknet's reorg channel interleaving is NOT a plain space-to-depth /
+        # pixel_unshuffle. The sequence below reproduces the community-verified
+        # darknet2pytorch (marvis) ordering — the order the pretrained 1x1 conv
+        # after the YOLOv2 passthrough concat expects. The exact ordering is
+        # regression-locked by ``test_reorg_channel_ordering_golden``.
+        #
+        # Verification status: real LibreYOLO2b weights produce correct
+        # detections through this path, so it is functionally faithful. Note
+        # OpenCV's dnn ``Reorg`` layer does NOT match Darknet's ordering, so it
+        # is not a valid oracle for the passthrough — confirm any bitwise check
+        # against compiled Darknet, not OpenCV (see weights/parity_darknet.py).
         s = self.stride
         b, c, h, w = x.shape
         hs = ws = s
