@@ -50,9 +50,10 @@ class LibreYOLO9(BaseModel):
     FAMILY = "yolo9"
     FILENAME_PREFIX = "LibreYOLO9"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "c": 640}
-    SUPPORTED_TASKS = ("detect",)
+    SUPPORTED_TASKS = ("detect", "segment")
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
+        "segment": INPUT_SIZES,
     }
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
@@ -132,6 +133,8 @@ class LibreYOLO9(BaseModel):
     @classmethod
     def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
         """Infer YOLO9 task from task-specific head branches."""
+        if any(key.startswith("head.proto") for key in weights_dict):
+            return "segment"
         return None
 
     # =========================================================================
@@ -169,6 +172,7 @@ class LibreYOLO9(BaseModel):
             config=self.size,
             reg_max=self.reg_max,
             nb_classes=self.nb_classes,
+            task=self.task,
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:

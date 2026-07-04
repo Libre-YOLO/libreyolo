@@ -104,11 +104,16 @@ class YOLO9Trainer(BaseTrainer):
         def _scalar(v):
             return v.item() if isinstance(v, torch.Tensor) else v
 
-        return {
+        components = {
             "box": _scalar(outputs.get("box", 0)),
             "cls": _scalar(outputs.get("cls", 0)),
             "dfl": _scalar(outputs.get("dfl", 0)),
         }
+        if "seg" in outputs:
+            components["seg"] = _scalar(outputs.get("seg", 0))
+        return components
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
+        if getattr(self.model, "task", "detect") == "segment":
+            return self.model(imgs, targets=targets, masks=polygons)
         return self.model(imgs, targets=targets)

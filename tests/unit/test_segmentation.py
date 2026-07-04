@@ -251,8 +251,10 @@ class TestFactorySegDetection:
         assert LibreYOLOX.get_download_url("LibreYOLOXs-seg.pt") is None
         assert LibreYOLO9.detect_size_from_filename("LibreYOLO9s.pt") == "s"
         assert LibreYOLO9.detect_task_from_filename("LibreYOLO9s.pt") is None
-        # YOLO9 is detect-only; legacy -seg filenames no longer match.
-        assert LibreYOLO9.detect_size_from_filename("LibreYOLO9s-seg.pt") is None
+        # YOLO9 supports instance segmentation, so -seg filenames resolve to
+        # size 's' and task 'segment' (as with the other seg-capable families).
+        assert LibreYOLO9.detect_size_from_filename("LibreYOLO9s-seg.pt") == "s"
+        assert LibreYOLO9.detect_task_from_filename("LibreYOLO9s-seg.pt") == "segment"
 
 
 class TestPolygonLabelParsing:

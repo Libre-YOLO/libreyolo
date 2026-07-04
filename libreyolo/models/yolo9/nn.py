@@ -714,6 +714,108 @@ class DDetect(nn.Module):
         )
 
 
+class MaskProto(nn.Module):
+    """Prototype-mask branch for YOLO9 instance segmentation.
+
+    YOLACT-style prototype generator (Bolya et al., ICCV 2019, "YOLACT:
+    Real-time Instance Segmentation"): a small conv stack over the highest-
+    resolution neck feature (P3) that emits ``c_out`` prototype masks at
+    2x the P3 resolution. Per-instance masks are recovered downstream as a
+    linear combination of these prototypes with the head's mask coefficients.
+    """
+
+    def __init__(self, c1, c_mid=256, c_out=32):
+        super().__init__()
+        self.cv1 = Conv(c1, c_mid, 3)
+        self.up = nn.Upsample(scale_factor=2, mode="nearest")
+        self.cv2 = Conv(c_mid, c_mid, 3)
+        self.cv3 = Conv(c_mid, c_out, 1)
+
+    def forward(self, x):
+        return self.cv3(self.cv2(self.up(self.cv1(x))))
+
+
+class DDetectSeg(DDetect):
+    """YOLO9 detection head plus YOLACT-style prototype mask prediction.
+
+    Extends :class:`DDetect` with a :class:`MaskProto` prototype branch on the
+    P3 feature and a per-scale mask-coefficient tower (``cv4``). Detection is
+    unchanged and reuses the base towers/decode; segmentation adds ``nm`` mask
+    coefficients per anchor whose linear combination with the prototypes yields
+    the instance masks.
+
+    Checkpoint-format contract: the extra branches live at ``proto`` and
+    ``cv4`` — the presence of ``head.proto.*`` keys is what marks a checkpoint
+    as ``task='segment'`` (see ``model.py``).
+    """
+
+    def __init__(
+        self,
+        nc=80,
+        ch=(),
+        reg_max=16,
+        stride=(),
+        use_group=True,
+        num_masks=32,
+        proto_channels=256,
+    ):
+        super().__init__(
+            nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group
+        )
+        self.nm = num_masks
+        self.proto = MaskProto(ch[0], proto_channels, self.nm)
+        self._seg_loss_fn = None
+
+        # Mask-coefficient tower per scale (YOLACT prediction head), mirroring
+        # the box/class tower widths: a quarter of P3 channels, floored at nm.
+        c4 = max(ch[0] // 4, self.nm)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1))
+            for x in ch
+        )
+
+    def _get_seg_loss_fn(self, device):
+        if self._seg_loss_fn is None:
+            from .loss import YOLO9SegmentationLoss
+
+            self._seg_loss_fn = YOLO9SegmentationLoss(
+                num_classes=self.nc,
+                reg_max=self.reg_max,
+                strides=self.stride.tolist(),
+                image_size=None,
+                device=device,
+                num_masks=self.nm,
+            )
+        return self._seg_loss_fn
+
+    def forward(self, x, targets=None, img_size=None, masks=None):
+        features = list(x)
+        proto = self.proto(features[0])
+        batch_size = proto.shape[0]
+        mask_coeffs = torch.cat(
+            [
+                self.cv4[i](features[i]).view(batch_size, self.nm, -1)
+                for i in range(self.nl)
+            ],
+            dim=2,
+        )
+
+        det_outputs = super().forward(features, targets=None, img_size=img_size)
+
+        if self.training:
+            if targets is not None:
+                loss_fn = self._get_seg_loss_fn(proto.device)
+                if img_size is not None:
+                    loss_fn.update_anchors(list(img_size))
+                return loss_fn(det_outputs, targets, mask_coeffs, proto, masks)
+            return det_outputs, mask_coeffs, proto
+
+        predictions, raw_outputs = det_outputs
+        if self.export:
+            return predictions, proto, mask_coeffs
+        return predictions, raw_outputs, proto, mask_coeffs
+
+
 # =============================================================================
 # Model Architecture Definitions
 # =============================================================================
@@ -1011,6 +1113,9 @@ class LibreYOLO9Model(nn.Module):
         reg_max=16,
         nb_classes=80,
         img_size=640,
+        task="detect",
+        num_masks=32,
+        proto_channels=256,
     ):
         """
         Initialize YOLOv9 model.
@@ -1020,6 +1125,10 @@ class LibreYOLO9Model(nn.Module):
             reg_max: Regression max value for DFL
             nb_classes: Number of classes
             img_size: Input image size
+            task: 'detect' (default) or 'segment' for YOLACT-style instance
+                segmentation, which swaps in the :class:`DDetectSeg` head.
+            num_masks: Number of prototype masks / mask coefficients (segment).
+            proto_channels: Hidden channels of the prototype branch (segment).
         """
         super().__init__()
 
@@ -1032,6 +1141,7 @@ class LibreYOLO9Model(nn.Module):
         self.nc = nb_classes
         self.reg_max = reg_max
         self.img_size = img_size
+        self.task = task
 
         cfg = YOLO9_CONFIGS[config]
 
@@ -1040,14 +1150,24 @@ class LibreYOLO9Model(nn.Module):
 
         # Detection head - use exact channels from config
         head_channels = cfg["head_channels"]
-        self.head = DDetect(
-            nc=nb_classes,
-            ch=head_channels,
-            reg_max=reg_max,
-            stride=(8, 16, 32),
-        )
+        if task == "segment":
+            self.head = DDetectSeg(
+                nc=nb_classes,
+                ch=head_channels,
+                reg_max=reg_max,
+                stride=(8, 16, 32),
+                num_masks=num_masks,
+                proto_channels=proto_channels,
+            )
+        else:
+            self.head = DDetect(
+                nc=nb_classes,
+                ch=head_channels,
+                reg_max=reg_max,
+                stride=(8, 16, 32),
+            )
 
-    def forward(self, x, targets=None):
+    def forward(self, x, targets=None, masks=None):
         """
         Forward pass through backbone, neck, and detection head.
 
@@ -1055,12 +1175,15 @@ class LibreYOLO9Model(nn.Module):
             x: Input tensor [B, 3, H, W]
             targets: Optional ground truth [B, max_targets, 5] with [class, x1, y1, x2, y2] normalized
                     Only used during training to compute loss.
+            masks: Optional per-instance GT masks for segmentation training.
 
         Returns:
             Training with targets: Dict with loss values (total_loss, box_loss, dfl_loss, cls_loss)
             Training without targets: Raw predictions (list of tensors)
             Inference: Dict with decoded predictions and features
         """
+        is_segment = self.task == "segment"
+
         # Backbone
         p3, p4, p5 = self.backbone(x)
 
@@ -1071,6 +1194,10 @@ class LibreYOLO9Model(nn.Module):
         if self.training and targets is not None:
             # Pass image size for anchor generation
             img_size = (x.shape[3], x.shape[2])  # (W, H)
+            if is_segment:
+                return self.head(
+                    [n3, n4, n5], targets=targets, img_size=img_size, masks=masks
+                )
             return self.head([n3, n4, n5], targets=targets, img_size=img_size)
 
         # Normal forward (training without targets or inference)
@@ -1080,7 +1207,23 @@ class LibreYOLO9Model(nn.Module):
             # Return raw outputs for loss calculation
             return output
 
-        # Inference mode
+        if is_segment:
+            # Export: DDetectSeg returns (predictions, proto, mask_coeffs).
+            if self.head.export:
+                return output
+            # DDetectSeg inference returns (y, raw_outputs, proto, mask_coeffs)
+            y, x_list, proto, mask_coeffs = output
+            return {
+                "predictions": y,
+                "raw_outputs": x_list,
+                "proto": proto,
+                "mask_coeffs": mask_coeffs,
+                "x8": {"features": n3},
+                "x16": {"features": n4},
+                "x32": {"features": n5},
+            }
+
+        # Inference mode (detect)
         y, x_list = output
 
         # Export mode: return only the prediction tensor for ONNX/TorchScript

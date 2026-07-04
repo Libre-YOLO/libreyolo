@@ -672,3 +672,250 @@ class YOLO9Loss:
 
         return loss_dict
 
+
+def _crop_mask_loss(loss: Tensor, boxes_xyxy: Tensor) -> Tensor:
+    """Zero the per-pixel mask loss outside each positive's matched box.
+
+    YOLACT crops predicted masks to the detection box; at train time we crop
+    the loss instead so gradients only flow for pixels inside the box.
+
+    Args:
+        loss: (n, h, w) per-pixel loss for n positive instances.
+        boxes_xyxy: (n, 4) boxes in prototype-grid coordinates.
+    """
+    n, h, w = loss.shape
+    if n == 0:
+        return loss
+
+    x1, y1, x2, y2 = boxes_xyxy.unbind(dim=1)
+    rows = torch.arange(h, device=loss.device, dtype=loss.dtype)[None, :, None]
+    cols = torch.arange(w, device=loss.device, dtype=loss.dtype)[None, None, :]
+    keep = (
+        (cols >= x1[:, None, None])
+        & (cols < x2[:, None, None])
+        & (rows >= y1[:, None, None])
+        & (rows < y2[:, None, None])
+    )
+    return loss * keep
+
+
+class YOLO9SegmentationLoss(YOLO9Loss):
+    """YOLO9 detection loss plus YOLACT-style prototype-mask loss.
+
+    Reuses the detection assignment and box/DFL/class losses from
+    :class:`YOLO9Loss`, then adds a per-positive mask BCE between the predicted
+    mask (``coeffs @ proto``) and the ground-truth instance mask, cropped to
+    the matched box and normalized by box area (as in YOLACT / the YOLOv8-seg
+    recipe, both public).
+    """
+
+    def __init__(
+        self,
+        *args,
+        num_masks: int = 32,
+        mask_weight: float = 2.5,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.num_masks = num_masks
+        self.mask_weight = mask_weight
+
+    def _normalize_masks(self, masks, targets: Tensor, size: Tuple[int, int]) -> Tensor:
+        """Coerce the GT masks to ``(B, N, mask_h, mask_w)`` at prototype size."""
+        if masks is None:
+            raise ValueError(
+                "YOLO9 segmentation training requires per-instance masks. "
+                "Use YOLO segmentation labels or COCO segmentations."
+            )
+
+        if isinstance(masks, Tensor):
+            mask_tensor = masks.to(device=targets.device, dtype=targets.dtype)
+        else:
+            stacked = []
+            for item in masks:
+                if isinstance(item, Tensor):
+                    stacked.append(item)
+                else:
+                    stacked.append(torch.as_tensor(item))
+            mask_tensor = torch.stack(stacked, dim=0).to(
+                device=targets.device, dtype=targets.dtype
+            )
+
+        if mask_tensor.ndim == 3:
+            mask_tensor = mask_tensor.unsqueeze(0)
+        if tuple(mask_tensor.shape[-2:]) != tuple(size):
+            b, n, _, _ = mask_tensor.shape
+            mask_tensor = F.interpolate(
+                mask_tensor.reshape(b * n, 1, *mask_tensor.shape[-2:]),
+                size=size,
+                mode="nearest",
+            ).reshape(b, n, *size)
+        return mask_tensor
+
+    def _single_mask_loss(
+        self,
+        gt_masks: Tensor,
+        pred_coeffs: Tensor,
+        proto: Tensor,
+        boxes_xyxy: Tensor,
+        areas: Tensor,
+    ) -> Tensor:
+        if pred_coeffs.numel() == 0:
+            return proto.sum() * 0.0
+
+        c, h, w = proto.shape
+        pred_masks = (pred_coeffs @ proto.reshape(c, -1)).reshape(-1, h, w)
+        loss = F.binary_cross_entropy_with_logits(
+            pred_masks, gt_masks, reduction="none"
+        )
+        cropped = _crop_mask_loss(loss, boxes_xyxy)
+        return (cropped.mean(dim=(1, 2)) / areas.clamp_min(1e-6)).mean()
+
+    def __call__(
+        self,
+        predictions: List[Tensor],
+        targets: Tensor,
+        mask_coeffs: Tensor,
+        proto: Tensor,
+        masks=None,
+    ) -> Dict[str, Tensor]:
+        if self.vec2box is None:
+            raise RuntimeError("Vec2Box not initialized. Call update_anchors() first.")
+
+        preds_cls, preds_anc, preds_box = self.vec2box(predictions)
+
+        bsz = targets.shape[0]
+        img_w, img_h = self.vec2box.image_size
+        scale = torch.tensor(
+            [1, img_w, img_h, img_w, img_h],
+            device=targets.device,
+            dtype=targets.dtype,
+        )
+        targets_scaled = targets * scale
+
+        align_targets, valid_masks, matched_indices = self.matcher(
+            targets_scaled,
+            (preds_cls.detach(), preds_box.detach()),
+            return_indices=True,
+        )
+        targets_cls, targets_bbox = torch.split(
+            align_targets, (self.num_classes, 4), dim=-1
+        )
+
+        preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
+        targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
+
+        cls_norm = self._global_cls_norm(targets_cls)
+        box_norm = targets_cls.sum(-1)[valid_masks]
+
+        loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
+        if valid_masks.any():
+            loss_box = self.box_loss(
+                preds_box_norm, targets_bbox_norm, valid_masks, box_norm, cls_norm
+            )
+            anchors_norm = (self.vec2box.anchor_grid / self.vec2box.scaler[:, None])[None]
+            loss_dfl = self.dfl_loss(
+                preds_anc,
+                targets_bbox_norm,
+                anchors_norm,
+                valid_masks,
+                box_norm,
+                cls_norm,
+            )
+        else:
+            loss_box = preds_box_norm.sum() * 0.0
+            loss_dfl = preds_anc.sum() * 0.0
+
+        # ---- Prototype mask loss -------------------------------------------
+        mask_h, mask_w = proto.shape[-2:]
+        gt_masks = self._normalize_masks(masks, targets, (mask_h, mask_w))
+        num_gt_masks = gt_masks.shape[1]
+        coeffs = mask_coeffs.permute(0, 2, 1).contiguous()  # (B, anchors, nm)
+
+        loss_mask = proto.sum() * 0.0
+        for batch_idx in range(bsz):
+            positives = valid_masks[batch_idx]
+            if not positives.any():
+                continue
+
+            target_idx = matched_indices[batch_idx][positives].long()
+
+            # Fix (issue #432 era): DO NOT clamp out-of-range matches onto the
+            # last mask — that silently trains a positive against a *different*
+            # instance's silhouette (mosaic concatenates 4 images, so the label
+            # count can exceed the rasterized-mask buffer). Drop those positives
+            # instead of corrupting the loss.
+            in_range = (target_idx >= 0) & (target_idx < num_gt_masks)
+            if not in_range.any():
+                continue
+            target_idx = target_idx[in_range]
+
+            matched_masks = gt_masks[batch_idx][target_idx]
+
+            # Fix: skip empty GT masks (padding rows and the mosaic
+            # empty-polygon placeholders rasterize to all-zeros; supervising
+            # them teaches the model to erase real objects).
+            nonempty = matched_masks.flatten(1).any(dim=1)
+            if not nonempty.any():
+                continue
+            keep = in_range.clone()
+            keep[in_range] = nonempty
+            matched_masks = matched_masks[nonempty]
+
+            matched_boxes = targets_bbox[batch_idx][positives][keep]
+            scale_boxes = matched_boxes / torch.tensor(
+                [img_w, img_h, img_w, img_h],
+                device=targets.device,
+                dtype=targets.dtype,
+            )
+            mask_boxes = scale_boxes * torch.tensor(
+                [mask_w, mask_h, mask_w, mask_h],
+                device=targets.device,
+                dtype=targets.dtype,
+            )
+            areas = (
+                (scale_boxes[:, 2] - scale_boxes[:, 0]).clamp_min(0)
+                * (scale_boxes[:, 3] - scale_boxes[:, 1]).clamp_min(0)
+            )
+
+            loss_mask = loss_mask + self._single_mask_loss(
+                matched_masks,
+                coeffs[batch_idx][positives][keep],
+                proto[batch_idx],
+                mask_boxes,
+                areas,
+            )
+
+        loss_box_weighted = self.box_weight * loss_box
+        loss_dfl_weighted = self.dfl_weight * loss_dfl
+        loss_cls_weighted = self.cls_weight * loss_cls
+        loss_mask_weighted = self.mask_weight * loss_mask / max(bsz, 1)
+
+        total_loss = (
+            loss_box_weighted
+            + loss_dfl_weighted
+            + loss_cls_weighted
+            + loss_mask_weighted
+        )
+
+        return {
+            "total_loss": total_loss,
+            "box_loss": loss_box_weighted,
+            "dfl_loss": loss_dfl_weighted,
+            "cls_loss": loss_cls_weighted,
+            "seg_loss": loss_mask_weighted,
+            "box": loss_box_weighted.item()
+            if isinstance(loss_box_weighted, Tensor)
+            else loss_box_weighted,
+            "dfl": loss_dfl_weighted.item()
+            if isinstance(loss_dfl_weighted, Tensor)
+            else loss_dfl_weighted,
+            "cls": loss_cls_weighted.item()
+            if isinstance(loss_cls_weighted, Tensor)
+            else loss_cls_weighted,
+            "seg": loss_mask_weighted.item()
+            if isinstance(loss_mask_weighted, Tensor)
+            else loss_mask_weighted,
+            "num_fg": valid_masks.sum().item() / max(bsz, 1),
+        }
+
