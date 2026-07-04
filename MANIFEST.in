@@ -24,6 +24,9 @@ recursive-include libreyolo/data *.json
 recursive-include libreyolo/models/clip *.gz
 recursive-include libreyolo/models/clip/data *.json
 
+# Bundled public-domain Darknet model-definition cfgs (YOLOv2/v3/v4)
+recursive-include libreyolo/models/darknet/cfgs *.cfg
+
 # Bundled third-party license texts (must ship with the wheel)
 recursive-include libreyolo/models *.md
 recursive-include libreyolo/models NOTICE

@@ -20,6 +20,14 @@ project the weights were derived from. Per-family summary:
     YOLO9    (LibreYOLO9{t,s,m,c})                     MIT
              upstream: MultimediaTechLab/YOLO
 
+    YOLOv2   (LibreYOLO2{t,b})                         public domain
+    YOLOv3   (LibreYOLO3{t,b,spp})                     public domain
+    YOLOv4   (LibreYOLO4{t,b})                         public domain
+             upstream: pjreddie/darknet (v2/v3), AlexeyAB/darknet (v4)
+             Darknet is public domain ("YOLO LICENSE"); both the .cfg
+             architectures and the pretrained .weights carry no license
+             obligations. Convert with weights/convert_darknet_weights.py.
+
     RF-DETR  (LibreRFDETR{n,s,m,l})                    Apache-2.0
              upstream: roboflow/rf-detr
              (backbone: facebookresearch/dinov2, Apache-2.0)

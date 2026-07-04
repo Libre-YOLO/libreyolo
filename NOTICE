@@ -91,6 +91,22 @@ NAFNet (MIT License)
     weights license; convert only weights that you have the right to use and
     redistribute.
 
+Darknet YOLOv2 / YOLOv3 / YOLOv4 (public domain)
+    Path:    libreyolo/models/darknet/, libreyolo/models/yolo2|yolo3|yolo4/
+    License: libreyolo/models/darknet/cfgs/NOTICE  (public domain)
+    Source:  https://github.com/pjreddie/darknet  (YOLOv2/v3)
+             https://github.com/AlexeyAB/darknet   (YOLOv4)
+
+    The LibreYOLO2/3/4 families reproduce the YOLOv2, YOLOv3, and YOLOv4
+    architectures from the Darknet project, which is public domain (the
+    "YOLO LICENSE": "Darknet is public domain. Do whatever you want with
+    it."). The model-definition (.cfg) files are bundled under
+    libreyolo/models/darknet/cfgs/ and drive both the runtime graph builder
+    and the weight converter. Only the .cfg format and the numerical
+    behaviour of the Darknet layers are reproduced; no Darknet C source is
+    copied. Being public domain, these terms impose no obligations on
+    LibreYOLO or its downstream users.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------
