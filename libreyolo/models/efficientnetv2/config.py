@@ -29,6 +29,11 @@ class EfficientNetV2Config(TrainConfig):
     min_lr_ratio: float = 0.01
     workers: int = 8
     ema: bool = True
+    # Classification validation is cheap (a few seconds over the val split), so
+    # validate every epoch rather than inheriting the detection default of 10.
+    # Short fine-tunes (the documented ``epochs=5`` example) then still report
+    # top-1/top-5 each epoch and save ``best.pt``.
+    eval_interval: int = 1
 
     def __post_init__(self) -> None:
         # EfficientNetV2-base evaluates each variant at a different resolution;

@@ -171,7 +171,7 @@ class SPPBottleneck(nn.Module):
 
 
 class CSPLayer(nn.Module):
-    """CSP Bottleneck with 3 convolutions (C3 in YOLOv5)."""
+    """CSP bottleneck block with 3 convolutions."""
 
     def __init__(
         self,
@@ -613,31 +613,6 @@ class YOLOXHead(nn.Module):
         output[..., :2] = (output[..., :2] + grid) * stride
         output[..., 2:4] = torch.exp(output[..., 2:4]) * stride
         return output, grid
-
-    def decode_outputs(self, outputs, dtype):
-        """Decode outputs for inference."""
-        grids = []
-        strides = []
-        device = outputs.device
-        for (hsize, wsize), stride in zip(self.hw, self.strides):
-            yv, xv = meshgrid([torch.arange(hsize), torch.arange(wsize)])
-            grid = torch.stack((xv, yv), 2).view(1, -1, 2)
-            grids.append(grid)
-            shape = grid.shape[:2]
-            strides.append(torch.full((*shape, 1), stride))
-
-        grids = torch.cat(grids, dim=1).to(device=device, dtype=outputs.dtype)
-        strides = torch.cat(strides, dim=1).to(device=device, dtype=outputs.dtype)
-
-        outputs = torch.cat(
-            [
-                (outputs[..., 0:2] + grids) * strides,
-                torch.exp(outputs[..., 2:4]) * strides,
-                outputs[..., 4:],
-            ],
-            dim=-1,
-        )
-        return outputs
 
     def get_losses(
         self,

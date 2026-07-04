@@ -139,6 +139,8 @@ class ClassifyValidator(BaseValidator):
         logits = logits.detach().float().cpu()
         targets = targets.detach().cpu().view(-1)
 
+        # NOTE: "top5" is really top-min(5, num_classes). For nc < 5 it
+        # degrades to top-nc, so accuracy_top5 == 1.0 trivially when nc <= 5.
         num_classes = logits.shape[1]
         k = min(5, num_classes)
         topk = logits.topk(k, dim=1).indices  # [B, k]

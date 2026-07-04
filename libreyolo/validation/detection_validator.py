@@ -307,12 +307,6 @@ class DetectionValidator(BaseValidator):
         if self.config.verbose:
             logger.info("Initializing COCO evaluator...")
 
-        if self.config.data is None:
-            raise RuntimeError(
-                "config.data must be set to a yaml path or registry name "
-                "to initialize the COCO evaluator."
-            )
-
         # Always initialise plot-tracking state before any early returns
         self._confusion_matrix = None
         self._val_samples: List[Dict] = []
@@ -320,6 +314,9 @@ class DetectionValidator(BaseValidator):
             from .val_plotter import ConfusionMatrix  # noqa: PLC0415
             self._confusion_matrix = ConfusionMatrix(nc=self.nc)
 
+        # A COCO-annotation dataset (resolvable from either data= or data_dir=)
+        # is handled here first; the config.data requirement below only applies
+        # to the load_data_config / YOLOCocoAPI path.
         if self._coco_annotation_file is not None:
             try:
                 from pycocotools.coco import COCO
@@ -343,6 +340,12 @@ class DetectionValidator(BaseValidator):
                 )
             return
 
+        if self.config.data is None:
+            raise RuntimeError(
+                "config.data must be set to a yaml path or registry name "
+                "to initialize the COCO evaluator."
+            )
+
         # Resolve the (possibly registry-name) data argument through
         # load_data_config — that handles both relative `path:` fields and
         # registry shortcuts like "coco-val-only", returning absolute file
@@ -354,6 +357,15 @@ class DetectionValidator(BaseValidator):
         split = self.config.split
         img_files = data_cfg.get(f"{split}_img_files")
         label_files = data_cfg.get(f"{split}_label_files")
+
+        # Reuse the file list already resolved in _setup_dataloader (e.g. the
+        # images/<split> directory-glob fallback), which load_data_config does
+        # not re-expose via the {split}_img_files key.
+        if self._yolo_coco_img_files:
+            img_files = self._yolo_coco_img_files
+            if self._yolo_coco_label_files:
+                label_files = self._yolo_coco_label_files
+
         if not img_files:
             raise RuntimeError(
                 f"No {split} images resolved for data={self.config.data!r}. "

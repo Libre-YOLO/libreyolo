@@ -185,11 +185,12 @@ def predict_cmd(
 
         loaded_model.face_detector = resolve_face_detector(fd_model)
 
-    # NOTE: half for PyTorch inference is not yet supported in the inference
-    # pipeline (model converts to FP16 but input stays FP32 → dtype mismatch).
-    # FP16 works correctly through exported models (ONNX, TensorRT).
-    # For now, warn and skip.
-    if half:
+    # FP16 (half) precision: exported runtimes (ONNX, TensorRT, ...) accept the
+    # flag and run in FP16, so forward it there. For native PyTorch inference it
+    # is not yet wired (model converts to FP16 but input stays FP32 → dtype
+    # mismatch), so warn and skip for those.
+    is_exported_backend = hasattr(loaded_model, "_run_inference")
+    if half and not is_exported_backend:
         out.progress(
             "Warning: half (FP16) is not yet supported for PyTorch inference. "
             "Use exported models (ONNX/TensorRT) for FP16. Ignoring."
@@ -206,11 +207,22 @@ def predict_cmd(
         import ast
 
         try:
-            parsed_classes = list(ast.literal_eval(classes))
+            evaluated = ast.literal_eval(classes)
         except (ValueError, SyntaxError):
             exit_with_error(
                 out, "config_type_error", f"Invalid classes value: {classes}"
             )
+        # Accept a bare int (classes=0), a list (classes=[0,2,5]), or a
+        # comma-separated string that parses to a tuple (classes="0,2").
+        if isinstance(evaluated, int):
+            parsed_classes = [evaluated]
+        else:
+            try:
+                parsed_classes = list(evaluated)
+            except TypeError:
+                exit_with_error(
+                    out, "config_type_error", f"Invalid classes value: {classes}"
+                )
 
     # Run inference
     out.progress(f"Running inference on {source}...")
@@ -232,6 +244,8 @@ def predict_cmd(
         overlap_ratio=overlap_ratio,
         output_file_format=output_file_format,
     )
+    if half and is_exported_backend:
+        predict_kwargs["half"] = half
     results = loaded_model(source, **predict_kwargs)
     elapsed = time.time() - t0
 
@@ -299,6 +313,18 @@ def predict_cmd(
                     "dtype": str(restored.dtype),
                 }
                 summary = "restored"
+            elif getattr(r, "depth_map", None) is not None:
+                depth_map = r.depth_map
+                result_data["depth"] = {
+                    "shape": list(depth_map.data.shape),
+                    "min": round(float(depth_map.min), 4),
+                    "max": round(float(depth_map.max), 4),
+                    "mean": round(float(depth_map.mean), 4),
+                }
+                summary = (
+                    f"depth min={depth_map.min:.4g} "
+                    f"max={depth_map.max:.4g} mean={depth_map.mean:.4g}"
+                )
             else:
                 summary = "(no detections)"
 
@@ -321,6 +347,11 @@ def predict_cmd(
             obb_np = obb_data.numpy()
         else:
             obb_np = obb_data
+        kpts_data = r.keypoints if getattr(r, "keypoints", None) is not None else None
+        if kpts_data is not None and hasattr(kpts_data.data, "cpu"):
+            kpts_np = kpts_data.numpy()
+        else:
+            kpts_np = kpts_data
         for i in range(len(boxes)):
             cls_id = int(boxes.cls[i])
             cls_name = r.names.get(cls_id, str(cls_id))
@@ -348,6 +379,21 @@ def predict_cmd(
                     "pitch_deg": round(pitch * 180.0 / _math.pi, 2),
                     "yaw_deg": round(yaw * 180.0 / _math.pi, 2),
                 }
+            if kpts_np is not None and i < len(kpts_np):
+                kp_xy = kpts_np.xy[i]
+                kp_conf = kpts_np.conf
+                keypoints = []
+                for k in range(len(kp_xy)):
+                    kp = {
+                        "xy": [
+                            round(float(kp_xy[k, 0]), 1),
+                            round(float(kp_xy[k, 1]), 1),
+                        ],
+                    }
+                    if kp_conf is not None:
+                        kp["confidence"] = round(float(kp_conf[i, k]), 4)
+                    keypoints.append(kp)
+                det["keypoints"] = keypoints
             detections.append(det)
             class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
 

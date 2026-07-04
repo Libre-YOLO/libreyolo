@@ -1,7 +1,7 @@
 """
 RTMDet neural network architecture for LibreYOLO.
 
-Cleanroom port from open-mmlab/mmdetection (Apache-2.0). Mirrors the upstream
+Ported from open-mmlab/mmdetection (Apache-2.0). Mirrors the upstream
 attribute names so the conversion script is a metadata-wrap rather than a
 structural rewrite:
 

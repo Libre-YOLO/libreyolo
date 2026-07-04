@@ -13,20 +13,20 @@ Current pressure points:
 
 - Task and family are mixed together.
   - `-seg` is effectively a RF-DETR special case in
-    [libreyolo/models/__init__.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/models/__init__.py:285).
+    [libreyolo/models/__init__.py](../../libreyolo/models/__init__.py:285).
 - Shared results only model boxes plus optional masks.
-  - [libreyolo/utils/results.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/utils/results.py:183)
+  - [libreyolo/utils/results.py](../../libreyolo/utils/results.py:183)
 - Shared datasets collapse polygons to boxes and drop COCO segmentation.
-  - [libreyolo/data/dataset.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/data/dataset.py:107)
-  - [libreyolo/data/dataset.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/data/dataset.py:279)
+  - [libreyolo/data/dataset.py](../../libreyolo/data/dataset.py:107)
+  - [libreyolo/data/dataset.py](../../libreyolo/data/dataset.py:279)
 - Validation is hardwired to bbox detection.
-  - [libreyolo/models/base/model.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/models/base/model.py:521)
-  - [libreyolo/training/trainer.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/training/trainer.py:482)
+  - [libreyolo/models/base/model.py](../../libreyolo/models/base/model.py:521)
+  - [libreyolo/training/trainer.py](../../libreyolo/training/trainer.py:482)
 - Export and backend support infer task through heuristics instead of a stable
   contract.
-  - [libreyolo/export/exporter.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/export/exporter.py:410)
-  - [libreyolo/export/onnx.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/export/onnx.py:105)
-  - [libreyolo/backends/base.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/backends/base.py:190)
+  - [libreyolo/export/exporter.py](../../libreyolo/export/exporter.py:410)
+  - [libreyolo/export/onnx.py](../../libreyolo/export/onnx.py:105)
+  - [libreyolo/backends/base.py](../../libreyolo/backends/base.py:190)
 
 This is manageable for wrapped RF-DETR segmentation, but it will not scale to:
 
@@ -96,7 +96,7 @@ Task resolution precedence:
 Keep one image-level result object, but make the per-instance payload explicit.
 
 Proposed updates in
-[libreyolo/utils/results.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/utils/results.py:1):
+[libreyolo/utils/results.py](../../libreyolo/utils/results.py:1):
 
 - keep `Boxes`
 - keep `Masks`
@@ -157,7 +157,7 @@ Tracking boundary:
 - payload preservation is generic
 
 Instead of manually slicing masks in
-[libreyolo/tracking/tracker.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/tracking/tracker.py:265),
+[libreyolo/tracking/tracker.py](../../libreyolo/tracking/tracker.py:265),
 the tracker should call:
 
 ```python
@@ -272,7 +272,7 @@ All task validators should share one COCO metric suite:
 - keypoints metrics
 
 This removes the current hard dependency on box-only postprocessing in
-[libreyolo/validation/detection_validator.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/validation/detection_validator.py:310).
+[libreyolo/validation/detection_validator.py](../../libreyolo/validation/detection_validator.py:310).
 
 ### 6. Runtime and Export Contract
 
@@ -486,11 +486,11 @@ Changes:
 
 Primary files:
 
-- [libreyolo/models/base/model.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/models/base/model.py)
-- [libreyolo/utils/results.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/utils/results.py)
-- [libreyolo/models/__init__.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/models/__init__.py)
-- [libreyolo/utils/drawing.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/utils/drawing.py)
-- [libreyolo/tracking/tracker.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/tracking/tracker.py)
+- [libreyolo/models/base/model.py](../../libreyolo/models/base/model.py)
+- [libreyolo/utils/results.py](../../libreyolo/utils/results.py)
+- [libreyolo/models/__init__.py](../../libreyolo/models/__init__.py)
+- [libreyolo/utils/drawing.py](../../libreyolo/utils/drawing.py)
+- [libreyolo/tracking/tracker.py](../../libreyolo/tracking/tracker.py)
 
 Compatibility:
 
@@ -516,8 +516,8 @@ Primary files:
 - new `libreyolo/data/parsers/yolo.py`
 - new `libreyolo/data/parsers/coco.py`
 - new `libreyolo/data/collate.py`
-- update [libreyolo/data/dataset.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/data/dataset.py)
-- update [libreyolo/data/yolo_coco_api.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/data/yolo_coco_api.py)
+- update [libreyolo/data/dataset.py](../../libreyolo/data/dataset.py)
+- update [libreyolo/data/yolo_coco_api.py](../../libreyolo/data/yolo_coco_api.py)
 
 Key rule:
 
@@ -539,9 +539,9 @@ Changes:
 
 Primary files:
 
-- [libreyolo/validation/base.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/validation/base.py)
-- [libreyolo/validation/detection_validator.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/validation/detection_validator.py)
-- [libreyolo/validation/coco_evaluator.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/validation/coco_evaluator.py)
+- [libreyolo/validation/base.py](../../libreyolo/validation/base.py)
+- [libreyolo/validation/detection_validator.py](../../libreyolo/validation/detection_validator.py)
+- [libreyolo/validation/coco_evaluator.py](../../libreyolo/validation/coco_evaluator.py)
 - new `libreyolo/validation/factory.py`
 - new `libreyolo/validation/types.py`
 - new `libreyolo/validation/segmentation_validator.py`
@@ -571,10 +571,10 @@ Changes:
 
 Primary files:
 
-- [libreyolo/export/exporter.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/export/exporter.py)
-- [libreyolo/export/onnx.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/export/onnx.py)
-- [libreyolo/backends/base.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/backends/base.py)
-- [libreyolo/backends/onnx.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/backends/onnx.py)
+- [libreyolo/export/exporter.py](../../libreyolo/export/exporter.py)
+- [libreyolo/export/onnx.py](../../libreyolo/export/onnx.py)
+- [libreyolo/backends/base.py](../../libreyolo/backends/base.py)
+- [libreyolo/backends/onnx.py](../../libreyolo/backends/onnx.py)
 - new `libreyolo/export/contract.py`
 - new `libreyolo/backends/contracts.py`
 - new `libreyolo/backends/parsers.py`
@@ -596,8 +596,8 @@ Changes:
 
 Primary files:
 
-- [libreyolo/training/trainer.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/training/trainer.py)
-- [libreyolo/training/config.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/training/config.py)
+- [libreyolo/training/trainer.py](../../libreyolo/training/trainer.py)
+- [libreyolo/training/config.py](../../libreyolo/training/config.py)
 - new `libreyolo/training/architecture/grid.py`
 - new `libreyolo/training/architecture/detr.py`
 - new `libreyolo/training/task.py`
@@ -624,7 +624,7 @@ Changes:
 Primary files:
 
 - rename `libreyolo/models/ec/` to `libreyolo/models/edgecrafter/`
-- update [libreyolo/models/__init__.py](/Users/xuban.ceccon/Documents/GitHub/libreyolo/libreyolo/models/__init__.py)
+- update [libreyolo/models/__init__.py](../../libreyolo/models/__init__.py)
 - add `LibreYOLOEdgeCrafter`
 
 ## Exact Class And File Targets

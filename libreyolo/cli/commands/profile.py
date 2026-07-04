@@ -3,14 +3,18 @@
 Built for agents. Every subcommand prints results to stdout and supports
 ``--json``, so an LLM can drive the loop:
 
-    libreyolo profile run  --data coco1000 --weights LibreYOLO9t.pt --size t
+    libreyolo profile run   coco1000 --weights LibreYOLO9t.pt --size t   # profile TRAINING
+    libreyolo profile infer path/to/img --weights LibreYOLO9t.pt         # profile INFERENCE
     libreyolo profile summary <trace>                # what's the bottleneck?
     libreyolo profile kernels <trace> --top 20       # drill to the kernels
     libreyolo profile ops     <trace> --top 20       # framework/host ops
     libreyolo profile compare <before> <after>       # did my change help?
 
-...read insight, change the training/config/code, re-run, ``compare``, repeat
-until images/sec is maxed.
+``run`` and ``infer`` emit the same self-contained ``profile.json`` (schema
+``libreyolo.profile.analysis/v1``), so every lens below works on either. The
+profiler only measures — read the verdict, change the training/config/code
+yourself, re-run, ``compare``, repeat until images/sec is maxed (or latency is
+minimised).
 """
 
 from __future__ import annotations
@@ -58,6 +62,19 @@ def _pct(before, after) -> str:
     if not before:
         return ""
     return f" ({(after - before) / before * 100:+.0f}%)"
+
+
+_IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+
+def _resolve_infer_source(source: str) -> list[str]:
+    """Resolve a file or directory to a list of image paths (empty = not found)."""
+    p = Path(source)
+    if p.is_dir():
+        return sorted(str(f) for f in p.iterdir() if f.suffix.lower() in _IMG_EXTS)
+    if p.exists():
+        return [str(p)]
+    return []
 
 
 @profile_app.command("run")
@@ -177,6 +194,95 @@ def run_cmd(
         print(f"next:    libreyolo profile summary {pj}")
 
 
+@profile_app.command("infer")
+def infer_cmd(
+    source: Optional[str] = typer.Argument(None, help="Image or directory (default: bundled sample image)"),
+    weights: str = typer.Option("LibreYOLO9t.pt", "--weights", help="Model weights file / name"),
+    size: str = typer.Option("t", "--size", help="Model size variant"),
+    batch: int = typer.Option(1, "--batch", help="Images per forward pass"),
+    imgsz: int = typer.Option(640, "--imgsz"),
+    half: bool = typer.Option(False, "--half/--no-half", help="Autocast fp16 forward (CUDA only)"),
+    warmup: int = typer.Option(20, "--warmup", help="Warmup iterations before measuring"),
+    runs: int = typer.Option(100, "--runs", help="Measured iterations"),
+    repeat: int = typer.Option(1, "--repeat", help="Repeat N times for mean +/- stdev throughput (needed for a significant compare)"),
+    conf: float = typer.Option(0.25, "--conf", help="Confidence threshold (affects NMS work)"),
+    iou: float = typer.Option(0.45, "--iou", help="NMS IoU threshold"),
+    max_det: int = typer.Option(300, "--max-det", help="Max detections/image (affects NMS work)"),
+    device: str = typer.Option("0", "--device"),
+    trace: bool = typer.Option(True, "--trace/--no-trace", help="Emit a Chrome trace for kernel/op drill-down"),
+    project: str = typer.Option("runs/profile", "--project"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Profile the inference path: latency p50/p90/p99, stage split (preprocess/forward/NMS), GPU truth."""
+    import statistics as _st
+
+    import torch
+    from libreyolo import SAMPLE_IMAGE, LibreYOLO
+    from libreyolo.profiling import InferenceProfiler
+
+    images = _resolve_infer_source(source or SAMPLE_IMAGE)
+    if not images:
+        typer.echo(f"no images found at: {source}", err=True)
+        raise typer.Exit(2)
+
+    trials: list[float] = []
+    last = None
+    for i in range(max(1, repeat)):
+        name = f"infer_{i}" if repeat > 1 else "infer"
+        model = LibreYOLO(model_path=weights, size=size, device=device)
+        save_dir = Path(project) / name
+        prof = InferenceProfiler(
+            model, warmup=warmup, runs=runs, batch=batch, imgsz=imgsz,
+            half=half, trace=trace, save_dir=save_dir, meta={"model": weights},
+        )
+        a = prof.run(images, conf=conf, iou=iou, max_det=max_det)
+        last = (a, save_dir)
+        if a.get("img_per_s") is not None:
+            trials.append(a["img_per_s"])
+        if i < repeat - 1:
+            import gc
+
+            del model, prof
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    a, save_dir = last
+    pj = save_dir / "profile.json"
+    if len(trials) > 1:
+        mean, std = round(_st.fmean(trials), 2), round(_st.pstdev(trials), 2)
+        a["img_per_s"] = mean
+        a.setdefault("metrics", {})["throughput_img_s"] = mean
+        a["img_per_s_std"] = std
+        a["img_per_s_n"] = len(trials)
+        a["img_per_s_trials"] = [round(t, 2) for t in trials]
+        pj = Path(project) / "infer_repeat.json"
+        pj.write_text(_json.dumps(a))
+
+    lat = a.get("latency") or {}
+    if json_output:
+        print(_json.dumps({
+            "profile": str(pj), "mode": "inference",
+            "img_per_s": a.get("img_per_s"), "img_per_s_std": a.get("img_per_s_std"),
+            "img_per_s_n": a.get("img_per_s_n", 1),
+            "latency_p50_ms": lat.get("p50_ms"), "latency_p90_ms": lat.get("p90_ms"),
+            "latency_p99_ms": lat.get("p99_ms"), "bound": a.get("bound"),
+            "stages_ms": a.get("stages_ms"),
+        }, indent=2))
+    else:
+        thr = str(a.get("img_per_s"))
+        if a.get("img_per_s_n", 1) > 1:
+            thr += f" +/- {a.get('img_per_s_std')} (n={a['img_per_s_n']})"
+        print(f"latency  p50 {lat.get('p50_ms')} ms | p90 {lat.get('p90_ms')} ms | "
+              f"p99 {lat.get('p99_ms')} ms  |  {thr} img/s")
+        st = a.get("stages_ms") or {}
+        print(f"stages   preprocess {st.get('preprocess')} ms | forward {st.get('forward')} ms | "
+              f"postprocess/NMS {st.get('postprocess')} ms")
+        print(f">> {str(a.get('bound')).upper()} — {a.get('bound_why')}")
+        print(f"profile: {pj}")
+        print(f"next:    libreyolo profile summary {pj}")
+
+
 @profile_app.command("summary")
 def summary_cmd(
     trace: str = typer.Argument(..., help="Path to profile_trace.json"),
@@ -185,16 +291,23 @@ def summary_cmd(
     """High-level diagnosis: utilisation, verdict, kernel mix, top kernels."""
     a = _load(trace)
     if json_output:
-        keep = ("trace", "model", "config", "bound", "bound_why", "step_ms", "img_per_s",
-                "gpu_util", "gpu_busy_ms_per_step", "mean_kernel_us", "kernels_per_step",
-                "unique_kernels", "memcpy_ms_per_step", "tensorcore_pct", "peak_vram_mb",
+        keep = ("trace", "mode", "model", "config", "bound", "bound_why", "step_ms",
+                "img_per_s", "latency", "stages_ms", "gpu_util", "gpu_busy_ms_per_step",
+                "mean_kernel_us", "kernels_per_step", "unique_kernels",
+                "memcpy_ms_per_step", "tensorcore_pct", "peak_vram_mb",
                 "dataload_ms", "dataload_frac", "host_overhead_ms_per_step",
                 "launches_per_step", "memory_pressure", "cuda_mallocs_per_step",
                 "gpu_util_raw", "window", "categories", "phases_gpu", "top_kernels")
-        print(_json.dumps({k: a[k] for k in keep}, indent=2))
+        print(_json.dumps({k: a[k] for k in keep if k in a}, indent=2))
         return
     print(f"model {a.get('model') or '?'}  |  {a.get('img_per_s') or '?'} img/s  |  "
           f"step {a['step_ms']} ms  |  {a['kernels_per_step']} kernels/step @ ~{a['mean_kernel_us']:.0f}us")
+    if a.get("mode") == "inference":
+        lat, st = a.get("latency") or {}, a.get("stages_ms") or {}
+        print(f"latency  p50 {lat.get('p50_ms')} ms | p90 {lat.get('p90_ms')} ms | "
+              f"p99 {lat.get('p99_ms')} ms  ({lat.get('n')} samples)")
+        print(f"stages   preprocess {st.get('preprocess')} ms | forward {st.get('forward')} ms | "
+              f"postprocess/NMS {st.get('postprocess')} ms")
     print(f"GPU util {a['gpu_util'] * 100:.0f}%  ({a['gpu_busy_ms_per_step']} ms busy)  |  "
           f"Tensor Cores {a['tensorcore_pct']:.0f}%  |  peak VRAM {a.get('peak_vram_mb') or '?'} MB  |  "
           f"memcpy {a['memcpy_ms_per_step']} ms")

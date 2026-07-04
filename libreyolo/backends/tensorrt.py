@@ -224,7 +224,12 @@ class TensorRTBackend(BaseBackend):
         stem = Path(self.model_path).stem.lower()
         if "deimv2" in stem:
             return "deimv2"
-        if "ec" in stem:
+        # "ec" must be a whole token, not a bare substring (else "detector"/
+        # "detection" would falsely match and route a YOLO tensor through EC's
+        # sigmoid/top-k). The LibreYOLO default naming is ``LibreEC*`` (see
+        # LibreEC.FILENAME_PREFIX), so also honor that prefix explicitly.
+        stem_tokens = re.split(r"[_\-.]+", stem)
+        if stem.startswith("libreec") or "ec" in stem_tokens:
             return "ec"
         if "dfine" in stem:
             return "dfine"

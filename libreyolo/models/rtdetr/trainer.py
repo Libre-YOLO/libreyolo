@@ -20,12 +20,12 @@ from libreyolo.training.scheduler import (
     LinearLRScheduler,
 )
 from libreyolo.models.yolo9.transforms import (
-    YOLO9TrainTransform,
     YOLO9MosaicMixupDataset,
 )
 
 from .config import RTDETRConfig
 from .loss import RTDETRLoss
+from .transforms import RTDETRTrainTransform
 
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,12 @@ class RTDETRTrainer(BaseTrainer):
         return f"RT-DETR-{self.config.size}"
 
     def create_transforms(self):
-        preproc = YOLO9TrainTransform(
+        # Stretch-to-square resize (NOT letterbox) so training matches the
+        # RT-DETR val/inference geometry, which resizes with a plain stretch.
+        # The YOLO9 mosaic wrapper is reused as-is; it hands the per-tile
+        # original images to this transform (wants_unresized_image=True) and its
+        # own mosaic canvas is already square, so its geometry is unaffected.
+        preproc = RTDETRTrainTransform(
             max_labels=300,  # RTDETR uses more labels
             flip_prob=self.config.flip_prob,
             hsv_prob=self.config.hsv_prob,

@@ -145,7 +145,12 @@ def postprocess(
 
     valid_boxes = cxcywh_to_xyxy(valid_boxes_cxcywh)
 
-    if original_size is not None and ratio != 1.0:
+    # Clamp/rescale unconditionally when we know the original size. Gating on
+    # ``ratio != 1.0`` (as before) silently skipped the clamp when one image
+    # dimension is already the input size (ratio can be 1.0), leaving boxes that
+    # overflow into padding/negatives — mirror rtmdet.py's unconditional clamp
+    # (~1 mAP). Dividing by ratio==1.0 is a harmless no-op.
+    if original_size is not None:
         valid_boxes = valid_boxes / ratio
 
         valid_boxes[:, [0, 2]] = torch.clamp(

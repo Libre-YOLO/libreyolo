@@ -37,11 +37,7 @@ from ...tasks import (
     task_suffix_pattern,
     task_to_suffix,
 )
-from ...training.config import (
-    TrainConfig,
-    check_distillation_not_implemented,
-    load_train_cfg,
-)
+from ...training.config import TrainConfig, load_train_cfg
 from ...utils.general import COCO_CLASSES
 from ...utils.image_loader import ImageInput
 from ...utils.logging import ensure_default_logging
@@ -85,15 +81,11 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
         if cfg is None:
-            # Reserved-but-unimplemented distillation API: fail fast before any
-            # dataset resolution (which may autodownload) when a teacher is set.
-            check_distillation_not_implemented(user_kwargs.get("distill_model"))
             return train_fn(self, *args, **user_kwargs)
         cfg_kwargs = load_train_cfg(cfg)
         consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
         merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
         merged.update(user_kwargs)
-        check_distillation_not_implemented(merged.get("distill_model"))
         return train_fn(self, *args, **merged)
 
     wrapper._libreyolo_cfg_wrapped = True  # type: ignore[attr-defined]
@@ -311,6 +303,22 @@ class BaseModel(ABC):
     # =========================================================================
     # Concrete defaults — subclasses may override
     # =========================================================================
+
+    def get_distill_config(self) -> Dict:
+        """Return distillation config for this model instance.
+
+        Returns:
+            Dict with keys:
+                - tap_points: List[str] — module paths for forward hooks
+                - channels: List[int] — channel dimensions per tap point
+                - strides: List[int] — spatial strides per tap point
+
+        Subclasses that support distillation must override this method.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_distill_config(). "
+            f"Distillation is not yet supported for the '{self.FAMILY}' family."
+        )
 
     def _get_valid_sizes(self) -> List[str]:
         return list(self._get_task_input_sizes().keys())
@@ -1012,6 +1020,15 @@ class BaseModel(ABC):
             raise NotImplementedError(
                 "Tracking does not support depth maps yet. "
                 "Use predict() for depth models."
+            )
+        if task == "semantic":
+            raise NotImplementedError(
+                "Tracking does not support semantic segmentation yet. "
+                "Use predict() for semantic models."
+            )
+        if task == "restore":
+            raise NotImplementedError(
+                "Tracking does not support restoration models. Use predict()."
             )
 
         from ...tracking import (

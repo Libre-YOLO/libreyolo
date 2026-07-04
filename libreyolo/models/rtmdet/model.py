@@ -1,6 +1,6 @@
 """LibreRTMDet: BaseModel subclass wiring RTMDet into the LibreYOLO factory.
 
-Cleanroom port of RTMDet (Lyu et al., 2022) from open-mmlab/mmdetection
+Port of RTMDet (Lyu et al., 2022) from open-mmlab/mmdetection
 (Apache-2.0). Sizes: t / s / m / l / x. Detection-only in the first PR;
 RTMDet-Ins (segmentation) lands as a follow-up.
 
@@ -216,9 +216,9 @@ class LibreRTMDet(BaseModel):
     ) -> dict:
         """Fine-tune LibreRTMDet on a YOLO-format dataset.
 
-        **EXPERIMENTAL.** The QualityFocalLoss + GIoU + BatchDynamicSoftLabelAssigner
-        components are cleanroom-ported from mmyolo and the trainer runs
-        end-to-end. What is NOT validated:
+        **EXPERIMENTAL.** The QualityFocalLoss + GIoU + DynamicSoftLabelAssigner
+        components are ported from mmdetection (Apache-2.0) and the trainer
+        runs end-to-end. What is NOT validated:
 
         - small-dataset fine-tune convergence (RF1-floor parity)
         - paper-parity training-from-scratch (reproducing the 41.1 val mAP)
@@ -241,8 +241,8 @@ class LibreRTMDet(BaseModel):
         """
         if not allow_experimental:
             raise RuntimeError(
-                "RTMDet training is experimental. The loss + assigner mirror "
-                "mmyolo's BatchDynamicSoftLabelAssigner + QualityFocalLoss + "
+                "RTMDet training is experimental. The loss + assigner follow "
+                "mmdetection's DynamicSoftLabelAssigner + QualityFocalLoss + "
                 "GIoULoss recipe and the trainer runs end-to-end, but small-"
                 "dataset fine-tune convergence and from-scratch paper parity "
                 "have NOT been verified. Pass allow_experimental=True to "
@@ -269,6 +269,9 @@ class LibreRTMDet(BaseModel):
 
         yaml_nc = data_config.get("nc")
         yaml_names = data_config.get("names")
+        # If no nc in data.yaml, infer it by counting.
+        if yaml_nc is None and yaml_names is not None:
+            yaml_nc = len(yaml_names)
         if yaml_nc is not None and yaml_nc != self.nb_classes:
             self._rebuild_for_new_classes(yaml_nc)
         if yaml_names is not None:

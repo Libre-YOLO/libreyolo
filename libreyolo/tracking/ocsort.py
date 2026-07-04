@@ -176,7 +176,7 @@ def _associate(
     valid_mask = valid_mask[:, np.newaxis]
 
     iou_matrix = _iou_batch(detections, trackers)
-    scores = detections[:, -1][:, np.newaxis]
+    scores = detections[:, 4][:, np.newaxis]
 
     angle_diff_cost = (valid_mask * diff_angle) * vdc_weight
     angle_diff_cost = angle_diff_cost.T * scores

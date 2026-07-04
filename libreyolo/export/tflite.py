@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_EXPORTS = {
     ("yolo9", "detect"): "YOLO9 detect",
     ("rfdetr", "detect"): "RF-DETR detect",
-    ("rfdetr", "seg"): "RF-DETR segmentation",
+    ("rfdetr", "segment"): "RF-DETR segmentation",
     ("rfdetr", "pose"): "RF-DETR pose",
 }
 _UNSUPPORTED_FAMILY_REASONS: dict[str, str] = {}

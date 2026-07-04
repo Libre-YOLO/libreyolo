@@ -214,7 +214,10 @@ def test_librenafnet_train_runs_tiny_restore_smoke(tmp_path):
 
 def test_restore_metrics_are_perfect_for_identical_rgb():
     target = torch.rand(3, 16, 16)
-    assert math.isinf(psnr_rgb(target, target))
+    # A perfect reconstruction (mse == 0) is capped at a large finite PSNR
+    # rather than +inf, so a single identity image can't poison the aggregate
+    # PSNR / fitness used for best-checkpoint selection.
+    assert psnr_rgb(target, target) == pytest.approx(100.0)
     assert ssim_rgb(target, target) == pytest.approx(1.0)
 
 

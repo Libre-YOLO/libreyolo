@@ -59,17 +59,26 @@ class OnnxBackend(BaseBackend):
             else:
                 providers = ["CPUExecutionProvider"]
                 resolved_device = "cpu"
-        elif device in ("cuda", "gpu"):
+        elif device in ("cuda", "gpu") or device.startswith("cuda:"):
             if "CUDAExecutionProvider" in available_providers:
                 providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                resolved_device = "cuda"
             else:
                 providers = ["CPUExecutionProvider"]
-            resolved_device = (
-                "cuda" if "CUDAExecutionProvider" in available_providers else "cpu"
-            )
+                resolved_device = "cpu"
+                logger.warning(
+                    "Requested device %r but CUDAExecutionProvider is not "
+                    "available; falling back to CPU.",
+                    device,
+                )
         else:
             providers = ["CPUExecutionProvider"]
             resolved_device = "cpu"
+            logger.warning(
+                "Requested device %r is not supported by the ONNX backend; "
+                "falling back to CPU.",
+                device,
+            )
 
         self.session = ort.InferenceSession(onnx_path, providers=providers)
         self.input_name = self.session.get_inputs()[0].name

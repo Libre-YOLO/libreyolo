@@ -97,15 +97,24 @@ class StandardValPreprocessor(BaseValPreprocessor):
             targets = np.array(targets).copy()
             n = min(len(targets), self.max_labels)
 
-            # Undo letterbox scaling (applied by dataset) and apply simple resize scaling
-            letterbox_r = min(target_h / orig_h, target_w / orig_w)
             scale_x = target_w / orig_w
             scale_y = target_h / orig_h
 
-            targets[:n, 0] = targets[:n, 0] / letterbox_r * scale_x
-            targets[:n, 1] = targets[:n, 1] / letterbox_r * scale_y
-            targets[:n, 2] = targets[:n, 2] / letterbox_r * scale_x
-            targets[:n, 3] = targets[:n, 3] / letterbox_r * scale_y
+            if self.wants_unresized_image:
+                # The dataset handed over original-coordinate labels (no
+                # letterbox pre-scaling); only the simple resize scale applies.
+                targets[:n, 0] *= scale_x
+                targets[:n, 1] *= scale_y
+                targets[:n, 2] *= scale_x
+                targets[:n, 3] *= scale_y
+            else:
+                # Undo letterbox scaling (applied by dataset) then apply the
+                # simple resize scaling.
+                letterbox_r = min(target_h / orig_h, target_w / orig_w)
+                targets[:n, 0] = targets[:n, 0] / letterbox_r * scale_x
+                targets[:n, 1] = targets[:n, 1] / letterbox_r * scale_y
+                targets[:n, 2] = targets[:n, 2] / letterbox_r * scale_x
+                targets[:n, 3] = targets[:n, 3] / letterbox_r * scale_y
 
             padded_targets[:n] = targets[:n]
 
@@ -395,16 +404,16 @@ class DEIMv2ValPreprocessor(DEIMValPreprocessor):
             targets = np.array(targets).copy()
             n = min(len(targets), self.max_labels)
 
-            # COCO annotations are pre-scaled by the dataset's aspect-ratio r.
-            # Undo that, then apply upstream's direct square resize scaling.
-            letterbox_r = min(target_h / orig_h, target_w / orig_w)
+            # wants_unresized_image=True: pull_item already returns labels in
+            # original coordinates, so only the direct square resize scaling
+            # applies (no letterbox ratio to undo).
             scale_x = target_w / orig_w
             scale_y = target_h / orig_h
 
-            targets[:n, 0] = targets[:n, 0] / letterbox_r * scale_x
-            targets[:n, 1] = targets[:n, 1] / letterbox_r * scale_y
-            targets[:n, 2] = targets[:n, 2] / letterbox_r * scale_x
-            targets[:n, 3] = targets[:n, 3] / letterbox_r * scale_y
+            targets[:n, 0] *= scale_x
+            targets[:n, 1] *= scale_y
+            targets[:n, 2] *= scale_x
+            targets[:n, 3] *= scale_y
 
             padded_targets[:n] = targets[:n]
 
@@ -530,13 +539,14 @@ class RTDETRv2ValPreprocessor(BaseValPreprocessor):
         if len(targets) > 0:
             targets = np.array(targets).copy()
             n = min(len(targets), self.max_labels)
-            letterbox_r = min(target_h / orig_h, target_w / orig_w)
+            # wants_unresized_image=True: labels are already in original
+            # coordinates, so only the direct square resize scaling applies.
             scale_x = target_w / orig_w
             scale_y = target_h / orig_h
-            targets[:n, 0] = targets[:n, 0] / letterbox_r * scale_x
-            targets[:n, 1] = targets[:n, 1] / letterbox_r * scale_y
-            targets[:n, 2] = targets[:n, 2] / letterbox_r * scale_x
-            targets[:n, 3] = targets[:n, 3] / letterbox_r * scale_y
+            targets[:n, 0] *= scale_x
+            targets[:n, 1] *= scale_y
+            targets[:n, 2] *= scale_x
+            targets[:n, 3] *= scale_y
             padded_targets[:n] = targets[:n]
 
         return resized, padded_targets

@@ -42,6 +42,23 @@ model = LibreYOLO("LibreYOLO9t.pt")
 result = model(SAMPLE_IMAGE, save=True)
 ```
 
+Image classification works the same way. Load a pretrained ImageNet-1k
+classifier (`MobileNetV4`, `ConvNeXt`, `EfficientNetV2`, or `ResNet`), then
+predict or fine-tune on your own folder-per-class dataset:
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreResNet50-cls.pt")   # weights auto-download on first use
+result = model("image.jpg")                  # a single image -> one Results
+print(result.probs.top1, float(result.probs.top1conf))  # class index + confidence
+print(result.probs.top5)                     # indices of the 5 most likely classes
+
+# Fine-tune on an ImageFolder dataset (train/ and val/, one sub-folder per
+# class). The classifier head resizes to your class count automatically.
+model.train(data="path/to/dataset", epochs=5)
+```
+
 For the full list of extras and per-backend notes, see the [docs](https://www.libreyolo.com/docs#installation).
 
 To install from source in editable mode (for development or to track unreleased changes):
@@ -91,7 +108,7 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     </tr>
   </thead>
   <tbody>
-    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
     <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>exp</td></tr>
     <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
     <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>

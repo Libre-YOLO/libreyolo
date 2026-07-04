@@ -433,6 +433,10 @@ class OBBValidator(BaseValidator):
         recall = cum_tp / max(float(n_gt), 1.0)
         precision = cum_tp / np.maximum(cum_tp + cum_fp, 1e-9)
         ap = self._average_precision(recall, precision)
+        # Headline P/R are taken at the last (loosest) operating point — i.e.
+        # every prediction that survived conf_thres (default 0.001) is counted.
+        # This is a deliberate design choice; changing the operating point would
+        # change the reported P/R. AP above is unaffected (full PR curve).
         final_precision = float(cum_tp[-1] / max(cum_tp[-1] + cum_fp[-1], 1e-9))
         final_recall = float(cum_tp[-1] / max(float(n_gt), 1.0))
         return ap, final_precision, final_recall

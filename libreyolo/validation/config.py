@@ -45,6 +45,10 @@ class ValidationConfig:
     max_det: int = 300
 
     # Metrics
+    # NOTE: iou_thresholds is only honored on the OBB validation path. The COCO
+    # (detect/segment) path evaluates through pycocotools, which is locked to
+    # its own default IoU sweep (0.50:0.05:0.95) via coco_eval.params.iouThrs
+    # and ignores this value.
     iou_thresholds: Tuple[float, ...] = (
         0.50,
         0.55,

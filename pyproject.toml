@@ -1,6 +1,6 @@
 [project]
 name = "libreyolo"
-version = "1.3.0.dev0"
+version = "1.4.0.dev0"
 description = "Libre YOLO - An open source YOLO library with MIT license."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -79,6 +79,11 @@ openvocab = [
     # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection).
     "transformers>=5.1.0",
 ]
+label = [
+    # AI-assist for `libreyolo label`: SAM click-to-mask via the LibreSAM tier.
+    # The manual labeller and model-assisted box auto-label work without this.
+    "libreyolo[sam]",
+]
 tensorrt = [
     # No CUDA on macOS; marker drops these. Version pin must match the
     # [[tool.uv.dependency-metadata]] blocks below.
@@ -102,6 +107,8 @@ tflite = [
     # Required for RF-DETR onnxsim preprocessing step.
     "onnx-simplifier>=0.4.36",
 ]
+# Intentionally empty: all tracking dependencies (e.g. scipy) are core deps,
+# so `libreyolo[tracking]` installs nothing extra. Kept for a stable extra name.
 tracking = []
 rtdetr = []
 gaze = [
@@ -152,6 +159,7 @@ all = [
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
+    "libreyolo[label]",
     "libreyolo[openvocab]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
@@ -277,6 +285,7 @@ markers = [
     "experimental_backend: tests covering an experimental backend",
     "onnx: tests covering ONNX export or inference",
     "torchscript: tests covering TorchScript export or inference",
+    "smoke: fast end-to-end pipeline checks on tiny synthetic data (CPU, <60s)",
     "tensorrt: tests requiring TensorRT",
     "trt: alias for TensorRT tests requiring TensorRT",
     "openvino: tests requiring OpenVINO",

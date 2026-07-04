@@ -69,7 +69,11 @@ class DFINETrainer(BaseTrainer):
         return f"DFINE-{self.config.size}"
 
     def create_transforms(self):
-        preproc = DFINETrainTransform(max_labels=120, flip_prob=self.config.flip_prob)
+        preproc = DFINETrainTransform(
+            max_labels=120,
+            flip_prob=self.config.flip_prob,
+            imgsz=self.config.imgsz,
+        )
         return preproc, DFINEPassThroughDataset
 
     def create_scheduler(self, iters_per_epoch: int):

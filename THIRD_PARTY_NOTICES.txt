@@ -82,13 +82,45 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/augment.py).
 
 --------------------------------------------------------------------
-YOLO (MultimediaTechLab, successor to WongKinYiu/YOLO)
+YOLO (MultimediaTechLab/YOLO)
 --------------------------------------------------------------------
 Source: https://github.com/MultimediaTechLab/YOLO
 License: MIT
 Copyright (c) 2024 Kin-Yiu Wong and Hao-Tang Tsui
-Used for: YOLO9 model family (libreyolo/models/yolo9/), including the
-          loss port in libreyolo/models/yolo9/loss.py.
+Used for: YOLO9 model family (libreyolo/models/yolo9/ and
+          libreyolo/models/yolo9_e2e/): the architecture blocks and
+          detection head in nn.py and the loss port in loss.py.
+
+--------------------------------------------------------------------
+RepVGG (DingXiaoH)
+--------------------------------------------------------------------
+Source: https://github.com/DingXiaoH/RepVGG
+License: MIT
+Copyright (c) 2020 DingXiaoH
+Used for: RepConv fuse / re-parameterization logic
+          (libreyolo/models/yolo9/nn.py RepConvN.fuse_convs).
+
+--------------------------------------------------------------------
+mmdetection (OpenMMLab)
+--------------------------------------------------------------------
+Source: https://github.com/open-mmlab/mmdetection
+License: Apache License 2.0
+Copyright (c) OpenMMLab. All rights reserved.
+Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
+          port in nn.py; QualityFocalLoss, GIoULoss,
+          DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
+          Published RTMDet COCO weights were trained with mmdetection.
+
+--------------------------------------------------------------------
+PicoDet (PaddleDetection / Picodet_Pytorch)
+--------------------------------------------------------------------
+Source: https://github.com/Bo396543018/Picodet_Pytorch (direct source,
+        a PyTorch port built on mmdetection), from
+        https://github.com/PaddlePaddle/PaddleDetection (original)
+License: Apache License 2.0 (all of Picodet_Pytorch, PaddleDetection,
+         and mmdetection)
+Copyright (c) PaddlePaddle Authors; OpenMMLab.
+Used for: PICODET model family (libreyolo/models/picodet/).
 
 --------------------------------------------------------------------
 PIDNet (XuJiacong)

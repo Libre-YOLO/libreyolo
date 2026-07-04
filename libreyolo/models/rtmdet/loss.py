@@ -1,19 +1,22 @@
 """
 RTMDet training losses and label assignment.
 
-Cleanroom port of the components defined in mmdetection / mmyolo (Apache-2.0):
+Ported and adapted from mmdetection (open-mmlab/mmdetection, Apache-2.0),
+where RTMDet originates:
 - ``QualityFocalLoss``: classification loss with IoU-soft targets
-- ``GIoULoss``: bounding-box regression loss
-- ``BatchDynamicSoftLabelAssigner``: dynamic-k label assignment with soft cls cost
+  (mmdet/models/losses/gfocal_loss.py)
+- ``GIoULoss``: bounding-box regression loss (mmdet/models/losses/iou_loss.py)
+- ``DynamicSoftLabelAssigner``: per-image dynamic-k label assignment with a
+  soft classification cost (mmdet/models/task_modules/assigners/
+  dynamic_soft_label_assigner.py), looped over the padded batch here
 - ``MlvlPointGenerator``: cell-corner priors with stride for each FPN level
 
 All operations are pure PyTorch; no mmcv / mmengine runtime dependency.
 
-The implementation follows mmyolo's ``loss_by_feat`` (mmyolo/models/dense_heads/
-rtmdet_head.py:274-368) but adapts to LibreYOLO's head output convention,
-which already multiplies the regression branch by stride and (per-size)
-applies ``exp_on_reg``. Therefore the loss does NOT re-multiply by stride
-before ``distance2bbox``.
+The loss flow follows mmdetection's ``RTMDetHead.loss_by_feat`` but adapts to
+LibreYOLO's head output convention, which already multiplies the regression
+branch by stride and (per-size) applies ``exp_on_reg``. Therefore the loss
+does NOT re-multiply by stride before decoding boxes.
 """
 
 from __future__ import annotations
@@ -25,7 +28,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-_INF = 100_000_000
 _EPS = 1.0e-7
 
 
@@ -211,28 +213,19 @@ class QualityFocalLoss(nn.Module):
 
 
 # =============================================================================
-# Dynamic-k label assignment (batched)
+# Dynamic-k label assignment
 # =============================================================================
 
 
-def _find_inside_points(
-    boxes: torch.Tensor, points: torch.Tensor
-) -> torch.Tensor:
-    """Boolean ``(N_points, B, N_gt)`` whether each point is inside each GT box.
+class DynamicSoftLabelAssigner(nn.Module):
+    """Dynamic-k label assignment with soft cls + IoU + center-prior cost.
 
-    ``boxes``: (B, N_gt, 4) xyxy. ``points``: (N_points, 2) xy.
-    """
-    lt = points[:, None, None] - boxes[..., :2]
-    rb = boxes[..., 2:] - points[:, None, None]
-    deltas = torch.cat([lt, rb], dim=-1)
-    return deltas.min(dim=-1).values > 0
-
-
-class BatchDynamicSoftLabelAssigner(nn.Module):
-    """Dynamic-k assignment with soft cls + IoU + center-prior cost.
-
-    Cleanroom port of mmyolo's BatchDynamicSoftLabelAssigner
-    (mmyolo/models/task_modules/assigners/batch_dsl_assigner.py).
+    Ported and adapted from mmdetection's ``DynamicSoftLabelAssigner``
+    (mmdet/models/task_modules/assigners/dynamic_soft_label_assigner.py,
+    Apache-2.0) — the assigner RTMDet ships with in mmdetection. mmdet
+    assigns image by image (its ``loss_by_feat`` maps ``assign`` over the
+    batch); :meth:`forward` keeps that per-image algorithm and loops it over
+    LibreYOLO's padded batch tensors.
     """
 
     def __init__(
@@ -259,77 +252,39 @@ class BatchDynamicSoftLabelAssigner(nn.Module):
         pad_bbox_flag: torch.Tensor, # (B, N_gt, 1) 0/1 mask of valid GTs
     ) -> dict:
         batch_size, num_priors, _ = pred_bboxes.shape
-        num_gt = gt_bboxes.size(1)
 
-        if num_gt == 0 or num_priors == 0:
-            return {
-                "assigned_labels": gt_labels.new_full(
-                    pred_scores[..., 0].shape, self.num_classes, dtype=torch.long
-                ),
-                "assigned_bboxes": gt_bboxes.new_zeros(pred_bboxes.shape),
-                "assign_metrics": gt_bboxes.new_zeros(pred_scores[..., 0].shape),
-            }
-
-        prior_xy = priors[:, :2]
-        prior_stride = priors[:, 2]
-
-        is_in_gts = _find_inside_points(gt_bboxes, prior_xy)  # (N_priors, B, N_gt)
-        is_in_gts = is_in_gts * pad_bbox_flag[..., 0][None]
-        is_in_gts = is_in_gts.permute(1, 0, 2)  # (B, N_priors, N_gt)
-        valid_mask = is_in_gts.sum(dim=-1) > 0  # (B, N_priors)
-
-        # Soft center prior: distance from prior to gt center, normalized by stride
-        gt_center = (gt_bboxes[..., :2] + gt_bboxes[..., 2:]) * 0.5
-        distance = (
-            (prior_xy[None].unsqueeze(2) - gt_center[:, None, :, :])
-            .pow(2)
-            .sum(-1)
-            .sqrt()
-            / prior_stride[None, :, None]
-        )
-        distance = distance * valid_mask.unsqueeze(-1)
-        soft_center_prior = torch.pow(10.0, distance - self.soft_center_radius)
-
-        # IoU cost
-        pairwise_ious = batched_box_iou(pred_bboxes, gt_bboxes)  # (B, N_priors, N_gt)
-        iou_cost = -torch.log(pairwise_ious + _EPS) * self.iou_weight
-
-        # Cls cost: gather predicted score for each GT's class
-        # pred_scores: (B, N_priors, C). gt_labels: (B, N_gt, 1).
-        gt_cls = gt_labels.long().squeeze(-1)  # (B, N_gt)
-        # For each (b, n_gt), select pred_scores[b, :, gt_cls[b, n_gt]]
-        # → result shape (B, N_priors, N_gt)
-        b_idx = torch.arange(batch_size, device=pred_scores.device).view(-1, 1).expand(-1, num_gt)
-        pairwise_pred_scores = pred_scores.permute(0, 2, 1)[b_idx, gt_cls].permute(0, 2, 1)
-
-        scale_factor = pairwise_ious - pairwise_pred_scores.sigmoid()
-        pairwise_cls_cost = F.binary_cross_entropy_with_logits(
-            pairwise_pred_scores, pairwise_ious, reduction="none"
-        ) * scale_factor.abs().pow(2.0)
-
-        cost_matrix = pairwise_cls_cost + iou_cost + soft_center_prior
-
-        # Mask invalid (outside-any-GT) priors with INF so they never get picked
-        max_pad_value = torch.full_like(cost_matrix, _INF)
-        cost_matrix = torch.where(
-            valid_mask[..., None].expand(-1, -1, num_gt), cost_matrix, max_pad_value
-        )
-
-        matched_pred_ious, matched_gt_inds, fg_mask = self._dynamic_k_matching(
-            cost_matrix, pairwise_ious, pad_bbox_flag
-        )
-
-        batch_index = (fg_mask > 0).nonzero(as_tuple=True)[0]
+        # Background = num_classes; positives are filled in per image below.
         assigned_labels = gt_labels.new_full(
             pred_scores[..., 0].shape, self.num_classes, dtype=torch.long
         )
-        assigned_labels[fg_mask] = gt_labels[batch_index, matched_gt_inds].squeeze(-1).long()
-
         assigned_bboxes = gt_bboxes.new_zeros(pred_bboxes.shape)
-        assigned_bboxes[fg_mask] = gt_bboxes[batch_index, matched_gt_inds]
-
         assign_metrics = gt_bboxes.new_zeros(pred_scores[..., 0].shape)
-        assign_metrics[fg_mask] = matched_pred_ious.to(assign_metrics.dtype)
+
+        if num_priors == 0:
+            return {
+                "assigned_labels": assigned_labels,
+                "assigned_bboxes": assigned_bboxes,
+                "assign_metrics": assign_metrics,
+            }
+
+        for img_idx in range(batch_size):
+            num_gt = int(pad_bbox_flag[img_idx, :, 0].sum().item())
+            if num_gt == 0:
+                continue
+            image_gt_bboxes = gt_bboxes[img_idx, :num_gt]
+            image_gt_labels = gt_labels[img_idx, :num_gt, 0].long()
+            fg_mask, matched_gt_inds, matched_ious = self._assign_single(
+                pred_bboxes[img_idx],
+                pred_scores[img_idx],
+                priors,
+                image_gt_bboxes,
+                image_gt_labels,
+            )
+            if fg_mask is None:
+                continue
+            assigned_labels[img_idx, fg_mask] = image_gt_labels[matched_gt_inds]
+            assigned_bboxes[img_idx, fg_mask] = image_gt_bboxes[matched_gt_inds]
+            assign_metrics[img_idx, fg_mask] = matched_ious.to(assign_metrics.dtype)
 
         return {
             "assigned_labels": assigned_labels,
@@ -337,38 +292,117 @@ class BatchDynamicSoftLabelAssigner(nn.Module):
             "assign_metrics": assign_metrics,
         }
 
+    def _assign_single(
+        self,
+        decoded_bboxes: torch.Tensor,  # (N_priors, 4) xyxy
+        pred_scores: torch.Tensor,     # (N_priors, num_classes) logits
+        priors: torch.Tensor,          # (N_priors, 3) [x, y, stride]
+        gt_bboxes: torch.Tensor,       # (num_gt, 4) xyxy
+        gt_labels: torch.Tensor,       # (num_gt,) long
+    ):
+        """Assign one image, following mmdet ``DynamicSoftLabelAssigner.assign``.
+
+        Returns ``(fg_mask, matched_gt_inds, matched_pred_ious)`` over the
+        full prior set, or ``(None, None, None)`` when no prior lands inside
+        any GT box.
+        """
+        num_gt = gt_bboxes.size(0)
+
+        # Candidate priors: cell centers strictly inside a GT box.
+        prior_center = priors[:, :2]
+        lt_ = prior_center[:, None] - gt_bboxes[:, :2]
+        rb_ = gt_bboxes[:, 2:] - prior_center[:, None]
+        deltas = torch.cat([lt_, rb_], dim=-1)
+        is_in_gts = deltas.min(dim=-1).values > 0
+        valid_mask = is_in_gts.sum(dim=1) > 0
+        if not bool(valid_mask.any()):
+            return None, None, None
+
+        valid_decoded_bbox = decoded_bboxes[valid_mask]
+        valid_pred_scores = pred_scores[valid_mask]
+        num_valid = valid_decoded_bbox.size(0)
+
+        # Soft center prior: prior-to-GT-center distance in stride units.
+        gt_center = (gt_bboxes[:, :2] + gt_bboxes[:, 2:]) / 2.0
+        valid_prior = priors[valid_mask]
+        strides = valid_prior[:, 2]
+        distance = (
+            (valid_prior[:, None, :2] - gt_center[None, :, :])
+            .pow(2)
+            .sum(-1)
+            .sqrt()
+            / strides[:, None]
+        )
+        soft_center_prior = torch.pow(10, distance - self.soft_center_radius)
+
+        # IoU cost.
+        pairwise_ious = batched_box_iou(
+            valid_decoded_bbox.unsqueeze(0), gt_bboxes.unsqueeze(0)
+        ).squeeze(0)
+        iou_cost = -torch.log(pairwise_ious + _EPS) * self.iou_weight
+
+        # Soft classification cost: BCE against the IoU-scaled one-hot label,
+        # rescaled by the (soft label - sigmoid score) gap, summed over classes.
+        gt_onehot_label = (
+            F.one_hot(gt_labels.to(torch.int64), pred_scores.shape[-1])
+            .float()
+            .unsqueeze(0)
+            .repeat(num_valid, 1, 1)
+        )
+        valid_pred_scores = valid_pred_scores.unsqueeze(1).repeat(1, num_gt, 1)
+        soft_label = gt_onehot_label * pairwise_ious[..., None]
+        scale_factor = soft_label - valid_pred_scores.sigmoid()
+        soft_cls_cost = (
+            F.binary_cross_entropy_with_logits(
+                valid_pred_scores, soft_label, reduction="none"
+            )
+            * scale_factor.abs().pow(2.0)
+        ).sum(dim=-1)
+
+        cost_matrix = soft_cls_cost + iou_cost + soft_center_prior
+
+        matched_pred_ious, matched_gt_inds, fg_mask_inboxes = (
+            self._dynamic_k_matching(cost_matrix, pairwise_ious, num_gt)
+        )
+
+        # Scatter the inside-boxes foreground mask back to full prior indexing.
+        fg_mask = valid_mask.clone()
+        fg_mask[valid_mask] = fg_mask_inboxes
+        return fg_mask, matched_gt_inds, matched_pred_ious
+
     def _dynamic_k_matching(
         self,
-        cost_matrix: torch.Tensor,   # (B, N_priors, N_gt)
-        pairwise_ious: torch.Tensor, # (B, N_priors, N_gt)
-        pad_bbox_flag: torch.Tensor, # (B, N_gt, 1)
+        cost: torch.Tensor,          # (N_valid, N_gt)
+        pairwise_ious: torch.Tensor, # (N_valid, N_gt)
+        num_gt: int,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        matching_matrix = torch.zeros_like(cost_matrix, dtype=torch.uint8)
+        """SimOTA-style dynamic top-k selection, from mmdet
+        ``DynamicSoftLabelAssigner.dynamic_k_matching``."""
+        matching_matrix = torch.zeros_like(cost, dtype=torch.uint8)
 
-        candidate_topk = min(self.topk, pairwise_ious.size(1))
-        topk_ious, _ = torch.topk(pairwise_ious, candidate_topk, dim=1)
-        dynamic_ks = torch.clamp(topk_ious.sum(1).int(), min=1)
+        # Each GT's k = sum of its top-``topk`` candidate IoUs, at least 1.
+        candidate_topk = min(self.topk, pairwise_ious.size(0))
+        topk_ious, _ = torch.topk(pairwise_ious, candidate_topk, dim=0)
+        dynamic_ks = torch.clamp(topk_ious.sum(0).int(), min=1)
+        for gt_idx in range(num_gt):
+            _, pos_idx = torch.topk(
+                cost[:, gt_idx], k=int(dynamic_ks[gt_idx]), largest=False
+            )
+            matching_matrix[pos_idx, gt_idx] = 1
 
-        num_gts = pad_bbox_flag.sum((1, 2)).int()
-        _, sorted_indices = torch.sort(cost_matrix, dim=1)
-
-        for b in range(pad_bbox_flag.shape[0]):
-            for gt_idx in range(int(num_gts[b].item())):
-                k = int(dynamic_ks[b, gt_idx].item())
-                topk_ids = sorted_indices[b, :k, gt_idx]
-                matching_matrix[b, topk_ids, gt_idx] = 1
-
-        # Resolve double-assigned priors by min-cost
-        prior_match_gt_mask = matching_matrix.sum(2) > 1
+        # Resolve priors assigned to several GTs by minimum cost.
+        prior_match_gt_mask = matching_matrix.sum(1) > 1
         if prior_match_gt_mask.sum() > 0:
-            cost_argmin = torch.argmin(cost_matrix[prior_match_gt_mask, :], dim=1)
+            _, cost_argmin = torch.min(cost[prior_match_gt_mask, :], dim=1)
             matching_matrix[prior_match_gt_mask, :] = 0
             matching_matrix[prior_match_gt_mask, cost_argmin] = 1
 
-        fg_mask = matching_matrix.sum(2) > 0
-        matched_pred_ious = (matching_matrix * pairwise_ious).sum(2)[fg_mask]
-        matched_gt_inds = matching_matrix[fg_mask, :].argmax(1)
-        return matched_pred_ious, matched_gt_inds, fg_mask
+        fg_mask_inboxes = matching_matrix.sum(1) > 0
+        matched_gt_inds = matching_matrix[fg_mask_inboxes, :].argmax(1)
+        matched_pred_ious = (matching_matrix * pairwise_ious).sum(1)[
+            fg_mask_inboxes
+        ]
+        return matched_pred_ious, matched_gt_inds, fg_mask_inboxes
 
 
 # =============================================================================
@@ -404,7 +438,7 @@ class RTMDetLoss(nn.Module):
         self.strides = list(strides)
         self.loss_cls = QualityFocalLoss(beta=qfl_beta, loss_weight=loss_cls_weight)
         self.loss_bbox = GIoULoss(loss_weight=loss_bbox_weight)
-        self.assigner = BatchDynamicSoftLabelAssigner(
+        self.assigner = DynamicSoftLabelAssigner(
             num_classes=num_classes,
             soft_center_radius=soft_center_radius,
             topk=assigner_topk,

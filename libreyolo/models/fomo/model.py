@@ -13,6 +13,7 @@ from ...training.callbacks import TrainCallbacks
 from ..base.model import BaseModel
 from .nn import CONFIGS, LibreFOMOModel, detect_size_from_state_dict
 from .utils import postprocess as postprocess_fomo
+from .utils import preprocess_numpy
 from ...training.config import FOMOConfig
 from ...training.ddp_spawn import ddp_aware
 from ...validation.preprocessors import FOMOValPreprocessor
@@ -113,7 +114,7 @@ class LibreFOMO(BaseModel):
 
     @staticmethod
     def _get_preprocess_numpy():
-        return FOMOValPreprocessor
+        return preprocess_numpy
 
     def _preprocess(
         self,
