@@ -285,6 +285,19 @@ class YOLO9E2EValPreprocessor(YOLO9ValPreprocessor):
     """
 
 
+class DarknetValPreprocessor(YOLO9ValPreprocessor):
+    """Darknet families (YOLOv2/v3/v4): letterbox, RGB, 0-1, ~0.5 gray pad.
+
+    Identical to the YOLO9 preprocessor (letterbox top-left, BGR->RGB, /255)
+    except the pad fill is 128 (~0.5), matching Darknet's ``letterbox_image``.
+    """
+
+    def __init__(
+        self, img_size: Tuple[int, int], max_labels: int = 120, pad_value: int = 128
+    ):
+        super().__init__(img_size, max_labels, pad_value=pad_value)
+
+
 class YOLONASValPreprocessor(YOLO9ValPreprocessor):
     """YOLO-NAS preprocessor: resize to 636 (longest side), center-pad to 640, RGB, 0-1.
 

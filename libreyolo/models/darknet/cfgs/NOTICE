@@ -1,0 +1,24 @@
+Bundled Darknet model-definition (.cfg) files
+=============================================
+
+The .cfg files in this directory are the model definitions for YOLOv2, YOLOv3,
+and YOLOv4 (and their tiny/spp variants). They originate from the Darknet
+project and are public domain:
+
+    pjreddie/darknet  (YOLOv1/v2/v3)  https://github.com/pjreddie/darknet
+    AlexeyAB/darknet  (YOLOv4)        https://github.com/AlexeyAB/darknet
+
+Darknet is released under the "YOLO LICENSE":
+
+    "0. Darknet is public domain.
+     1. Do whatever you want with it.
+     2. Stop emailing me about it!"
+
+LibreYOLO bundles these public-domain cfgs as the single source of truth for the
+Darknet-lineage architectures: the runtime graph builder
+(``libreyolo/models/darknet/net.py``) and the weight converter
+(``weights/convert_darknet_weights.py``) both read them, so the architecture
+definition never drifts between model and converter.
+
+Only the .cfg text format and the numerical behaviour of the Darknet layers are
+reproduced. No Darknet C source is copied into LibreYOLO.

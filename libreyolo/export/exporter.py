@@ -600,6 +600,21 @@ class BaseExporter(ABC):
             ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
+        elif family in {"yolo2", "yolo3", "yolo4"}:
+            from ..models.darknet.export import DarknetExportWrapper
+
+            # Bake the anchor-box decode into the graph so every export format
+            # emits a self-contained (B, 4+nc, N) tensor consumed by the shared
+            # backend decode. No learned anchors need to travel in metadata.
+            nn_model = DarknetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "yolo7":
+            from ..models.yolo7.export import YOLO7ExportWrapper
+
+            nn_model = YOLO7ExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()

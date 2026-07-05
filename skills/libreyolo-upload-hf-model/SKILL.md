@@ -42,6 +42,10 @@ file = name + ".pt"
 | Family | Prefix | Example |
 |---|---|---|
 | YOLOX | `LibreYOLOX` | `LibreYOLOXs.pt` |
+| YOLO2 | `LibreYOLO2` | `LibreYOLO2b.pt` (public-domain Darknet) |
+| YOLO3 | `LibreYOLO3` | `LibreYOLO3b.pt`, `LibreYOLO3spp.pt` (public-domain Darknet) |
+| YOLO4 | `LibreYOLO4` | `LibreYOLO4b.pt` (public-domain Darknet) |
+| YOLO7 | `LibreYOLO7` | `LibreYOLO7b.pt` (MIT MultimediaTechLab/YOLO) |
 | YOLO9 | `LibreYOLO9` | `LibreYOLO9m.pt` |
 | RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt` |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
@@ -66,6 +70,14 @@ Authoritative list of all valid weight filenames (matches the schema enforced by
 ```
 LibreYOLOXn.pt, LibreYOLOXt.pt, LibreYOLOXs.pt, LibreYOLOXm.pt,
 LibreYOLOXl.pt, LibreYOLOXx.pt,
+
+LibreYOLO2t.pt, LibreYOLO2b.pt,
+
+LibreYOLO3t.pt, LibreYOLO3b.pt, LibreYOLO3spp.pt,
+
+LibreYOLO4t.pt, LibreYOLO4b.pt,
+
+LibreYOLO7b.pt,
 
 LibreYOLO9t.pt, LibreYOLO9s.pt, LibreYOLO9m.pt, LibreYOLO9c.pt,
 
@@ -215,8 +227,9 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `yolo9_e2e`, `l2cs`, RTMDet, or the VLM tier — omit
-  the section and tell the user.
+- **No slug exists** for `yolo9_e2e`, `l2cs`, RTMDet, the VLM tier, or the
+  Darknet-lineage families (`yolo2`, `yolo3`, `yolo4`) and `yolo7` — omit the
+  Benchmarks section and tell the user.
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
   [LibreYOLO/vision-analysis](https://github.com/LibreYOLO/vision-analysis);

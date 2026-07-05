@@ -184,6 +184,8 @@ libreyolo = [
     "data/*.json",
     "models/clip/*.gz",
     "models/clip/data/*.json",
+    "models/darknet/cfgs/*.cfg",
+    "models/yolo7/*.yaml",
     "models/**/NOTICE",
     "models/**/LICENSE",
     "models/**/*.md",

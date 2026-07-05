@@ -58,6 +58,12 @@ from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
+# Darknet-lineage detectors (public domain). Each keys can_load on a unique
+# family prefix (yolo2./yolo3./yolo4.) so registration order is not sensitive.
+from .yolo3.model import LibreYOLO3  # noqa: E402
+from .yolo4.model import LibreYOLO4  # noqa: E402
+from .yolo2.model import LibreYOLO2  # noqa: E402
+from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
@@ -631,6 +637,10 @@ __all__ = [
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
+    "LibreYOLO3",
+    "LibreYOLO4",
+    "LibreYOLO2",
+    "LibreYOLO7",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",

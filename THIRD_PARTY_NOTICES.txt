@@ -404,3 +404,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------
+Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+--------------------------------------------------------------------
+Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+        https://github.com/AlexeyAB/darknet    (YOLOv4)
+License: Public domain ("YOLO LICENSE")
+Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+          The public-domain .cfg model definitions are bundled under
+          libreyolo/models/darknet/cfgs/; only the .cfg format and the
+          numerical behaviour of the Darknet layers are reproduced. No
+          Darknet C source is copied.
+
+YOLO LICENSE, Version 2, July 29 2016
+
+    0. Darknet is public domain.
+    1. Do whatever you want with it.
+    2. Stop emailing me about it!
+
+--------------------------------------------------------------------
+MultimediaTechLab/YOLO (YOLOv7, YOLOv9)
+--------------------------------------------------------------------
+Source: https://github.com/MultimediaTechLab/YOLO
+License: MIT
+Copyright (c) 2024 Kin-Yiu, Wong and Hao-Tang, Tsui
+Used for: the LibreYOLO7 family (native port of YOLOv7,
+          libreyolo/models/yolo7) and the LibreYOLO9 detection head. This is
+          the original authors' MIT re-release, NOT the GPL-3.0
+          WongKinYiu/yolov7 or WongKinYiu/yolov9. Module names mirror upstream
+          so the MIT-licensed weights load unchanged; the v7.yaml model
+          definition is bundled under libreyolo/models/yolo7/.
+
+MIT License
+
+Copyright (c) 2024 Kin-Yiu, Wong and Hao-Tang, Tsui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.
