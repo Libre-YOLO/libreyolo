@@ -136,6 +136,16 @@ def _prepare_yolo9_static_eval(nn_model: nn.Module, dummy: torch.Tensor):
 
 def _prepare_rtdetr_static_eval(nn_model: nn.Module, height: int, width: int) -> None:
     """Precompute RT-DETR eval tensors for the fixed CoreML export image size."""
+    # The export pipeline hands us the _RTDETRExportWrapper whose only submodule
+    # is ``.model``; descend until we reach the module that actually owns
+    # encoder/decoder so the precomputed pos_embed/anchors are not silently
+    # dropped. Guarded so an already-unwrapped model still works.
+    while (
+        getattr(nn_model, "encoder", None) is None
+        and getattr(nn_model, "decoder", None) is None
+        and getattr(nn_model, "model", None) is not None
+    ):
+        nn_model = nn_model.model
     device = next(nn_model.parameters(), torch.empty(0)).device
     eval_spatial_size = (height, width)
 

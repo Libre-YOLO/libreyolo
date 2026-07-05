@@ -516,7 +516,7 @@ def test_val_json_reports_classification_metrics(monkeypatch):
         app,
         [
             "val",
-            "data=imagenet10",
+            "data=smoke10",
             "model=LibreYOLO9t-cls.pt",
             "imgsz=224",
             "batch=8",
@@ -526,7 +526,7 @@ def test_val_json_reports_classification_metrics(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert captured["data"] == "imagenet10"
+    assert captured["data"] == "smoke10"
     assert captured["imgsz"] == 224
     assert captured["batch"] == 8
     assert captured["workers"] == 0

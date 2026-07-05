@@ -18,9 +18,48 @@ MIT-licensed computer vision library with inference and training support for a v
 
 ## Installation & Quick start
 
+`pip install libreyolo` covers most users. It comes with the YOLOv9 flagship
+and the other detection models, plus training and inference. Now and then you'll
+add an extra: for a model family with a heavier dependency (for example RF-DETR,
+which needs the large `transformers` library), or for an export backend when you
+need to export a model:
+
 ```bash
 pip install libreyolo
+
+# Add an extra in brackets when you need one (comma-separate to combine),
+# e.g. pip install "libreyolo[rfdetr,onnx]":
+#   export:    onnx, tensorrt, openvino, ncnn, tflite, coreml
+#   models:    rfdetr, vlm, sam, openvocab, clip, gaze
+#   training:  lora, plots, tensorboard, mlflow, wandb
+#   or all:    pip install "libreyolo[all]"
 ```
+
+```python
+from libreyolo import LibreYOLO, SAMPLE_IMAGE
+
+model = LibreYOLO("LibreYOLO9t.pt")
+result = model(SAMPLE_IMAGE, save=True)
+```
+
+Image classification works the same way. Load a pretrained ImageNet-1k
+classifier (`MobileNetV4`, `ConvNeXt`, `EfficientNetV2`, or `ResNet`), then
+predict or fine-tune on your own folder-per-class dataset:
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreResNet50-cls.pt")   # weights auto-download on first use
+result = model("image.jpg")                  # a single image -> one Results
+print(result.probs.top1, float(result.probs.top1conf))  # class index + confidence
+print(result.probs.top5)                     # indices of the 5 most likely classes
+
+# Fine-tune on an ImageFolder dataset (train/ and val/, one sub-folder per
+# class). The classifier head resizes to your class count automatically.
+model.train(data="path/to/dataset", epochs=5)
+```
+
+For the full list of extras and per-backend notes, see the [docs](https://www.libreyolo.com/docs#installation).
 
 To install from source in editable mode (for development or to track unreleased changes):
 
@@ -28,15 +67,6 @@ To install from source in editable mode (for development or to track unreleased 
 git clone https://github.com/LibreYOLO/libreyolo.git
 cd libreyolo
 pip install -e .
-```
-
-For optional runtime and export dependencies such as ONNX Runtime, OpenVINO, TensorRT, NCNN, and RF-DETR, see the [full docs](https://www.libreyolo.com/docs).
-
-```python
-from libreyolo import LibreYOLO, SAMPLE_IMAGE
-
-model = LibreYOLO("LibreYOLO9t.pt")
-result = model(SAMPLE_IMAGE, save=True)
 ```
 
 ## Flagship models
@@ -78,10 +108,11 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     </tr>
   </thead>
   <tbody>
-    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
     <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>exp</td></tr>
     <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
     <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>
+    <tr><td>YOLOv9-P2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>exp</td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>YOLO-NAS</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
     <tr><td>D-FINE</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
     <tr><td>DEIM</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
@@ -99,6 +130,14 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     <tr><td>L2CS</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
   </tbody>
 </table>
+
+YOLOv9-P2 is a small-object variant of YOLOv9 with an extra stride-4 detection
+scale, built for aerial/tiny-object imagery where objects fall below ~16 px
+(on regular datasets like COCO, prefer stock YOLOv9). A VisDrone-trained
+research preview is available as
+[`LibreYOLO9P2s-visdrone.pt`](https://huggingface.co/LibreYOLO/LibreYOLO9P2s-visdrone)
+(non-commercial license); train your own with
+`LibreYOLO9P2(None, size="s").train(..., pretrained="LibreYOLO9s.pt")`.
 
 ## License
 

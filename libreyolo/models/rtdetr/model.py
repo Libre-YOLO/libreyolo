@@ -11,6 +11,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...postprocess.rtdetr import postprocess as rtdetr_postprocess
 from ...utils.image_loader import ImageInput
@@ -489,7 +490,7 @@ class LibreRTDETR(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

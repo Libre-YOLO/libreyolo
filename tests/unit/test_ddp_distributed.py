@@ -2,8 +2,10 @@
 
 Spawns 2 child processes using ``torch.multiprocessing.spawn`` and exercises
 the full BaseTrainer DDP path: process group init, DDP model wrap, per-rank
-forward, ``loss * world_size`` backward, optimizer step, parameter sync check
-across ranks, and checkpoint round-trip.
+forward, backward, optimizer step, parameter sync check across ranks, and
+checkpoint round-trip. (Loss is passed through ``scale_loss_for_ddp``, which is
+the identity — every LibreYOLO loss is mean/ratio-normalized, so DDP's gradient
+averaging already yields single-GPU-equivalent gradients; see issue #484.)
 
 Two backend tiers:
 

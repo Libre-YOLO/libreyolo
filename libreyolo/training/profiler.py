@@ -286,8 +286,11 @@ def analyze_trace(trace_path, summary_path=None):
     ops = sorted((orow(n, td, optot) for n, td in opagg.items()),
                  key=lambda r: r["pct_of_cpu_ops"], reverse=True)
 
-    # Per-phase rollup + drill lists.
-    _ORDER = ["dataload", "to_device", "forward", "backward", "optimizer"]
+    # Per-phase rollup + drill lists. Includes inference stages (preprocess /
+    # postprocess) so `profile infer` phase tables read pre -> forward -> post;
+    # they simply never appear for training traces.
+    _ORDER = ["dataload", "to_device", "preprocess", "forward", "backward",
+              "postprocess", "optimizer"]
     phase_names = [p for p in _ORDER if p in phase_gpu or p in phase_kern or p in phase_op]
     phase_names += [p for p in phase_kern if p not in phase_names]
     phases, kernels_by_phase, ops_by_phase = [], {}, {}

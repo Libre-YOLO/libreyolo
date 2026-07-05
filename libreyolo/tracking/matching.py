@@ -13,7 +13,8 @@ try:
     from scipy.optimize import linear_sum_assignment as scipy_lsa
 except ImportError as e:
     raise ImportError(
-        "scipy is required for tracking. Install with: pip install libreyolo[tracking]"
+        "scipy is required for tracking and is a core LibreYOLO dependency. "
+        "Reinstall it with: pip install libreyolo"
     ) from e
 
 if TYPE_CHECKING:

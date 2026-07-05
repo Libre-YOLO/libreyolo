@@ -224,14 +224,29 @@ class CoreMLBackend(BaseBackend):
         effective_imgsz: ImageSize,
         original_size: tuple,
         conf: float,
-        ratio: float = 1.0,
+        ratio: float | None = None,
+        iou: float = 0.45,
+        max_det: int = 300,
+        **kwargs,
     ):
+        if ratio is None:
+            ratio = 1.0
         if self._has_embedded_nms:
+            # Apple's NMS already ran inside the .mlpackage, so iou/max_det are
+            # applied there; they are accepted here only for signature parity
+            # with BaseBackend._parse_outputs.
             return self._parse_embedded_nms(
                 all_outputs, effective_imgsz, original_size, conf, ratio=ratio
             )
         return super()._parse_outputs(
-            all_outputs, effective_imgsz, original_size, conf, ratio=ratio
+            all_outputs,
+            effective_imgsz,
+            original_size,
+            conf,
+            ratio=ratio,
+            iou=iou,
+            max_det=max_det,
+            **kwargs,
         )
 
     def _build_result(self, *args, iou: float, **kwargs):

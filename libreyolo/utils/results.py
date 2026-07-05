@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -518,6 +519,55 @@ class DepthMap(_TensorPayload):
         )
 
 
+class RestoredImage(_TensorPayload):
+    """Dense restored RGB image for a single input.
+
+    Data shape is ``(H, W, 3)`` uint8 RGB on the original image canvas.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 3 or data.shape[-1] != 3:
+            raise ValueError(
+                f"expected (H, W, 3) restored RGB image but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    @property
+    def array(self) -> np.ndarray:
+        """Return the raw HWC uint8 RGB ndarray."""
+
+        arr = np.asarray(_numpy(self.data))
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        return arr
+
+    def save(self, path: str | Path) -> None:
+        """Write the restored RGB image to disk."""
+
+        from PIL import Image
+
+        path = Path(path)
+        if path.parent and path.parent != Path("."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(self.array, mode="RGB").save(path)
+
+    def __getitem__(self, idx):
+        # Instance indexing does not apply to a dense restored image; keep it
+        # intact so shared Results slicing paths cannot corrupt the HWC layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"RestoredImage(shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class OBB(_TensorPayload):
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
         if data.ndim == 1:
@@ -700,6 +750,7 @@ class Results:
         "points",
         "semantic_mask",
         "depth_map",
+        "restored",
     )
 
     def __init__(
@@ -716,6 +767,7 @@ class Results:
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
+        restored: Optional[RestoredImage] = None,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -728,6 +780,8 @@ class Results:
             points = Points(points.data, orig_shape)
         if depth_map is not None and depth_map.orig_shape is None:
             depth_map = DepthMap(depth_map.data, orig_shape)
+        if restored is not None and restored.orig_shape is None:
+            restored = RestoredImage(restored.data, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -738,6 +792,7 @@ class Results:
         self.points = points
         self.semantic_mask = semantic_mask
         self.depth_map = depth_map
+        self.restored = restored
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -759,6 +814,7 @@ class Results:
             "points": self.points,
             "semantic_mask": self.semantic_mask,
             "depth_map": self.depth_map,
+            "restored": self.restored,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -812,6 +868,7 @@ class Results:
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
+        restored: Optional[RestoredImage] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -832,6 +889,8 @@ class Results:
             self.semantic_mask = semantic_mask
         if depth_map is not None:
             self.depth_map = depth_map
+        if restored is not None:
+            self.restored = restored
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -880,6 +939,14 @@ class Results:
                         "min": round(self.depth_map.min, decimals),
                         "max": round(self.depth_map.max, decimals),
                         "mean": round(self.depth_map.mean, decimals),
+                    }
+                ]
+            if self.restored is not None:
+                h, w = self.restored.array.shape[:2]
+                return [
+                    {
+                        "name": "restored",
+                        "shape": [int(h), int(w), 3],
                     }
                 ]
             if self.probs is None:
@@ -972,6 +1039,8 @@ class Results:
             return 1
         if self.depth_map is not None:
             return 1
+        if self.restored is not None:
+            return 1
         return 0
 
     def __repr__(self) -> str:
@@ -988,6 +1057,8 @@ class Results:
             parts.append(f"semantic_mask={self.semantic_mask}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
+        if self.restored is not None:
+            parts.append(f"restored={self.restored}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

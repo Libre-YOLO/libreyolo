@@ -31,6 +31,12 @@ from .depth_dataset import (
     img2depth_paths,
     resolve_depth_data,
 )
+from .restore_dataset import (
+    RestoreDataset,
+    img2restore_target_paths,
+    resolve_restore_data,
+    restore_collate_fn,
+)
 from .semantic_dataset import (
     SemanticDataset,
     img2mask_paths,
@@ -81,6 +87,10 @@ __all__ = [
     "depth_collate_fn",
     "img2depth_paths",
     "resolve_depth_data",
+    "RestoreDataset",
+    "img2restore_target_paths",
+    "resolve_restore_data",
+    "restore_collate_fn",
     "SemanticDataset",
     "img2mask_paths",
     "resolve_semantic_data",

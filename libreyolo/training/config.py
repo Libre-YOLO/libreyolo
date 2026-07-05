@@ -5,7 +5,6 @@ import warnings
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
-
 import yaml
 
 logger = logging.getLogger(__name__)
@@ -115,6 +114,19 @@ class TrainConfig:
     # training is unchanged.
     nbs: Optional[int] = None
 
+    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path;
+    # setting it turns distillation on. ``dis`` is the global distillation loss
+    # weight; left as None it falls back to the selected loss type's published
+    # default (MGD: 2e-5, CWD: 1.0). ``distill_loss_type`` picks the feature
+    # loss ("mgd" or "cwd"); ``distill_mask_ratio`` (MGD) and ``distill_tau``
+    # (CWD) are the per-loss hyper-parameters. Families without a
+    # ``get_distill_config()`` implementation raise a clear error at setup.
+    distill_model: Optional[str] = None
+    dis: Optional[float] = None
+    distill_loss_type: str = "mgd"
+    distill_mask_ratio: float = 0.65
+    distill_tau: float = 1.0
+
     # Checkpointing / output
     project: str = "runs/train"
     name: str = "exp"
@@ -135,7 +147,6 @@ class TrainConfig:
     log_interval: int = 10
     seed: int = 0
     allow_download_scripts: bool = False
-
     # Profiling. When ``profile`` is True the trainer profiles a short window of
     # real training steps (``profile_warmup`` discarded, then ``profile_steps``
     # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome
@@ -212,6 +223,10 @@ class YOLO9Config(TrainConfig):
     workers: int = 8
     mask_downsample_ratio: int = 4
     sync_bn: bool = False
+    # Per-image ground-truth cap in the train transforms. Dense datasets
+    # (e.g. aerial imagery) exceed the historical 100-box default; boxes
+    # beyond the cap are silently dropped, so raise it for such data.
+    max_labels: int = 100
 
 
 @dataclass(kw_only=True)
@@ -835,7 +850,7 @@ class RTMDetConfig(TrainConfig):
     Status: training is NOT yet implemented in LibreYOLO. This config exists so
     callers can introspect intended hyperparameters. ``LibreRTMDet.train()``
     raises ``NotImplementedError`` until the follow-up PR lands the loss,
-    DynamicSoftLabelAssigner, BatchDynamicSoftLabelAssigner, MlvlPointGenerator,
+    DynamicSoftLabelAssigner, MlvlPointGenerator,
     and the 2-stage pipeline-switch hook.
     """
 

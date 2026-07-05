@@ -35,6 +35,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
@@ -581,6 +582,7 @@ class LibreDINOv2(BaseModel):
         lr: float | None = None,
         output_dir: str = "runs/train",
         resume=None,
+        callbacks: TrainCallbacks = None,
         **kwargs,
     ) -> Dict:
         """Fine-tune LibreDINOv2 for semantic segmentation or classification.
@@ -635,6 +637,7 @@ class LibreDINOv2(BaseModel):
             exist_ok=exist_ok,
             resume=resume,
             device=str(self.device),
+            callbacks=callbacks,
             **train_kwargs,
         )
 

@@ -16,10 +16,14 @@ repos, each with its own authoritative skill. Do not run benchmarks from inside
 
 ## The two repos
 
-| Repo | Role | Authoritative skill |
+| Repo | Role | Authoritative skill (open on GitHub) |
 |---|---|---|
-| `vision-analysis-benchmark` (the harness) | Runs models, emits `va.submission.v1` JSON | `skills/generate-benchmark-results/SKILL.md` |
-| `vision-analysis` (the website) | Validates JSON, rebuilds the dataset, deploys | `skills/submit-benchmark-results/SKILL.md` |
+| `vision-analysis-benchmark` (the harness) | Runs models, emits `va.submission.v1` JSON | [`generate-benchmark-results`](https://github.com/LibreYOLO/vision-analysis-benchmark/blob/main/skills/generate-benchmark-results/SKILL.md) |
+| `vision-analysis` (the website) | Validates JSON, rebuilds the dataset, deploys | [`submit-benchmark-results`](https://github.com/LibreYOLO/vision-analysis/blob/main/skills/submit-benchmark-results/SKILL.md) |
+
+Direct links to the authoritative skills (read these — this signpost only orients):
+- Harness: https://github.com/LibreYOLO/vision-analysis-benchmark/blob/main/skills/generate-benchmark-results/SKILL.md
+- Website: https://github.com/LibreYOLO/vision-analysis/blob/main/skills/submit-benchmark-results/SKILL.md
 
 Local checkouts on this machine:
 `C:\Users\Usuario\Documents\GitHub\vision-analysis-benchmark` and

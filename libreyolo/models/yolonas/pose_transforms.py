@@ -11,42 +11,34 @@ Augmentation follows the public SuperGradients YOLO-NAS pose recipe where it
 is practical for YOLO-format labels: keypoint-aware hflip, brightness/contrast,
 HSV jitter, random affine, resize, and padding. Training pads in the center;
 validation pads bottom/right.
+
+The keypoint-aware helper implementations live in
+:mod:`libreyolo.data.augment.pose`; this module keeps only the YOLO-NAS
+specifics (capped letterbox with the 127 pad/border fill — the EC pose recipe
+fills with 114 and stretches without letterboxing).
 """
 
 from __future__ import annotations
 
-import random
+import random  # noqa: F401  (historical module attribute)
 from typing import Optional, Sequence
 
-import cv2
+import cv2  # noqa: F401  (historical module attribute)
 import numpy as np
 
+from ...data.augment.constants import (  # noqa: F401
+    IMAGENET_MEAN as _IMAGENET_MEAN,
+    IMAGENET_STD as _IMAGENET_STD,
+)
+from ...data.augment.pose import (
+    AFFINE_INTERPOLATIONS as _AFFINE_INTERPOLATIONS,
+    brightness_contrast as _brightness_contrast,
+    build_target as _build_target,
+    finalize_image as _finalize_image,
+    random_affine_pose,
+)
 from ...training.augment import augment_hsv
 from .utils import YOLO_NAS_POSE_PAD_VALUE, YOLO_NAS_POSE_RESIZE_SIZE
-
-_AFFINE_INTERPOLATIONS = {
-    "nearest": cv2.INTER_NEAREST,
-    "linear": cv2.INTER_LINEAR,
-    "cubic": cv2.INTER_CUBIC,
-    "area": cv2.INTER_AREA,
-    "lanczos": cv2.INTER_LANCZOS4,
-}
-
-# ImageNet stats — used only when ``imagenet_norm=True`` (e.g. EdgeCrafter's
-# pretrained ViT backbone, which expects RGB ImageNet-normalized inputs).
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
-
-
-def _finalize_image(img: np.ndarray, to_rgb: bool, imagenet_norm: bool) -> np.ndarray:
-    """HWC uint8 BGR -> CHW float32, optionally RGB + ImageNet-normalized."""
-    if to_rgb:
-        img = img[:, :, ::-1]
-    img = np.ascontiguousarray(img.transpose(2, 0, 1), dtype=np.float32)
-    img /= 255.0
-    if imagenet_norm:
-        img = (img - _IMAGENET_MEAN) / _IMAGENET_STD
-    return np.ascontiguousarray(img, dtype=np.float32)
 
 
 def _letterbox(
@@ -75,13 +67,6 @@ def _letterbox(
     return canvas, r, pad_x, pad_y
 
 
-def _brightness_contrast(img: np.ndarray) -> None:
-    """In-place SG-style brightness/contrast jitter for uint8 BGR images."""
-    alpha = random.uniform(0.8, 1.2)
-    beta = random.uniform(-0.2, 0.2) * 255.0
-    img[:] = np.clip(img.astype(np.float32) * alpha + beta, 0, 255).astype(np.uint8)
-
-
 def _random_affine(
     img: np.ndarray,
     bboxes: np.ndarray,
@@ -92,68 +77,17 @@ def _random_affine(
     scale_range: tuple[float, float],
     interpolation: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Apply a lightweight keypoint-aware affine transform in image space."""
-    h, w = img.shape[:2]
-    angle = random.uniform(-degrees, degrees)
-    scale = random.uniform(*scale_range)
-    tx = random.uniform(-translate, translate) * w
-    ty = random.uniform(-translate, translate) * h
-
-    matrix = cv2.getRotationMatrix2D((w * 0.5, h * 0.5), angle, scale)
-    matrix[:, 2] += (tx, ty)
-    warped = cv2.warpAffine(
+    """YOLO-NAS affine: shared keypoint-aware affine with the 127 border fill."""
+    return random_affine_pose(
         img,
-        matrix,
-        dsize=(w, h),
-        flags=interpolation,
-        borderValue=(YOLO_NAS_POSE_PAD_VALUE,) * 3,
+        bboxes,
+        kpts,
+        degrees=degrees,
+        translate=translate,
+        scale_range=scale_range,
+        interpolation=interpolation,
+        border_value=YOLO_NAS_POSE_PAD_VALUE,
     )
-
-    if len(bboxes) == 0:
-        return warped, bboxes, kpts
-
-    xyxy = np.concatenate(
-        [
-            bboxes[:, :2] - bboxes[:, 2:] * 0.5,
-            bboxes[:, :2] + bboxes[:, 2:] * 0.5,
-        ],
-        axis=1,
-    )
-    corners = np.stack(
-        [
-            xyxy[:, [0, 1]],
-            xyxy[:, [2, 1]],
-            xyxy[:, [2, 3]],
-            xyxy[:, [0, 3]],
-        ],
-        axis=1,
-    )
-    ones = np.ones((*corners.shape[:2], 1), dtype=np.float32)
-    warped_corners = np.concatenate([corners, ones], axis=2) @ matrix.T
-    new_xyxy = np.concatenate(
-        [warped_corners.min(axis=1), warped_corners.max(axis=1)], axis=1
-    )
-    new_xyxy[:, [0, 2]] = new_xyxy[:, [0, 2]].clip(0, w)
-    new_xyxy[:, [1, 3]] = new_xyxy[:, [1, 3]].clip(0, h)
-    bboxes[:, :2] = (new_xyxy[:, :2] + new_xyxy[:, 2:]) * 0.5
-    bboxes[:, 2:] = new_xyxy[:, 2:] - new_xyxy[:, :2]
-
-    points = kpts[..., :2]
-    warped_points = (
-        np.concatenate([points, np.ones((*points.shape[:2], 1), dtype=np.float32)], axis=2)
-        @ matrix.T
-    )
-    kpts[..., :2] = warped_points
-    outside = (
-        (kpts[..., 0] < 0)
-        | (kpts[..., 0] >= w)
-        | (kpts[..., 1] < 0)
-        | (kpts[..., 1] >= h)
-    )
-    kpts[..., 0] = kpts[..., 0].clip(0, w)
-    kpts[..., 1] = kpts[..., 1].clip(0, h)
-    kpts[..., 2] = np.where(outside, 0.0, kpts[..., 2])
-    return warped, bboxes, kpts
 
 
 def _apply_letterbox_to_targets(
@@ -168,37 +102,6 @@ def _apply_letterbox_to_targets(
     kpts[..., :2] *= ratio
     kpts[..., 0] += pad_x
     kpts[..., 1] += pad_y
-
-
-def _build_target(
-    cls: np.ndarray,
-    bboxes_px: np.ndarray,
-    kpts_px: np.ndarray,
-    num_keypoints: int,
-    max_labels: int,
-) -> np.ndarray:
-    """Assemble the padded ``(max_labels, 5 + 3K)`` target slab.
-
-    Valid rows are written contiguously from the front — the pose loss relies
-    on this front-packing to slice each image's objects.
-    """
-    target = np.zeros((max_labels, 5 + 3 * num_keypoints), dtype=np.float32)
-    if len(bboxes_px) == 0:
-        return target
-
-    keep = (
-        (bboxes_px[:, 2] * bboxes_px[:, 3] > 1.0)
-        & ((kpts_px[..., 2] > 0).sum(axis=1) >= 1)
-    )
-    bboxes_px, cls, kpts_px = bboxes_px[keep], cls[keep], kpts_px[keep]
-    n = min(len(bboxes_px), max_labels)
-    if n == 0:
-        return target
-
-    target[:n, 0] = cls[:n]
-    target[:n, 1:5] = bboxes_px[:n]
-    target[:n, 5:] = kpts_px[:n].reshape(len(kpts_px), -1)[:n]
-    return target
 
 
 class YOLONASPoseTrainTransform:

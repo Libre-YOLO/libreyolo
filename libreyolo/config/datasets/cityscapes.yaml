@@ -1,0 +1,39 @@
+# Cityscapes semantic segmentation, 19 trainId classes.
+#
+# Manual download: Cityscapes access is controlled by the dataset owners.
+# Arrange files under <DATASETS_DIR>/cityscapes using LibreYOLO's dense
+# semantic layout:
+#
+#   images/train/**/*.png    RGB leftImg8bit images
+#   images/val/**/*.png
+#   masks/train/**/*.png     single-channel trainId masks, same stem as image
+#   masks/val/**/*.png       pixels 0..18 are classes, 255 is ignore
+#
+# If starting from the official tree, copy or symlink leftImg8bit into images
+# and gtFine labelTrainIds into masks with matching image stems.
+path: cityscapes
+train: images/train
+val: images/val
+masks_dir: masks
+ignore_index: 255
+nc: 19
+names:
+  0: road
+  1: sidewalk
+  2: building
+  3: wall
+  4: fence
+  5: pole
+  6: traffic light
+  7: traffic sign
+  8: vegetation
+  9: terrain
+  10: sky
+  11: person
+  12: rider
+  13: car
+  14: truck
+  15: bus
+  16: train
+  17: motorcycle
+  18: bicycle

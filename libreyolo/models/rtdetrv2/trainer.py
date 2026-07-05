@@ -10,6 +10,19 @@ from ..rtdetr.trainer import RTDETRTrainer
 
 
 class RTDETRv2Trainer(RTDETRTrainer):
+    def on_setup(self):
+        """Initialize the v2 loss criterion.
+
+        v1's ``RTDETRLoss`` ignores the ``enc_aux_outputs`` key that the v2
+        decoder emits, leaving ``enc_score_head``/``enc_bbox_head`` unsupervised
+        (zero gradient). ``RTDETRv2Loss`` adds that encoder query-selection
+        supervision, matching upstream RT-DETRv2.
+        """
+        from .loss import RTDETRv2Loss
+
+        self.criterion = RTDETRv2Loss(num_classes=self.config.num_classes)
+        self.criterion.to(self.device)
+
     def _setup_device(self) -> torch.device:
         device = super()._setup_device()
         if device.type == "mps":

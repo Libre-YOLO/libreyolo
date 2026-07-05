@@ -55,7 +55,6 @@ def val_cmd(
     project: str = typer.Option("runs/val", help="Output directory root"),
     name: str = typer.Option("exp", help="Experiment name"),
     exist_ok: bool = typer.Option(False, help="Reuse output directory"),
-    use_coco_eval: bool = typer.Option(True, help="Use pycocotools evaluator"),
     allow_download_scripts: bool = typer.Option(
         False,
         "--allow-download-scripts",
@@ -172,6 +171,86 @@ def val_cmd(
                 f"  P: {precision:.4f}  R: {recall:.4f}  F1: {f1:.4f}\n"
                 f"  MLE: {mle:.4f}  MAE: {mae:.4f}  RMSE: {rmse:.4f}\n"
                 f"  Sweep mAP: {sweep_map:.4f}"
+            )
+        out.result(data_out)
+        return
+
+    task = getattr(loaded_model, "task", "detect")
+
+    if task == "restore":
+        psnr = metrics.get("metrics/PSNR", 0.0)
+        ssim = metrics.get("metrics/SSIM", 0.0)
+        data_out = {
+            "model": model,
+            "model_family": loaded_model.FAMILY,
+            "data": data,
+            "split": split,
+            "device": str(loaded_model.device),
+            "metrics": {
+                "PSNR": round(float(psnr), 4),
+                "SSIM": round(float(ssim), 4),
+            },
+        }
+        if not json_output:
+            data_out["_human_text"] = (
+                f"Validating {loaded_model.FAMILY}-{loaded_model.size} "
+                f"on {data} ({split}):\n"
+                f"  PSNR: {float(psnr):.4f}  SSIM: {float(ssim):.4f}"
+            )
+        out.result(data_out)
+        return
+
+    if task == "depth":
+        abs_rel = metrics.get("metrics/abs_rel", 0.0)
+        rmse = metrics.get("metrics/rmse", 0.0)
+        delta1 = metrics.get("metrics/delta1", 0.0)
+        delta2 = metrics.get("metrics/delta2", 0.0)
+        delta3 = metrics.get("metrics/delta3", 0.0)
+        data_out = {
+            "model": model,
+            "model_family": loaded_model.FAMILY,
+            "data": data,
+            "split": split,
+            "device": str(loaded_model.device),
+            "metrics": {
+                "abs_rel": round(float(abs_rel), 4),
+                "rmse": round(float(rmse), 4),
+                "delta1": round(float(delta1), 4),
+                "delta2": round(float(delta2), 4),
+                "delta3": round(float(delta3), 4),
+            },
+        }
+        if not json_output:
+            data_out["_human_text"] = (
+                f"Validating {loaded_model.FAMILY}-{loaded_model.size} "
+                f"on {data} ({split}):\n"
+                f"  AbsRel: {float(abs_rel):.4f}  RMSE: {float(rmse):.4f}\n"
+                f"  delta1: {float(delta1):.4f}  delta2: {float(delta2):.4f}  "
+                f"delta3: {float(delta3):.4f}"
+            )
+        out.result(data_out)
+        return
+
+    if task == "semantic":
+        miou = metrics.get("metrics/mIoU", 0.0)
+        pixel_acc = metrics.get("metrics/pixel_accuracy", 0.0)
+        data_out = {
+            "model": model,
+            "model_family": loaded_model.FAMILY,
+            "data": data,
+            "split": split,
+            "device": str(loaded_model.device),
+            "metrics": {
+                "mIoU": round(float(miou), 4),
+                "pixel_accuracy": round(float(pixel_acc), 4),
+            },
+        }
+        if not json_output:
+            data_out["_human_text"] = (
+                f"Validating {loaded_model.FAMILY}-{loaded_model.size} "
+                f"on {data} ({split}):\n"
+                f"  mIoU: {float(miou):.4f}  "
+                f"pixel accuracy: {float(pixel_acc):.4f}"
             )
         out.result(data_out)
         return

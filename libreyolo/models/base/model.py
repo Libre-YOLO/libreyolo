@@ -122,6 +122,11 @@ class BaseModel(ABC):
     val_preprocessor_class = StandardValPreprocessor
     validator_class: ClassVar[Optional[type]] = None
     EXPERIMENTAL_WEIGHT_FILENAMES: ClassVar[frozenset[str]] = frozenset()
+    # Dataset-variant weight suffixes (e.g. "visdrone" accepts
+    # ``LibreYOLO9P2s-visdrone.pt``). Families that publish checkpoints
+    # trained on a non-default dataset opt in; the variant stays part of the
+    # Hugging Face repo name in ``get_download_url``.
+    WEIGHT_VARIANTS: ClassVar[tuple[str, ...]] = ()
 
     # Batched-predict policy: True when ``_preprocess`` yields stackable
     # (1, C, H, W) tensors and every tensor in the ``_forward`` output keeps
@@ -304,6 +309,22 @@ class BaseModel(ABC):
     # Concrete defaults — subclasses may override
     # =========================================================================
 
+    def get_distill_config(self) -> Dict:
+        """Return distillation config for this model instance.
+
+        Returns:
+            Dict with keys:
+                - tap_points: List[str] — module paths for forward hooks
+                - channels: List[int] — channel dimensions per tap point
+                - strides: List[int] — spatial strides per tap point
+
+        Subclasses that support distillation must override this method.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_distill_config(). "
+            f"Distillation is not yet supported for the '{self.FAMILY}' family."
+        )
+
     def _get_valid_sizes(self) -> List[str]:
         return list(self._get_task_input_sizes().keys())
 
@@ -418,7 +439,15 @@ class BaseModel(ABC):
             suffix_group = rf"(?P<task>{suffixes}){optional}"
         else:
             suffix_group = ""
-        return re.compile(rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{ext}")
+        variant_group = ""
+        if cls.WEIGHT_VARIANTS:
+            variants = "|".join(
+                re.escape(variant.lower()) for variant in cls.WEIGHT_VARIANTS
+            )
+            variant_group = rf"(?P<variant>-(?:{variants}))?"
+        return re.compile(
+            rf"{prefix}(?P<size>{sizes_pattern}){suffix_group}{variant_group}{ext}"
+        )
 
     @classmethod
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
@@ -440,6 +469,16 @@ class BaseModel(ABC):
         if task_suffix:
             return normalize_task(task_suffix.lstrip("-"))
         return None
+
+    @classmethod
+    def detect_variant_from_filename(cls, filename: str) -> Optional[str]:
+        """Extract the dataset-variant suffix from a weight filename, if any."""
+        pattern = cls._filename_regex()
+        if pattern is None:
+            return None
+        m = pattern.search(filename.lower())
+        variant = m.groupdict().get("variant") if m else None
+        return variant.lstrip("-") if variant else None
 
     @classmethod
     def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
@@ -467,7 +506,9 @@ class BaseModel(ABC):
         task = cls.detect_task_from_filename(filename)
         task_suffix = task_to_suffix(task)
         suffix = f"-{task_suffix}" if task_suffix else ""
-        name = f"{cls.FILENAME_PREFIX}{size}{suffix}"
+        variant = cls.detect_variant_from_filename(filename)
+        variant_suffix = f"-{variant}" if variant else ""
+        name = f"{cls.FILENAME_PREFIX}{size}{suffix}{variant_suffix}"
         return f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
 
     @classmethod
@@ -725,6 +766,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if getattr(self, "task", "detect") == "restore":
+            raise ValueError(
+                "Test-time augmentation does not support restoration models yet. "
+                "Use augment=False for restore models."
             )
 
         from PIL import Image as PILImage
@@ -1000,6 +1046,15 @@ class BaseModel(ABC):
                 "Tracking does not support depth maps yet. "
                 "Use predict() for depth models."
             )
+        if task == "semantic":
+            raise NotImplementedError(
+                "Tracking does not support semantic segmentation yet. "
+                "Use predict() for semantic models."
+            )
+        if task == "restore":
+            raise NotImplementedError(
+                "Tracking does not support restoration models. Use predict()."
+            )
 
         from ...tracking import (
             ByteTracker,
@@ -1155,6 +1210,7 @@ class BaseModel(ABC):
             OBBValidator,
             PointValidator,
             PoseValidator,
+            RestoreValidator,
             SegmentationValidator,
             SemanticValidator,
             ValidationConfig,
@@ -1188,6 +1244,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if augment and self.task == "restore":
+            raise ValueError(
+                "Augmented validation does not support restoration models yet. "
+                "Use augment=False for restore models."
             )
 
         config = ValidationConfig(
@@ -1224,6 +1285,8 @@ class BaseModel(ABC):
             validator_cls = SemanticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "restore":
+            validator_cls = RestoreValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

@@ -28,7 +28,7 @@ evidence-based, and scoped to the PR under review.
 - Cross-task checkpoint loads fail.
 - Not every family supports every task.
 - YOLO9 and RF-DETR anchor coverage.
-- Public APIs follow Ultralytics-style conventions.
+- Public APIs follow the de-facto YOLO CLI/API conventions.
 - Explicit user kwargs beat defaults.
 - CLI defaults are family-derived.
 - Config dataclasses define training truth.
@@ -39,7 +39,7 @@ evidence-based, and scoped to the PR under review.
 - Per-rank loaders divide global batch.
 - Python multi-GPU training auto-spawns DDP.
 - Torchrun owns rank and device environment.
-- DDP loss scales by world size.
+- DDP losses are mean-normalized (locally, or global-sum/world_size); gradient averaging needs no world-size scaling.
 - Rank zero owns side effects.
 - Autobatch returns rank-divisible global batches.
 - Unit tests prove CPU-safe API behavior.
