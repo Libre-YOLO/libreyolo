@@ -39,13 +39,22 @@ opened yourself.
 
 ### 1. Branch
 
+First resolve the remote that points at `LibreYOLO/libreyolo` and use it
+everywhere below (do not hardcode `upstream`; a fresh clone may only have
+`origin`). This same `$REMOTE` is reused at the push step:
+
+```bash
+REMOTE=$(git remote -v | awk 'tolower($0) ~ /github.com[:\/]libreyolo\/libreyolo/ {print $1; exit}')
+[ -n "$REMOTE" ] || { echo "no remote points at LibreYOLO/libreyolo; add one first"; exit 1; }
+```
+
 Branch off up-to-date dev, named `<issue-number>-<short-slug>` when there
 is an issue (repo convention, e.g. `477-add-deblurring`), otherwise a short
 descriptive slug:
 
 ```bash
-git fetch upstream
-git switch -c 512-fix-thing upstream/dev
+git fetch "$REMOTE"
+git switch -c 512-fix-thing "$REMOTE/dev"
 ```
 
 If the work already sits on a correctly-named branch, reuse it. If the work
@@ -68,15 +77,10 @@ Skills/docs-only changes have no tests to run; say so and move on.
 
 ### 3. Push and hand over the one-click PR link
 
-Push to the remote that points at `LibreYOLO/libreyolo`. It is normally
-named `upstream` here (`origin` is dead), but a fresh clone or a
-colleague's worktree may only have `origin`, so **resolve the remote before
-pushing** rather than assuming `upstream` exists:
+Push through the same `$REMOTE` resolved in step 1 (normally `upstream`
+here; `origin` is dead):
 
 ```bash
-# pick the remote whose URL is LibreYOLO/libreyolo; do not hardcode 'upstream'
-REMOTE=$(git remote -v | awk '/LibreYOLO\/libreyolo/ {print $1; exit}')
-[ -n "$REMOTE" ] || { echo "no remote points at LibreYOLO/libreyolo; add one first"; exit 1; }
 git push -u "$REMOTE" <branch>
 ```
 

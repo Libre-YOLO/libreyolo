@@ -324,10 +324,14 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    ```
 
    The human sets the title, pastes `changelog.md`, and publishes; that is
-   what creates the tag and fires `publish.yml`. Only if the user explicitly
-   asks you to prepare a draft, run
-   `gh release create vX.Y.Z -R LibreYOLO/libreyolo --target release --title "LibreYOLO vX.Y.Z" --notes-file changelog.md --draft`
-   and tell them a draft now exists for them to review, publish, or delete.
+   what creates the tag and fires `publish.yml`.
+
+   Do **not** run `gh release create` yourself, even with `--draft`. The gh
+   CLI creates the `vX.Y.Z` git tag up front for a draft ("if a matching git
+   tag does not yet exist, one will automatically get created"), and
+   `publish.yml` fires on `v*` tag pushes, so an agent-created draft can push
+   a release tag and kick off the publish workflow before the human has
+   decided anything. Tag creation stays a human action.
 4. **Approve the publish.** The run pauses on the `pypi` GitHub Environment
    for a manual approval (the job shows as "Publish to PyPI"). This is a
    human-required click; the agent never approves it.
