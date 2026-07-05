@@ -47,7 +47,8 @@ file = name + ".pt"
 | YOLO4 | `LibreYOLO4` | `LibreYOLO4b.pt` (public-domain Darknet) |
 | YOLO7 | `LibreYOLO7` | `LibreYOLO7b.pt` (MIT MultimediaTechLab/YOLO) |
 | YOLO9 | `LibreYOLO9` | `LibreYOLO9m.pt` |
-| RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt` |
+| YOLO9-P2 | `LibreYOLO9P2` | `LibreYOLO9P2s.pt`, `LibreYOLO9P2s-visdrone.pt` (dataset-variant suffix) |
+| RFDETR | `LibreRFDETR` | `LibreRFDETRn.pt`, `LibreRFDETRn-seg.pt`, `LibreRFDETRx-pose.pt` |
 | RTDETR | `LibreRTDETR` | `LibreRTDETRr50.pt` |
 | RTDETRv2 | `LibreRTDETRv2` | `LibreRTDETRv2r50.pt` |
 | RTDETRv4 | `LibreRTDETRv4` | `LibreRTDETRv4s.pt` |
@@ -58,6 +59,21 @@ file = name + ".pt"
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
+| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
+| PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
+| EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
+| DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
+| DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
+| FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
+
+Never-upload families: **L2CS** (Gaze360 terms forbid redistribution) and any
+weight whose upstream/training-data license fails the gate in
+`skills/libreyolo-license-audit`. DepthAnythingV2 `b`/`l`/`g` weights are
+CC-BY-NC; hosting them is a maintainer decision, not a default. The
+open-vocabulary and SAM/VLM tiers ship HF *snapshot directories*
+(`LibreGroundingDINOt`, `LibreOWLv2b16`, ...), not single `.pt` files; their
+repos mirror upstream snapshot layout plus card, so the 5-file contract below
+does not apply verbatim (follow the existing mirror repos).
 
 **Ask the user** if: the size code isn't obvious, the family isn't one of the above, or the filename doesn't match what the loader at `libreyolo/models/base/model.py:get_download_url` builds. Do not guess.
 
@@ -83,6 +99,9 @@ LibreYOLO9t.pt, LibreYOLO9s.pt, LibreYOLO9m.pt, LibreYOLO9c.pt,
 
 LibreYOLO9E2Et.pt, LibreYOLO9E2Es.pt, LibreYOLO9E2Em.pt,
 LibreYOLO9E2Ec.pt,
+
+LibreYOLO9P2t.pt, LibreYOLO9P2s.pt,
+LibreYOLO9P2t-visdrone.pt, LibreYOLO9P2s-visdrone.pt,
 
 LibreYOLONASs.pt, LibreYOLONASm.pt, LibreYOLONASl.pt,
 LibreYOLONASn-pose.pt, LibreYOLONASs-pose.pt,
@@ -115,7 +134,9 @@ LibreRTMDetl.pt, LibreRTMDetx.pt,
 
 LibreRFDETRn.pt, LibreRFDETRs.pt, LibreRFDETRm.pt,
 LibreRFDETRl.pt, LibreRFDETRn-seg.pt, LibreRFDETRs-seg.pt,
-LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt,
+LibreRFDETRm-seg.pt, LibreRFDETRl-seg.pt, LibreRFDETRx-pose.pt,
+LibreRFDETRn-obb.pt, LibreRFDETRs-obb.pt, LibreRFDETRm-obb.pt,
+LibreRFDETRl-obb.pt,
 
 LibreECs.pt, LibreECm.pt, LibreECl.pt, LibreECx.pt,
 LibreECs-pose.pt, LibreECm-pose.pt, LibreECl-pose.pt,
@@ -133,8 +154,33 @@ LibreEfficientNetV2b2-cls.pt, LibreEfficientNetV2b3-cls.pt,
 LibreResNet18-cls.pt, LibreResNet34-cls.pt,
 LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 
-LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt
+LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
+
+LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
+
+LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
+
+LibreEoMTl-sem.pt,
+
+LibreDINOv2n.pt, LibreDINOv2s.pt, LibreDINOv2m.pt, LibreDINOv2l.pt,
+LibreDINOv2n-cls.pt, LibreDINOv2s-cls.pt, LibreDINOv2m-cls.pt,
+LibreDINOv2l-cls.pt,
+
+LibreDepthAnythingV2s-depth.pt, LibreDepthAnythingV2b-depth.pt,
+LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
+
+LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
+
+License caveats inside the list: DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
+(maintainer decision to host); `-visdrone` variants are a research preview
+under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
+the license stated loudly on the card); FOMO weights have no cleared hosting
+license yet. A name being *valid* does not make it *hostable*; run the gate.
+
+The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
+`docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in
+their `model.py` may carry one, and plain COCO-default weights never do.
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
@@ -227,9 +273,10 @@ Rules:
 
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
-- **No slug exists** for `yolo9_e2e`, `l2cs`, RTMDet, the VLM tier, or the
-  Darknet-lineage families (`yolo2`, `yolo3`, `yolo4`) and `yolo7` — omit the
-  Benchmarks section and tell the user.
+- **No slug exists** for `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
+  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo2`, `yolo3`,
+  `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
+  Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
   [LibreYOLO/vision-analysis](https://github.com/LibreYOLO/vision-analysis);

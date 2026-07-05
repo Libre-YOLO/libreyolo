@@ -92,7 +92,7 @@ Every file carries `pytest.mark.e2e` plus more specific markers. Compose with
 | **Export backends** | `export_backend` + `supported_backend`/`experimental_backend` + backend | `test_onnx` (onnx, *supported*), `test_torchscript`, `test_openvino`, `test_ncnn`, `test_tensorrt` (trt), `test_coreml_roundtrip` (macOS), `test_yolonas_pose_export` |
 | **Inference / parity** | `general_nightly`, plus family/task | `test_deterministic_inference`, `test_openvocab_inference`, `test_rfdetr_keypoint_parity`, `test_weight_requirements` |
 | **Training** | `rf1`, `rf5`, `slow`, `flagship_nightly` | `test_rf1_training` (rf1), `test_rf5_training` (rf5), `test_training_regression`, `test_rfdetr_lora`, `test_rfdetr_seg_training` |
-| **Task / family tiers** | `fomo`, `l2cs`, `sam`, `vlm`, `openvocab`, `yolonas` | `test_fomo`, `test_l2cs_gaze`, `test_sam_smoke`, `test_lfm2_vlm_smoke`, `test_yolonas`, `test_sam3dbody_contract` |
+| **Task / family tiers** | `fomo`, `l2cs`, `sam`, `vlm`, `openvocab`, `yolonas` | `test_fomo`, `test_l2cs_gaze`, `test_sam_smoke`, `test_sam2_smoke`, `test_mobilesam_smoke`, `test_lfm2_vlm_smoke`, `test_yolonas`, `test_sam3dbody_contract` |
 | **Pipelines** | `flagship_nightly`, family | `test_video`, `test_tracking` (CUDA-only), `test_val_coco128`, `test_doctor_coco8`, `cli/test_cli` |
 
 Common selections:

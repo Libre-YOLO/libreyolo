@@ -202,6 +202,9 @@ Compact rows — clone these directly for the newer archetypes:
 | **MobileNetV4 / ConvNeXt / EfficientNetV2 / ResNet** | classify backbone | classify | production | shared `BaseTrainer` classify path; parity vs timm is bit-identical (`max_abs_diff == 0`) |
 | **CLIP** | dual-tower zero-shot | classify | inference-only | pure-torch towers (no open_clip at runtime); `set_classes` API; `clip_validator.py` |
 | **DINOv2** | ViT | semantic, classify | via `RFDETRConfig` | lazy-registered together with RF-DETR (transformers dep) |
+| **YOLO9-P2** (`models/yolo9_p2/`) | YOLO-grid (child of YOLO9) | detect | production | stride-4 P2 head for small objects; sizes t/s; the `WEIGHT_VARIANTS = ("visdrone",)` precedent for dataset-variant weight suffixes |
+| **Darknet lineage: YOLO2/3/4** (`models/darknet/` + thin `models/yolo{2,3,4}/`) | anchor-grid CNN | detect | inference-only | one shared `DarknetFamily` (cfg parser + blocks + anchor decode) serves all three; public-domain upstream; converter `weights/convert_darknet_weights.py`, parity via `weights/parity_darknet.py` |
+| **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | inference-only | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py` |
 
 ### 4.1 Sibling factory tiers (not `BaseModel` families)
 
@@ -213,8 +216,8 @@ They live in sibling factories with their own contracts:
   (`models/grounding_dino/`) and OWLv2 (`models/owlv2/`) are aliased today;
   the native OMDet-Turbo port (`models/omdet_turbo/`) is built for this tier.
   Shared towers live in `models/bert/` (text) and `models/swin/` (vision).
-- **`LibreSAM`** — promptable segmentation: SAM (`models/sam/`), MobileSAM
-  (`models/mobilesam/`).
+- **`LibreSAM`** — promptable segmentation: SAM-1 and SAM-2 (`models/sam/`),
+  MobileSAM (`models/mobilesam/`).
 - **`LibreVLM`** (`models/vlm/`) — vision-language models.
 
 If your port is prompt-driven, clone one of these tiers instead of a factory
