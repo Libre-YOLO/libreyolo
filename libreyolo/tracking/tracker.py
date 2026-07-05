@@ -163,7 +163,10 @@ class ByteTracker:
             if remaining_high_dets
             else np.empty((0, 4))
         )
+        remaining_high_scores = np.array([d.score for d in remaining_high_dets])
         cost3 = iou_distance(unconfirmed, remaining_high_bboxes)
+        if cfg.fuse_score and len(remaining_high_scores) > 0:
+            cost3 = fuse_score(cost3, remaining_high_scores)
         matches3, u_unconf, u_det_final = linear_assignment(
             cost3, cfg.match_thresh_unconfirmed
         )
@@ -176,6 +179,7 @@ class ByteTracker:
         # Remove unmatched unconfirmed tracks.
         for i in u_unconf:
             unconfirmed[i].mark_removed()
+            self.removed_stracks.append(unconfirmed[i])
 
         # ------------------------------------------------------------------
         # 6. Initialize new tracks from remaining unmatched high-conf detections
@@ -195,6 +199,7 @@ class ByteTracker:
         for t in self.lost_stracks:
             if self._frame_id - t.frame_id > max_time_lost:
                 t.mark_removed()
+                self.removed_stracks.append(t)
 
         # ------------------------------------------------------------------
         # 8. Update track lists

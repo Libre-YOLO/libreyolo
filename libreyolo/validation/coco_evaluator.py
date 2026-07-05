@@ -147,11 +147,21 @@ class COCOEvaluator:
 
         # stats layout: [mAP, mAP50, mAP75, AP_s, AP_m, AP_l,
         #                AR1, AR10, AR100, AR_s, AR_m, AR_l]
-        precision = self._mean_valid(coco_eval.eval["precision"][:, :, :, 0, -1])
-        recall = self._mean_valid(coco_eval.eval["recall"][:, :, 0, -1])
+        #
+        # NOTE: these are NOT a precision/recall pair at a fixed operating
+        # point. ``precision`` here is the mean of the precision array at the
+        # last maxDet over all IoU/recall/class bins == mAP@[.5:.95] (stats[0]),
+        # and ``recall`` == AR@100 (stats[8]). They are emitted under the
+        # honest ``map_5095`` / ``ar_100`` keys below; the legacy
+        # ``precision`` / ``recall`` keys are kept as aliases for backward
+        # compatibility and must not be plotted as a distinct P/R.
+        map_5095 = self._mean_valid(coco_eval.eval["precision"][:, :, :, 0, -1])
+        ar_100 = self._mean_valid(coco_eval.eval["recall"][:, :, 0, -1])
         return {
-            "precision": precision,
-            "recall": recall,
+            "map_5095": map_5095,
+            "ar_100": ar_100,
+            "precision": map_5095,  # alias (deprecated): == map_5095, not real P
+            "recall": ar_100,  # alias (deprecated): == ar_100, not real R
             "mAP": float(coco_eval.stats[0]),
             "mAP50": float(coco_eval.stats[1]),
             "mAP75": float(coco_eval.stats[2]),
@@ -169,8 +179,10 @@ class COCOEvaluator:
     def _empty_metrics(self) -> Dict[str, float]:
         """Return all-zero metrics dict."""
         return {
-            "precision": 0.0,
-            "recall": 0.0,
+            "map_5095": 0.0,
+            "ar_100": 0.0,
+            "precision": 0.0,  # alias (deprecated): == map_5095, not real P
+            "recall": 0.0,  # alias (deprecated): == ar_100, not real R
             "mAP": 0.0,
             "mAP50": 0.0,
             "mAP75": 0.0,

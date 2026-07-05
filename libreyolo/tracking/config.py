@@ -18,7 +18,9 @@ class TrackConfig:
         track_buffer: Frames to keep lost tracks before removal.
         frame_rate: Video frame rate (used to scale track_buffer).
         fuse_score: Fuse detection score with IoU for first association.
-        minimum_consecutive_frames: Frames a track must be matched before it is confirmed.
+        minimum_consecutive_frames: Total matched frames (hits) a track must
+            accumulate before it is confirmed and emitted (not required to be
+            consecutive).
     """
 
     track_high_thresh: float = 0.25

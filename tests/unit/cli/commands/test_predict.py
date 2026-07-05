@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from libreyolo.cli.commands import predict as predict_module
 from libreyolo.cli.commands.predict import predict_cmd
 from libreyolo.cli.parsing import KeyValueCommand
-from libreyolo.utils.results import Points, Probs, Results
+from libreyolo.utils.results import Points, Probs, RestoredImage, Results
 
 pytestmark = pytest.mark.unit
 
@@ -59,6 +59,26 @@ class _FakePointModel:
             path=str(source),
             names={0: "person"},
             points=Points(torch.tensor([[6.0, 5.0, 0.0, 0.9]])),
+        )
+
+
+class _FakeRestoreModel:
+    FAMILY = "nafnet"
+    task = "restore"
+    size = "s"
+    device = "cpu"
+
+    def _get_input_size(self) -> int:
+        return 256
+
+    def __call__(self, source, **kwargs):
+        del kwargs
+        return Results(
+            boxes=None,
+            orig_shape=(10, 12),
+            path=str(source),
+            names={0: "image"},
+            restored=RestoredImage(torch.zeros((10, 12, 3), dtype=torch.uint8)),
         )
 
 
@@ -128,3 +148,46 @@ def test_predict_formats_point_results(monkeypatch, tmp_path):
     assert det["class_id"] == 0
     assert det["confidence"] == 0.9
     assert det["point_xy"] == [6.0, 5.0]
+
+
+def test_predict_formats_restore_results(monkeypatch, tmp_path):
+    source = tmp_path / "image.jpg"
+    Image.new("RGB", (12, 10)).save(source)
+    fake_model = _FakeRestoreModel()
+
+    monkeypatch.setattr(
+        predict_module,
+        "resolve_model_or_exit",
+        lambda out, model: model,
+    )
+    monkeypatch.setattr(
+        predict_module,
+        "load_model_or_exit",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    json_result = runner.invoke(
+        _make_app(),
+        [
+            f"source={source}",
+            "model=fake-restore.pt",
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0
+    data = json.loads(json_result.stdout)
+    item = data["results"][0]
+    assert item["detections"] == []
+    assert item["restored"] == {"shape": [10, 12, 3], "dtype": "uint8"}
+
+    human_result = runner.invoke(
+        _make_app(),
+        [
+            f"source={source}",
+            "model=fake-restore.pt",
+        ],
+    )
+
+    assert human_result.exit_code == 0
+    assert "restored" in human_result.stdout

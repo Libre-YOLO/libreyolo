@@ -4,29 +4,35 @@ ECPose uses the same preprocessing contract at train, validation, and
 inference time: resize directly to the square model input, convert BGR to RGB,
 scale to [0, 1], then apply ImageNet normalization. No letterbox padding is
 used, so non-square images intentionally stretch to the model input.
+
+The keypoint-aware helper implementations live in
+:mod:`libreyolo.data.augment.pose`; this module keeps only the EC-specific
+pieces (direct-stretch target scaling and the 114 affine border fill — the
+YOLO-NAS pose recipe fills with 127).
 """
 
 from __future__ import annotations
 
-import random
+import random  # noqa: F401  (historical module attribute)
 from typing import Optional, Sequence
 
-import cv2
+import cv2  # noqa: F401  (historical module attribute)
 import numpy as np
 
+from ...data.augment.constants import (  # noqa: F401
+    IMAGENET_MEAN as _IMAGENET_MEAN,
+    IMAGENET_STD as _IMAGENET_STD,
+)
+from ...data.augment.pose import (
+    AFFINE_INTERPOLATIONS as _AFFINE_INTERPOLATIONS,
+    brightness_contrast as _brightness_contrast,
+    build_target as _build_target,
+    finalize_image as _finalize_image,
+    random_affine_pose,
+)
 from ...training.augment import augment_hsv
 
-_AFFINE_INTERPOLATIONS = {
-    "nearest": cv2.INTER_NEAREST,
-    "linear": cv2.INTER_LINEAR,
-    "cubic": cv2.INTER_CUBIC,
-    "area": cv2.INTER_AREA,
-    "lanczos": cv2.INTER_LANCZOS4,
-}
-
 _AFFINE_BORDER_VALUE = 114
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
 
 
 def _as_hw(input_dim) -> tuple[int, int]:
@@ -35,24 +41,6 @@ def _as_hw(input_dim) -> tuple[int, int]:
     if len(input_dim) != 2:
         raise ValueError(f"input_dim must be int or (h, w), got {input_dim!r}")
     return int(input_dim[0]), int(input_dim[1])
-
-
-def _finalize_image(img: np.ndarray, to_rgb: bool, imagenet_norm: bool) -> np.ndarray:
-    """HWC uint8 BGR -> CHW float32, optionally RGB + ImageNet-normalized."""
-    if to_rgb:
-        img = img[:, :, ::-1]
-    img = np.ascontiguousarray(img.transpose(2, 0, 1), dtype=np.float32)
-    img /= 255.0
-    if imagenet_norm:
-        img = (img - _IMAGENET_MEAN) / _IMAGENET_STD
-    return np.ascontiguousarray(img, dtype=np.float32)
-
-
-def _brightness_contrast(img: np.ndarray) -> None:
-    """In-place brightness/contrast jitter for uint8 BGR images."""
-    alpha = random.uniform(0.8, 1.2)
-    beta = random.uniform(-0.2, 0.2) * 255.0
-    img[:] = np.clip(img.astype(np.float32) * alpha + beta, 0, 255).astype(np.uint8)
 
 
 def _random_affine(
@@ -65,68 +53,17 @@ def _random_affine(
     scale_range: tuple[float, float],
     interpolation: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Apply a keypoint-aware affine transform in original image space."""
-    h, w = img.shape[:2]
-    angle = random.uniform(-degrees, degrees)
-    scale = random.uniform(*scale_range)
-    tx = random.uniform(-translate, translate) * w
-    ty = random.uniform(-translate, translate) * h
-
-    matrix = cv2.getRotationMatrix2D((w * 0.5, h * 0.5), angle, scale)
-    matrix[:, 2] += (tx, ty)
-    warped = cv2.warpAffine(
+    """EC affine: shared keypoint-aware affine with the EC 114 border fill."""
+    return random_affine_pose(
         img,
-        matrix,
-        dsize=(w, h),
-        flags=interpolation,
-        borderValue=(_AFFINE_BORDER_VALUE,) * 3,
+        bboxes,
+        kpts,
+        degrees=degrees,
+        translate=translate,
+        scale_range=scale_range,
+        interpolation=interpolation,
+        border_value=_AFFINE_BORDER_VALUE,
     )
-
-    if len(bboxes) == 0:
-        return warped, bboxes, kpts
-
-    xyxy = np.concatenate(
-        [
-            bboxes[:, :2] - bboxes[:, 2:] * 0.5,
-            bboxes[:, :2] + bboxes[:, 2:] * 0.5,
-        ],
-        axis=1,
-    )
-    corners = np.stack(
-        [
-            xyxy[:, [0, 1]],
-            xyxy[:, [2, 1]],
-            xyxy[:, [2, 3]],
-            xyxy[:, [0, 3]],
-        ],
-        axis=1,
-    )
-    ones = np.ones((*corners.shape[:2], 1), dtype=np.float32)
-    warped_corners = np.concatenate([corners, ones], axis=2) @ matrix.T
-    new_xyxy = np.concatenate(
-        [warped_corners.min(axis=1), warped_corners.max(axis=1)], axis=1
-    )
-    new_xyxy[:, [0, 2]] = new_xyxy[:, [0, 2]].clip(0, w)
-    new_xyxy[:, [1, 3]] = new_xyxy[:, [1, 3]].clip(0, h)
-    bboxes[:, :2] = (new_xyxy[:, :2] + new_xyxy[:, 2:]) * 0.5
-    bboxes[:, 2:] = new_xyxy[:, 2:] - new_xyxy[:, :2]
-
-    points = kpts[..., :2]
-    warped_points = (
-        np.concatenate([points, np.ones((*points.shape[:2], 1), dtype=np.float32)], axis=2)
-        @ matrix.T
-    )
-    kpts[..., :2] = warped_points
-    outside = (
-        (kpts[..., 0] < 0)
-        | (kpts[..., 0] >= w)
-        | (kpts[..., 1] < 0)
-        | (kpts[..., 1] >= h)
-    )
-    kpts[..., 0] = kpts[..., 0].clip(0, w)
-    kpts[..., 1] = kpts[..., 1].clip(0, h)
-    kpts[..., 2] = np.where(outside, 0.0, kpts[..., 2])
-    return warped, bboxes, kpts
 
 
 def _scale_targets_direct(
@@ -146,32 +83,6 @@ def _scale_targets_direct(
     bboxes[:, [1, 3]] *= scale_y
     kpts[..., 0] *= scale_x
     kpts[..., 1] *= scale_y
-
-
-def _build_target(
-    cls: np.ndarray,
-    bboxes_px: np.ndarray,
-    kpts_px: np.ndarray,
-    num_keypoints: int,
-    max_labels: int,
-) -> np.ndarray:
-    target = np.zeros((max_labels, 5 + 3 * num_keypoints), dtype=np.float32)
-    if len(bboxes_px) == 0:
-        return target
-
-    keep = (
-        (bboxes_px[:, 2] * bboxes_px[:, 3] > 1.0)
-        & ((kpts_px[..., 2] > 0).sum(axis=1) >= 1)
-    )
-    bboxes_px, cls, kpts_px = bboxes_px[keep], cls[keep], kpts_px[keep]
-    n = min(len(bboxes_px), max_labels)
-    if n == 0:
-        return target
-
-    target[:n, 0] = cls[:n]
-    target[:n, 1:5] = bboxes_px[:n]
-    target[:n, 5:] = kpts_px[:n].reshape(len(kpts_px), -1)[:n]
-    return target
 
 
 class ECPoseTrainTransform:

@@ -47,6 +47,7 @@ _METADATA_CONVERSION_HELP = (
 from .ec.model import LibreEC  # noqa: E402
 from .yolox.model import LibreYOLOX  # noqa: E402
 from .yolo9_e2e.model import LibreYOLO9E2E  # noqa: E402
+from .yolo9_p2.model import LibreYOLO9P2  # noqa: E402  (must precede LibreYOLO9: P2 checkpoints also match the base backbone/neck patterns)
 from .yolo9.model import LibreYOLO9  # noqa: E402
 from .yolonas.model import LibreYOLONAS  # noqa: E402
 from .deimv2.model import LibreDEIMv2  # noqa: E402
@@ -57,11 +58,20 @@ from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
+# Darknet-lineage detectors (public domain). Each keys can_load on a unique
+# family prefix (yolo2./yolo3./yolo4.) so registration order is not sensitive.
+from .yolo3.model import LibreYOLO3  # noqa: E402
+from .yolo4.model import LibreYOLO4  # noqa: E402
+from .yolo2.model import LibreYOLO2  # noqa: E402
+from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
+from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
@@ -477,6 +487,13 @@ def LibreYOLO(
             f"Registered model families: {', '.join(registered)}."
         )
 
+    if matched_cls.FAMILY == "pidnet" and not has_v1_metadata:
+        raise ValueError(
+            "Raw upstream PIDNet checkpoints must be converted before loading. "
+            "Use weights/convert_pidnet_weights.py to create a LibreYOLO "
+            "checkpoint with Cityscapes semantic metadata."
+        )
+
     # Auto-detect size
     if size is None:
         if matched_cls.FAMILY == "rfdetr":
@@ -510,8 +527,8 @@ def LibreYOLO(
     # the fresh model init too early. This matters for YOLO9-t where the class
     # branch width depends on COCO-vs-custom ``nc`` during construction.
     if nb_classes is None:
-        if matched_cls.FAMILY in ("rfdetr", "dinov2"):
-            # RF-DETR / DINOv2 build their heads to the checkpoint's class width.
+        if matched_cls.FAMILY in ("rfdetr", "dinov2", "eomt"):
+            # Transformer dense heads build to the checkpoint's class width.
             # The 80 default below is a YOLO9-family convention that would
             # mis-size the head for a metadata-wrapped checkpoint.
             nb_classes = matched_cls.detect_nb_classes(weights_dict)
@@ -564,7 +581,9 @@ def LibreYOLO(
         supported_tasks=matched_cls.SUPPORTED_TASKS,
     )
     family_kwargs = (
-        {"reg_max": reg_max} if matched_cls.FAMILY in ("yolo9", "yolo9_e2e") else {}
+        {"reg_max": reg_max}
+        if matched_cls.FAMILY in ("yolo9", "yolo9_e2e", "yolo9_p2")
+        else {}
     )
     if matched_cls.FAMILY == "yolo9" and resolved_task == "pose":
         detected_keypoints = matched_cls.detect_num_keypoints(weights_dict)
@@ -610,6 +629,7 @@ __all__ = [
     "LibreYOLOX",
     "LibreYOLO9",
     "LibreYOLO9E2E",
+    "LibreYOLO9P2",
     "LibreYOLONAS",
     "LibreDFINE",
     "LibreDEIM",
@@ -617,11 +637,18 @@ __all__ = [
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
+    "LibreYOLO3",
+    "LibreYOLO4",
+    "LibreYOLO2",
+    "LibreYOLO7",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreNAFNet",
+    "LibreEoMT",
+    "LibrePIDNet",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",

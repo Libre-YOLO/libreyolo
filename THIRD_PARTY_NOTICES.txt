@@ -82,13 +82,56 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/augment.py).
 
 --------------------------------------------------------------------
-YOLO (MultimediaTechLab, successor to WongKinYiu/YOLO)
+YOLO (MultimediaTechLab/YOLO)
 --------------------------------------------------------------------
 Source: https://github.com/MultimediaTechLab/YOLO
 License: MIT
 Copyright (c) 2024 Kin-Yiu Wong and Hao-Tang Tsui
-Used for: YOLO9 model family (libreyolo/models/yolo9/), including the
-          loss port in libreyolo/models/yolo9/loss.py.
+Used for: YOLO9 model family (libreyolo/models/yolo9/ and
+          libreyolo/models/yolo9_e2e/): the architecture blocks and
+          detection head in nn.py and the loss port in loss.py.
+
+--------------------------------------------------------------------
+RepVGG (DingXiaoH)
+--------------------------------------------------------------------
+Source: https://github.com/DingXiaoH/RepVGG
+License: MIT
+Copyright (c) 2020 DingXiaoH
+Used for: RepConv fuse / re-parameterization logic
+          (libreyolo/models/yolo9/nn.py RepConvN.fuse_convs).
+
+--------------------------------------------------------------------
+mmdetection (OpenMMLab)
+--------------------------------------------------------------------
+Source: https://github.com/open-mmlab/mmdetection
+License: Apache License 2.0
+Copyright (c) OpenMMLab. All rights reserved.
+Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
+          port in nn.py; QualityFocalLoss, GIoULoss,
+          DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
+          Published RTMDet COCO weights were trained with mmdetection.
+
+--------------------------------------------------------------------
+PicoDet (PaddleDetection / Picodet_Pytorch)
+--------------------------------------------------------------------
+Source: https://github.com/Bo396543018/Picodet_Pytorch (direct source,
+        a PyTorch port built on mmdetection), from
+        https://github.com/PaddlePaddle/PaddleDetection (original)
+License: Apache License 2.0 (all of Picodet_Pytorch, PaddleDetection,
+         and mmdetection)
+Copyright (c) PaddlePaddle Authors; OpenMMLab.
+Used for: PICODET model family (libreyolo/models/picodet/).
+
+--------------------------------------------------------------------
+PIDNet (XuJiacong)
+--------------------------------------------------------------------
+Source: https://github.com/XuJiacong/PIDNet
+License: MIT
+Copyright (c) 2022 Jiacong Xu
+Used for: PIDNet semantic segmentation family
+          (libreyolo/models/pidnet/). Converted Cityscapes weights are
+          MIT-licensed PIDNet weights; the Cityscapes dataset itself is not
+          redistributed by LibreYOLO.
 
 --------------------------------------------------------------------
 SuperGradients / YOLO-NAS
@@ -155,6 +198,58 @@ Used for: DINOv2-with-Registers reference implementation that
           libreyolo/models/rfdetr/dinov2.py adapts to add windowed
           self-attention. Also a runtime dependency loaded via
           AutoBackbone for the non-windowed DinoV2 path.
+
+--------------------------------------------------------------------
+EoMT (Mobile Perception Systems Lab at TU/e)
+--------------------------------------------------------------------
+Source: https://github.com/tue-mps/eomt
+License: MIT
+Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
+Citation: Kerssies, T., Cavagnero, N., Hermans, A., Norouzi, N.,
+          Averta, G., Leibe, B., Dubbelman, G., and de Geus, D.
+          "Your ViT is Secretly an Image Segmentation Model." CVPR 2025.
+Used for: LibreEoMT semantic segmentation family
+          (libreyolo/models/eomt/). Runtime execution uses the Apache-2.0
+          Hugging Face Transformers EoMT implementation with converted
+          MIT-licensed DINOv2 EoMT-L ADE20K weights.
+
+NOTE - code vs. weights: LibreYOLO ships only the DINOv2-based ADE20K
+semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
+they depend on gated non-commercial DINOv3 weights.
+
+--------------------------------------------------------------------
+Grounding DINO (IDEA-Research)
+--------------------------------------------------------------------
+Source: https://github.com/IDEA-Research/GroundingDINO
+License: Apache License 2.0
+Copyright (c) 2023 IDEA-Research
+Citation: Liu, S., Zeng, Z., Ren, T., Li, F., Zhang, H., Yang, J.,
+          Li, C., Yang, J., Su, H., Zhu, J., and Zhang, L. "Grounding
+          DINO: Marrying DINO with Grounded Pre-Training for Open-Set
+          Object Detection." ECCV 2024.
+Used for: LibreGroundingDINO open-vocabulary detector. The shipped path
+          (libreyolo/models/openvocab/grounding_dino.py) runs through the
+          Apache-2.0 Hugging Face Transformers GroundingDinoForObjectDetection
+          implementation. A native clean-room port derived from the same
+          Apache-2.0 transformers reference also lives at
+          libreyolo/models/grounding_dino/. Weights are rehosted at
+          LibreYOLO/LibreGroundingDINOt and LibreYOLO/LibreGroundingDINOb.
+
+--------------------------------------------------------------------
+OWLv2 / OWL-ViT (Google Research)
+--------------------------------------------------------------------
+Source: https://github.com/google-research/scenic (OWL-ViT / OWLv2)
+License: Apache License 2.0
+Copyright (c) 2023 Google LLC
+Citation: Minderer, M., Gritsenko, A., and Houlsby, N. "Scaling
+          Open-Vocabulary Object Detection." NeurIPS 2023.
+Used for: LibreOWLv2 open-vocabulary detector. The shipped path
+          (libreyolo/models/openvocab/owlv2.py) runs through the Apache-2.0
+          Hugging Face Transformers Owlv2ForObjectDetection implementation.
+          A native clean-room port derived from the same Apache-2.0
+          transformers reference also lives at libreyolo/models/owlv2/.
+          Weights are rehosted at LibreYOLO/LibreOWLv2b16 and
+          LibreYOLO/LibreOWLv2l14.
 
 --------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
@@ -247,6 +342,28 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+NAFNet (Megvii Research)
+--------------------------------------------------------------------
+Source: https://github.com/megvii-research/NAFNet
+License: MIT
+Copyright (c) 2022 Megvii Inc.
+Citation: Chen, L., Chu, X., Zhang, X., and Sun, J. "Simple Baselines
+          for Image Restoration." ECCV 2022.
+Used for: NAFNet restoration model family (libreyolo/models/nafnet/),
+          including the NAFBlock architecture and test-time local
+          converter logic. The LibreYOLO wrapper adds the restore-task
+          contract, paired train/validation plumbing, fixed-resolution
+          ONNX export metadata, and Results.restored payload.
+
+NOTE - code vs. weights/data: The NAFNet source code is MIT licensed.
+LibreYOLO does not bundle NAFNet pretrained checkpoint files. Some
+published GoPro-trained NAFNet weights do not carry an explicit
+standalone weights license; convert only weights that you have the
+right to use and redistribute. The GoPro deblurring dataset is separate
+from the NAFNet code and carries its own terms; users are responsible
+for dataset compliance.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models
@@ -321,3 +438,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------
+Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+--------------------------------------------------------------------
+Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+        https://github.com/AlexeyAB/darknet    (YOLOv4)
+License: Public domain ("YOLO LICENSE")
+Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+          The public-domain .cfg model definitions are bundled under
+          libreyolo/models/darknet/cfgs/; only the .cfg format and the
+          numerical behaviour of the Darknet layers are reproduced. No
+          Darknet C source is copied.
+
+YOLO LICENSE, Version 2, July 29 2016
+
+    0. Darknet is public domain.
+    1. Do whatever you want with it.
+    2. Stop emailing me about it!
+
+--------------------------------------------------------------------
+MultimediaTechLab/YOLO (YOLOv7, YOLOv9)
+--------------------------------------------------------------------
+Source: https://github.com/MultimediaTechLab/YOLO
+License: MIT
+Copyright (c) 2024 Kin-Yiu, Wong and Hao-Tang, Tsui
+Used for: the LibreYOLO7 family (native port of YOLOv7,
+          libreyolo/models/yolo7) and the LibreYOLO9 detection head. This is
+          the original authors' MIT re-release, NOT the GPL-3.0
+          WongKinYiu/yolov7 or WongKinYiu/yolov9. Module names mirror upstream
+          so the MIT-licensed weights load unchanged; the v7.yaml model
+          definition is bundled under libreyolo/models/yolo7/.
+
+MIT License
+
+Copyright (c) 2024 Kin-Yiu, Wong and Hao-Tang, Tsui
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.

@@ -78,10 +78,11 @@ def test_tflite_family_support_scaffold():
     exports = supported_tflite_exports()
     assert ("yolo9", "detect") in exports
     assert ("rfdetr", "detect") in exports
-    assert ("rfdetr", "seg") in exports
+    assert ("rfdetr", "segment") in exports
     assert ("rfdetr", "pose") in exports
     ensure_tflite_family_supported("yolo9", "detect")
     ensure_tflite_family_supported("rfdetr", "detect")
+    ensure_tflite_family_supported("rfdetr", "segment")
     with pytest.raises(NotImplementedError, match="task 'segment'"):
         ensure_tflite_family_supported("yolo9", "segment")
 

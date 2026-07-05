@@ -20,6 +20,29 @@ class YOLO9Trainer(BaseTrainer):
 
     artifact_model_families = ("yolo9", "yolo9_e2e")
 
+    # Module names inspected by get_freeze_groups, in freeze order.
+    # Subclasses with extra modules (e.g. yolo9_p2) extend these.
+    _BACKBONE_FREEZE_MODULES = (
+        "conv0",
+        "conv1",
+        "elan1",
+        "down2",
+        "elan2",
+        "down3",
+        "elan3",
+        "down4",
+        "elan4",
+        "spp",
+    )
+    _NECK_FREEZE_MODULES = (
+        "elan_up1",
+        "elan_up2",
+        "down1",
+        "elan_down1",
+        "down2",
+        "elan_down2",
+    )
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return YOLO9Config
@@ -37,30 +60,12 @@ class YOLO9Trainer(BaseTrainer):
         head = getattr(model, "head", None)
         groups: List[FreezeGroup] = []
         if backbone is not None:
-            for name in (
-                "conv0",
-                "conv1",
-                "elan1",
-                "down2",
-                "elan2",
-                "down3",
-                "elan3",
-                "down4",
-                "elan4",
-                "spp",
-            ):
+            for name in self._BACKBONE_FREEZE_MODULES:
                 module = getattr(backbone, name, None)
                 if module is not None:
                     groups.append((f"backbone.{name}", module))
         if neck is not None:
-            for name in (
-                "elan_up1",
-                "elan_up2",
-                "down1",
-                "elan_down1",
-                "down2",
-                "elan_down2",
-            ):
+            for name in self._NECK_FREEZE_MODULES:
                 module = getattr(neck, name, None)
                 if module is not None:
                     groups.append((f"neck.{name}", module))
@@ -70,7 +75,7 @@ class YOLO9Trainer(BaseTrainer):
 
     def create_transforms(self):
         preproc = YOLO9TrainTransform(
-            max_labels=100,
+            max_labels=getattr(self.config, "max_labels", 100),
             flip_prob=self.config.flip_prob,
             vertical_flip_prob=0.0,
             hsv_prob=self.config.hsv_prob,

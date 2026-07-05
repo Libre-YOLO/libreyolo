@@ -1,0 +1,26 @@
+LibreEoMT third-party notice
+============================
+
+LibreEoMT integrates EoMT (Encoder-only Mask Transformer) for semantic
+segmentation.
+
+Upstream:
+  Source: https://github.com/tue-mps/eomt
+  License: MIT
+  Copyright: Mobile Perception Systems Lab at TU/e and contributors
+
+Runtime reference:
+  Source: https://github.com/huggingface/transformers
+  License: Apache-2.0
+  Copyright: The HuggingFace Team and Mobile Perception Systems Lab at TU/e
+
+Backbone:
+  DINOv2 is Apache-2.0. LibreEoMT ships only the DINOv2-based ADE20K semantic
+  EoMT-L checkpoint. DINOv3 EoMT variants are excluded because they depend on
+  gated non-commercial DINOv3 weights.
+
+Weights:
+  The supported checkpoint is converted from
+  tue-mps/ade20k_semantic_eomt_large_512 and is MIT licensed by upstream.
+  ADE20K is a research dataset; users remain responsible for dataset-license
+  compliance when validating or fine-tuning.

@@ -2,9 +2,20 @@
 Neural network architecture for LibreYOLO yolo9.
 
 Supports yolo9-t (tiny), yolo9-s (small), yolo9-m (medium), and yolo9-c (compact/largest).
+
+The architecture blocks (Conv, ELAN/RepNCSPELAN, AConv/ADown, SPPELAN) and the
+detection head are ported and adapted from MultimediaTechLab/YOLO
+(https://github.com/MultimediaTechLab/YOLO, MIT License, Copyright (c) 2024
+Kin-Yiu, Wong and Hao-Tang, Tsui), the official MIT release of YOLOv9 — see
+``yolo/model/module.py`` and ``yolo/utils/bounding_box_utils.py`` there. The
+RepConv fuse/re-parameterization logic follows DingXiaoH/RepVGG (MIT License).
+
+LibreYOLO keeps its own module layout and state-dict key names
+(``backbone.*`` / ``neck.*`` / ``head.cv2|cv3|dfl``): they are the published
+LibreYOLO9 checkpoint format, and :mod:`libreyolo.models.yolo9.convert` maps
+upstream checkpoints onto it.
 """
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -453,32 +464,49 @@ class DFL(nn.Module):
 
 class DDetect(nn.Module):
     """
-    Decoupled Detection Head for yolo9.
-    Anchor-free detection with DFL for box regression.
+    Anchor-free, decoupled detection head for yolo9.
 
-    Uses grouped convolutions (groups=4) in the box branch.
+    Ported and adapted from MultimediaTechLab/YOLO (MIT): each feature-map
+    scale gets a box-regression tower and a class-score tower — the
+    ``anchor_conv`` / ``class_conv`` pair of ``yolo.model.module.Detection``,
+    replicated per scale as in ``MultiheadDetection`` — and inference decodes
+    LTRB distances against the anchor grid the way
+    ``yolo.utils.bounding_box_utils.Vec2Box`` does. The DFL integral over
+    ``reg_max`` bins (:class:`DFL`) turns per-side distributions into
+    distances first.
+
+    Checkpoint-format contract: the towers live in the ``cv2`` / ``cv3``
+    ``ModuleList``s and the integral module at ``dfl``. These attribute names
+    and the tower widths define the published LibreYOLO9 state-dict layout —
+    renaming them breaks every released and user-trained checkpoint, so treat
+    them as frozen API.
+
     Supports training mode with loss computation when targets are provided.
     """
 
-    dynamic = False
-    export = False
-    shape = None
-    anchors = torch.empty(0)
-    strides = torch.empty(0)
-
     @staticmethod
-    def _box_branch_width(input_channels, groups, output_channels, reg_max):
-        """Choose the hidden width used by the box-regression towers."""
-        grouped_width = ((input_channels // 4 + groups - 1) // groups) * groups
-        return max(grouped_width, output_channels, reg_max)
+    def _round_up(value, divisor):
+        """Smallest multiple of ``divisor`` that is >= ``value``."""
+        return ((value + divisor - 1) // divisor) * divisor
+
+    @classmethod
+    def _box_branch_width(cls, input_channels, groups, output_channels, reg_max):
+        """Box-tower hidden width, as in MMT ``Detection``: a quarter of the
+        first scale's channels rounded up to the group count, floored at the
+        distribution width."""
+        return max(
+            cls._round_up(input_channels // 4, groups),
+            output_channels,
+            reg_max,
+        )
 
     @staticmethod
     def _build_box_towers(input_channels, hidden_channels, output_channels, groups):
-        """Build box-regression towers for each feature-map scale."""
+        """Per-scale box-regression towers (MMT ``Detection.anchor_conv``)."""
         return nn.ModuleList(
             nn.Sequential(
                 Conv(channels, hidden_channels, 3),
-                Conv(hidden_channels, hidden_channels, 3, g=groups),
+                Conv(hidden_channels, hidden_channels, 3, groups=groups),
                 nn.Conv2d(hidden_channels, output_channels, 1, groups=groups),
             )
             for channels in input_channels
@@ -486,7 +514,7 @@ class DDetect(nn.Module):
 
     @staticmethod
     def _build_class_towers(input_channels, hidden_channels, num_classes):
-        """Build class-score towers for each feature-map scale."""
+        """Per-scale class-score towers (MMT ``Detection.class_conv``)."""
         return nn.ModuleList(
             nn.Sequential(
                 Conv(channels, hidden_channels, 3),
@@ -510,6 +538,16 @@ class DDetect(nn.Module):
         self.nl = len(ch)  # number of detection layers
         self.reg_max = reg_max
         self.no = nc + reg_max * 4  # number of outputs per anchor
+
+        # Inference anchor-grid cache. ``dynamic`` forces a rebuild every
+        # forward; ``export`` bypasses the cache entirely so traced graphs
+        # stay shape-consistent. ``anchors``/``strides`` are read externally
+        # after a warm-up forward (see export/coreml.py).
+        self.dynamic = False
+        self.export = False
+        self.shape = None
+        self.anchors = torch.empty(0)
+        self.strides = torch.empty(0)
         # Register stride as a buffer so .to(device) moves it. Plain
         # attribute assignment leaves it on CPU even after model.to("cuda")
         # which silently breaks device-mismatch checks under DDP. dtype
@@ -528,6 +566,14 @@ class DDetect(nn.Module):
         self._box_hidden_channels = self._box_branch_width(
             ch[0], self._box_groups, self._box_output_channels, reg_max
         )
+        # The class-tower hidden width is part of the published LibreYOLO9
+        # checkpoint geometry: the first scale's channel count, floored at
+        # ``min(nc, 100)`` (width 80 for the released COCO models). Keep it —
+        # it must reproduce the tensor shapes of released and user-trained
+        # checkpoints. Checkpoints whose width differs (e.g. COCO-width
+        # towers reused under a new ``nc``) are handled by the rebuild
+        # helpers in ``model.py``, which read the width straight from the
+        # checkpoint tensors.
         self._class_hidden_channels = max(ch[0], min(nc, 100))
 
         self.cv2 = self._build_box_towers(
@@ -542,12 +588,13 @@ class DDetect(nn.Module):
         self._init_bias()
 
     def _init_bias(self):
-        """Initialize biases for focal loss."""
-        for a, b, s in zip(self.cv2, self.cv3, self.stride):
-            a[-1].bias.data[:] = 1.0  # box
-            b[-1].bias.data[: self.nc] = math.log(
-                5 / self.nc / (640 / float(s)) ** 2
-            )  # cls
+        """Detection-prior bias init, as in MMT ``Detection.__init__``: box
+        towers start at 1.0, class towers at -10 (a ~4.5e-5 foreground prior
+        after sigmoid). Only affects training from scratch — any loaded
+        checkpoint overwrites these."""
+        for box_tower, class_tower in zip(self.cv2, self.cv3):
+            box_tower[-1].bias.data.fill_(1.0)
+            class_tower[-1].bias.data.fill_(-10.0)
 
     def _get_loss_fn(self, device):
         """Lazily initialize loss function for training."""
@@ -577,53 +624,62 @@ class DDetect(nn.Module):
             Training without targets: Raw predictions (list of tensors)
             Inference: Decoded predictions
         """
-        shape = x[0].shape  # BCHW
-
-        for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+        preds = [
+            torch.cat((self.cv2[i](feat), self.cv3[i](feat)), 1)
+            for i, feat in enumerate(x)
+        ]
 
         if self.training:
             if targets is not None:
                 # Compute loss
-                loss_fn = self._get_loss_fn(x[0].device)
+                loss_fn = self._get_loss_fn(preds[0].device)
                 if img_size is not None:
                     loss_fn.update_anchors(list(img_size))
-                return loss_fn(x, targets)
-            return x
+                return loss_fn(preds, targets)
+            return preds
 
-        # Inference mode
-        # In export mode, always regenerate anchors to ensure trace consistency
-        # (JIT trace runs the model twice and checks for consistency)
+        # Inference mode.
+        # In export mode, always regenerate anchors to ensure trace
+        # consistency (JIT trace runs the model twice and checks outputs).
+        shape = preds[0].shape  # BCHW
         if self.export:
             anchors, strides = (
                 generated.transpose(0, 1)
-                for generated in self._make_anchors(x, self.stride, 0.5)
+                for generated in self._make_anchors(preds, self.stride, 0.5)
             )
         else:
             if self.dynamic or self.shape != shape:
                 self.anchors, self.strides = (
                     generated.transpose(0, 1)
-                    for generated in self._make_anchors(x, self.stride, 0.5)
+                    for generated in self._make_anchors(preds, self.stride, 0.5)
                 )
                 self.shape = shape
             anchors, strides = self.anchors, self.strides
 
-        # Flatten and concatenate all scales
-        x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+        # Flatten every scale to (B, no, HW) and concatenate the scales, then
+        # split the channel dim into the 4*reg_max distance distributions and
+        # the class logits.
+        flat = torch.cat([p.view(shape[0], self.no, -1) for p in preds], 2)
+        box_dist, class_logits = flat.split((self.reg_max * 4, self.nc), 1)
 
-        box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
-
-        # DFL decoding
-        dbox = (
-            self._decode_bboxes(self.dfl(box), anchors.unsqueeze(0)) * strides
+        # DFL integral -> LTRB distances (grid units) -> xyxy boxes (pixels).
+        boxes = (
+            self._decode_bboxes(self.dfl(box_dist), anchors.unsqueeze(0)) * strides
         )
 
-        y = torch.cat((dbox, cls.sigmoid()), 1)
+        y = torch.cat((boxes, class_logits.sigmoid()), 1)
 
-        return y, x
+        return y, preds
 
     def _make_anchors(self, feats, strides, grid_cell_offset=0.5):
-        """Generate anchors from feature maps."""
+        """Anchor centers plus per-anchor stride, one row per feature cell.
+
+        Follows MMT ``generate_anchors`` (pixel centers at ``stride/2 +
+        k*stride``), expressed in grid units — cell ``k`` sits at ``k +
+        offset`` and the matching stride scales it back to pixels at decode
+        time. Grid sizes come from the live feature maps rather than the
+        image size so dynamic shapes and tracing work.
+        """
         centers_by_level = []
         stride_by_level = []
         for feature, stride in zip(feats, strides):
@@ -643,27 +699,19 @@ class DDetect(nn.Module):
 
         return torch.cat(centers_by_level, dim=0), torch.cat(stride_by_level, dim=0)
 
-    def _decode_bboxes(self, bboxes, anchors):
-        """Decode bboxes from DFL output."""
-        return self._dist2bbox(bboxes, anchors, xywh=False)
-
-    def _dist2bbox(self, distance, anchor_points, xywh=True, dim=1):
-        """Transform distance(ltrb) to box(xywh or xyxy).
+    def _decode_bboxes(self, distances, anchor_points):
+        """Decode LTRB distances into xyxy boxes, as in MMT ``Vec2Box``: the
+        box corners are the anchor center minus the left-top pair and plus
+        the right-bottom pair.
 
         Args:
-            distance: (batch, 4, anchors) - l, t, r, b distances from anchor
+            distances: (batch, 4, anchors) - l, t, r, b distances from anchor
             anchor_points: (1, 2, anchors) - anchor center coordinates
-            xywh: Return xywh format if True, else xyxy
-            dim: Dimension to split/concat on (should be 1 for coordinates)
         """
-        lt, rb = distance.chunk(2, dim)  # Each (batch, 2, anchors)
-        x1y1 = anchor_points - lt
-        x2y2 = anchor_points + rb
-        if xywh:
-            c_xy = (x1y1 + x2y2) / 2
-            wh = x2y2 - x1y1
-            return torch.cat((c_xy, wh), dim)
-        return torch.cat((x1y1, x2y2), dim)
+        left_top, right_bottom = distances.chunk(2, 1)
+        return torch.cat(
+            (anchor_points - left_top, anchor_points + right_bottom), 1
+        )
 
 
 # =============================================================================

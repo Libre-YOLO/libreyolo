@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
@@ -288,7 +289,7 @@ class LibreEC(BaseModel):
         resume: bool = False,
         amp: bool = True,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

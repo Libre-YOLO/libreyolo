@@ -55,6 +55,12 @@ class YOLOXTrainer(BaseTrainer):
         }
 
     def on_setup(self):
+        # Only seed focal-loss bias priors for a fresh (from-scratch) head.
+        # on_setup runs after any pretrained/resume checkpoint has been loaded
+        # in __init__, so unconditionally calling initialize_biases would wipe
+        # the learned cls/obj priors on every warm-start.
+        if getattr(self.wrapper_model, "model_path", None):
+            return
         raw = getattr(self.model, "module", self.model)
         if hasattr(raw, "head") and hasattr(raw.head, "initialize_biases"):
             raw.head.initialize_biases(0.01)

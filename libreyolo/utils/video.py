@@ -357,6 +357,13 @@ def run_video_inference(
                             )
                         else:
                             annotated_pil = pil_img
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "restored", None) is not None
+                    ):
+                        annotated_pil = Image.fromarray(
+                            result.restored.array, mode="RGB"
+                        )
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:

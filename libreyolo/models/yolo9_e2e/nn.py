@@ -1,6 +1,10 @@
-"""Neural network architecture for YOLOv9 end-to-end (NMS-free)."""
+"""Neural network architecture for YOLOv9 end-to-end (NMS-free).
 
-import math
+Builds on the LibreYOLO9 head (see ``..yolo9.nn``, ported from
+MultimediaTechLab/YOLO, MIT License). The dual one-to-many / one-to-one
+branch scheme implements the dual-assignment training strategy from the
+YOLOv10 paper (Wang et al., 2024, arXiv:2405.14458).
+"""
 
 import torch
 
@@ -44,10 +48,11 @@ class YOLO9E2EDetect(DDetect):
         target.load_state_dict(source.state_dict())
 
     def _init_one2one_bias(self):
-        """Initialize biases for the one-to-one branch."""
-        for a, b, s in zip(self.one2one_cv2, self.one2one_cv3, self.stride):
-            a[-1].bias.data[:] = 1.0
-            b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / float(s)) ** 2)
+        """Initialize the one-to-one branch with the same detection priors as
+        the dense branch (box 1.0, class -10 — see ``DDetect._init_bias``)."""
+        for box_tower, class_tower in zip(self.one2one_cv2, self.one2one_cv3):
+            box_tower[-1].bias.data.fill_(1.0)
+            class_tower[-1].bias.data.fill_(-10.0)
 
     def _get_loss_fn(self, device):
         """Lazily initialize the dual-branch loss."""

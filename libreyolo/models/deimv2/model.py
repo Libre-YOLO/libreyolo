@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
+from ...training.callbacks import TrainCallbacks
 from ...training.config import DEIMv2Config
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
@@ -215,7 +216,7 @@ class LibreDEIMv2(BaseModel):
         resume: bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:

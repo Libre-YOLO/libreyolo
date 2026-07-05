@@ -13,10 +13,11 @@ Reference: https://github.com/lyuwenyu/RT-DETR
 """
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+
+from libreyolo.training.distributed import all_reduce_avg_scalar
 
 try:
     from scipy.optimize import linear_sum_assignment
@@ -313,16 +314,16 @@ class SetCriterion(nn.Module):
         indices = self.matcher(outputs_without_aux, targets)
 
         # Compute number of target boxes for normalization.
-        # Under DDP, all-reduce so every rank divides by the global count,
-        # not just its own per-rank batch. Without this, losses would be
-        # scaled by per-rank box counts, which diverge from single-GPU semantics.
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor(
-            [num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device
+        # Under DDP, all-reduce and divide by world_size (the average per-rank
+        # count) so DDP's gradient averaging reproduces single-GPU semantics —
+        # the same reduction every other DETR family uses. The previous code
+        # summed WITHOUT dividing, which was only correct in combination with
+        # the (removed) x world_size loss scaling; keeping it would under-scale
+        # RT-DETR's multi-GPU gradients by 1/world_size (issue #484).
+        num_boxes = all_reduce_avg_scalar(
+            sum(len(t["labels"]) for t in targets),
+            device=next(iter(outputs.values())).device,
         )
-        if dist.is_available() and dist.is_initialized():
-            dist.all_reduce(num_boxes, op=dist.ReduceOp.SUM)
-        num_boxes = torch.clamp(num_boxes, min=1).item()
 
         # Compute all requested losses
         losses = {}

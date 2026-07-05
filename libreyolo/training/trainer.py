@@ -18,7 +18,7 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
-from .artifacts import TrainingArtifactsCallback
+from .artifacts import TrainingArtifactsCallback, TrainingStatusCallback
 from .callbacks import (
     TrainCallbackList,
     TrainCallbacks,
@@ -94,8 +94,15 @@ class BaseTrainer(ABC):
         self.callbacks = TrainCallbackList(callbacks)
         for logger_callback in resolve_loggers(loggers):
             self.callbacks.append(logger_callback)
+        # TrainingArtifactsCallback is family-gated (results.csv / summary.json
+        # only for opted-in families). TrainingStatusCallback is universal: every
+        # run gets a live status.json + train.log so agents and the `libreyolo
+        # monitor` web UI can watch any training without extra configuration.
         self.artifact_callbacks = TrainCallbackList(
-            TrainingArtifactsCallback(enabled_families=self.artifact_model_families)
+            [
+                TrainingArtifactsCallback(enabled_families=self.artifact_model_families),
+                TrainingStatusCallback(),
+            ]
         )
 
         # Distributed state. We init the process group eagerly when launched
@@ -143,6 +150,8 @@ class BaseTrainer(ABC):
         self._frozen_bn_modules: Tuple[nn.Module, ...] = ()
         self.train_loader = None
         self._is_setup = False
+        self.distiller = None
+        self._distill_loss_val = 0.0
 
         # Profiling (opt-in via config.profile). None = disabled, zero overhead.
         self._profiler = None
@@ -337,10 +346,12 @@ class BaseTrainer(ABC):
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         pg0, pg1, pg2 = [], [], []
+        captured_ids: set = set()
 
         def add_if_trainable(group: list, param: Optional[nn.Parameter]) -> None:
             if isinstance(param, nn.Parameter) and param.requires_grad:
                 group.append(param)
+                captured_ids.add(id(param))
 
         # Catch every batch-norm flavour, including SyncBN: BatchNorm{1,2,3}d
         # and SyncBatchNorm are all siblings under ``_BatchNorm``. The naive
@@ -354,6 +365,17 @@ class BaseTrainer(ABC):
                 add_if_trainable(pg0, v.weight)
             elif hasattr(v, "weight"):
                 add_if_trainable(pg1, v.weight)
+
+        # Bare nn.Parameters (LayerScale gamma, NAFNet beta/gamma, YOLO-NAS
+        # alpha, ...) are not exposed as a module ``.weight``/``.bias``
+        # attribute, so the named_modules() sweep above never captures them and
+        # they would silently never join a param group (no gradient updates).
+        # Add any still-uncaptured trainable parameter to the no-weight-decay
+        # group (pg2), matching how biases/norms are handled.
+        for _pk, p in self.model.named_parameters():
+            if p.requires_grad and id(p) not in captured_ids:
+                pg2.append(p)
+                captured_ids.add(id(p))
 
         lr = self.effective_lr
         opt_name = self.config.optimizer
@@ -416,6 +438,82 @@ class BaseTrainer(ABC):
         for module in getattr(self, "_frozen_bn_modules", ()):
             module.eval()
 
+    def _setup_distillation(self):
+        """Set up knowledge distillation when ``config.distill_model`` is set."""
+        if not getattr(self.config, "distill_model", None):
+            return
+
+        from ..distillation import Distiller
+        from ..models import LibreYOLO
+
+        if self.wrapper_model is None:
+            raise ValueError(
+                "distill_model requires the trainer to be constructed with "
+                "wrapper_model set (the student wrapper provides tap points)."
+            )
+
+        # Load teacher via the factory (handles family detection, weight loading)
+        logger.info(f"Loading teacher model: {self.config.distill_model}")
+        teacher_wrapper = LibreYOLO(self.config.distill_model)
+        teacher_nn = teacher_wrapper.model.to(self.device)
+
+        # Get distillation configs from the models themselves. Families that
+        # don't support distillation raise NotImplementedError here with a
+        # message naming the family.
+        teacher_cfg = teacher_wrapper.get_distill_config()
+        student_cfg = self.wrapper_model.get_distill_config()
+
+        self.distiller = Distiller(
+            teacher_model=teacher_nn,
+            student_model=self.model,
+            teacher_config=teacher_cfg,
+            student_config=student_cfg,
+            loss_type=self.config.distill_loss_type,
+            loss_weight=self.config.dis,
+            mask_ratio=self.config.distill_mask_ratio,
+            tau=self.config.distill_tau,
+        )
+        self.distiller.to(self.device)
+
+        # resume() may run before setup() — apply deferred adapter state now.
+        deferred_state = getattr(self, "_resume_distiller_state", None)
+        if deferred_state is not None:
+            try:
+                self.distiller.loss_modules.load_state_dict(deferred_state)
+                logger.info("Distiller adapter state restored from resume checkpoint")
+            except Exception as e:
+                logger.warning(f"Could not load deferred distiller state: {e}")
+            finally:
+                self._resume_distiller_state = None
+
+        # Add distiller's learnable params (align/generation convs) to optimizer
+        distill_params = list(self.distiller.loss_modules.parameters())
+        if distill_params:
+            self.optimizer.add_param_group(
+                {"params": distill_params, "lr": self.effective_lr}
+            )
+            logger.info(
+                f"Added {len(distill_params)} distillation params to optimizer"
+            )
+
+    def _sync_distiller_grads(self):
+        """All-reduce distiller adapter/generator gradients across DDP ranks.
+
+        The distiller's loss modules live outside the DDP-wrapped student, so
+        DDP's reducer never sees their gradients; without an explicit sync each
+        rank would train its own diverging adapters. No-op outside DDP.
+        """
+        distiller = getattr(self, "distiller", None)
+        if distiller is None or not is_distributed():
+            return
+        import torch.distributed as dist
+
+        world_size = float(get_world_size())
+        for param in distiller.loss_modules.parameters():
+            if param.grad is not None:
+                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                param.grad /= world_size
+
     def _get_save_dir(self) -> Path:
         project = Path(self.config.project)
         name = self.config.name
@@ -438,6 +536,8 @@ class BaseTrainer(ABC):
             return self._setup_semantic_data()
         if wrapper_task == "depth":
             return self._setup_depth_data()
+        if wrapper_task == "restore":
+            return self._setup_restore_data()
 
         img_size = self.input_size
         preproc, MosaicDatasetClass = self.create_transforms()
@@ -617,6 +717,14 @@ class BaseTrainer(ABC):
 
         if is_main_process():
             logger.info(f"Training dataset: {len(train_dataset)} images")
+            _hint_task = getattr(
+                getattr(self, "wrapper_model", None), "task", "detect"
+            )
+            if _hint_task == "detect" and self.config.data:
+                logger.info(
+                    f"Tip: sanity-check your dataset for common issues first with "
+                    f"`libreyolo doctor {self.config.data}`"
+                )
             logger.info(
                 f"Iterations per epoch: {len(self.train_loader)} "
                 f"(batch_per_rank={per_rank_batch}, world_size={self.world_size})"
@@ -665,8 +773,10 @@ class BaseTrainer(ABC):
             imgsz=imgsz,
             augment=True,
             class_to_idx=class_to_idx,
-            crop_pct=getattr(wrapper, "crop_pct", 0.875),
-            interpolation=getattr(wrapper, "interpolation", "bilinear"),
+            transform_kwargs={
+                "crop_pct": getattr(wrapper, "crop_pct", 0.875),
+                "interpolation": getattr(wrapper, "interpolation", "bilinear"),
+            },
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
@@ -892,6 +1002,73 @@ class BaseTrainer(ABC):
             )
         return train_dataset
 
+    def _setup_restore_data(self):
+        """Build the restoration train dataloader from a paired dataset YAML."""
+        from torch.utils.data import DataLoader
+
+        from ..data.restore_dataset import (
+            RestoreDataset,
+            resolve_restore_data,
+            restore_collate_fn,
+        )
+
+        if not self.config.data:
+            raise ValueError("Restore training requires data= (a dataset YAML).")
+        data_config = resolve_restore_data(
+            self.config.data,
+            allow_scripts=self.config.allow_download_scripts,
+        )
+        train_dataset = RestoreDataset(
+            data_config,
+            split="train",
+            imgsz=self.config.imgsz,
+            augment=True,
+        )
+
+        self.num_classes = 1
+        self.config.num_classes = 1
+        if self.wrapper_model is not None:
+            self.wrapper_model.nb_classes = 1
+            self.wrapper_model.names = {0: "image"}
+
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        try:
+            visible_samples = len(sampler) if sampler is not None else len(train_dataset)
+        except TypeError:
+            visible_samples = len(train_dataset)
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
+            num_workers=self.config.workers,
+            pin_memory=self.device.type == "cuda",
+            collate_fn=restore_collate_fn,
+            drop_last=visible_samples >= per_rank_batch,
+        )
+
+        if is_main_process():
+            logger.info("Restore dataset: %d image pairs", len(train_dataset))
+            logger.info(
+                "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+                len(self.train_loader),
+                per_rank_batch,
+                self.world_size,
+            )
+        return train_dataset
+
     def _resolve_num_classes_from_data_config(self) -> int:
         """Resolve dataset class count before criterion construction."""
         resolved = int(self.config.num_classes)
@@ -1003,6 +1180,7 @@ class BaseTrainer(ABC):
         self._setup_data()
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
+        self._setup_distillation()
         self.lr_scheduler = self.create_scheduler(self._scheduler_steps_per_epoch())
 
         # resume() may be called before setup() when the optimizer doesn't exist
@@ -1063,6 +1241,10 @@ class BaseTrainer(ABC):
             self.save_dir = self._get_save_dir()
             self.config.to_yaml(self.save_dir / "train_config.yaml")
             logger.info(f"Saving to: {self.save_dir}")
+            logger.info(
+                f"Tip: watch this run live in your browser with "
+                f"`libreyolo monitor {self.save_dir}`"
+            )
         else:
             self.save_dir = Path(self.config.project) / self.config.name
 
@@ -1205,19 +1387,13 @@ class BaseTrainer(ABC):
                 self.epoch_losses.append(epoch_loss)
 
                 is_best = self._update_best_state(epoch, val_metrics)
-                periodic_save_due = (
-                    self.config.save_period > 0
-                    and (epoch + 1) % self.config.save_period == 0
+                # Write ``last.pt`` every epoch so a crash never costs more than
+                # a single epoch. ``best.pt`` (is_best) and periodic
+                # ``epoch_N.pt`` (save_period) stay gated inside
+                # _save_checkpoint, so those are unaffected.
+                self._save_checkpoint(
+                    epoch, epoch_loss, val_metrics, is_best=is_best
                 )
-                should_save = (
-                    periodic_save_due
-                    or epoch == self.config.epochs - 1
-                    or is_best
-                )
-                if should_save:
-                    self._save_checkpoint(
-                        epoch, epoch_loss, val_metrics, is_best=is_best
-                    )
 
                 event = self._build_train_epoch_event(
                     epoch=epoch,
@@ -1238,9 +1414,17 @@ class BaseTrainer(ABC):
                 # We broadcast the stop flag so every rank exits the loop in
                 # lockstep — otherwise non-rank-0 ranks proceed into the
                 # next epoch's collective backward() and deadlock.
+                # Patience is measured in EPOCHS since the last metric
+                # improvement. ``best_epoch`` is the 1-based epoch of the best
+                # result, so this stays meaningful even when validation only
+                # runs on an interval (unlike counting discrete val events).
+                epochs_since_best = (
+                    (epoch + 1) - self.best_epoch if self.best_epoch else 0
+                )
                 should_stop = (
                     self.config.patience > 0
-                    and self.patience_counter >= self.config.patience
+                    and self.best_epoch > 0
+                    and epochs_since_best >= self.config.patience
                 )
                 if self.is_distributed:
                     import torch.distributed as _dist
@@ -1257,12 +1441,15 @@ class BaseTrainer(ABC):
                     if is_main_process():
                         logger.info(
                             f"Early stopping triggered after {epoch + 1} epochs "
-                            f"(patience={self.config.patience}, no improvement for {self.patience_counter} epochs)"
+                            f"(patience={self.config.patience}, no improvement for {epochs_since_best} epochs)"
                         )
                     break
 
                 if getattr(self, "_stop_training", False):
                     break
+
+            if getattr(self, "distiller", None) is not None:
+                self.distiller.cleanup()
 
             total_time = time.time() - start_time
             if is_main_process():
@@ -1616,6 +1803,8 @@ class BaseTrainer(ABC):
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1637,18 +1826,35 @@ class BaseTrainer(ABC):
                     step=self.current_iter,
                 )
 
-            # Forward + backward. Under DDP we multiply loss by world_size
-            # so that backward() gradient averaging produces the same
-            # sum-of-per-rank gradients as single-GPU. No-op outside DDP.
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
+            if distiller is not None:
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
+
+            # Forward + backward. Under DDP the loss needs no rescaling:
+            # every family's loss is mean/ratio-normalized, so DDP's gradient
+            # averaging already composes the per-rank gradients into the
+            # single-GPU-equivalent gradient (see scale_loss_for_ddp, #484).
+            # The distiller's adapter grads are averaged the same way in
+            # _sync_distiller_grads, keeping student and distiller consistent.
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
+                    self._sync_distiller_grads()
                     if self._should_clip_gradients():
                         self.scaler.unscale_(self.optimizer)
                         self._clip_gradients()
@@ -1659,13 +1865,21 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
                     loss.backward()
+                    self._sync_distiller_grads()
                     self._clip_gradients()
                 with self._prof_phase("optimizer"):
                     self.optimizer.step()
+
+            if distiller is not None:
+                distiller.step()
 
             # EMA
             if self.ema_model is not None:
@@ -1676,6 +1890,8 @@ class BaseTrainer(ABC):
             # already returns a Python float and detaches from autograd.
             loss_val = float(total_loss_raw.item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             for name, value in loss_components.items():
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
@@ -1748,6 +1964,9 @@ class BaseTrainer(ABC):
         actual_window = accum
         lr = self.optimizer.param_groups[0]["lr"]
 
+        # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
+        distiller = getattr(self, "distiller", None)
+
         prof = getattr(self, "_profiler", None)
         loader = prof.wrap_loader(pbar) if prof is not None else pbar
         for batch_idx, batch in enumerate(loader):
@@ -1776,23 +1995,37 @@ class BaseTrainer(ABC):
                 self.optimizer.zero_grad(set_to_none=True)
                 actual_window = min(accum, len(self.train_loader) - batch_idx)
 
+            # Teacher forward (no-grad). Under AMP it runs in autocast too, so
+            # the frozen teacher doesn't pay full-precision compute each step.
+            if distiller is not None:
+                if self.scaler is not None:
+                    with autocast("cuda"):
+                        distiller.teacher_forward(imgs)
+                else:
+                    distiller.teacher_forward(imgs)
+
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the
-            # window boundary (``is_opt_step``). Under DDP we additionally
-            # multiply the per-micro-batch loss by world_size so DDP's
-            # gradient averaging composes correctly with the division-by-
-            # window scheme.
+            # window boundary (``is_opt_step``). The division by the window
+            # keeps mean semantics across micro-batches; under DDP no further
+            # rescaling is needed (losses are mean-normalized, so DDP's
+            # gradient averaging is already correct — see scale_loss_for_ddp).
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with autocast("cuda"):
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
+                        if distiller is not None:
+                            distill_loss = distiller.compute_loss()
+                            total_loss_raw = total_loss_raw + distill_loss
+                            self._distill_loss_val = distill_loss.item()
                         loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         if self._should_clip_gradients():
                             self.scaler.unscale_(self.optimizer)
                             self._clip_gradients()
@@ -1802,14 +2035,22 @@ class BaseTrainer(ABC):
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     total_loss_raw = outputs["total_loss"]
+                    if distiller is not None:
+                        distill_loss = distiller.compute_loss()
+                        total_loss_raw = total_loss_raw + distill_loss
+                        self._distill_loss_val = distill_loss.item()
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     loss.backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
+                        self._sync_distiller_grads()
                         self._clip_gradients()
                         self.optimizer.step()
+
+            if distiller is not None:
+                distiller.step()
 
             if is_opt_step:
                 # EMA
@@ -1822,6 +2063,8 @@ class BaseTrainer(ABC):
             # Logging uses the raw pre-scale value (single-GPU semantics).
             loss_val = float(total_loss_raw.detach().item())
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
+            if distiller is not None:
+                loss_components["distill"] = self._distill_loss_val
             total_loss += loss_val
             num_batches += 1
             for name, value in loss_components.items():
@@ -1900,6 +2143,8 @@ class BaseTrainer(ABC):
             return self._run_semantic_validation(epoch)
         if validation_task == "depth":
             return self._run_depth_validation(epoch)
+        if validation_task == "restore":
+            return self._run_restore_validation(epoch)
         try:
             from libreyolo.validation import (
                 DetectionValidator,
@@ -1924,7 +2169,7 @@ class BaseTrainer(ABC):
 
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -2016,7 +2261,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running classification validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2068,7 +2313,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running semantic validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2120,7 +2365,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running depth validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2154,6 +2399,59 @@ class BaseTrainer(ABC):
             }
         except Exception as e:
             logger.error(f"Depth validation failed: {e}")
+            import traceback
+
+            logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
+            return None
+
+    def _run_restore_validation(
+        self, epoch: int
+    ) -> Optional[Dict[str, Any]]:
+        """Validate the restoration model (PSNR / SSIM) on the val split."""
+        try:
+            from libreyolo.validation import RestoreValidator, ValidationConfig
+
+            if self.wrapper_model is None:
+                logger.error("Validation requires wrapper_model to be provided to trainer")
+                return None
+
+            logger.info(f"Running restore validation for epoch {epoch + 1}")
+            val_config = ValidationConfig(
+                data=self.config.data,
+                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                imgsz=self.config.imgsz,
+                device=str(self.device),
+                half=self.config.amp and self.device.type == "cuda",
+                verbose=False,
+                num_workers=self.config.workers,
+                split="val",
+                allow_download_scripts=self.config.allow_download_scripts,
+            )
+
+            eval_pytorch_model = (
+                self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+            )
+            original_model = self.wrapper_model.model
+            self.wrapper_model.model = eval_pytorch_model
+            try:
+                validator = RestoreValidator(model=self.wrapper_model, config=val_config)
+                results = validator.run()
+            finally:
+                self.wrapper_model.model = original_model
+
+            raw_metrics = self._scalar_mapping(results)
+            psnr = raw_metrics.get("metrics/PSNR", 0.0)
+            ssim = raw_metrics.get("metrics/SSIM", 0.0)
+            logger.info("Validation - PSNR: %.4f, SSIM: %.4f", psnr, ssim)
+            return {
+                "mAP50": psnr,
+                "mAP50_95": psnr,
+                "best_metric": psnr,
+                "best_metric_key": "metrics/PSNR",
+                "metrics": raw_metrics,
+            }
+        except Exception as e:
+            logger.error(f"Restore validation failed: {e}")
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
@@ -2234,6 +2532,39 @@ class BaseTrainer(ABC):
             checkpoint["train_model"] = raw_model.state_dict()
             checkpoint["ema"] = self.ema_model.ema.state_dict()
             checkpoint["ema_updates"] = self.ema_model.updates
+        if getattr(self, "distiller", None) is not None:
+            # Adapter/generator weights live outside the student model; persist
+            # them so resume doesn't restart the distillation projectors cold.
+            checkpoint["distiller"] = self.distiller.loss_modules.state_dict()
+
+        # AMP + RNG state so ``resume()`` continues bit-for-bit instead of
+        # re-warming the GradScaler from 65536 and reseeding the RNGs. All keys
+        # are optional; older checkpoints without them still load fine.
+        if self.scaler is not None:
+            try:
+                checkpoint["scaler"] = self.scaler.state_dict()
+            except Exception:
+                logger.warning("Could not capture GradScaler state for checkpoint")
+        rng_state: Dict[str, Any] = {"torch": torch.get_rng_state()}
+        if torch.cuda.is_available():
+            rng_state["cuda"] = torch.cuda.get_rng_state_all()
+        try:
+            import numpy as _np
+
+            # Store numpy's MT19937 state in a ``weights_only=True``-safe form
+            # (a torch tensor + primitives). The raw ``get_state()`` tuple holds
+            # a numpy ndarray, which the repo's safe checkpoint loader rejects.
+            _keys, _pos, _has_gauss, _cached = _np.random.get_state()[1:]
+            rng_state["numpy"] = {
+                "keys": torch.from_numpy(_keys.astype("int64", copy=True)),
+                "pos": int(_pos),
+                "has_gauss": int(_has_gauss),
+                "cached_gaussian": float(_cached),
+            }
+        except Exception:
+            pass
+        checkpoint["rng_state"] = rng_state
+
         validate_checkpoint_metadata(checkpoint, strict=True)
 
         weights_dir = self.save_dir / "weights"
@@ -2305,6 +2636,18 @@ class BaseTrainer(ABC):
                 self._resume_optimizer_state = checkpoint["optimizer"]
                 logger.info("Optimizer state deferred until after setup()")
 
+        if "distiller" in checkpoint:
+            if self.distiller is not None:
+                try:
+                    self.distiller.loss_modules.load_state_dict(checkpoint["distiller"])
+                    logger.info("Distiller adapter state restored")
+                except Exception as e:
+                    logger.warning(f"Could not load distiller state: {e}")
+            else:
+                # setup() hasn't run yet — defer until the distiller exists.
+                self._resume_distiller_state = checkpoint["distiller"]
+                logger.info("Distiller state deferred until after setup()")
+
         if "best_metric_value" in checkpoint or "best_mAP50_95" in checkpoint:
             checkpoint_metric_key = checkpoint.get("best_metric_key", "metrics/mAP50-95")
             current_metric_key = getattr(self, "best_metric_key", "metrics/mAP50-95")
@@ -2346,6 +2689,43 @@ class BaseTrainer(ABC):
                     logger.warning(f"Could not load EMA weights: {e}")
             self.ema_model.updates = checkpoint["ema_updates"]
             logger.info(f"EMA updates restored: {self.ema_model.updates}")
+
+        # Restore AMP + RNG state when present (backward-compatible: pre-v1.3
+        # checkpoints lack these keys and simply skip this block).
+        if "scaler" in checkpoint and self.scaler is not None:
+            try:
+                self.scaler.load_state_dict(checkpoint["scaler"])
+                logger.info("GradScaler state restored")
+            except Exception as e:
+                logger.warning(f"Could not load GradScaler state: {e}")
+
+        rng_state = checkpoint.get("rng_state")
+        if rng_state:
+            try:
+                torch_state = rng_state.get("torch")
+                if torch_state is not None:
+                    # map_location may have moved the byte tensor to GPU; the
+                    # RNG setters require CPU ByteTensors.
+                    torch.set_rng_state(torch_state.cpu())
+                cuda_state = rng_state.get("cuda")
+                if cuda_state is not None and torch.cuda.is_available():
+                    torch.cuda.set_rng_state_all([s.cpu() for s in cuda_state])
+                np_state = rng_state.get("numpy")
+                if np_state is not None:
+                    import numpy as _np
+
+                    _np.random.set_state(
+                        (
+                            "MT19937",
+                            np_state["keys"].cpu().numpy().astype("uint32"),
+                            int(np_state["pos"]),
+                            int(np_state["has_gauss"]),
+                            float(np_state["cached_gaussian"]),
+                        )
+                    )
+                logger.info("RNG state restored")
+            except Exception as e:
+                logger.warning(f"Could not restore RNG state: {e}")
 
         self.patience_counter = 0
         logger.info(

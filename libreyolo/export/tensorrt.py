@@ -1,5 +1,6 @@
 """TensorRT export implementation."""
 
+import hashlib
 import json
 import logging
 import warnings
@@ -239,6 +240,18 @@ def export_tensorrt(
             min_batch = cfg.dynamic.min_batch
             opt_batch = cfg.dynamic.opt_batch
             max_batch = cfg.dynamic.max_batch
+        if cfg.int8:
+            # int8_calibration (dataset/fraction/cache) is parsed and validated
+            # by TensorRTExportConfig but not consumed here: calibration comes
+            # from the pre-built ``calibration_data`` loader (the export()
+            # data=/fraction= arguments). Warn rather than silently drop it.
+            warnings.warn(
+                "TensorRTExportConfig.int8_calibration "
+                "(dataset/fraction/cache) is currently ignored: INT8 "
+                "calibration is driven by the export() data=/fraction= "
+                "arguments (passed here as calibration_data). Set those to "
+                "control INT8 calibration."
+            )
 
     if metadata is not None:
         metadata = dict(metadata)
@@ -319,7 +332,23 @@ def export_tensorrt(
 
             if compat_level is not None:
                 builder_config.hardware_compatibility_level = compat_level
-                logger.info("Hardware compatibility: %s", hardware_compatibility)
+                if (
+                    hardware_compatibility == "same_compute_capability"
+                    and compat_level == trt.HardwareCompatibilityLevel.NONE
+                ):
+                    # This TRT build has no real "same compute capability" level;
+                    # it falls back to NONE, which yields a current-GPU-only
+                    # engine. Do not claim portability was applied.
+                    warnings.warn(
+                        "hardware_compatibility='same_compute_capability' is not "
+                        "supported on this TensorRT build and maps to NONE: the "
+                        "engine is optimized for the current GPU only and is not "
+                        "portable to other GPUs of the same compute capability."
+                    )
+                else:
+                    logger.info(
+                        "Hardware compatibility: %s", hardware_compatibility
+                    )
             else:
                 warnings.warn(
                     f"Unknown hardware_compatibility '{hardware_compatibility}'. "
@@ -333,11 +362,16 @@ def export_tensorrt(
 
     # Precision
     precision_str = "FP32"
+    # Canonical precision actually realized by the build (may differ from the
+    # requested precision when the GPU lacks fast FP16/INT8). Threaded into the
+    # sidecar metadata so the artifact never claims a precision it isn't.
+    actual_precision = "fp32"
 
     if half or int8:
         if builder.platform_has_fast_fp16:
             builder_config.set_flag(trt.BuilderFlag.FP16)
             precision_str = "FP16"
+            actual_precision = "fp16"
             # ViT backbones (DINOv2/v3) overflow in FP16 -> NaN. The FP16 builder flag above is
             # enabled for both half and int8 builds (INT8 still runs FP16-precision layers), so
             # pin the ViT backbone whenever FP16 is active, not only for half. Detect a ViT
@@ -384,11 +418,18 @@ def export_tensorrt(
         if builder.platform_has_fast_int8:
             builder_config.set_flag(trt.BuilderFlag.INT8)
             precision_str = "INT8"
+            actual_precision = "int8"
 
             CalibratorClass = get_calibrator_class()
+            # Key the calibration cache on model identity (ONNX content hash) so
+            # calibration scales for one model are never reused for another that
+            # happens to export to the same output path.
+            model_hash = hashlib.sha1(onnx_data).hexdigest()[:12]
+            cache_out = Path(output_path)
+            cache_file = cache_out.with_name(f"{cache_out.stem}.{model_hash}.cache")
             calibrator = CalibratorClass(
                 calibration_data,
-                cache_file=str(Path(output_path).with_suffix(".cache")),
+                cache_file=str(cache_file),
             )
             builder_config.int8_calibrator = calibrator
             logger.info(
@@ -456,6 +497,9 @@ def export_tensorrt(
         f.write(serialized_engine)
 
     if metadata is not None:
+        # Reflect the precision actually realized by the build (e.g. fp16 after
+        # an INT8→FP16 fallback) instead of the pre-build request.
+        metadata["precision"] = actual_precision
         sidecar_path = Path(str(output_path) + ".json")
         with open(sidecar_path, "w") as f:
             json.dump(metadata, f, indent=2)

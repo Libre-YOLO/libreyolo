@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",
@@ -287,6 +287,14 @@ class BaseExporter(ABC):
                 "Add a depth-aware export/runtime contract (dense float "
                 "output plus backend parsing) before exporting depth models."
             )
+        if getattr(self.model, "task", "detect") == "restore" and dynamic:
+            warnings.warn(
+                "Restore export uses a fixed-resolution runtime contract in "
+                "v1; forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
         half, int8 = self._validate(half, int8, data)
         self._preflight(half=half, int8=int8, data=data, **kwargs)
         data = self._resolve_calibration_data(int8, data)
@@ -460,6 +468,13 @@ class BaseExporter(ABC):
                 "DEIMv2 export uses fixed decoder anchors; imgsz must match "
                 f"the native size {native_imgsz}, got {imgsz}."
             )
+        if model_name == "nafnet":
+            padder_size = int(getattr(self.model.model, "padder_size", 16))
+            if imgsz[0] % padder_size or imgsz[1] % padder_size:
+                raise ValueError(
+                    "NAFNet export imgsz must be divisible by the network "
+                    f"downsample factor {padder_size}, got {imgsz}."
+                )
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "
@@ -555,12 +570,17 @@ class BaseExporter(ABC):
         if family == "dfine":
             from ..models.dfine.nn import DFINEExportWrapper
 
+            # deploy() (BN fusion + decoder-layer pruning + head swap) mutates
+            # the wrapped model in place; deepcopy first so the user's live
+            # model is never destructively modified (mirrors the deimv2 path).
+            nn_model = copy.deepcopy(nn_model)
             nn_model = DFINEExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
         elif family == "deim":
             from ..models.deim.nn import DEIMExportWrapper
 
+            nn_model = copy.deepcopy(nn_model)
             nn_model = DEIMExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True
@@ -574,11 +594,27 @@ class BaseExporter(ABC):
         elif family == "ec":
             from ..models.ec.nn import ECExportWrapper
 
+            nn_model = copy.deepcopy(nn_model)
             nn_model = ECExportWrapper(
                 nn_model, task=getattr(self.model, "task", "detect")
             ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
+        elif family in {"yolo2", "yolo3", "yolo4"}:
+            from ..models.darknet.export import DarknetExportWrapper
+
+            # Bake the anchor-box decode into the graph so every export format
+            # emits a self-contained (B, 4+nc, N) tensor consumed by the shared
+            # backend decode. No learned anchors need to travel in metadata.
+            nn_model = DarknetExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "yolo7":
+            from ..models.yolo7.export import YOLO7ExportWrapper
+
+            nn_model = YOLO7ExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
         elif family in {"rtdetr", "rtdetrv2", "rtdetrv4"}:
             nn_model = _RTDETRExportWrapper(nn_model).to(device)
             nn_model.eval()
@@ -723,7 +759,11 @@ class BaseExporter(ABC):
     def _export_intermediate_onnx(
         self, nn_model, dummy, output_path, opset, simplify, dynamic
     ):
-        onnx_output = str(Path(output_path).with_suffix(".onnx"))
+        # Use a distinct intermediate name so it never collides with (and the
+        # finally-block cleanup never deletes) a real ONNX export the user may
+        # have written to the default ``<stem>.onnx`` path.
+        out = Path(output_path)
+        onnx_output = str(out.with_name(f"{out.stem}.export_intermediate.onnx"))
         logger.info("Step 1/2: Exporting to ONNX (%s)", onnx_output)
         return export_onnx(
             nn_model,
@@ -1045,6 +1085,13 @@ class TorchScriptExporter(BaseExporter):
             device = torch.device("cpu")
         return super()._resolve_params(output_path, imgsz, device, half, int8)
 
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        # The graph is traced at a fixed input shape, so report dynamic=False
+        # regardless of the requested flag (mirrors the NCNN override).
+        meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
+        meta["dynamic"] = False
+        return meta
+
     def _export(self, nn_model, dummy, *, output_path, metadata, **kwargs):
         return export_torchscript(
             nn_model, dummy, output_path=output_path, metadata=metadata
@@ -1311,6 +1358,14 @@ class CoreMLExporter(BaseExporter):
                     "Use ONNX embedded NMS when max_det control is required."
                 )
         super()._preflight(half=half, int8=int8, data=data, **kwargs)
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        # CoreML uses a hard-fixed ct.ImageType(shape=...); the exported graph
+        # has a fixed input shape, so report dynamic=False regardless of the
+        # requested flag (mirrors the NCNN override).
+        meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
+        meta["dynamic"] = False
+        return meta
 
     def _export(
         self,

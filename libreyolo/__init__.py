@@ -9,6 +9,7 @@ from .models import (
     LibreYOLOX,
     LibreYOLO9,
     LibreYOLO9E2E,
+    LibreYOLO9P2,
     LibreYOLONAS,
     LibreDFINE,
     LibreDEIM,
@@ -19,9 +20,16 @@ from .models import (
     LibreRTDETRv2,
     LibreRTDETRv4,
     LibreRTMDet,
+    LibreYOLO3,
+    LibreYOLO4,
+    LibreYOLO2,
+    LibreYOLO7,
     LibreL2CS,
     LibreFOMO,
     LibreDepthAnythingV2,
+    LibreNAFNet,
+    LibreEoMT,
+    LibrePIDNet,
     LibreMobileNetV4,
     LibreConvNeXt,
     LibreEfficientNetV2,
@@ -39,6 +47,7 @@ from .utils.results import (
     Gaze,
     SemanticMask,
     DepthMap,
+    RestoredImage,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -107,9 +116,16 @@ def __getattr__(name):
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
+        "LibreSAM2": (".models.sam", "LibreSAM2"),
+        "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
+        "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
+        "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
+        "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
         "DATASETS_DIR": (".data", "DATASETS_DIR"),
         "load_data_config": (".data", "load_data_config"),
         "check_dataset": (".data", "check_dataset"),
+        "Distiller": (".distillation", "Distiller"),
+        "get_distill_config": (".distillation", "get_distill_config"),
     }
     if name in ("LibreRFDETR", "LibreDINOv2"):
         # RF-DETR and DINOv2 share the same transformers dependency check.
@@ -130,6 +146,7 @@ __all__ = [
     "LibreYOLO",
     "LibreYOLO9",
     "LibreYOLO9E2E",
+    "LibreYOLO9P2",
     "LibreYOLONAS",
     "LibreYOLOX",
     "LibreRTDETR",
@@ -142,9 +159,16 @@ __all__ = [
     "LibreEC",
     "LibrePICODET",
     "LibreRTMDet",
+    "LibreYOLO3",
+    "LibreYOLO4",
+    "LibreYOLO2",
+    "LibreYOLO7",
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreNAFNet",
+    "LibreEoMT",
+    "LibrePIDNet",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
@@ -163,6 +187,12 @@ __all__ = [
     # Promptable-segmentation tier (optional, requires libreyolo[sam])
     "LibreSAM",
     "LibreSAM1",
+    "LibreSAM2",
+    "LibreMobileSAM",
+    # Open-vocabulary detector tier (optional, requires libreyolo[openvocab])
+    "LibreOpenVocab",
+    "LibreGroundingDINO",
+    "LibreOWLv2",
     # Results
     "Results",
     "Boxes",
@@ -174,6 +204,7 @@ __all__ = [
     "Gaze",
     "SemanticMask",
     "DepthMap",
+    "RestoredImage",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
@@ -200,4 +231,7 @@ __all__ = [
     "DATASETS_DIR",
     "load_data_config",
     "check_dataset",
+    # Distillation
+    "Distiller",
+    "get_distill_config",
 ]

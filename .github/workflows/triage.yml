@@ -6,6 +6,8 @@ on:
 
 jobs:
   triage:
+    # Skip auto-triage when the maintainer opens the issue themselves.
+    if: github.event.issue.user.login != 'ehxuban11'
     runs-on: ubuntu-latest
     permissions:
       issues: write

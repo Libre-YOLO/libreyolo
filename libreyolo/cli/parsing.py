@@ -18,12 +18,24 @@ _TRUE_VALUES = {"true", "1"}
 _FALSE_VALUES = {"false", "0"}
 
 
-def rewrite_known_bool_flags(args: list[str], bool_flags: set[str]) -> list[str]:
+def rewrite_known_bool_flags(
+    args: list[str],
+    bool_flags: set[str],
+    negatable: Optional[set[str]] = None,
+) -> list[str]:
     """Rewrite known bool flags from key=value or bare-word syntax.
 
     This is used both by the CLI parser and by the entry point's early logging
     setup so flags like ``quiet=true`` behave the same as ``--quiet``.
+
+    ``negatable`` is the subset of ``bool_flags`` (CLI names, dash form) that
+    actually expose a ``--no-<flag>`` form. For one-way flags (e.g. ``--json``,
+    ``--quiet``) that have no negative form, ``key=false`` drops the flag
+    entirely instead of emitting a nonexistent ``--no-<flag>`` (which Click
+    would reject with "No such option").
     """
+    if negatable is None:
+        negatable = set()
     new_args: list[str] = []
     for arg in args:
         m = re.match(r"^([a-zA-Z_][a-zA-Z0-9_-]*)=(.*)$", arg)
@@ -34,8 +46,9 @@ def rewrite_known_bool_flags(args: list[str], bool_flags: set[str]) -> list[str]
             if cli_key in bool_flags and lower_value in _TRUE_VALUES | _FALSE_VALUES:
                 if lower_value in _TRUE_VALUES:
                     new_args.append(f"--{cli_key}")
-                else:
+                elif cli_key in negatable:
                     new_args.append(f"--no-{cli_key}")
+                # One-way flag set to false: omit it entirely.
             else:
                 new_args.append(arg)
         elif arg.replace("_", "-") in bool_flags:
@@ -53,6 +66,7 @@ class KeyValueCommand(TyperCommand):
         # Use getattr throughout to be robust across typer/click versions
         # (TyperOption may not be a direct subclass of click.Option in all envs).
         bool_flags: set[str] = set()
+        negatable: set[str] = set()
         cli_to_param: dict[str, str] = {}
         for param in self.params:
             if not getattr(param, "opts", None):
@@ -69,12 +83,21 @@ class KeyValueCommand(TyperCommand):
                     if param_name:
                         cli_to_param[cli_key] = param_name
             if getattr(param, "is_flag", False):
+                primary_names: list[str] = []
                 for opt in param.opts:
                     if opt.startswith("--"):
-                        bool_flags.add(opt.lstrip("-"))
+                        name = opt.lstrip("-")
+                        bool_flags.add(name)
+                        primary_names.append(name)
+                has_negative = False
                 for opt in getattr(param, "secondary_opts", []):
                     if opt.startswith("--"):
-                        bool_flags.add(opt.lstrip("-"))
+                        name = opt.lstrip("-")
+                        bool_flags.add(name)
+                        if name.startswith("no-"):
+                            has_negative = True
+                if has_negative:
+                    negatable.update(primary_names)
 
         # Compute which params the user explicitly provided from the raw args,
         # and store them in ctx.meta so get_user_provided_params() can retrieve
@@ -95,7 +118,7 @@ class KeyValueCommand(TyperCommand):
                     user_provided.add(cli_to_param.get(key, key))
         ctx.meta["user_provided"] = user_provided
 
-        new_args = rewrite_known_bool_flags(args, bool_flags)
+        new_args = rewrite_known_bool_flags(args, bool_flags, negatable)
         parsed_args: list[str] = []
         for arg in new_args:
             # Match key=value pattern (key must start with letter or underscore)

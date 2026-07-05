@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ...postprocess.efficientnetv2 import postprocess as _effv2_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
@@ -196,6 +197,7 @@ class LibreEfficientNetV2(BaseModel):
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
+        callbacks: TrainCallbacks = None,
         **kwargs: Any,
     ) -> dict:
         """Fine-tune the classifier on an ImageFolder-style dataset.
@@ -230,6 +232,7 @@ class LibreEfficientNetV2(BaseModel):
             resume=resume,
             amp=amp,
             patience=patience,
+            callbacks=callbacks,
             **kwargs,
         )
 

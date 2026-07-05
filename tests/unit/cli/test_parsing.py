@@ -147,11 +147,14 @@ class TestLoggingFlagNormalization:
 
         result = _normalize_logging_flags(argv)
 
+        # This early pass is command-agnostic and only feeds the logging peek,
+        # so it treats quiet/verbose as one-way: quiet=true -> --quiet, while
+        # verbose=false is dropped (rather than emitting a --no-verbose that the
+        # per-command KeyValueCommand would reject for one-way --verbose flags).
         assert result == [
             "libreyolo",
             "predict",
             "--quiet",
-            "--no-verbose",
             "model=yolox-s",
         ]
 

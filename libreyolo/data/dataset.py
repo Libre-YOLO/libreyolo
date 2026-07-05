@@ -416,6 +416,12 @@ class YOLODataset(ImageCacheMixin, Dataset):
         # Read image to get dimensions
         try:
             with Image.open(img_file) as im:
+                # Use the stored (non-EXIF-rotated) dimensions so label-space
+                # dims match the pixels from cv2.imdecode below, which is called
+                # with IMREAD_IGNORE_ORIENTATION. Both stay in stored orientation
+                # on every OpenCV build (imdecode's native EXIF handling is
+                # build-dependent, so relying on it would mismatch dims vs pixels
+                # on builds that ignore EXIF).
                 width, height = im.size
         except (FileNotFoundError, UnidentifiedImageError, OSError) as e:
             raise FileNotFoundError(f"Cannot read image: {img_file}") from e
@@ -474,8 +480,8 @@ class YOLODataset(ImageCacheMixin, Dataset):
         if labels:
             res = np.array(labels, dtype=np.float32)
         else:
-            width = 6 if self.load_obb else 5
-            res = np.zeros((0, width), dtype=np.float32)
+            ncol = 6 if self.load_obb else 5
+            res = np.zeros((0, ncol), dtype=np.float32)
 
         # Scale to target image size
         r = min(self.img_size[0] / height, self.img_size[1] / width)
@@ -515,8 +521,12 @@ class YOLODataset(ImageCacheMixin, Dataset):
     def _decode_image(self, index: int) -> np.ndarray:
         """Decode image from disk for given index."""
         img_file = self.img_files[index]
-        img = cv2.imread(str(img_file))
-        assert img is not None, f"Failed to load {img_file}"
+        img = cv2.imdecode(
+            np.fromfile(str(img_file), dtype=np.uint8),
+            cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION,
+        )
+        if img is None:
+            raise ValueError(f"Failed to load {img_file}")
         return img
 
     def load_resized_img(self, index: int) -> np.ndarray:
@@ -552,6 +562,17 @@ class YOLODataset(ImageCacheMixin, Dataset):
             return img, label, origin_image_size, index
         img = self.load_resized_img(index)
         if self.load_segments:
+            if segments:
+                # Boxes were scaled by ``r`` at load time to match the resized
+                # canvas; scale the sibling segments by the same ratio so masks
+                # stay aligned with boxes when imgsz != native.
+                r = min(
+                    self.img_size[0] / origin_image_size[0],
+                    self.img_size[1] / origin_image_size[1],
+                )
+                for rings in segments:
+                    for ring in rings:
+                        ring *= r
             return img, copy.deepcopy(label), origin_image_size, index, segments
         return img, copy.deepcopy(label), origin_image_size, index
 
@@ -862,8 +883,12 @@ class COCODataset(ImageCacheMixin, Dataset):
     def _decode_image(self, index: int) -> np.ndarray:
         """Decode image from disk for given index."""
         img_file = str(self._image_path(index))
-        img = cv2.imread(img_file)
-        assert img is not None, f"Failed to load {img_file}"
+        img = cv2.imdecode(
+            np.fromfile(img_file, dtype=np.uint8),
+            cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION,
+        )
+        if img is None:
+            raise ValueError(f"Failed to load {img_file}")
         return img
 
     def load_resized_img(self, index: int) -> np.ndarray:

@@ -8,6 +8,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
 from ..base import BaseModel
 from ...training.config import YOLOXConfig
 from ...utils.image_loader import ImageInput
@@ -172,6 +173,21 @@ class LibreYOLOX(BaseModel):
     # Public API
     # =========================================================================
 
+    def get_distill_config(self) -> Dict:
+        """Return distillation config derived from this model's architecture.
+
+        The tap points are the three PAFPN outputs (C3_p3, C3_n3, C3_n4) and
+        channel dimensions are ``[256, 512, 1024] * width_multiplier``.
+        """
+        from .nn import LibreYOLOXModel
+
+        width = LibreYOLOXModel.CONFIGS[self.size]["width"]
+        return {
+            "tap_points": ["backbone.C3_p3", "backbone.C3_n3", "backbone.C3_n4"],
+            "channels": [int(256 * width), int(512 * width), int(1024 * width)],
+            "strides": [8, 16, 32],
+        }
+
     @ddp_aware()
     def train(
         self,
@@ -193,7 +209,7 @@ class LibreYOLOX(BaseModel):
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
-        callbacks=None,
+        callbacks: TrainCallbacks = None,
         loggers=None,
         **kwargs,
     ) -> dict:
@@ -239,6 +255,9 @@ class LibreYOLOX(BaseModel):
 
         yaml_nc = data_config.get("nc")
         yaml_names = data_config.get("names")
+        # If no nc in data.yaml, infer it by counting.
+        if yaml_nc is None and yaml_names is not None:
+            yaml_nc = len(yaml_names)
         if yaml_nc is not None and yaml_nc != self.nb_classes:
             self._rebuild_for_new_classes(yaml_nc)
 

@@ -412,6 +412,27 @@ class YOLOCocoAPI:
             }
             if "segmentation" in result:
                 ann["segmentation"] = result["segmentation"]
+                # Prefer true mask area over bbox w*h so the COCO small/medium/
+                # large AP bucketing matches the segmentation, not the box.
+                try:
+                    from pycocotools import mask as mask_utils
+
+                    img_meta = res_coco.imgs.get(result["image_id"], {})
+                    h, w = img_meta.get("height"), img_meta.get("width")
+                    segm = result["segmentation"]
+                    rle = None
+                    if isinstance(segm, list) and len(segm) > 0 and h and w:
+                        rle = mask_utils.merge(mask_utils.frPyObjects(segm, h, w))
+                    elif isinstance(segm, dict):
+                        rle = dict(segm)
+                        if isinstance(rle.get("counts"), list) and h and w:
+                            rle = mask_utils.frPyObjects(rle, h, w)
+                        elif isinstance(rle.get("counts"), str):
+                            rle["counts"] = rle["counts"].encode("ascii")
+                    if rle is not None:
+                        ann["area"] = float(mask_utils.area(rle))
+                except ImportError:
+                    pass
             res_coco.anns[ann_id] = ann
 
             img_id = result["image_id"]

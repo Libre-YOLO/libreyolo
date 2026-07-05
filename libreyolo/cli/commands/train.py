@@ -200,6 +200,18 @@ def train_cmd(
         "",
         help="Freeze layers: int count, list of indices, or module name(s)",
     ),
+    # Distillation
+    distill_model: str = typer.Option(
+        "",
+        help="Teacher checkpoint for knowledge distillation",
+    ),
+    dis: Optional[float] = typer.Option(
+        None,
+        help="Distillation loss weight (default: per-loss-type published default)",
+    ),
+    distill_loss_type: str = typer.Option(
+        "mgd", help="Distillation feature loss: mgd, cwd"
+    ),
     # Optimizer
     optimizer: str = typer.Option("sgd", help="Optimizer: sgd, adam, adamw"),
     lr0: float = typer.Option(0.01, help="Initial learning rate"),
@@ -262,6 +274,7 @@ def train_cmd(
     import ast
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
+
     user_provided = get_user_provided_params()
     normalized_task = None
     if task is not None:
@@ -296,6 +309,14 @@ def train_cmd(
         cache_val = cache_str
     elif cache_str in ("true", "1", "yes"):
         cache_val = True
+    elif cache_str in ("false", "0", "no", ""):
+        cache_val = False
+    else:
+        exit_with_error(
+            out,
+            "config_type_error",
+            f"Invalid cache value: {cache}. Use ram, disk, true, or false.",
+        )
 
     # Parse resume (can be "true"/"false" or a path)
     resume_val: bool | str = False
@@ -382,6 +403,9 @@ def train_cmd(
         "momentum": momentum,
         "weight_decay": weight_decay,
         "nesterov": nesterov,
+        "distill_model": distill_model or None,
+        "dis": dis,
+        "distill_loss_type": distill_loss_type,
         "scheduler": scheduler,
         "warmup_epochs": warmup_epochs,
         "warmup_lr_start": warmup_lr_start,
@@ -449,6 +473,11 @@ def train_cmd(
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
+        if params.get("distill_model"):
+            resolved_config["distill_model"] = params["distill_model"]
+            resolved_config["distill_loss_type"] = params["distill_loss_type"]
+            if params.get("dis") is not None:
+                resolved_config["dis"] = params["dis"]
         if normalized_task is not None:
             resolved_config["task"] = normalized_task
         if family == "rfdetr":
@@ -539,6 +568,10 @@ def train_cmd(
     training_hours = (time.time() - t0) / 3600
 
     # Build output
+    epochs_completed = params["epochs"]
+    epoch_losses = results.get("epoch_losses")
+    if isinstance(epoch_losses, (list, tuple)):
+        epochs_completed = len(epoch_losses)
     best_mAP50 = results.get("best_mAP50", None)
     best_mAP50_95 = results.get("best_mAP50_95", None)
     best_epoch = results.get("best_epoch", None)
@@ -554,7 +587,7 @@ def train_cmd(
         "model_family": loaded_family,
         "data": data,
         "device": str(loaded_model.device),
-        "epochs_completed": params["epochs"],
+        "epochs_completed": epochs_completed,
         "best_epoch": best_epoch,
         "best_metrics": (
             {"mAP50": best_mAP50, "mAP50_95": best_mAP50_95}
@@ -569,7 +602,7 @@ def train_cmd(
 
     if not json_output:
         lines = [
-            f"Training complete: {params['epochs']} epochs in {training_hours:.2f}h",
+            f"Training complete: {epochs_completed} epochs in {training_hours:.2f}h",
         ]
         if best_mAP50 is not None:
             lines.append(
