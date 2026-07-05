@@ -163,11 +163,11 @@ as the source of truth. By tier:
   suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
 - **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]`
-  / `[vlm]`): `LibreOpenVocab` (Grounding DINO, OWLv2: text-vocabulary
-  detection), `LibreSAM` / `LibreSAM2` / `LibreMobileSAM` (point/box-prompted
-  masks), `LibreCLIP` (zero-shot classify), and the `LibreVLM` family —
-  Qwen3VL, Florence2, Kosmos2, SmolVLM2, InternVL3, LocateAnything, LFM2VL.
-  Dedicated guide: `skills/use-libreyolo-zero-shot/`.
+  / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
+  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP`
+  (zero-shot classify), and the `LibreVLM` family (vision-language
+  detection). For the exact model aliases in each tier, use `libreyolo
+  models` and the dedicated guide `skills/use-libreyolo-zero-shot/`.
 
 ## The UI
 
