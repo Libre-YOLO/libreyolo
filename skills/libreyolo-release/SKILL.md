@@ -326,6 +326,18 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    The human sets the title, pastes `changelog.md`, and publishes; that is
    what creates the tag and fires `publish.yml`.
 
+   **Standardise what you hand over (past releases drifted: "v1.3.0",
+   "v1.2.0 release", "LibreYOLO v1.1.1", "Release v1.0.0" are all real
+   past titles).** When you give the human the New Release URL, also give
+   them the exact fields:
+   - **Title**: the bare tag `vX.Y.Z` (matches the most recent release).
+   - **Description**: the `changelog.md` from Phase 1, which must open with
+     a bold lead line `LibreYOLO **vX.Y.Z**, <one-line summary>` followed by
+     `##` sections (bolded item names + PR/issue refs), matching the v1.3.0
+     body shape.
+   - **Pre-release**: unchecked. **Set as latest**: leave on.
+   - **Binaries**: attach none; the wheel ships via `publish.yml`.
+
    Do **not** run `gh release create` yourself, even with `--draft`. The gh
    CLI creates the `vX.Y.Z` git tag up front for a draft ("if a matching git
    tag does not yet exist, one will automatically get created"), and
