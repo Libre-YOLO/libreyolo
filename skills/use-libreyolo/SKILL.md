@@ -3,7 +3,8 @@ name: use-libreyolo
 description: >-
   Use LibreYOLO as a computer vision library: run inference, train, validate,
   export, and track with object-detection / segmentation (and pose, classify,
-  gaze, OBB, semantic, depth) models on your own images and video. This is the
+  gaze, OBB, semantic, depth, point, restore) models on your own images and
+  video. This is the
   guide for *using* the `libreyolo` pip package — not for contributing to or
   developing it. Use whenever someone wants to detect, segment, or track with a
   YOLO9 or RF-DETR model, train on a YOLO-format dataset, measure mAP, run
@@ -36,9 +37,10 @@ libreyolo checks      # verify install, CUDA/MPS, and optional export backends
 
 The base install is lightweight. Some features need **optional extras** —
 install them as `libreyolo[extra]` (or `libreyolo[all]`). Available extras:
-`onnx`, `rfdetr`, `tensorrt`, `openvino`, `ncnn`, `tflite`, `coreml`,
-`tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `plots`, `lora`, `tensorboard`,
-`mlflow`, `wandb`, `all`. `libreyolo checks` reports which are present.
+`onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite`, `coreml`,
+`tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `openvocab`, `clip`, `label`,
+`plots`, `lora`, `tensorboard`, `mlflow`, `wandb`, `all`. `libreyolo checks`
+reports which are present.
 
 ## The four verbs
 
@@ -137,27 +139,35 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `depth`. Detection — plus **RF-DETR segmentation** — is the
-heavily-tested core; other task/family combinations vary in maturity, so check
-the README compatibility table before relying on one.
+`gaze`, `obb`, `point`, `depth`, `restore`. Detection — plus **RF-DETR
+segmentation** — is the heavily-tested core; other task/family combinations
+vary in maturity, so check the README compatibility table before relying on
+one. Task outputs land on matching `Results` fields (`r.semantic_mask`,
+`r.depth_map`, `r.restored`, `r.points`, …).
 
 ## Models
 
 `libreyolo models` lists every family with its sizes and exact names — treat it
 as the source of truth. By tier:
 
-- **Flagship:** YOLO9 (CNN), RF-DETR (transformer) — detection + segmentation.
-- **Other detectors:** YOLOX, YOLO9-E2E, YOLO-NAS, D-FINE, DEIM, DEIMv2,
-  RT-DETR / v2 / v4, PicoDet, RTMDet, EC.
-- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO.
+- **Flagship:** YOLO9 (CNN), RF-DETR (transformer) — detection + segmentation
+  (RF-DETR also pose + OBB).
+- **Other detectors:** YOLOX, YOLO9-E2E, YOLO9-P2 (stride-4 small-object),
+  YOLO-NAS, D-FINE, DEIM, DEIMv2, RT-DETR / v2 / v4, PicoDet, RTMDet, EC,
+  and the inference-only classic lineage YOLO2/3/4/7.
+- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
+  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
   suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
-- **Open-vocabulary / promptable** (need `libreyolo[vlm]` / `[sam]`): the
-  `LibreVLM` family — Qwen3VL, Florence2, Kosmos2, SmolVLM2, InternVL3,
-  LocateAnything, LFM2VL — and `LibreSAM` / `LibreSAM1`.
+- **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]`
+  / `[vlm]`): `LibreOpenVocab` (Grounding DINO, OWLv2: text-vocabulary
+  detection), `LibreSAM` / `LibreSAM2` / `LibreMobileSAM` (point/box-prompted
+  masks), `LibreCLIP` (zero-shot classify), and the `LibreVLM` family —
+  Qwen3VL, Florence2, Kosmos2, SmolVLM2, InternVL3, LocateAnything, LFM2VL.
+  Dedicated guide: `skills/use-libreyolo-zero-shot/`.
 
 ## The UI
 
@@ -166,6 +176,17 @@ libreyolo ui          # drag/drop/paste images in the browser, pick a model, see
 ```
 A local web app with almost no extra dependencies — the easiest way to try most
 models without writing any code. Great for quick experimentation.
+
+## Other commands worth knowing
+
+- `libreyolo label [data=<dataset-or-folder>]` — browser labelling tool
+  (boxes/masks/classes) that writes YOLO-format labels; `libreyolo[label]`
+  adds SAM click-to-mask assist.
+- `libreyolo doctor <dataset.yaml>` — dataset sanity checks (corrupt images,
+  label mismatches, leakage, tiny objects) before you burn GPU hours on a
+  bad dataset.
+- `libreyolo profile run|infer ...` — throughput/latency profiling; see
+  `skills/libreyolo-profiling/`.
 
 ## Exact, version-correct options
 
