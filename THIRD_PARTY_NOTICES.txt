@@ -218,6 +218,40 @@ semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
 they depend on gated non-commercial DINOv3 weights.
 
 --------------------------------------------------------------------
+Grounding DINO (IDEA-Research)
+--------------------------------------------------------------------
+Source: https://github.com/IDEA-Research/GroundingDINO
+License: Apache License 2.0
+Copyright (c) 2023 IDEA-Research
+Citation: Liu, S., Zeng, Z., Ren, T., Li, F., Zhang, H., Yang, J.,
+          Li, C., Yang, J., Su, H., Zhu, J., and Zhang, L. "Grounding
+          DINO: Marrying DINO with Grounded Pre-Training for Open-Set
+          Object Detection." ECCV 2024.
+Used for: LibreGroundingDINO open-vocabulary detector. The shipped path
+          (libreyolo/models/openvocab/grounding_dino.py) runs through the
+          Apache-2.0 Hugging Face Transformers GroundingDinoForObjectDetection
+          implementation. A native clean-room port derived from the same
+          Apache-2.0 transformers reference also lives at
+          libreyolo/models/grounding_dino/. Weights are rehosted at
+          LibreYOLO/LibreGroundingDINOt and LibreYOLO/LibreGroundingDINOb.
+
+--------------------------------------------------------------------
+OWLv2 / OWL-ViT (Google Research)
+--------------------------------------------------------------------
+Source: https://github.com/google-research/scenic (OWL-ViT / OWLv2)
+License: Apache License 2.0
+Copyright (c) 2023 Google LLC
+Citation: Minderer, M., Gritsenko, A., and Houlsby, N. "Scaling
+          Open-Vocabulary Object Detection." NeurIPS 2023.
+Used for: LibreOWLv2 open-vocabulary detector. The shipped path
+          (libreyolo/models/openvocab/owlv2.py) runs through the Apache-2.0
+          Hugging Face Transformers Owlv2ForObjectDetection implementation.
+          A native clean-room port derived from the same Apache-2.0
+          transformers reference also lives at libreyolo/models/owlv2/.
+          Weights are rehosted at LibreYOLO/LibreOWLv2b16 and
+          LibreYOLO/LibreOWLv2l14.
+
+--------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
 --------------------------------------------------------------------
 Source: https://github.com/Atten4Vis/LW-DETR
