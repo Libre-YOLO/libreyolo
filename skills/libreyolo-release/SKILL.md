@@ -326,6 +326,26 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    The human sets the title, pastes `changelog.md`, and publishes; that is
    what creates the tag and fires `publish.yml`.
 
+   **Prefill the form so the human only reviews and clicks Publish.** The
+   `releases/new` page accepts `title` and `body` query params, so hand
+   over a URL with everything filled in. Prefilling creates nothing (no tag,
+   no draft) until the human clicks Publish, so it stays inside the
+   "tag creation is a human action" rule below. Build it by URL-encoding
+   `changelog.md`:
+
+   ```python
+   import urllib.parse, pathlib
+   body = pathlib.Path("changelog.md").read_text(encoding="utf-8")
+   q = urllib.parse.urlencode(
+       {"target": "release", "tag": "vX.Y.Z", "title": "vX.Y.Z", "body": body}
+   )
+   print("https://github.com/LibreYOLO/libreyolo/releases/new?" + q)
+   ```
+
+   GitHub accepts a few KB of `body` in the URL (a full changelog is ~3 KB,
+   well within limits). Still hand over the raw `changelog.md` too, in case
+   the human wants to paste manually.
+
    **Standardise what you hand over (past releases drifted: "v1.3.0",
    "v1.2.0 release", "LibreYOLO v1.1.1", "Release v1.0.0" are all real
    past titles).** When you give the human the New Release URL, also give
