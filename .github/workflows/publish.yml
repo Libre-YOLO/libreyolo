@@ -25,6 +25,47 @@ jobs:
             exit 1
           fi
 
+      # Integrity gate: the tag name is the single source of truth for the
+      # version being shipped. Every downstream fact must agree with it before
+      # the pypi approval becomes reachable. This is what stops a tag from
+      # being cut on a commit whose pyproject was never bumped (e.g. v1.3.1
+      # accidentally pointing at the 1.3.0 release commit).
+      - name: Tag version matches pyproject version
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "tag_version=${TAG_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Reject anything that is not a clean release number (no .dev / a / b / rc).
+          if ! echo "$TAG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' is not a clean X.Y.Z release version."
+            exit 1
+          fi
+
+          PYPROJECT_VERSION="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "pyproject.toml at this tag declares version: ${PYPROJECT_VERSION}"
+          echo "tag declares version:                        ${TAG_VERSION}"
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error::Version mismatch: tag ${GITHUB_REF_NAME} but pyproject.toml is ${PYPROJECT_VERSION}. The version bump on release was likely skipped."
+            exit 1
+          fi
+
+      - name: Version not already on PyPI
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.tag_version }}
+        run: |
+          # 200 = version already published (fatal: PyPI rejects re-uploads).
+          # 404 = new version (good).
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/libreyolo/${TAG_VERSION}/json")"
+          echo "PyPI HTTP status for libreyolo==${TAG_VERSION}: ${CODE}"
+          if [ "$CODE" = "200" ]; then
+            echo "::error::libreyolo ${TAG_VERSION} is already on PyPI. Re-uploads are rejected; bump the version."
+            exit 1
+          fi
+          if [ "$CODE" != "404" ]; then
+            echo "::warning::Unexpected PyPI status ${CODE}; proceeding, but verify manually."
+          fi
+
   build:
     name: Build package
     needs: verify-release-source
@@ -36,6 +77,24 @@ jobs:
 
       - name: Build sdist and wheel
         run: uv build --out-dir dist/
+
+      - name: Built artifact version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # The built wheel filename encodes the version the package will ship as.
+          if ! ls dist/libreyolo-"${TAG_VERSION}"-py3-none-any.whl >/dev/null 2>&1; then
+            echo "::error::No wheel named libreyolo-${TAG_VERSION}-*.whl in dist/. Built artifact does not match the tag:"
+            ls -1 dist/ || true
+            exit 1
+          fi
+          # Cross-check the wheel's own METADATA (defends against a filename that
+          # disagrees with the packaged metadata).
+          META_VERSION="$(unzip -p dist/libreyolo-"${TAG_VERSION}"-py3-none-any.whl '*.dist-info/METADATA' | grep -m1 '^Version:' | awk '{print $2}')"
+          echo "wheel METADATA version: ${META_VERSION}"
+          if [ "$META_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Wheel METADATA version ${META_VERSION} != tag ${TAG_VERSION}."
+            exit 1
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
