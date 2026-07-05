@@ -68,9 +68,19 @@ Skills/docs-only changes have no tests to run; say so and move on.
 
 ### 3. Push and hand over the one-click PR link
 
+Push to the `upstream` remote (this repo's canonical remote; `origin` is
+dead here). Confirm it exists first, because a fresh clone or a colleague's
+worktree may only have `origin`:
+
 ```bash
+git remote get-url upstream >/dev/null 2>&1 || \
+  echo "no 'upstream' remote; use the remote that points at LibreYOLO/libreyolo"
 git push -u upstream <branch>
 ```
+
+If there is no `upstream`, find the remote whose URL is
+`LibreYOLO/libreyolo` (`git remote -v`) and push there instead; the compare
+URL below is unaffected (it is a github.com URL, not remote-dependent).
 
 Then hand the user the one-click compare URL and stop:
 
@@ -123,14 +133,27 @@ Loop until happy:
      surface expensive ones to the user.
 3. Done when the latest Greptile review has no unaddressed findings and its
    summary reads as approving (it scores confidence like "5/5, safe to
-   merge"). Also confirm CI checks are green: `gh pr checks <n>`.
+   merge"). Also confirm CI checks with `gh pr checks <n>`, and read the
+   result rather than just counting green. An **empty** or all-skipped check list
+   is not "green": a PR based on `release` triggers no CI at all (workflows
+   fire on `dev` only), so "no checks" there means "untested", not "passed".
+   Report that honestly rather than as a pass.
+
+Note on how to read Greptile's output: its substantive review is posted as
+a PR summary comment (fetch `gh api repos/LibreYOLO/libreyolo/issues/<n>/comments`),
+with per-finding items and a confidence score, plus sometimes inline
+comments. The GitHub "review" object body is often empty, so an empty
+review body does not mean it found nothing; read the summary comment. When
+re-reviewing, findings anchored to a superseded commit SHA are already
+addressed; only findings on the latest commit are live.
 
 ### 5. Report
 
-End the turn with: PR URL, one-line summary of the change, CI status,
-Greptile verdict (score + how many findings were fixed vs rebutted), and
-whether it is ready to merge. **Do not merge the PR yourself** unless the
-user explicitly says to merge; merging to dev is their click.
+End the turn with: PR URL, one-line summary of the change, CI status
+(honest about untested release PRs), Greptile verdict (score + how many
+findings were fixed vs rebutted), and whether it is ready to merge. **Do
+not merge the PR yourself** unless the user explicitly says to merge;
+merging to dev is their click.
 
 ## Common variants
 
@@ -143,8 +166,10 @@ user explicitly says to merge; merging to dev is their click.
 - **User says "ship it" on an already-open PR**: skip to step 4; the job
   is Greptile + CI + report.
 - **Fork PRs / external contributors**: Greptile still reviews, but you
-  cannot push to their branch; findings become review comments instead of
-  commits.
+  cannot push to their branch. Do **not** post the findings as PR comments
+  to route them (that needs the human's explicit ask, per `AGENTS.md`);
+  relay them to the user in your summary and let the human decide what to
+  post or request from the contributor.
 
 ## Anti-patterns
 
@@ -154,6 +179,8 @@ user explicitly says to merge; merging to dev is their click.
 - Ending the turn with "want me to open a PR?". Hand the link.
 - Replying on the Greptile thread to rebut a finding. Put the rebuttal in
   your summary; the human comments if they want to.
+- Passing `-c "<comment>"` to `gh pr close`/`gh pr reopen`. That posts a PR
+  comment, which needs the human's explicit ask. Close/reopen bare.
 - `git add -A` in the dirty main checkout.
 - Blindly applying every Greptile comment. It's usually right, not always
   right; a wrong "fix" that lands because a bot suggested it is still your
