@@ -2,21 +2,25 @@
 name: merge-to-dev
 description: >-
   The whole dance for landing code on LibreYOLO's dev branch: branch, commit,
-  push to upstream, hand the user a one-click PR link (or open the PR),
-  then babysit the Greptile bot review until it is happy. Use whenever the
-  user says "put this on dev", "push this to dev", "merge this to dev",
-  "ship this", "open a PR for this", or hands over finished work on
-  LibreYOLO/libreyolo. The user should never have to ask for the PR link;
-  producing it (and handling Greptile) IS the task.
+  push to upstream, then hand the user a one-click compare URL that opens an
+  empty PR form for them to submit (agents must not open the PR themselves),
+  and once they have opened it, babysit the Greptile bot review until it is
+  happy. Use whenever the user says "put this on dev", "push this to dev",
+  "merge this to dev", "ship this", "open a PR for this", or hands over
+  finished work on LibreYOLO/libreyolo. The user should never have to ask for
+  the PR link; producing it is the task.
 ---
 
 # Merge code to dev
 
 There is exactly one way code lands on `dev` in `LibreYOLO/libreyolo`:
-**branch -> commit -> push to upstream -> PR with base `dev`**. Never push
-to `dev` directly, even though the account has admin. When the user says
-"put this on dev", run the entire dance below and end your turn with the
-PR link and the Greptile verdict, not with a question.
+**branch -> commit -> push to upstream -> the human opens a PR with base
+`dev`**. Never push to `dev` directly, even though the account has admin.
+And per `AGENTS.md`, the **agent never opens the PR**: it pushes the branch
+and hands over a one-click compare URL that opens the PR form empty, and the
+human submits it. When the user says "put this on dev", run the dance below
+and end your turn with that link, not with a question and not with a PR you
+opened yourself.
 
 ## Environment gotchas (read first, they bite every session)
 
@@ -62,36 +66,38 @@ PYTHONPATH=. .venv/Scripts/python.exe -m pytest tests/unit/<touched-area> -q
 
 Skills/docs-only changes have no tests to run; say so and move on.
 
-### 3. Push and produce the PR
+### 3. Push and hand over the one-click PR link
 
 ```bash
 git push -u upstream <branch>
 ```
 
-Then either open the PR directly (default when the change is
-self-explanatory):
-
-```bash
-gh pr create -R LibreYOLO/libreyolo --base dev --head <branch> \
-  --title "<title>" --body "<what and why, issue ref like 'Closes #512'>"
-```
-
-or, if the user likes to write the description themselves, give the
-one-click compare URL:
+Then hand the user the one-click compare URL and stop:
 
 ```
 https://github.com/LibreYOLO/libreyolo/compare/dev...<branch>?expand=1
 ```
 
-**Always deliver one of these two without being asked.** "Pushed the
-branch" is not a finished turn; the link is the deliverable. Note: CI
-(`unit-tests.yml`, `install-smoke.yml`) runs on PRs to `dev`, so the PR is
-also what buys you the CI signal.
+**The agent must not open the PR.** `AGENTS.md` is explicit: "Agents must
+not open pull requests"; "Humans handle ... PR creation"; agents "may reply
+with a one-click GitHub URL (no description pre-filled) so the human can
+open the PR." The `?expand=1` compare link opens the PR form empty, which
+is exactly what the policy allows: do not use `gh pr create`, and do not
+pre-fill a description. Draft a suggested title and body in your message
+for the user to copy if they want, but the click is theirs.
 
-### 4. Babysit Greptile
+**Deliver the link without being asked.** "Pushed the branch" is not a
+finished turn; the link is the deliverable. CI (`unit-tests.yml`,
+`install-smoke.yml`) runs once the human opens the PR to `dev`, so their
+click is also what starts the CI signal.
 
-When the PR author is one of the repo admins, the Greptile bot reviews the
-PR automatically a few minutes after it opens (and again after each push).
+### 4. Babysit Greptile (after the human opens the PR)
+
+This step needs a PR to exist, so it starts once the human has opened it
+from your link (or tells you "it's open" / "ship it"). Do not sit polling
+for a PR number before then. When the PR author is one of the repo admins,
+the Greptile bot reviews the PR automatically a few minutes after it opens
+(and again after each push).
 Its reviews are usually good; treat them as a real reviewer, not noise.
 
 Loop until happy:
@@ -109,8 +115,10 @@ Loop until happy:
    - **Right** (real bug, real improvement): fix the code, commit, push.
      The push triggers a re-review; go back to step 1.
    - **Wrong or not applicable**: don't change the code to appease the bot.
-     Reply on the thread with a one-line factual reason so the resolution
-     is recorded, and tell the user in the summary.
+     Put a one-line factual rebuttal in your summary to the user, and let
+     **them** reply on the thread if they want it recorded. `AGENTS.md`:
+     "Agents must not post ... PR comments unless a human explicitly asks."
+     Do not reply on the Greptile thread yourself.
    - **Judgement call** (style, scope): lean toward fixing cheap ones,
      surface expensive ones to the user.
 3. Done when the latest Greptile review has no unaddressed findings and its
@@ -126,10 +134,10 @@ user explicitly says to merge; merging to dev is their click.
 
 ## Common variants
 
-- **"This is for release, not dev"**: same dance with `--base release`,
-  but that only happens during a release cut or hotfix; confirm first.
-  Remember release PRs from dev show no CI checks (workflows trigger on
-  dev only).
+- **"This is for release, not dev"**: same dance, but the compare URL bases
+  on `release` (`compare/release...<branch>?expand=1`); that only happens
+  during a release cut or hotfix, so confirm first. Remember release PRs
+  from dev show no CI checks (workflows trigger on dev only).
 - **Work in a worktree**: same flow; push from the worktree. The branch is
   what matters, not which checkout it sits in.
 - **User says "ship it" on an already-open PR**: skip to step 4; the job
@@ -141,7 +149,11 @@ user explicitly says to merge; merging to dev is their click.
 ## Anti-patterns
 
 - Pushing to `dev` or `release` directly. Never, admin or not.
-- Ending the turn with "want me to open a PR?". Open it or hand the link.
+- Opening the PR yourself with `gh pr create`. `AGENTS.md` forbids it; hand
+  the one-click compare URL and let the human submit.
+- Ending the turn with "want me to open a PR?". Hand the link.
+- Replying on the Greptile thread to rebut a finding. Put the rebuttal in
+  your summary; the human comments if they want to.
 - `git add -A` in the dirty main checkout.
 - Blindly applying every Greptile comment. It's usually right, not always
   right; a wrong "fix" that lands because a bot suggested it is still your

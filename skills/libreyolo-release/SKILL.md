@@ -209,21 +209,28 @@ Present the scoreboard + curated changelog. On explicit "go":
    preflight check 3 told you if there are any). Resolve conflicts on dev;
    the version line auto-merges to the clean release value, so **manually
    set dev back to the next `X.Y.0.dev0`**.
-2. **Bump + PR.** Branch off merged dev, set `pyproject.toml` to clean
-   `X.Y.0`, push, open PR with base `release`. Remember: this PR shows no
-   CI checks by design. Merge with a **merge commit, never squash** (squash
-   collapses the whole cycle's history).
-3. **GitHub release.** Draft it with the changelog so the publish moment is
-   one click:
+2. **Bump + hand over the PR link.** Branch off merged dev, set
+   `pyproject.toml` to clean `X.Y.0`, push, then hand the user the one-click
+   compare URL `https://github.com/LibreYOLO/libreyolo/compare/release...<branch>?expand=1`.
+   Per `AGENTS.md`, the **agent does not open the PR**; the human submits
+   it. Remind them: this PR shows no CI checks by design, and it must be
+   merged with a **merge commit, never squash** (squash collapses the whole
+   cycle's history).
+3. **GitHub release (human action).** Cutting the release is the user's; the
+   agent may prepare a **draft** for them to review and publish, since a
+   draft is not a live PR or comment and publishing it is their click:
 
    ```bash
    gh release create vX.Y.Z -R LibreYOLO/libreyolo --target release \
      --title "LibreYOLO vX.Y.Z" --notes-file changelog.md --draft
    ```
 
-   Publishing the release creates the tag, which fires `publish.yml`.
-4. **Approve "Publish to PyPI"** in the Actions run. This is the only
-   human-required click; do not try to automate it.
+   If unsure whether the user wants even a draft created for them, hand the
+   changelog file and the "new release" URL instead and let them do it.
+   Publishing the release (their action) creates the tag, which fires
+   `publish.yml`.
+4. **Approve "Publish to PyPI"** in the Actions run. This is a
+   human-required click; the agent never approves it.
 
 ## Phase 4: Post-publish verification (do not skip)
 
