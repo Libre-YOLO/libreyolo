@@ -68,19 +68,20 @@ Skills/docs-only changes have no tests to run; say so and move on.
 
 ### 3. Push and hand over the one-click PR link
 
-Push to the `upstream` remote (this repo's canonical remote; `origin` is
-dead here). Confirm it exists first, because a fresh clone or a colleague's
-worktree may only have `origin`:
+Push to the remote that points at `LibreYOLO/libreyolo`. It is normally
+named `upstream` here (`origin` is dead), but a fresh clone or a
+colleague's worktree may only have `origin`, so **resolve the remote before
+pushing** rather than assuming `upstream` exists:
 
 ```bash
-git remote get-url upstream >/dev/null 2>&1 || \
-  echo "no 'upstream' remote; use the remote that points at LibreYOLO/libreyolo"
-git push -u upstream <branch>
+# pick the remote whose URL is LibreYOLO/libreyolo; do not hardcode 'upstream'
+REMOTE=$(git remote -v | awk '/LibreYOLO\/libreyolo/ {print $1; exit}')
+[ -n "$REMOTE" ] || { echo "no remote points at LibreYOLO/libreyolo; add one first"; exit 1; }
+git push -u "$REMOTE" <branch>
 ```
 
-If there is no `upstream`, find the remote whose URL is
-`LibreYOLO/libreyolo` (`git remote -v`) and push there instead; the compare
-URL below is unaffected (it is a github.com URL, not remote-dependent).
+The compare URL below is a github.com URL, so it is unaffected by which
+remote name you pushed through.
 
 Then hand the user the one-click compare URL and stop:
 
@@ -159,8 +160,10 @@ merging to dev is their click.
 
 - **"This is for release, not dev"**: same dance, but the compare URL bases
   on `release` (`compare/release...<branch>?expand=1`); that only happens
-  during a release cut or hotfix, so confirm first. Remember release PRs
-  from dev show no CI checks (workflows trigger on dev only).
+  during a release cut or hotfix, so confirm first. Release PRs trigger no
+  CI (workflows fire on `dev` only), so `gh pr checks` returns an empty or
+  all-skipped list. Report that as "no CI ran (untested)", never as green,
+  and do not run the Greptile-done "checks are green" step against it.
 - **Work in a worktree**: same flow; push from the worktree. The branch is
   what matters, not which checkout it sits in.
 - **User says "ship it" on an already-open PR**: skip to step 4; the job

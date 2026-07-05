@@ -313,19 +313,21 @@ hotfix, use the "Minor vs patch" branch-off-`release` variant instead.
    it. Remind them: this PR shows no CI checks by design, and it must be
    merged with a **merge commit, never squash** (squash collapses the whole
    cycle's history).
-3. **GitHub release (human action).** Cutting the release is the user's; the
-   agent may prepare a **draft** for them to review and publish, since a
-   draft is not a live PR or comment and publishing it is their click:
+3. **GitHub release (human action).** Cutting the release is the user's. By
+   default the agent creates **no** release object: hand over the changelog
+   file and the New Release URL and let the human fill it in, so no
+   agent-created draft or tag target is left behind if the release is
+   cancelled or retargeted.
 
-   ```bash
-   gh release create vX.Y.Z -R LibreYOLO/libreyolo --target release \
-     --title "LibreYOLO vX.Y.Z" --notes-file changelog.md --draft
+   ```
+   https://github.com/LibreYOLO/libreyolo/releases/new?target=release&tag=vX.Y.Z
    ```
 
-   If unsure whether the user wants even a draft created for them, hand the
-   changelog file and the "new release" URL instead and let them do it.
-   Publishing the release (their action) creates the tag, which fires
-   `publish.yml`.
+   The human sets the title, pastes `changelog.md`, and publishes; that is
+   what creates the tag and fires `publish.yml`. Only if the user explicitly
+   asks you to prepare a draft, run
+   `gh release create vX.Y.Z -R LibreYOLO/libreyolo --target release --title "LibreYOLO vX.Y.Z" --notes-file changelog.md --draft`
+   and tell them a draft now exists for them to review, publish, or delete.
 4. **Approve the publish.** The run pauses on the `pypi` GitHub Environment
    for a manual approval (the job shows as "Publish to PyPI"). This is a
    human-required click; the agent never approves it.
