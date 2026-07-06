@@ -256,6 +256,59 @@ def _case_yolox_mosaic_mixup():
     return {"img": img, "labels": labels}
 
 
+def _case_perspective_random_affine():
+    from libreyolo.data.augment.geometry import random_affine
+
+    _seed_all()
+    img = _image(h=64, w=64)
+    boxes = _boxes_xyxy_cls(0)
+    out_img, out_boxes = random_affine(
+        img,
+        boxes,
+        target_size=(64, 64),
+        degrees=10.0,
+        translate=0.1,
+        scales=0.1,
+        shear=10.0,
+        perspective=0.001,
+    )
+    return {"img": out_img, "labels": out_boxes}
+
+
+def _case_yolox_flipud():
+    from libreyolo.training.augment import TrainTransform
+
+    t = TrainTransform(max_labels=50, flip_prob=0.0, hsv_prob=0.0, flipud=1.0)
+    _seed_all()
+    img, labels = t(_image(), _boxes_xyxy_cls(0), (64, 64))
+    return {"img": img, "labels": labels}
+
+
+def _case_yolonas_flipud():
+    from libreyolo.models.yolonas.transforms import YOLONASTrainTransform
+
+    t = YOLONASTrainTransform(max_labels=50, flip_prob=0.0, hsv_prob=0.0, flipud=1.0)
+    _seed_all()
+    img, labels = t(_image(), _boxes_xyxy_cls(0), (64, 64))
+    return {"img": img, "labels": labels}
+
+
+def _case_yolo9_rot90_obb():
+    from libreyolo.models.yolo9.transforms import YOLO9TrainTransform
+
+    t = YOLO9TrainTransform(
+        max_labels=50,
+        flip_prob=0.0,
+        vertical_flip_prob=0.0,
+        hsv_prob=0.0,
+        output_label_dim=6,
+        rot90_prob=1.0,
+    )
+    _seed_all()
+    img, labels = t(_image(), _obb_targets(), (64, 64))
+    return {"img": img, "labels": labels}
+
+
 def _case_yolonas_train():
     from libreyolo.models.yolonas.transforms import YOLONASTrainTransform
 
@@ -706,6 +759,10 @@ CASES = {
     "yolox_train_empty": _case_yolox_train_empty,
     "yolox_val": _case_yolox_val,
     "yolox_mosaic_mixup": _case_yolox_mosaic_mixup,
+    "perspective_random_affine": _case_perspective_random_affine,
+    "yolox_flipud": _case_yolox_flipud,
+    "yolonas_flipud": _case_yolonas_flipud,
+    "yolo9_rot90_obb": _case_yolo9_rot90_obb,
     "yolonas_train": _case_yolonas_train,
     "yolonas_affine_mixup": _case_yolonas_affine_mixup,
     "yolo9_train_det": _case_yolo9_train_det,

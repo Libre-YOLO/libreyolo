@@ -92,6 +92,13 @@ class TrainConfig:
     mosaic_scale: Tuple[float, float] = (0.1, 2.0)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 2.0
+    # Projective (perspective) warp magnitude, following the de-facto YOLO
+    # knob. The two projective terms are sampled in [-perspective, +perspective]
+    # (~0.0005 is a typical scale). Default 0.0 keeps the pure-affine warp.
+    perspective: float = 0.0
+    # Vertical-flip probability (top-to-bottom). Off by default; useful for
+    # datasets without a fixed up/down orientation (e.g. aerial imagery).
+    flipud: float = 0.0
 
     # Training features
     ema: bool = True
@@ -232,6 +239,10 @@ class YOLO9Config(TrainConfig):
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.
     max_labels: int = 100
+    # Probability of a random k*90-degree rotation for oriented-box (OBB)
+    # training. Off by default; only applied on the OBB path (samples carrying
+    # angle targets) and ignored for axis-aligned detection.
+    rot90: float = 0.0
 
 
 @dataclass(kw_only=True)

@@ -21,7 +21,12 @@ import numpy as np
 
 from ..obb import normalize_obb_angle
 from .color import augment_hsv
-from .geometry import letterbox_preproc, mirror, random_affine  # noqa: F401
+from .geometry import (  # noqa: F401
+    letterbox_preproc,
+    mirror,
+    random_affine,
+    rot90_image_boxes,
+)
 from .segments import (
     copy_segments as _copy_segments,
     filter_segments as _filter_segments,
@@ -53,6 +58,8 @@ class YOLO9TrainTransform:
         hsv_prob=1.0,
         mask_downsample_ratio=4,
         output_label_dim=None,
+        flipud=None,
+        rot90_prob=0.0,
     ):
         """
         Args:
@@ -60,13 +67,23 @@ class YOLO9TrainTransform:
             flip_prob: Probability of horizontal flip
             vertical_flip_prob: Probability of vertical flip
             hsv_prob: Probability of HSV augmentation
+            flipud: Standard-name alias for ``vertical_flip_prob``. When given
+                (not ``None``) it overrides ``vertical_flip_prob``; the older
+                name is kept for backward compatibility.
+            rot90_prob: Probability of a random k*90-degree rotation (k in
+                1..3). Intended for oriented-box (OBB) training; it is only
+                applied when the sample carries angle targets and draws no
+                random numbers when disabled.
         """
         self.max_labels = max_labels
         self.flip_prob = flip_prob
-        self.vertical_flip_prob = vertical_flip_prob
+        self.vertical_flip_prob = (
+            vertical_flip_prob if flipud is None else flipud
+        )
         self.hsv_prob = hsv_prob
         self.mask_downsample_ratio = mask_downsample_ratio
         self.output_label_dim = output_label_dim
+        self.rot90_prob = rot90_prob
 
     def __call__(self, image, targets, input_dim, segments=None):
         """
@@ -131,6 +148,26 @@ class YOLO9TrainTransform:
         labels_o = labels.copy()
         angles_o = angles.copy() if angles is not None else None
         segments_o = _copy_segments(segments_t)
+
+        # Apply a random k*90-degree rotation for oriented boxes. Off by
+        # default and only meaningful when the sample carries angle targets, so
+        # it is guarded to draw no random numbers when disabled (keeping the
+        # detection path's RNG order unchanged). The image and box centers
+        # rotate together; the angle turns by k*pi/2. A quarter turn of a
+        # rectangle is a swap of its sides, which normalize_obb_angle folds back
+        # into the canonical [-pi/2, pi/2) range, so width/height are preserved
+        # and only the angle column carries the turn.
+        if self.rot90_prob > 0 and angles is not None:
+            if random.random() < self.rot90_prob:
+                k = random.randint(1, 3)
+                image, boxes = rot90_image_boxes(image, boxes, k)
+                angles = np.asarray(
+                    [
+                        normalize_obb_angle(float(a) + k * np.pi / 2.0)
+                        for a in angles
+                    ],
+                    dtype=np.float32,
+                )
 
         # Apply HSV augmentation
         if random.random() < self.hsv_prob:
@@ -273,6 +310,7 @@ class YOLO9MosaicMixupDataset:
         enable_mixup=False,
         mosaic_prob=1.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         """
         Initialize YOLO9MosaicMixupDataset.
@@ -298,6 +336,7 @@ class YOLO9MosaicMixupDataset:
         self.translate = translate
         self.scale = mosaic_scale
         self.shear = shear
+        self.perspective = perspective
         self.mixup_scale = mixup_scale
         self.enable_mosaic = mosaic
         self.enable_mixup = enable_mixup
@@ -446,6 +485,7 @@ class YOLO9MosaicMixupDataset:
                 translate=self.translate,
                 scales=self.scale,
                 shear=self.shear,
+                perspective=self.perspective,
             )
 
         # Filter small boxes
