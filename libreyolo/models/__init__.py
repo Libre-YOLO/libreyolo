@@ -547,6 +547,8 @@ def LibreYOLO(
         else None
     )
     filename_task = matched_cls.detect_task_from_filename(Path(model_path).name)
+    if checkpoint_task is None:
+        checkpoint_task = matched_cls.detect_checkpoint_task(weights_dict)
     if checkpoint_task is None and matched_cls.FAMILY == "rfdetr":
         if any(k.startswith("segmentation_head") for k in weights_dict):
             checkpoint_task = "segment"

@@ -714,6 +714,10 @@ class BaseBackend(ABC):
                 max_det=max_det,
             )
         elif self.model_family in ("dfine", "rtdetrv4"):
+            if self.model_family == "dfine" and self.task == "segment":
+                return self._parse_dfine_segment(
+                    all_outputs, orig_w, orig_h, conf, max_det=max_det
+                )
             boxes, scores, cls = self._parse_dfine(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
@@ -1287,6 +1291,70 @@ class BaseBackend(ABC):
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
+
+    def _parse_dfine_segment(
+        self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+        """Parse D-FINE-seg raw exports into boxes, classes, and masks."""
+        pred_logits = all_outputs[0][0]
+        pred_boxes = all_outputs[1][0]
+        pred_masks = all_outputs[2][0] if len(all_outputs) >= 3 else None
+
+        _, nc = pred_logits.shape
+        prob = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
+        prob = prob.astype(np.float32)
+        flat = prob.reshape(-1)
+        k = min(max_det, flat.size)
+        idx = np.argpartition(-flat, k - 1)[:k]
+        idx = idx[np.argsort(-flat[idx])]
+
+        scores = flat[idx]
+        query_idx = idx // nc
+        class_ids = idx % nc
+
+        boxes = self._scale_cxcywh_boxes(
+            pred_boxes[query_idx],
+            orig_w,
+            orig_h,
+            clip=True,
+        )
+        keep = scores > conf
+        boxes = boxes[keep]
+        scores = scores[keep]
+        query_idx = query_idx[keep]
+        class_ids = class_ids[keep]
+
+        masks_out = None
+        if pred_masks is not None and query_idx.size > 0:
+            masks_t = torch.from_numpy(pred_masks[query_idx]).unsqueeze(1).float()
+            in_h, in_w = _imgsz_hw(self.input_size)
+            masks_t = F.interpolate(
+                masks_t,
+                size=(int(in_h), int(in_w)),
+                mode="bilinear",
+                align_corners=False,
+            )
+            masks_t = F.interpolate(
+                masks_t,
+                size=(int(orig_h), int(orig_w)),
+                mode="bilinear",
+                align_corners=False,
+            )[:, 0].clamp_(0, 1)
+            boxes_t = torch.from_numpy(boxes).to(dtype=masks_t.dtype)
+            if boxes_t.numel() > 0:
+                ys = torch.arange(int(orig_h), dtype=masks_t.dtype)[None, :, None]
+                xs = torch.arange(int(orig_w), dtype=masks_t.dtype)[None, None, :]
+                x1, y1, x2, y2 = boxes_t.T
+                inside = (
+                    (xs >= x1[:, None, None])
+                    & (xs < x2[:, None, None])
+                    & (ys >= y1[:, None, None])
+                    & (ys < y2[:, None, None])
+                )
+                masks_t = masks_t * inside.to(dtype=masks_t.dtype)
+            masks_out = (masks_t >= 0.5).numpy()
+
+        return boxes, scores, class_ids.astype(np.int64), masks_out
 
     def _parse_ec_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det=300

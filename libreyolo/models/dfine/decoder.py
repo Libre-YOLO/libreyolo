@@ -2,6 +2,8 @@
 
 Ported from D-FINE (https://github.com/Peterande/D-FINE).
 Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
+D-FINE-seg mask head additions adapted from https://github.com/ArgoHA/D-FINE-seg.
+Copyright (c) 2026 The D-FINE-seg Authors. All Rights Reserved.
 Modified from RT-DETR (https://github.com/lyuwenyu/RT-DETR)
 Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 
@@ -289,6 +291,55 @@ class LQE(nn.Module):
         return scores + quality_score
 
 
+class MaskDecoder(nn.Module):
+    """Fuse encoder PAN features into a shared mask feature map.
+
+    D-FINE-seg uses the finest encoder output plus upsampled coarser outputs,
+    smooths the fused map, and upsamples to quarter resolution. Per-query mask
+    logits are produced by a dot product between this map and a query mask
+    embedding from ``mask_head``.
+    """
+
+    def __init__(self, in_chs, out_ch=256):
+        super().__init__()
+        n_groups = 32
+        self.lateral = nn.ModuleList(
+            [nn.Conv2d(ch, out_ch, kernel_size=1, bias=False) for ch in in_chs]
+        )
+        self.bn = nn.ModuleList([nn.GroupNorm(n_groups, out_ch) for _ in in_chs])
+        self.fusion_conv = nn.Conv2d(
+            out_ch,
+            out_ch,
+            kernel_size=3,
+            padding=1,
+            bias=False,
+        )
+        self.fusion_norm = nn.GroupNorm(n_groups, out_ch)
+        self.up_conv = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.GroupNorm(n_groups, out_ch)
+        self.act = nn.ReLU(inplace=True)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        init.kaiming_normal_(self.up_conv.weight, mode="fan_out", nonlinearity="relu")
+
+    def forward(self, feats):
+        f0 = self.bn[0](self.lateral[0](feats[0]))
+        x = f0
+        for i in range(1, len(feats)):
+            t = self.bn[i](self.lateral[i](feats[i]))
+            x = x + F.interpolate(
+                t,
+                size=f0.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        x = self.act(self.fusion_norm(self.fusion_conv(x)))
+        x = F.interpolate(x, scale_factor=2.0, mode="bilinear", align_corners=False)
+        return self.act(self.bn1(self.up_conv(x)))
+
+
 class TransformerDecoder(nn.Module):
     """Transformer decoder implementing Fine-grained Distribution Refinement (FDR)."""
 
@@ -366,6 +417,7 @@ class TransformerDecoder(nn.Module):
         attn_mask=None,
         memory_mask=None,
         dn_meta=None,
+        return_queries=False,
     ):
         output = target
         output_detach = pred_corners_undetach = 0
@@ -375,6 +427,7 @@ class TransformerDecoder(nn.Module):
         dec_out_logits = []
         dec_out_pred_corners = []
         dec_out_refs = []
+        dec_out_queries = [] if return_queries else None
         if not hasattr(self, "project"):
             project = weighting_function(self.reg_max, up, reg_scale)
         else:
@@ -404,6 +457,8 @@ class TransformerDecoder(nn.Module):
                 attn_mask,
                 query_pos_embed,
             )
+            if return_queries:
+                dec_out_queries.append(output)
 
             if i == 0:
                 pre_bboxes = F.sigmoid(
@@ -439,6 +494,7 @@ class TransformerDecoder(nn.Module):
             torch.stack(dec_out_refs),
             pre_bboxes,
             pre_scores,
+            torch.stack(dec_out_queries) if return_queries else None,
         )
 
 
@@ -470,6 +526,9 @@ class DFINETransformer(nn.Module):
         reg_max=32,
         reg_scale=4.0,
         layer_scale=1,
+        enable_mask_head=False,
+        mask_dim=256,
+        mask_low_level_ch=None,
     ):
         super().__init__()
         feat_channels = list(feat_channels)
@@ -492,6 +551,8 @@ class DFINETransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self.enable_mask_head = bool(enable_mask_head)
+        self.mask_dim = int(mask_dim)
 
         assert query_select_method in ("default", "one2many", "agnostic")
         assert cross_attn_method in ("default", "discrete")
@@ -536,6 +597,21 @@ class DFINETransformer(nn.Module):
             layer_scale,
             activation=activation,
         )
+
+        if self.enable_mask_head:
+            mask_in_chs = (
+                [int(mask_low_level_ch)] + feat_channels
+                if mask_low_level_ch is not None
+                else feat_channels
+            )
+            self.mask_decoder = MaskDecoder(in_chs=mask_in_chs, out_ch=self.mask_dim)
+            self.mask_head = MLP(
+                hidden_dim,
+                hidden_dim,
+                self.mask_dim,
+                3,
+                act=activation,
+            )
 
         self.num_denoising = num_denoising
         self.label_noise_ratio = label_noise_ratio
@@ -813,7 +889,18 @@ class DFINETransformer(nn.Module):
         )
         return topk_memory, topk_logits, topk_anchors
 
-    def forward(self, feats, targets=None):
+    def _should_do_masks(self, targets):
+        del targets
+        return self.enable_mask_head
+
+    def _mask_logits_from_queries(self, queries, mask_feat):
+        mask_embed = self.mask_head(queries)
+        scale = mask_embed.shape[-1] ** -0.5
+        mask_embed = mask_embed * scale
+        return torch.einsum("bqc,bchw->bqhw", mask_embed, mask_feat)
+
+    def forward(self, feats, targets=None, low_level_feat=None):
+        enable_mask_head = self._should_do_masks(targets)
         memory, spatial_shapes = self._get_encoder_input(feats)
 
         if self.training and self.num_denoising > 0 and targets is not None:
@@ -845,7 +932,15 @@ class DFINETransformer(nn.Module):
             memory, spatial_shapes, denoising_logits, denoising_bbox_unact
         )
 
-        out_bboxes, out_logits, out_corners, out_refs, pre_bboxes, pre_logits = (
+        (
+            out_bboxes,
+            out_logits,
+            out_corners,
+            out_refs,
+            pre_bboxes,
+            pre_logits,
+            hs,
+        ) = (
             self.decoder(
                 init_ref_contents,
                 init_ref_points_unact,
@@ -860,6 +955,7 @@ class DFINETransformer(nn.Module):
                 self.reg_scale,
                 attn_mask=attn_mask,
                 dn_meta=dn_meta,
+                return_queries=enable_mask_head,
             )
         )
 
@@ -882,6 +978,34 @@ class DFINETransformer(nn.Module):
             dn_out_refs, out_refs = torch.split(
                 out_refs, dn_meta["dn_num_split"], dim=2
             )
+            if enable_mask_head and hs is not None:
+                dn_hs, hs = torch.split(hs, dn_meta["dn_num_split"], dim=2)
+        else:
+            dn_hs = None
+
+        if enable_mask_head:
+            mask_feats = (
+                list(feats)
+                if low_level_feat is None
+                else [low_level_feat] + list(feats)
+            )
+            mask_feat = self.mask_decoder(mask_feats)
+            pred_masks = self._mask_logits_from_queries(hs[-1], mask_feat)
+            aux_masks = [
+                self._mask_logits_from_queries(h, mask_feat) for h in hs[:-1]
+            ]
+            dn_pred_masks = None
+            dn_aux_masks = None
+            if self.training and dn_meta is not None and dn_hs is not None:
+                dn_pred_masks = self._mask_logits_from_queries(dn_hs[-1], mask_feat)
+                dn_aux_masks = [
+                    self._mask_logits_from_queries(h, mask_feat) for h in dn_hs[:-1]
+                ]
+        else:
+            pred_masks = None
+            aux_masks = None
+            dn_pred_masks = None
+            dn_aux_masks = None
 
         if self.training:
             out = {
@@ -892,8 +1016,12 @@ class DFINETransformer(nn.Module):
                 "up": self.up,
                 "reg_scale": self.reg_scale,
             }
+            if enable_mask_head:
+                out["pred_masks"] = pred_masks
         else:
             out = {"pred_logits": out_logits[-1], "pred_boxes": out_bboxes[-1]}
+            if enable_mask_head:
+                out["pred_masks"] = torch.sigmoid(pred_masks)
 
         if self.training and self.aux_loss:
             out["aux_outputs"] = self._set_aux_loss2(
@@ -903,6 +1031,7 @@ class DFINETransformer(nn.Module):
                 out_refs[:-1],
                 out_corners[-1],
                 out_logits[-1],
+                aux_masks=aux_masks if enable_mask_head else None,
             )
             out["enc_aux_outputs"] = self._set_aux_loss(
                 enc_topk_logits_list, enc_topk_bboxes_list
@@ -918,7 +1047,10 @@ class DFINETransformer(nn.Module):
                     dn_out_refs,
                     dn_out_corners[-1],
                     dn_out_logits[-1],
+                    aux_masks=dn_aux_masks if enable_mask_head else None,
                 )
+                if enable_mask_head and dn_pred_masks is not None:
+                    out["dn_pred_masks"] = dn_pred_masks
                 out["dn_pre_outputs"] = {
                     "pred_logits": dn_pre_logits,
                     "pred_boxes": dn_pre_bboxes,
@@ -943,9 +1075,13 @@ class DFINETransformer(nn.Module):
         outputs_ref,
         teacher_corners=None,
         teacher_logits=None,
+        aux_masks=None,
     ):
-        return [
-            {
+        results = []
+        for idx, (a, b, c, d) in enumerate(
+            zip(outputs_class, outputs_coord, outputs_corners, outputs_ref)
+        ):
+            item = {
                 "pred_logits": a,
                 "pred_boxes": b,
                 "pred_corners": c,
@@ -953,7 +1089,7 @@ class DFINETransformer(nn.Module):
                 "teacher_corners": teacher_corners,
                 "teacher_logits": teacher_logits,
             }
-            for a, b, c, d in zip(
-                outputs_class, outputs_coord, outputs_corners, outputs_ref
-            )
-        ]
+            if aux_masks is not None and idx < len(aux_masks):
+                item["pred_masks"] = aux_masks[idx]
+            results.append(item)
+        return results

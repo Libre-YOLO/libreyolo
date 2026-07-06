@@ -303,7 +303,7 @@ def export_onnx(
             ["dets", "labels", "masks"]
             if model_family == "rfdetr"
             else ["pred_logits", "pred_boxes", "pred_masks"]
-            if model_family == "ec"
+            if model_family in {"dfine", "ec"}
             else ["boxes", "scores", "masks"]
         )
         input_name = "input" if model_family == "rfdetr" else "images"
@@ -312,7 +312,12 @@ def export_onnx(
                 input_name: {0: "batch"},
                 output_names[0]: {0: "batch", 1: "queries"},
                 output_names[1]: {0: "batch", 1: "queries"},
-                output_names[2]: {0: "batch", 1: "queries"},
+                output_names[2]: {
+                    0: "batch",
+                    1: "queries",
+                    2: "mask_height",
+                    3: "mask_width",
+                },
             }
             if dynamic
             else None

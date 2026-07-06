@@ -297,6 +297,13 @@ class DFINEConfig(TrainConfig):
     clip_max_norm: float = 0.1  # upstream default; 0 disables clipping
     multi_scale: bool = True  # per-batch random resize via DFINEMultiScaleCollate
     aug_stop_epoch_ratio: float = 0.85  # disable strong augs at epoch * ratio
+    crop_resize_prob: float = 0.0
+
+    # D-FINE-seg mask supervision (only used when task='segment').
+    mask_bce_loss_weight: float = 1.0
+    mask_dice_loss_weight: float = 1.0
+    mask_match_cost: float = 1.0
+    mask_dice_match_cost: float = 1.0
 
     amp: bool = False
     epochs: int = 132

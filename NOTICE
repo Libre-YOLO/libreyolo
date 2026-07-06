@@ -118,6 +118,15 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
 
+D-FINE-seg (Apache License 2.0)
+    Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
+    Source:  https://github.com/ArgoHA/D-FINE-seg
+
+    LibreDFINE segment support adapts D-FINE-seg's mask decoder/head,
+    mask matching, mask loss, and mask postprocess references. The
+    D-FINE-seg repository is Apache-2.0; its maintainer approved reuse
+    with attribution in ArgoHA/D-FINE-seg#70.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------

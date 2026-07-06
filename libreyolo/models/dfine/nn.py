@@ -44,6 +44,7 @@ SIZE_CONFIGS: Dict[str, Dict] = {
         "dec_num_points": (6, 6),
         "dec_eval_idx": -1,
         "reg_scale": 4.0,
+        "mask_dim": 128,
     },
     "s": {
         "backbone": "B0",
@@ -68,6 +69,7 @@ SIZE_CONFIGS: Dict[str, Dict] = {
         "dec_num_points": (3, 6, 3),
         "dec_eval_idx": -1,
         "reg_scale": 4.0,
+        "mask_dim": 256,
     },
     "m": {
         "backbone": "B2",
@@ -92,6 +94,7 @@ SIZE_CONFIGS: Dict[str, Dict] = {
         "dec_num_points": (3, 6, 3),
         "dec_eval_idx": -1,
         "reg_scale": 4.0,
+        "mask_dim": 256,
     },
     "l": {
         "backbone": "B4",
@@ -116,6 +119,7 @@ SIZE_CONFIGS: Dict[str, Dict] = {
         "dec_num_points": (3, 6, 3),
         "dec_eval_idx": -1,
         "reg_scale": 4.0,
+        "mask_dim": 256,
     },
     "x": {
         "backbone": "B5",
@@ -143,6 +147,7 @@ SIZE_CONFIGS: Dict[str, Dict] = {
         "dec_num_points": (3, 6, 3),
         "dec_eval_idx": -1,
         "reg_scale": 8.0,
+        "mask_dim": 256,
     },
 }
 
@@ -156,6 +161,7 @@ class LibreDFINEModel(nn.Module):
         nb_classes: int = 80,
         eval_spatial_size: tuple[int, int] | None = (640, 640),
         activation: str = "relu",
+        enable_mask_head: bool = False,
     ):
         super().__init__()
         if config not in SIZE_CONFIGS:
@@ -163,10 +169,19 @@ class LibreDFINEModel(nn.Module):
         cfg = SIZE_CONFIGS[config]
         self.config = config
 
+        return_idx = tuple(cfg["return_idx"])
+        mask_low_level_ch = None
+        if enable_mask_head and 8 not in cfg["enc_feat_strides"]:
+            if 1 not in return_idx:
+                return_idx = (1, *return_idx)
+            mask_low_level_ch = HGNetv2.arch_configs[cfg["backbone"]]["stage_config"][
+                "stage2"
+            ][2]
+
         self.backbone = HGNetv2(
             name=cfg["backbone"],
             use_lab=cfg["use_lab"],
-            return_idx=cfg["return_idx"],
+            return_idx=return_idx,
             freeze_stem_only=cfg["freeze_stem_only"],
             freeze_at=cfg["freeze_at"],
             freeze_norm=cfg["freeze_norm"],
@@ -195,12 +210,19 @@ class LibreDFINEModel(nn.Module):
             eval_idx=cfg["dec_eval_idx"],
             reg_scale=cfg["reg_scale"],
             activation=activation,
+            enable_mask_head=enable_mask_head,
+            mask_dim=cfg["mask_dim"],
+            mask_low_level_ch=mask_low_level_ch,
         )
 
     def forward(self, x: torch.Tensor, targets: List[dict] | None = None):
         feats = self.backbone(x)
+        low_level_feat = None
+        if len(feats) > len(self.encoder.in_channels):
+            low_level_feat = feats[0]
+            feats = feats[1:]
         feats = self.encoder(feats)
-        return self.decoder(feats, targets=targets)
+        return self.decoder(feats, targets=targets, low_level_feat=low_level_feat)
 
     def deploy(self):
         """Fuse BN into conv + strip non-eval decoder layers for export."""
@@ -228,4 +250,6 @@ class DFINEExportWrapper(nn.Module):
 
     def forward(self, x):
         out = self.model(x)
+        if "pred_masks" in out:
+            return out["pred_logits"], out["pred_boxes"], out["pred_masks"]
         return out["pred_logits"], out["pred_boxes"]

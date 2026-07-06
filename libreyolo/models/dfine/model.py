@@ -11,11 +11,12 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
 from ...training.callbacks import TrainCallbacks
+from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import DFINEValPreprocessor
 from ..base import BaseModel
 from .nn import LibreDFINEModel
-from ...postprocess.dfine import postprocess
+from ...postprocess.dfine import postprocess, postprocess_seg
 from .utils import preprocess_image, unwrap_dfine_checkpoint
 
 
@@ -30,6 +31,12 @@ class LibreDFINE(BaseModel):
     FAMILY = "dfine"
     FILENAME_PREFIX = "LibreDFINE"
     INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640, "x": 640}
+    SUPPORTED_TASKS = ("detect", "segment")
+    DEFAULT_TASK = "detect"
+    TASK_INPUT_SIZES = {
+        "detect": INPUT_SIZES,
+        "segment": INPUT_SIZES,
+    }
     val_preprocessor_class = DFINEValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
 
@@ -88,6 +95,15 @@ class LibreDFINE(BaseModel):
             return int(weights_dict[key].shape[0])
         return None
 
+    @classmethod
+    def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
+        if any(
+            k.startswith("decoder.mask_decoder.") or k.startswith("decoder.mask_head.")
+            for k in weights_dict
+        ):
+            return "segment"
+        return None
+
     # -------------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------------
@@ -98,6 +114,7 @@ class LibreDFINE(BaseModel):
         size: str,
         nb_classes: int = 80,
         device: str = "auto",
+        task: str | None = None,
         **kwargs,
     ):
         if isinstance(model_path, dict):
@@ -107,6 +124,7 @@ class LibreDFINE(BaseModel):
             size=size,
             nb_classes=nb_classes,
             device=device,
+            task=task,
             **kwargs,
         )
         if isinstance(model_path, str):
@@ -117,10 +135,11 @@ class LibreDFINE(BaseModel):
             config=self.size,
             nb_classes=self.nb_classes,
             eval_spatial_size=(self.input_size, self.input_size),
+            enable_mask_head=self.task == "segment",
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
-        return {
+        layers = {
             "backbone": self.model.backbone,
             "backbone_stem": self.model.backbone.stem,
             "encoder": self.model.encoder,
@@ -132,6 +151,10 @@ class LibreDFINE(BaseModel):
             "dec_bbox_head": self.model.decoder.dec_bbox_head,
             "dec_score_head": self.model.decoder.dec_score_head,
         }
+        if self.task == "segment":
+            layers["mask_decoder"] = self.model.decoder.mask_decoder
+            layers["mask_head"] = self.model.decoder.mask_head
+        return layers
 
     @staticmethod
     def _get_preprocess_numpy():
@@ -164,6 +187,14 @@ class LibreDFINE(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "segment":
+            return postprocess_seg(
+                output,
+                conf_thres=conf_thres,
+                iou_thres=iou_thres,
+                original_size=original_size,
+                max_det=max_det,
+            )
         return postprocess(
             output,
             conf_thres=conf_thres,
@@ -176,6 +207,18 @@ class LibreDFINE(BaseModel):
         # D-FINE checkpoints carry buffers (anchors, valid_mask) that are
         # regenerated at forward time from eval_spatial_size. Tolerate drift.
         return False
+
+    def _validate_loaded_state_dict_for_task(
+        self,
+        state_dict: dict,
+        checkpoint: dict | None = None,
+    ) -> None:
+        detected_task = self.detect_checkpoint_task(state_dict)
+        if detected_task == "segment" and self.task != "segment":
+            raise RuntimeError(
+                "D-FINE segmentation checkpoints must be loaded with task='segment' "
+                "or a '-seg' filename suffix."
+            )
 
     @ddp_aware()
     def train(
@@ -311,6 +354,12 @@ class LibreDFINE(BaseModel):
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
             state_dict = unwrap_dfine_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
+            detected_task = self.detect_checkpoint_task(state_dict)
+            if detected_task == "segment" and self.task != "segment":
+                raise RuntimeError(
+                    "D-FINE segmentation checkpoints must be loaded with task='segment' "
+                    "or a '-seg' filename suffix."
+                )
 
             if isinstance(loaded, dict):
                 ckpt_family = loaded.get("model_family", "")
@@ -320,6 +369,18 @@ class LibreDFINE(BaseModel):
                         f"Checkpoint was trained with model_family='{ckpt_family}' "
                         f"but is being loaded into '{own_family}'."
                     )
+                ckpt_task = loaded.get("task")
+                if ckpt_task is not None:
+                    normalized_ckpt_task = normalize_task(ckpt_task)
+                    allowed = normalized_ckpt_task == self.task or (
+                        normalized_ckpt_task == "detect" and self.task == "segment"
+                    )
+                    if not allowed:
+                        raise RuntimeError(
+                            f"Checkpoint was trained for task='{normalized_ckpt_task}' "
+                            f"but this model was initialized for task='{self.task}'. "
+                            "Pass the matching task."
+                        )
                 ckpt_nc = loaded.get("nc")
                 if ckpt_nc is not None and ckpt_nc != self.nb_classes:
                     self._rebuild_for_new_classes(int(ckpt_nc))

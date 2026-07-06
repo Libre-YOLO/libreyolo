@@ -304,6 +304,7 @@ class RFDETRSegTransform:
         crop_min_size: int = 384,
         crop_max_size: int = 600,
         target_dim: int = 5,
+        imagenet_norm: bool = True,
     ):
         if target_dim not in (5, 6):
             raise ValueError(f"RF-DETR target_dim must be 5 or 6, got {target_dim}")
@@ -321,6 +322,7 @@ class RFDETRSegTransform:
         self.crop_min_size = crop_min_size
         self.crop_max_size = crop_max_size
         self.target_dim = target_dim
+        self.imagenet_norm = bool(imagenet_norm)
         self.target_size = _resolve_training_size(
             imgsz,
             multi_scale=multi_scale,
@@ -442,7 +444,8 @@ class RFDETRSegTransform:
 
         # CHW float32 in [0, 1], then ImageNet normalize.
         img_out = img_rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
-        img_out = (img_out - _IMAGENET_MEAN) / _IMAGENET_STD
+        if self.imagenet_norm:
+            img_out = (img_out - _IMAGENET_MEAN) / _IMAGENET_STD
         img_out = np.ascontiguousarray(img_out)
 
         mask_shape = (target_h, target_w)

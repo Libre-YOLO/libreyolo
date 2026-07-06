@@ -114,7 +114,7 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>
     <tr><td>YOLOv9-P2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>exp</td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>YOLO-NAS</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
-    <tr><td>D-FINE</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
+    <tr><td>D-FINE</td><td>✓</td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
     <tr><td>DEIM</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
     <tr><td>DEIMv2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
     <tr><td>RT-DETR</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>

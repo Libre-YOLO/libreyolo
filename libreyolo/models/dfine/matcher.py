@@ -20,6 +20,37 @@ from scipy.optimize import linear_sum_assignment
 from .box_ops import box_cxcywh_to_xyxy, generalized_box_iou
 
 
+def dice_cost(
+    pred_masks: torch.Tensor,
+    gt_masks: torch.Tensor,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    pred_masks = pred_masks.flatten(1).float()
+    gt_masks = gt_masks.flatten(1).float()
+    numerator = 2 * torch.einsum("qp,tp->qt", pred_masks, gt_masks)
+    denominator = pred_masks.sum(dim=1, keepdim=True) + gt_masks.sum(
+        dim=1, keepdim=False
+    )
+    return 1 - (numerator + eps) / (denominator + eps)
+
+
+def sigmoid_focal_cost(
+    pred_logits: torch.Tensor,
+    gt_labels: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+) -> torch.Tensor:
+    pred_logits = pred_logits.float()
+    gt_labels = gt_labels.float()
+    pred_prob = pred_logits.sigmoid()
+    neg_cost = (1 - alpha) * (pred_prob**gamma) * (-(1 - pred_prob + 1e-8).log())
+    pos_cost = alpha * ((1 - pred_prob) ** gamma) * (-(pred_prob + 1e-8).log())
+    cost = torch.einsum("qp,tp->qt", pos_cost, gt_labels) + torch.einsum(
+        "qp,tp->qt", neg_cost, (1 - gt_labels)
+    )
+    return cost / pred_logits.shape[1]
+
+
 class HungarianMatcher(nn.Module):
     """One-to-one matching between predictions and targets via LSAP.
 
@@ -32,6 +63,8 @@ class HungarianMatcher(nn.Module):
         self.cost_class = weight_dict["cost_class"]
         self.cost_bbox = weight_dict["cost_bbox"]
         self.cost_giou = weight_dict["cost_giou"]
+        self.cost_mask = weight_dict.get("cost_mask", 0.0)
+        self.cost_mask_dice = weight_dict.get("cost_mask_dice", 0.0)
 
         self.use_focal_loss = use_focal_loss
         self.alpha = alpha
@@ -80,7 +113,64 @@ class HungarianMatcher(nn.Module):
             + self.cost_class * cost_class
             + self.cost_giou * cost_giou
         )
-        C = C.view(bs, num_queries, -1).cpu()
+        C = C.view(bs, num_queries, -1)
+
+        if (self.cost_mask > 0 or self.cost_mask_dice > 0) and "pred_masks" in outputs:
+            pred_masks = outputs["pred_masks"]
+            has_any_masks = any(
+                "masks" in t and t["masks"] is not None and t["masks"].numel() > 0
+                for t in targets
+            )
+            if pred_masks is not None and has_any_masks:
+                _, q_mask, hm, wm = pred_masks.shape
+                if q_mask != num_queries:
+                    dn_num = q_mask - num_queries
+                    if dn_num > 0:
+                        pred_masks = pred_masks[:, dn_num:]
+
+                sizes_local = [len(v["boxes"]) for v in targets]
+                offset = 0
+                for b in range(bs):
+                    n_tgt = sizes_local[b]
+                    if n_tgt == 0:
+                        continue
+                    target = targets[b]
+                    if (
+                        "masks" not in target
+                        or target["masks"] is None
+                        or target["masks"].numel() == 0
+                    ):
+                        offset += n_tgt
+                        continue
+
+                    tgt_masks = target["masks"].float().to(pred_masks.device)
+                    if tgt_masks.shape[-2:] != (hm, wm):
+                        tgt_masks = F.interpolate(
+                            tgt_masks.unsqueeze(1),
+                            size=(hm, wm),
+                            mode="bilinear",
+                            align_corners=False,
+                        ).squeeze(1)
+
+                    pred_probs = pred_masks[b].sigmoid()
+                    mask_cost = pred_probs.new_zeros((num_queries, n_tgt))
+                    if self.cost_mask_dice > 0:
+                        mask_cost = mask_cost + self.cost_mask_dice * dice_cost(
+                            pred_probs, tgt_masks
+                        )
+                    if self.cost_mask > 0:
+                        mask_cost = mask_cost + self.cost_mask * sigmoid_focal_cost(
+                            pred_masks[b].flatten(1),
+                            tgt_masks.flatten(1),
+                            alpha=self.alpha,
+                            gamma=self.gamma,
+                        )
+                    C[b, :, offset : offset + n_tgt] = (
+                        C[b, :, offset : offset + n_tgt] + mask_cost
+                    )
+                    offset += n_tgt
+
+        C = C.cpu()
 
         sizes = [len(v["boxes"]) for v in targets]
         C = torch.nan_to_num(C, nan=1.0)

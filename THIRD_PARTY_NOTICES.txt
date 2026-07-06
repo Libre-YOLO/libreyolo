@@ -153,6 +153,18 @@ Used for: EC model family detection, segmentation, and pose architecture
           references (libreyolo/models/ec/).
 
 --------------------------------------------------------------------
+D-FINE-seg (ArgoHA)
+--------------------------------------------------------------------
+Source: https://github.com/ArgoHA/D-FINE-seg
+License: Apache License 2.0
+Copyright (c) 2026 The D-FINE-seg Authors. All Rights Reserved.
+Used for: D-FINE instance-segmentation mask decoder/head, mask matching,
+          mask loss, and postprocess references
+          (libreyolo/models/dfine/, libreyolo/postprocess/dfine.py).
+          The repository maintainer approved reuse with attribution in
+          ArgoHA/D-FINE-seg#70.
+
+--------------------------------------------------------------------
 RT-DETR (lyuwenyu)
 --------------------------------------------------------------------
 Source: https://github.com/lyuwenyu/RT-DETR
