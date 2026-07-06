@@ -94,6 +94,8 @@ def test_background_image_with_segments_returns_empty_masks():
 
     out, labels, masks = t(img.copy(), _EMPTY, (48, 64), segments=[])
 
-    assert masks.shape == (10, 48 // 4, 64 // 4)
+    # No instances -> zero mask rows (variable-length masks, #527).
+    assert masks.shape == (0, 48 // 4, 64 // 4)
+    assert masks.dtype == np.uint8
     assert not masks.any()
     assert np.all(labels[:, 0] == -1)

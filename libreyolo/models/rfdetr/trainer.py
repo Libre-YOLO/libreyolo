@@ -388,11 +388,19 @@ class RFDETRTrainer(BaseTrainer):
             keypoints[..., 1] *= scale_y
 
         if isinstance(polygons, torch.Tensor):
-            polygons = F.interpolate(
-                polygons.float(),
-                size=(scale, scale),
-                mode="nearest",
-            )
+            if polygons.shape[1] == 0:
+                # All-background batch: masks are padded to the batch max
+                # instance count (#527), which can be 0. F.interpolate
+                # rejects empty 4D inputs, so resize the shape directly.
+                polygons = polygons.new_zeros(
+                    (*polygons.shape[:2], scale, scale), dtype=torch.float32
+                )
+            else:
+                polygons = F.interpolate(
+                    polygons.float(),
+                    size=(scale, scale),
+                    mode="nearest",
+                )
 
         return imgs, targets, polygons
 
@@ -816,7 +824,9 @@ class RFDETRTrainer(BaseTrainer):
                 if is_obb:
                     entry["angles"] = t_valid[:, 5].float()
                 if masks_batch is not None:
-                    m = masks_batch[batch_idx][valid]
+                    # masks are padded to the batch max instance count, not
+                    # max_labels (#527); real rows always sit below that cap.
+                    m = masks_batch[batch_idx][valid[: masks_batch.shape[1]]]
                     entry["masks"] = m.to(device=self.device, dtype=torch.bool)
                 if is_pose:
                     keypoints = t_valid[:, 5:].view(-1, self.config.num_keypoints, 3).clone()
@@ -858,9 +868,9 @@ class RFDETRTrainer(BaseTrainer):
         height, width = imgs.shape[-2], imgs.shape[-1]
         is_seg = task == "segment"
         # ``polygons`` here is the collate-stacked output of RFDETRSegTransform:
-        # a [B, max_labels, mask_h, mask_w] float32 tensor whose slot i aligns
-        # with target slot i. Slice by the same ``valid`` box mask to hand the
-        # criterion per-image ``[N_valid, mask_h, mask_w]`` tensors.
+        # a [B, batch_max_instances, mask_h, mask_w] uint8 tensor whose slot i
+        # aligns with target slot i. Slice by the same ``valid`` box mask to
+        # hand the criterion per-image ``[N_valid, mask_h, mask_w]`` tensors.
         masks_batch = (
             polygons.to(self.device, non_blocking=True)
             if is_seg and isinstance(polygons, torch.Tensor)

@@ -231,12 +231,18 @@ def _filter_segments(segments, keep_mask):
 
 
 def _rasterize_segments(segments, image_shape, mask_shape, max_masks):
-    """Render per-instance polygon rings to a (max_masks, mask_h, mask_w) float32 array.
+    """Render per-instance polygon rings to a (n, mask_h, mask_w) uint8 array.
 
     Polygons are given in pixel coords on ``image_shape``; they are scaled into
-    ``mask_shape`` before being filled into individual mask slots.
+    ``mask_shape`` before being filled into individual mask slots. ``n`` is the
+    real instance count (capped at ``max_masks``), not padded to ``max_masks``,
+    and masks are uint8 rather than float32 — the dense padded float32 buffer
+    exhausted host RAM with multiple dataloader workers on large datasets
+    (issue #527). Row ``i`` aligns with label row ``i``; the collate pads to
+    the batch max.
     """
-    masks = np.zeros((max_masks, mask_shape[0], mask_shape[1]), dtype=np.float32)
+    n = min(len(segments), max_masks) if segments else 0
+    masks = np.zeros((n, mask_shape[0], mask_shape[1]), dtype=np.uint8)
     if not segments:
         return masks
 
@@ -251,7 +257,7 @@ def _rasterize_segments(segments, image_shape, mask_shape, max_masks):
             mask = dense_mask
             if mask.shape != mask_shape:
                 mask = cv2.resize(mask, (mask_w, mask_h), interpolation=cv2.INTER_NEAREST)
-            masks[idx] = (mask > 0).astype(np.float32)
+            masks[idx] = (mask > 0).astype(np.uint8)
             continue
 
         polygons = []
@@ -271,7 +277,8 @@ class RFDETRSegTransform:
     """Per-sample seg transform: square resize + flip + ImageNet norm + polygon rasterization.
 
     Output: ``(img_chw_float_rgb_imagenet, padded_labels [max_labels, 5] cxcywh-pixel,
-    masks [max_labels, mask_h, mask_w] float32)``.
+    masks [n_instances, mask_h, mask_w] uint8)`` — mask row ``i`` aligns with
+    label row ``i``; the collate pads masks to the batch max instance count.
 
     The trainer's ``on_forward`` converts cxcywh-pixel → cxcywh-normalized and slices
     masks to ``[num_valid, H, W]`` per image before passing to the criterion.

@@ -436,6 +436,113 @@ class TestPolygonLabelParsing:
         assert stacked_masks.shape == (2, 2, 8, 8)
         assert stacked_masks[0, 0].sum() == 16
 
+    def test_yolo_collate_pads_variable_length_masks_to_batch_max(self):
+        """Transforms emit (n_i, H, W) masks; collate pads to batch max (#527)."""
+        from libreyolo.data.dataset import yolox_collate_fn
+
+        img = np.zeros((3, 32, 32), dtype=np.float32)
+        target = np.zeros((4, 5), dtype=np.float32)
+        masks_a = np.ones((3, 8, 8), dtype=np.uint8)
+        masks_b = np.zeros((0, 8, 8), dtype=np.uint8)
+
+        batch = [
+            (img, target, (32, 32), 0, masks_a),
+            (img, target, (32, 32), 1, masks_b),
+        ]
+
+        _, _, _, _, stacked_masks = yolox_collate_fn(batch)
+
+        assert stacked_masks.shape == (2, 3, 8, 8)
+        assert stacked_masks.dtype == torch.uint8
+        assert stacked_masks[0].sum() == 3 * 64
+        assert stacked_masks[1].sum() == 0
+
+    def test_yolo_collate_pads_tensor_masks_preserving_dtype(self):
+        """The tensor branch pads natively in torch (no numpy round-trip),
+        so grad-tracking or non-CPU mask tensors keep working (#527 review)."""
+        from libreyolo.data.dataset import yolox_collate_fn
+
+        img = np.zeros((3, 32, 32), dtype=np.float32)
+        target = np.zeros((4, 5), dtype=np.float32)
+        masks_a = torch.ones((2, 8, 8), dtype=torch.uint8)
+        masks_b = torch.zeros((0, 8, 8), dtype=torch.uint8)
+
+        batch = [
+            (img, target, (32, 32), 0, masks_a),
+            (img, target, (32, 32), 1, masks_b),
+        ]
+
+        _, _, _, _, stacked_masks = yolox_collate_fn(batch)
+
+        assert isinstance(stacked_masks, torch.Tensor)
+        assert stacked_masks.shape == (2, 2, 8, 8)
+        assert stacked_masks.dtype == torch.uint8
+        assert stacked_masks[0].sum() == 2 * 64
+
+        # Grad-tracking tensors must survive collate (old torch.stack did).
+        grad_masks = torch.ones((1, 8, 8), requires_grad=True)
+        batch = [(img, target, (32, 32), 0, grad_masks)] * 2
+        _, _, _, _, stacked = yolox_collate_fn(batch)
+        assert stacked.shape == (2, 1, 8, 8)
+
+    def test_rfdetr_trainer_aligns_padded_masks_with_boxes(self):
+        """End-to-end alignment through collate -> trainer slicing (#527):
+        per image, the sliced masks must match the valid boxes 1:1 even with
+        ragged instance counts across the batch."""
+        from libreyolo.data.dataset import yolox_collate_fn
+        from libreyolo.models.rfdetr.trainer import RFDETRTrainer
+
+        img = np.zeros((3, 32, 32), dtype=np.float32)
+        max_labels = 5
+
+        def _item(img_id, n_instances):
+            # cxcywh-pixel targets, real rows front-packed, padding zeroed.
+            target = np.zeros((max_labels, 5), dtype=np.float32)
+            masks = np.zeros((n_instances, 8, 8), dtype=np.uint8)
+            for i in range(n_instances):
+                target[i] = [0, 16, 16, 8, 8]
+                masks[i, i, :] = i + 1  # distinct content per row
+            return (img, target, (32, 32), img_id, masks)
+
+        batch = [_item(0, 3), _item(1, 0), _item(2, 1)]
+        imgs, targets, _, _, masks_batch = yolox_collate_fn(batch)
+        assert masks_batch.shape == (3, 3, 8, 8)
+
+        trainer = object.__new__(RFDETRTrainer)
+        trainer.device = torch.device("cpu")
+        trainer.wrapper_model = type("W", (), {"task": "segment"})()
+
+        target_list = trainer._targets_to_rfdetr_list(
+            targets, height=32, width=32, masks_batch=masks_batch
+        )
+
+        for expected_n, entry in zip([3, 0, 1], target_list):
+            assert entry["boxes"].shape[0] == expected_n
+            assert entry["masks"].shape[0] == expected_n
+        # Row i of masks still carries row i's content after slicing.
+        assert target_list[0]["masks"][2, 2, :].all()
+        assert not target_list[0]["masks"][2, 0, :].any()
+
+    def test_rfdetr_multi_scale_handles_all_background_seg_batch(self):
+        """F.interpolate rejects empty 4D inputs; an all-background batch now
+        collates to (B, 0, H, W) masks and must not crash multi-scale (#527)."""
+        from libreyolo.models.rfdetr.trainer import RFDETRTrainer
+
+        trainer = object.__new__(RFDETRTrainer)
+        trainer.wrapper_model = type("W", (), {"task": "segment"})()
+        trainer._multi_scale_scales = lambda: [16]
+
+        imgs = torch.zeros(2, 3, 32, 32)
+        targets = torch.zeros(2, 5, 5)
+        polygons = torch.zeros(2, 0, 8, 8, dtype=torch.uint8)
+
+        imgs_s, _, polygons_s = trainer._apply_multi_scale_batch(
+            imgs, targets, polygons, step=0
+        )
+
+        assert imgs_s.shape[-2:] == (16, 16)
+        assert polygons_s.shape == (2, 0, 16, 16)
+
     def test_yolo9_seg_transform_rasterizes_polygons(self):
         from libreyolo.models.yolo9.transforms import YOLO9TrainTransform
 
@@ -455,7 +562,10 @@ class TestPolygonLabelParsing:
 
         assert img.shape == (3, 64, 64)
         assert labels.shape == (4, 5)
-        assert masks.shape == (4, 16, 16)
+        # Masks carry only the real instances as uint8, not max_labels
+        # float32 slots (#527).
+        assert masks.shape == (1, 16, 16)
+        assert masks.dtype == np.uint8
         assert labels[0, 0] == 0
         assert masks[0].sum() > 0
 
@@ -478,7 +588,10 @@ class TestPolygonLabelParsing:
 
         assert img.shape == (3, 64, 64)
         assert labels.shape == (4, 5)
-        assert masks.shape == (4, 64, 64)
+        # Masks carry only the real instances as uint8, not max_labels
+        # float32 slots (#527).
+        assert masks.shape == (1, 64, 64)
+        assert masks.dtype == np.uint8
         assert labels[0, 0] == 0
         assert masks[0].sum() > 0
 
