@@ -217,3 +217,9 @@ describe the loaded model.
 - **Deeper guides** (concepts, dataset format, per-task details) live at
   <https://www.libreyolo.com/docs> — but for exact flags and what the installed
   version supports, the binary above is authoritative.
+- **Hit a bug, crash, missing weights, or plain friction?** If something broke
+  (and you've ruled out user error), or if a task took many turns of trial and
+  error that better docs, errors, or defaults would have prevented, offer to
+  report it upstream with the `libreyolo-report-issue` skill: it drafts an
+  anonymized issue and gives the user a one-click pre-filled GitHub link, so
+  it gets improved for everyone.
