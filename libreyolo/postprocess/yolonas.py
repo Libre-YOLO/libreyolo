@@ -205,7 +205,15 @@ def postprocess_pose(
         pose_xy = pose_xy[0]
         pose_conf = pose_conf[0]
 
-    scores = scores.squeeze(-1)
+    # scores: [A, nc]. Single-class pose keeps the exact historical path
+    # (class-agnostic NMS, all-zero classes); multi-class pose takes the
+    # highest-scoring class per anchor and runs per-class NMS.
+    multiclass = scores.shape[-1] > 1
+    if multiclass:
+        scores, class_ids = scores.max(dim=-1)
+    else:
+        scores = scores.squeeze(-1)
+        class_ids = None
     # `>=` matches super-gradients' YoloNASPosePostPredictionCallback boundary.
     mask = scores >= conf_thres
     if not mask.any():
@@ -221,6 +229,8 @@ def postprocess_pose(
     scores = scores[mask].float()
     pose_xy = pose_xy[mask].float()
     pose_conf = pose_conf[mask].float()
+    if class_ids is not None:
+        class_ids = class_ids[mask]
 
     if pre_nms_max_predictions and scores.numel() > pre_nms_max_predictions:
         topk = scores.topk(pre_nms_max_predictions)
@@ -228,6 +238,8 @@ def postprocess_pose(
         bboxes = bboxes[topk.indices]
         pose_xy = pose_xy[topk.indices]
         pose_conf = pose_conf[topk.indices]
+        if class_ids is not None:
+            class_ids = class_ids[topk.indices]
 
     if original_size is not None:
         if letterbox:
@@ -258,6 +270,8 @@ def postprocess_pose(
             scores = scores[valid]
             pose_xy = pose_xy[valid]
             pose_conf = pose_conf[valid]
+            if class_ids is not None:
+                class_ids = class_ids[valid]
 
     if bboxes.numel() == 0:
         return {
@@ -268,7 +282,10 @@ def postprocess_pose(
             "keypoints": torch.zeros((0, pose_xy.shape[-2], 3)),
         }
 
-    keep = torchvision.ops.nms(bboxes, scores, iou_thres)
+    if class_ids is not None:
+        keep = torchvision.ops.batched_nms(bboxes, scores, class_ids, iou_thres)
+    else:
+        keep = torchvision.ops.nms(bboxes, scores, iou_thres)
     if keep.numel() > post_nms_max_predictions:
         keep = keep[:post_nms_max_predictions]
 
@@ -277,7 +294,10 @@ def postprocess_pose(
     pose_xy = pose_xy[keep].cpu()
     pose_conf = pose_conf[keep].cpu()
     keypoints = torch.cat([pose_xy, pose_conf.unsqueeze(-1)], dim=-1)
-    classes = torch.zeros(scores.shape[0], dtype=torch.long)
+    if class_ids is not None:
+        classes = class_ids[keep].cpu().long()
+    else:
+        classes = torch.zeros(scores.shape[0], dtype=torch.long)
 
     return {
         "boxes": bboxes,

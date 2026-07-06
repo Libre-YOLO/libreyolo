@@ -97,6 +97,7 @@ class YOLONASPoseTrainer(BaseTrainer):
     def on_setup(self):
         self.loss_fn = YoloNASPoseLoss(
             oks_sigmas=self._resolve_oks_sigmas(),
+            num_classes=self.config.num_classes,
             classification_loss_type=self.config.classification_loss_type,
             regression_iou_loss_type=self.config.regression_iou_loss_type,
             classification_loss_weight=self.config.classification_loss_weight,
@@ -132,7 +133,7 @@ class YOLONASPoseTrainer(BaseTrainer):
         cfg = load_data_config(
             self.config.data, allow_scripts=self.config.allow_download_scripts
         )
-        self.num_classes = 1
+        self.num_classes = self.config.num_classes
         flip_idx = cfg.get("flip_idx")
 
         train_imgs = cfg.get("train_img_files")

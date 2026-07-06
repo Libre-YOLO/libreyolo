@@ -1042,6 +1042,7 @@ class YoloNASPoseLoss(nn.Module):
         bbox_assigned_beta: float = 6.0,
         assigner_multiply_by_pose_oks: bool = True,
         rescale_pose_loss_with_assigned_score: bool = True,
+        num_classes: int = 1,
     ):
         super().__init__()
         self.classification_loss_type = classification_loss_type
@@ -1050,7 +1051,9 @@ class YoloNASPoseLoss(nn.Module):
         self.iou_loss_weight = iou_loss_weight
         self.iou_loss = {"giou": GIoULoss, "ciou": CIoULoss}[regression_iou_loss_type]()
         self.num_keypoints = len(oks_sigmas)
-        self.num_classes = 1  # pose estimation is single-class
+        # Class count for the box/objectness branch. 1 for classic single-class
+        # (person) pose; > 1 for multi-class pose with a shared keypoint skeleton.
+        self.num_classes = num_classes
         self.register_buffer("oks_sigmas", torch.as_tensor(oks_sigmas, dtype=torch.float32))
         self.pose_cls_loss_weight = pose_cls_loss_weight
         self.pose_reg_loss_weight = pose_reg_loss_weight
@@ -1101,7 +1104,9 @@ class YoloNASPoseLoss(nn.Module):
         t = targets[:, :n_max]
         gt_bbox = cxcywh_to_xyxy(t[..., 1:5])
         pad_gt_mask = ((t[..., 3] > 0) & (t[..., 4] > 0)).unsqueeze(-1).float()
-        gt_class = torch.zeros(batch_size, n_max, 1, dtype=torch.long, device=device)
+        # Real class ids from the targets (column 0). For single-class pose
+        # these are all 0; for multi-class pose they select the gt's class.
+        gt_class = t[..., 0:1].long()
         gt_poses = t[..., 5:].reshape(batch_size, n_max, self.num_keypoints, 3)
         gt_crowd = torch.zeros(batch_size, n_max, 1, device=device)
         return {

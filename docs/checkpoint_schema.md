@@ -41,6 +41,11 @@ Required field meanings:
 
 Pose checkpoints additionally include:
 
+- `nc` / `names`: pose is usually single-class (`nc: 1`, `person`), but the
+  YOLO-NAS pose head also supports multi-class pose with a single shared
+  keypoint skeleton (one `kpt_shape` for every class); `nc` and `names` then
+  describe the classes as in detection. Runtime pose exports emit `scores` with
+  shape `[batch, anchors, nc]`.
 - `num_keypoints`: positive integer keypoint count used by the pose head.
 - `keypoint_dim`: pose label dimension from the dataset contract, either `2`
   for `x,y` labels or `3` for `x,y,visibility` labels. Model outputs always
