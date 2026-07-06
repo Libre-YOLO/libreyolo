@@ -521,9 +521,10 @@ class RFDETRSegPassThroughDataset:
         enable_mixup=False,
         mosaic_prob=0.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         del mosaic, degrees, translate, mosaic_scale, mixup_scale, shear
-        del enable_mixup, mosaic_prob, mixup_prob
+        del enable_mixup, mosaic_prob, mixup_prob, perspective
         self.dataset = dataset
         self.img_size = img_size
         self.preproc = preproc or RFDETRSegTransform(imgsz=img_size[0])

@@ -687,6 +687,7 @@ class BaseTrainer(ABC):
             mosaic_scale=self.config.mosaic_scale,
             mixup_scale=self.config.mixup_scale,
             shear=self.config.shear,
+            perspective=getattr(self.config, "perspective", 0.0),
             enable_mixup=mosaic_enabled and self.config.mixup_prob > 0,
             mosaic_prob=self.config.mosaic_prob if mosaic_enabled else 0.0,
             mixup_prob=self.config.mixup_prob if mosaic_enabled else 0.0,
