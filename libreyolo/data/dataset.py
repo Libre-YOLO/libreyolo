@@ -974,11 +974,35 @@ def yolox_collate_fn(batch):
 
     if has_segments:
         if all(isinstance(s, np.ndarray) for s in segments):
-            return imgs, targets, img_infos, img_ids, torch.from_numpy(np.stack(segments))
+            return imgs, targets, img_infos, img_ids, _pad_stack_masks(segments)
         if all(isinstance(s, torch.Tensor) for s in segments):
-            return imgs, targets, img_infos, img_ids, torch.stack(segments)
+            return (
+                imgs,
+                targets,
+                img_infos,
+                img_ids,
+                _pad_stack_masks([s.numpy() for s in segments]),
+            )
         return imgs, targets, img_infos, img_ids, list(segments)
     return imgs, targets, img_infos, img_ids
+
+
+def _pad_stack_masks(masks_list):
+    """Stack per-image ``(n_i, H, W)`` mask arrays into ``(B, max_n, H, W)``.
+
+    Transforms emit only as many mask rows as an image has instances (mask
+    row ``i`` aligns with label row ``i``); padding to a fixed ``max_labels``
+    slot count made the seg label buffer dwarf the image batch and blow up
+    host RAM with multiple dataloader workers on COCO-scale datasets
+    (issue #527). Pad rows are zero masks, matching the old padded contract.
+    """
+    max_n = max(m.shape[0] for m in masks_list)
+    h, w = masks_list[0].shape[-2:]
+    out = np.zeros((len(masks_list), max_n, h, w), dtype=masks_list[0].dtype)
+    for i, m in enumerate(masks_list):
+        if m.shape[0]:
+            out[i, : m.shape[0]] = m
+    return torch.from_numpy(out)
 
 
 def create_dataloader(

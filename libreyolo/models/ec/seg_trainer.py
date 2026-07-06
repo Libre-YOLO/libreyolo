@@ -218,7 +218,9 @@ class ECSegTrainer(BaseTrainer):
                     "boxes": (t_valid[:, 1:5] / scale).clamp(0.0, 1.0),
                 }
                 if masks_batch is not None:
-                    entry["masks"] = masks_batch[b][valid].to(
+                    # masks are padded to the batch max instance count, not
+                    # max_labels (#527); real rows always sit below that cap.
+                    entry["masks"] = masks_batch[b][valid[: masks_batch.shape[1]]].to(
                         device=self.device, dtype=torch.bool
                     )
             target_list.append(entry)

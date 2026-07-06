@@ -116,10 +116,12 @@ class YOLO9TrainTransform:
                 image = image[::-1, :]
             image, _ = preproc(image, input_dim)
             if return_masks:
+                # No instances -> zero mask rows (masks are variable-length
+                # per image and padded to the batch max at collate, #527).
                 return (
                     image,
                     padded_labels,
-                    np.zeros((self.max_labels, *mask_shape), dtype=np.float32),
+                    np.zeros((0, *mask_shape), dtype=np.uint8),
                 )
             return image, padded_labels
 

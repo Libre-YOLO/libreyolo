@@ -436,6 +436,27 @@ class TestPolygonLabelParsing:
         assert stacked_masks.shape == (2, 2, 8, 8)
         assert stacked_masks[0, 0].sum() == 16
 
+    def test_yolo_collate_pads_variable_length_masks_to_batch_max(self):
+        """Transforms emit (n_i, H, W) masks; collate pads to batch max (#527)."""
+        from libreyolo.data.dataset import yolox_collate_fn
+
+        img = np.zeros((3, 32, 32), dtype=np.float32)
+        target = np.zeros((4, 5), dtype=np.float32)
+        masks_a = np.ones((3, 8, 8), dtype=np.uint8)
+        masks_b = np.zeros((0, 8, 8), dtype=np.uint8)
+
+        batch = [
+            (img, target, (32, 32), 0, masks_a),
+            (img, target, (32, 32), 1, masks_b),
+        ]
+
+        _, _, _, _, stacked_masks = yolox_collate_fn(batch)
+
+        assert stacked_masks.shape == (2, 3, 8, 8)
+        assert stacked_masks.dtype == torch.uint8
+        assert stacked_masks[0].sum() == 3 * 64
+        assert stacked_masks[1].sum() == 0
+
     def test_yolo9_seg_transform_rasterizes_polygons(self):
         from libreyolo.models.yolo9.transforms import YOLO9TrainTransform
 
@@ -455,7 +476,10 @@ class TestPolygonLabelParsing:
 
         assert img.shape == (3, 64, 64)
         assert labels.shape == (4, 5)
-        assert masks.shape == (4, 16, 16)
+        # Masks carry only the real instances as uint8, not max_labels
+        # float32 slots (#527).
+        assert masks.shape == (1, 16, 16)
+        assert masks.dtype == np.uint8
         assert labels[0, 0] == 0
         assert masks[0].sum() > 0
 
@@ -478,7 +502,10 @@ class TestPolygonLabelParsing:
 
         assert img.shape == (3, 64, 64)
         assert labels.shape == (4, 5)
-        assert masks.shape == (4, 64, 64)
+        # Masks carry only the real instances as uint8, not max_labels
+        # float32 slots (#527).
+        assert masks.shape == (1, 64, 64)
+        assert masks.dtype == np.uint8
         assert labels[0, 0] == 0
         assert masks[0].sum() > 0
 
