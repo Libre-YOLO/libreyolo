@@ -1,5 +1,6 @@
 """Unit tests for the semantic-segmentation dataset."""
 
+import random
 from pathlib import Path
 
 import numpy as np
@@ -159,6 +160,80 @@ class TestSemanticDatasetMasks:
             assert img.shape == (3, 32, 32)
             assert mask.shape == (32, 32)
             assert set(torch.unique(mask).tolist()) <= {0, 1, 255}
+
+    def test_hsv_leaves_mask_untouched_and_preserves_image(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        # Stretch mode removes scale jitter and crops, isolating flip + hsv.
+        ref = SemanticDataset(
+            config, split="train", imgsz=16, resize_mode="stretch", augment=False
+        )
+        _, ref_mask, _, _ = ref[0]
+
+        dataset = SemanticDataset(
+            config,
+            split="train",
+            imgsz=16,
+            resize_mode="stretch",
+            augment=True,
+            hsv_prob=1.0,
+        )
+        # Pick a seed whose first random() (the horizontal flip draw) does not
+        # fire, so geometry matches the reference and only hsv touches the image.
+        seed = next(
+            s for s in range(1000) if (random.seed(s) or random.random()) >= 0.5
+        )
+        random.seed(seed)
+        np.random.seed(0)
+        img, mask, _, _ = dataset[0]
+
+        # Class IDs are untouched: hsv only ever sees the image.
+        assert torch.equal(mask, ref_mask)
+        assert set(torch.unique(mask).tolist()) <= {0, 1, 255}
+        # Image dtype/range preserved.
+        assert img.dtype == torch.float32
+        assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0
+        assert img.shape == (3, 16, 16)
+
+    def test_hsv_prob_zero_disables_photometric_jitter(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        ref = SemanticDataset(
+            config, split="train", imgsz=16, resize_mode="stretch", augment=False
+        )
+        _, ref_mask, _, _ = ref[0]
+        ref_img, _, _, _ = ref[0]
+
+        dataset = SemanticDataset(
+            config,
+            split="train",
+            imgsz=16,
+            resize_mode="stretch",
+            augment=True,
+            hsv_prob=0.0,
+        )
+        seed = next(
+            s for s in range(1000) if (random.seed(s) or random.random()) >= 0.5
+        )
+        random.seed(seed)
+        img, mask, _, _ = dataset[0]
+
+        # No flip, no scale, no hsv -> identical to the plain stretched sample.
+        assert torch.equal(img, ref_img)
+        assert torch.equal(mask, ref_mask)
+
+    def test_augment_is_seed_deterministic(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        dataset = SemanticDataset(
+            config, split="train", imgsz=16, augment=True, hsv_prob=1.0
+        )
+        random.seed(7)
+        np.random.seed(7)
+        img_a, mask_a, _, _ = dataset[0]
+        random.seed(7)
+        np.random.seed(7)
+        img_b, mask_b, _, _ = dataset[0]
+
+        assert torch.equal(img_a, img_b)
+        assert torch.equal(mask_a, mask_b)
 
 
 class TestPolygonFallback:
