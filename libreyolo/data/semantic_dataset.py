@@ -37,6 +37,7 @@ import torch
 from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 
+from .augment.color import augment_hsv
 from .utils import get_img_files, img2label_paths, load_data_config
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,8 @@ class SemanticDataset(Dataset):
 
     Images are letterboxed (default) or stretched to ``imgsz``; masks follow
     with nearest-neighbor geometry and ignore-valued padding. Training
-    augmentation applies horizontal flips and scale jitter with random crops.
+    augmentation applies horizontal flips, scale jitter with random crops, and
+    HSV photometric jitter on the image only (masks are never recolored).
     """
 
     def __init__(
@@ -181,6 +183,7 @@ class SemanticDataset(Dataset):
         resize_mode: str = "letterbox",
         ignore_index: int = IGNORE_INDEX,
         scale_jitter: Tuple[float, float] = (0.5, 1.5),
+        hsv_prob: float = 0.5,
     ):
         if resize_mode not in ("letterbox", "stretch"):
             raise ValueError(
@@ -192,6 +195,7 @@ class SemanticDataset(Dataset):
         self.resize_mode = resize_mode
         self.ignore_index = int(data_config.get("ignore_index", ignore_index))
         self.scale_jitter = scale_jitter
+        self.hsv_prob = float(hsv_prob)
 
         split_value = data_config.get(split)
         if not split_value:
@@ -330,6 +334,13 @@ class SemanticDataset(Dataset):
             if random.random() < 0.5:
                 img = np.ascontiguousarray(img[:, ::-1])
                 mask = np.ascontiguousarray(mask[:, ::-1])
+            if self.hsv_prob and random.random() < self.hsv_prob:
+                # augment_hsv follows the shared BGR contract; images here are
+                # RGB, so flip to BGR for the jitter and back to RGB. The mask
+                # is never passed in, so class IDs are untouched.
+                img_bgr = np.ascontiguousarray(img[..., ::-1])
+                augment_hsv(img_bgr)
+                img = np.ascontiguousarray(img_bgr[..., ::-1])
             if self.resize_mode == "letterbox":
                 scale = random.uniform(*self.scale_jitter)
 

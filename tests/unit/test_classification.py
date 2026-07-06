@@ -285,3 +285,206 @@ def test_classify_family_train_end_to_end(tmp_path):
     assert result.probs.data.shape[0] == 2
 
 
+# ---------------------------------------------------------------------------
+# Classification augmentation pack: auto_augment / erasing / mixup / cutmix.
+# ---------------------------------------------------------------------------
+
+
+def _train_op_names(**kwargs):
+    from libreyolo.data.classify_dataset import build_classify_transforms
+
+    compose = build_classify_transforms(224, True, **kwargs)
+    return [type(op).__name__ for op in compose.transforms]
+
+
+def test_transforms_default_off_is_unchanged():
+    """Default-off knobs must not alter the train transform list (regression)."""
+    assert _train_op_names() == [
+        "RandomResizedCrop",
+        "RandomHorizontalFlip",
+        "ToTensor",
+        "Normalize",
+    ]
+    # Passing the knobs at their off-defaults is byte-identical to omitting them.
+    assert _train_op_names(auto_augment=None, erasing=0.0) == _train_op_names()
+
+
+@pytest.mark.parametrize(
+    "policy,cls_name",
+    [
+        ("randaugment", "RandAugment"),
+        ("autoaugment", "AutoAugment"),
+        ("augmix", "AugMix"),
+    ],
+)
+def test_auto_augment_inserted_before_totensor(policy, cls_name):
+    names = _train_op_names(auto_augment=policy)
+    assert cls_name in names
+    # Auto-augment acts on PIL/uint8, so it sits after the flip and before ToTensor.
+    assert names.index(cls_name) == names.index("RandomHorizontalFlip") + 1
+    assert names.index(cls_name) < names.index("ToTensor")
+
+
+def test_erasing_appended_after_normalize():
+    names = _train_op_names(erasing=0.4)
+    assert names[-1] == "RandomErasing"
+    assert names.index("RandomErasing") > names.index("Normalize")
+
+
+def test_val_pipeline_ignores_augment_knobs():
+    from libreyolo.data.classify_dataset import build_classify_transforms
+
+    compose = build_classify_transforms(
+        224, False, auto_augment="randaugment", erasing=0.5
+    )
+    names = [type(op).__name__ for op in compose.transforms]
+    assert names == ["Resize", "CenterCrop", "ToTensor", "Normalize"]
+
+
+def test_unknown_auto_augment_raises():
+    from libreyolo.data.classify_dataset import build_classify_transforms
+
+    with pytest.raises(ValueError, match="randaugment, autoaugment, augmix"):
+        build_classify_transforms(224, True, auto_augment="cutout")
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.0, 1.5])
+def test_erasing_bounds_validated(bad):
+    from libreyolo.data.classify_dataset import build_classify_transforms
+
+    with pytest.raises(ValueError, match="erasing must be in"):
+        build_classify_transforms(224, True, erasing=bad)
+
+
+def test_build_classify_collate_off_returns_plain_fn():
+    from libreyolo.data.classify_dataset import (
+        build_classify_collate,
+        classify_collate_fn,
+    )
+
+    assert build_classify_collate(5, 0.0, 0.0) is classify_collate_fn
+
+
+@pytest.mark.parametrize(
+    "mixup,cutmix",
+    [(1.0, 0.0), (0.0, 1.0), (1.0, 1.0)],
+)
+def test_mixing_produces_soft_labels(mixup, cutmix):
+    """MixUp / CutMix keep image shape and emit soft labels that sum to 1."""
+    from libreyolo.data.classify_dataset import build_classify_collate
+
+    num_classes = 4
+    collate = build_classify_collate(num_classes, mixup=mixup, cutmix=cutmix)
+    batch = [(torch.rand(3, 16, 16), i % num_classes) for i in range(6)]
+    imgs, labels, infos, ids = collate(batch)
+
+    assert imgs.shape == (6, 3, 16, 16)
+    assert labels.shape == (6, num_classes)
+    assert labels.dtype.is_floating_point
+    assert torch.allclose(labels.sum(dim=1), torch.ones(6), atol=1e-5)
+    assert len(infos) == 6 and len(ids) == 6
+
+
+def test_soft_labels_feed_cross_entropy():
+    """The classify criterion (cross-entropy) must accept mixed soft targets."""
+    from libreyolo.data.classify_dataset import build_classify_collate
+
+    num_classes = 3
+    collate = build_classify_collate(num_classes, mixup=1.0)
+    batch = [(torch.rand(3, 16, 16), i % num_classes) for i in range(4)]
+    _, soft_labels, _, _ = collate(batch)
+
+    logits = torch.randn(4, num_classes, requires_grad=True)
+    loss = torch.nn.functional.cross_entropy(logits, soft_labels)
+    loss.backward()
+    assert loss.item() > 0
+    assert logits.grad is not None
+
+
+def test_build_classify_collate_rejects_out_of_range_prob():
+    from libreyolo.data.classify_dataset import build_classify_collate
+
+    with pytest.raises(ValueError, match="mixup must be in"):
+        build_classify_collate(4, mixup=1.5)
+    with pytest.raises(ValueError, match="cutmix must be in"):
+        build_classify_collate(4, cutmix=-0.2)
+
+
+def test_augment_knobs_plumb_through_trainer(tmp_path):
+    """auto_augment / erasing / mixup must flow config -> dataset -> collate.
+
+    Drives the shared classification data setup the way ``model.train(...)``
+    does, then inspects the built loader so the plumbing is verified without a
+    full training run.
+    """
+    from libreyolo import LibreMobileNetV4
+    from libreyolo.data.classify_dataset import _ClassifyBatchMixer
+    from libreyolo.models.mobilenetv4.trainer import MobileNetV4Trainer
+
+    _make_imagefolder(tmp_path / "data", n_classes=3, n_per=4, size=64)
+    model = LibreMobileNetV4(size="s", device="cpu")
+
+    trainer = MobileNetV4Trainer(
+        model=model.model,
+        wrapper_model=model,
+        size="s",
+        num_classes=model.nb_classes,
+        data=str(tmp_path / "data"),
+        imgsz=32,
+        batch=4,
+        workers=0,
+        device="cpu",
+        auto_augment="randaugment",
+        erasing=0.3,
+        mixup=0.5,
+    )
+
+    assert trainer.config.auto_augment == "randaugment"
+    assert trainer.config.erasing == 0.3
+    assert trainer.config.mixup == 0.5
+
+    trainer._setup_classify_data()
+
+    # Mixing wraps the collate; the train transform carries the aug ops.
+    assert isinstance(trainer.train_loader.collate_fn, _ClassifyBatchMixer)
+    op_names = [
+        type(op).__name__
+        for op in trainer.train_loader.dataset._impl.transform.transforms
+    ]
+    assert "RandAugment" in op_names
+    assert op_names[-1] == "RandomErasing"
+
+
+def test_public_train_api_accepts_augment_pack(tmp_path):
+    """End-to-end: model.train(...) accepts the pack and completes a run.
+
+    Exercises the full public path (wrapper.train -> trainer -> dataset/collate
+    -> soft-target cross-entropy) with MixUp on so the soft-label loss is hit.
+    """
+    from libreyolo import LibreMobileNetV4
+
+    _make_imagefolder(tmp_path / "data", n_classes=2, n_per=6, size=64)
+    model = LibreMobileNetV4(size="s", device="cpu")
+
+    metrics = model.train(
+        data=str(tmp_path / "data"),
+        epochs=1,
+        batch=4,
+        imgsz=32,
+        workers=0,
+        device="cpu",
+        project=str(tmp_path / "runs"),
+        name="aug_smoke",
+        exist_ok=True,
+        auto_augment="randaugment",
+        erasing=0.25,
+        mixup=1.0,
+    )
+
+    assert model.nb_classes == 2
+    best = tmp_path / "runs" / "aug_smoke" / "weights" / "best.pt"
+    assert best.exists()
+    epoch_metrics = metrics.get("epoch_metrics", [])
+    assert epoch_metrics and epoch_metrics[-1].get("validated") is True
+
+

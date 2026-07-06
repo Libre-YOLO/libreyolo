@@ -77,8 +77,9 @@ class YOLO9Trainer(BaseTrainer):
         preproc = YOLO9TrainTransform(
             max_labels=getattr(self.config, "max_labels", 100),
             flip_prob=self.config.flip_prob,
-            vertical_flip_prob=0.0,
+            vertical_flip_prob=getattr(self.config, "flipud", 0.0),
             hsv_prob=self.config.hsv_prob,
+            rot90_prob=getattr(self.config, "rot90", 0.0),
         )
         return preproc, YOLO9MosaicMixupDataset
 

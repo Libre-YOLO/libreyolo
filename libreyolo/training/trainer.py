@@ -4,6 +4,7 @@ Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
 import contextlib
+import inspect
 import logging
 import math
 import sys
@@ -676,7 +677,7 @@ class BaseTrainer(ABC):
 
         train_dataset.enable_image_cache(getattr(self.config, "cache", False))
 
-        train_dataset = MosaicDatasetClass(
+        dataset_kwargs = dict(
             dataset=train_dataset,
             img_size=img_size,
             mosaic=mosaic_enabled,
@@ -686,10 +687,22 @@ class BaseTrainer(ABC):
             mosaic_scale=self.config.mosaic_scale,
             mixup_scale=self.config.mixup_scale,
             shear=self.config.shear,
+            perspective=getattr(self.config, "perspective", 0.0),
             enable_mixup=mosaic_enabled and self.config.mixup_prob > 0,
             mosaic_prob=self.config.mosaic_prob if mosaic_enabled else 0.0,
             mixup_prob=self.config.mixup_prob if mosaic_enabled else 0.0,
         )
+        # Copy-paste is only wired for the mosaic datasets whose constructor
+        # accepts it (segmentation-capable pipelines); pass it through only
+        # there so the shared instantiation stays valid for every family. OBB
+        # has no segments, so leave it off in that case.
+        cp_prob = float(getattr(self.config, "copy_paste", 0.0) or 0.0)
+        if "copy_paste" in inspect.signature(MosaicDatasetClass).parameters:
+            dataset_kwargs["copy_paste"] = 0.0 if load_obb else cp_prob
+            dataset_kwargs["copy_paste_mode"] = getattr(
+                self.config, "copy_paste_mode", "flip"
+            )
+        train_dataset = MosaicDatasetClass(**dataset_kwargs)
 
         # ``batch`` is the global batch under DDP. Each rank's loader is built
         # with ``batch // world_size``.
@@ -743,7 +756,7 @@ class BaseTrainer(ABC):
 
         from ..data.classify_dataset import (
             ClassifyDataset,
-            classify_collate_fn,
+            build_classify_collate,
             get_class_names,
             resolve_classify_data,
         )
@@ -776,7 +789,17 @@ class BaseTrainer(ABC):
             transform_kwargs={
                 "crop_pct": getattr(wrapper, "crop_pct", 0.875),
                 "interpolation": getattr(wrapper, "interpolation", "bilinear"),
+                "auto_augment": getattr(self.config, "auto_augment", None),
+                "erasing": getattr(self.config, "erasing", 0.0),
             },
+        )
+
+        # Batch-level MixUp / CutMix (soft labels) when requested; otherwise this
+        # returns the plain classify collate so default training is unchanged.
+        collate_fn = build_classify_collate(
+            num_classes,
+            mixup=getattr(self.config, "mixup", 0.0),
+            cutmix=getattr(self.config, "cutmix", 0.0),
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
@@ -815,7 +838,7 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
-            collate_fn=classify_collate_fn,
+            collate_fn=collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
 

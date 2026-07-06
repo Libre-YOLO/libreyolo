@@ -18,6 +18,7 @@ masks ride along for crop fidelity). They are deliberately NOT merged.
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import Optional, Sequence
 
@@ -27,6 +28,9 @@ import numpy as np
 from ..obb import normalize_obb_angle, scale_xywhr
 from .constants import IMAGENET_MEAN as _IMAGENET_MEAN
 from .constants import IMAGENET_STD as _IMAGENET_STD
+from .copy_paste import copy_paste as _copy_paste_instances
+
+logger = logging.getLogger(__name__)
 
 
 def compute_multi_scale_scales(
@@ -304,11 +308,19 @@ class RFDETRSegTransform:
         crop_min_size: int = 384,
         crop_max_size: int = 600,
         target_dim: int = 5,
+        copy_paste: float = 0.0,
+        copy_paste_mode: str = "flip",
     ):
         if target_dim not in (5, 6):
             raise ValueError(f"RF-DETR target_dim must be 5 or 6, got {target_dim}")
         self.max_labels = max_labels
         self.flip_prob = flip_prob
+        # Copy-paste instance augmentation (segmentation only). The pass-through
+        # dataset serves one sample at a time, so only the same-sample "flip"
+        # source is available here; a "mixup" request warns once and falls back.
+        self.copy_paste = copy_paste
+        self.copy_paste_mode = copy_paste_mode
+        self._copy_paste_warned = False
         self.imgsz = imgsz
         self.mask_downsample_ratio = mask_downsample_ratio
         self.multi_scale = multi_scale
@@ -345,6 +357,34 @@ class RFDETRSegTransform:
             else np.zeros((len(targets),), dtype=np.float32)
         )
         segments_t = _copy_segments(segments)
+
+        # Copy-paste while segments are still polygons on the original canvas.
+        # Ordered so copy_paste == 0 draws no RNG (fixtures stay pinned).
+        if self.copy_paste > 0.0 and self.target_dim == 5 and segments_t and len(boxes):
+            if self.copy_paste_mode == "mixup" and not self._copy_paste_warned:
+                logger.warning(
+                    "copy_paste_mode='mixup' needs a second sample, which the "
+                    "RF-DETR pass-through pipeline does not provide; using the "
+                    "flipped same-sample source instead."
+                )
+                self._copy_paste_warned = True
+            if random.random() < self.copy_paste:
+                # Same-sample source: force the mirror (flip_prob=1.0) so pasted
+                # instances land at their mirrored position rather than back on
+                # top of themselves.
+                image, boxes, labels, segments_t = _copy_paste_instances(
+                    image,
+                    boxes,
+                    labels,
+                    segments_t,
+                    image,
+                    boxes,
+                    labels,
+                    segments_t,
+                    max_instances=self.max_labels,
+                    flip_prob=1.0,
+                )
+                angles = np.zeros((len(boxes),), dtype=np.float32)
 
         # Optional horizontal flip — applied before resize, on the original canvas.
         if random.random() < self.flip_prob:
@@ -485,9 +525,10 @@ class RFDETRSegPassThroughDataset:
         enable_mixup=False,
         mosaic_prob=0.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         del mosaic, degrees, translate, mosaic_scale, mixup_scale, shear
-        del enable_mixup, mosaic_prob, mixup_prob
+        del enable_mixup, mosaic_prob, mixup_prob, perspective
         self.dataset = dataset
         self.img_size = img_size
         self.preproc = preproc or RFDETRSegTransform(imgsz=img_size[0])

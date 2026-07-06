@@ -43,6 +43,12 @@ class RFDETRConfig(TrainConfig):
     expanded_scales: bool = True
     do_random_resize_via_padding: bool = False
     crop_resize_prob: float = 0.5
+    # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
+    # is the per-sample probability (0 disables it). The pass-through pipeline
+    # only supports the same-sample "flip" source, so ``copy_paste_mode`` other
+    # than "flip" falls back to it with a warning.
+    copy_paste: float = 0.0
+    copy_paste_mode: str = "flip"
     amp: bool = True
     backbone_lr_mult: float = 0.1
     clip_max_norm: float = 0.1

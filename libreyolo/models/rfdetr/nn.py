@@ -477,7 +477,12 @@ class RFDETRClassifier(nn.Module):
         pooled = self.drop(pooled)
         logits = self.linear(pooled)
         if self.training and targets is not None:
-            loss = F.cross_entropy(logits, targets.long())
+            # Hard labels arrive as ``[B]`` class indices; batch-level MixUp /
+            # CutMix produce ``[B, num_classes]`` soft (class-probability)
+            # targets. ``cross_entropy`` accepts both, but only the index form
+            # must be cast to long.
+            tgt = targets if targets.dim() == 2 else targets.long()
+            loss = F.cross_entropy(logits, tgt)
             return {"total_loss": loss, "cls": loss}
         return logits
 

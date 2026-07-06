@@ -92,6 +92,29 @@ class TrainConfig:
     mosaic_scale: Tuple[float, float] = (0.1, 2.0)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 2.0
+    # Projective (perspective) warp magnitude, following the de-facto YOLO
+    # knob. The two projective terms are sampled in [-perspective, +perspective]
+    # (~0.0005 is a typical scale). Default 0.0 keeps the pure-affine warp.
+    perspective: float = 0.0
+    # Vertical-flip probability (top-to-bottom). Off by default; useful for
+    # datasets without a fixed up/down orientation (e.g. aerial imagery).
+    flipud: float = 0.0
+
+    # Classification augmentation pack. These drive the classification
+    # ImageFolder pipeline only (detection families ignore them) and all
+    # default off, so existing training behavior is unchanged unless requested.
+    #   - auto_augment: one of "randaugment", "autoaugment", "augmix" or None.
+    #   - erasing: RandomErasing probability, 0 <= erasing < 1.
+    #   - mixup / cutmix: per-batch probability of applying the MixUp / CutMix
+    #     op (soft labels). At most one op runs per batch: MixUp is applied with
+    #     probability ``mixup``, otherwise CutMix with probability ``cutmix``, so
+    #     the two are additive and should sum to at most 1.
+    # Note: on the CLI, ``--mixup`` is the detection ``mixup_prob`` alias; the
+    # classification ``mixup`` knob is Python-API only (model.train(mixup=...)).
+    auto_augment: Optional[str] = None
+    erasing: float = 0.0
+    mixup: float = 0.0
+    cutmix: float = 0.0
 
     # Training features
     ema: bool = True
@@ -232,6 +255,16 @@ class YOLO9Config(TrainConfig):
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.
     max_labels: int = 100
+    # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
+    # is the per-sample probability (0 disables it); ``copy_paste_mode`` selects
+    # the source: "flip" reuses the same sample mirrored, "mixup" pulls a second
+    # random sample.
+    copy_paste: float = 0.0
+    copy_paste_mode: str = "flip"
+    # Probability of a random k*90-degree rotation for oriented-box (OBB)
+    # training. Off by default; only applied on the OBB path (samples carrying
+    # angle targets) and ignored for axis-aligned detection.
+    rot90: float = 0.0
 
 
 @dataclass(kw_only=True)
