@@ -62,9 +62,10 @@ class TrainConfig:
     #   - "cpu", "mps", "0", "cuda:0", 0 → single device
     #   - [0, 1] or "0,1" → multi-GPU, requires torchrun launch
     device: Union[str, int, List[int]] = "auto"
-    # SyncBatchNorm across ranks under DDP. Off here; per-family configs
-    # override (yolo9 defaults True per upstream MultimediaTechLab). No-op
-    # when not distributed.
+    # SyncBatchNorm across ranks under DDP. Off here; BatchNorm-heavy CNN
+    # families (e.g. yolo9) override to True so BN statistics are computed
+    # across the global batch instead of each rank's small shard. No-op when
+    # not distributed.
     sync_bn: bool = False
 
     # Optimizer
@@ -222,7 +223,11 @@ class YOLO9Config(TrainConfig):
     name: str = "yolo9_exp"
     workers: int = 8
     mask_downsample_ratio: int = 4
-    sync_bn: bool = False
+    # YOLO9 is BatchNorm-heavy. Under multi-GPU DDP the per-rank batch is
+    # ``batch // world_size``; without SyncBatchNorm each rank's BN running
+    # statistics track only its own small shard, which measurably degrades the
+    # converged model versus single-GPU (issue #484). Sync BN across ranks.
+    sync_bn: bool = True
     # Per-image ground-truth cap in the train transforms. Dense datasets
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.

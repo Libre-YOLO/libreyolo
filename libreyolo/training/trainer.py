@@ -1177,6 +1177,28 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("AutoBatch: resolved global batch size = %d", self.config.batch)
 
+        # BN statistics quality under DDP: with SyncBatchNorm off, each rank's
+        # BatchNorm tracks only its own per-rank shard (batch // world_size).
+        # A small per-rank batch produces noisy running stats and degrades the
+        # converged model (issue #484). Warn (do not silently change behavior)
+        # so users of BatchNorm families can enable sync_bn.
+        if self.is_distributed and not getattr(self.config, "sync_bn", False):
+            per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+            has_batchnorm = any(
+                isinstance(m, nn.modules.batchnorm._BatchNorm)
+                for m in self.model.modules()
+            )
+            if has_batchnorm and per_rank_batch < 16 and is_main_process():
+                logger.warning(
+                    "DDP per-rank batch is %d (global batch %d / world_size %d) "
+                    "and sync_bn is disabled; BatchNorm running statistics are "
+                    "computed per rank on this small shard, which can reduce "
+                    "accuracy versus single-GPU. Consider setting sync_bn=True.",
+                    per_rank_batch,
+                    self.config.batch,
+                    self.world_size,
+                )
+
         self._setup_data()
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
