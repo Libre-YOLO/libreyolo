@@ -388,11 +388,19 @@ class RFDETRTrainer(BaseTrainer):
             keypoints[..., 1] *= scale_y
 
         if isinstance(polygons, torch.Tensor):
-            polygons = F.interpolate(
-                polygons.float(),
-                size=(scale, scale),
-                mode="nearest",
-            )
+            if polygons.shape[1] == 0:
+                # All-background batch: masks are padded to the batch max
+                # instance count (#527), which can be 0. F.interpolate
+                # rejects empty 4D inputs, so resize the shape directly.
+                polygons = polygons.new_zeros(
+                    (*polygons.shape[:2], scale, scale), dtype=torch.float32
+                )
+            else:
+                polygons = F.interpolate(
+                    polygons.float(),
+                    size=(scale, scale),
+                    mode="nearest",
+                )
 
         return imgs, targets, polygons
 

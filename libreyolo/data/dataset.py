@@ -976,13 +976,7 @@ def yolox_collate_fn(batch):
         if all(isinstance(s, np.ndarray) for s in segments):
             return imgs, targets, img_infos, img_ids, _pad_stack_masks(segments)
         if all(isinstance(s, torch.Tensor) for s in segments):
-            return (
-                imgs,
-                targets,
-                img_infos,
-                img_ids,
-                _pad_stack_masks([s.numpy() for s in segments]),
-            )
+            return imgs, targets, img_infos, img_ids, _pad_stack_mask_tensors(segments)
         return imgs, targets, img_infos, img_ids, list(segments)
     return imgs, targets, img_infos, img_ids
 
@@ -996,13 +990,24 @@ def _pad_stack_masks(masks_list):
     host RAM with multiple dataloader workers on COCO-scale datasets
     (issue #527). Pad rows are zero masks, matching the old padded contract.
     """
-    max_n = max(m.shape[0] for m in masks_list)
+    max_n = max((m.shape[0] for m in masks_list), default=0)
     h, w = masks_list[0].shape[-2:]
     out = np.zeros((len(masks_list), max_n, h, w), dtype=masks_list[0].dtype)
     for i, m in enumerate(masks_list):
         if m.shape[0]:
             out[i, : m.shape[0]] = m
     return torch.from_numpy(out)
+
+
+def _pad_stack_mask_tensors(masks_list):
+    """Tensor twin of :func:`_pad_stack_masks`, preserving device and dtype."""
+    max_n = max((m.shape[0] for m in masks_list), default=0)
+    h, w = masks_list[0].shape[-2:]
+    out = masks_list[0].new_zeros((len(masks_list), max_n, h, w))
+    for i, m in enumerate(masks_list):
+        if m.shape[0]:
+            out[i, : m.shape[0]] = m
+    return out
 
 
 def create_dataloader(
