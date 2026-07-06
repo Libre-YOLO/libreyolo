@@ -14,6 +14,7 @@ numpy-only consumers never pay the torch import.
 
 from .boxes import adjust_box_anns, cxcywh2xyxy, xyxy2cxcywh
 from .color import augment_hsv
+from .copy_paste import copy_paste
 from .geometry import (
     apply_affine_to_bboxes,
     get_affine_matrix,
@@ -30,6 +31,7 @@ __all__ = [
     "cxcywh2xyxy",
     "xyxy2cxcywh",
     "augment_hsv",
+    "copy_paste",
     "apply_affine_to_bboxes",
     "get_affine_matrix",
     "get_aug_params",

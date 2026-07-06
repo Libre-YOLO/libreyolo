@@ -4,6 +4,7 @@ Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
 import contextlib
+import inspect
 import logging
 import math
 import sys
@@ -676,7 +677,7 @@ class BaseTrainer(ABC):
 
         train_dataset.enable_image_cache(getattr(self.config, "cache", False))
 
-        train_dataset = MosaicDatasetClass(
+        dataset_kwargs = dict(
             dataset=train_dataset,
             img_size=img_size,
             mosaic=mosaic_enabled,
@@ -690,6 +691,17 @@ class BaseTrainer(ABC):
             mosaic_prob=self.config.mosaic_prob if mosaic_enabled else 0.0,
             mixup_prob=self.config.mixup_prob if mosaic_enabled else 0.0,
         )
+        # Copy-paste is only wired for the mosaic datasets whose constructor
+        # accepts it (segmentation-capable pipelines); pass it through only
+        # there so the shared instantiation stays valid for every family. OBB
+        # has no segments, so leave it off in that case.
+        cp_prob = float(getattr(self.config, "copy_paste", 0.0) or 0.0)
+        if "copy_paste" in inspect.signature(MosaicDatasetClass).parameters:
+            dataset_kwargs["copy_paste"] = 0.0 if load_obb else cp_prob
+            dataset_kwargs["copy_paste_mode"] = getattr(
+                self.config, "copy_paste_mode", "flip"
+            )
+        train_dataset = MosaicDatasetClass(**dataset_kwargs)
 
         # ``batch`` is the global batch under DDP. Each rank's loader is built
         # with ``batch // world_size``.

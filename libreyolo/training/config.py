@@ -232,6 +232,12 @@ class YOLO9Config(TrainConfig):
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.
     max_labels: int = 100
+    # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
+    # is the per-sample probability (0 disables it); ``copy_paste_mode`` selects
+    # the source: "flip" reuses the same sample mirrored, "mixup" pulls a second
+    # random sample.
+    copy_paste: float = 0.0
+    copy_paste_mode: str = "flip"
 
 
 @dataclass(kw_only=True)
