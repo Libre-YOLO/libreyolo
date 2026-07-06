@@ -100,6 +100,20 @@ class TrainConfig:
     # datasets without a fixed up/down orientation (e.g. aerial imagery).
     flipud: float = 0.0
 
+    # Classification augmentation pack. These drive the classification
+    # ImageFolder pipeline only (detection families ignore them) and all
+    # default off, so existing training behavior is unchanged unless requested.
+    #   - auto_augment: one of "randaugment", "autoaugment", "augmix" or None.
+    #   - erasing: RandomErasing probability, 0 <= erasing < 1.
+    #   - mixup / cutmix: per-batch probability of applying the MixUp / CutMix
+    #     op (soft labels). When both > 0 the op is chosen randomly per batch.
+    # Note: on the CLI, ``--mixup`` is the detection ``mixup_prob`` alias; the
+    # classification ``mixup`` knob is Python-API only (model.train(mixup=...)).
+    auto_augment: Optional[str] = None
+    erasing: float = 0.0
+    mixup: float = 0.0
+    cutmix: float = 0.0
+
     # Training features
     ema: bool = True
     ema_decay: float = 0.9998

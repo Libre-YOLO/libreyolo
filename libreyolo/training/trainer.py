@@ -756,7 +756,7 @@ class BaseTrainer(ABC):
 
         from ..data.classify_dataset import (
             ClassifyDataset,
-            classify_collate_fn,
+            build_classify_collate,
             get_class_names,
             resolve_classify_data,
         )
@@ -789,7 +789,17 @@ class BaseTrainer(ABC):
             transform_kwargs={
                 "crop_pct": getattr(wrapper, "crop_pct", 0.875),
                 "interpolation": getattr(wrapper, "interpolation", "bilinear"),
+                "auto_augment": getattr(self.config, "auto_augment", None),
+                "erasing": getattr(self.config, "erasing", 0.0),
             },
+        )
+
+        # Batch-level MixUp / CutMix (soft labels) when requested; otherwise this
+        # returns the plain classify collate so default training is unchanged.
+        collate_fn = build_classify_collate(
+            num_classes,
+            mixup=getattr(self.config, "mixup", 0.0),
+            cutmix=getattr(self.config, "cutmix", 0.0),
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
@@ -828,7 +838,7 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
-            collate_fn=classify_collate_fn,
+            collate_fn=collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
 
