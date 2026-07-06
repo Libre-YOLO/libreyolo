@@ -445,7 +445,7 @@ class BaseTrainer(ABC):
             return
 
         from ..distillation import Distiller
-        from ..models import LibreYOLO
+        from ..distillation.teachers import is_foundation_teacher
 
         if self.wrapper_model is None:
             raise ValueError(
@@ -453,27 +453,57 @@ class BaseTrainer(ABC):
                 "wrapper_model set (the student wrapper provides tap points)."
             )
 
-        # Load teacher via the factory (handles family detection, weight loading)
-        logger.info(f"Loading teacher model: {self.config.distill_model}")
-        teacher_wrapper = LibreYOLO(self.config.distill_model)
-        teacher_nn = teacher_wrapper.model.to(self.device)
+        if is_foundation_teacher(self.config.distill_model):
+            # Foundation teacher (e.g. DINOv2): a frozen semantic ViT supervises
+            # a single student backbone stage via feature-MSE. Features come
+            # through the teacher's extract_features(), not forward hooks, and
+            # the loss handles the teacher/student spatial-grid mismatch.
+            from ..distillation.teachers import DINOv2Teacher
 
-        # Get distillation configs from the models themselves. Families that
-        # don't support distillation raise NotImplementedError here with a
-        # message naming the family.
-        teacher_cfg = teacher_wrapper.get_distill_config()
-        student_cfg = self.wrapper_model.get_distill_config()
+            logger.info(f"Loading foundation teacher: {self.config.distill_model}")
+            teacher = DINOv2Teacher(self.config.distill_model).to(self.device)
 
-        self.distiller = Distiller(
-            teacher_model=teacher_nn,
-            student_model=self.model,
-            teacher_config=teacher_cfg,
-            student_config=student_cfg,
-            loss_type=self.config.distill_loss_type,
-            loss_weight=self.config.dis,
-            mask_ratio=self.config.distill_mask_ratio,
-            tau=self.config.distill_tau,
-        )
+            if not hasattr(self.wrapper_model, "get_backbone_distill_config"):
+                family = getattr(self.wrapper_model, "FAMILY", type(self.wrapper_model).__name__)
+                raise NotImplementedError(
+                    f"Foundation-model distillation into the '{family}' family is "
+                    f"not supported yet (no get_backbone_distill_config())."
+                )
+
+            self.distiller = Distiller(
+                teacher_model=teacher,
+                student_model=self.model,
+                teacher_config=teacher.get_distill_config(),
+                student_config=self.wrapper_model.get_backbone_distill_config(),
+                loss_type="feat_mse",
+                loss_weight=self.config.dis,
+                teacher_feature_fn=teacher.extract_features,
+                normalize=getattr(self.config, "distill_normalize", False),
+            )
+        else:
+            from ..models import LibreYOLO
+
+            # Load teacher via the factory (handles family detection, weight loading)
+            logger.info(f"Loading teacher model: {self.config.distill_model}")
+            teacher_wrapper = LibreYOLO(self.config.distill_model)
+            teacher_nn = teacher_wrapper.model.to(self.device)
+
+            # Get distillation configs from the models themselves. Families that
+            # don't support distillation raise NotImplementedError here with a
+            # message naming the family.
+            teacher_cfg = teacher_wrapper.get_distill_config()
+            student_cfg = self.wrapper_model.get_distill_config()
+
+            self.distiller = Distiller(
+                teacher_model=teacher_nn,
+                student_model=self.model,
+                teacher_config=teacher_cfg,
+                student_config=student_cfg,
+                loss_type=self.config.distill_loss_type,
+                loss_weight=self.config.dis,
+                mask_ratio=self.config.distill_mask_ratio,
+                tau=self.config.distill_tau,
+            )
         self.distiller.to(self.device)
 
         # resume() may run before setup() — apply deferred adapter state now.

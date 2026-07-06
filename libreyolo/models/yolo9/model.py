@@ -456,6 +456,24 @@ class LibreYOLO9(BaseModel):
             "strides": [8, 16, 32],
         }
 
+    def get_backbone_distill_config(self) -> Dict:
+        """Single-scale backbone config for foundation-teacher distillation.
+
+        Used when the teacher is a semantic ViT (e.g. DINOv2) rather than a
+        detector: supervision lands on the stride-16 backbone stage (P4,
+        ``backbone.elan3``) instead of the detection-specific neck. The teacher
+        is single-scale, so this returns one tap point.
+        """
+        from .nn import YOLO9_CONFIGS
+
+        cfg = YOLO9_CONFIGS[self.size]
+        p4_channels = cfg["stages"][1][1]  # elan3 (P4) output width
+        return {
+            "tap_points": ["backbone.elan3"],
+            "channels": [p4_channels],
+            "strides": [16],
+        }
+
     @ddp_aware()
     def train(
         self,
