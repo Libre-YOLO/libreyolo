@@ -335,6 +335,12 @@ def build_train_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     for f in fields(TrainConfig):
         if f.name in excluded:
             continue
+        # A field whose name is itself a CLI alias key (e.g. the classification
+        # ``mixup`` field vs the ``mixup`` -> ``mixup_prob`` detection alias)
+        # does not own that CLI name; it is API-only, so skip it here rather
+        # than let the detection-flavored CLI value leak into it.
+        if f.name in TRAIN_ALIASES:
+            continue
         cli_name = internal_to_cli.get(f.name, f.name)
         if cli_name in params:
             kwargs[f.name] = params[cli_name]
@@ -495,6 +501,11 @@ def get_cfg_defaults() -> dict[str, Any]:
     train_defaults = {}
     for f in fields(TrainConfig):
         if f.name in train_exclude:
+            continue
+        # Skip fields shadowed by a CLI alias key (e.g. the classification
+        # ``mixup`` field): the CLI name belongs to the aliased detection field
+        # (``mixup_prob``), whose default is the one the CLI actually uses.
+        if f.name in TRAIN_ALIASES:
             continue
         cli_name = train_internal_to_cli.get(f.name, f.name)
         train_defaults[cli_name] = _to_json_safe(getattr(base, f.name))

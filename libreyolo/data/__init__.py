@@ -7,6 +7,7 @@ Supports YAML configs with .txt file paths.
 
 from .classify_dataset import (
     ClassifyDataset,
+    build_classify_collate,
     build_classify_transforms,
     classify_collate_fn,
     get_class_names,
@@ -79,6 +80,7 @@ __all__ = [
     "COCO17_SKELETON",
     "default_oks_sigmas",
     "ClassifyDataset",
+    "build_classify_collate",
     "build_classify_transforms",
     "classify_collate_fn",
     "get_class_names",
