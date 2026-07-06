@@ -86,6 +86,42 @@ def _fill_instance_mask(rings, height, width):
     return mask.astype(bool)
 
 
+def _instance_dense_mask(inst):
+    """Return an instance's attached exact mask (uint8) if any ring carries one.
+
+    RLE-sourced instances attach the exact decoded mask to the ring; the polygon
+    ring is only a lossy contour of it. Polygon-sourced instances have no such
+    attribute and return ``None``, so they keep the polygon rasterization path.
+    """
+    for ring in inst:
+        mask = getattr(ring, "dense_mask", None)
+        if mask is not None:
+            return np.ascontiguousarray(mask).astype(np.uint8)
+    return None
+
+
+def _warp_dense_to_canvas(dense, new_w, new_h, crop_w, crop_h, height, width):
+    """Resize an exact mask to the jittered source size and drop it on the
+    destination canvas top-left, matching how the source image is placed so the
+    pasted pixels and their mask stay pixel-aligned."""
+    resized = cv2.resize(
+        dense.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST
+    )
+    canvas = np.zeros((height, width), dtype=np.uint8)
+    canvas[:crop_h, :crop_w] = resized[:crop_h, :crop_w]
+    return canvas.astype(bool)
+
+
+def _attach_dense_mask(rings, instance_mask):
+    """Attach the destination-frame exact mask to ring 0 of a pasted instance so
+    downstream mask-aware transforms keep full fidelity for that instance."""
+    from libreyolo.data.dataset import DenseMaskRing
+
+    out = list(rings)
+    out[0] = DenseMaskRing(out[0], instance_mask.astype(np.uint8))
+    return out
+
+
 def copy_paste(
     img,
     boxes,
@@ -150,13 +186,19 @@ def copy_paste(
     src_labels = np.asarray(src_labels).reshape(-1)
     # Work on private ring copies so the caller's source arrays stay intact.
     src_rings = [[np.asarray(r, dtype=np.float32).copy() for r in inst] for inst in src_segments]
+    # Parallel per-instance exact masks (or None). Ring copies above drop the
+    # dense-mask attribute, so capture it here before it is lost.
+    src_dense = [_instance_dense_mask(inst) for inst in src_segments]
 
-    # Optionally mirror the whole source (image + boxes + polygons).
+    # Optionally mirror the whole source (image + boxes + polygons + masks).
     if _draw_uniform01(rng) < flip_prob:
         src = np.ascontiguousarray(src[:, ::-1])
         if len(src_boxes):
             src_boxes[:, [0, 2]] = src_w - src_boxes[:, [2, 0]]
         src_rings = [_flip_rings_lr(inst, src_w) for inst in src_rings]
+        src_dense = [
+            None if m is None else np.ascontiguousarray(m[:, ::-1]) for m in src_dense
+        ]
 
     # Scale-jitter, then map source coordinates into the destination frame. The
     # source image is resized to (W*s, H*s) and dropped at the destination's
@@ -195,7 +237,15 @@ def copy_paste(
     pasted_segments = []
     for i in selected:
         inst_rings = src_rings[i]
-        instance_mask = _fill_instance_mask(inst_rings, height, width)
+        dense = src_dense[i]
+        if dense is not None:
+            # Warp the exact mask with the same resize + placement as the source
+            # image; more faithful than rasterizing the lossy polygon contour.
+            instance_mask = _warp_dense_to_canvas(
+                dense, new_w, new_h, crop_w, crop_h, height, width
+            )
+        else:
+            instance_mask = _fill_instance_mask(inst_rings, height, width)
         if not instance_mask.any():
             # Instance fell entirely outside the destination canvas.
             continue
@@ -211,6 +261,8 @@ def copy_paste(
             ]
         )
         pasted_labels.append(src_labels[i] if i < len(src_labels) else 0)
+        if dense is not None and clipped and len(clipped[0]):
+            clipped = _attach_dense_mask(clipped, instance_mask)
         pasted_segments.append(clipped)
 
     if not union_mask.any():

@@ -164,6 +164,44 @@ def test_no_source_instances_is_noop():
     assert len(segments) == 1
 
 
+def test_dense_mask_drives_paste_not_polygon():
+    """An RLE-sourced instance must paste by its exact mask, not the polygon.
+
+    The source polygon covers a large square, but the attached dense mask marks
+    only a small inner square. The paste must follow the dense mask: pixels
+    inside the polygon but outside the dense mask stay untouched, and the pasted
+    instance carries the exact mask forward as a ``DenseMaskRing``.
+    """
+    from libreyolo.data.dataset import DenseMaskRing
+
+    dst = np.zeros((80, 80, 3), dtype=np.uint8)
+    src = np.full((80, 80, 3), 200, dtype=np.uint8)
+    big_ring = _square_ring(10, 10, 60, 60)
+    dense = np.zeros((80, 80), dtype=np.uint8)
+    dense[20:30, 20:30] = 1
+    img_out, _, _, segments = copy_paste(
+        dst,
+        np.zeros((0, 4), dtype=np.float32),
+        np.zeros((0,), dtype=np.float32),
+        [],
+        src,
+        np.array([[10.0, 10.0, 60.0, 60.0]], dtype=np.float32),
+        np.array([0.0], dtype=np.float32),
+        [[DenseMaskRing(big_ring, dense)]],
+        flip_prob=0.0,
+        scale_range=(1.0, 1.0),
+        rng=random.Random(0),
+    )
+    # Inside the dense square: pasted (bright source pixels).
+    assert (img_out[20:30, 20:30] == 200).all()
+    # Inside the polygon but outside the dense mask: untouched background.
+    assert (img_out[50, 50] == 0).all()
+    # The pasted instance keeps its exact mask for downstream mask-aware ops.
+    assert isinstance(segments[-1][0], DenseMaskRing)
+    assert segments[-1][0].dense_mask[25, 25] == 1
+    assert segments[-1][0].dense_mask[50, 50] == 0
+
+
 def test_input_arrays_not_mutated():
     scene = _scene()
     img_before = scene["img"].copy()

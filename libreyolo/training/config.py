@@ -106,7 +106,9 @@ class TrainConfig:
     #   - auto_augment: one of "randaugment", "autoaugment", "augmix" or None.
     #   - erasing: RandomErasing probability, 0 <= erasing < 1.
     #   - mixup / cutmix: per-batch probability of applying the MixUp / CutMix
-    #     op (soft labels). When both > 0 the op is chosen randomly per batch.
+    #     op (soft labels). At most one op runs per batch: MixUp is applied with
+    #     probability ``mixup``, otherwise CutMix with probability ``cutmix``, so
+    #     the two are additive and should sum to at most 1.
     # Note: on the CLI, ``--mixup`` is the detection ``mixup_prob`` alias; the
     # classification ``mixup`` knob is Python-API only (model.train(mixup=...)).
     auto_augment: Optional[str] = None

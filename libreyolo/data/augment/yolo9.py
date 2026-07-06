@@ -419,6 +419,11 @@ class YOLO9MosaicMixupDataset:
         else:
             src_img, src_boxes, src_classes, src_segments = image, boxes, classes, segments
 
+        # In "flip" mode the source is the same sample, so force the mirror
+        # (flip_prob=1.0): an unflipped self-paste would drop instances back on
+        # their own location. In "mixup" mode the source is a different sample,
+        # so a random flip (default 0.5) is a useful extra variation.
+        cp_flip_prob = 0.5 if self.copy_paste_mode == "mixup" else 1.0
         new_image, new_boxes, new_classes, new_segments = _copy_paste_instances(
             image,
             boxes,
@@ -429,6 +434,7 @@ class YOLO9MosaicMixupDataset:
             src_classes,
             src_segments,
             max_instances=getattr(self.preproc, "max_labels", None),
+            flip_prob=cp_flip_prob,
         )
 
         if len(new_boxes):

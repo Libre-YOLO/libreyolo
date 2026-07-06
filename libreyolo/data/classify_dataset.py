@@ -357,30 +357,33 @@ class _ClassifyBatchMixer:
     tensors of shape ``[B, num_classes]`` whose rows sum to 1, which the
     cross-entropy criterion consumes directly.
 
-    Probability semantics: ``mixup`` and ``cutmix`` are each the probability of
-    applying that op to a batch. When both are enabled the op is chosen per
-    batch via ``v2.RandomChoice`` and applied with probability
-    ``max(mixup, cutmix)``. When neither is enabled the plain collate is used
-    (see :func:`build_classify_collate`), so the default behavior is unchanged.
+    Probability semantics: at most one op is applied per batch, from a single
+    draw ``r``. MixUp is applied when ``r < mixup``; otherwise CutMix is applied
+    when ``r < mixup + cutmix``. So ``mixup`` is honored exactly as MixUp's
+    per-batch probability and ``cutmix`` as CutMix's (the two are additive and
+    should sum to at most 1). With a single op enabled this reduces to applying
+    that op with its own probability. When neither is enabled the plain collate
+    is used (see :func:`build_classify_collate`), so default behavior is
+    unchanged.
     """
 
     def __init__(self, num_classes: int, mixup: float = 0.0, cutmix: float = 0.0):
         from torchvision.transforms import v2
 
-        ops = []
-        if mixup > 0:
-            ops.append(v2.MixUp(num_classes=num_classes))
-        if cutmix > 0:
-            ops.append(v2.CutMix(num_classes=num_classes))
-        if not ops:
+        self._mixup = v2.MixUp(num_classes=num_classes) if mixup > 0 else None
+        self._cutmix = v2.CutMix(num_classes=num_classes) if cutmix > 0 else None
+        if self._mixup is None and self._cutmix is None:
             raise ValueError("_ClassifyBatchMixer needs mixup>0 or cutmix>0.")
-        self._op = ops[0] if len(ops) == 1 else v2.RandomChoice(ops)
-        self._prob = max(mixup, cutmix)
+        self._mixup_p = float(mixup)
+        self._cutmix_p = float(cutmix)
 
     def __call__(self, batch):
         imgs, labels, img_infos, img_ids = classify_collate_fn(batch)
-        if torch.rand(1).item() < self._prob:
-            imgs, labels = self._op(imgs, labels)
+        r = float(torch.rand(1).item())
+        if self._mixup is not None and r < self._mixup_p:
+            imgs, labels = self._mixup(imgs, labels)
+        elif self._cutmix is not None and r < self._mixup_p + self._cutmix_p:
+            imgs, labels = self._cutmix(imgs, labels)
         return imgs, labels, img_infos, img_ids
 
 

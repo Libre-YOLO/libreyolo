@@ -369,6 +369,9 @@ class RFDETRSegTransform:
                 )
                 self._copy_paste_warned = True
             if random.random() < self.copy_paste:
+                # Same-sample source: force the mirror (flip_prob=1.0) so pasted
+                # instances land at their mirrored position rather than back on
+                # top of themselves.
                 image, boxes, labels, segments_t = _copy_paste_instances(
                     image,
                     boxes,
@@ -379,6 +382,7 @@ class RFDETRSegTransform:
                     labels,
                     segments_t,
                     max_instances=self.max_labels,
+                    flip_prob=1.0,
                 )
                 angles = np.zeros((len(boxes),), dtype=np.float32)
 
