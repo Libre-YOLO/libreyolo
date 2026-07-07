@@ -592,13 +592,30 @@ class PoseValidator(BaseValidator):
                 gt_keypoints_arr = (
                     np.stack(gt_keypoints) if gt_keypoints else None
                 )
-                gt_classes = np.zeros(len(anns), int)
+                category_ids = getattr(self, "_category_ids", []) or []
+                if len(category_ids) > 1:
+                    # Multi-class pose: label GT/predictions by class in the plot.
+                    cat_to_idx = {int(c): i for i, c in enumerate(category_ids)}
+                    gt_classes = np.array(
+                        [cat_to_idx.get(int(a.get("category_id", 0)), 0) for a in anns],
+                        dtype=int,
+                    )
+                    names = getattr(self.model, "names", None)
+                    class_names = (
+                        [str(names.get(i, i)) for i in range(len(category_ids))]
+                        if isinstance(names, dict)
+                        else names
+                    )
+                else:
+                    # Single-class pose is visually category-agnostic.
+                    gt_classes = np.zeros(len(anns), int)
+                    class_names = None
                 _safe(
                     ValPlotter.plot_val_sample,
                     img_bgr,
                     gt_boxes, gt_classes,
                     sample["pred_boxes"], sample["pred_classes"], sample["pred_scores"],
-                    None,  # class_names — poses are category-agnostic visually
+                    class_names,
                     samples_dir / f"val_sample_{idx:02d}.jpg",
                     gt_keypoints=gt_keypoints_arr,
                     pred_keypoints=sample.get("pred_keypoints"),

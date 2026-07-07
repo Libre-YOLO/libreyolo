@@ -272,6 +272,8 @@ class RFDETRTrainer(BaseTrainer):
                 patch_size=patch_size,
                 num_windows=num_windows,
                 crop_resize_prob=self.config.crop_resize_prob,
+                copy_paste=getattr(self.config, "copy_paste", 0.0),
+                copy_paste_mode=getattr(self.config, "copy_paste_mode", "flip"),
             )
             return preproc, RFDETRSegPassThroughDataset
         if task == "pose":

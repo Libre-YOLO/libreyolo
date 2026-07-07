@@ -256,6 +256,59 @@ def _case_yolox_mosaic_mixup():
     return {"img": img, "labels": labels}
 
 
+def _case_perspective_random_affine():
+    from libreyolo.data.augment.geometry import random_affine
+
+    _seed_all()
+    img = _image(h=64, w=64)
+    boxes = _boxes_xyxy_cls(0)
+    out_img, out_boxes = random_affine(
+        img,
+        boxes,
+        target_size=(64, 64),
+        degrees=10.0,
+        translate=0.1,
+        scales=0.1,
+        shear=10.0,
+        perspective=0.001,
+    )
+    return {"img": out_img, "labels": out_boxes}
+
+
+def _case_yolox_flipud():
+    from libreyolo.training.augment import TrainTransform
+
+    t = TrainTransform(max_labels=50, flip_prob=0.0, hsv_prob=0.0, flipud=1.0)
+    _seed_all()
+    img, labels = t(_image(), _boxes_xyxy_cls(0), (64, 64))
+    return {"img": img, "labels": labels}
+
+
+def _case_yolonas_flipud():
+    from libreyolo.models.yolonas.transforms import YOLONASTrainTransform
+
+    t = YOLONASTrainTransform(max_labels=50, flip_prob=0.0, hsv_prob=0.0, flipud=1.0)
+    _seed_all()
+    img, labels = t(_image(), _boxes_xyxy_cls(0), (64, 64))
+    return {"img": img, "labels": labels}
+
+
+def _case_yolo9_rot90_obb():
+    from libreyolo.models.yolo9.transforms import YOLO9TrainTransform
+
+    t = YOLO9TrainTransform(
+        max_labels=50,
+        flip_prob=0.0,
+        vertical_flip_prob=0.0,
+        hsv_prob=0.0,
+        output_label_dim=6,
+        rot90_prob=1.0,
+    )
+    _seed_all()
+    img, labels = t(_image(), _obb_targets(), (64, 64))
+    return {"img": img, "labels": labels}
+
+
 def _case_yolonas_train():
     from libreyolo.models.yolonas.transforms import YOLONASTrainTransform
 
@@ -351,6 +404,44 @@ def _case_yolo9_mosaic_seg():
         img_size=(64, 64),
         preproc=YOLO9TrainTransform(max_labels=50, flip_prob=0.5, hsv_prob=1.0),
         mosaic_prob=1.0,
+    )
+    _seed_all()
+    img, labels, _info, _id, masks = ds[0]
+    return {"img": img, "labels": labels, "masks": masks}
+
+
+def _case_yolo9_mosaic_seg_copypaste_flip():
+    from libreyolo.models.yolo9.transforms import (
+        YOLO9MosaicMixupDataset,
+        YOLO9TrainTransform,
+    )
+
+    ds = YOLO9MosaicMixupDataset(
+        _StubDetDataset(with_segments=True, dense_first=True),
+        img_size=(64, 64),
+        preproc=YOLO9TrainTransform(max_labels=50, flip_prob=0.5, hsv_prob=1.0),
+        mosaic_prob=1.0,
+        copy_paste=1.0,
+        copy_paste_mode="flip",
+    )
+    _seed_all()
+    img, labels, _info, _id, masks = ds[0]
+    return {"img": img, "labels": labels, "masks": masks}
+
+
+def _case_yolo9_mosaic_seg_copypaste_mixup():
+    from libreyolo.models.yolo9.transforms import (
+        YOLO9MosaicMixupDataset,
+        YOLO9TrainTransform,
+    )
+
+    ds = YOLO9MosaicMixupDataset(
+        _StubDetDataset(with_segments=True, dense_first=True),
+        img_size=(64, 64),
+        preproc=YOLO9TrainTransform(max_labels=50, flip_prob=0.5, hsv_prob=1.0),
+        mosaic_prob=1.0,
+        copy_paste=1.0,
+        copy_paste_mode="mixup",
     )
     _seed_all()
     img, labels, _info, _id, masks = ds[0]
@@ -570,6 +661,23 @@ def _case_rfdetr_seg_no_crop():
     return {"img": img, "labels": labels, "masks": masks}
 
 
+def _case_rfdetr_seg_copypaste():
+    from libreyolo.models.rfdetr.seg_transforms import RFDETRSegTransform
+
+    t = RFDETRSegTransform(
+        max_labels=20,
+        flip_prob=0.5,
+        imgsz=64,
+        copy_paste=1.0,
+        copy_paste_mode="flip",
+    )
+    _seed_all()
+    img, labels, masks = t(
+        _image(key=3), _boxes_xyxy_cls(3), (64, 64), segments=_segments(3)
+    )
+    return {"img": img, "labels": labels, "masks": masks}
+
+
 def _case_rfdetr_det():
     from libreyolo.models.rfdetr.seg_transforms import RFDETRDetTransform
 
@@ -706,6 +814,10 @@ CASES = {
     "yolox_train_empty": _case_yolox_train_empty,
     "yolox_val": _case_yolox_val,
     "yolox_mosaic_mixup": _case_yolox_mosaic_mixup,
+    "perspective_random_affine": _case_perspective_random_affine,
+    "yolox_flipud": _case_yolox_flipud,
+    "yolonas_flipud": _case_yolonas_flipud,
+    "yolo9_rot90_obb": _case_yolo9_rot90_obb,
     "yolonas_train": _case_yolonas_train,
     "yolonas_affine_mixup": _case_yolonas_affine_mixup,
     "yolo9_train_det": _case_yolo9_train_det,
@@ -713,6 +825,8 @@ CASES = {
     "yolo9_train_seg": _case_yolo9_train_seg,
     "yolo9_mosaic_det": _case_yolo9_mosaic_det,
     "yolo9_mosaic_seg": _case_yolo9_mosaic_seg,
+    "yolo9_mosaic_seg_copypaste_flip": _case_yolo9_mosaic_seg_copypaste_flip,
+    "yolo9_mosaic_seg_copypaste_mixup": _case_yolo9_mosaic_seg_copypaste_mixup,
     "yolo9_val": _case_yolo9_val,
     "deim_train": _case_deim_train,
     "deim_train_weak_only": _case_deim_train_weak_only,
@@ -726,6 +840,7 @@ CASES = {
     "dfine_pull_item_letterboxed": _case_dfine_pull_item_letterboxed,
     "rfdetr_seg": _case_rfdetr_seg,
     "rfdetr_seg_no_crop": _case_rfdetr_seg_no_crop,
+    "rfdetr_seg_copypaste": _case_rfdetr_seg_copypaste,
     "rfdetr_det": _case_rfdetr_det,
     "rfdetr_det_obb": _case_rfdetr_det_obb,
     "rfdetr_pose": _case_rfdetr_pose,

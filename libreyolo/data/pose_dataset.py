@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 def parse_yolo_pose_label_line(
-    parts: Sequence[str], num_keypoints: int, keypoint_dim: int = 3
+    parts: Sequence[str],
+    num_keypoints: int,
+    keypoint_dim: int = 3,
+    num_classes: Optional[int] = None,
 ):
     """Parse one YOLO pose label line into ``(cls, bbox, keypoints)``.
 
@@ -39,6 +42,10 @@ def parse_yolo_pose_label_line(
         keypoint_dim: Number of values per keypoint in the label file. YOLO pose
             YAML uses ``kpt_shape: [K, 2]`` for xy-only labels and
             ``kpt_shape: [K, 3]`` for xyv labels.
+        num_classes: If given, reject class ids outside ``[0, num_classes)``.
+            Single-class pose is class-agnostic (the loss trains class 0
+            regardless of the label column), so callers pass this for
+            multi-class datasets only.
 
     Returns:
         Tuple of ``(cls_id: int, bbox: (4,) cxcywh float32,
@@ -46,7 +53,9 @@ def parse_yolo_pose_label_line(
         labels are promoted to xyv with visibility ``2``.
 
     Raises:
-        ValueError: If the line does not have exactly ``5 + keypoint_dim*K`` fields.
+        ValueError: If the line does not have exactly ``5 + keypoint_dim*K``
+            fields, or if ``num_classes`` is given and the class id falls
+            outside ``[0, num_classes)``.
     """
     if keypoint_dim not in (2, 3):
         raise ValueError(f"Unsupported keypoint_dim {keypoint_dim}; expected 2 or 3")
@@ -57,6 +66,10 @@ def parse_yolo_pose_label_line(
             f"label, got {len(parts)}"
         )
     cls_id = int(float(parts[0]))
+    if num_classes is not None and not 0 <= cls_id < num_classes:
+        raise ValueError(
+            f"Pose class id {cls_id} out of range [0, {num_classes - 1}]"
+        )
     bbox = np.array(parts[1:5], dtype=np.float32)
     keypoints = np.array(parts[5:], dtype=np.float32).reshape(
         num_keypoints, keypoint_dim
@@ -84,13 +97,17 @@ class YOLOPoseDataset(Dataset):
         preproc=None,
         keypoint_dim: int = 3,
         decode_scale: int = 1,
+        num_classes: Optional[int] = None,
     ):
         if num_keypoints < 1:
             raise ValueError(f"num_keypoints must be >= 1, got {num_keypoints}")
         if keypoint_dim not in (2, 3):
             raise ValueError(f"keypoint_dim must be 2 or 3, got {keypoint_dim}")
+        if num_classes is not None and num_classes < 1:
+            raise ValueError(f"num_classes must be >= 1, got {num_classes}")
 
         self.num_keypoints = num_keypoints
+        self.num_classes = num_classes
         self.keypoint_dim = keypoint_dim
         self.img_size = img_size
         self._input_dim = img_size
@@ -128,6 +145,7 @@ class YOLOPoseDataset(Dataset):
     def _load_all_labels(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         labels = []
         bad_lines = 0
+        bad_class_lines = 0
         for label_file in self.label_files:
             cls_list, box_list, kpt_list = [], [], []
             if label_file.exists():
@@ -142,6 +160,11 @@ class YOLOPoseDataset(Dataset):
                             )
                         except ValueError:
                             bad_lines += 1
+                            continue
+                        if self.num_classes is not None and not (
+                            0 <= cls_id < self.num_classes
+                        ):
+                            bad_class_lines += 1
                             continue
                         cls_list.append(cls_id)
                         box_list.append(bbox)
@@ -168,6 +191,14 @@ class YOLOPoseDataset(Dataset):
                 "that does not match %d keypoints",
                 bad_lines,
                 self.num_keypoints,
+            )
+        if bad_class_lines:
+            logger.warning(
+                "YOLOPoseDataset: skipped %d label line(s) with a class id "
+                "outside [0, %d]; check for 1-indexed class ids or a wrong "
+                "nc in the dataset yaml",
+                bad_class_lines,
+                self.num_classes - 1,
             )
         return labels
 

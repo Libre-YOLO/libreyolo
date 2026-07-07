@@ -13,7 +13,7 @@ import numpy as np
 
 from .boxes import adjust_box_anns, xyxy2cxcywh
 from .color import augment_hsv
-from .geometry import letterbox_preproc, mirror, random_affine
+from .geometry import letterbox_preproc, mirror, mirror_vertical, random_affine
 
 
 def preproc(img, input_size, swap=(2, 0, 1)):
@@ -24,10 +24,13 @@ def preproc(img, input_size, swap=(2, 0, 1)):
 class YOLONASTrainTransform:
     """Train transform emitting `[class, cx, cy, w, h]` pixel targets."""
 
-    def __init__(self, max_labels=100, flip_prob=0.5, hsv_prob=0.5):
+    def __init__(self, max_labels=100, flip_prob=0.5, hsv_prob=0.5, flipud=0.0):
         self.max_labels = max_labels
         self.flip_prob = flip_prob
         self.hsv_prob = hsv_prob
+        # Vertical-flip probability (off by default). Guarded so a disabled
+        # knob draws no random numbers and leaves existing behavior untouched.
+        self.flipud = flipud
 
     def __call__(self, image, targets, input_dim):
         boxes = targets[:, :4].copy()
@@ -47,6 +50,8 @@ class YOLONASTrainTransform:
             augment_hsv(image)
 
         image_t, boxes = mirror(image, boxes, self.flip_prob)
+        if self.flipud > 0:
+            image_t, boxes = mirror_vertical(image_t, boxes, self.flipud)
         image_t, r = preproc(image_t, input_dim)
         boxes = xyxy2cxcywh(boxes)
         boxes *= r
@@ -93,6 +98,7 @@ class YOLONASAffineMixupDataset:
         enable_mixup=False,
         mosaic_prob=0.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         del mosaic, mosaic_prob
         self.dataset = dataset
@@ -102,6 +108,7 @@ class YOLONASAffineMixupDataset:
         self.translate = translate
         self.scale = mosaic_scale
         self.shear = shear
+        self.perspective = perspective
         self.mixup_scale = mixup_scale
         self.enable_affine = True
         self.enable_mixup = enable_mixup
@@ -131,6 +138,7 @@ class YOLONASAffineMixupDataset:
                 translate=self.translate,
                 scales=self.scale,
                 shear=self.shear,
+                perspective=self.perspective,
             )
 
         if self.enable_mixup and len(label) > 0 and random.random() < self.mixup_prob:

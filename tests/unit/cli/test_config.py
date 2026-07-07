@@ -197,7 +197,12 @@ class TestBuildTrainKwargs:
         assert kwargs["epochs"] == 50
 
     def test_covers_all_config_fields(self):
-        """Every non-excluded TrainConfig field is picked up when present."""
+        """Every non-excluded TrainConfig field is picked up when present.
+
+        Fields whose name is itself a CLI alias key (e.g. the classification
+        ``mixup`` field, shadowed by the ``mixup`` -> ``mixup_prob`` detection
+        alias) are API-only and intentionally skipped by the CLI builder.
+        """
         excluded = {"size", "num_classes", "data", "data_dir"}
         from libreyolo.cli.aliases import TRAIN_ALIASES
 
@@ -205,15 +210,20 @@ class TestBuildTrainKwargs:
 
         params = {}
         base = TrainConfig()
+        alias_shadowed = 0
         for f in dc_fields(TrainConfig):
             if f.name in excluded:
+                continue
+            if f.name in TRAIN_ALIASES:
+                alias_shadowed += 1
                 continue
             cli_name = internal_to_cli.get(f.name, f.name)
             params[cli_name] = getattr(base, f.name)
 
         kwargs = build_train_kwargs(params)
-        expected_count = len(dc_fields(TrainConfig)) - len(excluded)
+        expected_count = len(dc_fields(TrainConfig)) - len(excluded) - alias_shadowed
         assert len(kwargs) == expected_count
+        assert "mixup" not in kwargs
 
     def test_unknown_params_ignored(self):
         """Params not in TrainConfig are silently dropped."""

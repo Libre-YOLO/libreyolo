@@ -32,13 +32,13 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.nn as nn
 
 from .hooks import FeatureHookManager
-from .losses import MGDLoss, CWDLoss, DISTILL_LOSSES
+from .losses import MGDLoss, CWDLoss, FeatureMSELoss, DISTILL_LOSSES
 
 logger = logging.getLogger(__name__)
 
@@ -86,16 +86,28 @@ class Distiller(nn.Module):
         mask_ratio: float = 0.65,
         tau: float = 1.0,
         per_scale_weight: Optional[List[float]] = None,
+        teacher_feature_fn: Optional[Callable[[torch.Tensor], List[torch.Tensor]]] = None,
+        normalize: bool = False,
     ):
         super().__init__()
 
         self.loss_type = loss_type.lower()
         self.loss_weight = loss_weight if loss_weight is not None else self._default_weight()
+        self.normalize = normalize
+
+        # A foundation-model teacher (e.g. DINOv2) emits token features that are
+        # not a hookable BCHW module output and lives on a different spatial
+        # grid/stride than the student. Callers pass ``teacher_feature_fn`` to
+        # extract its per-scale feature maps directly; the feature-MSE loss then
+        # resizes them to the student. In that mode we skip teacher hooks and the
+        # stride-equality check (the loss handles spatial mismatch).
+        self.teacher_feature_fn = teacher_feature_fn
+        self._teacher_feats: Optional[List[torch.Tensor]] = None
 
         # Validate configs
         t_strides = teacher_config["strides"]
         s_strides = student_config["strides"]
-        if t_strides != s_strides:
+        if teacher_feature_fn is None and t_strides != s_strides:
             raise ValueError(
                 f"Teacher and student must have matching strides. "
                 f"Teacher: {t_strides}, Student: {s_strides}"
@@ -111,8 +123,14 @@ class Distiller(nn.Module):
         for param in self.teacher.parameters():
             param.requires_grad = False
 
-        # Register hooks on both models
-        self.t_hooks = FeatureHookManager(self.teacher, teacher_config["tap_points"])
+        # Register hooks. The student is always hooked. The teacher is hooked
+        # only when it exposes hookable BCHW features (detector teachers);
+        # foundation teachers deliver features via ``teacher_feature_fn``.
+        self.t_hooks = (
+            FeatureHookManager(self.teacher, teacher_config["tap_points"])
+            if teacher_feature_fn is None
+            else None
+        )
         self.s_hooks = FeatureHookManager(student_model, student_config["tap_points"])
 
         # Per-scale weights
@@ -153,7 +171,7 @@ class Distiller(nn.Module):
 
     def _default_weight(self) -> float:
         """Return sensible default loss weight for the chosen loss type."""
-        defaults = {"mgd": 2e-5, "cwd": 1.0}
+        defaults = {"mgd": 2e-5, "cwd": 1.0, "feat_mse": 1.0}
         if self.loss_type not in defaults:
             raise ValueError(
                 f"No default weight for loss type '{self.loss_type}'. "
@@ -185,6 +203,13 @@ class Distiller(nn.Module):
                 tau=tau,
                 loss_weight=scale_weight,
             )
+        elif self.loss_type == "feat_mse":
+            return FeatureMSELoss(
+                student_channels=student_ch,
+                teacher_channels=teacher_ch,
+                loss_weight=scale_weight,
+                normalize=self.normalize,
+            )
         else:
             raise ValueError(
                 f"Unknown loss type: '{self.loss_type}'. "
@@ -208,6 +233,10 @@ class Distiller(nn.Module):
         Returns:
             Teacher model output (usually ignored — we only need the hooks).
         """
+        if self.teacher_feature_fn is not None:
+            # Foundation teacher: extract features directly and stash them.
+            self._teacher_feats = [f.detach() for f in self.teacher_feature_fn(images)]
+            return None
         return self.teacher(images)
 
     def compute_loss(self) -> torch.Tensor:
@@ -222,13 +251,27 @@ class Distiller(nn.Module):
         Raises:
             RuntimeError: If features haven't been captured yet.
         """
-        t_feats = self.t_hooks.get_feature_list()
+        if self.teacher_feature_fn is not None:
+            if self._teacher_feats is None:
+                raise RuntimeError(
+                    "Teacher features not extracted. "
+                    "Did you call teacher_forward() before compute_loss()?"
+                )
+            t_feats = self._teacher_feats
+        else:
+            t_feats = self.t_hooks.get_feature_list()
         s_feats = self.s_hooks.get_feature_list()
 
         if len(t_feats) != self.num_scales:
-            missing = [
-                p for p in self.t_hooks.tap_points if p not in self.t_hooks.get_features()
-            ]
+            missing = (
+                [
+                    p
+                    for p in self.t_hooks.tap_points
+                    if p not in self.t_hooks.get_features()
+                ]
+                if self.t_hooks is not None
+                else []
+            )
             raise RuntimeError(
                 f"Expected {self.num_scales} teacher features, got {len(t_feats)} "
                 f"(missing tap points: {missing}). "
@@ -259,12 +302,15 @@ class Distiller(nn.Module):
 
     def step(self):
         """Clear captured features. Call at the end of each training step."""
-        self.t_hooks.clear()
+        if self.t_hooks is not None:
+            self.t_hooks.clear()
+        self._teacher_feats = None
         self.s_hooks.clear()
 
     def cleanup(self):
         """Remove all hooks and free resources. Call when training ends."""
-        self.t_hooks.remove()
+        if self.t_hooks is not None:
+            self.t_hooks.remove()
         self.s_hooks.remove()
         logger.info("Distiller cleaned up")
 

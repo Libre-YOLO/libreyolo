@@ -5,8 +5,8 @@ Restoration datasets pair a degraded input image with a clean target image:
     inputs/train/*.jpg
     targets/train/*.jpg
 
-Pairs are matched by stem. Training uses coupled crop/flip augmentation so the
-same geometry is applied to the input and target. Validation keeps native
+Pairs are matched by stem. Training uses coupled crop/flip/rot90 augmentation so
+the same geometry is applied to the input and target. Validation keeps native
 resolution; the collate function pads only enough to stack a batch and records
 the original shape so metrics ignore padded pixels.
 """
@@ -171,9 +171,19 @@ class RestoreDataset(Dataset):
             left = random.randint(0, max(0, w - self.imgsz))
             inp = inp[top : top + self.imgsz, left : left + self.imgsz]
             target = target[top : top + self.imgsz, left : left + self.imgsz]
+            # Coupled geometry: horizontal flip, vertical flip, and a random
+            # rot90. The same op is applied to input and target so pixels stay
+            # aligned. Crops are square (imgsz x imgsz) so rot90 keeps shape.
             if random.random() < 0.5:
                 inp = np.ascontiguousarray(inp[:, ::-1])
                 target = np.ascontiguousarray(target[:, ::-1])
+            if random.random() < 0.5:
+                inp = np.ascontiguousarray(inp[::-1, :])
+                target = np.ascontiguousarray(target[::-1, :])
+            k = random.randint(0, 3)
+            if k:
+                inp = np.ascontiguousarray(np.rot90(inp, k))
+                target = np.ascontiguousarray(np.rot90(target, k))
         return inp, target
 
     def __getitem__(self, index: int):

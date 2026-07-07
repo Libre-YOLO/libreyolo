@@ -14,6 +14,7 @@ Only the quadrant placement math (:func:`~.mosaic.get_mosaic_coordinate`)
 is provably identical and shared.
 """
 
+import logging
 import random
 
 import cv2
@@ -21,7 +22,13 @@ import numpy as np
 
 from ..obb import normalize_obb_angle
 from .color import augment_hsv
-from .geometry import letterbox_preproc, mirror, random_affine  # noqa: F401
+from .copy_paste import copy_paste as _copy_paste_instances
+from .geometry import (  # noqa: F401
+    letterbox_preproc,
+    mirror,
+    random_affine,
+    rot90_image_boxes,
+)
 from .segments import (
     copy_segments as _copy_segments,
     filter_segments as _filter_segments,
@@ -30,6 +37,8 @@ from .segments import (
     rasterize_segments as _rasterize_segments,
     transform_segments as _transform_segments,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def preproc(img, input_size, swap=(2, 0, 1)):
@@ -53,6 +62,8 @@ class YOLO9TrainTransform:
         hsv_prob=1.0,
         mask_downsample_ratio=4,
         output_label_dim=None,
+        flipud=None,
+        rot90_prob=0.0,
     ):
         """
         Args:
@@ -60,13 +71,23 @@ class YOLO9TrainTransform:
             flip_prob: Probability of horizontal flip
             vertical_flip_prob: Probability of vertical flip
             hsv_prob: Probability of HSV augmentation
+            flipud: Standard-name alias for ``vertical_flip_prob``. When given
+                (not ``None``) it overrides ``vertical_flip_prob``; the older
+                name is kept for backward compatibility.
+            rot90_prob: Probability of a random k*90-degree rotation (k in
+                1..3). Intended for oriented-box (OBB) training; it is only
+                applied when the sample carries angle targets and draws no
+                random numbers when disabled.
         """
         self.max_labels = max_labels
         self.flip_prob = flip_prob
-        self.vertical_flip_prob = vertical_flip_prob
+        self.vertical_flip_prob = (
+            vertical_flip_prob if flipud is None else flipud
+        )
         self.hsv_prob = hsv_prob
         self.mask_downsample_ratio = mask_downsample_ratio
         self.output_label_dim = output_label_dim
+        self.rot90_prob = rot90_prob
 
     def __call__(self, image, targets, input_dim, segments=None):
         """
@@ -131,6 +152,26 @@ class YOLO9TrainTransform:
         labels_o = labels.copy()
         angles_o = angles.copy() if angles is not None else None
         segments_o = _copy_segments(segments_t)
+
+        # Apply a random k*90-degree rotation for oriented boxes. Off by
+        # default and only meaningful when the sample carries angle targets, so
+        # it is guarded to draw no random numbers when disabled (keeping the
+        # detection path's RNG order unchanged). The image and box centers
+        # rotate together; the angle turns by k*pi/2. A quarter turn of a
+        # rectangle is a swap of its sides, which normalize_obb_angle folds back
+        # into the canonical [-pi/2, pi/2) range, so width/height are preserved
+        # and only the angle column carries the turn.
+        if self.rot90_prob > 0 and angles is not None:
+            if random.random() < self.rot90_prob:
+                k = random.randint(1, 3)
+                image, boxes = rot90_image_boxes(image, boxes, k)
+                angles = np.asarray(
+                    [
+                        normalize_obb_angle(float(a) + k * np.pi / 2.0)
+                        for a in angles
+                    ],
+                    dtype=np.float32,
+                )
 
         # Apply HSV augmentation
         if random.random() < self.hsv_prob:
@@ -273,6 +314,9 @@ class YOLO9MosaicMixupDataset:
         enable_mixup=False,
         mosaic_prob=1.0,
         mixup_prob=0.0,
+        copy_paste=0.0,
+        copy_paste_mode="flip",
+        perspective=0.0,
     ):
         """
         Initialize YOLO9MosaicMixupDataset.
@@ -290,6 +334,11 @@ class YOLO9MosaicMixupDataset:
             enable_mixup: Enable mixup (default False for yolo9)
             mosaic_prob: Probability of applying mosaic
             mixup_prob: Probability of applying mixup
+            copy_paste: Probability of applying copy-paste instance augmentation
+                (segmentation only). 0 disables it and leaves the RNG stream
+                untouched.
+            copy_paste_mode: "flip" pastes instances from the same sample
+                mirrored, "mixup" pastes instances from a second random sample.
         """
         self.dataset = dataset
         self.img_size = img_size
@@ -298,11 +347,15 @@ class YOLO9MosaicMixupDataset:
         self.translate = translate
         self.scale = mosaic_scale
         self.shear = shear
+        self.perspective = perspective
         self.mixup_scale = mixup_scale
         self.enable_mosaic = mosaic
         self.enable_mixup = enable_mixup
         self.mosaic_prob = mosaic_prob
         self.mixup_prob = mixup_prob
+        self.copy_paste = copy_paste
+        self.copy_paste_mode = copy_paste_mode
+        self._copy_paste_warned = False
 
     def __len__(self):
         return len(self.dataset)
@@ -315,6 +368,83 @@ class YOLO9MosaicMixupDataset:
         """Disable mosaic and mixup augmentation (for final training epochs)."""
         self.enable_mosaic = False
         self.enable_mixup = False
+        # Copy-paste is a strong augmentation too; drop it in the no-aug tail.
+        self.copy_paste = 0.0
+
+    def _pull_copy_paste_source(self):
+        """Pull a second random sample as a copy-paste source.
+
+        Returns ``(img, boxes, labels, segments)`` in the sample's own pixel
+        coords, or ``(None, None, None, None)`` if the sample carries no
+        segments.
+        """
+        idx = random.randint(0, len(self.dataset) - 1)
+        item = self.dataset.pull_item(idx)
+        if len(item) == 5:
+            img, label, _info, _id, segments = item
+            return img, label[:, :4], label[:, 4], segments
+        return None, None, None, None
+
+    def _apply_copy_paste(self, image, labels, segments):
+        """Optionally paste extra instances before the final preproc.
+
+        ``labels`` is ``[N, >=5]`` with ``[x1, y1, x2, y2, class, ...]`` in the
+        pixel frame of ``image``; ``segments`` are the aligned polygon rings.
+        Returns the (possibly enlarged) ``(image, labels, segments)``.
+        """
+        # Ordered so the default (copy_paste == 0) draws no RNG and detection
+        # data (no segments) is a warn-once no-op without consuming the stream.
+        if self.copy_paste <= 0.0:
+            return image, labels, segments
+        if not segments:
+            if not self._copy_paste_warned:
+                logger.warning(
+                    "copy_paste is set but the dataset has no segments; "
+                    "copy-paste needs instance masks and is being skipped."
+                )
+                self._copy_paste_warned = True
+            return image, labels, segments
+        if random.random() >= self.copy_paste:
+            return image, labels, segments
+        if labels.ndim != 2 or labels.shape[1] != 5:
+            # Copy-paste only handles plain [x1, y1, x2, y2, class] seg labels.
+            return image, labels, segments
+
+        boxes = labels[:, :4]
+        classes = labels[:, 4]
+        if self.copy_paste_mode == "mixup":
+            src_img, src_boxes, src_classes, src_segments = self._pull_copy_paste_source()
+            if src_segments is None:
+                return image, labels, segments
+        else:
+            src_img, src_boxes, src_classes, src_segments = image, boxes, classes, segments
+
+        # In "flip" mode the source is the same sample, so force the mirror
+        # (flip_prob=1.0): an unflipped self-paste would drop instances back on
+        # their own location. In "mixup" mode the source is a different sample,
+        # so a random flip (default 0.5) is a useful extra variation.
+        cp_flip_prob = 0.5 if self.copy_paste_mode == "mixup" else 1.0
+        new_image, new_boxes, new_classes, new_segments = _copy_paste_instances(
+            image,
+            boxes,
+            classes,
+            segments,
+            src_img,
+            src_boxes,
+            src_classes,
+            src_segments,
+            max_instances=getattr(self.preproc, "max_labels", None),
+            flip_prob=cp_flip_prob,
+        )
+
+        if len(new_boxes):
+            new_labels = np.concatenate(
+                [new_boxes.reshape(-1, 4), np.asarray(new_classes, dtype=np.float32).reshape(-1, 1)],
+                axis=1,
+            ).astype(np.float32)
+        else:
+            new_labels = np.zeros((0, 5), dtype=np.float32)
+        return new_image, new_labels, new_segments
 
     def __getitem__(self, idx):
         if self.enable_mosaic and random.random() < self.mosaic_prob:
@@ -327,6 +457,7 @@ class YOLO9MosaicMixupDataset:
         item = self.dataset.pull_item(idx)
         if len(item) == 5:
             img, label, img_info, img_id, segments = item
+            img, label, segments = self._apply_copy_paste(img, label, segments)
             output = self.preproc(img, label, self.input_dim, segments)
             img, label, masks = output
             return img, label, img_info, img_id, masks
@@ -446,6 +577,7 @@ class YOLO9MosaicMixupDataset:
                 translate=self.translate,
                 scales=self.scale,
                 shear=self.shear,
+                perspective=self.perspective,
             )
 
         # Filter small boxes
@@ -456,6 +588,13 @@ class YOLO9MosaicMixupDataset:
             mosaic_labels = mosaic_labels[mask]
             if has_segments:
                 mosaic_segments = _filter_segments(mosaic_segments, mask)
+
+        # Copy-paste operates while segments are still polygons in the assembled
+        # mosaic's pixel frame, so pasted masks and labels stay consistent.
+        if has_segments:
+            mosaic_img, mosaic_labels, mosaic_segments = self._apply_copy_paste(
+                mosaic_img, mosaic_labels, mosaic_segments
+            )
 
         # Apply preprocessing (HSV, flip, normalize)
         if has_segments:

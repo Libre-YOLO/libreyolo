@@ -1200,16 +1200,28 @@ class BaseBackend(ABC):
     ):
         """Parse YOLO-NAS pose: boxes, scores, keypoint xy, keypoint confidence."""
         boxes = all_outputs[0][0]
-        scores = all_outputs[1][0].squeeze(-1)
+        scores = all_outputs[1][0]
         keypoints_xy = all_outputs[2][0]
         keypoints_conf = all_outputs[3][0]
+
+        # scores: [A, nc]. Single-class pose keeps the historical squeeze;
+        # multi-class pose takes the top-scoring class per anchor.
+        if scores.ndim > 1 and scores.shape[-1] > 1:
+            class_ids_full = scores.argmax(axis=-1).astype(np.int64)
+            scores = scores.max(axis=-1)
+        else:
+            scores = scores.squeeze(-1)
+            class_ids_full = None
 
         mask = scores >= conf
         boxes = boxes[mask].astype(np.float32, copy=True)
         max_scores = scores[mask].astype(np.float32, copy=False)
         keypoints_xy = keypoints_xy[mask].astype(np.float32, copy=True)
         keypoints_conf = keypoints_conf[mask].astype(np.float32, copy=False)
-        class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
+        if class_ids_full is not None:
+            class_ids = class_ids_full[mask]
+        else:
+            class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
 
         if len(boxes) == 0:
             keypoints = np.zeros((0, keypoints_xy.shape[-2], 3), dtype=np.float32)
