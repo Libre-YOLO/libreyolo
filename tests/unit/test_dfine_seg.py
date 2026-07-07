@@ -166,6 +166,64 @@ def test_dfine_segment_postprocess_matches_validation_mask_resize_path():
     assert torch.equal(det["masks"][0], two_step >= 0.5)
 
 
+def test_upstream_seg_filename_size_detection():
+    """ArgoSA release filenames (dfine_seg_n_coco.pt) must resolve a size so
+    the D-FINE/DEIM tensor-tie disambiguation can claim them."""
+    assert LibreDFINE.detect_size_from_filename("dfine_seg_n_coco.pt") == "n"
+    assert LibreDFINE.detect_size_from_filename("dfine_seg_x_coco.pt") == "x"
+    assert LibreDFINE.detect_size_from_filename("deim_hgnetv2_n_coco.pth") is None
+
+
+def test_rtdetrv4_stays_detect_only():
+    """RT-DETRv4 inherits from LibreDFINE but has no mask head."""
+    from libreyolo.models.rtdetrv4.model import LibreRTDETRv4
+
+    assert LibreRTDETRv4.SUPPORTED_TASKS == ("detect",)
+    with pytest.raises(ValueError, match="not supported"):
+        LibreRTDETRv4(None, size="s", nb_classes=2, device="cpu", task="segment")
+
+
+def _detect_checkpoint(tmp_path):
+    det = LibreDFINEModel("n", nb_classes=2, eval_spatial_size=(640, 640))
+    ckpt = {
+        "model": det.state_dict(),
+        "model_family": "dfine",
+        "size": "n",
+        "nc": 2,
+        "task": "detect",
+        "metadata_version": "1.0",
+    }
+    path = tmp_path / "LibreDFINEn.pt"
+    torch.save(ckpt, path)
+    return path
+
+
+def test_detect_checkpoint_as_segment_requires_transfer_flag(tmp_path):
+    path = _detect_checkpoint(tmp_path)
+
+    with pytest.raises(RuntimeError, match="no mask head"):
+        LibreDFINE(str(path), size="n", nb_classes=2, device="cpu", task="segment")
+
+    model = LibreDFINE(
+        str(path),
+        size="n",
+        nb_classes=2,
+        device="cpu",
+        task="segment",
+        allow_detect_to_segment_transfer=True,
+    )
+    assert model.task == "segment"
+    assert hasattr(model.model.decoder, "mask_head")
+
+
+def test_factory_rejects_detect_checkpoint_as_segment(tmp_path):
+    from libreyolo import LibreYOLO
+
+    path = _detect_checkpoint(tmp_path)
+    with pytest.raises(RuntimeError, match="no mask head"):
+        LibreYOLO(str(path), device="cpu", task="segment")
+
+
 def test_dfine_mask_loss_no_match_zero_stays_connected():
     criterion = DFINECriterion(
         matcher=None,

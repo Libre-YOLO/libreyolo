@@ -23,6 +23,10 @@ class LibreRTDETRv4(LibreDFINE):
     FAMILY = "rtdetrv4"
     FILENAME_PREFIX = "LibreRTDETRv4"
     INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
+    # D-FINE grew a segment task (D-FINE-seg mask head); RT-DETRv4 has no mask
+    # head, so pin the inherited task surface back to detect-only.
+    SUPPORTED_TASKS = ("detect",)
+    TASK_INPUT_SIZES = {}
     TRAIN_CONFIG = RTDETRv4Config
 
     @classmethod

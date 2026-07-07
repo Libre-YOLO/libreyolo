@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Type
 
+import logging
+
 import torch
 from torch.amp import autocast
 from tqdm import tqdm
@@ -57,6 +59,8 @@ from .transforms import (
     DFINEPassThroughDataset,
     DFINETrainTransform,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DFINETrainer(BaseTrainer):
@@ -459,6 +463,12 @@ class DFINETrainer(BaseTrainer):
         else:
             from ...data.dataset import yolox_collate_fn
 
+            if getattr(self.config, "multi_scale", False) and load_segments:
+                logger.info(
+                    "D-FINE multi-scale training is not supported with "
+                    "task='segment'; training at fixed %dpx.",
+                    self.config.imgsz,
+                )
             collate_fn = yolox_collate_fn
 
         self.train_loader = DataLoader(

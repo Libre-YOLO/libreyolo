@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -19,6 +20,8 @@ from .nn import LibreDFINEModel
 from ...postprocess.dfine import postprocess, postprocess_seg
 from .utils import preprocess_image, unwrap_dfine_checkpoint
 
+logger = logging.getLogger(__name__)
+
 
 class LibreDFINE(BaseModel):
     """LibreYOLO wrapper for D-FINE.
@@ -26,6 +29,13 @@ class LibreDFINE(BaseModel):
     Loads upstream ``dfine_{n,s,m,l,x}_coco.pth`` checkpoints and supports
     inference, fine-tuning (via ``DFINETrainer``), validation, and export
     (ONNX / TensorRT / OpenVINO).
+
+    ``task='segment'`` adds the D-FINE-seg mask head (experimental).
+    COCO-pretrained ``LibreDFINE{n,s,m,l,x}-seg.pt`` weights auto-download from
+    the LibreYOLO Hugging Face org (converted from ArgoSA/D-FINE-seg,
+    Apache-2.0). Fine-tuning from detect weights instead requires an explicit
+    transfer (``allow_detect_to_segment_transfer=True``, which the
+    ``libreyolo train ... task=segment`` CLI passes automatically).
     """
 
     FAMILY = "dfine"
@@ -52,7 +62,11 @@ class LibreDFINE(BaseModel):
         detected = super().detect_size_from_filename(filename)
         if detected is not None:
             return detected
-        m = re.search(r"dfine(?:_hgnetv2)?_([nsmlx])(?:_|\.|$)", filename.lower())
+        # Covers upstream D-FINE (dfine_hgnetv2_n_coco.pth) and D-FINE-seg
+        # (dfine_seg_n_coco.pt) release filenames.
+        m = re.search(
+            r"dfine(?:_hgnetv2)?(?:_seg)?_([nsmlx])(?:_|\.|$)", filename.lower()
+        )
         if m:
             return m.group(1)
         return None
@@ -115,8 +129,12 @@ class LibreDFINE(BaseModel):
         nb_classes: int = 80,
         device: str = "auto",
         task: str | None = None,
+        allow_detect_to_segment_transfer: bool = False,
         **kwargs,
     ):
+        # Must be set before super().__init__ — weight loading (and its task
+        # validation hook) runs inside the base constructor.
+        self._allow_detect_to_segment_transfer = bool(allow_detect_to_segment_transfer)
         if isinstance(model_path, dict):
             model_path = unwrap_dfine_checkpoint(model_path)
         super().__init__(
@@ -218,6 +236,22 @@ class LibreDFINE(BaseModel):
             raise RuntimeError(
                 "D-FINE segmentation checkpoints must be loaded with task='segment' "
                 "or a '-seg' filename suffix."
+            )
+        if self.task == "segment" and detected_task is None:
+            # Detect weights carry no mask head; predicting with a randomly
+            # initialized one would silently return garbage masks.
+            if not getattr(self, "_allow_detect_to_segment_transfer", False):
+                raise RuntimeError(
+                    "This D-FINE checkpoint has no mask head (detect weights), but "
+                    "the model was initialized for task='segment'. Detect-to-segment "
+                    "initialization is only supported as an explicit training "
+                    "transfer: pass allow_detect_to_segment_transfer=True to "
+                    "LibreDFINE (the `libreyolo train ... task=segment` CLI does "
+                    "this for you), then train before predicting."
+                )
+            logger.info(
+                "Initializing D-FINE segment model from detect weights: the mask "
+                "head is randomly initialized and requires training."
             )
 
     @ddp_aware()
@@ -354,12 +388,9 @@ class LibreDFINE(BaseModel):
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
             state_dict = unwrap_dfine_checkpoint(loaded)
             state_dict = self._strip_ddp_prefix(dict(state_dict))
-            detected_task = self.detect_checkpoint_task(state_dict)
-            if detected_task == "segment" and self.task != "segment":
-                raise RuntimeError(
-                    "D-FINE segmentation checkpoints must be loaded with task='segment' "
-                    "or a '-seg' filename suffix."
-                )
+            self._validate_loaded_state_dict_for_task(
+                state_dict, loaded if isinstance(loaded, dict) else None
+            )
 
             if isinstance(loaded, dict):
                 ckpt_family = loaded.get("model_family", "")
@@ -373,7 +404,9 @@ class LibreDFINE(BaseModel):
                 if ckpt_task is not None:
                     normalized_ckpt_task = normalize_task(ckpt_task)
                     allowed = normalized_ckpt_task == self.task or (
-                        normalized_ckpt_task == "detect" and self.task == "segment"
+                        normalized_ckpt_task == "detect"
+                        and self.task == "segment"
+                        and self._allow_detect_to_segment_transfer
                     )
                     if not allowed:
                         raise RuntimeError(

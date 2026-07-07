@@ -49,13 +49,15 @@ def _create_explicit_task_train_model(
     Create the requested architecture first so task-specific heads exist before
     training.
     """
-    if family not in {"yolo9", "rfdetr"} or resume:
+    if family not in {"yolo9", "rfdetr", "dfine"} or resume:
         return None
 
     from libreyolo.tasks import normalize_task
 
     if family == "yolo9":
         from libreyolo.models.yolo9.model import LibreYOLO9 as model_cls
+    elif family == "dfine":
+        from libreyolo.models.dfine.model import LibreDFINE as model_cls
     else:
         from libreyolo.models.rfdetr.model import LibreRFDETR as model_cls
 
@@ -63,12 +65,24 @@ def _create_explicit_task_train_model(
     train_task = normalize_task(task) if task is not None else filename_task
     if train_task is None:
         return None
+    if family == "dfine" and train_task != "segment":
+        return None
     if task is None and filename_task == train_task and _model_ref_exists(model_path):
         return None
 
     size = model_cls.detect_size_from_filename(Path(model_path).name)
     if size is None:
         return None
+    if family == "dfine" and train_task == "segment" and _model_ref_exists(model_path):
+        # Detect checkpoints are legal segment-training starting points, but
+        # only as an explicit transfer (the mask head starts untrained).
+        return model_cls(
+            model_path,
+            size=size,
+            task=train_task,
+            device=device,
+            allow_detect_to_segment_transfer=True,
+        )
     if family == "rfdetr" and train_task == "obb" and _model_ref_exists(model_path):
         return model_cls(
             model_path,
@@ -139,6 +153,30 @@ def _create_rfdetr_pose_from_loaded_detect_model(
         task="pose",
         device=device,
         allow_detect_to_pose_transfer=True,
+    )
+
+
+def _create_dfine_segment_from_loaded_detect_model(
+    loaded_model,
+    *,
+    model_path: str,
+    device: str,
+):
+    """Switch an already-loaded D-FINE detect checkpoint to the segment architecture."""
+    if (
+        get_loaded_model_family(loaded_model) != "dfine"
+        or getattr(loaded_model, "task", "detect") != "detect"
+    ):
+        return None
+
+    from libreyolo.models.dfine.model import LibreDFINE
+
+    return LibreDFINE(
+        model_path,
+        size=getattr(loaded_model, "size", None),
+        task="segment",
+        device=device,
+        allow_detect_to_segment_transfer=True,
     )
 
 
@@ -369,6 +407,12 @@ def train_cmd(
                 )
             if replacement is None and normalized_task == "pose":
                 replacement = _create_rfdetr_pose_from_loaded_detect_model(
+                    loaded_model,
+                    model_path=model_path,
+                    device=device,
+                )
+            if replacement is None and normalized_task == "segment":
+                replacement = _create_dfine_segment_from_loaded_detect_model(
                     loaded_model,
                     model_path=model_path,
                     device=device,
