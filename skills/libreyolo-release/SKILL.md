@@ -84,7 +84,7 @@ Preflight checks (all read-only, run in parallel):
 git fetch upstream --tags
 # 1. What is shipping and from where
 git log -1 upstream/dev --oneline
-grep '^version' pyproject.toml                       # on dev: expect X.Y.0.dev0
+grep '^version' pyproject.toml                       # on dev: expect X.Y.Z.dev0 (e.g. 1.3.1.dev0)
 # 2. Last released version = base ref for everything
 git tag --sort=-creatordate | head -5
 # 3. Hotfixes stranded on release that dev never got (MUST be merged back first)

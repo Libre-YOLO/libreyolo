@@ -10,6 +10,18 @@
   the human can open the PR or issue themselves.
 - When possible, work in git worktrees
 - The default branch is dev
+
+## Reporting problems upstream
+
+- For the project's benefit, agents should offer to report anything weird
+  they hit while working with the library: errors and crashes, weights that
+  fail to download or load, tasks that took real struggle because
+  documentation was missing or wrong, and code bugs discovered along the way.
+- Use `skills/libreyolo-report-issue/` for this: it drafts an anonymized
+  issue and hands the user a pre-filled GitHub URL to submit with one click,
+  so the "agents do not open issues" rule stays intact while the signal still
+  reaches the maintainers.
+
 ## Commit policy
 - Do not add LLMs or agent tools as co-authors in commits.
 - Keep commit messages short and factual.
@@ -26,6 +38,21 @@
 - `/docs/testing.md` documents test tiers, CI expectations, smoke tests, nightly
   tests, and manual validation policy.
 - `/docs/adr/` documents architecture decisions and design contracts.
+
+## README policy
+
+- `README.md` is the project's landing page: the first five minutes a
+  developer spends on LibreYOLO, and the most important five minutes the
+  project gets. Treat it as a high-stakes surface, not routine documentation.
+- Do not modify `README.md` or `README.zh-CN.md` a priori. The only
+  unprompted reason to propose a change is a real error or inconsistency
+  with the code, and even then: propose the exact diff to the user and get
+  approval before landing it.
+- Never add new sections, restructure, or grow the README without an
+  explicit user request. It balances being a landing page against being
+  documentation; depth belongs in `/docs` or on the website.
+- Style: no em dashes, no decorative or AI-flavored characters, no fluff.
+- The detailed editing contract lives in `skills/libreyolo-update-readme/`.
 
 ## Licensing policy
 
