@@ -1104,9 +1104,16 @@ class YoloNASPoseLoss(nn.Module):
         t = targets[:, :n_max]
         gt_bbox = cxcywh_to_xyxy(t[..., 1:5])
         pad_gt_mask = ((t[..., 3] > 0) & (t[..., 4] > 0)).unsqueeze(-1).float()
-        # Real class ids from the targets (column 0). For single-class pose
-        # these are all 0; for multi-class pose they select the gt's class.
-        gt_class = t[..., 0:1].long()
+        if self.num_classes == 1:
+            # Historical single-class pose contract: the label class column is
+            # category-agnostic and every GT trains class 0. Forwarding a raw
+            # non-zero id (e.g. COCO person=1) would collide with the assigner's
+            # background index and silently drop that GT's supervision.
+            gt_class = torch.zeros(batch_size, n_max, 1, dtype=torch.long, device=device)
+        else:
+            # Multi-class pose: real class ids from the targets (column 0),
+            # validated against nc at data-load time (YOLOPoseDataset).
+            gt_class = t[..., 0:1].long()
         gt_poses = t[..., 5:].reshape(batch_size, n_max, self.num_keypoints, 3)
         gt_crowd = torch.zeros(batch_size, n_max, 1, device=device)
         return {

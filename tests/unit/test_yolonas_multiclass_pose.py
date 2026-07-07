@@ -269,3 +269,65 @@ class TestBackendParser:
             effective_imgsz=320, orig_w=320, orig_h=320, conf=0.5, ratio=1.0,
         )
         assert class_ids.tolist() == [0, 0]
+
+
+# ---------------------------------------------------------------------------
+# Class-id safety (Greptile P1 on PR #530 + label range validation)
+# ---------------------------------------------------------------------------
+
+
+class TestClassIdSafety:
+    def test_single_class_nonzero_label_ids_train_class_zero(self):
+        # Historical contract: single-class pose ignores the label class column.
+        # A raw id of 1 (e.g. COCO person=1) must NOT reach the assigner, whose
+        # background index is also 1 — that would silently drop the GT.
+        loss_fn = YoloNASPoseLoss(oks_sigmas=[0.1], num_classes=1)
+        targets = torch.zeros(1, 2, 5 + 3 * 1)
+        targets[0, 0] = torch.tensor([1, 160, 160, 80, 80, 160, 160, 2])
+        targets[0, 1] = torch.tensor([1, 60, 60, 40, 40, 60, 60, 2])
+        tgt = loss_fn._unpack_padded_targets(targets)
+        assert tgt["gt_class"].unique().tolist() == [0]
+
+    def test_multiclass_gt_class_passes_through(self):
+        loss_fn = YoloNASPoseLoss(oks_sigmas=[0.1], num_classes=3)
+        targets = torch.zeros(1, 2, 5 + 3 * 1)
+        targets[0, 0] = torch.tensor([2, 160, 160, 80, 80, 160, 160, 2])
+        targets[0, 1] = torch.tensor([0, 60, 60, 40, 40, 60, 60, 2])
+        tgt = loss_fn._unpack_padded_targets(targets)
+        assert tgt["gt_class"][0, :, 0].tolist() == [2, 0]
+
+    def test_parser_rejects_out_of_range_class(self):
+        from libreyolo.data.pose_dataset import parse_yolo_pose_label_line
+
+        line = "2 0.5 0.5 0.2 0.2 0.5 0.5 2".split()
+        # id == nc and negatives are rejected when num_classes is given
+        with pytest.raises(ValueError, match="out of range"):
+            parse_yolo_pose_label_line(line, 1, 3, num_classes=2)
+        with pytest.raises(ValueError, match="out of range"):
+            parse_yolo_pose_label_line(
+                "-1 0.5 0.5 0.2 0.2 0.5 0.5 2".split(), 1, 3, num_classes=2
+            )
+        # in-range id passes; without num_classes stays lenient
+        cls_id, _, _ = parse_yolo_pose_label_line(line, 1, 3, num_classes=3)
+        assert cls_id == 2
+        cls_id, _, _ = parse_yolo_pose_label_line(line, 1, 3)
+        assert cls_id == 2
+
+    def test_dataset_skips_out_of_range_class_lines(self, tmp_path):
+        from libreyolo.data.pose_dataset import YOLOPoseDataset
+
+        img = tmp_path / "im.jpg"
+        img.write_bytes(b"")  # labels load at init; the image is never opened
+        lbl = tmp_path / "im.txt"
+        lbl.write_text(
+            "0 0.5 0.5 0.2 0.2 0.5 0.5 2\n"
+            "5 0.3 0.3 0.1 0.1 0.3 0.3 2\n"  # out of range for nc=2
+            "1 0.7 0.7 0.1 0.1 0.7 0.7 2\n"
+        )
+        ds = YOLOPoseDataset(
+            [img], num_keypoints=1, label_files=[lbl], num_classes=2
+        )
+        assert ds.labels[0][1].tolist() == [0.0, 1.0]
+        # without num_classes the historical leniency is preserved
+        ds = YOLOPoseDataset([img], num_keypoints=1, label_files=[lbl])
+        assert ds.labels[0][1].tolist() == [0.0, 5.0, 1.0]
