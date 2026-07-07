@@ -109,6 +109,8 @@ LibreYOLONASm-pose.pt, LibreYOLONASl-pose.pt,
 
 LibreDFINEn.pt, LibreDFINEs.pt, LibreDFINEm.pt, LibreDFINEl.pt,
 LibreDFINEx.pt,
+LibreDFINEn-seg.pt, LibreDFINEs-seg.pt, LibreDFINEm-seg.pt,
+LibreDFINEl-seg.pt, LibreDFINEx-seg.pt,
 
 LibreDEIMn.pt, LibreDEIMs.pt, LibreDEIMm.pt, LibreDEIMl.pt,
 LibreDEIMx.pt,
