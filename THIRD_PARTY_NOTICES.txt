@@ -79,7 +79,10 @@ License: Apache License 2.0
 Copyright (c) 2021-2022 Megvii Inc. All rights reserved.
 Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/ema.py), augmentation pipeline
-          (libreyolo/training/augment.py).
+          (libreyolo/training/augment.py), and the SimOTA training loss
+          adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
+          bboxes_iou, IoULoss, and the get_assignments/get_geometry_constraint/
+          simota_matching/get_losses assignment logic).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)
@@ -90,6 +93,11 @@ Copyright (c) 2024 Kin-Yiu Wong and Hao-Tang Tsui
 Used for: YOLO9 model family (libreyolo/models/yolo9/ and
           libreyolo/models/yolo9_e2e/): the architecture blocks and
           detection head in nn.py and the loss port in loss.py.
+          Also the YOLOv7 family (libreyolo/models/yolo7/): the architecture
+          (net.py, blocks.py) and the Anc2Box anchor decode reproduced in
+          postprocess/yolo7.py and mirrored by the training loss (loss.py:
+          _decode). Upstream ships no v7 training loss, so training assignment
+          is adapted from YOLOX (see the YOLOX entry above), not from here.
 
 --------------------------------------------------------------------
 RepVGG (DingXiaoH)

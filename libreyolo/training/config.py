@@ -229,6 +229,28 @@ class YOLOXConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class YOLOv7Config(TrainConfig):
+    """YOLOv7 training defaults.
+
+    v7 is anchor-based but trains through LibreYOLO's YOLOX-style pipeline
+    (SimOTA assignment + mosaic/mixup TrainTransform), so the schedule mirrors
+    :class:`YOLOXConfig`.
+    """
+
+    momentum: float = 0.937
+    warmup_epochs: int = 3
+    warmup_lr_start: float = 0.0
+    no_aug_epochs: int = 15
+    min_lr_ratio: float = 0.05
+    degrees: float = 10.0
+    shear: float = 2.0
+    mosaic_scale: Tuple[float, float] = (0.1, 2.0)
+    mixup_prob: float = 1.0
+    ema_decay: float = 0.9999
+    name: str = "exp"
+
+
+@dataclass(kw_only=True)
 class YOLO9Config(TrainConfig):
     """YOLOv9-specific training defaults."""
 
