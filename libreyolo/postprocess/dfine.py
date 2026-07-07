@@ -40,7 +40,13 @@ def postprocess_seg(
     input_size=None,
     **_unused,
 ):
-    """Decode D-FINE-seg output dict into detections plus instance masks."""
+    """Decode D-FINE-seg output dict into detections plus instance masks.
+
+    ``iou_thres`` is accepted for API parity but unused: D-FINE is a set
+    predictor (top-k selection, no NMS), matching ``postprocess`` below.
+    ``input_size`` routes the mask upsample through the model input
+    resolution first, matching the exported-backend two-step resize path.
+    """
     from ..models.dfine.box_ops import box_cxcywh_to_xyxy
 
     out_logits = outputs["pred_logits"]

@@ -212,6 +212,9 @@ class LibreDFINE(BaseModel):
                 iou_thres=iou_thres,
                 original_size=original_size,
                 max_det=max_det,
+                # Route the mask upsample through the model input resolution so
+                # PyTorch masks match the exported-backend two-step resize path.
+                input_size=kwargs.get("input_size") or self.input_size,
             )
         return postprocess(
             output,

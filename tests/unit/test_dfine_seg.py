@@ -174,6 +174,42 @@ def test_upstream_seg_filename_size_detection():
     assert LibreDFINE.detect_size_from_filename("deim_hgnetv2_n_coco.pth") is None
 
 
+def test_model_postprocess_matches_backend_mask_resize_path():
+    """LibreDFINE._postprocess must route masks through the model input size,
+    matching the exported-backend two-step resize (Greptile P1 on PR #537)."""
+    model = LibreDFINE(None, size="n", nb_classes=1, device="cpu", task="segment")
+    mask = torch.tensor(
+        [
+            [
+                [
+                    [0.4963, 0.7682, 0.0885],
+                    [0.1320, 0.3074, 0.6341],
+                    [0.4901, 0.8964, 0.4556],
+                ]
+            ]
+        ],
+        dtype=torch.float32,
+    )
+    outputs = {
+        "pred_logits": torch.tensor([[[10.0]]]),
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 1.0, 1.0]]]),
+        "pred_masks": mask,
+    }
+
+    det = model._postprocess(
+        outputs, conf_thres=0.5, iou_thres=0.0, original_size=(5, 7), max_det=1
+    )
+
+    size = model.input_size
+    two_step = F.interpolate(
+        F.interpolate(mask, size=(size, size), mode="bilinear", align_corners=False),
+        size=(7, 5),
+        mode="bilinear",
+        align_corners=False,
+    )[0, 0]
+    assert torch.equal(det["masks"][0], two_step >= 0.5)
+
+
 def test_rtdetrv4_stays_detect_only():
     """RT-DETRv4 inherits from LibreDFINE but has no mask head."""
     from libreyolo.models.rtdetrv4.model import LibreRTDETRv4
