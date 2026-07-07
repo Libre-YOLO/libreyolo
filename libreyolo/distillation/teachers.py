@@ -118,13 +118,28 @@ class DINOv2Teacher(nn.Module):
     def extract_features(self, images: torch.Tensor) -> List[torch.Tensor]:
         """Return ``[BCHW]`` patch features for a batch of ``[0, 1]`` images.
 
+        The image is first resized to the nearest multiple of ``patch_size`` so
+        the patch grid covers the *whole* frame. A raw ``h // patch`` grid would
+        crop the trailing ``h % patch`` pixels (e.g. 640 -> 45*14 = 630, a 10 px
+        border), and the loss would then map that partial grid onto the full
+        student feature map, supervising border cells with spatially-shifted
+        targets. Resizing to full coverage keeps teacher and student aligned.
+
         The token sequence's last ``Hp*Wp`` entries are the patch tokens
         (slicing from the end is robust to CLS and register prefix tokens),
         reshaped to a ``(N, hidden_size, Hp, Wp)`` grid.
         """
         images = (images - self._mean) / self._std
         n, _, h, w = images.shape
-        hp, wp = h // self.patch_size, w // self.patch_size
+
+        # Nearest multiple of patch_size on each axis => full-frame coverage.
+        hp = max(1, round(h / self.patch_size))
+        wp = max(1, round(w / self.patch_size))
+        th, tw = hp * self.patch_size, wp * self.patch_size
+        if (th, tw) != (h, w):
+            images = torch.nn.functional.interpolate(
+                images, size=(th, tw), mode="bilinear", align_corners=False
+            )
 
         out = self.dino(pixel_values=images, interpolate_pos_encoding=True)
         tokens = out.last_hidden_state  # (N, prefix + Hp*Wp, C)
