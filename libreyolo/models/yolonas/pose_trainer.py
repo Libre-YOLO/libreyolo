@@ -97,6 +97,7 @@ class YOLONASPoseTrainer(BaseTrainer):
     def on_setup(self):
         self.loss_fn = YoloNASPoseLoss(
             oks_sigmas=self._resolve_oks_sigmas(),
+            num_classes=self.config.num_classes,
             classification_loss_type=self.config.classification_loss_type,
             regression_iou_loss_type=self.config.regression_iou_loss_type,
             classification_loss_weight=self.config.classification_loss_weight,
@@ -115,6 +116,10 @@ class YOLONASPoseTrainer(BaseTrainer):
         self.val_loader = None
 
     def _build_dataset(self, img_files, label_files, preproc) -> YOLOPoseDataset:
+        # Validate label class ids only for multi-class pose. Single-class pose
+        # is class-agnostic by contract (the loss trains class 0 regardless of
+        # the label column), so any historical labels keep loading.
+        nc = self.config.num_classes
         return YOLOPoseDataset(
             img_files=img_files,
             num_keypoints=self.num_keypoints,
@@ -123,6 +128,7 @@ class YOLONASPoseTrainer(BaseTrainer):
             preproc=preproc,
             keypoint_dim=self.config.keypoint_dim,
             decode_scale=self.config.decode_scale,
+            num_classes=nc if nc and nc > 1 else None,
         )
 
     def _setup_data(self):
@@ -132,7 +138,7 @@ class YOLONASPoseTrainer(BaseTrainer):
         cfg = load_data_config(
             self.config.data, allow_scripts=self.config.allow_download_scripts
         )
-        self.num_classes = 1
+        self.num_classes = self.config.num_classes
         flip_idx = cfg.get("flip_idx")
 
         train_imgs = cfg.get("train_img_files")

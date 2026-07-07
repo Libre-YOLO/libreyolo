@@ -1324,12 +1324,14 @@ class YoloNASPoseDFLHead(nn.Module):
         num_keypoints: int,
         stride: int,
         reg_max: int = 16,
+        num_classes: int = 1,
     ):
         super().__init__()
         bbox_inter = width_multiplier(bbox_inter_channels, width_mult, 8)
         pose_inter = width_multiplier(pose_inter_channels, width_mult, 8)
 
         self.num_keypoints = num_keypoints
+        self.num_classes = num_classes
         self.stride = stride
         self.reg_max = reg_max
         self.prior_prob = 1e-2
@@ -1355,8 +1357,10 @@ class YoloNASPoseDFLHead(nn.Module):
             *[pose_block(pose_inter, pose_inter) for _ in range(pose_regression_blocks)]
         )
 
-        # pose_conf_in_class_head=True: cls outputs 1 (objectness) + K (visibility).
-        self.cls_pred = nn.Conv2d(bbox_inter, 1 + num_keypoints, 1, 1, 0)
+        # pose_conf_in_class_head=True: cls outputs num_classes class scores + K
+        # (per-keypoint visibility). For single-class pose num_classes == 1, the
+        # historical objectness channel.
+        self.cls_pred = nn.Conv2d(bbox_inter, num_classes + num_keypoints, 1, 1, 0)
         self.reg_pred = nn.Conv2d(bbox_inter, 4 * (reg_max + 1), 1, 1, 0)
         self.pose_pred = nn.Conv2d(pose_inter, 2 * num_keypoints, 1, 1, 0)
 
@@ -1373,22 +1377,45 @@ class YoloNASPoseDFLHead(nn.Module):
         """Rebuild the keypoint-dependent layers for a new keypoint count.
 
         Used when fine-tuning a COCO (17-keypoint) checkpoint onto a dataset
-        with a different number of keypoints. The objectness channel of
-        ``cls_pred`` is preserved; the per-keypoint visibility channels and
-        ``pose_pred`` are reinitialised.
+        with a different number of keypoints. The class channels of ``cls_pred``
+        are preserved; the per-keypoint visibility channels and ``pose_pred``
+        are reinitialised.
         """
+        nc = self.num_classes
         old_cls = self.cls_pred
-        new_cls = nn.Conv2d(old_cls.in_channels, 1 + num_keypoints, 1, 1, 0)
+        new_cls = nn.Conv2d(old_cls.in_channels, nc + num_keypoints, 1, 1, 0)
         prior_bias = -math.log((1 - self.prior_prob) / self.prior_prob)
         torch.nn.init.constant_(new_cls.bias, prior_bias)
         with torch.no_grad():
-            new_cls.weight[0:1].copy_(old_cls.weight[0:1])
-            new_cls.bias[0:1].copy_(old_cls.bias[0:1])
+            new_cls.weight[:nc].copy_(old_cls.weight[:nc])
+            new_cls.bias[:nc].copy_(old_cls.bias[:nc])
         self.cls_pred = new_cls
         self.pose_pred = nn.Conv2d(
             self.pose_pred.in_channels, 2 * num_keypoints, 1, 1, 0
         )
         self.num_keypoints = num_keypoints
+
+    def replace_num_classes(self, num_classes: int):
+        """Rebuild the class channels of ``cls_pred`` for a new class count.
+
+        Used when fine-tuning a single-class (COCO person) checkpoint onto a
+        multi-class pose dataset. The per-keypoint visibility channels are
+        preserved; the class channels are reinitialised with the prior bias.
+        """
+        old_cls = self.cls_pred
+        old_nc = self.num_classes
+        new_cls = nn.Conv2d(
+            old_cls.in_channels, num_classes + self.num_keypoints, 1, 1, 0
+        )
+        prior_bias = -math.log((1 - self.prior_prob) / self.prior_prob)
+        torch.nn.init.constant_(new_cls.bias, prior_bias)
+        with torch.no_grad():
+            # Preserve the K visibility channels: old ``[old_nc:]`` -> new
+            # ``[num_classes:]`` (class channels are left freshly initialised).
+            new_cls.weight[num_classes:].copy_(old_cls.weight[old_nc:])
+            new_cls.bias[num_classes:].copy_(old_cls.bias[old_nc:])
+        self.cls_pred = new_cls
+        self.num_classes = num_classes
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         x = self.stem(x)
@@ -1403,9 +1430,9 @@ class YoloNASPoseDFLHead(nn.Module):
         pose_feat = self.reg_dropout_rate(self.pose_convs(pose_features))
         pose_output = self.pose_pred(pose_feat)
 
-        # Split objectness and per-keypoint visibility from cls head.
-        pose_logits = cls_output[:, 1:, :, :]
-        cls_output = cls_output[:, 0:1, :, :]
+        # Split class scores and per-keypoint visibility from cls head.
+        pose_logits = cls_output[:, self.num_classes :, :, :]
+        cls_output = cls_output[:, : self.num_classes, :, :]
         pose_regression = pose_output.reshape(
             (pose_output.size(0), self.num_keypoints, 2, pose_output.size(2), pose_output.size(3))
         )
@@ -1428,6 +1455,7 @@ class YoloNASPoseNDFLHeads(nn.Module):
         self,
         in_channels: Tuple[int, int, int],
         num_keypoints: int = 17,
+        num_classes: int = 1,
         width_mult: float = 1.0,
         reg_max: int = 16,
         grid_cell_offset: float = 0.5,
@@ -1438,6 +1466,7 @@ class YoloNASPoseNDFLHeads(nn.Module):
         super().__init__()
         self.in_channels = tuple(in_channels)
         self.num_keypoints = num_keypoints
+        self.num_classes = num_classes
         self.reg_max = reg_max
         self.grid_cell_offset = grid_cell_offset
         self.compensate_grid_cell_offset = compensate_grid_cell_offset
@@ -1458,6 +1487,7 @@ class YoloNASPoseNDFLHeads(nn.Module):
                 num_keypoints=num_keypoints,
                 stride=stride,
                 reg_max=reg_max,
+                num_classes=num_classes,
             )
             setattr(self, f"head{i + 1}", head)
 
@@ -1468,6 +1498,12 @@ class YoloNASPoseNDFLHeads(nn.Module):
         for i in range(self.num_heads):
             getattr(self, f"head{i + 1}").replace_num_keypoints(num_keypoints)
         self.num_keypoints = num_keypoints
+
+    def replace_num_classes(self, num_classes: int):
+        """Rebuild every per-stride head for a new class count."""
+        for i in range(self.num_heads):
+            getattr(self, f"head{i + 1}").replace_num_classes(num_classes)
+        self.num_classes = num_classes
 
     @torch.jit.ignore
     def cache_anchors(self, input_size: Tuple[int, int]):
@@ -1532,7 +1568,7 @@ class YoloNASPoseNDFLHeads(nn.Module):
             pose_logits_list.append(torch.permute(pose_logits.flatten(2), [0, 2, 1]))
 
         cls_score_list = torch.cat(cls_score_list, dim=-1)
-        cls_score_list = torch.permute(cls_score_list, [0, 2, 1])  # [B, A, 1] logits
+        cls_score_list = torch.permute(cls_score_list, [0, 2, 1])  # [B, A, nc] logits
         reg_dist_reduced_list = torch.cat(reg_dist_reduced_list, dim=1)  # [B, A, 4]
         reg_distri_list = torch.cat(reg_distri_list, dim=1)  # [B, A, 4*(reg_max+1)]
         pose_regression_list = torch.cat(pose_regression_list, dim=1)  # [B, A, K, 2]
@@ -1577,7 +1613,7 @@ class YoloNASPoseNDFLHeads(nn.Module):
             )
         )
         raw_predictions = (
-            cls_score_list,        # [B, A, 1] classification logits
+            cls_score_list,        # [B, A, nc] classification logits
             reg_distri_list,       # [B, A, 4*(reg_max+1)] raw DFL distribution
             pose_regression_list,  # [B, A, K, 2] decoded pose coords (image px)
             pose_logits_list,      # [B, A, K] keypoint visibility logits
@@ -1601,6 +1637,7 @@ class LibreYOLONASPoseModel(nn.Module):
         self,
         config: str = "s",
         num_keypoints: int = 17,
+        num_classes: int = 1,
         in_channels: int = 3,
         reg_max: int = 16,
         eval_size: Optional[Tuple[int, int]] = None,
@@ -1615,6 +1652,7 @@ class LibreYOLONASPoseModel(nn.Module):
         variant = _VARIANT_CONFIGS[config]
         self.config = config
         self.num_keypoints = num_keypoints
+        self.num_classes = num_classes
         self.reg_max = reg_max
 
         self.backbone = YoloNASBackbone(variant, in_channels=in_channels)
@@ -1622,6 +1660,7 @@ class LibreYOLONASPoseModel(nn.Module):
         self.heads = YoloNASPoseNDFLHeads(
             in_channels=tuple(self.neck.out_channels),
             num_keypoints=num_keypoints,
+            num_classes=num_classes,
             width_mult=variant["head_width_mult"],
             reg_max=reg_max,
             eval_size=eval_size,
@@ -1642,6 +1681,11 @@ class LibreYOLONASPoseModel(nn.Module):
         """Rebuild the pose head for a new keypoint count (fine-tuning hook)."""
         self.heads.replace_num_keypoints(num_keypoints)
         self.num_keypoints = num_keypoints
+
+    def replace_num_classes(self, num_classes: int):
+        """Rebuild the pose head for a new class count (fine-tuning hook)."""
+        self.heads.replace_num_classes(num_classes)
+        self.num_classes = num_classes
 
     def prep_model_for_conversion(
         self, input_size=None, full_fusion: bool = False, **kwargs

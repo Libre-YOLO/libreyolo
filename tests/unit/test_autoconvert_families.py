@@ -82,6 +82,10 @@ def _yolonas_s(pose: bool = False):
         "heads.head1.reg_pred.weight": torch.zeros(68, 64, 1, 1),
     }
     if pose:
+        # Pose fuses the class scores and K per-keypoint visibility logits into
+        # one head: cls_pred out_channels == num_classes + K. Single-class
+        # (person) COCO pose is 1 + 17 = 18, not the 80-class detection width.
+        sd["heads.head1.cls_pred.weight"] = torch.zeros(1 + 17, 64, 1, 1)
         sd["heads.head1.pose_pred.weight"] = torch.zeros(34, 64, 1, 1)
     return sd
 

@@ -124,9 +124,14 @@ class LibreYOLONAS(BaseModel):
         if tensor is None or tensor.ndim == 0:
             return None
         if cls.is_pose_state_dict(weights_dict):
-            # Pose has 1 detection class (person); the cls head's extra
-            # channels are per-keypoint visibility logits.
-            return 1
+            # The pose cls head fuses num_classes class scores with K
+            # per-keypoint visibility logits: out_channels == num_classes + K.
+            # Recover the class count by subtracting K (from pose_pred). A
+            # single-class COCO checkpoint yields (1 + 17) - 17 = 1.
+            num_keypoints = cls.detect_num_keypoints(weights_dict)
+            if num_keypoints is None:
+                return 1
+            return max(1, int(tensor.shape[0]) - int(num_keypoints))
         return int(tensor.shape[0])
 
     @classmethod
@@ -165,8 +170,6 @@ class LibreYOLONAS(BaseModel):
         task: str | None = None,
         **kwargs,
     ):
-        # For pose, override classes to single-class person detection regardless
-        # of how many classes the user passed (which defaults to 80 for COCO).
         resolved_task = normalize_task(task) if task is not None else None
         self.reg_max = reg_max
         # Default keypoint count; overridden from checkpoint metadata/state
@@ -179,7 +182,14 @@ class LibreYOLONAS(BaseModel):
                 ckpt_k = self.detect_num_keypoints(model_path)
                 if ckpt_k is not None:
                     self.num_keypoints = ckpt_k
-        if resolved_task == "pose":
+                # Recover the class count from the state dict so a multi-class
+                # pose checkpoint builds the right head width.
+                ckpt_nc = self.detect_nb_classes(model_path)
+                nb_classes = ckpt_nc if ckpt_nc is not None else 1
+        elif resolved_task == "pose":
+            # Fresh model or file path: default to single-class (person) pose.
+            # A file path's real class count is resolved in _load_weights;
+            # training resolves it from the dataset yaml.
             nb_classes = 1
         super().__init__(
             model_path=model_path,
@@ -190,7 +200,12 @@ class LibreYOLONAS(BaseModel):
             **kwargs,
         )
         if self.task == "pose":
-            self.names = {0: "person"}
+            # Placeholder names; overridden by checkpoint metadata in
+            # _load_weights or by the dataset yaml at train() time.
+            if self.nb_classes == 1:
+                self.names = {0: "person"}
+            else:
+                self.names = {i: str(i) for i in range(self.nb_classes)}
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
@@ -199,6 +214,7 @@ class LibreYOLONAS(BaseModel):
             return LibreYOLONASPoseModel(
                 config=self.size,
                 num_keypoints=self.num_keypoints,
+                num_classes=self.nb_classes,
                 reg_max=self.reg_max,
             )
         return LibreYOLONASModel(
@@ -223,11 +239,13 @@ class LibreYOLONAS(BaseModel):
         }
 
     def _rebuild_for_new_classes(self, new_nb_classes: int):
-        if self.task == "pose":
-            # Pose head has fixed single-class detection; classes are not
-            # configurable at load time.
-            return
         self.nb_classes = new_nb_classes
+        if self.task == "pose":
+            # Rebuild the pose head's class channels; the per-keypoint
+            # visibility channels and the rest of the model are preserved.
+            self.model.replace_num_classes(new_nb_classes)
+            self.model.to(self.device)
+            return
         self.model.nc = new_nb_classes
         self.model.heads.replace_num_classes(new_nb_classes)
         self.model.to(self.device)
@@ -427,6 +445,12 @@ class LibreYOLONAS(BaseModel):
                 ckpt_k = self.detect_num_keypoints(state_dict)
                 if ckpt_k is not None and ckpt_k != self.num_keypoints:
                     self._rebuild_for_new_keypoints(ckpt_k)
+                # Match the class count from the state-dict shapes, covering
+                # bare pose checkpoints that carry no ``nc`` metadata (the
+                # metadata path below is a no-op when they already agree).
+                ckpt_nc = self.detect_nb_classes(state_dict)
+                if ckpt_nc is not None and ckpt_nc != self.nb_classes:
+                    self._rebuild_for_new_classes(ckpt_nc)
 
             if isinstance(loaded, dict):
                 ckpt_family = loaded.get("model_family", "")
@@ -663,12 +687,17 @@ class LibreYOLONAS(BaseModel):
                 f"(got {keypoint_dim})."
             )
 
-        # Pose is single-class; carry the dataset's class name into checkpoints.
+        # Resolve the class count from the dataset yaml. Multi-class pose uses a
+        # single shared keypoint skeleton (one kpt_shape for every class), so nc
+        # only affects the class/box branch, not the keypoints.
+        yaml_nc = data_config.get("nc")
         yaml_names = data_config.get("names")
-        if yaml_names is not None:
-            if isinstance(yaml_names, list):
-                yaml_names = {i: n for i, n in enumerate(yaml_names)}
-            self.names = self._sanitize_names(yaml_names, 1)
+        if yaml_nc is None and yaml_names is not None:
+            yaml_nc = len(yaml_names)
+
+        # Rebuild the pose head for the dataset's keypoint count first, then its
+        # class count (both touch cls_pred; this order carries the freshly sized
+        # visibility channels through the class rebuild).
         if num_keypoints != self.num_keypoints:
             logger.info(
                 "Rebuilding YOLO-NAS pose head for %d keypoints (was %d)",
@@ -676,6 +705,19 @@ class LibreYOLONAS(BaseModel):
                 self.num_keypoints,
             )
             self._rebuild_for_new_keypoints(num_keypoints)
+        if yaml_nc is not None and int(yaml_nc) != self.nb_classes:
+            logger.info(
+                "Rebuilding YOLO-NAS pose head for %d classes (was %d)",
+                int(yaml_nc),
+                self.nb_classes,
+            )
+            self._rebuild_for_new_classes(int(yaml_nc))
+
+        # Carry the dataset's class names into checkpoints.
+        if yaml_names is not None:
+            if isinstance(yaml_names, list):
+                yaml_names = {i: n for i, n in enumerate(yaml_names)}
+            self.names = self._sanitize_names(yaml_names, self.nb_classes)
 
         if self.size in {"m", "l"}:
             kwargs.setdefault("dfl_loss_weight", 0.5)
@@ -696,7 +738,7 @@ class LibreYOLONAS(BaseModel):
             model=self.model,
             wrapper_model=self,
             size=self.size,
-            num_classes=1,
+            num_classes=self.nb_classes,
             num_keypoints=num_keypoints,
             keypoint_dim=keypoint_dim,
             data=data,
