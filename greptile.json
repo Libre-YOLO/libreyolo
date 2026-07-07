@@ -1,3 +1,5 @@
 {
-  "skipReview": "AUTOMATIC"
+  "shouldUpdateDescription": true,
+  "statusCommentsEnabled": false,
+  "statusCheck": true
 }
