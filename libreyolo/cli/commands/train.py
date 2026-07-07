@@ -203,14 +203,17 @@ def train_cmd(
     # Distillation
     distill_model: str = typer.Option(
         "",
-        help="Teacher checkpoint for knowledge distillation",
+        help="Teacher for knowledge distillation: a detector checkpoint, or a "
+        "foundation-teacher id (e.g. 'dinov2') for backbone feature distillation",
     ),
     dis: Optional[float] = typer.Option(
         None,
         help="Distillation loss weight (default: per-loss-type published default)",
     ),
     distill_loss_type: str = typer.Option(
-        "mgd", help="Distillation feature loss: mgd, cwd"
+        "mgd",
+        help="Distillation feature loss for detector teachers: mgd, cwd "
+        "(foundation teachers always use feat_mse)",
     ),
     # Optimizer
     optimizer: str = typer.Option("sgd", help="Optimizer: sgd, adam, adamw"),

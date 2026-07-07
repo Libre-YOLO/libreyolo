@@ -166,8 +166,82 @@ class CWDLoss(nn.Module):
         return self.loss_weight * loss
 
 
+class FeatureMSELoss(nn.Module):
+    """Plain feature-matching MSE loss for foundation-model distillation.
+
+    Aligns the student feature map to the teacher's channel width with a 1x1
+    conv, resizes the teacher's feature grid to the student's spatial size
+    (bilinear), and minimizes the mean-squared error between them. Unlike
+    MGD/CWD this makes no assumption that teacher and student share a spatial
+    resolution or stride, so a single-scale foundation teacher (e.g. a DINOv2
+    ViT with a /14 patch grid) can supervise a convolutional backbone stage.
+
+    This is the classic feature-distillation objective (FitNets, Romero et al.,
+    ICLR 2015): match intermediate student features to a frozen teacher's via
+    a learned projection and an L2 loss. The same objective underlies modern
+    frozen-SSL-teacher recipes that distill a DINOv2 ViT into a smaller student
+    with a plain feature MSE. Implemented from that public description; no
+    third-party distillation source was used.
+
+    Args:
+        student_channels: Channels in the student feature map.
+        teacher_channels: Channels in the teacher feature map.
+        loss_weight: Per-scale multiplier (the global alpha is applied by the
+            Distiller). Default: 1.0.
+        normalize: If True, L2-normalize both feature maps over the channel
+            dimension before the MSE (angle-only matching, scale-invariant).
+            Default: False (plain MSE, matching the zero-hyperparameter recipe).
+
+    Shape:
+        - student_feat: (N, student_channels, Hs, Ws)
+        - teacher_feat: (N, teacher_channels, Ht, Wt)  # Ht/Wt may differ
+        - output: scalar loss
+    """
+
+    def __init__(
+        self,
+        student_channels: int,
+        teacher_channels: int,
+        loss_weight: float = 1.0,
+        normalize: bool = False,
+    ):
+        super().__init__()
+        self.loss_weight = loss_weight
+        self.normalize = normalize
+
+        # 1x1 conv aligning student channels to the teacher width; skipped when
+        # the widths already match.
+        if student_channels != teacher_channels:
+            self.align = nn.Conv2d(student_channels, teacher_channels, kernel_size=1)
+        else:
+            self.align = None
+
+    def forward(
+        self, student_feat: torch.Tensor, teacher_feat: torch.Tensor
+    ) -> torch.Tensor:
+        aligned = self.align(student_feat) if self.align is not None else student_feat
+
+        # Resize the teacher grid to the student's spatial size. The teacher is
+        # single-scale (e.g. DINOv2 /14) and rarely matches the student stride.
+        if aligned.shape[-2:] != teacher_feat.shape[-2:]:
+            teacher_feat = F.interpolate(
+                teacher_feat,
+                size=aligned.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        if self.normalize:
+            aligned = F.normalize(aligned, dim=1)
+            teacher_feat = F.normalize(teacher_feat, dim=1)
+
+        loss = F.mse_loss(aligned, teacher_feat)
+        return self.loss_weight * loss
+
+
 # Registry of available loss classes
 DISTILL_LOSSES = {
     "mgd": MGDLoss,
     "cwd": CWDLoss,
+    "feat_mse": FeatureMSELoss,
 }

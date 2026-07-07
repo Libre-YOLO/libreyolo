@@ -138,18 +138,23 @@ class TrainConfig:
     # training is unchanged.
     nbs: Optional[int] = None
 
-    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path;
-    # setting it turns distillation on. ``dis`` is the global distillation loss
-    # weight; left as None it falls back to the selected loss type's published
-    # default (MGD: 2e-5, CWD: 1.0). ``distill_loss_type`` picks the feature
-    # loss ("mgd" or "cwd"); ``distill_mask_ratio`` (MGD) and ``distill_tau``
-    # (CWD) are the per-loss hyper-parameters. Families without a
-    # ``get_distill_config()`` implementation raise a clear error at setup.
+    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path,
+    # or a foundation-teacher id (e.g. ``"dinov2"``); setting it turns
+    # distillation on. ``dis`` is the global distillation loss weight; left as
+    # None it falls back to the selected loss type's published default (MGD:
+    # 2e-5, CWD: 1.0, feat_mse: 1.0). ``distill_loss_type`` picks the feature
+    # loss ("mgd" or "cwd") for detector teachers; a foundation teacher always
+    # uses "feat_mse" on a single backbone stage. ``distill_mask_ratio`` (MGD)
+    # and ``distill_tau`` (CWD) are the per-loss hyper-parameters;
+    # ``distill_normalize`` L2-normalizes features before the feat_mse loss.
+    # Families without a ``get_distill_config()`` (or, for foundation teachers,
+    # ``get_backbone_distill_config()``) raise a clear error at setup.
     distill_model: Optional[str] = None
     dis: Optional[float] = None
     distill_loss_type: str = "mgd"
     distill_mask_ratio: float = 0.65
     distill_tau: float = 1.0
+    distill_normalize: bool = False
 
     # Checkpointing / output
     project: str = "runs/train"
