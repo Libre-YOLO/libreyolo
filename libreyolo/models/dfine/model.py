@@ -148,6 +148,12 @@ class LibreDFINE(BaseModel):
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
+    @property
+    def _is_segmentation(self) -> bool:
+        # Adapter flag derived from the canonical task state; shared surfaces
+        # (tiled predict, export naming) dispatch mask handling on it.
+        return self.task == "segment"
+
     def _init_model(self) -> nn.Module:
         return LibreDFINEModel(
             config=self.size,

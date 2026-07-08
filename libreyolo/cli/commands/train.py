@@ -73,16 +73,32 @@ def _create_explicit_task_train_model(
     size = model_cls.detect_size_from_filename(Path(model_path).name)
     if size is None:
         return None
-    if family == "dfine" and train_task == "segment" and _model_ref_exists(model_path):
-        # Detect checkpoints are legal segment-training starting points, but
-        # only as an explicit transfer (the mask head starts untrained).
-        return model_cls(
-            model_path,
-            size=size,
-            task=train_task,
-            device=device,
-            allow_detect_to_segment_transfer=True,
-        )
+    if family == "dfine" and train_task == "segment":
+        if not _model_ref_exists(model_path):
+            # Published weights (LibreDFINEn-seg.pt or a detect checkpoint used
+            # as transfer source) must auto-download here; falling through to
+            # the scratch path would silently train uninitialized.
+            url = model_cls.get_download_url(Path(model_path).name)
+            if url:
+                from libreyolo.utils.download import download_weights
+
+                dl_path = Path(model_path)
+                if dl_path.parent == Path("."):
+                    dl_path = Path("weights") / dl_path.name
+                download_weights(str(dl_path), size)
+                model_path = str(dl_path)
+        if _model_ref_exists(model_path):
+            # Detect checkpoints are legal segment-training starting points,
+            # but only as an explicit transfer (the mask head starts
+            # untrained). Seg checkpoints carry mask keys and load normally;
+            # the flag is inert for them.
+            return model_cls(
+                model_path,
+                size=size,
+                task=train_task,
+                device=device,
+                allow_detect_to_segment_transfer=True,
+            )
     if family == "rfdetr" and train_task == "obb" and _model_ref_exists(model_path):
         return model_cls(
             model_path,

@@ -260,6 +260,60 @@ def test_factory_rejects_detect_checkpoint_as_segment(tmp_path):
         LibreYOLO(str(path), device="cpu", task="segment")
 
 
+def test_tiled_predict_rejects_segment():
+    """Tiled inference merges only boxes; seg models must refuse it loudly."""
+    import numpy as np
+    from PIL import Image
+
+    model = LibreDFINE(None, size="n", nb_classes=2, device="cpu", task="segment")
+    img = Image.fromarray(
+        (np.random.rand(1280, 1600, 3) * 255).astype(np.uint8)
+    )
+    with pytest.raises(ValueError, match="segmentation"):
+        model.predict(img, tiling=True, save=False)
+
+
+def test_cli_seg_train_autodownloads_missing_weights(tmp_path, monkeypatch):
+    """A missing-but-published seg weight reference must download, not fall
+    through to a silent from-scratch model."""
+    from libreyolo.cli.commands import train as train_mod
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    seg = LibreDFINEModel(
+        "n", nb_classes=2, eval_spatial_size=(640, 640), enable_mask_head=True
+    )
+    ckpt = wrap_libreyolo_checkpoint(
+        seg.state_dict(), model_family="dfine", size="n", task="segment", nc=2
+    )
+
+    monkeypatch.chdir(tmp_path)
+    calls = {}
+
+    def fake_download(path, size):
+        calls["path"] = str(path)
+        from pathlib import Path as _P
+
+        _P(path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(ckpt, path)
+
+    monkeypatch.setattr(
+        "libreyolo.utils.download.download_weights", fake_download
+    )
+
+    model = train_mod._create_explicit_task_train_model(
+        family="dfine",
+        model_path="LibreDFINEn-seg.pt",
+        task="segment",
+        resume=False,
+        device="cpu",
+    )
+
+    assert calls["path"].replace("\\", "/").endswith("weights/LibreDFINEn-seg.pt")
+    assert model is not None
+    assert model.task == "segment"
+    assert hasattr(model.model.decoder, "mask_head")
+
+
 def test_dfine_mask_loss_no_match_zero_stays_connected():
     criterion = DFINECriterion(
         matcher=None,
