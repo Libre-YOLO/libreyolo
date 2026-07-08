@@ -89,3 +89,41 @@ def test_forward_parity(size):
 
     assert (my_txt - ref_txt).abs().max().item() <= _EXACT_TOL
     assert (my_img - ref_img).abs().max().item() <= _POOL_TOL
+
+
+def test_multilingual_spanish_smoke():
+    """Spanish class names classify the parkour fixture correctly (b16)."""
+    ckpt = _REPO_ROOT / "weights" / "LibreSigLIP2b16-cls.pt"
+    if not ckpt.exists():
+        pytest.skip("LibreSigLIP2b16-cls.pt not converted")
+
+    from libreyolo import LibreSigLIP2
+
+    model = LibreSigLIP2(str(ckpt), size="b16", device="cpu")
+    labels = ["una persona haciendo parkour", "un perro", "un coche", "una calle vacia"]
+    model.set_classes(labels, templates=["una foto de {}."])
+    fixture = _REPO_ROOT / "libreyolo" / "assets" / "parkour.jpg"
+    r = model.predict(str(fixture), verbose=False)[0]
+    assert model.names[r.probs.top1] == "una persona haciendo parkour"
+
+
+def test_imagenette_zero_shot_gate():
+    """b16 zero-shot imagenette top-1 must be >= 0.99 via model.val().
+
+    Needs a local imagenette ImageFolder; point IMAGENETTE_DIR at its root
+    (containing train/ and val/ wnid folders).
+    """
+    import os
+
+    data = os.environ.get("IMAGENETTE_DIR")
+    if not data or not Path(data).is_dir():
+        pytest.skip("Set IMAGENETTE_DIR to an imagenette ImageFolder root")
+    ckpt = _REPO_ROOT / "weights" / "LibreSigLIP2b16-cls.pt"
+    if not ckpt.exists():
+        pytest.skip("LibreSigLIP2b16-cls.pt not converted")
+
+    from libreyolo import LibreSigLIP2
+
+    model = LibreSigLIP2(str(ckpt), size="b16", device="auto")
+    res = model.val(data=data, imgsz=256, batch=32, workers=0, verbose=False)
+    assert float(res["metrics/accuracy_top1"]) >= 0.99

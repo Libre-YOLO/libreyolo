@@ -4,7 +4,7 @@ description: >-
   Use LibreYOLO's zero-shot and promptable tiers: open-vocabulary detection
   with text vocabularies (LibreOpenVocab: Grounding DINO, OWLv2), promptable
   segmentation with points/boxes (LibreSAM: SAM-1, SAM-2, MobileSAM),
-  zero-shot classification (LibreCLIP set_classes), and VLM-as-detector
+  zero-shot classification (LibreCLIP / LibreSigLIP2 set_classes), and VLM-as-detector
   (LibreVLM). Use when someone wants to detect arbitrary text-described
   classes without training ("find the forklifts", custom vocabulary),
   click-to-segment / box-to-mask, segment-everything, open-set
@@ -26,7 +26,7 @@ directory, not a `Libre*<size>.pt` checkpoint).
 |---|---|---|
 | Boxes for classes described in text | `LibreOpenVocab` | `libreyolo[openvocab]` |
 | Mask from a click / box, or segment-everything | `LibreSAM` | `libreyolo[sam]` |
-| Whole-image label from your own label set | `LibreCLIP` | `libreyolo[clip]` |
+| Whole-image label from your own label set | `LibreCLIP` / `LibreSigLIP2` | `libreyolo[clip]` / `libreyolo[siglip2]` |
 | Ask an instruction-following model to find things (slow, flexible) | `LibreVLM` | `libreyolo[vlm]` |
 
 Combinations are normal: LibreOpenVocab boxes fed to LibreSAM as box prompts
@@ -97,11 +97,11 @@ model.reset_image()
   mixed labels refine one object; foreground-only points on different
   objects need separate predicts.
 
-## LibreCLIP (zero-shot classify)
+## LibreCLIP / LibreSigLIP2 (zero-shot classify)
 
 ```python
 from libreyolo import LibreYOLO
-model = LibreYOLO("LibreCLIPb32-cls.pt")
+model = LibreYOLO("LibreCLIPb32-cls.pt")        # or "LibreSigLIP2b16-cls.pt"
 model.set_classes(["a forklift", "an empty aisle", "a spill"])
 r = model("frame.jpg"); r.probs.top1
 ```
@@ -110,6 +110,22 @@ Same `Results.probs` contract as trained classifiers; defaults to
 ImageNet-1k labels until `set_classes`. Descriptive phrases ("a photo of a
 ...") often score better than bare nouns; the model re-derives text
 embeddings on each `set_classes`, so set once, not per frame.
+
+LibreSigLIP2 (sizes `b16` at 256 px, `so400m` at 384 px; extra
+`libreyolo[siglip2]` for the SentencePiece tokenizer) is the accuracy upgrade
+tier next to LibreCLIP and a drop-in swap of the weights path. Two
+SigLIP-specific capabilities:
+
+- **Multilingual class names.** The tokenizer is multilingual (Gemma
+  vocabulary); Spanish/German/French labels work out of the box.
+- **`set_classes([...], multi_label=True)`** switches from the default
+  softmax-over-classes to independent per-class sigmoid probabilities
+  (SigLIP's native calibrated scoring) for images where several labels can be
+  true at once. CLIP cannot offer this.
+
+Prompt sensitivity differs between the two: SigLIP over-triggers on verbose
+label phrasings more than CLIP, so prefer concise class names ("English
+springer" rather than "English Springer Spaniel").
 
 ## LibreVLM (generative, last resort for detection)
 
@@ -125,7 +141,7 @@ so any string "works", with matching honesty caveats.
 - Zero-shot mAP is well below a fine-tuned detector on a fixed class list;
   these tiers trade accuracy and speed for vocabulary freedom.
 - All four tiers are inference-only in LibreYOLO: no `train()`/fine-tuning,
-  and `val()` support varies (CLIP has a classify validator; open-vocab
+  and `val()` support varies (CLIP and SigLIP2 have classify validators; open-vocab
   eval runs through the standard detect path with a fixed vocabulary).
 - Everything runs through the `transformers` extra stack; first use
   downloads snapshot weights (hundreds of MB to GB). `libreyolo checks`

@@ -72,6 +72,26 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
+SigLIP / SigLIP 2 (Google; Hugging Face Transformers)
+--------------------------------------------------------------------
+Source: https://github.com/google-research/big_vision,
+        https://github.com/huggingface/transformers (models/siglip, models/siglip2)
+License: Apache License 2.0
+Copyright (c) Google LLC; (c) The HuggingFace Inc. team.
+Used for: the LibreSigLIP2 family (libreyolo/models/siglip2/). The image/text
+towers (libreyolo/models/siglip2/nn.py) are a clean-room native torch
+re-implementation of the SigLIP architecture, structured to match the
+transformers reference implementation (no transformers at runtime). The
+multilingual SentencePiece tokenizer model
+(libreyolo/models/siglip2/siglip2_tokenizer.model, Gemma vocabulary) is shipped
+verbatim from the Apache-2.0 google/siglip2-* Hugging Face release.
+
+The shipped LibreSigLIP2 weights are converted from the Apache-2.0
+google/siglip2-base-patch16-256 and google/siglip2-so400m-patch14-384
+checkpoints (state-dict metadata wrap only; learned parameters unchanged). See
+libreyolo/models/siglip2/NOTICE.md.
+
+--------------------------------------------------------------------
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
