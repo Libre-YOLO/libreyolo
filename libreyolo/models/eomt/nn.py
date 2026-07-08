@@ -13,10 +13,7 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-EOMT_L_ADE20K_CONFIG: dict[str, Any] = {
-    "hidden_size": 1024,
-    "num_hidden_layers": 24,
-    "num_attention_heads": 16,
+_EOMT_BASE_CONFIG: dict[str, Any] = {
     "hidden_act": "gelu",
     "hidden_dropout_prob": 0.0,
     "initializer_range": 0.02,
@@ -30,7 +27,6 @@ EOMT_L_ADE20K_CONFIG: dict[str, Any] = {
     "num_upscale_blocks": 2,
     "attention_dropout": 0.0,
     "use_swiglu_ffn": False,
-    "num_blocks": 4,
     "no_object_weight": 0.1,
     "class_weight": 2.0,
     "mask_weight": 5.0,
@@ -40,6 +36,36 @@ EOMT_L_ADE20K_CONFIG: dict[str, Any] = {
     "importance_sample_ratio": 0.75,
     "num_queries": 100,
     "num_register_tokens": 4,
+}
+
+EOMT_S_CONFIG: dict[str, Any] = {
+    **_EOMT_BASE_CONFIG,
+    "hidden_size": 384,
+    "num_hidden_layers": 12,
+    "num_attention_heads": 6,
+    "num_blocks": 3,
+}
+
+EOMT_B_CONFIG: dict[str, Any] = {
+    **_EOMT_BASE_CONFIG,
+    "hidden_size": 768,
+    "num_hidden_layers": 12,
+    "num_attention_heads": 12,
+    "num_blocks": 3,
+}
+
+EOMT_L_ADE20K_CONFIG: dict[str, Any] = {
+    **_EOMT_BASE_CONFIG,
+    "hidden_size": 1024,
+    "num_hidden_layers": 24,
+    "num_attention_heads": 16,
+    "num_blocks": 4,
+}
+
+_SIZE_TO_CONFIG: dict[str, dict[str, Any]] = {
+    "s": EOMT_S_CONFIG,
+    "b": EOMT_B_CONFIG,
+    "l": EOMT_L_ADE20K_CONFIG,
 }
 
 
@@ -89,19 +115,23 @@ class LibreEoMTNet(nn.Module):
         num_queries: int = 100,
     ) -> None:
         super().__init__()
-        if config != "l":
-            raise ValueError("LibreEoMT currently ships only size 'l'.")
+        if config not in _SIZE_TO_CONFIG:
+            raise ValueError(
+                f"LibreEoMT size {config!r} is not supported. "
+                f"Valid sizes: {sorted(_SIZE_TO_CONFIG)}."
+            )
+        size_cfg = _SIZE_TO_CONFIG[config]
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
         self.num_queries = int(num_queries)
-        self.patch_size = int(EOMT_L_ADE20K_CONFIG["patch_size"])
+        self.patch_size = int(size_cfg["patch_size"])
 
         EomtConfig, EomtForUniversalSegmentation = _load_transformers_eomt()
         id2label = {i: f"class_{i}" for i in range(self.nb_classes)}
         label2id = {label: i for i, label in id2label.items()}
         hf_config = EomtConfig(
             **{
-                **EOMT_L_ADE20K_CONFIG,
+                **size_cfg,
                 "image_size": self.image_size,
                 "num_queries": self.num_queries,
                 "id2label": id2label,
@@ -148,6 +178,8 @@ class LibreEoMTNet(nn.Module):
 
 
 __all__ = [
+    "EOMT_S_CONFIG",
+    "EOMT_B_CONFIG",
     "EOMT_L_ADE20K_CONFIG",
     "IMAGENET_MEAN",
     "IMAGENET_STD",

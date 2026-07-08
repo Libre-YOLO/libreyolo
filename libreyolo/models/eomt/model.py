@@ -48,16 +48,16 @@ class LibreEoMT(BaseModel):
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "segment")
     DEFAULT_TASK: ClassVar[str] = "semantic"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
-    INPUT_SIZES: ClassVar[Dict[str, int]] = {"l": 512}
+    INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 512, "b": 512, "l": 512}
     TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
-        "semantic": {"l": 512},
-        "segment": {"l": 640},
+        "semantic": {"s": 512, "b": 512, "l": 512},
+        "segment": {"s": 640, "b": 640, "l": 640},
     }
 
     semantic_resize_mode: ClassVar[str] = "split"
     semantic_imgsz_divisor: ClassVar[int] = 16
 
-    _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {1024: "l"}
+    _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {384: "s", 768: "b", 1024: "l"}
     _UPSTREAM_URL: ClassVar[str] = "https://github.com/tue-mps/eomt"
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
 
@@ -96,6 +96,18 @@ class LibreEoMT(BaseModel):
         weight = state.get("query.weight")
         if weight is not None and getattr(weight, "ndim", 0) >= 1:
             return int(weight.shape[0])
+        return None
+
+    @classmethod
+    def detect_image_size(cls, weights_dict: dict, patch_size: int = 16) -> Optional[int]:
+        """Infer image_size from position embedding shape: sqrt(num_positions) * patch_size."""
+        state = normalize_eomt_state_dict(weights_dict)
+        weight = state.get("embeddings.position_embeddings.weight")
+        if weight is not None and getattr(weight, "ndim", 0) >= 1:
+            num_positions = int(weight.shape[0])
+            side = int(round(num_positions ** 0.5))
+            if side * side == num_positions:
+                return side * patch_size
         return None
 
     @classmethod
@@ -173,6 +185,11 @@ class LibreEoMT(BaseModel):
 
     def _rebuild_for_new_queries(self, new_num_queries: int):
         self.num_queries = int(new_num_queries)
+        self.model = self._init_model()
+        self.model.to(self.device)
+
+    def _rebuild_for_new_image_size(self, new_image_size: int):
+        self.input_size = int(new_image_size)
         self.model = self._init_model()
         self.model.to(self.device)
 
@@ -574,6 +591,14 @@ class LibreEoMT(BaseModel):
         ckpt_num_queries = self.detect_num_queries(state)
         if ckpt_num_queries is not None and ckpt_num_queries != self.num_queries:
             self._rebuild_for_new_queries(ckpt_num_queries)
+
+        # State-dict detection is authoritative: position embeddings encode the
+        # native resolution and cannot be wrong. Metadata imgsz is a hint only.
+        ckpt_imgsz = self.detect_image_size(state)
+        if ckpt_imgsz is None:
+            ckpt_imgsz = loaded.get("imgsz") if isinstance(loaded, dict) else None
+        if ckpt_imgsz is not None and int(ckpt_imgsz) != self.input_size:
+            self._rebuild_for_new_image_size(int(ckpt_imgsz))
 
         result = self.model.load_state_dict(state, strict=self._strict_loading())
         missing = list(getattr(result, "missing_keys", []) or [])

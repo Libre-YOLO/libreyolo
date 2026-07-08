@@ -19,10 +19,23 @@ from _conversion_utils import (
 
 
 DEFAULT_HF_REPO = "tue-mps/ade20k_semantic_eomt_large_512"
-# DINOv2-based COCO instance checkpoint (no _dinov3 suffix = original DINOv2 weights, MIT).
+# DINOv2-based COCO instance checkpoints (no _dinov3 suffix = original DINOv2 weights, MIT).
 DEFAULT_SEGMENT_HF_REPO = "tue-mps/coco_instance_eomt_large_640"
 COCO_HF_REPO = DEFAULT_SEGMENT_HF_REPO
-_APPROVED_HF_REPOS = {DEFAULT_HF_REPO, DEFAULT_SEGMENT_HF_REPO}
+COCO_HF_REPO_1280 = "tue-mps/coco_instance_eomt_large_1280"
+# DINOv2-based panoptic checkpoints — approved for --things-only instance conversion.
+COCO_PANOPTIC_HF_REPO_S = "tue-mps/coco_panoptic_eomt_small_640_2x"
+COCO_PANOPTIC_HF_REPO_B = "tue-mps/coco_panoptic_eomt_base_640_2x"
+COCO_PANOPTIC_HF_REPO_L = "tue-mps/coco_panoptic_eomt_large_640"
+_APPROVED_HF_REPOS = {
+    DEFAULT_HF_REPO,
+    DEFAULT_SEGMENT_HF_REPO,
+    COCO_HF_REPO_1280,
+    COCO_PANOPTIC_HF_REPO_S,
+    COCO_PANOPTIC_HF_REPO_B,
+    COCO_PANOPTIC_HF_REPO_L,
+}
+_NC_PANOPTIC = 133  # 80 things + 53 stuff
 _IMGSZ_SEMANTIC = 512
 _NC_SEMANTIC = 150
 _IMGSZ_SEGMENT = 640
@@ -35,10 +48,14 @@ _TASK_TO_IMGSZ = {
     "semantic": _IMGSZ_SEMANTIC,
     "segment": _IMGSZ_SEGMENT,
 }
-_TASK_TO_OUTPUT = {
-    "semantic": "weights/LibreEoMTl-sem.pt",
-    "segment": "weights/LibreEoMTl-seg.pt",
-}
+
+
+def _default_output_path(task: str, size: str, imgsz: int) -> str:
+    """Generate default output filename from task, backbone size, and image size."""
+    default_imgsz = _TASK_TO_IMGSZ[task]
+    task_suffix = "sem" if task == "semantic" else "seg"
+    imgsz_suffix = f"-{imgsz}" if imgsz != default_imgsz else ""
+    return f"weights/LibreEoMT{size}-{task_suffix}{imgsz_suffix}.pt"
 
 
 def _load_ade20k_names() -> dict[int, str]:
@@ -126,8 +143,9 @@ def _validate_source_provenance(
         )
 
     raise ValueError(
-        "LibreEoMT release conversion supports only the approved DINOv2 ADE20K "
-        f"source {DEFAULT_HF_REPO!r}. Refusing unapproved source {source!r}."
+        f"Unapproved source {source!r}. Approved repos:\n"
+        + "\n".join(f"  {r}" for r in sorted(_APPROVED_HF_REPOS))
+        + "\nPass --allow-unverified-source for local DINOv2 checkpoints."
     )
 
 
@@ -153,6 +171,38 @@ def _load_state_dict(
     return normalize_eomt_state_dict(loaded)
 
 
+def _slice_to_things_only(
+    state_dict: dict[str, torch.Tensor],
+    nc_things: int = 80,
+) -> dict[str, torch.Tensor]:
+    """Trim a panoptic checkpoint to keep only the things classes.
+
+    COCO panoptic contiguous ordering: indices 0..nc_things-1 are things,
+    nc_things..nc_panoptic-1 are stuff, nc_panoptic is the null/no-object class.
+    Three tensors depend on nc: class_predictor.weight, class_predictor.bias,
+    and criterion.empty_weight. All are sliced [0:nc_things] + [nc_panoptic].
+    """
+    result = dict(state_dict)
+    nc_dependent_keys = (
+        "class_predictor.weight",
+        "class_predictor.bias",
+        "criterion.empty_weight",
+    )
+    for key in nc_dependent_keys:
+        tensor = result.get(key)
+        if tensor is None:
+            continue
+        nc_panoptic = tensor.shape[0] - 1  # last entry is null/no-object class
+        if nc_things >= nc_panoptic:
+            raise ValueError(
+                f"--things-only: nc_things={nc_things} >= nc_panoptic={nc_panoptic}. "
+                "Does this checkpoint already have only things classes?"
+            )
+        null_entry = tensor[nc_panoptic : nc_panoptic + 1]
+        result[key] = torch.cat([tensor[:nc_things], null_entry], dim=0)
+    return result
+
+
 def convert_weights(
     input_source: str,
     output_path: str,
@@ -160,9 +210,12 @@ def convert_weights(
     task: str = "semantic",
     imgsz: int | None = None,
     allow_unverified_source: bool = False,
+    things_only: bool = False,
 ) -> dict[str, Any]:
     if task not in ("semantic", "segment"):
         raise ValueError(f"task must be 'semantic' or 'segment'; got {task!r}.")
+    if things_only and task != "segment":
+        raise ValueError("--things-only is only valid with --task segment.")
 
     add_repo_root_to_path()
     from libreyolo.models.eomt.model import LibreEoMT
@@ -182,31 +235,49 @@ def convert_weights(
         )
 
     size = LibreEoMT.detect_size(state_dict)
-    if size != "l":
+    if size is None:
         raise ValueError(
-            f"LibreEoMT v1 ships only size 'l'; detected size={size!r}."
+            "Could not detect EoMT backbone size from checkpoint. "
+            "Expected hidden_size of 384 (s), 768 (b), or 1024 (l)."
         )
     nc = LibreEoMT.detect_nb_classes(state_dict)
 
+    if things_only:
+        if nc != _NC_PANOPTIC:
+            raise ValueError(
+                f"--things-only expects a COCO panoptic checkpoint with {_NC_PANOPTIC} "
+                f"classes; detected nc={nc}."
+            )
+        print(f"  Slicing class_predictor: {nc} panoptic classes → 80 COCO things.")
+        state_dict = _slice_to_things_only(state_dict, nc_things=80)
+        nc = 80
+
+    # Use the actual position-embedding image size as the default imgsz so that
+    # non-standard checkpoints (e.g. panoptic at 640px converted as semantic) are
+    # embedded correctly without requiring an explicit --imgsz argument.
+    detected_imgsz = LibreEoMT.detect_image_size(state_dict)
+
     if task == "semantic":
-        if nc != _NC_SEMANTIC:
+        if nc != _NC_SEMANTIC and not allow_unverified_source:
             raise ValueError(
-                f"Semantic EoMT requires ADE20K 150-class weights; detected nc={nc}."
+                f"Semantic EoMT requires ADE20K 150-class weights; detected nc={nc}. "
+                "Pass --allow-unverified-source to override."
             )
-        names = _load_ade20k_names()
-        effective_imgsz = imgsz if imgsz is not None else _IMGSZ_SEMANTIC
+        names = _load_ade20k_names() if nc == _NC_SEMANTIC else {i: f"class_{i}" for i in range(nc)}
+        effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEMANTIC)
     else:
-        if nc != 80:
+        if nc != 80 and not allow_unverified_source:
             raise ValueError(
-                f"Segment EoMT requires COCO 80-class instance weights; detected nc={nc}."
+                f"Segment EoMT requires COCO 80-class instance weights; detected nc={nc}. "
+                "Pass --allow-unverified-source to override (e.g. for nc=133 panoptic-as-instance)."
             )
-        names = _load_coco_names()
-        effective_imgsz = imgsz if imgsz is not None else _IMGSZ_SEGMENT
+        names = _load_coco_names() if nc == 80 else {i: f"class_{i}" for i in range(nc)}
+        effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEGMENT)
 
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
         model_family="eomt",
-        size="l",
+        size=size,
         task=task,
         nc=nc,
         names=names,
@@ -253,7 +324,18 @@ def verify_conversion(converted_path: str) -> bool:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Convert EoMT-L weights (ADE20K semantic / COCO instance) to LibreYOLO format."
+        description=(
+            "Convert EoMT weights (ADE20K semantic / COCO instance) to LibreYOLO format.\n\n"
+            "Approved DINOv2 sources:\n"
+            f"  semantic l-512 : {DEFAULT_HF_REPO}\n"
+            f"  segment  l-640 : {DEFAULT_SEGMENT_HF_REPO}\n"
+            f"  segment  l-1280: {COCO_HF_REPO_1280}\n"
+            f"  segment  s-640 : {COCO_PANOPTIC_HF_REPO_S}  (--things-only)\n"
+            f"  segment  b-640 : {COCO_PANOPTIC_HF_REPO_B}  (--things-only)\n"
+            f"  segment  l-640 : {COCO_PANOPTIC_HF_REPO_L}  (--things-only)\n\n"
+            "s/b backbones: convert from panoptic with --things-only --task segment."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _default_input = {
         "semantic": DEFAULT_HF_REPO,
@@ -263,7 +345,6 @@ if __name__ == "__main__":
         (sys.argv[sys.argv.index("--task") + 1] for _ in [0]
          if "--task" in sys.argv), "semantic"
     ) if "--task" in sys.argv else "semantic"
-    default_input = _default_input.get(task_arg, DEFAULT_HF_REPO)
     parser.add_argument(
         "input",
         nargs="?",
@@ -279,8 +360,9 @@ if __name__ == "__main__":
         nargs="?",
         default=None,
         help=(
-            "Output LibreYOLO checkpoint path "
-            "(default: weights/LibreEoMTl-sem.pt or weights/LibreEoMTl-seg.pt)."
+            "Output LibreYOLO checkpoint path. "
+            "Default is auto-generated from task/size/imgsz "
+            "(e.g. weights/LibreEoMTl-seg.pt, weights/LibreEoMTl-seg-1280.pt)."
         ),
     )
     parser.add_argument(
@@ -301,6 +383,15 @@ if __name__ == "__main__":
         help="Verify round-trip after conversion.",
     )
     parser.add_argument(
+        "--things-only",
+        action="store_true",
+        help=(
+            "Convert a COCO panoptic checkpoint (nc=133) to a COCO instance model (nc=80) "
+            "by slicing the class_predictor to keep only the 80 things categories. "
+            "Required to convert the s/b backbone panoptic checkpoints for instance seg."
+        ),
+    )
+    parser.add_argument(
         "--allow-unverified-source",
         action="store_true",
         help=(
@@ -311,13 +402,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     input_src = args.input or _default_input.get(args.task, DEFAULT_HF_REPO)
-    output = args.output or _TASK_TO_OUTPUT[args.task]
+    if args.output:
+        output = args.output
+    else:
+        # Detect size and imgsz for auto-generated filename.
+        # We do a lightweight peek at the state dict size before full conversion.
+        add_repo_root_to_path()
+        from libreyolo.models.eomt.model import LibreEoMT as _EoMT
+        _peek_state = _load_state_dict(input_src, allow_unverified_source=args.allow_unverified_source)
+        _detected_size = _EoMT.detect_size(_peek_state) or "l"
+        _effective_imgsz = args.imgsz if args.imgsz is not None else _TASK_TO_IMGSZ[args.task]
+        output = _default_output_path(args.task, _detected_size, _effective_imgsz)
     convert_weights(
         input_src,
         output,
         task=args.task,
         imgsz=args.imgsz,
         allow_unverified_source=args.allow_unverified_source,
+        things_only=args.things_only,
     )
     if args.verify:
         verify_conversion(output)

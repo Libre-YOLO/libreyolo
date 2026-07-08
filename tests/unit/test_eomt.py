@@ -25,14 +25,16 @@ def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
         "mask_head.fc2.weight": torch.zeros(hidden, hidden),
         "mask_head.fc3.weight": torch.zeros(hidden, hidden),
         "class_predictor.weight": torch.zeros(nc + 1, hidden),
+        "class_predictor.bias": torch.zeros(nc + 1),
+        "criterion.empty_weight": torch.zeros(nc + 1),
     }
 
 
 class _FakeEoMTNet(nn.Module):
     def __init__(self, config: str = "l", nb_classes: int = 150, image_size: int = 512, num_queries: int = 100):
         super().__init__()
-        if config != "l":
-            raise ValueError("test fake supports only EoMT-L")
+        if config not in ("s", "b", "l"):
+            raise ValueError(f"test fake: unsupported size {config!r}")
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
         self.num_queries = int(num_queries)
@@ -73,8 +75,11 @@ class TestEoMTMetadata:
         assert LibreEoMT.SUPPORTED_TASKS == ("semantic", "segment")
         assert LibreEoMT.DEFAULT_TASK == "semantic"
         assert LibreEoMT.REQUIRE_TASK_SUFFIX
-        assert LibreEoMT.INPUT_SIZES == {"l": 512}
-        assert LibreEoMT.TASK_INPUT_SIZES == {"semantic": {"l": 512}, "segment": {"l": 640}}
+        assert LibreEoMT.INPUT_SIZES == {"s": 512, "b": 512, "l": 512}
+        assert LibreEoMT.TASK_INPUT_SIZES == {
+            "semantic": {"s": 512, "b": 512, "l": 512},
+            "segment": {"s": 640, "b": 640, "l": 640},
+        }
         assert LibreEoMT.semantic_resize_mode == "split"
         assert LibreEoMT.semantic_imgsz_divisor == 16
 
@@ -92,6 +97,13 @@ class TestEoMTMetadata:
         assert LibreEoMT.detect_size(state) == "l"
         assert LibreEoMT.detect_nb_classes(state) == 150
         assert LibreEoMT.detect_checkpoint_task(state) == "semantic"
+
+    def test_detect_size_small_and_base(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        assert LibreEoMT.detect_size(_synthetic_eomt_state(nc=150, hidden=384)) == "s"
+        assert LibreEoMT.detect_size(_synthetic_eomt_state(nc=150, hidden=768)) == "b"
+        assert LibreEoMT.detect_size(_synthetic_eomt_state(nc=150, hidden=1024)) == "l"
 
     def test_detect_checkpoint_task_segment(self):
         from libreyolo.models.eomt.model import LibreEoMT
@@ -241,8 +253,8 @@ class _FakeEoMTNetSeg(nn.Module):
 
     def __init__(self, config: str = "l", nb_classes: int = 80, image_size: int = 640, num_queries: int = 100):
         super().__init__()
-        if config != "l":
-            raise ValueError("test fake supports only EoMT-L")
+        if config not in ("s", "b", "l"):
+            raise ValueError(f"test fake: unsupported size {config!r}")
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
         self.num_queries = 10  # fixed small count for tests
@@ -345,6 +357,141 @@ class TestEoMTSegment:
         assert loaded.size == "l"
         assert loaded.nb_classes == 80
         assert loaded.input_size == 640
+
+
+class TestEoMTSizes:
+    """Tests for small/base backbone size support and large-1280 variant."""
+
+    def test_small_semantic_construction(self, fake_eomt_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(model_path=None, size="s", task="semantic", nb_classes=150, device="cpu")
+        assert model.size == "s"
+        assert model.task == "semantic"
+        assert model.input_size == 512
+
+    def test_base_semantic_construction(self, fake_eomt_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(model_path=None, size="b", task="semantic", nb_classes=150, device="cpu")
+        assert model.size == "b"
+        assert model.input_size == 512
+
+    def test_small_segment_construction(self, fake_eomt_seg_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(model_path=None, size="s", task="segment", nb_classes=80, device="cpu")
+        assert model.size == "s"
+        assert model.task == "segment"
+        assert model.input_size == 640
+
+    def test_base_segment_construction(self, fake_eomt_seg_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(model_path=None, size="b", task="segment", nb_classes=80, device="cpu")
+        assert model.size == "b"
+        assert model.input_size == 640
+
+    def test_checkpoint_round_trip_base_segment(self, fake_eomt_seg_net, tmp_path):
+        from libreyolo import LibreYOLO
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        ckpt = wrap_libreyolo_checkpoint(
+            _synthetic_eomt_state(nc=80, hidden=768),
+            model_family="eomt",
+            size="b",
+            task="segment",
+            nc=80,
+            names={i: f"coco_{i}" for i in range(80)},
+            imgsz=640,
+        )
+        ckpt_path = tmp_path / "LibreEoMTb-seg.pt"
+        torch.save(ckpt, str(ckpt_path))
+
+        loaded = LibreYOLO(str(ckpt_path), device="cpu")
+        assert loaded.size == "b"
+        assert loaded.task == "segment"
+        assert loaded.input_size == 640
+
+    def test_converter_large_1280_segment(self, monkeypatch, tmp_path):
+        converter = _load_converter_module()
+
+        def _fake_load(source, *, allow_unverified_source=False):
+            return _synthetic_eomt_state(nc=80, hidden=1024)
+
+        monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+        out_path = tmp_path / "LibreEoMTl-seg-1280.pt"
+
+        ckpt = converter.convert_weights(
+            converter.COCO_HF_REPO_1280, str(out_path), task="segment", imgsz=1280
+        )
+
+        assert ckpt["size"] == "l"
+        assert ckpt["task"] == "segment"
+        assert ckpt["nc"] == 80
+        assert ckpt["imgsz"] == 1280
+
+    def test_converter_default_output_path(self):
+        converter = _load_converter_module()
+
+        assert converter._default_output_path("semantic", "l", 512) == "weights/LibreEoMTl-sem.pt"
+        assert converter._default_output_path("segment", "l", 640) == "weights/LibreEoMTl-seg.pt"
+        assert converter._default_output_path("segment", "l", 1280) == "weights/LibreEoMTl-seg-1280.pt"
+        assert converter._default_output_path("segment", "s", 640) == "weights/LibreEoMTs-seg.pt"
+        assert converter._default_output_path("segment", "b", 640) == "weights/LibreEoMTb-seg.pt"
+
+    def test_converter_things_only_slices_panoptic(self, monkeypatch, tmp_path):
+        converter = _load_converter_module()
+
+        def _fake_load(source, *, allow_unverified_source=False):
+            # Panoptic checkpoint: nc=133, hidden=384 (small backbone)
+            return _synthetic_eomt_state(nc=133, hidden=384)
+
+        monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+        out_path = tmp_path / "LibreEoMTs-seg.pt"
+
+        ckpt = converter.convert_weights(
+            converter.COCO_PANOPTIC_HF_REPO_S,
+            str(out_path),
+            task="segment",
+            things_only=True,
+        )
+
+        assert ckpt["size"] == "s"
+        assert ckpt["task"] == "segment"
+        assert ckpt["nc"] == 80
+        assert ckpt["imgsz"] == 640
+        # All three nc-dependent tensors sliced to 81 rows (80 things + null).
+        assert ckpt["model"]["class_predictor.weight"].shape == (81, 384)
+        assert ckpt["model"]["class_predictor.bias"].shape == (81,)
+        assert ckpt["model"]["criterion.empty_weight"].shape == (81,)
+
+    def test_converter_things_only_rejects_non_panoptic(self, monkeypatch, tmp_path):
+        converter = _load_converter_module()
+
+        def _fake_load(source, *, allow_unverified_source=False):
+            return _synthetic_eomt_state(nc=80, hidden=1024)
+
+        monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+
+        with pytest.raises(ValueError, match="133"):
+            converter.convert_weights(
+                converter.COCO_HF_REPO,
+                str(tmp_path / "out.pt"),
+                task="segment",
+                things_only=True,
+            )
+
+    def test_converter_things_only_rejects_semantic_task(self, tmp_path):
+        converter = _load_converter_module()
+
+        with pytest.raises(ValueError, match="--things-only"):
+            converter.convert_weights(
+                converter.DEFAULT_HF_REPO,
+                str(tmp_path / "out.pt"),
+                task="semantic",
+                things_only=True,
+            )
 
 
 def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
