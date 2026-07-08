@@ -1,8 +1,9 @@
-"""Convert DINOv2 EoMT-L ADE20K semantic weights into LibreYOLO format."""
+"""Convert DINOv2 EoMT-L weights (ADE20K semantic / COCO instance) into LibreYOLO format."""
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,9 +19,26 @@ from _conversion_utils import (
 
 
 DEFAULT_HF_REPO = "tue-mps/ade20k_semantic_eomt_large_512"
-_APPROVED_HF_REPOS = {DEFAULT_HF_REPO}
-_IMGSZ = 512
-_NC = 150
+# DINOv2-based COCO instance checkpoint (no _dinov3 suffix = original DINOv2 weights, MIT).
+DEFAULT_SEGMENT_HF_REPO = "tue-mps/coco_instance_eomt_large_640"
+COCO_HF_REPO = DEFAULT_SEGMENT_HF_REPO
+_APPROVED_HF_REPOS = {DEFAULT_HF_REPO, DEFAULT_SEGMENT_HF_REPO}
+_IMGSZ_SEMANTIC = 512
+_NC_SEMANTIC = 150
+_IMGSZ_SEGMENT = 640
+
+# Legacy aliases kept for backward compat.
+_IMGSZ = _IMGSZ_SEMANTIC
+_NC = _NC_SEMANTIC
+
+_TASK_TO_IMGSZ = {
+    "semantic": _IMGSZ_SEMANTIC,
+    "segment": _IMGSZ_SEGMENT,
+}
+_TASK_TO_OUTPUT = {
+    "semantic": "weights/LibreEoMTl-sem.pt",
+    "segment": "weights/LibreEoMTl-seg.pt",
+}
 
 
 def _load_ade20k_names() -> dict[int, str]:
@@ -29,6 +47,17 @@ def _load_ade20k_names() -> dict[int, str]:
     data = yaml.safe_load(config_path.read_text())
     names = data["names"]
     return {int(k): str(v) for k, v in names.items()}
+
+
+def _load_coco_names() -> dict[int, str]:
+    root = add_repo_root_to_path()
+    config_path = root / "libreyolo" / "config" / "datasets" / "coco.yaml"
+    data = yaml.safe_load(config_path.read_text())
+    names = data["names"]
+    if isinstance(names, list):
+        return {i: str(n) for i, n in enumerate(names)}
+    return {int(k): str(v) for k, v in names.items()}
+
 
 
 def _load_hf_state_dict(repo_id: str) -> dict[str, torch.Tensor]:
@@ -128,8 +157,13 @@ def convert_weights(
     input_source: str,
     output_path: str,
     *,
+    task: str = "semantic",
+    imgsz: int | None = None,
     allow_unverified_source: bool = False,
 ) -> dict[str, Any]:
+    if task not in ("semantic", "segment"):
+        raise ValueError(f"task must be 'semantic' or 'segment'; got {task!r}.")
+
     add_repo_root_to_path()
     from libreyolo.models.eomt.model import LibreEoMT
     from libreyolo.utils.serialization import (
@@ -153,19 +187,30 @@ def convert_weights(
             f"LibreEoMT v1 ships only size 'l'; detected size={size!r}."
         )
     nc = LibreEoMT.detect_nb_classes(state_dict)
-    if nc != _NC:
-        raise ValueError(
-            f"LibreEoMT v1 ships only ADE20K 150-class weights; detected nc={nc}."
-        )
+
+    if task == "semantic":
+        if nc != _NC_SEMANTIC:
+            raise ValueError(
+                f"Semantic EoMT requires ADE20K 150-class weights; detected nc={nc}."
+            )
+        names = _load_ade20k_names()
+        effective_imgsz = imgsz if imgsz is not None else _IMGSZ_SEMANTIC
+    else:
+        if nc != 80:
+            raise ValueError(
+                f"Segment EoMT requires COCO 80-class instance weights; detected nc={nc}."
+            )
+        names = _load_coco_names()
+        effective_imgsz = imgsz if imgsz is not None else _IMGSZ_SEGMENT
 
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
         model_family="eomt",
         size="l",
-        task="semantic",
-        nc=_NC,
-        names=_load_ade20k_names(),
-        imgsz=_IMGSZ,
+        task=task,
+        nc=nc,
+        names=names,
+        imgsz=effective_imgsz,
     )
     errors = validate_checkpoint_metadata(checkpoint, strict=False)
     if errors:
@@ -187,31 +232,68 @@ def verify_conversion(converted_path: str) -> bool:
         f"nc={model.nb_classes}"
     )
     model.model.eval()
+    imgsz = model.input_size
     with torch.no_grad():
-        out = model.model(torch.zeros(1, 3, _IMGSZ, _IMGSZ))
-    logits = out["semantic_logits"] if isinstance(out, dict) else out
-    print(f"  forward pass OK - semantic logits: {tuple(logits.shape)}")
+        out = model.model(torch.zeros(1, 3, imgsz, imgsz))
+    if not isinstance(out, dict):
+        print(f"  forward pass OK - output shape: {tuple(out.shape)}")
+        return True
+    if model.task == "segment":
+        class_logits = out.get("class_queries_logits")
+        mask_logits = out.get("masks_queries_logits")
+        print(
+            f"  forward pass OK - class_queries_logits: {tuple(class_logits.shape)}, "
+            f"masks_queries_logits: {tuple(mask_logits.shape)}"
+        )
+    else:
+        logits = out.get("semantic_logits", out.get("logits"))
+        print(f"  forward pass OK - semantic logits: {tuple(logits.shape)}")
     return True
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Convert EoMT-L ADE20K semantic weights to LibreYOLO format."
+        description="Convert EoMT-L weights (ADE20K semantic / COCO instance) to LibreYOLO format."
     )
+    _default_input = {
+        "semantic": DEFAULT_HF_REPO,
+        "segment": DEFAULT_SEGMENT_HF_REPO,
+    }
+    task_arg = next(
+        (sys.argv[sys.argv.index("--task") + 1] for _ in [0]
+         if "--task" in sys.argv), "semantic"
+    ) if "--task" in sys.argv else "semantic"
+    default_input = _default_input.get(task_arg, DEFAULT_HF_REPO)
     parser.add_argument(
         "input",
         nargs="?",
-        default=DEFAULT_HF_REPO,
+        default=None,
         help=(
             "HF repo id, local HF directory, model.safetensors, or pytorch_model.bin "
-            f"(default: {DEFAULT_HF_REPO})"
+            f"(default for semantic: {DEFAULT_HF_REPO}; "
+            f"default for segment: {DEFAULT_SEGMENT_HF_REPO})"
         ),
     )
     parser.add_argument(
         "output",
         nargs="?",
-        default="weights/LibreEoMTl-sem.pt",
-        help="Output LibreYOLO checkpoint path.",
+        default=None,
+        help=(
+            "Output LibreYOLO checkpoint path "
+            "(default: weights/LibreEoMTl-sem.pt or weights/LibreEoMTl-seg.pt)."
+        ),
+    )
+    parser.add_argument(
+        "--task",
+        choices=("semantic", "segment"),
+        default="semantic",
+        help="Target task: 'semantic' (ADE20K) or 'segment' (COCO instance). Default: semantic.",
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=None,
+        help="Override the embedded image size (default: 512 for semantic, 640 for segment).",
     )
     parser.add_argument(
         "--verify",
@@ -222,16 +304,20 @@ if __name__ == "__main__":
         "--allow-unverified-source",
         action="store_true",
         help=(
-            "Allow a local/non-allowlisted source after manual DINOv2 ADE20K "
+            "Allow a local/non-allowlisted source after manual DINOv2 "
             "provenance verification. DINOv3 sources remain rejected."
         ),
     )
     args = parser.parse_args()
 
+    input_src = args.input or _default_input.get(args.task, DEFAULT_HF_REPO)
+    output = args.output or _TASK_TO_OUTPUT[args.task]
     convert_weights(
-        args.input,
-        args.output,
+        input_src,
+        output,
+        task=args.task,
+        imgsz=args.imgsz,
         allow_unverified_source=args.allow_unverified_source,
     )
     if args.verify:
-        verify_conversion(args.output)
+        verify_conversion(output)

@@ -29,12 +29,13 @@ def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
 
 
 class _FakeEoMTNet(nn.Module):
-    def __init__(self, config: str = "l", nb_classes: int = 150, image_size: int = 512):
+    def __init__(self, config: str = "l", nb_classes: int = 150, image_size: int = 512, num_queries: int = 100):
         super().__init__()
         if config != "l":
             raise ValueError("test fake supports only EoMT-L")
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
+        self.num_queries = int(num_queries)
         self.proj = nn.Conv2d(3, self.nb_classes, 1)
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -69,10 +70,11 @@ class TestEoMTMetadata:
 
         assert LibreEoMT.FAMILY == "eomt"
         assert LibreEoMT.FILENAME_PREFIX == "LibreEoMT"
-        assert LibreEoMT.SUPPORTED_TASKS == ("semantic",)
+        assert LibreEoMT.SUPPORTED_TASKS == ("semantic", "segment")
         assert LibreEoMT.DEFAULT_TASK == "semantic"
         assert LibreEoMT.REQUIRE_TASK_SUFFIX
         assert LibreEoMT.INPUT_SIZES == {"l": 512}
+        assert LibreEoMT.TASK_INPUT_SIZES == {"semantic": {"l": 512}, "segment": {"l": 640}}
         assert LibreEoMT.semantic_resize_mode == "split"
         assert LibreEoMT.semantic_imgsz_divisor == 16
 
@@ -90,6 +92,12 @@ class TestEoMTMetadata:
         assert LibreEoMT.detect_size(state) == "l"
         assert LibreEoMT.detect_nb_classes(state) == 150
         assert LibreEoMT.detect_checkpoint_task(state) == "semantic"
+
+    def test_detect_checkpoint_task_segment(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=80)) == "segment"
+        assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=150)) == "semantic"
 
     def test_can_load_handles_common_prefixes(self):
         from libreyolo.models.eomt.model import LibreEoMT
@@ -141,11 +149,12 @@ class TestEoMTMetadata:
             "https://huggingface.co/LibreYOLO/LibreEoMTl-sem/resolve/main/"
             "LibreEoMTl-sem.pt"
         )
+        assert LibreEoMT.detect_task_from_filename("LibreEoMTl-seg.pt") == "segment"
 
     def test_wrong_task_raises(self, fake_eomt_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        with pytest.raises(ValueError, match="semantic"):
+        with pytest.raises(ValueError, match="not supported"):
             LibreEoMT(model_path=None, size="l", task="detect", device="cpu")
 
 
@@ -225,6 +234,117 @@ class TestEoMTPredict:
             model.train(data="ade20k.yaml")
         with pytest.raises(NotImplementedError):
             model.export(format="onnx")
+
+
+class _FakeEoMTNetSeg(nn.Module):
+    """Fake EoMT net that returns query-level outputs for segment task testing."""
+
+    def __init__(self, config: str = "l", nb_classes: int = 80, image_size: int = 640, num_queries: int = 100):
+        super().__init__()
+        if config != "l":
+            raise ValueError("test fake supports only EoMT-L")
+        self.nb_classes = int(nb_classes)
+        self.image_size = int(image_size)
+        self.num_queries = 10  # fixed small count for tests
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        b, _, h, w = x.shape
+        return {
+            "semantic_logits": torch.zeros(b, self.nb_classes, h, w),
+            "class_queries_logits": torch.zeros(b, self.num_queries, self.nb_classes + 1),
+            "masks_queries_logits": torch.zeros(b, self.num_queries, h, w),
+        }
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        from torch.nn.modules.module import _IncompatibleKeys
+
+        return _IncompatibleKeys([], [])
+
+
+@pytest.fixture
+def fake_eomt_seg_net(monkeypatch):
+    import libreyolo.models.eomt.model as eomt_model
+
+    monkeypatch.setattr(eomt_model, "LibreEoMTNet", _FakeEoMTNetSeg)
+    return _FakeEoMTNetSeg
+
+
+class TestEoMTSegment:
+    def test_segment_task_construction(self, fake_eomt_seg_net):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+        )
+        assert model.task == "segment"
+        assert model.input_size == 640
+
+    def test_segment_postprocess_returns_instance_fields(self, fake_eomt_seg_net, tmp_path):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (80, 60), color=(10, 20, 30)).save(img_path)
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+        )
+        result = model.predict(str(img_path), imgsz=640)
+
+        # With zero logits and conf=0.25, no instances should pass threshold.
+        assert result.semantic_mask is None
+        assert result.boxes is not None or result.masks is None  # empty or absent
+        assert result.boxes is None or len(result.boxes) == 0
+
+    def test_segment_postprocess_segment_direct(self, fake_eomt_seg_net):
+        """Call _postprocess_segment directly with synthetic logits above threshold."""
+        import torch
+
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="segment", nb_classes=3, device="cpu"
+        )
+        num_queries, h, w = 4, 64, 64
+        # Make query 0 confident on class 1 by giving it a high score.
+        class_logits = torch.full((1, num_queries, 4), -10.0)
+        class_logits[0, 0, 1] = 10.0   # query 0 → class 1 with high confidence
+        mask_logits = torch.zeros(1, num_queries, h, w)
+        mask_logits[0, 0, 16:48, 16:48] = 5.0  # query 0 has a mask patch
+
+        output = {
+            "class_queries_logits": class_logits,
+            "masks_queries_logits": mask_logits,
+        }
+        det = model._postprocess_segment(output, conf_thres=0.1, iou_thres=0.5,
+                                          original_size=(w, h))
+        assert det["num_detections"] >= 1
+        assert len(det["boxes"]) == det["num_detections"]
+        assert det["masks"].shape[0] == det["num_detections"]
+        assert det["masks"].shape[1] == h
+        assert det["masks"].shape[2] == w
+
+    def test_segment_checkpoint_round_trip(self, fake_eomt_seg_net, tmp_path):
+        from libreyolo import LibreYOLO
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        ckpt = wrap_libreyolo_checkpoint(
+            _synthetic_eomt_state(nc=80),
+            model_family="eomt",
+            size="l",
+            task="segment",
+            nc=80,
+            names={i: f"coco_{i}" for i in range(80)},
+            imgsz=640,
+        )
+        ckpt_path = tmp_path / "LibreEoMTl-seg.pt"
+        torch.save(ckpt, str(ckpt_path))
+
+        loaded = LibreYOLO(str(ckpt_path), device="cpu")
+        assert loaded.FAMILY == "eomt"
+        assert loaded.task == "segment"
+        assert loaded.size == "l"
+        assert loaded.nb_classes == 80
+        assert loaded.input_size == 640
 
 
 def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
@@ -357,6 +477,38 @@ def test_converter_wraps_metadata(monkeypatch, tmp_path):
             "imgsz",
         ]
     ).issubset(ckpt)
+
+
+def test_converter_segment_task(monkeypatch, tmp_path):
+    converter = _load_converter_module()
+
+    def _fake_load(source, *, allow_unverified_source=False):
+        return _synthetic_eomt_state(nc=80)
+
+    monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+    out_path = tmp_path / "LibreEoMTl-seg.pt"
+
+    ckpt = converter.convert_weights(
+        converter.COCO_HF_REPO, str(out_path), task="segment"
+    )
+
+    assert out_path.exists()
+    assert ckpt["task"] == "segment"
+    assert ckpt["nc"] == 80
+    assert ckpt["imgsz"] == 640
+    assert ckpt["names"][0] == "person"
+
+
+def test_converter_segment_rejects_wrong_nc(monkeypatch, tmp_path):
+    converter = _load_converter_module()
+
+    def _fake_load(source, *, allow_unverified_source=False):
+        return _synthetic_eomt_state(nc=150)
+
+    monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+
+    with pytest.raises(ValueError, match="80-class"):
+        converter.convert_weights("fake_source", str(tmp_path / "bad.pt"), task="segment")
 
 
 def test_converter_rejects_dinov3_even_with_override(tmp_path):

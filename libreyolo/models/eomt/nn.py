@@ -79,19 +79,21 @@ def normalize_eomt_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 class LibreEoMTNet(nn.Module):
-    """EoMT-L semantic model adapted to LibreYOLO dense-task conventions."""
+    """EoMT-L model adapted to LibreYOLO dense-task conventions."""
 
     def __init__(
         self,
         config: str = "l",
         nb_classes: int = 150,
         image_size: int = 512,
+        num_queries: int = 100,
     ) -> None:
         super().__init__()
         if config != "l":
             raise ValueError("LibreEoMT currently ships only size 'l'.")
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
+        self.num_queries = int(num_queries)
         self.patch_size = int(EOMT_L_ADE20K_CONFIG["patch_size"])
 
         EomtConfig, EomtForUniversalSegmentation = _load_transformers_eomt()
@@ -101,6 +103,7 @@ class LibreEoMTNet(nn.Module):
             **{
                 **EOMT_L_ADE20K_CONFIG,
                 "image_size": self.image_size,
+                "num_queries": self.num_queries,
                 "id2label": id2label,
                 "label2id": label2id,
             }

@@ -1,4 +1,4 @@
-"""LibreEoMT semantic segmentation wrapper."""
+"""LibreEoMT semantic and instance segmentation wrapper."""
 
 from __future__ import annotations
 
@@ -39,16 +39,20 @@ def _eomt_keys(weights_dict: dict[str, Any]) -> set[str]:
 
 
 class LibreEoMT(BaseModel):
-    """Encoder-only Mask Transformer for semantic segmentation."""
+    """Encoder-only Mask Transformer for semantic and instance segmentation."""
 
     FAMILY: ClassVar[str] = "eomt"
     FILENAME_PREFIX: ClassVar[str] = "LibreEoMT"
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic",)
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "segment")
     DEFAULT_TASK: ClassVar[str] = "semantic"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"l": 512}
+    TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
+        "semantic": {"l": 512},
+        "segment": {"l": 640},
+    }
 
     semantic_resize_mode: ClassVar[str] = "split"
     semantic_imgsz_divisor: ClassVar[int] = 16
@@ -87,8 +91,21 @@ class LibreEoMT(BaseModel):
         return None
 
     @classmethod
+    def detect_num_queries(cls, weights_dict: dict) -> Optional[int]:
+        state = normalize_eomt_state_dict(weights_dict)
+        weight = state.get("query.weight")
+        if weight is not None and getattr(weight, "ndim", 0) >= 1:
+            return int(weight.shape[0])
+        return None
+
+    @classmethod
     def detect_checkpoint_task(cls, state_dict: dict) -> Optional[str]:
-        return "semantic" if cls.can_load(state_dict) else None
+        if not cls.can_load(state_dict):
+            return None
+        nc = cls.detect_nb_classes(state_dict)
+        if nc is not None and nc == 80:
+            return "segment"
+        return "semantic"
 
     @classmethod
     def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
@@ -101,15 +118,14 @@ class LibreEoMT(BaseModel):
         model_path=None,
         size: str = "l",
         nb_classes: int = 150,
+        num_queries: int = 100,
         device: str = "auto",
         task: str | None = None,
         **kwargs,
     ) -> None:
-        resolved_task = normalize_task(task) if task is not None else "semantic"
-        if resolved_task != "semantic":
-            raise ValueError(f"LibreEoMT supports only task='semantic'; got {task!r}.")
         if size is None:
             size = "l"
+        self.num_queries = int(num_queries)
 
         if isinstance(model_path, dict) and not model_path:
             weight_source = None
@@ -118,12 +134,13 @@ class LibreEoMT(BaseModel):
         else:
             weight_source = model_path
 
+        # BaseModel._resolve_task validates task against SUPPORTED_TASKS.
         super().__init__(
             model_path=None,
             size=size,
             nb_classes=nb_classes,
             device=device,
-            task=resolved_task,
+            task=task,
             **kwargs,
         )
 
@@ -142,6 +159,7 @@ class LibreEoMT(BaseModel):
             config=self.size,
             nb_classes=self.nb_classes,
             image_size=self.input_size,
+            num_queries=getattr(self, "num_queries", 100),
         )
 
     def _strict_loading(self) -> bool:
@@ -150,6 +168,11 @@ class LibreEoMT(BaseModel):
     def _rebuild_for_new_classes(self, new_nb_classes: int):
         self.nb_classes = int(new_nb_classes)
         self.names = {i: f"class_{i}" for i in range(self.nb_classes)}
+        self.model = self._init_model()
+        self.model.to(self.device)
+
+    def _rebuild_for_new_queries(self, new_num_queries: int):
+        self.num_queries = int(new_num_queries)
         self.model = self._init_model()
         self.model.to(self.device)
 
@@ -279,7 +302,7 @@ class LibreEoMT(BaseModel):
         effective_res = input_size if input_size is not None else self.input_size
         if effective_res % self.semantic_imgsz_divisor:
             raise ValueError(
-                f"LibreEoMT semantic imgsz={effective_res} must be divisible "
+                f"LibreEoMT imgsz={effective_res} must be divisible "
                 f"by {self.semantic_imgsz_divisor} (EoMT patch grid)."
             )
         if effective_res != self.input_size:
@@ -301,6 +324,23 @@ class LibreEoMT(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
+    @staticmethod
+    def _masks_to_boxes(masks: torch.Tensor) -> torch.Tensor:
+        """Convert (K, H, W) masks to (K, 4) xyxy boxes in absolute pixel coords."""
+        k = masks.shape[0]
+        if k == 0:
+            return torch.zeros((0, 4), dtype=torch.float32, device=masks.device)
+        boxes = []
+        for mask in masks:
+            nonzero = mask.nonzero()
+            if len(nonzero) == 0:
+                boxes.append(torch.zeros(4, dtype=torch.float32, device=masks.device))
+            else:
+                y1, x1 = nonzero.min(0).values.float()
+                y2, x2 = nonzero.max(0).values.float()
+                boxes.append(torch.stack([x1, y1, x2, y2]))
+        return torch.stack(boxes)
+
     def _postprocess(
         self,
         output: Any,
@@ -310,6 +350,13 @@ class LibreEoMT(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "segment":
+            return self._postprocess_segment(
+                output, conf_thres, iou_thres, original_size, max_det
+            )
+        return self._postprocess_semantic(output, original_size)
+
+    def _postprocess_semantic(self, output: Any, original_size: Tuple[int, int]) -> Dict:
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("logits"))
@@ -338,6 +385,115 @@ class LibreEoMT(BaseModel):
             align_corners=False,
         )
         return {"semantic": logits.argmax(dim=1)[0].cpu()}
+
+    def _postprocess_segment(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+    ) -> Dict:
+        """Decode instance segmentation from per-query class and mask logits."""
+        if not isinstance(output, dict):
+            raise ValueError("LibreEoMT segment forward must return a dict.")
+        class_logits = output.get("class_queries_logits")  # (B, Q, C+1)
+        mask_logits = output.get("masks_queries_logits")   # (B, Q, H, W)
+        if class_logits is None or mask_logits is None:
+            raise ValueError(
+                "LibreEoMT segment forward did not include class_queries_logits "
+                "and masks_queries_logits."
+            )
+        orig_w, orig_h = original_size
+        patch_offsets = getattr(self, "_last_eomt_patch_offsets", None)
+        resized_shape = getattr(self, "_last_eomt_resized_shape", None)
+        num_patches = int(class_logits.shape[0])
+        resized_h, resized_w = resized_shape if resized_shape else (orig_h, orig_w)
+        has_patches = (
+            patch_offsets is not None
+            and resized_shape is not None
+            and len(patch_offsets) == num_patches
+        )
+
+        all_scores: list[torch.Tensor] = []
+        all_classes: list[torch.Tensor] = []
+        all_boxes: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
+
+        for patch_idx in range(num_patches):
+            cls_logit = class_logits[patch_idx]  # (Q, C+1)
+            msk_logit = mask_logits[patch_idx]   # (Q, H, W)
+
+            # DETR-style decoding: softmax, exclude null/background class
+            scores_per_query = cls_logit.softmax(-1)[..., :-1]  # (Q, C)
+            scores, labels = scores_per_query.max(-1)           # (Q,), (Q,)
+
+            keep = scores > conf_thres
+            if not keep.any():
+                continue
+
+            scores = scores[keep]
+            labels = labels[keep]
+            binary_masks = (msk_logit[keep].sigmoid() > 0.5).float()  # (K, H, W)
+
+            # Place patch masks into full resized-image canvas
+            if has_patches:
+                _, start, end = patch_offsets[patch_idx]
+                vertical = resized_h > resized_w
+                full = torch.zeros(
+                    (len(binary_masks), resized_h, resized_w),
+                    dtype=binary_masks.dtype,
+                    device=binary_masks.device,
+                )
+                if vertical:
+                    full[:, start:end, :] = binary_masks
+                else:
+                    full[:, :, start:end] = binary_masks
+                binary_masks = full
+
+            # Upsample masks to original image size
+            masks_orig = F.interpolate(
+                binary_masks.unsqueeze(0),
+                size=(orig_h, orig_w),
+                mode="bilinear",
+                align_corners=False,
+            )[0]
+            masks_orig = (masks_orig > 0.5).float()
+
+            boxes = self._masks_to_boxes(masks_orig)
+
+            all_scores.append(scores.cpu())
+            all_classes.append(labels.cpu())
+            all_boxes.append(boxes.cpu())
+            all_masks.append(masks_orig.cpu())
+
+        if not all_scores:
+            return {
+                "boxes": [],
+                "scores": [],
+                "classes": [],
+                "num_detections": 0,
+                "masks": torch.zeros((0, orig_h, orig_w), dtype=torch.float32),
+            }
+
+        boxes_t = torch.cat(all_boxes, dim=0)    # (N, 4)
+        scores_t = torch.cat(all_scores, dim=0)  # (N,)
+        labels_t = torch.cat(all_classes, dim=0) # (N,)
+        masks_t = torch.cat(all_masks, dim=0)    # (N, H, W)
+
+        from torchvision.ops import batched_nms
+
+        keep_idx = batched_nms(boxes_t.float(), scores_t.float(), labels_t, iou_thres)
+        if len(keep_idx) > max_det:
+            keep_idx = keep_idx[:max_det]
+
+        return {
+            "boxes": boxes_t[keep_idx].tolist(),
+            "scores": scores_t[keep_idx].tolist(),
+            "classes": labels_t[keep_idx].tolist(),
+            "num_detections": int(len(keep_idx)),
+            "masks": masks_t[keep_idx],
+        }
 
     def _load_weights(self, model_path: str | dict[str, Any]) -> None:
         if isinstance(model_path, (str, Path)):
@@ -389,11 +545,14 @@ class LibreEoMT(BaseModel):
             )
 
         ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "semantic":
-            raise RuntimeError(
-                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
-                "but is being loaded into a LibreEoMT semantic model."
-            )
+        if isinstance(ckpt_task, str):
+            normalized_ckpt_task = normalize_task(ckpt_task)
+            if normalized_ckpt_task != self.task:
+                raise RuntimeError(
+                    f"Checkpoint task={normalized_ckpt_task!r} does not match "
+                    f"model task={self.task!r}. Pass task={normalized_ckpt_task!r} "
+                    "when constructing LibreEoMT, or use the correct checkpoint."
+                )
 
         state = _extract_state(loaded)
         state = normalize_eomt_state_dict(state)
@@ -411,6 +570,10 @@ class LibreEoMT(BaseModel):
             ckpt_nc = self.detect_nb_classes(state)
         if ckpt_nc is not None and int(ckpt_nc) != self.nb_classes:
             self._rebuild_for_new_classes(int(ckpt_nc))
+
+        ckpt_num_queries = self.detect_num_queries(state)
+        if ckpt_num_queries is not None and ckpt_num_queries != self.num_queries:
+            self._rebuild_for_new_queries(ckpt_num_queries)
 
         result = self.model.load_state_dict(state, strict=self._strict_loading())
         missing = list(getattr(result, "missing_keys", []) or [])
@@ -459,6 +622,24 @@ class LibreEoMT(BaseModel):
         half: bool = False,
         **kwargs,
     ):
+        if self.task == "segment":
+            return super().val(
+                data=data,
+                batch=batch,
+                imgsz=imgsz,
+                conf=conf,
+                iou=iou,
+                workers=workers,
+                allow_download_scripts=allow_download_scripts,
+                device=device,
+                split=split,
+                augment=augment,
+                save_json=save_json,
+                verbose=verbose,
+                plots=plots,
+                **kwargs,
+            )
+
         conf_thres = float(conf)
         iou_thres = float(iou)
         if not 0 <= conf_thres < 1:
