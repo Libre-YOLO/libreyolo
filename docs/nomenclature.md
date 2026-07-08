@@ -30,6 +30,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
 | `yolox`     | `LibreYOLOX`    | All-caps acronym |
+| `yolo1`     | `LibreYOLO1`    | All-caps acronym + version digit (YOLOv1 / Darknet, public domain; VOC-20, fixed 448) — inference-only |
 | `yolo2`     | `LibreYOLO2`    | All-caps acronym + version digit (YOLOv2 / Darknet, public domain) — inference-only |
 | `yolo3`     | `LibreYOLO3`    | All-caps acronym + version digit (YOLOv3 / Darknet, public domain) — inference-only |
 | `yolo4`     | `LibreYOLO4`    | All-caps acronym + version digit (YOLOv4 / Darknet, public domain) — inference-only |
@@ -108,6 +109,7 @@ ships:
 | Family | Size codes |
 |---|---|
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
+| `yolo1`     | `t` (tiny-yolov1, 448), `b` (yolov1, 448) (both fixed 448; the FC head forbids dynamic shapes) |
 | `yolo2`     | `t` (yolov2-tiny, 416), `b` (yolov2, 608) |
 | `yolo3`     | `t` (yolov3-tiny, 416), `b` (yolov3, 416), `spp` (yolov3-spp, 608) |
 | `yolo4`     | `t` (yolov4-tiny, 416), `b` (yolov4, 608) |
@@ -213,6 +215,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | Family    | `SUPPORTED_TASKS`                   | Default | Notes |
 |---|---|---|---|
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
+| `yolo1`     | `("detect",)` (default)             | detect | YOLOv1 (Darknet, public domain); Pascal VOC 20 classes, fixed 448; inference-only in LibreYOLO |
 | `yolo2`     | `("detect",)` (default)             | detect | YOLOv2/YOLO9000 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo3`     | `("detect",)` (default)             | detect | YOLOv3 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo4`     | `("detect",)` (default)             | detect | YOLOv4 (Darknet, public domain); inference-only in LibreYOLO |

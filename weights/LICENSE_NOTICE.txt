@@ -20,13 +20,20 @@ project the weights were derived from. Per-family summary:
     YOLO9    (LibreYOLO9{t,s,m,c})                     MIT
              upstream: MultimediaTechLab/YOLO
 
+    YOLOv1   (LibreYOLO1{t,b})                         public domain
     YOLOv2   (LibreYOLO2{t,b})                         public domain
     YOLOv3   (LibreYOLO3{t,b,spp})                     public domain
     YOLOv4   (LibreYOLO4{t,b})                         public domain
-             upstream: pjreddie/darknet (v2/v3), AlexeyAB/darknet (v4)
+             upstream: pjreddie/darknet (v1/v2/v3), AlexeyAB/darknet (v4)
              Darknet is public domain ("YOLO LICENSE"); both the .cfg
              architectures and the pretrained .weights carry no license
              obligations. Convert with weights/convert_darknet_weights.py.
+             YOLOv1 is Pascal VOC (20 classes), fixed 448. Its pretrained
+             yolov1.weights was pulled from pjreddie.com/media/files/ (now
+             archived only on the Wayback Machine); the tiny-yolov1 .weights
+             was overwritten upstream by the YOLOv2 release and is not
+             recoverable, so LibreYOLO1t ships as code only (bring your own
+             tiny-yolov1.weights to convert).
 
     YOLOv7   (LibreYOLO7b)                             MIT
              upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)

@@ -412,6 +412,22 @@ def reset_gpu_state():
 # ---------------------------------------------------------------------------
 # Model catalog — single source of truth
 # ---------------------------------------------------------------------------
+#
+# Intentionally excluded: the Darknet-lineage museum families (yolo1, yolo2,
+# yolo3, yolo4) and yolo7. The catalog drives test_val_coco128.py, whose gate
+# (mAP50-95 >= 0.18) and auto-download route assume COCO-trained weights with a
+# public HF download. These families do not fit that gate:
+#   - yolo1 is Pascal VOC (20 classes, not COCO), so COCO-val mAP is meaningless
+#     for it; its faithfulness is proven by the byte-exact converter check and
+#     the dog/bicycle/car golden (tests/unit/test_yolo1.py::test_yolo1b_golden_*,
+#     gated on LIBREYOLO1B_CKPT). Its pretrained tiny weights are unrecoverable
+#     upstream, so there is no auto-download route to gate on at all.
+#   - yolo2/3/4/7 are inference-only conversions covered by the offline
+#     synthetic-weight unit suites (tests/unit/test_darknet_families.py,
+#     tests/unit/test_yolo1.py, tests/unit/test_yolo7.py) plus the external
+#     numeric-parity scripts (weights/parity_darknet.py, weights/parity_yolo7.py).
+# Adding any of them here would either fail the COCO gate or need a hand-staged
+# weight the gated nightly cannot provision.
 
 # (family, size, weights)
 MODEL_CATALOG = [

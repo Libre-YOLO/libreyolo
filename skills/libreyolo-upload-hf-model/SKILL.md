@@ -42,6 +42,7 @@ file = name + ".pt"
 | Family | Prefix | Example |
 |---|---|---|
 | YOLOX | `LibreYOLOX` | `LibreYOLOXs.pt` |
+| YOLO1 | `LibreYOLO1` | `LibreYOLO1b.pt` (public-domain Darknet, VOC-20; `t` weights lost upstream) |
 | YOLO2 | `LibreYOLO2` | `LibreYOLO2b.pt` (public-domain Darknet) |
 | YOLO3 | `LibreYOLO3` | `LibreYOLO3b.pt`, `LibreYOLO3spp.pt` (public-domain Darknet) |
 | YOLO4 | `LibreYOLO4` | `LibreYOLO4b.pt` (public-domain Darknet) |
@@ -86,6 +87,8 @@ Authoritative list of all valid weight filenames (matches the schema enforced by
 ```
 LibreYOLOXn.pt, LibreYOLOXt.pt, LibreYOLOXs.pt, LibreYOLOXm.pt,
 LibreYOLOXl.pt, LibreYOLOXx.pt,
+
+LibreYOLO1t.pt, LibreYOLO1b.pt,
 
 LibreYOLO2t.pt, LibreYOLO2b.pt,
 
@@ -276,8 +279,8 @@ Rules:
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
 - **No slug exists** for `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
-  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo2`, `yolo3`,
-  `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
+  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo1`, `yolo2`,
+  `yolo3`, `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
