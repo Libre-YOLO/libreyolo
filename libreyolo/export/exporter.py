@@ -295,6 +295,17 @@ class BaseExporter(ABC):
                 stacklevel=2,
             )
             dynamic = False
+        if getattr(self.model, "task", "detect") == "matte" and dynamic:
+            # BiRefNet's Swin relative-position tables are resolution-tied, so
+            # the matte contract is the fixed native square (1024). Forcing a
+            # dynamic graph would silently mis-interpolate them.
+            warnings.warn(
+                "Matte export uses a fixed-resolution runtime contract "
+                "(native 1024); forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
         half, int8 = self._validate(half, int8, data)
         self._preflight(half=half, int8=int8, data=data, **kwargs)
         data = self._resolve_calibration_data(int8, data)
@@ -308,6 +319,19 @@ class BaseExporter(ABC):
                 if _requires_onnx_opset17(self.model._get_model_name())
                 else 13
             )
+
+        # BiRefNet's decoder uses torchvision deform_conv2d, which maps to the
+        # standard ONNX ``DeformConv`` op (opset 19+). Force a compatible opset
+        # and register the symbolic before tracing.
+        if getattr(self.model, "task", "detect") == "matte":
+            from ..models.birefnet.export import (
+                MIN_OPSET as _MATTE_MIN_OPSET,
+                register_deform_conv2d_onnx_symbolic,
+            )
+
+            if opset < _MATTE_MIN_OPSET:
+                opset = _MATTE_MIN_OPSET
+            register_deform_conv2d_onnx_symbolic(_MATTE_MIN_OPSET)
 
         imgsz, device, output_path = self._resolve_params(
             output_path,

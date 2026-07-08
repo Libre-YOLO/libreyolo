@@ -201,6 +201,7 @@ Compact rows — clone these directly for the newer archetypes:
 | **YOLO9-P2** (`models/yolo9_p2/`) | YOLO-grid (child of YOLO9) | detect | production | stride-4 P2 head for small objects; sizes t/s; the `WEIGHT_VARIANTS = ("visdrone",)` precedent for dataset-variant weight suffixes |
 | **Darknet lineage: YOLO2/3/4** (`models/darknet/` + thin `models/yolo{2,3,4}/`) | anchor-grid CNN | detect | inference-only | one shared `DarknetFamily` (cfg parser + blocks + anchor decode) serves all three; public-domain upstream; converter `weights/convert_darknet_weights.py`, parity via `weights/parity_darknet.py` |
 | **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | inference-only | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py` |
+| **BiRefNet** (`models/birefnet/`) | Swin v1 + bilateral-reference decoder | matte | inference-only (v1) | MIT upstream; `matte` task (ADR 0010); `MatteValidator` (MAE + S-measure); **family-local Swin v1** (original lineage, NOT the timm `models/swin/` tower, see NOTICE); ASPP deformable conv exports to ONNX `DeformConv` (opset 19) via a registered symbolic; converter `weights/convert_birefnet_weights.py`, parity via `weights/parity_birefnet.py` (max_abs_diff == 0) |
 
 ### 4.1 Sibling factory tiers (not `BaseModel` families)
 

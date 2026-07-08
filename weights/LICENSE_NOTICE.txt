@@ -60,6 +60,18 @@ project the weights were derived from. Per-family summary:
              explicit standalone weights license. Convert only weights that
              you have the right to use and redistribute.
 
+    BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
+             upstream: ZhengPeng7/BiRefNet (code MIT)
+             l (general): Hugging Face weights tagged MIT -> rehosted under
+               the LibreYOLO org (LibreYOLO/LibreBiRefNetl-matte).
+             t (lite): the BiRefNet_lite HF repo shows an MIT badge in its
+               model card but has no explicit license metadata (no YAML
+               license field, no LICENSE file). LibreYOLO does NOT rehost the
+               lite weights pending an explicit license confirmation; the
+               converter and a ready-to-run upload script are provided so the
+               maintainer can host them once the tag is confirmed. Users may
+               still convert BiRefNet_lite locally at their own discretion.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the

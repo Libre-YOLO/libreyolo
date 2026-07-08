@@ -60,6 +60,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
+| `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 
 Casing rules observed in the table:
 
@@ -137,6 +138,7 @@ ships:
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
 | `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
+| `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
 
 Promptable SAM tier size aliases:
 
@@ -177,6 +179,7 @@ From `libreyolo/tasks.py`:
 | `point`       | `-point` |
 | `depth`       | `-depth` |
 | `restore`     | `-restore` |
+| `matte`       | `-matte` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -203,6 +206,14 @@ denoising. Models expose `Results.restored`, a uint8 RGB `(H, W, 3)` image on
 the original image canvas. Canonical restore filenames must carry the
 `-restore` suffix; task aliases such as `deblur`, `denoise`, and `restoration`
 resolve to `restore` at the API boundary.
+
+`matte` is the task for background removal / dichotomous image segmentation.
+Models expose `Results.matte`, a float `(H, W)` soft alpha map in `[0, 1]` on
+the original image canvas (`1` = foreground, `0` = background), plus
+`results.cutout()` (RGBA) and a transparent-PNG `results.save()`. Canonical
+matte filenames must carry the `-matte` suffix; task aliases such as `matting`,
+`background-removal`, `rembg`, and `dis` resolve to `matte` at the API boundary.
+See ADR 0010 for the full contract.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -238,6 +249,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
+| `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -311,6 +323,10 @@ LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 # nafnet — NAFNet restoration (restore-only)
 LibreNAFNets-restore.pt
 LibreNAFNetl-restore.pt
+
+# birefnet — BiRefNet background removal (matte-only)
+LibreBiRefNett-matte.pt          # BiRefNet_lite (Swin-T tier)
+LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)

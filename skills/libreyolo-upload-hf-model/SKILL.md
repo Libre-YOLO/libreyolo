@@ -60,6 +60,7 @@ file = name + ".pt"
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
+| BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
@@ -160,6 +161,8 @@ LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
 
+LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
+
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
 LibreEoMTl-sem.pt,
@@ -174,7 +177,11 @@ LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
 
-License caveats inside the list: DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
+License caveats inside the list: BiRefNet `l` (general) weights are MIT-tagged
+and hosted; BiRefNet `t` (lite) weights have no explicit license tag on the
+upstream HF repo (MIT badge in the card body only), so hosting the lite weights
+is a maintainer decision, not a default (`weights/upload_birefnet_hf.py` guards
+it behind `--confirm-lite-license`). DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
 (maintainer decision to host); `-visdrone` variants are a research preview
 under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
 the license stated loudly on the card); FOMO weights have no cleared hosting
