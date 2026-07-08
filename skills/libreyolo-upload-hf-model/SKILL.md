@@ -65,7 +65,7 @@ file = name + ".pt"
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
-| EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
+| EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
 | FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
@@ -177,6 +177,11 @@ LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
 LibreEoMTl-sem.pt,
+
+LibreEoMTl-seg.pt, LibreEoMTl-seg-1280.pt,
+
+LibreEoMTs-panoptic.pt, LibreEoMTb-panoptic.pt,
+LibreEoMTl-panoptic.pt,
 
 LibreDINOv2n.pt, LibreDINOv2s.pt, LibreDINOv2m.pt, LibreDINOv2l.pt,
 LibreDINOv2n-cls.pt, LibreDINOv2s-cls.pt, LibreDINOv2m-cls.pt,
