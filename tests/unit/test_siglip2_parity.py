@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 import torch
-import torch.nn.functional as F
 
 pytest.importorskip("transformers")
 pytest.importorskip("sentencepiece")
@@ -74,7 +73,7 @@ def test_forward_parity(size):
     model = LibreSigLIP2(str(ckpt), size=size, device="cpu")
 
     labels = ["a forklift", "an empty aisle", "a spill", "a cat"]
-    ids = model.tokenizer([f"a photo of a {l}." for l in labels])
+    ids = model.tokenizer([f"a photo of a {lbl}." for lbl in labels])
     import numpy as np
     from PIL import Image
 
