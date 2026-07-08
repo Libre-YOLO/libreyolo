@@ -116,7 +116,11 @@ def decode_detection(
     anchor decoders so the shared NMS + letterbox-inverse path is reused.
     """
     b = output.shape[0]
-    assert b == 1, "darknet detection decode expects batch size 1"
+    if b != 1:
+        raise ValueError(
+            f"darknet detection decode expects batch size 1, got {b}. "
+            "This head does not support batched inference."
+        )
     s = spec.side
     n = spec.boxes_per_cell
     nc = spec.num_classes

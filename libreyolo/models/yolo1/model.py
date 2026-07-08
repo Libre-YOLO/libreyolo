@@ -59,6 +59,10 @@ VOC_NAMES: tuple[str, ...] = (
 
 class LibreYOLO1(DarknetFamily):
     FAMILY = "yolo1"
+    # The fully-connected head decodes a single fixed-448 image at a time; the
+    # decoder rejects batch > 1. Force the inference runner to loop per image
+    # for list inputs instead of attempting a real batch.
+    SUPPORTS_BATCHED_PREDICT = False
     FILENAME_PREFIX = "LibreYOLO1"
     INPUT_SIZES = {"t": 448, "b": 448}
 

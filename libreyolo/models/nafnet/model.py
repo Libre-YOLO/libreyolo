@@ -173,7 +173,10 @@ class LibreNAFNet(BaseModel):
                     path = Path(cls._resolve_weights_path(str(model_path)))
                 if not path.exists():
                     return None
-                loaded = torch.load(str(path), map_location="cpu", weights_only=False)
+                # Safe peek: weights_only=True forbids pickle code execution.
+                # This only needs the tensor state dict to infer the block
+                # layout; anything unloadable falls back to the default config.
+                loaded = torch.load(str(path), map_location="cpu", weights_only=True)
                 state_dict = loaded.get("model", loaded) if isinstance(loaded, dict) else None
             else:
                 return None
