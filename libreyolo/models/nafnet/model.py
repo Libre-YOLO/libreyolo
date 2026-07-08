@@ -11,6 +11,7 @@ import torch.nn as nn
 
 from ...postprocess.nafnet import postprocess as _nafnet_postprocess
 from ...utils.image_loader import ImageInput
+from ...utils.serialization import load_untrusted_torch_file
 from ..base import BaseModel
 from .config import NAFNetConfig
 from .nn import NAFNetLocal
@@ -176,7 +177,9 @@ class LibreNAFNet(BaseModel):
                 # Safe peek: weights_only=True forbids pickle code execution.
                 # This only needs the tensor state dict to infer the block
                 # layout; anything unloadable falls back to the default config.
-                loaded = torch.load(str(path), map_location="cpu", weights_only=True)
+                loaded = load_untrusted_torch_file(
+                    str(path), map_location="cpu", context="NAFNet arch peek"
+                )
                 state_dict = loaded.get("model", loaded) if isinstance(loaded, dict) else None
             else:
                 return None
