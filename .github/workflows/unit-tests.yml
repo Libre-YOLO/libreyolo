@@ -2,9 +2,9 @@ name: Unit tests
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, release]
   pull_request:
-    branches: [dev]
+    branches: [dev, release]
   workflow_dispatch:
 
 permissions:

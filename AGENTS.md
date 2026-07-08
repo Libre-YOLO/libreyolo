@@ -39,7 +39,8 @@
   issue, the `libreyolo-report-issue` skill already does this. Pre-filling the
   handoff URL is expected; opening the PR itself (e.g. `gh pr create`) is not.
 - When possible, work in git worktrees
-- The default branch is dev
+- `release` is the default branch that visitors land on and clone; `dev` is the
+  integration branch where all development lands before it is promoted to a release.
 
 ## Reporting problems upstream
 
@@ -95,7 +96,9 @@
   evidence.
 
 ## Pull Request (PR) policy
-- The primary development branch is "dev"; "release" is for releases. Generally open PRs to dev, not release.
+- All development PRs target `dev`, never `release`. This holds regardless of
+  which branch GitHub shows as the default: `release` is the public default
+  branch, but it only receives curated release merges, not feature PRs.
 - Before reviewing or changing PRs, read the relevant files under /docs,
   especially documented schemas, contracts, and architecture decisions.
 - Prefer one PR per problem, or per small group of tightly related problems.
