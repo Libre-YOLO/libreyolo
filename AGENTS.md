@@ -1,5 +1,31 @@
 # Agent Instructions
 
+## Licensing policy (read this first)
+
+- This is the most important policy in this repository. LibreYOLO's entire
+  value is being genuinely MIT; one license violation endangers the project.
+- LibreYOLO faithfully respects open-source licenses.
+- Agents must not copy, adapt, paraphrase, or derive code from any third-party
+  project unless that project is explicitly licensed under MIT, Apache-2.0,
+  BSD, or a similarly permissive license compatible with LibreYOLO's licensing
+  requirements. Unknown or missing license means incompatible.
+- Never rewrite, rename, or restructure incompatibly-licensed code to obscure
+  its origin. A GPL function with new variable names is still a derivative
+  work. The only acceptable remedies are re-derivation from a genuinely clean
+  source with documented provenance, or removal. That choice belongs to the
+  maintainer: surface it, never pick silently.
+- If an agent may have been exposed to, influenced by, or contaminated by code
+  under GPL, AGPL, LGPL, proprietary, unknown, or otherwise incompatible terms,
+  the agent must immediately stop work on the affected area, flag the
+  contamination risk to the developer, and avoid contributing the affected
+  code. Flagging is never the wrong move; quiet contribution always is.
+- Ported or adapted code must state its upstream: repository, commit, and
+  license, in the PR description and the notice files.
+- See `skills/libreyolo-license-audit/` for the audit discipline and the
+  notice surfaces.
+
+## Agent conduct
+
 - Agents must not open GitHub issues.
 - Agents must not open pull requests.
 - Agents must not post issue comments or PR comments unless a human explicitly
@@ -53,17 +79,6 @@
   documentation; depth belongs in `/docs` or on the website.
 - Style: no em dashes, no decorative or AI-flavored characters, no fluff.
 - The detailed editing contract lives in `skills/libreyolo-update-readme/`.
-
-## Licensing policy
-
-- LibreYOLO faithfully respects open-source licenses.
-- Agents must not copy, adapt, paraphrase, or derive code from any third-party
-  project unless that project is explicitly licensed under MIT or Apache-2.0
-  and is compatible with LibreYOLO's licensing requirements.
-- If an agent may have been exposed to, influenced by, or contaminated by code
-  under GPL, AGPL, LGPL, proprietary, unknown, or otherwise incompatible terms,
-  the agent must immediately flag the contamination risk to the developer and
-  avoid contributing the affected code.
 
 ## Review guidelines
 
