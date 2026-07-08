@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet", "realesrgan"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",
@@ -287,7 +287,14 @@ class BaseExporter(ABC):
                 "Add a depth-aware export/runtime contract (dense float "
                 "output plus backend parsing) before exporting depth models."
             )
-        if getattr(self.model, "task", "detect") == "restore" and dynamic:
+        if (
+            getattr(self.model, "task", "detect") == "restore"
+            and dynamic
+            and self.model._get_model_name() != "realesrgan"
+        ):
+            # Real-ESRGAN generators are fully convolutional (conv + nearest
+            # interpolate + pixel shuffle/unshuffle) and export with dynamic H/W;
+            # other restore families (NAFNet) keep the fixed-resolution v1 contract.
             warnings.warn(
                 "Restore export uses a fixed-resolution runtime contract in "
                 "v1; forcing dynamic=False.",
