@@ -111,6 +111,33 @@ class TestEoMTMetadata:
         assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=80)) == "segment"
         assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=150)) == "semantic"
 
+    def test_detect_num_queries_and_image_size(self):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        # 100 queries, 512px (32*32 patches * 16 px each)
+        state_512 = {
+            "query.weight": torch.zeros(100, 256),
+            "embeddings.position_embeddings.weight": torch.zeros(1024, 1024),
+        }
+        assert LibreEoMT.detect_num_queries(state_512) == 100
+        assert LibreEoMT.detect_image_size(state_512) == 512
+
+        # 200 queries, 640px (40*40 patches)
+        state_640 = {
+            "query.weight": torch.zeros(200, 768),
+            "embeddings.position_embeddings.weight": torch.zeros(1600, 768),
+        }
+        assert LibreEoMT.detect_num_queries(state_640) == 200
+        assert LibreEoMT.detect_image_size(state_640) == 640
+
+        # Missing keys → None
+        assert LibreEoMT.detect_num_queries({}) is None
+        assert LibreEoMT.detect_image_size({}) is None
+
+        # Non-square position embeddings → None
+        state_bad = {"embeddings.position_embeddings.weight": torch.zeros(1023, 768)}
+        assert LibreEoMT.detect_image_size(state_bad) is None
+
     def test_can_load_handles_common_prefixes(self):
         from libreyolo.models.eomt.model import LibreEoMT
 
@@ -257,7 +284,7 @@ class _FakeEoMTNetSeg(nn.Module):
             raise ValueError(f"test fake: unsupported size {config!r}")
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
-        self.num_queries = 10  # fixed small count for tests
+        self.num_queries = int(num_queries)
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         b, _, h, w = x.shape
@@ -334,6 +361,38 @@ class TestEoMTSegment:
         assert det["masks"].shape[0] == det["num_detections"]
         assert det["masks"].shape[1] == h
         assert det["masks"].shape[2] == w
+
+    def test_single_patch_uses_topk_not_nms(self, fake_eomt_seg_net):
+        """Single-patch EoMT must use top-k (DETR axiom), not NMS.
+        Two queries with high overlap should NOT be suppressed by NMS."""
+        import torch
+
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="segment", nb_classes=3, device="cpu"
+        )
+        h, w, num_queries = 64, 64, 4
+        # Two queries both confident on different classes, with full-image masks
+        # that would have IoU=1.0 — NMS at 0.5 would suppress one; top-k keeps both.
+        # Remaining queries have uniform logits → score ≈0.25 < conf_thres=0.5.
+        class_logits = torch.full((1, num_queries, 4), -10.0)
+        class_logits[0, 0, 1] = 10.0   # query 0 → class 1, score ≈1.0
+        class_logits[0, 1, 2] = 10.0   # query 1 → class 2, score ≈1.0
+        # queries 2 and 3: uniform → score ≈0.25, filtered by conf_thres=0.5
+        mask_logits = torch.full((1, num_queries, h, w), 5.0)  # all masks fill the image
+
+        output = {
+            "class_queries_logits": class_logits,
+            "masks_queries_logits": mask_logits,
+        }
+        # num_patches=1 (single patch) → top-k: both detections survive
+        det = model._postprocess_segment(output, conf_thres=0.5, iou_thres=0.5,
+                                          original_size=(w, h))
+        assert det["num_detections"] == 2, (
+            "Single-patch segment must use top-k (DETR axiom): "
+            "two overlapping queries should both survive, NMS would drop one"
+        )
 
     def test_segment_checkpoint_round_trip(self, fake_eomt_seg_net, tmp_path):
         from libreyolo import LibreYOLO
@@ -540,6 +599,28 @@ def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
     assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
     assert "speed/preprocess_ms" in metrics
     assert (tmp_path / "val_out" / "config.yaml").exists()
+
+
+def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
+    """val() on a segment model delegates to BaseModel.val() without hitting
+    the semantic-specific code path (which would reject COCO data)."""
+    from unittest.mock import MagicMock
+
+    from libreyolo.models.eomt.model import LibreEoMT
+    from libreyolo.models.base.model import BaseModel
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+    )
+
+    sentinel = MagicMock(return_value={"metrics/mAP50": 0.0})
+    monkeypatch.setattr(BaseModel, "val", sentinel)
+
+    model.val(data="coco.yaml", imgsz=640)
+
+    sentinel.assert_called_once()
+    _, kwargs = sentinel.call_args
+    assert kwargs.get("data") == "coco.yaml"
 
 
 def test_val_rejects_unknown_kwargs(fake_eomt_net):

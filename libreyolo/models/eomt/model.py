@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
+from torchvision.ops import batched_nms
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.v2 import functional as TVF
 
@@ -115,6 +116,8 @@ class LibreEoMT(BaseModel):
         if not cls.can_load(state_dict):
             return None
         nc = cls.detect_nb_classes(state_dict)
+        # nc==80 is the COCO instance checkpoint convention; all other class
+        # counts (ADE20K 150, panoptic 133, custom) default to semantic.
         if nc is not None and nc == 80:
             return "segment"
         return "semantic"
@@ -325,7 +328,7 @@ class LibreEoMT(BaseModel):
         if effective_res != self.input_size:
             raise ValueError(
                 f"LibreEoMT requires imgsz={self.input_size}; got imgsz="
-                f"{effective_res}. The HF EoMT-L checkpoint uses fixed "
+                f"{effective_res}. The EoMT checkpoint uses fixed "
                 "position embeddings."
             )
         img = ImageLoader.load(image, color_format=color_format)
@@ -498,11 +501,17 @@ class LibreEoMT(BaseModel):
         labels_t = torch.cat(all_classes, dim=0) # (N,)
         masks_t = torch.cat(all_masks, dim=0)    # (N, H, W)
 
-        from torchvision.ops import batched_nms
-
-        keep_idx = batched_nms(boxes_t.float(), scores_t.float(), labels_t, iou_thres)
-        if len(keep_idx) > max_det:
-            keep_idx = keep_idx[:max_det]
+        if num_patches > 1:
+            # Multi-patch: NMS merges predictions of the same object detected
+            # in overlapping patches (cross-patch duplicates are expected).
+            keep_idx = batched_nms(boxes_t.float(), scores_t.float(), labels_t, iou_thres)
+            if len(keep_idx) > max_det:
+                keep_idx = keep_idx[:max_det]
+        else:
+            # Single-patch: EoMT is DETR-style (queries are uniquely assigned by
+            # bipartite matching); applying NMS can suppress valid overlapping
+            # detections. Use top-k by confidence score instead.
+            keep_idx = scores_t.argsort(descending=True)[:max_det]
 
         return {
             "boxes": boxes_t[keep_idx].tolist(),
@@ -721,7 +730,7 @@ class LibreEoMT(BaseModel):
         if effective_imgsz != self.input_size:
             raise ValueError(
                 f"LibreEoMT validation requires imgsz={self.input_size}; got "
-                f"imgsz={effective_imgsz}. The HF EoMT-L checkpoint uses fixed "
+                f"imgsz={effective_imgsz}. The EoMT checkpoint uses fixed "
                 "position embeddings."
             )
 
