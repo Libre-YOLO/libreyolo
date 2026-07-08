@@ -35,6 +35,7 @@ _APPROVED_HF_REPOS = {
     COCO_PANOPTIC_HF_REPO_L,
 }
 _NC_PANOPTIC = 133  # 80 things + 53 stuff
+_NC_THINGS = 80  # COCO panoptic is contiguous: things 0-79, stuff 80-132
 _IMGSZ_SEMANTIC = 512
 _NC_SEMANTIC = 150
 _IMGSZ_SEGMENT = 640
@@ -312,8 +313,7 @@ def convert_weights(
             )
         names = _COCO_PANOPTIC_NAMES if nc == _NC_PANOPTIC else {i: f"class_{i}" for i in range(nc)}
         effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEGMENT)
-        # LibreYOLO has no panoptic task; store as segment so the model loads correctly.
-        ckpt_task = "segment"
+        ckpt_task = "panoptic"
     else:
         if nc != 80 and not allow_unverified_source:
             raise ValueError(
@@ -324,6 +324,14 @@ def convert_weights(
         effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEGMENT)
         ckpt_task = "segment"
 
+    # Panoptic label sets need their thing/stuff split carried as category
+    # metadata: the panoptic merge fuses stuff categories into one segment each
+    # and cannot derive that from the weights. COCO panoptic is contiguous with
+    # things first (0-79), stuff after (80-132).
+    extra_metadata: dict[str, Any] = {}
+    if ckpt_task == "panoptic":
+        extra_metadata["thing_class_ids"] = list(range(_NC_THINGS))
+
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
         model_family="eomt",
@@ -332,6 +340,7 @@ def convert_weights(
         nc=nc,
         names=names,
         imgsz=effective_imgsz,
+        **extra_metadata,
     )
     errors = validate_checkpoint_metadata(checkpoint, strict=False)
     if errors:
@@ -359,7 +368,7 @@ def verify_conversion(converted_path: str) -> bool:
     if not isinstance(out, dict):
         print(f"  forward pass OK - output shape: {tuple(out.shape)}")
         return True
-    if model.task == "segment":
+    if model.task in ("segment", "panoptic"):
         class_logits = out.get("class_queries_logits")
         mask_logits = out.get("masks_queries_logits")
         print(
@@ -385,8 +394,9 @@ if __name__ == "__main__":
             f"  panoptic  s-640 : {COCO_PANOPTIC_HF_REPO_S}\n"
             f"  panoptic  b-640 : {COCO_PANOPTIC_HF_REPO_B}\n"
             f"  panoptic  l-640 : {COCO_PANOPTIC_HF_REPO_L}\n\n"
-            "panoptic task: keeps all 133 COCO classes (80 things + 53 stuff); stored as task=segment in metadata.\n"
-            "segment + --things-only: slices to 80 COCO things only."
+            "panoptic task: keeps all 133 COCO classes (80 things + 53 stuff) and stores task=panoptic\n"
+            "  with the thing/stuff split in thing_class_ids metadata.\n"
+            "segment + --things-only: slices to 80 COCO things only (a lossy instance-seg derivation)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

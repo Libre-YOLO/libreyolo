@@ -762,6 +762,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support semantic segmentation yet. "
                 "Use augment=False for semantic models."
             )
+        if getattr(self, "task", "detect") == "panoptic":
+            raise ValueError(
+                "Test-time augmentation does not support panoptic segmentation yet. "
+                "Use augment=False for panoptic models."
+            )
         if getattr(self, "task", "detect") == "depth":
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
@@ -1050,6 +1055,11 @@ class BaseModel(ABC):
             raise NotImplementedError(
                 "Tracking does not support semantic segmentation yet. "
                 "Use predict() for semantic models."
+            )
+        if task == "panoptic":
+            raise NotImplementedError(
+                "Tracking does not support panoptic segmentation yet. "
+                "Use predict() for panoptic models."
             )
         if task == "restore":
             raise NotImplementedError(

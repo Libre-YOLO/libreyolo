@@ -72,13 +72,14 @@ class TestEoMTMetadata:
 
         assert LibreEoMT.FAMILY == "eomt"
         assert LibreEoMT.FILENAME_PREFIX == "LibreEoMT"
-        assert LibreEoMT.SUPPORTED_TASKS == ("semantic", "segment")
+        assert LibreEoMT.SUPPORTED_TASKS == ("semantic", "segment", "panoptic")
         assert LibreEoMT.DEFAULT_TASK == "semantic"
         assert LibreEoMT.REQUIRE_TASK_SUFFIX
         assert LibreEoMT.INPUT_SIZES == {"s": 512, "b": 512, "l": 512}
         assert LibreEoMT.TASK_INPUT_SIZES == {
             "semantic": {"s": 512, "b": 512, "l": 512},
             "segment": {"s": 640, "b": 640, "l": 640},
+            "panoptic": {"s": 640, "b": 640, "l": 640},
         }
         assert LibreEoMT.semantic_resize_mode == "split"
         assert LibreEoMT.semantic_imgsz_divisor == 16
@@ -496,7 +497,7 @@ class TestEoMTSizes:
         assert model.input_size == 640
 
     def test_auto_task_from_panoptic_filename(self, fake_eomt_seg_net, tmp_path):
-        """-panoptic.pt files auto-infer task=segment even though suffix is unknown."""
+        """-panoptic.pt is a first-class panoptic checkpoint, not segment in disguise."""
         from libreyolo.models.eomt.model import LibreEoMT
         from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
@@ -505,18 +506,23 @@ class TestEoMTSizes:
             _synthetic_eomt_state(nc=133, hidden=768),
             model_family="eomt",
             size="b",
-            task="segment",
+            task="panoptic",
             nc=133,
             names=names,
             imgsz=640,
+            thing_class_ids=list(range(80)),
         )
         ckpt_path = tmp_path / "LibreEoMTb-panoptic.pt"
         torch.save(ckpt, str(ckpt_path))
 
         model = LibreEoMT(str(ckpt_path), device="cpu")
         assert model.size == "b"
-        assert model.task == "segment"
+        assert model.task == "panoptic"
         assert model.nb_classes == 133
+        # The thing/stuff split rides along as category metadata so the panoptic
+        # merge knows which categories to fuse.
+        assert model.thing_class_ids == list(range(80))
+        assert model._stuff_class_ids() == set(range(80, 133))
 
     def test_converter_large_1280_segment(self, monkeypatch, tmp_path):
         converter = _load_converter_module()
@@ -813,8 +819,10 @@ def test_converter_panoptic_task(monkeypatch, tmp_path):
     )
 
     assert out_path.exists()
-    # Stored as segment in metadata (LibreYOLO has no panoptic task).
-    assert ckpt["task"] == "segment"
+    # Honest metadata: panoptic checkpoints carry task="panoptic" and the
+    # thing/stuff split, not a "segment" label in disguise.
+    assert ckpt["task"] == "panoptic"
+    assert ckpt["thing_class_ids"] == list(range(80))
     assert ckpt["nc"] == 133
     assert ckpt["size"] == "s"
     assert ckpt["imgsz"] == 640
@@ -879,3 +887,173 @@ def test_builtin_ade20k_config_is_complete():
     assert config["names"][149] == "flag"
     assert config["label_mapping"][1] == 0
     assert config["label_mapping"][150] == 149
+
+
+# ---------------------------------------------------------------------------
+# Panoptic merge (Mask2Former inference recipe)
+# ---------------------------------------------------------------------------
+
+
+def _panoptic_stub(nc: int, thing_class_ids):
+    """Minimal stand-in exposing exactly what _postprocess_panoptic touches."""
+    from types import SimpleNamespace
+
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = SimpleNamespace(
+        PANOPTIC_SCORE_THRESHOLD=LibreEoMT.PANOPTIC_SCORE_THRESHOLD,
+        PANOPTIC_MASK_THRESHOLD=LibreEoMT.PANOPTIC_MASK_THRESHOLD,
+        PANOPTIC_OVERLAP_THRESHOLD=LibreEoMT.PANOPTIC_OVERLAP_THRESHOLD,
+        nb_classes=nc,
+        thing_class_ids=thing_class_ids,
+        _last_eomt_patch_offsets=None,
+        _last_eomt_resized_shape=None,
+        _last_eomt_content_size=None,  # unpadded already
+    )
+    stub._stuff_class_ids = lambda: LibreEoMT._stuff_class_ids(stub)
+    stub._unpad_and_resize_mask_logits = (
+        lambda ml, osz: LibreEoMT._unpad_and_resize_mask_logits(stub, ml, osz)
+    )
+    return stub
+
+
+def _quadrant_panoptic_output(nc: int = 4):
+    """4x4 canvas, 4 disjoint 2x2 quadrant queries + a null + a low-conf query.
+
+    q0/q1 -> class 0 (thing) in separate quadrants  -> two distinct segments
+    q2/q3 -> class 2 (stuff) in separate quadrants  -> fused into one segment
+    q4    -> argmax is the null class               -> dropped
+    q5    -> uniform logits (score 0.2)             -> dropped by conf_thres
+    """
+    quadrants = [
+        (slice(0, 2), slice(0, 2)),
+        (slice(0, 2), slice(2, 4)),
+        (slice(2, 4), slice(0, 2)),
+        (slice(2, 4), slice(2, 4)),
+    ]
+    classes = [0, 0, 2, 2]
+
+    class_logits = torch.full((1, 6, nc + 1), -10.0)
+    for q, c in enumerate(classes):
+        class_logits[0, q, c] = 5.0
+    class_logits[0, 4, nc] = 5.0        # null/no-object wins
+    class_logits[0, 5, :] = 0.0         # uniform -> score 1/(nc+1) = 0.2
+
+    mask_logits = torch.full((1, 6, 4, 4), -4.0)  # sigmoid ~0.018 outside
+    for q, (rows, cols) in enumerate(quadrants):
+        mask_logits[0, q, rows, cols] = 4.0       # sigmoid ~0.982 inside
+    mask_logits[0, 4] = 4.0
+    mask_logits[0, 5] = 4.0
+    return {"class_queries_logits": class_logits, "masks_queries_logits": mask_logits}
+
+
+def test_panoptic_merge_fuses_stuff_and_separates_things():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    out = LibreEoMT._postprocess_panoptic(
+        stub, _quadrant_panoptic_output(nc=4), 0.5, (4, 4)
+    )
+    seg, info = out["panoptic"], out["segments_info"]
+
+    assert seg.shape == (4, 4)
+    # Two thing segments (same category, separate instances) + one fused stuff.
+    assert len(info) == 3
+    assert sorted(e["category_id"] for e in info) == [0, 0, 2]
+    assert [e["isthing"] for e in info if e["category_id"] == 0] == [True, True]
+    assert [e["isthing"] for e in info if e["category_id"] == 2] == [False]
+
+    ids = {e["id"] for e in info}
+    assert 0 not in ids                       # 0 is reserved for void
+    assert len(ids) == 3                      # one entry per distinct segment id
+    assert set(seg.unique().tolist()) == ids  # every pixel labeled, no void left
+
+    # The two stuff quadrants share one segment id (fused).
+    stuff_id = next(e["id"] for e in info if e["category_id"] == 2)
+    assert int((seg == stuff_id).sum()) == 8  # both bottom quadrants
+    # Things stay separate: 4 pixels each.
+    for e in (e for e in info if e["category_id"] == 0):
+        assert int((seg == e["id"]).sum()) == 4
+
+
+def test_panoptic_merge_is_non_overlapping_and_drops_null_queries():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    out = LibreEoMT._postprocess_panoptic(
+        stub, _quadrant_panoptic_output(nc=4), 0.5, (4, 4)
+    )
+    seg = out["panoptic"]
+    # Every pixel carries exactly one id: a dense map trivially cannot overlap,
+    # so the real assertion is that the null/low-conf queries never claimed one.
+    assert int((seg == 0).sum()) == 0
+    assert seg.dtype == torch.int32
+    # 6 queries in, at most 4 could survive; null + low-conf were removed.
+    assert len(out["segments_info"]) == 3
+
+
+def test_panoptic_merge_without_thing_class_ids_fuses_nothing():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=None)
+    out = LibreEoMT._postprocess_panoptic(
+        stub, _quadrant_panoptic_output(nc=4), 0.5, (4, 4)
+    )
+    # No category metadata -> nothing is stuff -> the two class-2 quadrants stay
+    # separate segments instead of being silently fused.
+    assert len(out["segments_info"]) == 4
+    assert all(e["isthing"] for e in out["segments_info"])
+
+
+def test_panoptic_merge_empty_when_all_queries_are_null():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    class_logits = torch.full((1, 3, 5), -10.0)
+    class_logits[0, :, 4] = 5.0  # every query is no-object
+    output = {
+        "class_queries_logits": class_logits,
+        "masks_queries_logits": torch.full((1, 3, 4, 4), 4.0),
+    }
+    out = LibreEoMT._postprocess_panoptic(stub, output, 0.5, (4, 4))
+    assert out["segments_info"] == []
+    assert int(out["panoptic"].sum()) == 0
+
+
+def test_coco_content_size_matches_upstream_aspect_ratio_rule():
+    """COCO checkpoints resize the longest edge to 640, preserving aspect ratio.
+
+    Expected values captured from the upstream EoMT image processor's
+    get_size_with_aspect_ratio(size, shortest_edge=640, longest_edge=640).
+    """
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    cases = {
+        (576, 768): (480, 640),   # landscape
+        (1194, 1536): (498, 640),  # landscape, rounds to 498
+        (852, 1280): (426, 640),   # landscape
+        (640, 640): (640, 640),    # already square
+    }
+    for (oh, ow), expected in cases.items():
+        assert LibreEoMT._coco_content_size(oh, ow, 640) == expected
+
+
+def test_preprocess_pads_for_coco_tasks_and_splits_for_semantic(fake_eomt_seg_net):
+    """Only the ADE20K semantic checkpoint uses sliding-window patches.
+
+    Splitting a COCO image would hand the same object to two patches as two
+    independent queries, which the panoptic overlap check then discards.
+    """
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    img = Image.new("RGB", (768, 576), color=(120, 30, 200))
+
+    seg = LibreEoMT(model_path=None, size="l", task="segment", nb_classes=80, device="cpu")
+    tensor, _, orig_size, _ = seg._preprocess(img, "rgb")
+    assert tuple(tensor.shape) == (1, 3, 640, 640)   # single padded image
+    assert seg._last_eomt_patch_offsets is None
+    assert seg._last_eomt_content_size == (480, 640)
+    assert orig_size == (768, 576)
+    # Padding is zeros in [0, 1] space (the net normalizes afterwards).
+    assert float(tensor[0, :, 500:, :].abs().max()) == 0.0
+    assert float(tensor[0, :, :480, :640].abs().max()) > 0.0

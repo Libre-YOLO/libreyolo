@@ -46,14 +46,23 @@ class LibreEoMT(BaseModel):
     FILENAME_PREFIX: ClassVar[str] = "LibreEoMT"
     WEIGHT_EXT: ClassVar[str] = ".pt"
 
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "segment")
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "segment", "panoptic")
     DEFAULT_TASK: ClassVar[str] = "semantic"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 512, "b": 512, "l": 512}
     TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
         "semantic": {"s": 512, "b": 512, "l": 512},
         "segment": {"s": 640, "b": 640, "l": 640},
+        "panoptic": {"s": 640, "b": 640, "l": 640},
     }
+
+    # Panoptic merge constants (Mask2Former/MaskFormer inference recipe, and the
+    # upstream EoMT post-process defaults). A query's binarized mask must survive
+    # the per-pixel argmax with at least PANOPTIC_OVERLAP_THRESHOLD of its own
+    # area, else it is dropped as fully occluded.
+    PANOPTIC_SCORE_THRESHOLD: ClassVar[float] = 0.8
+    PANOPTIC_MASK_THRESHOLD: ClassVar[float] = 0.5
+    PANOPTIC_OVERLAP_THRESHOLD: ClassVar[float] = 0.8
 
     WEIGHT_VARIANTS: ClassVar[Tuple[str, ...]] = ("1280",)
 
@@ -63,46 +72,6 @@ class LibreEoMT(BaseModel):
     _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {384: "s", 768: "b", 1024: "l"}
     _UPSTREAM_URL: ClassVar[str] = "https://github.com/tue-mps/eomt"
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
-
-    # -panoptic is a storage convention for COCO panoptic checkpoints: they live
-    # under a distinct HF repo name but are loaded with task="segment".  The base
-    # class filename regex only covers canonical task suffixes (-sem / -seg), so
-    # panoptic files need three targeted overrides below.
-    _PANOPTIC_RE: ClassVar[Any] = None  # lazily compiled
-
-    @classmethod
-    def _panoptic_re(cls):
-        import re as _re
-        if cls._PANOPTIC_RE is None:
-            cls._PANOPTIC_RE = _re.compile(
-                rf"{cls.FILENAME_PREFIX.lower()}(?P<size>s|b|l)-panoptic"
-                + _re.escape(cls.WEIGHT_EXT)
-            )
-        return cls._PANOPTIC_RE
-
-    @classmethod
-    def detect_size_from_filename(cls, filename: str) -> Optional[str]:
-        m = cls._panoptic_re().fullmatch(filename.lower())
-        if m:
-            return m.group("size")
-        return super().detect_size_from_filename(filename)
-
-    @classmethod
-    def detect_task_from_filename(cls, filename: str) -> Optional[str]:
-        if cls._panoptic_re().fullmatch(filename.lower()):
-            return "segment"
-        return super().detect_task_from_filename(filename)
-
-    @classmethod
-    def get_download_url(cls, filename: str) -> Optional[str]:
-        # Panoptic checkpoints live in their own HF repo (LibreEoMTs-panoptic,
-        # LibreEoMTb-panoptic) — reconstruct from the filename directly.
-        if cls._panoptic_re().fullmatch(filename.lower()):
-            name = Path(filename).stem
-            return (
-                f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
-            )
-        return super().get_download_url(filename)
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -372,6 +341,56 @@ class LibreEoMT(BaseModel):
             align_corners=False,
         )[0]
 
+    @staticmethod
+    def _coco_content_size(orig_h: int, orig_w: int, size: int) -> Tuple[int, int]:
+        """Aspect-preserving size whose longest edge is ``size``.
+
+        Mirrors the DETR-style ``get_size_with_aspect_ratio`` that the upstream
+        EoMT image processor uses for the COCO checkpoints, where both
+        ``shortest_edge`` and ``longest_edge`` equal the model resolution.
+        """
+        min_o, max_o = float(min(orig_h, orig_w)), float(max(orig_h, orig_w))
+        target = size
+        raw: Optional[float] = None
+        if max_o / min_o * size > size:
+            raw = size * min_o / max_o
+            target = int(round(raw))
+        if (orig_h <= orig_w and orig_h == target) or (
+            orig_w <= orig_h and orig_w == target
+        ):
+            return orig_h, orig_w
+        if orig_w < orig_h:
+            out_w = target
+            out_h = int(raw * orig_h / orig_w) if raw is not None else int(size * orig_h / orig_w)
+        else:
+            out_h = target
+            out_w = int(raw * orig_w / orig_h) if raw is not None else int(size * orig_w / orig_h)
+        return out_h, out_w
+
+    def _preprocess_pil_pad(
+        self,
+        img: Image.Image,
+        input_size: int,
+    ) -> tuple[torch.Tensor, Tuple[int, int]]:
+        """Resize the longest edge to ``input_size`` and zero-pad to a square.
+
+        Padding is applied to the raw [0, 1] image; :class:`LibreEoMTNet`
+        normalizes afterwards, so the padded region lands on ``-mean/std``,
+        which is exactly what the upstream processor produces.
+        """
+        orig_w, orig_h = img.size
+        content_h, content_w = self._coco_content_size(orig_h, orig_w, input_size)
+        resized = TVF.resize(
+            TVF.pil_to_tensor(img).unsqueeze(0),
+            [content_h, content_w],
+            interpolation=InterpolationMode.BILINEAR,
+            antialias=True,
+        )[0].float()
+        resized.div_(255.0)
+        canvas = torch.zeros((3, input_size, input_size), dtype=resized.dtype)
+        canvas[:, :content_h, :content_w] = resized
+        return canvas.unsqueeze(0), (content_h, content_w)
+
     def _preprocess(
         self,
         image: ImageInput,
@@ -392,13 +411,49 @@ class LibreEoMT(BaseModel):
             )
         img = ImageLoader.load(image, color_format=color_format)
         orig_w, orig_h = img.size
-        img_tensor, resized_shape, patch_offsets = self._preprocess_pil_split(
-            img,
-            effective_res,
-        )
-        self._last_eomt_resized_shape = resized_shape
-        self._last_eomt_patch_offsets = patch_offsets
+
+        # Upstream splits only the ADE20K semantic checkpoint into sliding-window
+        # patches (do_split_image=True). The COCO instance and panoptic
+        # checkpoints are resized to fit the longest edge and zero-padded to a
+        # square (do_split_image=False, do_pad=True). Splitting those would hand
+        # the same object to two patches as two independent queries.
+        if self.task == "semantic":
+            img_tensor, resized_shape, patch_offsets = self._preprocess_pil_split(
+                img,
+                effective_res,
+            )
+            self._last_eomt_resized_shape = resized_shape
+            self._last_eomt_patch_offsets = patch_offsets
+            self._last_eomt_content_size = None
+        else:
+            img_tensor, content_size = self._preprocess_pil_pad(img, effective_res)
+            self._last_eomt_resized_shape = None
+            self._last_eomt_patch_offsets = None
+            self._last_eomt_content_size = content_size
+
         return img_tensor, img, (orig_w, orig_h), 1.0
+
+    def _unpad_and_resize_mask_logits(
+        self,
+        mask_logits: torch.Tensor,
+        original_size: Tuple[int, int],
+    ) -> torch.Tensor:
+        """Crop the zero-padded border off (Q, S, S) logits and resize to the image.
+
+        Bilinear interpolation happens on logits, not on sigmoid probabilities,
+        matching the upstream post-process.
+        """
+        orig_w, orig_h = original_size
+        content = getattr(self, "_last_eomt_content_size", None)
+        if content is not None:
+            content_h, content_w = content
+            mask_logits = mask_logits[:, :content_h, :content_w]
+        return F.interpolate(
+            mask_logits.unsqueeze(0),
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )[0]
 
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
@@ -433,7 +488,131 @@ class LibreEoMT(BaseModel):
             return self._postprocess_segment(
                 output, conf_thres, iou_thres, original_size, max_det
             )
+        if self.task == "panoptic":
+            return self._postprocess_panoptic(output, conf_thres, original_size)
         return self._postprocess_semantic(output, original_size)
+
+    def _stuff_class_ids(self) -> set[int]:
+        """Class ids that are 'stuff' (fused into one segment per category).
+
+        thing-vs-stuff is a per-category property of the label set, carried on
+        the checkpoint as ``thing_class_ids`` (see ``docs/dataset_schema.md``).
+        Without it we cannot tell stuff from things, so nothing is fused and
+        every region becomes its own segment: wrong, but loudly wrong rather
+        than silently mislabeled.
+        """
+        thing_ids = getattr(self, "thing_class_ids", None)
+        if not thing_ids:
+            logger.warning(
+                "LibreEoMT panoptic checkpoint has no 'thing_class_ids' metadata; "
+                "treating every category as a thing. Stuff regions will not be "
+                "fused into single segments. Re-convert with "
+                "weights/convert_eomt_weights.py to embed the split."
+            )
+            return set()
+        return set(range(self.nb_classes)) - set(int(i) for i in thing_ids)
+
+    def _postprocess_panoptic(
+        self,
+        output: Any,
+        conf_thres: float,
+        original_size: Tuple[int, int],
+    ) -> Dict:
+        """Merge per-query classes and masks into one non-overlapping segment map.
+
+        Implements the standard MaskFormer/Mask2Former panoptic inference recipe:
+        drop no-object and low-confidence queries, assign every pixel to the
+        query with the highest score-weighted mask probability, discard queries
+        whose surviving area falls below ``PANOPTIC_OVERLAP_THRESHOLD`` of their
+        own binarized area, and fuse all stuff segments of the same category.
+
+        Unlike ``_postprocess_segment`` this drops queries whose argmax over the
+        ``C + 1`` logits is the null class, which is what keeps a panoptic map
+        from filling with junk segments.
+        """
+        if not isinstance(output, dict):
+            raise ValueError("LibreEoMT panoptic forward must return a dict.")
+        class_logits = output.get("class_queries_logits")  # (P, Q, C+1)
+        mask_logits = output.get("masks_queries_logits")   # (P, Q, h, w)
+        if class_logits is None or mask_logits is None:
+            raise ValueError(
+                "LibreEoMT panoptic forward did not include class_queries_logits "
+                "and masks_queries_logits."
+            )
+
+        orig_w, orig_h = original_size
+        nc = int(class_logits.shape[-1]) - 1  # last logit is the null/no-object class
+
+        # The query score threshold is a merge hyperparameter, not a detection
+        # confidence, so panoptic ignores predict(conf=...) exactly as semantic
+        # does. Tune via PANOPTIC_SCORE_THRESHOLD.
+        score_threshold = self.PANOPTIC_SCORE_THRESHOLD
+
+        empty = {
+            "panoptic": torch.zeros((orig_h, orig_w), dtype=torch.int32),
+            "segments_info": [],
+        }
+
+        scores, labels = class_logits[0].softmax(dim=-1).max(-1)  # over C+1
+        keep = (labels != nc) & (scores > score_threshold)
+        if not keep.any():
+            return empty
+        scores, labels = scores[keep], labels[keep]
+
+        # Crop the zero-padded border, resize logits to the image, then sigmoid.
+        mask_probs = self._unpad_and_resize_mask_logits(
+            mask_logits[0][keep], original_size
+        ).sigmoid()
+
+        # Every pixel goes to the query with the highest score-weighted mask
+        # probability; a segment is the intersection of the pixels it won with
+        # its own binarized mask. Everything else stays void (segment id 0).
+        winner = (mask_probs * scores.view(-1, 1, 1)).argmax(dim=0)
+
+        stuff_ids = self._stuff_class_ids()
+        segmentation = torch.zeros(
+            (orig_h, orig_w), dtype=torch.int32, device=mask_probs.device
+        )
+        segments_info: list[dict] = []
+        stuff_memory: Dict[int, int] = {}
+        current_id = 0
+
+        for k in range(mask_probs.shape[0]):
+            label = int(labels[k])
+            is_stuff = label in stuff_ids
+
+            won = winner == k
+            own_mask = mask_probs[k] >= self.PANOPTIC_MASK_THRESHOLD
+            final_mask = won & own_mask
+            won_area = int(won.sum())
+            own_area = int(own_mask.sum())
+            if won_area == 0 or own_area == 0 or int(final_mask.sum()) == 0:
+                continue
+            # Mostly-occluded queries are dropped rather than left as slivers.
+            if won_area / own_area <= self.PANOPTIC_OVERLAP_THRESHOLD:
+                continue
+
+            if is_stuff and label in stuff_memory:
+                # One segment per stuff category: grow the existing one.
+                segmentation[final_mask] = stuff_memory[label]
+                continue
+
+            current_id += 1
+            if is_stuff:
+                stuff_memory[label] = current_id
+            segmentation[final_mask] = current_id
+            segments_info.append(
+                {
+                    "id": current_id,
+                    "category_id": label,
+                    "isthing": not is_stuff,
+                    "score": round(float(scores[k]), 6),
+                }
+            )
+
+        if not segments_info:
+            return empty
+        return {"panoptic": segmentation.cpu(), "segments_info": segments_info}
 
     def _postprocess_semantic(self, output: Any, original_size: Tuple[int, int]) -> Dict:
         logits = output
@@ -473,7 +652,12 @@ class LibreEoMT(BaseModel):
         original_size: Tuple[int, int],
         max_det: int = 300,
     ) -> Dict:
-        """Decode instance segmentation from per-query class and mask logits."""
+        """Decode instance segmentation from per-query class and mask logits.
+
+        The COCO instance checkpoints are padded, not split, so there is a single
+        forward pass whose masks are cropped back to the unpadded content before
+        being resized onto the original canvas.
+        """
         if not isinstance(output, dict):
             raise ValueError("LibreEoMT segment forward must return a dict.")
         class_logits = output.get("class_queries_logits")  # (B, Q, C+1)
@@ -513,10 +697,10 @@ class LibreEoMT(BaseModel):
 
             scores = scores[keep]
             labels = labels[keep]
-            binary_masks = (msk_logit[keep].sigmoid() > 0.5).float()  # (K, H, W)
 
-            # Place patch masks into full resized-image canvas
             if has_patches:
+                # Legacy split path (semantic-style preprocessing).
+                binary_masks = (msk_logit[keep].sigmoid() > 0.5).float()
                 _, start, end = patch_offsets[patch_idx]
                 vertical = resized_h > resized_w
                 full = torch.zeros(
@@ -528,15 +712,17 @@ class LibreEoMT(BaseModel):
                     full[:, start:end, :] = binary_masks
                 else:
                     full[:, :, start:end] = binary_masks
-                binary_masks = full
-
-            # Upsample masks to original image size
-            masks_orig = F.interpolate(
-                binary_masks.unsqueeze(0),
-                size=(orig_h, orig_w),
-                mode="bilinear",
-                align_corners=False,
-            )[0]
+                masks_orig = F.interpolate(
+                    full.unsqueeze(0),
+                    size=(orig_h, orig_w),
+                    mode="bilinear",
+                    align_corners=False,
+                )[0]
+            else:
+                # Padded path: crop the pad off the logits, resize, then binarize.
+                masks_orig = self._unpad_and_resize_mask_logits(
+                    msk_logit[keep], original_size
+                ).sigmoid()
             masks_orig = (masks_orig > 0.5).float()
 
             boxes = self._masks_to_boxes(masks_orig)
@@ -685,6 +871,13 @@ class LibreEoMT(BaseModel):
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
+
+        # Panoptic label sets carry their thing/stuff split as category metadata;
+        # the panoptic merge needs it to know which categories to fuse.
+        ckpt_thing_ids = loaded.get("thing_class_ids")
+        if ckpt_thing_ids is not None:
+            self.thing_class_ids = [int(i) for i in ckpt_thing_ids]
+
         self.model.to(self.device)
 
     def train(self, *args, **kwargs):
