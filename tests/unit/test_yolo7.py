@@ -144,7 +144,13 @@ def test_factory_loads_raw_upstream_v7(tmp_path):
     assert m.nb_classes == 80
 
 
-def test_train_raises():
+def test_train_is_supported_not_stubbed():
+    """v7 training is now wired (SimOTA loss); the inference-only guard is gone.
+
+    A bogus dataset path must fail in data loading (FileNotFoundError), proving
+    the call reaches the real training entrypoint rather than raising
+    NotImplementedError.
+    """
     m = LibreYOLO7(size="b")
-    with pytest.raises(NotImplementedError, match="inference-only"):
-        m.train(data="coco.yaml")
+    with pytest.raises(FileNotFoundError):
+        m.train(data="does_not_exist_zzz.yaml", epochs=1, device="cpu", workers=0)

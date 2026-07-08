@@ -421,6 +421,7 @@ MODEL_CATALOG = [
     ("yolox", "m", "LibreYOLOXm.pt"),
     ("yolox", "l", "LibreYOLOXl.pt"),
     ("yolox", "x", "LibreYOLOXx.pt"),
+    ("yolo7", "b", "LibreYOLO7b.pt"),
     ("yolo9", "t", "LibreYOLO9t.pt"),
     ("yolo9", "s", "LibreYOLO9s.pt"),
     ("yolo9", "m", "LibreYOLO9m.pt"),
@@ -531,6 +532,7 @@ RTDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 
 FAMILY_MARKERS = {
     "yolox": pytest.mark.yolox,
+    "yolo7": pytest.mark.yolo7,
     "yolo9": pytest.mark.yolo9,
     "yolo9_e2e": pytest.mark.yolo9_e2e,
     "yolonas": pytest.mark.yolonas,
