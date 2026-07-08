@@ -1207,6 +1207,7 @@ class BaseModel(ABC):
             ClassifyValidator,
             DepthValidator,
             DetectionValidator,
+            MatteValidator,
             OBBValidator,
             PointValidator,
             PoseValidator,
@@ -1250,6 +1251,11 @@ class BaseModel(ABC):
                 "Augmented validation does not support restoration models yet. "
                 "Use augment=False for restore models."
             )
+        if augment and self.task == "matte":
+            raise ValueError(
+                "Augmented validation does not support matte models yet. "
+                "Use augment=False for matte models."
+            )
 
         config = ValidationConfig(
             data=data,
@@ -1287,6 +1293,8 @@ class BaseModel(ABC):
             validator_cls = DepthValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
+        elif self.task == "matte":
+            validator_cls = MatteValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

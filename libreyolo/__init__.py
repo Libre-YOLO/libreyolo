@@ -23,11 +23,14 @@ from .models import (
     LibreYOLO3,
     LibreYOLO4,
     LibreYOLO2,
+    LibreYOLO1,
     LibreYOLO7,
     LibreL2CS,
     LibreFOMO,
     LibreDepthAnythingV2,
     LibreNAFNet,
+    LibreBiRefNet,
+    LibreRealESRGAN,
     LibreEoMT,
     LibrePIDNet,
     LibreMobileNetV4,
@@ -49,6 +52,7 @@ from .utils.results import (
     SemanticMask,
     DepthMap,
     RestoredImage,
+    Matte,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -163,11 +167,14 @@ __all__ = [
     "LibreYOLO3",
     "LibreYOLO4",
     "LibreYOLO2",
+    "LibreYOLO1",
     "LibreYOLO7",
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreNAFNet",
+    "LibreBiRefNet",
+    "LibreRealESRGAN",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
@@ -207,6 +214,7 @@ __all__ = [
     "SemanticMask",
     "DepthMap",
     "RestoredImage",
+    "Matte",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking

@@ -568,6 +568,45 @@ class RestoredImage(_TensorPayload):
         )
 
 
+class Matte(_TensorPayload):
+    """Dense soft alpha matte for a single image.
+
+    Data shape is ``(H, W)`` float32 in ``[0, 1]`` on the original image canvas.
+    ``1`` is fully foreground (opaque), ``0`` is fully background (transparent).
+    A soft matte subsumes a hard background-removal mask (threshold at 0.5) and
+    carries the anti-aliased edges (hair, fur) that binary masks discard.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) alpha matte but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    @property
+    def array(self) -> np.ndarray:
+        """Return the raw ``(H, W)`` float32 alpha matte clamped to ``[0, 1]``."""
+        arr = np.asarray(_numpy(self.data), dtype=np.float32)
+        return np.clip(arr, 0.0, 1.0)
+
+    def __getitem__(self, idx):
+        # A dense matte is whole-image, not per-detection; keep it intact so
+        # shared Results slicing paths cannot corrupt the (H, W) layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"Matte(shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class OBB(_TensorPayload):
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
         if data.ndim == 1:
@@ -751,6 +790,7 @@ class Results:
         "semantic_mask",
         "depth_map",
         "restored",
+        "matte",
     )
 
     def __init__(
@@ -768,6 +808,8 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
+        matte: Optional[Matte] = None,
+        restore_scale: int = 1,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -782,6 +824,8 @@ class Results:
             depth_map = DepthMap(depth_map.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
+        if matte is not None and matte.orig_shape is None:
+            matte = Matte(matte.data, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -793,6 +837,11 @@ class Results:
         self.semantic_mask = semantic_mask
         self.depth_map = depth_map
         self.restored = restored
+        self.matte = matte
+        # Integer upscale factor of a restore/super-resolution result: the
+        # restored canvas is ``restore_scale`` times the input. 1 for
+        # deblur/denoise and every non-restore task.
+        self.restore_scale = int(restore_scale) if restore_scale else 1
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -815,6 +864,8 @@ class Results:
             "semantic_mask": self.semantic_mask,
             "depth_map": self.depth_map,
             "restored": self.restored,
+            "matte": self.matte,
+            "restore_scale": self.restore_scale,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -869,6 +920,8 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
+        matte: Optional[Matte] = None,
+        restore_scale: Optional[int] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -891,11 +944,74 @@ class Results:
             self.depth_map = depth_map
         if restored is not None:
             self.restored = restored
+        if matte is not None:
+            self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+        if restore_scale is not None:
+            self.restore_scale = int(restore_scale) if restore_scale else 1
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
                 self.boxes = self.boxes.with_id(track_id)
         return self
+
+    def cutout(self, image: Any = None) -> np.ndarray:
+        """Return an RGBA ``(H, W, 4)`` uint8 cutout: source RGB + matte alpha.
+
+        The alpha channel is the soft matte scaled to ``[0, 255]``. The RGB is
+        taken from ``image`` when given (a PIL image or ``HxWx3`` array), else
+        reloaded from ``self.path``. Only valid for matte results.
+        """
+        if self.matte is None:
+            raise ValueError("cutout() is only defined for matte results (Results.matte is None).")
+        alpha = self.matte.array  # (H, W) float32 in [0, 1]
+        h, w = alpha.shape
+        rgb = self._source_rgb(image, (h, w))
+        alpha_u8 = np.rint(alpha * 255.0).astype(np.uint8)
+        return np.dstack([rgb, alpha_u8])
+
+    def _source_rgb(self, image: Any, hw: Tuple[int, int]) -> np.ndarray:
+        """Load the source image as an ``HxWx3`` uint8 RGB array on the matte canvas."""
+        from PIL import Image
+
+        h, w = hw
+        if image is None:
+            if not self.path:
+                raise ValueError(
+                    "cutout()/save() needs the source image but Results.path is unset; "
+                    "pass image=<PIL.Image or HxWx3 array>."
+                )
+            rgb = np.asarray(Image.open(self.path).convert("RGB"))
+        elif isinstance(image, Image.Image):
+            rgb = np.asarray(image.convert("RGB"))
+        else:
+            rgb = np.asarray(image)
+            if rgb.ndim == 2:
+                rgb = np.stack([rgb] * 3, axis=-1)
+            if rgb.shape[-1] == 4:
+                rgb = rgb[..., :3]
+        if rgb.shape[:2] != (h, w):
+            rgb = np.asarray(Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR))
+        return rgb.astype(np.uint8)
+
+    def save(self, path: str, image: Any = None) -> str:
+        """Save a matte result as a transparent-background RGBA PNG cutout.
+
+        Returns the written path. Requires the source image (via ``image`` or
+        ``self.path``).
+        """
+        from PIL import Image
+
+        if self.matte is None:
+            raise NotImplementedError(
+                "Results.save() writes a transparent-PNG cutout and is defined for "
+                "matte results only. Use result.plot()/CLI --save for other tasks."
+            )
+        rgba = self.cutout(image=image)
+        out = Path(path)
+        if out.parent and str(out.parent) not in (".", ""):
+            out.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(rgba, mode="RGBA").save(out)
+        return str(out)
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
         if self.boxes is None:
@@ -947,6 +1063,18 @@ class Results:
                     {
                         "name": "restored",
                         "shape": [int(h), int(w), 3],
+                        "scale": int(self.restore_scale),
+                    }
+                ]
+            if self.matte is not None:
+                matte_np = self.matte.array
+                h, w = matte_np.shape[:2]
+                fg = float((matte_np >= 0.5).mean())
+                return [
+                    {
+                        "name": "matte",
+                        "shape": [int(h), int(w)],
+                        "coverage": round(fg, decimals),
                     }
                 ]
             if self.probs is None:
@@ -1041,6 +1169,8 @@ class Results:
             return 1
         if self.restored is not None:
             return 1
+        if self.matte is not None:
+            return 1
         return 0
 
     def __repr__(self) -> str:
@@ -1059,6 +1189,10 @@ class Results:
             parts.append(f"depth_map={self.depth_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
+            if self.restore_scale != 1:
+                parts.append(f"restore_scale={self.restore_scale}")
+        if self.matte is not None:
+            parts.append(f"matte={self.matte}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

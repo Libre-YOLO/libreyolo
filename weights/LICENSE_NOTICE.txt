@@ -20,13 +20,20 @@ project the weights were derived from. Per-family summary:
     YOLO9    (LibreYOLO9{t,s,m,c})                     MIT
              upstream: MultimediaTechLab/YOLO
 
+    YOLOv1   (LibreYOLO1{t,b})                         public domain
     YOLOv2   (LibreYOLO2{t,b})                         public domain
     YOLOv3   (LibreYOLO3{t,b,spp})                     public domain
     YOLOv4   (LibreYOLO4{t,b})                         public domain
-             upstream: pjreddie/darknet (v2/v3), AlexeyAB/darknet (v4)
+             upstream: pjreddie/darknet (v1/v2/v3), AlexeyAB/darknet (v4)
              Darknet is public domain ("YOLO LICENSE"); both the .cfg
              architectures and the pretrained .weights carry no license
              obligations. Convert with weights/convert_darknet_weights.py.
+             YOLOv1 is Pascal VOC (20 classes), fixed 448. Its pretrained
+             yolov1.weights was pulled from pjreddie.com/media/files/ (now
+             archived only on the Wayback Machine); the tiny-yolov1 .weights
+             was overwritten upstream by the YOLOv2 release and is not
+             recoverable, so LibreYOLO1t ships as code only (bring your own
+             tiny-yolov1.weights to convert).
 
     YOLOv7   (LibreYOLO7b)                             MIT
              upstream: MultimediaTechLab/YOLO (Kin-Yiu Wong & Hao-Tang Tsui)
@@ -68,7 +75,27 @@ project the weights were derived from. Per-family summary:
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an
              explicit standalone weights license. Convert only weights that
-             you have the right to use and redistribute.
+             you have the right to use and redistribute. The SIDD denoising
+             weights are trained on SIDD (MIT-licensed dataset).
+
+    RealESRGAN (LibreRealESRGAN{x4,x2,x4t}-restore)    no bundled weights
+             upstream code: xinntao/Real-ESRGAN (BSD-3-Clause),
+             architecture lineage XPixelGroup/BasicSR (Apache-2.0)
+             Released generator weights (RealESRGAN_x4plus, RealESRGAN_x2plus,
+             realesr-general-x4v3) are BSD-3-Clause; mirrored as converted
+             checkpoints with provenance in the model cards.
+
+    BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
+             upstream: ZhengPeng7/BiRefNet (code MIT)
+             l (general): Hugging Face weights tagged MIT -> rehosted under
+               the LibreYOLO org (LibreYOLO/LibreBiRefNetl-matte).
+             t (lite): the BiRefNet_lite HF repo shows an MIT badge in its
+               model card but has no explicit license metadata (no YAML
+               license field, no LICENSE file). LibreYOLO does NOT rehost the
+               lite weights pending an explicit license confirmation; the
+               converter and a ready-to-run upload script are provided so the
+               maintainer can host them once the tag is confirmed. Users may
+               still convert BiRefNet_lite locally at their own discretion.
 
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting

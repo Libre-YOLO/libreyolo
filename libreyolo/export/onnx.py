@@ -224,11 +224,12 @@ def export_onnx(
     is_obb = task == "obb"
     is_classify = task == "classify"
     is_restore = task == "restore"
+    is_matte = task == "matte"
     known_detr_detection = _uses_dfine_style_export_wrapper(
         metadata.get("model_family")
     )
     num_outputs = None
-    if not is_seg and not known_detr_detection and not is_restore:
+    if not is_seg and not known_detr_detection and not is_restore and not is_matte:
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
 
@@ -242,8 +243,22 @@ def export_onnx(
         )
     elif is_restore:
         output_names = ["restored"]
+        # Real-ESRGAN generators support dynamic spatial dims; NAFNet keeps the
+        # fixed-resolution v1 contract (only batch is dynamic when enabled).
+        if dynamic and model_family == "realesrgan":
+            dynamic_axes = {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "restored": {0: "batch", 2: "out_height", 3: "out_width"},
+            }
+        else:
+            dynamic_axes = (
+                {"images": {0: "batch"}, "restored": {0: "batch"}} if dynamic else None
+            )
+    elif is_matte:
+        # Single-channel logit map (B, 1, S, S); apply sigmoid downstream.
+        output_names = ["matte"]
         dynamic_axes = (
-            {"images": {0: "batch"}, "restored": {0: "batch"}} if dynamic else None
+            {"images": {0: "batch"}, "matte": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_seg:
         output_names = ["predictions", "proto", "mask_coeffs"]

@@ -488,6 +488,48 @@ def draw_depth_map(
     return result
 
 
+def _checkerboard(
+    height: int,
+    width: int,
+    tile: int = 16,
+    light: int = 200,
+    dark: int = 154,
+) -> np.ndarray:
+    """Build an ``(H, W, 3)`` uint8 checkerboard, the standard transparency backdrop."""
+    ys = (np.arange(height) // tile)[:, None]
+    xs = (np.arange(width) // tile)[None, :]
+    board = np.where((ys + xs) % 2 == 0, light, dark).astype(np.uint8)
+    return np.repeat(board[:, :, None], 3, axis=2)
+
+
+def draw_matte(
+    img: Image.Image,
+    matte: np.ndarray,
+    tile: int = 16,
+) -> Image.Image:
+    """Preview a soft alpha matte by compositing the cutout over a checkerboard.
+
+    Args:
+        img: Source PIL image.
+        matte: ``(H, W)`` float alpha in ``[0, 1]`` (foreground opacity).
+        tile: Checkerboard tile size in pixels.
+
+    Returns:
+        RGB PIL image: foreground kept, background replaced by a checkerboard so
+        the transparency (and soft hair/fur edges) is visible at a glance.
+    """
+    rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
+    h, w = rgb.shape[:2]
+    alpha = np.asarray(matte, dtype=np.float32)
+    if alpha.shape[:2] != (h, w):
+        alpha_img = Image.fromarray(alpha, mode="F").resize((w, h), Image.BILINEAR)
+        alpha = np.asarray(alpha_img, dtype=np.float32)
+    alpha = np.clip(alpha, 0.0, 1.0)[:, :, None]
+    board = _checkerboard(h, w, tile=tile).astype(np.float32)
+    composite = rgb * alpha + board * (1.0 - alpha)
+    return Image.fromarray(np.clip(composite, 0, 255).astype(np.uint8), mode="RGB")
+
+
 # COCO 17-keypoint skeleton + colors (matches super-gradients defaults).
 COCO_KEYPOINT_EDGES: Tuple[Tuple[int, int], ...] = (
     (0, 1), (0, 2), (1, 2), (1, 3), (2, 4),

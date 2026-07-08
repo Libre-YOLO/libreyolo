@@ -402,7 +402,64 @@ published GoPro-trained NAFNet weights do not carry an explicit
 standalone weights license; convert only weights that you have the
 right to use and redistribute. The GoPro deblurring dataset is separate
 from the NAFNet code and carries its own terms; users are responsible
-for dataset compliance.
+for dataset compliance. The SIDD denoising weights are trained on the
+Smartphone Image Denoising Dataset (SIDD), which is distributed under
+the MIT License.
+
+--------------------------------------------------------------------
+Real-ESRGAN (Xintao Wang)
+--------------------------------------------------------------------
+Source: https://github.com/xinntao/Real-ESRGAN
+License: BSD-3-Clause
+Copyright (c) 2021 Xintao Wang.
+Citation: Wang, X., Xie, L., Dong, C., and Shan, Y. "Real-ESRGAN:
+          Training Real-World Blind Super-Resolution with Pure
+          Synthetic Data." ICCV Workshops 2021.
+Used for: the Real-ESRGAN super-resolution model family
+          (libreyolo/models/realesrgan/). The seam-free tiled forward
+          in utils.py is ported from Real-ESRGAN's inference helper.
+          The released generator weights (RealESRGAN_x4plus,
+          RealESRGAN_x2plus, realesr-general-x4v3) are BSD-3-Clause and
+          are mirrored as converted checkpoints with provenance.
+
+--------------------------------------------------------------------
+BasicSR (XPixelGroup)
+--------------------------------------------------------------------
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License 2.0
+Copyright 2018-2022 BasicSR Authors.
+Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
+          lineage in libreyolo/models/realesrgan/nn.py. Module and
+          parameter names mirror BasicSR so the released Real-ESRGAN
+          state dicts convert with a plain metadata-wrap.
+
+--------------------------------------------------------------------
+BiRefNet (Peng Zheng et al.)
+--------------------------------------------------------------------
+Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
+License: MIT
+Copyright (c) 2024 ZhengPeng (Peng Zheng).
+Citation: Zheng, P., Gao, D., Fan, D.-P., Liu, L., Laaksonen, J.,
+          Ouyang, W., and Sebe, N. "Bilateral Reference for
+          High-Resolution Dichotomous Image Segmentation." CAAI
+          Artificial Intelligence Research, 2024.
+Used for: BiRefNet background-removal model family
+          (libreyolo/models/birefnet/): the Swin Transformer v1
+          backbone and the bilateral-reference decoder (ASPP with
+          torchvision deformable convolution). The LibreYOLO port covers
+          the inference forward path, adds the matte-task contract
+          (Results.matte, cutout, transparent-PNG save), a paired
+          MAE/S-measure validator, and fixed-resolution ONNX export.
+          Parity verified: our fp32 forward matches the upstream
+          released weights with max_abs_diff == 0.
+
+NOTE - code vs. weights: The BiRefNet source code is MIT. The released
+BiRefNet (general, Swin-L) weights are tagged MIT on Hugging Face and are
+rehosted under the LibreYOLO org. The BiRefNet_lite (Swin-T) Hugging Face
+repo shows an MIT badge in its model card but carries no explicit license
+metadata (no YAML `license:` field, no LICENSE file); LibreYOLO does not
+rehost the lite weights pending an explicit license confirmation. See
+weights/LICENSE_NOTICE.txt.
 
 --------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
@@ -481,13 +538,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
-Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+Darknet (YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4)
 --------------------------------------------------------------------
-Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+Source: https://github.com/pjreddie/darknet   (YOLOv1/v2/v3)
         https://github.com/AlexeyAB/darknet    (YOLOv4)
 License: Public domain ("YOLO LICENSE")
-Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
-          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+Used for: the LibreYOLO1 / LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{1,2,3,4}).
           The public-domain .cfg model definitions are bundled under
           libreyolo/models/darknet/cfgs/; only the .cfg format and the
           numerical behaviour of the Darknet layers are reproduced. No

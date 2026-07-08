@@ -42,6 +42,7 @@ file = name + ".pt"
 | Family | Prefix | Example |
 |---|---|---|
 | YOLOX | `LibreYOLOX` | `LibreYOLOXs.pt` |
+| YOLO1 | `LibreYOLO1` | `LibreYOLO1b.pt` (public-domain Darknet, VOC-20; `t` weights lost upstream) |
 | YOLO2 | `LibreYOLO2` | `LibreYOLO2b.pt` (public-domain Darknet) |
 | YOLO3 | `LibreYOLO3` | `LibreYOLO3b.pt`, `LibreYOLO3spp.pt` (public-domain Darknet) |
 | YOLO4 | `LibreYOLO4` | `LibreYOLO4b.pt` (public-domain Darknet) |
@@ -60,7 +61,9 @@ file = name + ".pt"
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
-| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
+| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
+| BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
+| RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
@@ -87,6 +90,8 @@ Authoritative list of all valid weight filenames (matches the schema enforced by
 ```
 LibreYOLOXn.pt, LibreYOLOXt.pt, LibreYOLOXs.pt, LibreYOLOXm.pt,
 LibreYOLOXl.pt, LibreYOLOXx.pt,
+
+LibreYOLO1t.pt, LibreYOLO1b.pt,
 
 LibreYOLO2t.pt, LibreYOLO2b.pt,
 
@@ -162,6 +167,12 @@ LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
 
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
+LibreNAFNetl-restore-sidd.pt,
+
+LibreRealESRGANx4-restore.pt, LibreRealESRGANx2-restore.pt,
+LibreRealESRGANx4t-restore.pt,
+
+LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
@@ -177,7 +188,11 @@ LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
 
-License caveats inside the list: DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
+License caveats inside the list: BiRefNet `l` (general) weights are MIT-tagged
+and hosted; BiRefNet `t` (lite) weights have no explicit license tag on the
+upstream HF repo (MIT badge in the card body only), so hosting the lite weights
+is a maintainer decision, not a default (`weights/upload_birefnet_hf.py` guards
+it behind `--confirm-lite-license`). DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
 (maintainer decision to host); `-visdrone` variants are a research preview
 under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
 the license stated loudly on the card); FOMO weights have no cleared hosting
@@ -286,8 +301,8 @@ Rules:
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
 - **No slug exists** for `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
-  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo2`, `yolo3`,
-  `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
+  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo1`, `yolo2`,
+  `yolo3`, `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in

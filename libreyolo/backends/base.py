@@ -42,7 +42,11 @@ from ..utils.video import collect_video_results, is_video_file, run_video_infere
 logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
-_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet", "realesrgan"}
+
+# Real-ESRGAN integer upscale factor per size, used by scale-aware restore decode.
+_REALESRGAN_BACKEND_SCALE = {"x4": 4, "x2": 2, "x4t": 4}
+_REALESRGAN_BACKEND_PAD_MULTIPLE = {"x4": 1, "x2": 2, "x4t": 1}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
 # one of these must fail loudly instead of being silently parsed as YOLO9.
@@ -377,6 +381,8 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
+            if self.model_family == "realesrgan":
+                return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "classify":
             return self._preprocess_classify(image, effective_imgsz, color_format)
@@ -512,6 +518,41 @@ class BaseBackend(ABC):
                 else "edge"
             )
             arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+        img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
+        return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
+
+    @property
+    def restore_scale(self) -> int:
+        """Integer upscale factor for restore backends (1 unless super-resolution)."""
+
+        if self.model_family == "realesrgan":
+            return _REALESRGAN_BACKEND_SCALE.get(str(self.model_size), 1)
+        return 1
+
+    def _preprocess_restore_native(self, image, color_format):
+        """Native-resolution restore preprocessing for dynamic Real-ESRGAN graphs.
+
+        Loads RGB [0, 1], reflect-pads bottom/right to the network divisibility
+        factor (2 for the x2 pixel-unshuffle variant, 1 otherwise). The dynamic
+        ONNX graph accepts any spatial size, so no fixed canvas is imposed.
+        """
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        multiple = _REALESRGAN_BACKEND_PAD_MULTIPLE.get(str(self.model_size), 1)
+        if multiple > 1:
+            orig_h, orig_w = arr.shape[:2]
+            pad_h = (multiple - orig_h % multiple) % multiple
+            pad_w = (multiple - orig_w % multiple) % multiple
+            if pad_h or pad_w:
+                mode = (
+                    "reflect"
+                    if orig_h > 1 and orig_w > 1 and pad_h < orig_h and pad_w < orig_w
+                    else "edge"
+                )
+                arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
         img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
         return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
 
@@ -1889,8 +1930,14 @@ class BaseBackend(ABC):
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
-    def _parse_restore_output(all_outputs, original_size: Tuple[int, int]) -> np.ndarray:
-        """Decode backend restoration output to HWC uint8 RGB on original size."""
+    def _parse_restore_output(
+        all_outputs, original_size: Tuple[int, int], scale: int = 1
+    ) -> np.ndarray:
+        """Decode backend restoration output to HWC uint8 RGB.
+
+        For super-resolution the valid canvas is ``scale`` times the input, so
+        the output is cropped to ``scale`` x the original size.
+        """
         restored = np.asarray(all_outputs[0])
         if restored.ndim == 4:
             restored = restored[0]
@@ -1902,7 +1949,7 @@ class BaseBackend(ABC):
                 f"or [H, W, 3], got {tuple(restored.shape)}."
             )
         orig_w, orig_h = original_size
-        restored = restored[:orig_h, :orig_w, :]
+        restored = restored[: orig_h * int(scale), : orig_w * int(scale), :]
         return (np.clip(restored, 0.0, 1.0) * 255.0).round().astype(np.uint8)
 
     def _build_classify_result(
@@ -1928,11 +1975,14 @@ class BaseBackend(ABC):
         original_size: Tuple[int, int],
         image_path,
     ) -> Results:
-        restored = self._parse_restore_output(all_outputs, original_size)
+        scale = self.restore_scale
+        restored = self._parse_restore_output(all_outputs, original_size, scale)
+        restored_hw = (int(restored.shape[0]), int(restored.shape[1]))
         return Results(
             boxes=None,
-            restored=RestoredImage(torch.from_numpy(restored), orig_shape),
+            restored=RestoredImage(torch.from_numpy(restored), restored_hw),
             orig_shape=orig_shape,
+            restore_scale=scale,
             path=str(image_path) if image_path else None,
             names=self.names,
         )

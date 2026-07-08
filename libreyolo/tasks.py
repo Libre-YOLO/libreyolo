@@ -18,6 +18,7 @@ TaskType = Literal[
     "point",
     "depth",
     "restore",
+    "matte",
 ]
 TASKS = (
     "detect",
@@ -30,6 +31,7 @@ TASKS = (
     "point",
     "depth",
     "restore",
+    "matte",
 )
 
 TASK_ALIASES = {
@@ -65,6 +67,17 @@ TASK_ALIASES = {
     "restoration": "restore",
     "deblur": "restore",
     "denoise": "restore",
+    "matte": "matte",
+    "matting": "matte",
+    "background-removal": "matte",
+    "background_removal": "matte",
+    "rembg": "matte",
+    "dis": "matte",
+    "sr": "restore",
+    "super-resolution": "restore",
+    "super_resolution": "restore",
+    "superresolution": "restore",
+    "upscale": "restore",
 }
 
 TASK_TO_SUFFIX = {
@@ -77,6 +90,7 @@ TASK_TO_SUFFIX = {
     "point": "point",
     "depth": "depth",
     "restore": "restore",
+    "matte": "matte",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

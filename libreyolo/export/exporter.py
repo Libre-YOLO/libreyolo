@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet", "realesrgan"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",
@@ -287,10 +287,28 @@ class BaseExporter(ABC):
                 "Add a depth-aware export/runtime contract (dense float "
                 "output plus backend parsing) before exporting depth models."
             )
-        if getattr(self.model, "task", "detect") == "restore" and dynamic:
+        if (
+            getattr(self.model, "task", "detect") == "restore"
+            and dynamic
+            and self.model._get_model_name() != "realesrgan"
+        ):
+            # Real-ESRGAN generators are fully convolutional (conv + nearest
+            # interpolate + pixel shuffle/unshuffle) and export with dynamic H/W;
+            # other restore families (NAFNet) keep the fixed-resolution v1 contract.
             warnings.warn(
                 "Restore export uses a fixed-resolution runtime contract in "
                 "v1; forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
+        if getattr(self.model, "task", "detect") == "matte" and dynamic:
+            # BiRefNet's Swin relative-position tables are resolution-tied, so
+            # the matte contract is the fixed native square (1024). Forcing a
+            # dynamic graph would silently mis-interpolate them.
+            warnings.warn(
+                "Matte export uses a fixed-resolution runtime contract "
+                "(native 1024); forcing dynamic=False.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -308,6 +326,19 @@ class BaseExporter(ABC):
                 if _requires_onnx_opset17(self.model._get_model_name())
                 else 13
             )
+
+        # BiRefNet's decoder uses torchvision deform_conv2d, which maps to the
+        # standard ONNX ``DeformConv`` op (opset 19+). Force a compatible opset
+        # and register the symbolic before tracing.
+        if getattr(self.model, "task", "detect") == "matte":
+            from ..models.birefnet.export import (
+                MIN_OPSET as _MATTE_MIN_OPSET,
+                register_deform_conv2d_onnx_symbolic,
+            )
+
+            if opset < _MATTE_MIN_OPSET:
+                opset = _MATTE_MIN_OPSET
+            register_deform_conv2d_onnx_symbolic(_MATTE_MIN_OPSET)
 
         imgsz, device, output_path = self._resolve_params(
             output_path,
@@ -600,12 +631,13 @@ class BaseExporter(ABC):
             ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
-        elif family in {"yolo2", "yolo3", "yolo4"}:
+        elif family in {"yolo1", "yolo2", "yolo3", "yolo4"}:
             from ..models.darknet.export import DarknetExportWrapper
 
-            # Bake the anchor-box decode into the graph so every export format
-            # emits a self-contained (B, 4+nc, N) tensor consumed by the shared
-            # backend decode. No learned anchors need to travel in metadata.
+            # Bake the anchor-box decode (or the YOLOv1 dense-head decode) into the
+            # graph so every export format emits a self-contained (B, 4+nc, N)
+            # tensor consumed by the shared backend decode. No learned anchors
+            # need to travel in metadata.
             nn_model = DarknetExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True

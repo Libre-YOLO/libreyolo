@@ -48,6 +48,7 @@ from libreyolo.models.darknet import (  # noqa: E402
     parse_cfg_file,
 )
 from libreyolo.models.darknet.net import DarknetNet  # noqa: E402
+from libreyolo.models.yolo1.model import VOC_NAMES  # noqa: E402
 
 
 def _build_net(cfg_name_or_path: str, num_classes: int | None) -> DarknetNet:
@@ -59,9 +60,16 @@ def _build_net(cfg_name_or_path: str, num_classes: int | None) -> DarknetNet:
 
 # family -> {size -> bundled cfg name}, kept in sync with the family classes.
 _FAMILY_CFGS = {
+    "yolo1": {"t": "yolov1-tiny", "b": "yolov1"},
     "yolo2": {"t": "yolov2-tiny", "b": "yolov2"},
     "yolo3": {"t": "yolov3-tiny", "b": "yolov3", "spp": "yolov3-spp"},
     "yolo4": {"t": "yolov4-tiny", "b": "yolov4"},
+}
+
+# YOLOv1 is trained on Pascal VOC (20 classes), not COCO, so its checkpoints
+# carry the VOC label map rather than the generic ``build_class_names`` output.
+_FAMILY_NAMES = {
+    "yolo1": {index: name for index, name in enumerate(VOC_NAMES)},
 }
 
 
@@ -92,7 +100,11 @@ def convert_weights(
     # matching the DarknetFamily holder module.
     state_dict = {f"{family}.{k}": v for k, v in net.state_dict().items()}
 
-    names = build_class_names(nc)
+    family_names = _FAMILY_NAMES.get(family)
+    if family_names is not None and len(family_names) == nc:
+        names = family_names
+    else:
+        names = build_class_names(nc)
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
         model_family=family,
