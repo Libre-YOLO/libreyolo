@@ -122,8 +122,17 @@ the COCO-panoptic format:
   Every pixel belongs to exactly one segment; there is no overlap.
 - A JSON `segments_info` list, one entry per segment id present in the image:
   `{"id": int, "category_id": int, "iscrowd": 0|1, "area": int}`. `category_id`
-  indexes the dataset `names`; a per-category `isthing` flag distinguishes
-  countable "things" from amorphous "stuff".
+  indexes the dataset `names`.
+
+thing-vs-stuff is a **per-category** property, not a per-segment one: as in
+COCO-panoptic, GT `segments_info` entries do **not** carry an `isthing` field;
+the split lives on the category metadata (each category is a "thing" or
+"stuff"). The prediction result payload
+(`libreyolo.utils.results.PanopticSegmentation`) uses the same convention and
+may optionally denormalize `isthing` onto each predicted segment for
+convenience. Deriving thing/stuff from `category_id` is therefore the
+producer's responsibility (the model's `_postprocess_predictions` and
+`PanopticValidator`), so the two surfaces stay consistent.
 
 Validation uses Panoptic Quality (PQ = SQ x RQ), matching predicted to
 ground-truth segments of the same category at IoU > 0.5. See

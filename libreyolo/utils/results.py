@@ -471,10 +471,21 @@ class PanopticSegmentation(_TensorPayload):
 
     ``segments_info`` is a list of dicts, one per segment, each with at least::
 
-        {"id": int, "category_id": int, "isthing": bool}
+        {"id": int, "category_id": int}
 
-    where ``id`` matches a value in the map, ``category_id`` is the class index
-    in the model's ``names``, and ``isthing`` distinguishes instances from stuff.
+    where ``id`` matches a value in the map and ``category_id`` is the class
+    index in the model's ``names``.
+
+    thing-vs-stuff is a *per-category* property of the label set (mirroring the
+    COCO-panoptic GT, where ``isthing`` lives on the ``categories`` list, not on
+    per-segment ``segments_info`` entries), so the category metadata is the
+    source of truth. As a convenience a prediction payload MAY denormalize it
+    onto each segment (``"isthing": bool``, derived from ``category_id``); it is
+    optional and, when present, must agree with the category-level map. This
+    keeps the payload consistent with the GT contract in
+    ``docs/dataset_schema.md`` and puts the derive-from-category responsibility
+    on the producer (a model's ``_postprocess_predictions`` /
+    ``PanopticValidator``), not on downstream consumers.
 
     SCAFFOLD (issue #555): this defines the API contract only. No model family
     populates a :class:`Results` ``panoptic`` slot yet, and no drawing/summary
