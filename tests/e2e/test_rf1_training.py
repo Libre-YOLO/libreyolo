@@ -96,6 +96,13 @@ _EXPERIMENTAL_TRAINING_SKIP = {
         "RF1 mAP floor on small datasets (skill section 6: fine-tune parity, "
         "not paper parity). Inference parity is verified separately."
     ),
+    "yolo7": (
+        "YOLOv7 training is experimental: the loss is LibreYOLO's SimOTA "
+        "assignment (Apache-2.0 YOLOX lineage) driving the v7 anchor head, "
+        "not the upstream v7 OTA recipe, and its RF1 fine-tune floor has not "
+        "been validated yet. Inference parity vs MIT MultimediaTechLab/YOLO "
+        "is exact and verified separately."
+    ),
 }
 
 RF1_MODEL_WEIGHT_PARAMS = model_cases(
