@@ -32,8 +32,12 @@
   asks for it.
 - Humans handle issue creation, PR creation, review submission, and final merge
   decisions.
-- Agents may reply with a one-click GitHub URL (no description pre-filled) so
-  the human can open the PR or issue themselves.
+- Agents may reply with a one-click GitHub URL so the human can open the PR or
+  issue themselves, and should pre-fill it. For a PR, pre-fill the title and a
+  description that includes the required `## Code provenance` section (see
+  `.github/pull_request_template.md` and the `merge-to-dev` skill); for an
+  issue, the `libreyolo-report-issue` skill already does this. Pre-filling the
+  handoff URL is expected; opening the PR itself (e.g. `gh pr create`) is not.
 - When possible, work in git worktrees
 - The default branch is dev
 
@@ -103,8 +107,11 @@
 - Keep PRs to the least code needed to solve the stated problem.
 - Do not mention other computer vision libraries in PR titles or descriptions
   unless the comparison is necessary to explain compatibility or API behavior.
-- Encourage humans to write PR titles and descriptions in their own words so the
-  history is easier for reviewers and future readers to follow.
+- The agent pre-fills a draft PR title and description (including the required
+  `## Code provenance` section); the human edits it into their own words before
+  submitting, so the history stays easy for reviewers and future readers to
+  follow. The provenance section must be accurate for the actual diff, never a
+  placeholder, or the `provenance-check` CI gate fails.
 
 ## General library constraints
 - Generally every user facing API (Python, yamls, etc) has to follow the de-facto YOLO CLI/API conventions
