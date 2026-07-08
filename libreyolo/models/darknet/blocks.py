@@ -199,3 +199,102 @@ class Reorg(nn.Module):
         x = x.view(b, c, hs * ws, h // hs, w // ws).transpose(1, 2).contiguous()
         x = x.view(b, hs * ws * c, h // hs, w // ws)
         return x
+
+
+class DarknetDropout(nn.Module):
+    """``[dropout]`` layer: identity at inference.
+
+    The Darknet families are eval-only in LibreYOLO, so dropout carries no
+    parameters and passes activations straight through. It exists as a distinct
+    module (rather than being dropped) so layer indices in the cfg-driven module
+    list stay aligned with the ``.weights`` byte stream (dropout writes no bytes).
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+
+class DarknetConnected(nn.Module):
+    """``[connected]`` fully-connected layer: flatten -> Linear -> activation.
+
+    Used by the YOLOv1 head (the v2/v3/v4 detectors are fully convolutional).
+    Darknet stores connected weights as an ``(outputs, inputs)`` row-major matrix
+    (each output neuron's ``inputs`` weights contiguous) with ``biases`` first,
+    which is exactly ``nn.Linear``'s ``(out_features, in_features)`` +
+    ``(out_features,)`` layout. No transpose is needed for the v1-era weights
+    (Darknet only transposes when ``major > 1000`` or ``minor > 1000``).
+
+    The input is the previous feature map flattened in Darknet's channel-major
+    ``(C, H, W)`` order; ``torch.flatten(x, 1)`` on an ``(N, C, H, W)`` tensor
+    reproduces that exact order, so the pretrained matrix aligns element-for-
+    element. This flatten-order coupling is the load-bearing YOLOv1 port detail.
+    """
+
+    def __init__(self, in_features: int, out_features: int, activation: str = "linear"):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.linear = nn.Linear(in_features, out_features, bias=True)
+        self.act = make_activation(activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() > 2:
+            x = torch.flatten(x, 1)
+        return self.act(self.linear(x))
+
+
+class DarknetLocal(nn.Module):
+    """``[local]`` locally-connected layer (YOLOv1 head, size-3 kernels only).
+
+    Like a convolution but WITHOUT weight sharing: every output spatial location
+    has its own filter bank. Reproduces Darknet's ``forward_local_layer`` +
+    ``im2col_cpu``: for each of the ``L = out_h * out_w`` locations, an
+    independent ``(filters, C*k*k)`` matrix multiplies that location's im2col
+    patch, then a per-(channel, location) bias is added.
+
+    Weight layout matches Darknet's ``.weights`` byte order exactly:
+
+    * ``weight`` shape ``(L, filters, C*k*k)`` -> flat index
+      ``loc*(filters*C*k*k) + out*(C*k*k) + patch``
+    * ``bias``   shape ``(filters, L)``          -> flat index ``out*L + loc``
+
+    ``F.unfold`` yields the ``(N, C*k*k, L)`` patch tensor with the same
+    channel-major -> kernel-row -> kernel-col element ordering as Darknet's
+    ``im2col_cpu`` and the same row-major ``L`` (h then w), so the per-location
+    gemm maps 1:1. Darknet's ``local`` output-size formula only agrees with the
+    im2col padding for ``size=3`` (the only case YOLOv1 uses); ``out_h``/``out_w``
+    are computed by the caller and passed in.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        size: int,
+        stride: int,
+        pad: int,
+        activation: str,
+        out_h: int,
+        out_w: int,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.size = size
+        self.stride = stride
+        self.pad = pad  # padding amount in pixels (size // 2 for "same")
+        self.out_h = out_h
+        self.out_w = out_w
+        locations = out_h * out_w
+        patch = in_channels * size * size
+        self.weight = nn.Parameter(torch.zeros(locations, out_channels, patch))
+        self.bias = nn.Parameter(torch.zeros(out_channels, locations))
+        self.act = make_activation(activation)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        cols = F.unfold(x, kernel_size=self.size, padding=self.pad, stride=self.stride)
+        # cols: (N, C*k*k, L). out[n, o, l] = sum_k weight[l, o, k] * cols[n, k, l]
+        out = torch.einsum("lok,nkl->nol", self.weight, cols)  # (N, out, L)
+        out = out + self.bias.unsqueeze(0)  # broadcast (1, out, L)
+        out = out.view(out.shape[0], self.out_channels, self.out_h, self.out_w)
+        return self.act(out)

@@ -154,8 +154,9 @@ as the source of truth. By tier:
   (RF-DETR also pose + OBB).
 - **Other detectors:** YOLOX, YOLO9-E2E, YOLO9-P2 (stride-4 small-object),
   YOLO-NAS, D-FINE, DEIM, DEIMv2, RT-DETR / v2 / v4, PicoDet, RTMDet, EC,
-  and the classic lineage: YOLO2/3/4 (inference-only) and YOLO7 (also
-  trainable; experimental SimOTA recipe).
+  and the classic lineage: YOLO1/2/3/4 (inference-only; YOLO1 is the original
+  2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
+  recipe).
 - **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
   NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are

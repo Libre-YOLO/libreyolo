@@ -7,6 +7,14 @@ Darknet importer (`cv2.dnn.readNetFromDarknet`, Apache-2.0) as the oracle:
 same architecture, same `.weights`, same input blob → compare the raw head
 feature maps.
 
+YOLOv1 (yolo1) is deliberately NOT covered here: OpenCV's Darknet importer does
+not support the `[connected]` / `[local]` / `[detection]` layers YOLOv1 uses, so
+it is not a valid oracle for it. YOLOv1 faithfulness rests instead on (a) the
+byte-exact `.weights` reader assertion (the built net must consume yolov1.weights
+to the last byte) and (b) the classic dog/bicycle/car golden fixture on the real
+converted weights (tests/unit/test_yolo1.py::test_yolo1b_golden_dog_bicycle_car,
+gated on LIBREYOLO1B_CKPT).
+
 This is a gated one-off, NOT a PR-gate unit test: it needs real (public-domain)
 `.weights` files and OpenCV. Point it at a directory of Darknet weights:
 

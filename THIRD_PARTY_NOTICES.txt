@@ -481,13 +481,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
-Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+Darknet (YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4)
 --------------------------------------------------------------------
-Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+Source: https://github.com/pjreddie/darknet   (YOLOv1/v2/v3)
         https://github.com/AlexeyAB/darknet    (YOLOv4)
 License: Public domain ("YOLO LICENSE")
-Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
-          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+Used for: the LibreYOLO1 / LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{1,2,3,4}).
           The public-domain .cfg model definitions are bundled under
           libreyolo/models/darknet/cfgs/; only the .cfg format and the
           numerical behaviour of the Darknet layers are reproduced. No
