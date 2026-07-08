@@ -23,7 +23,7 @@ LibreYOLO is MIT. That only stays true if every contribution is clean:
   and the per-family `NOTICE` convention under `libreyolo/models/`).
 - By submitting a contribution you certify that you have the right to submit
   it under the MIT license, in the sense of the Developer Certificate of
-  Origin (developercertificate.org).
+  Origin (<https://developercertificate.org>).
 - Licensing doubts are blocking, not nits. If you are unsure whether a
   source is compatible, ask in the issue before writing code.
 

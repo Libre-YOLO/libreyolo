@@ -6,8 +6,8 @@
   value is being genuinely MIT; one license violation endangers the project.
 - LibreYOLO faithfully respects open-source licenses.
 - Agents must not copy, adapt, paraphrase, or derive code from any third-party
-  project unless that project is explicitly licensed under MIT, Apache-2.0, or
-  a similarly permissive license compatible with LibreYOLO's licensing
+  project unless that project is explicitly licensed under MIT, Apache-2.0,
+  BSD, or a similarly permissive license compatible with LibreYOLO's licensing
   requirements. Unknown or missing license means incompatible.
 - Never rewrite, rename, or restructure incompatibly-licensed code to obscure
   its origin. A GPL function with new variable names is still a derivative
