@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -14,6 +15,8 @@ from ..base import BaseModel
 from .config import NAFNetConfig
 from .nn import NAFNetLocal
 from .utils import preprocess_image, preprocess_numpy
+
+logger = logging.getLogger(__name__)
 
 
 NAFNET_SIZE_CONFIGS: dict[str, dict[str, object]] = {
@@ -177,7 +180,16 @@ class LibreNAFNet(BaseModel):
             if not isinstance(state_dict, dict):
                 return None
             return infer_nafnet_config(state_dict)
-        except Exception:
+        except Exception as exc:
+            # Best-effort pre-pass: any real problem resurfaces in
+            # _load_weights with a proper error, but keep the root cause
+            # visible instead of silently falling back to the default layout.
+            logger.warning(
+                "Could not infer NAFNet block config from %s (%s); "
+                "falling back to the default size config.",
+                model_path,
+                exc,
+            )
             return None
 
     def _init_model(self) -> nn.Module:

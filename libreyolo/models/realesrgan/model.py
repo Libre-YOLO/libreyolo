@@ -204,7 +204,10 @@ class LibreRealESRGAN(BaseModel):
 
         These control the seam-free tiled forward but must not leak into the
         shared postprocess kwargs, so they are stashed on the instance and read
-        back in ``_forward``.
+        back in ``_forward``. Like the rest of the LibreYOLO predict pipeline
+        (which also stages per-call state on the model instance), a model
+        instance is not safe for concurrent ``predict`` calls from multiple
+        threads; use one instance per thread for concurrent inference.
         """
 
         tile = kwargs.pop("tile", None)

@@ -32,7 +32,11 @@ def pixel_unshuffle(x: torch.Tensor, scale: int) -> torch.Tensor:
 
     b, c, hh, hw = x.size()
     out_channel = c * (scale**2)
-    assert hh % scale == 0 and hw % scale == 0
+    if hh % scale != 0 or hw % scale != 0:
+        raise ValueError(
+            f"pixel_unshuffle requires H and W to be divisible by scale={scale}, "
+            f"got ({hh}, {hw}). Reflect-pad the input to a multiple of {scale} first."
+        )
     h = hh // scale
     w = hw // scale
     x_view = x.view(b, c, h, scale, w, scale)
