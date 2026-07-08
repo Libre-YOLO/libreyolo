@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -396,10 +395,6 @@ if __name__ == "__main__":
         "segment": DEFAULT_SEGMENT_HF_REPO,
         "panoptic": COCO_PANOPTIC_HF_REPO_L,
     }
-    task_arg = next(
-        (sys.argv[sys.argv.index("--task") + 1] for _ in [0]
-         if "--task" in sys.argv), "semantic"
-    ) if "--task" in sys.argv else "semantic"
     parser.add_argument(
         "input",
         nargs="?",

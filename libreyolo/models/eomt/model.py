@@ -736,6 +736,9 @@ class LibreEoMT(BaseModel):
                 save_json=save_json,
                 verbose=verbose,
                 plots=plots,
+                save_plots=save_plots,
+                save_dir=save_dir,
+                half=half,
                 **kwargs,
             )
 

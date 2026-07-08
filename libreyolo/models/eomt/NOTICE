@@ -1,8 +1,8 @@
 LibreEoMT third-party notice
 ============================
 
-LibreEoMT integrates EoMT (Encoder-only Mask Transformer) for semantic
-segmentation.
+LibreEoMT integrates EoMT (Encoder-only Mask Transformer) for semantic and
+instance segmentation.
 
 Upstream:
   Source: https://github.com/tue-mps/eomt
@@ -15,12 +15,19 @@ Runtime reference:
   Copyright: The HuggingFace Team and Mobile Perception Systems Lab at TU/e
 
 Backbone:
-  DINOv2 is Apache-2.0. LibreEoMT ships only the DINOv2-based ADE20K semantic
-  EoMT-L checkpoint. DINOv3 EoMT variants are excluded because they depend on
+  DINOv2 is Apache-2.0. LibreEoMT ships only DINOv2-based EoMT checkpoints,
+  sizes s/b/l. DINOv3 EoMT variants are excluded because they depend on
   gated non-commercial DINOv3 weights.
 
-Weights:
-  The supported checkpoint is converted from
-  tue-mps/ade20k_semantic_eomt_large_512 and is MIT licensed by upstream.
-  ADE20K is a research dataset; users remain responsible for dataset-license
-  compliance when validating or fine-tuning.
+Weights (all MIT licensed by upstream):
+  Semantic (ADE20K 150-class, 512px, size l):
+    tue-mps/ade20k_semantic_eomt_large_512
+  Instance segmentation (COCO 80-class, 640px, sizes s/b/l; l also 1280px):
+    tue-mps/coco_instance_eomt_{small,base,large}_640
+    tue-mps/coco_instance_eomt_large_1280
+  Panoptic (COCO 133-class things+stuff, 640px, sizes s/b), converted and
+  loaded with task=segment since LibreYOLO has no panoptic task:
+    tue-mps/coco_panoptic_eomt_{small,base}_640_2x
+
+  ADE20K and COCO are research datasets; users remain responsible for
+  dataset-license compliance when validating or fine-tuning.

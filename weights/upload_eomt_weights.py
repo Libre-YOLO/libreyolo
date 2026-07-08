@@ -62,7 +62,7 @@ WEIGHTS = [
 
 _REPO_CARD_TEMPLATE = """\
 ---
-license: apache-2.0
+license: mit
 library_name: libreyolo
 ---
 
@@ -82,8 +82,8 @@ results = model.predict("image.jpg")
 
 ## Licence
 
-Weights are released under **Apache 2.0**.
-The EoMT architecture is from [tue-mps/eomt](https://github.com/tue-mps/eomt).
+Weights are released under **MIT**, matching the upstream
+[tue-mps/eomt](https://github.com/tue-mps/eomt) checkpoint license.
 """
 
 

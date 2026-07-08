@@ -665,11 +665,22 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
     sentinel = MagicMock(return_value={"metrics/mAP50": 0.0})
     monkeypatch.setattr(BaseModel, "val", sentinel)
 
-    model.val(data="coco.yaml", imgsz=640)
+    model.val(
+        data="coco.yaml",
+        imgsz=640,
+        half=True,
+        save_dir="runs/val/exp",
+        save_plots=True,
+    )
 
     sentinel.assert_called_once()
     _, kwargs = sentinel.call_args
     assert kwargs.get("data") == "coco.yaml"
+    # half/save_dir/save_plots must reach BaseModel.val(), not be silently
+    # swallowed by the outer LibreEoMT.val() signature.
+    assert kwargs.get("half") is True
+    assert kwargs.get("save_dir") == "runs/val/exp"
+    assert kwargs.get("save_plots") is True
 
 
 def test_val_rejects_unknown_kwargs(fake_eomt_net):

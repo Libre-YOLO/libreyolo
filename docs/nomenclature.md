@@ -297,6 +297,9 @@ LibreEoMTl-seg.pt          # EoMT-L, COCO 80-class instance segment, DINOv2 back
 LibreEoMTl-seg-1280.pt     # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 1280px
 LibreEoMTs-panoptic.pt     # EoMT-S, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
 LibreEoMTb-panoptic.pt     # EoMT-B, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+# NOTE: "-panoptic" is not a task suffix (LibreYOLO has no panoptic task). It
+# is an eomt-specific filename exception, handled by LibreEoMT.detect_task_from_filename,
+# that resolves to task="segment" with nc=133 (things 0-79, stuff 80-132).
 
 # pidnet - real-time semantic segmentation
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
