@@ -159,8 +159,11 @@ as the source of truth. By tier:
   2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
   recipe).
 - **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
-  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic),
-  BiRefNet (matte: background removal, sizes t/l, fixed 1024).
+  NAFNet (restore: deblur/denoise; denoise ships as
+  `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
+  super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the
+  input; big images via `predict(..., tile=512)`), BiRefNet (matte: background
+  removal, sizes t/l, fixed 1024), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`

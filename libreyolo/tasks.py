@@ -73,6 +73,11 @@ TASK_ALIASES = {
     "background_removal": "matte",
     "rembg": "matte",
     "dis": "matte",
+    "sr": "restore",
+    "super-resolution": "restore",
+    "super_resolution": "restore",
+    "superresolution": "restore",
+    "upscale": "restore",
 }
 
 TASK_TO_SUFFIX = {

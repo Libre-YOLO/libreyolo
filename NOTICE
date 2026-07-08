@@ -89,7 +89,25 @@ NAFNet (MIT License)
     (MIT). LibreYOLO does not bundle NAFNet pretrained checkpoint files. Some
     published GoPro-trained NAFNet weights do not carry an explicit standalone
     weights license; convert only weights that you have the right to use and
-    redistribute.
+    redistribute. The SIDD denoising weights are trained on the Smartphone
+    Image Denoising Dataset (SIDD), which is distributed under the MIT License.
+
+Real-ESRGAN / BasicSR (BSD-3-Clause / Apache-2.0)
+    Path:    libreyolo/models/realesrgan/, libreyolo/postprocess/realesrgan.py
+    License: libreyolo/models/realesrgan/NOTICE
+    Source:  https://github.com/xinntao/Real-ESRGAN (BSD-3-Clause),
+             https://github.com/XPixelGroup/BasicSR (Apache-2.0)
+
+    The LibreRealESRGAN super-resolution architectures (RRDBNet,
+    SRVGGNetCompact, pixel_unshuffle in libreyolo/models/realesrgan/nn.py) are a
+    native PyTorch implementation whose lineage is BasicSR (Apache-2.0,
+    Copyright 2018-2022 BasicSR Authors). The seam-free tiled forward in
+    libreyolo/models/realesrgan/utils.py is ported from Real-ESRGAN's inference
+    helper (BSD-3-Clause, Copyright (c) 2021 Xintao Wang). The released
+    Real-ESRGAN generator weights (RealESRGAN_x4plus, RealESRGAN_x2plus,
+    realesr-general-x4v3) are distributed under the BSD-3-Clause License;
+    LibreYOLO mirrors converted checkpoints with this provenance stated in the
+    model cards.
 
 Darknet YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4 (public domain)
     Path:    libreyolo/models/darknet/, libreyolo/models/yolo1|yolo2|yolo3|yolo4/

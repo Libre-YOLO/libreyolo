@@ -243,9 +243,17 @@ def export_onnx(
         )
     elif is_restore:
         output_names = ["restored"]
-        dynamic_axes = (
-            {"images": {0: "batch"}, "restored": {0: "batch"}} if dynamic else None
-        )
+        # Real-ESRGAN generators support dynamic spatial dims; NAFNet keeps the
+        # fixed-resolution v1 contract (only batch is dynamic when enabled).
+        if dynamic and model_family == "realesrgan":
+            dynamic_axes = {
+                "images": {0: "batch", 2: "height", 3: "width"},
+                "restored": {0: "batch", 2: "out_height", 3: "out_width"},
+            }
+        else:
+            dynamic_axes = (
+                {"images": {0: "batch"}, "restored": {0: "batch"}} if dynamic else None
+            )
     elif is_matte:
         # Single-channel logit map (B, 1, S, S); apply sigmoid downstream.
         output_names = ["matte"]

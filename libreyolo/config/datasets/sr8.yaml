@@ -1,0 +1,34 @@
+# SR8: an 8-image paired super-resolution regression set (like coco8 for detect).
+#
+# Layout (paired restore-dataset convention):
+#   sr8/inputs/val/*.png    low-resolution inputs
+#   sr8/targets/val/*.png    high-resolution targets (scale x the input on each axis)
+#
+# Build it (synthetic bicubic pairs, or from your own CC-BY images) with:
+#   python scripts/build_sr_valset.py --out DATASETS_DIR/sr8 --scale 4 --n 8
+#
+# Synthetic bicubic pairs are for regression / plumbing gates only. They do NOT
+# measure real-degradation super-resolution quality (Real-ESRGAN targets complex
+# real-world degradations, not clean bicubic downscaling). LibreYOLO does not
+# auto-download this dataset.
+
+path: sr8
+
+train: inputs/val
+val: inputs/val
+test:
+
+input_dir: inputs
+target_dir: targets
+
+# Upscale factor of the pairs (targets are `scale` x the inputs). Validation
+# derives the effective scale from the model (Results.restore_scale); pair an
+# x4 model (LibreRealESRGANx4-restore.pt) with a scale-4 set.
+scale: 4
+
+nc: 1
+names:
+  0: image
+
+degradation: super-resolution
+dataset: SR8-synthetic-bicubic

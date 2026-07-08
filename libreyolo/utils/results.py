@@ -809,6 +809,7 @@ class Results:
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
+        restore_scale: int = 1,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -837,6 +838,10 @@ class Results:
         self.depth_map = depth_map
         self.restored = restored
         self.matte = matte
+        # Integer upscale factor of a restore/super-resolution result: the
+        # restored canvas is ``restore_scale`` times the input. 1 for
+        # deblur/denoise and every non-restore task.
+        self.restore_scale = int(restore_scale) if restore_scale else 1
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -860,6 +865,7 @@ class Results:
             "depth_map": self.depth_map,
             "restored": self.restored,
             "matte": self.matte,
+            "restore_scale": self.restore_scale,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -915,6 +921,7 @@ class Results:
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
+        restore_scale: Optional[int] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -939,6 +946,8 @@ class Results:
             self.restored = restored
         if matte is not None:
             self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+        if restore_scale is not None:
+            self.restore_scale = int(restore_scale) if restore_scale else 1
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -1054,6 +1063,7 @@ class Results:
                     {
                         "name": "restored",
                         "shape": [int(h), int(w), 3],
+                        "scale": int(self.restore_scale),
                     }
                 ]
             if self.matte is not None:
@@ -1179,6 +1189,8 @@ class Results:
             parts.append(f"depth_map={self.depth_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
+            if self.restore_scale != 1:
+                parts.append(f"restore_scale={self.restore_scale}")
         if self.matte is not None:
             parts.append(f"matte={self.matte}")
         if self.track_id is not None:

@@ -317,12 +317,13 @@ def run_video_inference(
     with VideoSource(source, vid_stride=vid_stride) as video_src:
         writer = None
         out_path = None
+        effective_fps = None
         if save:
             out_path = resolve_video_save_path(source, output_path)
             effective_fps = video_src.fps / max(1, vid_stride)
-            writer = VideoWriter(
-                out_path, effective_fps, video_src.width, video_src.height
-            )
+            # The writer is created lazily from the first output frame instead
+            # of the source dimensions: restore/super-resolution results render
+            # on a canvas ``restore_scale`` times the source frame.
 
         total = video_src.total_frames // max(1, vid_stride) or None
         pbar = (
@@ -423,7 +424,12 @@ def run_video_inference(
                         np.array(annotated_pil), cv2.COLOR_RGB2BGR
                     )
 
-                    if save and writer is not None:
+                    if save:
+                        if writer is None:
+                            frame_h, frame_w = annotated_bgr.shape[:2]
+                            writer = VideoWriter(
+                                out_path, effective_fps, frame_w, frame_h
+                            )
                         writer.write_frame(annotated_bgr)
 
                     if show:

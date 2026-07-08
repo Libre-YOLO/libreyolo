@@ -75,7 +75,15 @@ project the weights were derived from. Per-family summary:
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an
              explicit standalone weights license. Convert only weights that
-             you have the right to use and redistribute.
+             you have the right to use and redistribute. The SIDD denoising
+             weights are trained on SIDD (MIT-licensed dataset).
+
+    RealESRGAN (LibreRealESRGAN{x4,x2,x4t}-restore)    no bundled weights
+             upstream code: xinntao/Real-ESRGAN (BSD-3-Clause),
+             architecture lineage XPixelGroup/BasicSR (Apache-2.0)
+             Released generator weights (RealESRGAN_x4plus, RealESRGAN_x2plus,
+             realesr-general-x4v3) are BSD-3-Clause; mirrored as converted
+             checkpoints with provenance in the model cards.
 
     BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
              upstream: ZhengPeng7/BiRefNet (code MIT)

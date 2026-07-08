@@ -693,7 +693,9 @@ class InferenceRunner:
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
             )
 
-        # Restore: a dense RGB image, no boxes.
+        # Restore: a dense RGB image, no boxes. For super-resolution the restored
+        # canvas is ``restore_scale`` times the input, so the RestoredImage carries
+        # its own (HR) shape while Results.orig_shape stays the source-image shape.
         restored_data = detections.get("restored")
         if restored_data is not None:
             orig_w, orig_h = original_size
@@ -702,12 +704,15 @@ class InferenceRunner:
                 if isinstance(restored_data, torch.Tensor)
                 else torch.as_tensor(restored_data)
             )
+            restore_scale = int(getattr(self.model, "restore_scale", 1) or 1)
+            restored_hw = (int(restored_t.shape[0]), int(restored_t.shape[1]))
             return Results(
                 boxes=None,
                 orig_shape=(orig_h, orig_w),
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
-                restored=RestoredImage(restored_t.to(torch.uint8), (orig_h, orig_w)),
+                restored=RestoredImage(restored_t.to(torch.uint8), restored_hw),
+                restore_scale=restore_scale,
             )
 
         # Matte: a dense soft alpha matte in [0, 1], no boxes.
