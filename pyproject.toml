@@ -295,6 +295,7 @@ markers = [
     "tflite: tests requiring TensorFlow Lite export",
     "coreml: tests requiring CoreML (macOS only)",
     "yolox: tests covering the YOLOX model family",
+    "yolo7: tests covering the YOLOv7 model family",
     "yolo9: tests covering the YOLO9 model family",
     "yolo9_e2e: tests covering the YOLOv9-E2E model family",
     "yolonas: tests covering the YOLO-NAS model family",
