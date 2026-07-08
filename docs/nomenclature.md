@@ -179,6 +179,7 @@ From `libreyolo/tasks.py`:
 | `detect`      | *(none — implicit)* |
 | `segment`     | `-seg` |
 | `semantic`    | `-sem` |
+| `panoptic`    | `-panoptic` |
 | `pose`        | `-pose` |
 | `classify`    | `-cls` |
 | `gaze`        | `-gaze` |
@@ -202,6 +203,17 @@ pixel with no instance separation. `segment` remains the task for
 instance segmentation (per-object masks). Semantic models expose
 `Results.semantic_mask` and use per-pixel validation metrics (mIoU,
 pixel accuracy) instead of box/mask mAP.
+
+`panoptic` is the task for panoptic segmentation: every pixel gets exactly one
+non-overlapping label, unifying `semantic` "stuff" (amorphous regions) with
+`segment` "things" (countable instances). Panoptic models expose
+`Results.panoptic` (a `(H, W)` segment-id map plus `segments_info`) and are
+scored with Panoptic Quality (PQ = SQ x RQ) rather than mIoU or mask mAP. The
+canonical suffix is the full word `-panoptic` (not an abbreviation), so
+`LibreEoMTs-panoptic.pt` is a first-class panoptic checkpoint, not a `segment`
+checkpoint in disguise. NOTE (issue #555): the task, its `Results` slot, and
+the `PanopticValidator` dispatch are scaffolded; the model postprocess, the PQ
+metric, and the COCO-panoptic dataset loader are not implemented yet.
 
 `depth` is the task for dense monocular depth estimation. Models expose
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the

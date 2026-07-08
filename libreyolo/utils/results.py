@@ -460,6 +460,98 @@ class SemanticMask(_TensorPayload):
         )
 
 
+class PanopticSegmentation(_TensorPayload):
+    """Panoptic segmentation result for a single image.
+
+    Panoptic segmentation assigns every pixel exactly one non-overlapping
+    segment, unifying "stuff" (amorphous background regions) and "things"
+    (countable object instances). ``data`` is a ``(H, W)`` integer segment-id
+    map on the original image canvas; ``segments_info`` describes each segment
+    id that appears in the map.
+
+    ``segments_info`` is a list of dicts, one per segment, each with at least::
+
+        {"id": int, "category_id": int}
+
+    where ``id`` matches a value in the map and ``category_id`` is the class
+    index in the model's ``names``.
+
+    thing-vs-stuff is a *per-category* property of the label set (mirroring the
+    COCO-panoptic GT, where ``isthing`` lives on the ``categories`` list, not on
+    per-segment ``segments_info`` entries), so the category metadata is the
+    source of truth. As a convenience a prediction payload MAY denormalize it
+    onto each segment (``"isthing": bool``, derived from ``category_id``); it is
+    optional and, when present, must agree with the category-level map. This
+    keeps the payload consistent with the GT contract in
+    ``docs/dataset_schema.md`` and puts the derive-from-category responsibility
+    on the producer (a model's ``_postprocess_predictions`` /
+    ``PanopticValidator``), not on downstream consumers.
+
+    SCAFFOLD (issue #555): this defines the API contract only. No model family
+    populates a :class:`Results` ``panoptic`` slot yet, and no drawing/summary
+    path consumes it. A family with panoptic weights (e.g. ``eomt``) plugs its
+    panoptic postprocess in by constructing this payload; :class:`Results.plot`
+    and :meth:`Results.summary` panoptic rendering are follow-up work. The
+    matching evaluation plug point is ``PanopticValidator`` (Panoptic Quality).
+    """
+
+    IGNORE_INDEX = 0  # COCO panoptic convention: segment id 0 is unlabeled/void.
+
+    def __init__(
+        self,
+        data: TensorLike,
+        segments_info: Optional[List[dict]] = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) panoptic segment-id map but got shape "
+                f"{tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+        # Plain-Python metadata; carried verbatim across device/array moves.
+        self.segments_info: List[dict] = list(segments_info or [])
+
+    @property
+    def segment_ids(self) -> List[int]:
+        """Sorted segment ids present in the map, excluding the void id."""
+        values = np.unique(_numpy(self.data))
+        return [int(v) for v in values if int(v) != self.IGNORE_INDEX]
+
+    def segment_mask(self, segment_id: int) -> TensorLike:
+        """Boolean ``(H, W)`` mask selecting the pixels of one segment id."""
+        return self.data == segment_id
+
+    # segments_info is not tensor data, so the base _TensorPayload moves (which
+    # rebuild via ``self.__class__(data, orig_shape)``) would drop it. Override
+    # the move/slice methods to carry it through.
+    def to(self, *args, **kwargs):
+        return self.__class__(_move(self.data, *args, **kwargs), self.segments_info, self.orig_shape)
+
+    def cpu(self):
+        return self.__class__(_cpu(self.data), self.segments_info, self.orig_shape)
+
+    def cuda(self):
+        return self.__class__(_cuda(self.data), self.segments_info, self.orig_shape)
+
+    def numpy(self):
+        return self.__class__(_numpy(self.data), self.segments_info, self.orig_shape)
+
+    def __getitem__(self, idx):
+        # A dense panoptic map is whole-image, not per-instance; keep it intact
+        # so shared Results slicing (e.g. ``result[0]``) cannot corrupt the
+        # (H, W) layout. Mirrors SemanticMask/DepthMap.
+        return self.__class__(self.data, self.segments_info, self.orig_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"PanopticSegmentation(shape={tuple(self.data.shape)}, "
+            f"segments={len(self.segment_ids)}, orig_shape={self.orig_shape})"
+        )
+
+
 class DepthMap(_TensorPayload):
     """Dense relative inverse-depth map for a single image.
 
@@ -788,6 +880,7 @@ class Results:
         "gaze",
         "points",
         "semantic_mask",
+        "panoptic",
         "depth_map",
         "restored",
         "matte",
@@ -806,6 +899,7 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
+        panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
@@ -835,6 +929,7 @@ class Results:
         self.gaze = gaze
         self.points = points
         self.semantic_mask = semantic_mask
+        self.panoptic = panoptic
         self.depth_map = depth_map
         self.restored = restored
         self.matte = matte
@@ -862,6 +957,7 @@ class Results:
             "gaze": self.gaze,
             "points": self.points,
             "semantic_mask": self.semantic_mask,
+            "panoptic": self.panoptic,
             "depth_map": self.depth_map,
             "restored": self.restored,
             "matte": self.matte,
@@ -918,6 +1014,7 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
+        panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
@@ -940,6 +1037,8 @@ class Results:
             self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
         if semantic_mask is not None:
             self.semantic_mask = semantic_mask
+        if panoptic is not None:
+            self.panoptic = panoptic
         if depth_map is not None:
             self.depth_map = depth_map
         if restored is not None:
@@ -1165,6 +1264,8 @@ class Results:
             return 1
         if self.semantic_mask is not None:
             return 1
+        if self.panoptic is not None:
+            return 1
         if self.depth_map is not None:
             return 1
         if self.restored is not None:
@@ -1185,6 +1286,8 @@ class Results:
             parts.append(f"masks={self.masks}")
         if self.semantic_mask is not None:
             parts.append(f"semantic_mask={self.semantic_mask}")
+        if self.panoptic is not None:
+            parts.append(f"panoptic={self.panoptic}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
         if self.restored is not None:

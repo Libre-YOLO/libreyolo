@@ -31,8 +31,8 @@ Required field meanings:
 - `model_family`: registered LibreYOLO family, such as `yolo9`, `rfdetr`,
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
-- `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
-  `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
+- `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
