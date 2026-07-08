@@ -30,6 +30,7 @@ from ...utils.drawing import (
     draw_boxes,
     draw_keypoints,
     draw_masks,
+    draw_matte,
     draw_obb,
     draw_depth_map,
     draw_points,
@@ -49,6 +50,7 @@ from ...utils.results import (
     DepthMap,
     Keypoints,
     Masks,
+    Matte,
     OBB,
     Points,
     Probs,
@@ -540,6 +542,14 @@ class InferenceRunner:
             result.restored.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "matte", None) is not None:
+            # A matte result saves as a transparent-background RGBA PNG cutout
+            # (source RGB + soft matte alpha), the canonical background-removal
+            # deliverable. Force a .png suffix so the alpha channel survives.
+            png_path = Path(save_path).with_suffix(".png")
+            result.save(png_path, image=original_img)
+            log_saved_result(result, png_path)
+            return
         if result.boxes is None and getattr(result, "points", None) is not None:
             if len(result.points) > 0:
                 annotated_img = draw_points(
@@ -699,6 +709,23 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 restored=RestoredImage(restored_t.to(torch.uint8), (orig_h, orig_w)),
+            )
+
+        # Matte: a dense soft alpha matte in [0, 1], no boxes.
+        matte_data = detections.get("matte")
+        if matte_data is not None:
+            orig_w, orig_h = original_size
+            matte_t = (
+                matte_data
+                if isinstance(matte_data, torch.Tensor)
+                else torch.as_tensor(matte_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                matte=Matte(matte_t.float(), (orig_h, orig_w)),
             )
 
         points_data = detections.get("points")

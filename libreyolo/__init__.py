@@ -28,6 +28,7 @@ from .models import (
     LibreFOMO,
     LibreDepthAnythingV2,
     LibreNAFNet,
+    LibreBiRefNet,
     LibreEoMT,
     LibrePIDNet,
     LibreMobileNetV4,
@@ -48,6 +49,7 @@ from .utils.results import (
     SemanticMask,
     DepthMap,
     RestoredImage,
+    Matte,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -167,6 +169,7 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreNAFNet",
+    "LibreBiRefNet",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
@@ -205,6 +208,7 @@ __all__ = [
     "SemanticMask",
     "DepthMap",
     "RestoredImage",
+    "Matte",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
