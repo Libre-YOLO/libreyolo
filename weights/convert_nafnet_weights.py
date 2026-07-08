@@ -93,11 +93,24 @@ def convert_weights(
         print(f"Auto-detected size: {size}")
 
     add_repo_root_to_path()
-    from libreyolo.models.nafnet import LibreNAFNet
+    from libreyolo.models.nafnet.model import infer_nafnet_config
+    from libreyolo.models.nafnet.nn import NAFNetLocal
     from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
-    model = LibreNAFNet(model_path=None, size=size, device="cpu")
-    result = model.model.load_state_dict(state_dict, strict=True)
+    # Build the architecture that matches the checkpoint's block layout (GoPro
+    # and SIDD NAFNet checkpoints share tensor names but differ in block counts).
+    cfg = infer_nafnet_config(state_dict)
+    if cfg is None:
+        raise ValueError("Could not infer NAFNet block config from the state dict.")
+    model = NAFNetLocal(
+        img_channel=3,
+        width=int(cfg["width"]),
+        middle_blk_num=int(cfg["middle_blk_num"]),
+        enc_blk_nums=cfg["enc_blk_nums"],
+        dec_blk_nums=cfg["dec_blk_nums"],
+        train_size=(1, 3, imgsz, imgsz),
+    )
+    result = model.load_state_dict(state_dict, strict=True)
     if result.missing_keys or result.unexpected_keys:
         raise RuntimeError(
             "NAFNet state dict did not load strictly: "
@@ -105,7 +118,7 @@ def convert_weights(
         )
 
     checkpoint = wrap_libreyolo_checkpoint(
-        model.model.state_dict(),
+        model.state_dict(),
         model_family="nafnet",
         size=size,
         task="restore",
