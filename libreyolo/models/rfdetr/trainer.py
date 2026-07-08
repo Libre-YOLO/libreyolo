@@ -28,6 +28,7 @@ from ...training.freezing import FreezeGroup
 from ...training.scheduler import BaseScheduler, CosineAnnealingScheduler, FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import RFDETRConfig
+from .imgsz import validate_imgsz
 from ..dfine.transforms import DFINEPassThroughDataset
 from .pose_transforms import RFDETRPoseTransform
 from .seg_transforms import (
@@ -246,19 +247,16 @@ class RFDETRTrainer(BaseTrainer):
         return getattr(getattr(self, "wrapper_model", None), "task", "detect") == "segment"
 
     def create_transforms(self):
-        patch_size = int(getattr(self.model, "patch_size", 16))
-        num_windows = int(getattr(self.model, "num_windows", 4))
-        block_size = patch_size * num_windows
+        raw = unwrap_model(self.model)
+        patch_size = int(getattr(raw, "patch_size", 16))
+        num_windows = int(getattr(raw, "num_windows", 4))
         # Validation always uses the literal imgsz, so divisibility is required
         # regardless of multi_scale mode.
-        if self.config.imgsz % block_size != 0:
-            lo = (self.config.imgsz // block_size) * block_size
-            hi = lo + block_size
-            raise ValueError(
-                f"imgsz={self.config.imgsz} is not divisible by {block_size} "
-                f"(patch_size={patch_size} x num_windows={num_windows}). "
-                f"Use {lo} or {hi}."
-            )
+        validate_imgsz(
+            self.config.imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+        )
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if task == "segment":
             preproc = RFDETRSegTransform(
@@ -456,17 +454,14 @@ class RFDETRTrainer(BaseTrainer):
         if not train_imgs:
             raise FileNotFoundError("No training images found for RF-DETR pose training")
 
-        patch_size = int(getattr(self.model, "patch_size", 16))
-        num_windows = int(getattr(self.model, "num_windows", 4))
-        block_size = patch_size * num_windows
-        if self.config.imgsz % block_size != 0:
-            lo = (self.config.imgsz // block_size) * block_size
-            hi = lo + block_size
-            raise ValueError(
-                f"imgsz={self.config.imgsz} is not divisible by {block_size} "
-                f"(patch_size={patch_size} x num_windows={num_windows}). "
-                f"Use {lo} or {hi}."
-            )
+        raw = unwrap_model(self.model)
+        patch_size = int(getattr(raw, "patch_size", 16))
+        num_windows = int(getattr(raw, "num_windows", 4))
+        validate_imgsz(
+            self.config.imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+        )
         train_tf = RFDETRPoseTransform(
             self.config.num_keypoints,
             flip_idx=flip_idx,

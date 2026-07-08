@@ -236,17 +236,22 @@ class SimOTAAssigner:
         pairwise_ious = bbox_iou_xyxy(valid_decoded, gt_bboxes)
         iou_cost = -torch.log(pairwise_ious + 1e-8)
 
-        # Classification cost: BCE between predicted scores and one-hot GT.
-        gt_onehot = F.one_hot(gt_labels.long(), num_classes=cls_pred.shape[1]).float()
-        gt_onehot = gt_onehot.unsqueeze(0).repeat(valid_decoded.shape[0], 1, 1)
-        cls_pred_expanded = (
-            valid_cls_pred.unsqueeze(1).repeat(1, num_gts, 1)
-        )
-        cls_cost = F.binary_cross_entropy(
-            cls_pred_expanded.clamp(1e-7, 1 - 1e-7),
-            gt_onehot,
-            reduction="none",
-        ).sum(dim=-1)
+        # Assignment is no-grad bookkeeping. Keep raw BCE out of CUDA autocast:
+        # PyTorch treats probability BCE as unsafe under AMP, while the actual
+        # trainable VFL path below already uses BCE-with-logits.
+        with torch.amp.autocast(valid_cls_pred.device.type, enabled=False):
+            gt_onehot = F.one_hot(
+                gt_labels.long(),
+                num_classes=cls_pred.shape[1],
+            ).float()
+            gt_onehot = gt_onehot.unsqueeze(0).repeat(valid_decoded.shape[0], 1, 1)
+            cls_pred_expanded = valid_cls_pred.float().unsqueeze(1).repeat(1, num_gts, 1)
+            cls_cost = F.binary_cross_entropy(
+                cls_pred_expanded.clamp(1e-7, 1 - 1e-7),
+                gt_onehot,
+                reduction="none",
+            ).sum(dim=-1)
+        cls_cost = cls_cost.to(iou_cost.dtype)
 
         cost = (
             self.cls_weight * cls_cost

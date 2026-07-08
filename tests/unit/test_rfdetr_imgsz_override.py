@@ -7,6 +7,7 @@ pytestmark = pytest.mark.unit
 
 rfdetr_model = pytest.importorskip("libreyolo.models.rfdetr.model")
 rfdetr_trainer = pytest.importorskip("libreyolo.models.rfdetr.trainer")
+from libreyolo.models.rfdetr.imgsz import validate_imgsz  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -15,10 +16,16 @@ rfdetr_trainer = pytest.importorskip("libreyolo.models.rfdetr.trainer")
 
 def _make_wrapper(input_size: int = 504) -> rfdetr_model.LibreRFDETR:
     wrapper = rfdetr_model.LibreRFDETR.__new__(rfdetr_model.LibreRFDETR)
-    wrapper.model = object()
+
+    class _FakeModel:
+        patch_size = 6
+        num_windows = 4  # block_size = 24
+
+    wrapper.model = _FakeModel()
     wrapper.size = "l"
     wrapper.nb_classes = 80
     wrapper.input_size = input_size
+    wrapper.task = "detect"
     return wrapper
 
 
@@ -105,6 +112,48 @@ def test_imgsz_none_falls_back_to_model_default(monkeypatch, tmp_path):
     assert captured["kwargs"]["imgsz"] == 504
 
 
+def test_train_rejects_invalid_explicit_imgsz():
+    """train(imgsz=500) fails before constructing the trainer."""
+    wrapper = _make_wrapper(input_size=504)
+    with pytest.raises(ValueError, match="RF-DETR train imgsz=500 is not divisible by 24"):
+        wrapper.train(data="data.yaml", imgsz=500)
+
+
+def test_inference_rejects_invalid_imgsz_before_loading_image():
+    """predict/preprocess paths fail early with the shared RF-DETR message."""
+    wrapper = _make_wrapper(input_size=504)
+    with pytest.raises(
+        ValueError,
+        match="RF-DETR inference imgsz=500 is not divisible by 24",
+    ):
+        wrapper._preprocess("missing.jpg", input_size=500)
+
+
+def test_val_preprocessor_rejects_invalid_imgsz():
+    """Validation preprocessor creation validates the RF-DETR block size."""
+    wrapper = _make_wrapper(input_size=504)
+    with pytest.raises(
+        ValueError,
+        match="RF-DETR validation imgsz=500 is not divisible by 24",
+    ):
+        wrapper._get_val_preprocessor(img_size=500)
+
+
+def test_export_rejects_invalid_imgsz_before_exporter(monkeypatch):
+    """export(imgsz=500) fails before backend exporter setup."""
+    wrapper = _make_wrapper(input_size=504)
+
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("BaseModel.export should not run")
+
+    monkeypatch.setattr(rfdetr_model.BaseModel, "export", _should_not_run)
+    with pytest.raises(
+        ValueError,
+        match="RF-DETR export imgsz=500 is not divisible by 24",
+    ):
+        wrapper.export(imgsz=500)
+
+
 # ---------------------------------------------------------------------------
 # create_transforms() divisibility validation
 # ---------------------------------------------------------------------------
@@ -121,3 +170,9 @@ def test_imgsz_not_divisible_raises_with_multi_scale_too():
     trainer = _make_trainer(imgsz=500, multi_scale=True)
     with pytest.raises(ValueError, match="not divisible by 24"):
         trainer.create_transforms()
+
+
+def test_validator_suggests_adjacent_valid_sizes():
+    """The shared message points users to nearby RF-DETR-valid square sizes."""
+    with pytest.raises(ValueError, match="Use 544 or 576"):
+        validate_imgsz(560, patch_size=16, num_windows=2)

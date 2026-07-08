@@ -21,6 +21,7 @@ from .nn import (
     RFDETR_SEG_CONFIGS,
 )
 from .config import RFDETRConfig
+from .imgsz import resolve_patch_window, validate_imgsz
 from ...postprocess.rfdetr import postprocess
 from .utils import IMAGENET_MEAN, IMAGENET_STD, preprocess_numpy
 from .trainer import RFDETRTrainer
@@ -651,6 +652,28 @@ class LibreRFDETR(BaseModel):
 
         return preprocess_numpy
 
+    def _validate_imgsz(
+        self,
+        imgsz: int | tuple[int, int],
+        *,
+        name: str = "imgsz",
+    ) -> int | tuple[int, int]:
+        patch_size, num_windows = resolve_patch_window(self.model)
+        return validate_imgsz(
+            imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            name=name,
+        )
+
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        if img_size is not None:
+            img_size = self._validate_imgsz(
+                img_size,
+                name="RF-DETR validation imgsz",
+            )
+        return super()._get_val_preprocessor(img_size=img_size)
+
     def _preprocess(
         self,
         image: ImageInput,
@@ -659,6 +682,10 @@ class LibreRFDETR(BaseModel):
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         """Preprocess: resize + ImageNet normalization (no letterbox)."""
         effective_res = input_size if input_size is not None else self.input_size
+        effective_res = self._validate_imgsz(
+            effective_res,
+            name="RF-DETR inference imgsz",
+        )
 
         img = ImageLoader.load(image, color_format=color_format)
         orig_w, orig_h = img.size
@@ -1050,10 +1077,27 @@ class LibreRFDETR(BaseModel):
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         """Export model. RF-DETR requires opset >= 17 for LayerNormalization."""
+        if kwargs.get("imgsz") is not None:
+            kwargs["imgsz"] = self._validate_imgsz(
+                kwargs["imgsz"],
+                name="RF-DETR export imgsz",
+            )
         return super().export(format, opset=opset, **kwargs)
 
     def val(self, *args, workers: int = 0, **kwargs) -> Dict:
         """Run RF-DETR validation with a Windows-safe worker default."""
+        if "imgsz" in kwargs and kwargs["imgsz"] is not None:
+            kwargs["imgsz"] = self._validate_imgsz(
+                kwargs["imgsz"],
+                name="RF-DETR validation imgsz",
+            )
+        elif len(args) >= 3 and args[2] is not None:
+            args = list(args)
+            args[2] = self._validate_imgsz(
+                args[2],
+                name="RF-DETR validation imgsz",
+            )
+            args = tuple(args)
         return super().val(*args, workers=workers, **kwargs)
 
     def _restore_after_training(self, result: dict) -> None:
@@ -1221,6 +1265,11 @@ class LibreRFDETR(BaseModel):
         train_kwargs.update(pose_train_metadata)
         if train_kwargs.get("imgsz") is None:
             train_kwargs["imgsz"] = self.input_size
+        else:
+            train_kwargs["imgsz"] = self._validate_imgsz(
+                train_kwargs["imgsz"],
+                name="RF-DETR train imgsz",
+            )
 
         aliases = {
             "num_workers": "workers",

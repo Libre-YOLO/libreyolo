@@ -656,11 +656,16 @@ class DEIMv2Config(TrainConfig):
 class ECConfig(TrainConfig):
     """EC-specific training defaults (experimental).
 
-    Fine-tune defaults follow upstream EdgeCrafter's published recipe (S/M):
+    Fine-tune defaults keep the optimizer/scheduler/loss shape from
+    EdgeCrafter's published recipe (S/M):
     AdamW with backbone-LR multiplier 0.05 (≈2.5e-5 vs head 5e-4), no-decay
     on norms/biases, FlatCosine schedule with quadratic warmup, EMA 0.9999,
-    Mosaic+Mixup until ~mid-training, all strong augs disabled past
-    ``stop_epoch``. Loss = MAL + L1 + GIoU + FGL + DDF.
+    Loss = MAL + L1 + GIoU + FGL + DDF.
+
+    The current LibreYOLO detection trainer uses a per-image D-FINE-style
+    pass-through transform with ImageNet normalization. Mosaic/MixUp and the
+    strong color/geometric knobs are disabled here so the public config matches
+    the effective training path.
 
     Training has NOT been validated on a real fine-tune run — ship as
     experimental.
@@ -676,12 +681,12 @@ class ECConfig(TrainConfig):
     no_aug_epochs: int = 4
     min_lr_ratio: float = 0.5  # EC's lr_gamma in upstream
 
-    mosaic_prob: float = 0.75
-    mixup_prob: float = 0.75
-    hsv_prob: float = 0.5
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
     flip_prob: float = 0.5
-    degrees: float = 10.0
-    translate: float = 0.1
+    degrees: float = 0.0
+    translate: float = 0.0
     mosaic_scale: Tuple[float, float] = (0.5, 1.5)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 0.0
@@ -920,11 +925,11 @@ class RTMDetConfig(TrainConfig):
     - DynamicSoftLabelAssigner (topk=13)
     - QualityFocalLoss (beta=2.0, weight=1.0) + GIoULoss (weight=2.0)
 
-    Status: training is NOT yet implemented in LibreYOLO. This config exists so
-    callers can introspect intended hyperparameters. ``LibreRTMDet.train()``
-    raises ``NotImplementedError`` until the follow-up PR lands the loss,
-    DynamicSoftLabelAssigner, MlvlPointGenerator,
-    and the 2-stage pipeline-switch hook.
+    Status: training is implemented but experimental. ``LibreRTMDet.train()``
+    requires ``allow_experimental=True`` because small-dataset fine-tune
+    convergence, from-scratch paper parity, multi-GPU behavior, cached
+    Mosaic/MixUp throughput, and the strict upstream two-stage pipeline switch
+    are not validated yet.
     """
 
     optimizer: str = "adamw"

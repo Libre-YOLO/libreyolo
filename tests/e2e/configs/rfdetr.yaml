@@ -3,10 +3,10 @@ model_type: rfdetr
 
 # Size-specific defaults
 sizes:
-  n: {imgsz: 560, lr0: 0.001, weights: LibreRFDETRn.pt}
-  s: {imgsz: 560, lr0: 0.001, weights: LibreRFDETRs.pt}
-  m: {imgsz: 560, lr0: 0.001, weights: LibreRFDETRm.pt}
-  l: {imgsz: 560, lr0: 0.001, weights: LibreRFDETRl.pt}
+  n: {imgsz: 544, lr0: 0.001, weights: LibreRFDETRn.pt}
+  s: {imgsz: 544, lr0: 0.001, weights: LibreRFDETRs.pt}
+  m: {imgsz: 544, lr0: 0.001, weights: LibreRFDETRm.pt}
+  l: {imgsz: 544, lr0: 0.001, weights: LibreRFDETRl.pt}
 
 # Training
 epochs: 100
@@ -17,7 +17,7 @@ weight_decay: 0.0001
 nesterov: true
 
 # Scheduler
-scheduler: yoloxwarmcos
+scheduler: step
 warmup_epochs: 5
 warmup_lr_start: 0.0
 no_aug_epochs: 15

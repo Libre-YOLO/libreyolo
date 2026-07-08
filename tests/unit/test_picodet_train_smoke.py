@@ -55,6 +55,37 @@ def test_simota_handles_empty_gt():
     assert pos.sum() == 0
 
 
+def test_simota_bce_cost_disables_autocast(monkeypatch):
+    """Raw probability BCE must not run inside AMP autocast."""
+    from libreyolo.models.picodet import loss as loss_module
+
+    a = SimOTAAssigner()
+    priors = torch.tensor(
+        [[5.0, 5.0, 8.0, 8.0], [20.0, 20.0, 8.0, 8.0]],
+        dtype=torch.float32,
+    )
+    decoded = torch.tensor(
+        [[0.0, 0.0, 10.0, 10.0], [16.0, 16.0, 24.0, 24.0]],
+        dtype=torch.float32,
+    )
+    cls_pred = torch.full((2, 80), 0.5, dtype=torch.float32)
+    gt_boxes = torch.tensor([[0.0, 0.0, 10.0, 10.0]], dtype=torch.float32)
+    gt_labels = torch.tensor([3], dtype=torch.long)
+    seen = {}
+    real_bce = loss_module.F.binary_cross_entropy
+
+    def wrapped_bce(*args, **kwargs):
+        seen["cpu_autocast"] = torch.is_autocast_enabled("cpu")
+        return real_bce(*args, **kwargs)
+
+    monkeypatch.setattr(loss_module.F, "binary_cross_entropy", wrapped_bce)
+
+    with torch.amp.autocast("cpu"):
+        a.assign(priors, decoded, cls_pred, gt_boxes, gt_labels)
+
+    assert seen["cpu_autocast"] is False
+
+
 def test_iou_pairwise_correct():
     a = torch.tensor([[0, 0, 10, 10], [0, 0, 5, 5]], dtype=torch.float32)
     b = torch.tensor([[0, 0, 10, 10]], dtype=torch.float32)
