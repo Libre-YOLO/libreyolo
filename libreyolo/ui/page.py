@@ -196,8 +196,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <section class="stage">
     <div class="toolbar" id="toolbar">
       <span style="font-size:18px">&#128193;</span>
-      <span><b>Drop images or a folder</b>, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, or browse</span>
+      <span><b>Drop images or a folder</b>, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, browse, or try the sample for a quick test</span>
       <span class="spacer"></span>
+      <button class="btn ghost" id="pickSample">Try a sample</button>
       <button class="btn ghost" id="pickFiles">Choose files</button>
       <button class="btn ghost" id="pickFolder">Add folder</button>
       <button class="btn" id="runBtn" disabled>
@@ -212,7 +213,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="terminal" id="terminal" style="display:none">
       <div class="term-head">
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="ttl">libreyolo &#8212; inference</span>
+        <span class="ttl">libreyolo - inference</span>
         <button class="tbtn" id="termClearBtn" title="Clear scrollback">clear</button>
       </div>
       <div class="term-body" id="termBody">
@@ -237,7 +238,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="M21 15l-5-5L5 21"/>
       </svg>
       <div class="big">No images yet</div>
-      <div>Drop images or a folder, then hit Run inference</div>
+      <div>Drop images or a folder, or use the default image for a quick test.</div>
     </div>
 
     <div class="gallery" id="gallery"></div>
@@ -248,7 +249,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <script>
 (function () {
   "use strict";
-  var images = []; // {name, file, srcUrl, w, h, status, renderedUrl, n, error}
+  var images = []; // {name, file, srcUrl, w, h, status, renderedUrl, n, task, label, error}
   var $ = function (id) { return document.getElementById(id); };
 
   $("addr").textContent = location.host;
@@ -274,7 +275,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     if (!files.length) return;
     files.forEach(function (f) {
       var url = URL.createObjectURL(f);
-      var entry = { name: f.name || "pasted.png", file: f, srcUrl: url, w: 0, h: 0, status: "queued", renderedUrl: url, n: 0, error: null };
+      var entry = { name: f.name || "pasted.png", file: f, srcUrl: url, w: 0, h: 0, status: "queued", renderedUrl: url, n: 0, task: null, label: null, error: null };
       images.push(entry);
       loadImage(url).then(function (im) { if (im) { entry.w = im.naturalWidth; entry.h = im.naturalHeight; } renderGallery(); });
     });
@@ -374,10 +375,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
         }
         if (errMsg) throw new Error(errMsg);
         if (!result) throw new Error("no result returned");
-        e.renderedUrl = result.rendered; e.n = result.count; e.status = "done"; e.error = null;
+        var label = result.label || (result.count + " object" + (result.count === 1 ? "" : "s"));
+        e.renderedUrl = result.rendered; e.n = result.count; e.task = result.task; e.label = label; e.status = "done"; e.error = null;
         if (result.dir) outdir = result.dir;
-        termLine("✓ " + e.name + ": " + result.count + " object" + (result.count === 1 ? "" : "s") +
-                 "  →  " + (result.dir || ""), "ok");
+        termLine("✓ " + e.name + ": " + label + "  →  " + (result.dir || ""), "ok");
       } catch (err) {
         e.status = "error"; e.error = err.message;
         termLine("✗ " + e.name + ": " + err.message, "err");
@@ -407,10 +408,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     g.innerHTML = "";
     images.forEach(function (e) {
       var card = document.createElement("div"); card.className = "card";
-      var stateHtml, ctHtml;
+      var stateHtml, ctHtml, ctText = null;
       if (e.status === "done") {
         stateHtml = '<span class="state done">rendered</span>';
-        ctHtml = '<b>' + e.n + '</b> obj';
+        ctHtml = "";
+        ctText = e.label || (e.n + " obj");
       } else if (e.status === "busy") {
         stateHtml = '<span class="state busy"><span class="minispin"></span>running</span>';
         ctHtml = '...';
@@ -426,6 +428,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<img src="' + e.renderedUrl + '" alt=""></div>' +
         '<div class="cap"><span class="nm"></span><span class="ct">' + ctHtml + '</span></div>';
       card.querySelector(".nm").textContent = e.name;
+      if (ctText !== null) card.querySelector(".ct").textContent = ctText;
       if (e.error) card.querySelector(".nm").title = e.error;
       g.appendChild(card);
     });
@@ -439,6 +442,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
   }
 
   // ---- controls ----
+  $("pickSample").addEventListener("click", function () {
+    fetch("/api/sample").then(function (response) {
+      if (!response.ok) throw new Error("sample unavailable");
+      return response.blob();
+    }).then(function (blob) {
+      var file = new File([blob], "guggenheim-bilbao.jpg", { type: "image/jpeg" });
+      addFiles([file]);
+    }).catch(function () { toast("Could not load the sample image."); });
+  });
   $("pickFiles").addEventListener("click", function () { $("fileInput").click(); });
   $("pickFolder").addEventListener("click", function () { $("folderInput").click(); });
   $("fileInput").addEventListener("change", function (ev) { addFiles(ev.target.files); ev.target.value = ""; });
