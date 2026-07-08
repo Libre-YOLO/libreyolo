@@ -768,6 +768,7 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
+        restore_scale: int = 1,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
@@ -793,6 +794,10 @@ class Results:
         self.semantic_mask = semantic_mask
         self.depth_map = depth_map
         self.restored = restored
+        # Integer upscale factor of a restore/super-resolution result: the
+        # restored canvas is ``restore_scale`` times the input. 1 for
+        # deblur/denoise and every non-restore task.
+        self.restore_scale = int(restore_scale) if restore_scale else 1
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -815,6 +820,7 @@ class Results:
             "semantic_mask": self.semantic_mask,
             "depth_map": self.depth_map,
             "restored": self.restored,
+            "restore_scale": self.restore_scale,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -869,6 +875,7 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
+        restore_scale: Optional[int] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
@@ -891,6 +898,8 @@ class Results:
             self.depth_map = depth_map
         if restored is not None:
             self.restored = restored
+        if restore_scale is not None:
+            self.restore_scale = int(restore_scale) if restore_scale else 1
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -947,6 +956,7 @@ class Results:
                     {
                         "name": "restored",
                         "shape": [int(h), int(w), 3],
+                        "scale": int(self.restore_scale),
                     }
                 ]
             if self.probs is None:
@@ -1059,6 +1069,8 @@ class Results:
             parts.append(f"depth_map={self.depth_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
+            if self.restore_scale != 1:
+                parts.append(f"restore_scale={self.restore_scale}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:
