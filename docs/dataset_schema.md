@@ -107,6 +107,30 @@ the object classes (`nc` grows by one).
 
 Canonical loader: `libreyolo.data.SemanticDataset`.
 
+## panoptic
+
+> SCAFFOLD (issue #555): the `panoptic` task is registered and its validator is
+> wired, but the dataset loader below is **not implemented yet**. This section
+> is the contract a contributor implements against; there is no canonical
+> `PanopticDataset` on disk yet.
+
+Panoptic segmentation pairs each image with a dense single-channel segment-id
+map and a per-image list describing each segment. The intended contract follows
+the COCO-panoptic format:
+
+- A PNG per image whose pixel value (or RGB-encoded value) is a **segment id**.
+  Every pixel belongs to exactly one segment; there is no overlap.
+- A JSON `segments_info` list, one entry per segment id present in the image:
+  `{"id": int, "category_id": int, "iscrowd": 0|1, "area": int}`. `category_id`
+  indexes the dataset `names`; a per-category `isthing` flag distinguishes
+  countable "things" from amorphous "stuff".
+
+Validation uses Panoptic Quality (PQ = SQ x RQ), matching predicted to
+ground-truth segments of the same category at IoU > 0.5. See
+`libreyolo/validation/panoptic_validator.py` for the metric plug points.
+
+Canonical loader: *(to be added — `libreyolo.data.PanopticDataset`)*.
+
 ## depth
 
 Depth estimation pairs each image with a dense single-channel depth map instead

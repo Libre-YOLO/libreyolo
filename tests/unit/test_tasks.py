@@ -69,6 +69,7 @@ def test_task_type_literal_is_public():
         "detect",
         "segment",
         "semantic",
+        "panoptic",
         "pose",
         "classify",
         "gaze",
