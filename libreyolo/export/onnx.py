@@ -171,6 +171,14 @@ def export_onnx(
     Returns:
         The output_path string.
     """
+    if metadata.get("model_family") == "yolo9" and (
+        metadata.get("task") == "segment" or metadata.get("segmentation") == "true"
+    ):
+        raise NotImplementedError(
+            "YOLO9 segmentation ONNX export is not supported. YOLO9 is "
+            "detection-only in LibreYOLO."
+        )
+
     if importlib.util.find_spec("onnx") is None:
         raise ImportError(
             "ONNX export requires the 'onnx' package. "
@@ -206,34 +214,36 @@ def export_onnx(
     # DETR detection families we already know the output schema, so skip
     # the probe forward pass entirely and reuse the count below.
     task = metadata.get("task")
+    model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
-    is_yolo9_seg = (
-        metadata.get("model_family") == "yolo9"
-        and task == "segment"
-    )
     is_yolo9_pose = (
-        metadata.get("model_family") == "yolo9"
+        model_family == "yolo9"
         and task == "pose"
     )
     is_rfdetr_pose = (
-        metadata.get("model_family") == "rfdetr"
+        model_family == "rfdetr"
         and task == "pose"
     )
-    is_ec_pose = metadata.get("model_family") == "ec" and task == "pose"
-    is_yolonas_pose = metadata.get("model_family") == "yolonas" and task == "pose"
+    is_ec_pose = model_family == "ec" and task == "pose"
+    is_yolonas_pose = model_family == "yolonas" and task == "pose"
     is_obb = task == "obb"
     is_classify = task == "classify"
     is_restore = task == "restore"
     is_matte = task == "matte"
     known_detr_detection = _uses_dfine_style_export_wrapper(
-        metadata.get("model_family")
+        model_family
     )
     num_outputs = None
     if not is_seg and not known_detr_detection and not is_restore and not is_matte:
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
 
-    model_family = metadata.get("model_family")
+    if model_family == "yolo9" and is_seg:
+        raise NotImplementedError(
+            "YOLO9 segmentation ONNX export is not supported. YOLO9 is "
+            "detection-only in LibreYOLO."
+        )
+
     if is_classify:
         # Classification emits a single logits tensor (B, num_classes).
         input_name = "input" if model_family == "rfdetr" else "images"
@@ -260,19 +270,6 @@ def export_onnx(
         dynamic_axes = (
             {"images": {0: "batch"}, "matte": {0: "batch"}} if dynamic else None
         )
-    elif is_yolo9_seg:
-        output_names = ["predictions", "proto", "mask_coeffs"]
-        dynamic_axes = (
-            {
-                "images": {0: "batch"},
-                "predictions": {0: "batch", 2: "anchors"},
-                "proto": {0: "batch", 2: "mask_height", 3: "mask_width"},
-                "mask_coeffs": {0: "batch", 2: "anchors"},
-            }
-            if dynamic
-            else None
-        )
-        metadata["segmentation"] = "true"
     elif is_yolo9_pose:
         output_names = ["predictions", "keypoints"]
         dynamic_axes = (

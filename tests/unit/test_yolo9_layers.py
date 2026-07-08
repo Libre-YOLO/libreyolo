@@ -355,25 +355,6 @@ class TestYOLO9Utils:
             0.9,
         ]
 
-    def test_postprocess_segment_keeps_best_class(self):
-        """Segment postprocess stays best-class (not multi-label) so each
-        detection keeps a single mask-coefficient vector."""
-        pred = torch.zeros(1, 6, 1)
-        pred[0, :4, 0] = torch.tensor([0.0, 0.0, 100.0, 100.0])
-        pred[0, 4:, 0] = torch.tensor([0.9, 0.8])  # two classes over conf
-        proto = torch.randn(1, 32, 16, 16)
-        coeffs = torch.randn(1, 32, 1)
-
-        out = yolo9_utils.postprocess(
-            {"predictions": pred, "proto": proto, "mask_coeffs": coeffs},
-            conf_thres=0.25,
-            iou_thres=0.5,
-            original_size=(100, 100),
-        )
-
-        assert out["num_detections"] == 1
-        assert out["classes"] == [0]
-
     def test_postprocess_obb_outputs_obb_payload(self):
         pred = torch.zeros(1, 7, 1)
         pred[0, :4, 0] = torch.tensor([10.0, 20.0, 50.0, 40.0])
@@ -767,37 +748,3 @@ def test_yolo9_trainer_checkpoint_uses_resolved_data_classes_for_obb(tmp_path):
     assert trainer.config.num_classes == 1
     assert checkpoint["nc"] == 1
     assert checkpoint["config"]["num_classes"] == 1
-
-
-def test_postprocess_segment_outputs_masks():
-    """YOLO9 segment postprocess keeps mask coefficients aligned through NMS."""
-    num_anchors = 4
-    num_classes = 2
-    num_masks = 32
-    pred = torch.zeros(1, 4 + num_classes, num_anchors)
-    pred[0, :4] = torch.tensor(
-        [
-            [10, 12, 11, 200],
-            [10, 12, 11, 200],
-            [50, 60, 55, 240],
-            [50, 60, 55, 240],
-        ],
-        dtype=torch.float32,
-    )
-    pred[0, 4:] = torch.tensor(
-        [[0.9, 0.2, 0.95, 0.1], [0.1, 0.8, 0.05, 0.7]]
-    )
-    proto = torch.randn(1, num_masks, 16, 16)
-    coeffs = torch.randn(1, num_masks, num_anchors)
-
-    out = yolo9_utils.postprocess(
-        {"predictions": pred, "proto": proto, "mask_coeffs": coeffs},
-        conf_thres=0.25,
-        iou_thres=0.5,
-        input_size=64,
-        original_size=(128, 96),
-        max_det=3,
-    )
-
-    assert out["num_detections"] == 2
-    assert out["masks"].shape == (2, 96, 128)

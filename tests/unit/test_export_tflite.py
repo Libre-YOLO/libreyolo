@@ -121,7 +121,7 @@ def test_tflite_blocks_yolo9_segment_before_onnx_export():
     wrapper.task = "segment"
     exporter = TFLiteExporter(wrapper)
 
-    with pytest.raises(NotImplementedError, match="task 'segment'"):
+    with pytest.raises(NotImplementedError, match="YOLO9 segmentation export"):
         exporter(output_path="unused.tflite")
 
 

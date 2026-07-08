@@ -1,4 +1,4 @@
-"""YOLO9 postprocessing (detect / segment / pose / OBB).
+"""YOLO9 postprocessing (detect / pose / OBB).
 
 Moved verbatim from ``libreyolo/models/yolo9/utils.py``, which re-exports
 everything here for backward compatibility.
@@ -6,7 +6,6 @@ everything here for backward compatibility.
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torchvision.ops import batched_nms
 from typing import Dict, Tuple, Union
 
@@ -174,70 +173,6 @@ def _obb_prefilter_keep_indices(
     return torch.topk(scores, min(limit, scores.numel())).indices
 
 
-def _crop_masks(masks: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
-    n, h, w = masks.shape
-    if n == 0:
-        return masks
-    x1, y1, x2, y2 = boxes.unbind(dim=1)
-    rows = torch.arange(h, device=masks.device, dtype=masks.dtype)[None, :, None]
-    cols = torch.arange(w, device=masks.device, dtype=masks.dtype)[None, None, :]
-    keep = (
-        (cols >= x1[:, None, None])
-        & (cols < x2[:, None, None])
-        & (rows >= y1[:, None, None])
-        & (rows < y2[:, None, None])
-    )
-    return masks * keep
-
-
-def _process_masks(
-    proto: torch.Tensor,
-    coeffs: torch.Tensor,
-    boxes_input: torch.Tensor,
-    input_shape: Tuple[int, int],
-    original_size: Tuple[int, int] | None,
-    letterbox: bool = True,
-) -> torch.Tensor:
-    if coeffs.numel() == 0:
-        h = original_size[1] if original_size is not None else input_shape[0]
-        w = original_size[0] if original_size is not None else input_shape[1]
-        return torch.zeros((0, h, w), dtype=torch.bool, device=proto.device)
-
-    c, mask_h, mask_w = proto.shape
-    masks = (coeffs @ proto.reshape(c, -1)).sigmoid().reshape(-1, mask_h, mask_w)
-
-    input_h, input_w = input_shape
-    boxes_mask = boxes_input.clone()
-    boxes_mask[:, [0, 2]] *= mask_w / max(float(input_w), 1.0)
-    boxes_mask[:, [1, 3]] *= mask_h / max(float(input_h), 1.0)
-    masks = _crop_masks(masks, boxes_mask)
-
-    if original_size is not None and letterbox:
-        orig_w, orig_h = original_size
-        ratio = min(input_h / orig_h, input_w / orig_w)
-        new_h = max(int(orig_h * ratio), 1)
-        new_w = max(int(orig_w * ratio), 1)
-        masks = F.interpolate(
-            masks[:, None],
-            size=(int(input_h), int(input_w)),
-            mode="bilinear",
-            align_corners=False,
-        )[:, 0]
-        masks = masks[:, :new_h, :new_w]
-        out_h, out_w = orig_h, orig_w
-    elif original_size is not None:
-        out_h, out_w = original_size[1], original_size[0]
-    else:
-        out_h, out_w = input_h, input_w
-    masks = F.interpolate(
-        masks[:, None],
-        size=(int(out_h), int(out_w)),
-        mode="bilinear",
-        align_corners=False,
-    )[:, 0]
-    return masks > 0.5
-
-
 def postprocess(
     output: Dict,
     conf_thres: float = 0.25,
@@ -286,16 +221,10 @@ def postprocess(
     # MultimediaTechLab/YOLO (yolo/utils/bounding_box_utils.py::bbox_nms, which
     # selects candidates via torch.where(cls_dist > min_confidence)). At the low
     # conf thresholds used for COCO evaluation this recovers ~0.7 mAP over
-    # best-class-only selection. Segmentation keeps best-class, since it carries
-    # one mask-coefficient vector per anchor.
-    mask_coeffs = output.get("mask_coeffs")
-    proto = output.get("proto")
+    # best-class-only selection.
     keypoints_all = output.get("keypoints")
     if keypoints_all is not None:
         keypoints_all = keypoints_all[0] if keypoints_all.dim() == 4 else keypoints_all
-    coeffs_all = None
-    if mask_coeffs is not None and proto is not None:
-        coeffs_all = mask_coeffs[0].transpose(0, 1) if mask_coeffs.dim() == 3 else mask_coeffs
 
     if is_obb:
         max_scores, class_ids = torch.max(scores, dim=1)
@@ -391,34 +320,21 @@ def postprocess(
             "num_detections": len(boxes),
         }
 
-    if coeffs_all is None:
-        anchor_idx, class_ids = (scores > conf_thres).nonzero(as_tuple=True)
-        if anchor_idx.numel() == 0:
-            return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
-        boxes_input = boxes_input[anchor_idx]
-        keypoints = keypoints_all[anchor_idx].clone() if keypoints_all is not None else None
-        max_scores = scores[anchor_idx, class_ids]
-        max_nms = max(max_det, _YOLO9_MAX_NMS_CANDIDATES)
-        if max_scores.numel() > max_nms:
-            keep = torch.topk(max_scores, max_nms).indices
-            boxes_input = boxes_input[keep]
-            if keypoints is not None:
-                keypoints = keypoints[keep]
-            max_scores = max_scores[keep]
-            class_ids = class_ids[keep]
-        boxes = boxes_input.clone()
-        coeffs = None
-    else:
-        max_scores, class_ids = torch.max(scores, dim=1)
-        mask = max_scores > conf_thres
-        if not mask.any():
-            return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
-        boxes_input = boxes_input[mask]
-        boxes = boxes_input.clone()
-        keypoints = keypoints_all[mask].clone() if keypoints_all is not None else None
-        max_scores = max_scores[mask]
-        class_ids = class_ids[mask]
-        coeffs = coeffs_all[mask]
+    anchor_idx, class_ids = (scores > conf_thres).nonzero(as_tuple=True)
+    if anchor_idx.numel() == 0:
+        return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
+    boxes_input = boxes_input[anchor_idx]
+    keypoints = keypoints_all[anchor_idx].clone() if keypoints_all is not None else None
+    max_scores = scores[anchor_idx, class_ids]
+    max_nms = max(max_det, _YOLO9_MAX_NMS_CANDIDATES)
+    if max_scores.numel() > max_nms:
+        keep = torch.topk(max_scores, max_nms).indices
+        boxes_input = boxes_input[keep]
+        if keypoints is not None:
+            keypoints = keypoints[keep]
+        max_scores = max_scores[keep]
+        class_ids = class_ids[keep]
+    boxes = boxes_input.clone()
 
     if original_size is not None:
         if letterbox:
@@ -454,8 +370,6 @@ def postprocess(
         class_ids = class_ids[valid]
         if keypoints is not None:
             keypoints = keypoints[valid]
-        if coeffs is not None:
-            coeffs = coeffs[valid]
 
     keep = _nms_keep_indices(boxes, max_scores, class_ids, iou_thres, max_det)
     if len(keep) == 0:
@@ -474,17 +388,5 @@ def postprocess(
     }
     if keypoints_out is not None:
         result["keypoints"] = keypoints_out.detach().cpu()
-
-    if coeffs is not None and proto is not None:
-        proto_i = proto[0] if proto.dim() == 4 else proto
-        masks = _process_masks(
-            proto_i,
-            coeffs[keep],
-            boxes_input[keep],
-            input_shape=(input_h, input_w),
-            original_size=original_size,
-            letterbox=letterbox,
-        )
-        result["masks"] = masks.detach().cpu()
 
     return result
