@@ -19,6 +19,7 @@ from libreyolo.models.rtmdet.model import LibreRTMDet
 from libreyolo.models.rtdetr.model import LibreRTDETR
 from libreyolo.models.rtdetrv2.model import LibreRTDETRv2
 from libreyolo.models.rtdetrv4.model import LibreRTDETRv4
+from libreyolo.models.yolo7.model import LibreYOLO7
 from libreyolo.models.yolo9.model import LibreYOLO9
 from libreyolo.models.yolo9_e2e.model import LibreYOLO9E2E
 from libreyolo.models.yolonas.model import LibreYOLONAS
@@ -29,6 +30,7 @@ pytestmark = pytest.mark.unit
 
 TRAINABLE_MODEL_CLASSES = [
     LibreYOLOX,
+    LibreYOLO7,
     LibreYOLO9,
     LibreYOLO9E2E,
     LibreYOLONAS,
@@ -116,6 +118,10 @@ FORWARDING_CASES = {
     "yolox": ForwardingCase(
         lambda: LibreYOLOX(None, size="n", nb_classes=2, device="cpu"),
         "libreyolo.models.yolox.trainer.YOLOXTrainer",
+    ),
+    "yolo7": ForwardingCase(
+        lambda: LibreYOLO7(None, size="b", nb_classes=2, device="cpu"),
+        "libreyolo.models.yolo7.trainer.YOLOv7Trainer",
     ),
     "yolo9": ForwardingCase(
         lambda: LibreYOLO9(None, size="t", nb_classes=2, device="cpu"),

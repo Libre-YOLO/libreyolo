@@ -229,25 +229,26 @@ class YOLOXConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
-class YOLOv7Config(TrainConfig):
+class YOLOv7Config(YOLOXConfig):
     """YOLOv7 training defaults.
 
-    v7 is anchor-based but trains through LibreYOLO's YOLOX-style pipeline
-    (SimOTA assignment + mosaic/mixup TrainTransform), so the schedule mirrors
-    :class:`YOLOXConfig`.
+    v7 is anchor-based but trains through the YOLOX-style pipeline (SimOTA
+    assignment + mosaic/mixup), so this subclasses :class:`YOLOXConfig` and
+    overrides only the real differences: v5/v7-lineage momentum, a shorter
+    warmup, slower EMA, and ``sync_bn=True`` because v7 is a BatchNorm-heavy
+    pure CNN (same rationale as :class:`YOLO9Config`, issue #484: per-rank BN
+    stats measurably degrade the converged model under DDP).
+
+    Note: unlike YOLOX, the final no-aug epochs run without an L1 refinement
+    stage — the v7 SimOTA loss has no raw-offset L1 branch.
     """
 
+    # v7 ships a single size; TrainConfig's "s" default doesn't exist here.
+    size: str = "b"
     momentum: float = 0.937
     warmup_epochs: int = 3
-    warmup_lr_start: float = 0.0
-    no_aug_epochs: int = 15
-    min_lr_ratio: float = 0.05
-    degrees: float = 10.0
-    shear: float = 2.0
-    mosaic_scale: Tuple[float, float] = (0.1, 2.0)
-    mixup_prob: float = 1.0
     ema_decay: float = 0.9999
-    name: str = "exp"
+    sync_bn: bool = True
 
 
 @dataclass(kw_only=True)

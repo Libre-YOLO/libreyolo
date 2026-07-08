@@ -119,7 +119,10 @@ class YOLOv7Model(nn.Module):
             return _Concat(), sum(output_dim[i] for i in source)
         if block_type == "MultiheadDetection":
             in_channels = [output_dim[i] for i in source]
-            return MultiheadDetection(in_channels, self.num_classes), 0
+            # Pass anchor_num from the yaml so it stays the single source of
+            # truth (blocks.py's default of 3 must not silently diverge).
+            return MultiheadDetection(in_channels, self.num_classes,
+                                      anchor_num=self.anchor_num), 0
         raise ValueError(f"Unsupported v7 block type: {block_type!r}")
 
     # -- forward ------------------------------------------------------------
@@ -156,6 +159,10 @@ class YOLOv7Model(nn.Module):
         class. No-op if the head is absent. ``implicit_a`` starts at 0 and
         ``implicit_m`` at 1, so at init the head output equals ``head_conv`` and
         these biases are the effective priors.
+
+        Idempotent by design (set, not add — YOLOX ``fill_`` semantics): calling
+        it twice, e.g. via repeated ``train()`` on the same object, resets to
+        the prior instead of compounding the shift.
         """
         import math
 
@@ -165,4 +172,4 @@ class YOLOv7Model(nn.Module):
         bias_prior = -math.log((1 - prior_prob) / prior_prob)
         for idet in head.heads:
             bias = idet.head_conv.bias.data.view(self.anchor_num, -1)  # [A, 5+nc]
-            bias[:, 4:] += bias_prior  # objectness (idx 4) + class channels
+            bias[:, 4:] = bias_prior  # objectness (idx 4) + class channels

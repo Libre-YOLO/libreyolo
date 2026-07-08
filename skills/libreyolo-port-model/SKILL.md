@@ -204,7 +204,7 @@ Compact rows — clone these directly for the newer archetypes:
 | **DINOv2** | ViT | semantic, classify | via `RFDETRConfig` | lazy-registered together with RF-DETR (transformers dep) |
 | **YOLO9-P2** (`models/yolo9_p2/`) | YOLO-grid (child of YOLO9) | detect | production | stride-4 P2 head for small objects; sizes t/s; the `WEIGHT_VARIANTS = ("visdrone",)` precedent for dataset-variant weight suffixes |
 | **Darknet lineage: YOLO2/3/4** (`models/darknet/` + thin `models/yolo{2,3,4}/`) | anchor-grid CNN | detect | inference-only | one shared `DarknetFamily` (cfg parser + blocks + anchor decode) serves all three; public-domain upstream; converter `weights/convert_darknet_weights.py`, parity via `weights/parity_darknet.py` |
-| **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | train + infer | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py`; training via SimOTA loss (`loss.py`) adapted from Apache-2.0 YOLOX |
+| **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | experimental training (RF1 skip map) + infer | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py`; training via SimOTA loss (`loss.py`) adapted from Apache-2.0 YOLOX |
 
 ### 4.1 Sibling factory tiers (not `BaseModel` families)
 

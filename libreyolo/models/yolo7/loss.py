@@ -8,7 +8,7 @@ built for YOLOv9's dual head only. v7 there is inference-only (``Anc2Box``
 decode). So there is nothing to port from that repo for training.
 
 Rather than adapt the GPL-3.0 ``WongKinYiu/yolov7`` / AGPL YOLOv5 anchor loss,
-this module is adapted from LibreYOLO's own in-repo **YOLOX SimOTA**
+this module reuses LibreYOLO's own in-repo **YOLOX SimOTA**
 (``libreyolo/models/yolox/``, Apache-2.0, Megvii YOLOX lineage). SimOTA is the
 same dynamic-assignment family as v7's OTA, and it is head-agnostic: it operates
 on decoded boxes plus objectness/class logits and per-anchor grid shifts. We
@@ -16,98 +16,37 @@ drive it with v7's ``Anc2Box``-decoded anchor predictions (3 anchors/cell,
 ``xy=(2σ-0.5+grid)·stride``, ``wh=(2σ)²·anchor``). No GPL YOLOv5/YOLOv7 code is
 read or used.
 
-``bboxes_iou`` and ``_IoULoss`` are copied verbatim from the in-repo Apache-2.0
-YOLOX modules; the assignment/geometry/matching logic mirrors YOLOX's
-``get_losses``/``get_assignments`` with v7's decode substituted for the
-anchor-free one.
+``bboxes_iou`` and ``IoULoss`` are imported from the in-repo Apache-2.0 YOLOX
+modules (single shared implementation, no copies); the assignment logic
+(``get_losses``/``get_assignments``/``get_geometry_constraint``/
+``simota_matching`` including the CUDA-OOM CPU retry) mirrors YOLOX's with
+v7's decode substituted for the anchor-free one.
+
+AMP note: the head maps are upcast to fp32 in ``_decode`` before any box math.
+v7's pixel-scale anchors (up to 459x401 -> ~184k px^2 at init) overflow fp16's
+65504 max inside ``torch.prod`` box areas, which yields NaN IoUs/gradients under
+autocast; the loss therefore always runs in fp32 regardless of AMP.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-# ---------------------------------------------------------------------------
-# IoU utilities — verbatim from libreyolo/models/yolox (Apache-2.0, Megvii).
-# ---------------------------------------------------------------------------
-def bboxes_iou(bboxes_a: torch.Tensor, bboxes_b: torch.Tensor,
-               xyxy: bool = True) -> torch.Tensor:
-    """Pairwise IoU between two box sets. cxcywh when ``xyxy=False``."""
-    if bboxes_a.shape[1] != 4 or bboxes_b.shape[1] != 4:
-        raise IndexError
-    if xyxy:
-        tl = torch.max(bboxes_a[:, None, :2], bboxes_b[:, :2])
-        br = torch.min(bboxes_a[:, None, 2:], bboxes_b[:, 2:])
-        area_a = torch.prod(bboxes_a[:, 2:] - bboxes_a[:, :2], 1)
-        area_b = torch.prod(bboxes_b[:, 2:] - bboxes_b[:, :2], 1)
-    else:
-        tl = torch.max(
-            (bboxes_a[:, None, :2] - bboxes_a[:, None, 2:] / 2),
-            (bboxes_b[:, :2] - bboxes_b[:, 2:] / 2),
-        )
-        br = torch.min(
-            (bboxes_a[:, None, :2] + bboxes_a[:, None, 2:] / 2),
-            (bboxes_b[:, :2] + bboxes_b[:, 2:] / 2),
-        )
-        area_a = torch.prod(bboxes_a[:, 2:], 1)
-        area_b = torch.prod(bboxes_b[:, 2:], 1)
-    en = (tl < br).to(device=tl.device, dtype=tl.dtype).prod(dim=2)
-    area_i = torch.prod(br - tl, 2) * en
-    return area_i / (area_a[:, None] + area_b - area_i)
-
-
-class _IoULoss(nn.Module):
-    """IoU regression loss on cxcywh boxes (Apache-2.0 YOLOX ``IoULoss``)."""
-
-    def __init__(self, reduction: str = "none", loss_type: str = "iou"):
-        super().__init__()
-        self.reduction = reduction
-        self.loss_type = loss_type
-
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        assert pred.shape[0] == target.shape[0]
-        pred = pred.view(-1, 4)
-        target = target.view(-1, 4)
-        tl = torch.max((pred[:, :2] - pred[:, 2:] / 2),
-                       (target[:, :2] - target[:, 2:] / 2))
-        br = torch.min((pred[:, :2] + pred[:, 2:] / 2),
-                       (target[:, :2] + target[:, 2:] / 2))
-        area_p = torch.prod(pred[:, 2:], 1)
-        area_g = torch.prod(target[:, 2:], 1)
-        en = (tl < br).type(tl.type()).prod(dim=1)
-        area_i = torch.prod(br - tl, 1) * en
-        area_u = area_p + area_g - area_i
-        iou = area_i / (area_u + 1e-16)
-        if self.loss_type == "iou":
-            loss = 1 - iou ** 2
-        elif self.loss_type == "giou":
-            c_tl = torch.min((pred[:, :2] - pred[:, 2:] / 2),
-                             (target[:, :2] - target[:, 2:] / 2))
-            c_br = torch.max((pred[:, :2] + pred[:, 2:] / 2),
-                             (target[:, :2] + target[:, 2:] / 2))
-            area_c = torch.prod(c_br - c_tl, 1)
-            giou = iou - (area_c - area_u) / area_c.clamp(1e-16)
-            loss = 1 - giou.clamp(min=-1.0, max=1.0)
-        else:
-            raise ValueError(self.loss_type)
-        if self.reduction == "mean":
-            loss = loss.mean()
-        elif self.reduction == "sum":
-            loss = loss.sum()
-        return loss
+from ..yolox.loss import IoULoss
+from ..yolox.nn import bboxes_iou
 
 
 class YOLOv7Loss:
     """SimOTA loss for the v7 anchor head.
 
     Plain class (not an ``nn.Module``) on purpose: it holds only stateless loss
-    modules and constant anchor tensors, so it is never registered on the model
-    and never enters the checkpoint (v7.pt has no loss keys → strict load stays
-    564/564).
+    modules and constant anchor/grid tensors, so it is never registered on the
+    model and never enters the checkpoint (v7.pt has no loss keys → strict load
+    stays 564/564).
 
     Args:
         num_classes: number of classes.
@@ -126,14 +65,44 @@ class YOLOv7Loss:
         ]  # list of [A, 2] (w, h) pixel sizes
         self.strides = [int(s) for s in strides]
         self.n_anchors = self.anchors[0].shape[0]
-        self.iou_loss = _IoULoss(reduction="none")
+        self.iou_loss = IoULoss(reduction="none")
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
+        # Grid/shift/stride tensors depend only on (head, H, W, device); cache
+        # them across steps like YOLOX's self.grids instead of rebuilding
+        # meshgrids and re-copying anchors to the device every iteration.
+        self._grid_cache: Dict[Tuple, Tuple[torch.Tensor, ...]] = {}
 
     def __call__(self, raw_outputs: List[torch.Tensor],
                  labels: torch.Tensor) -> Dict[str, torch.Tensor]:
         return self.get_losses(raw_outputs, labels)
 
     # -- decode -------------------------------------------------------------
+    def _grids_for(self, head_idx: int, H: int, W: int, device: torch.device):
+        """Cached per-(head, H, W, device) grid/anchor/shift constants (fp32)."""
+        key = (head_idx, H, W, str(device))
+        hit = self._grid_cache.get(key)
+        if hit is not None:
+            return hit
+        A = self.n_anchors
+        anchors = self.anchors[head_idx].to(device=device)  # [A, 2] fp32
+        yv, xv = torch.meshgrid(
+            torch.arange(H, device=device, dtype=torch.float32),
+            torch.arange(W, device=device, dtype=torch.float32),
+            indexing="ij",
+        )  # each [H, W]; yv = row index, xv = col index
+        col = xv.view(1, 1, H, W)
+        row = yv.view(1, 1, H, W)
+        aw = anchors[:, 0].view(1, A, 1, 1)
+        ah = anchors[:, 1].view(1, A, 1, 1)
+        # Grid shifts tiled anchor-major to match the (A, H, W) flatten order.
+        gx = xv.reshape(-1).repeat(A).view(1, -1)
+        gy = yv.reshape(-1).repeat(A).view(1, -1)
+        es = torch.full((1, A * H * W), float(self.strides[head_idx]),
+                        device=device, dtype=torch.float32)
+        hit = (col, row, aw, ah, gx, gy, es)
+        self._grid_cache[key] = hit
+        return hit
+
     def _decode(self, raw_outputs: List[torch.Tensor]):
         """Decode raw head maps to flat predictions + grid metadata.
 
@@ -141,28 +110,20 @@ class YOLOv7Loss:
         ``outputs`` is ``[B, N, 4+1+nc]`` (cxcywh **pixels** + obj/cls **logits**)
         and the shift/stride lists are per-head ``[1, A·H·W]`` — the SimOTA
         center-prior operates on the grid-cell centres shared by the A anchors.
+
+        Always computes in fp32 (see module docstring: fp16 box areas overflow).
         """
         nc = self.num_classes
         A = self.n_anchors
         outputs, x_shifts, y_shifts, expanded_strides = [], [], [], []
-        for raw, anchors, stride in zip(raw_outputs, self.anchors, self.strides):
+        for head_idx, (raw, stride) in enumerate(zip(raw_outputs, self.strides)):
             B, _, H, W = raw.shape
-            device, dtype = raw.device, raw.dtype
-            anchors = anchors.to(device=device, dtype=dtype)  # [A, 2]
+            raw = raw.float()  # fp32 loss path even under AMP
+            col, row, aw, ah, gx, gy, es = self._grids_for(head_idx, H, W, raw.device)
 
             # [B, A, 5+nc, H, W] -> [B, A, H, W, 5+nc]
             r = raw.view(B, A, 5 + nc, H, W).permute(0, 1, 3, 4, 2)
             sig = r[..., :4].sigmoid()
-
-            yv, xv = torch.meshgrid(
-                torch.arange(H, device=device, dtype=dtype),
-                torch.arange(W, device=device, dtype=dtype),
-                indexing="ij",
-            )  # each [H, W]; yv = row index, xv = col index
-            col = xv.view(1, 1, H, W)
-            row = yv.view(1, 1, H, W)
-            aw = anchors[:, 0].view(1, A, 1, 1)
-            ah = anchors[:, 1].view(1, A, 1, 1)
 
             cx = (sig[..., 0] * 2 - 0.5 + col) * stride
             cy = (sig[..., 1] * 2 - 0.5 + row) * stride
@@ -172,14 +133,9 @@ class YOLOv7Loss:
             out = torch.cat([box, r[..., 4:]], dim=-1)           # + obj/cls logits
             outputs.append(out.reshape(B, A * H * W, 5 + nc))
 
-            # Grid shifts tiled anchor-major to match the (A,H,W) flatten order.
-            gx = xv.reshape(-1).repeat(A).view(1, -1)
-            gy = yv.reshape(-1).repeat(A).view(1, -1)
             x_shifts.append(gx)
             y_shifts.append(gy)
-            expanded_strides.append(
-                torch.full((1, A * H * W), stride, device=device, dtype=dtype)
-            )
+            expanded_strides.append(es)
         return torch.cat(outputs, dim=1), x_shifts, y_shifts, expanded_strides
 
     # -- losses -------------------------------------------------------------
@@ -190,6 +146,7 @@ class YOLOv7Loss:
         obj_preds = outputs[:, :, 4:5]
         cls_preds = outputs[:, :, 5:]
 
+        labels = labels.float()
         # labels: [B, max_gt, 5] = (cls, cx, cy, w, h) in pixels; zero-rows pad.
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)
         total_num_anchors = outputs.shape[1]
@@ -211,16 +168,38 @@ class YOLOv7Loss:
             else:
                 gt_bboxes = labels[batch_idx, :num_gt, 1:5]
                 gt_classes = labels[batch_idx, :num_gt, 0]
-                (
-                    gt_matched_classes,
-                    fg_mask,
-                    pred_ious_this_matching,
-                    matched_gt_inds,
-                    num_fg_img,
-                ) = self.get_assignments(
-                    batch_idx, num_gt, gt_bboxes, gt_classes, bbox_preds[batch_idx],
-                    expanded_strides, x_shifts, y_shifts, cls_preds, obj_preds,
-                )
+                # CUDA-OOM retry ported from YOLOX get_losses: the [num_gt, N]
+                # cost/BCE matrices can spike on crowded images (v7 has 3x
+                # YOLOX's anchors), so fall back to a CPU assignment pass
+                # instead of killing the run.
+                try:
+                    (
+                        gt_matched_classes,
+                        fg_mask,
+                        pred_ious_this_matching,
+                        matched_gt_inds,
+                        num_fg_img,
+                    ) = self.get_assignments(
+                        batch_idx, num_gt, gt_bboxes, gt_classes,
+                        bbox_preds[batch_idx], expanded_strides, x_shifts,
+                        y_shifts, cls_preds, obj_preds,
+                    )
+                except RuntimeError as e:
+                    if "CUDA out of memory" not in str(e):
+                        raise
+                    torch.cuda.empty_cache()
+                    (
+                        gt_matched_classes,
+                        fg_mask,
+                        pred_ious_this_matching,
+                        matched_gt_inds,
+                        num_fg_img,
+                    ) = self.get_assignments(
+                        batch_idx, num_gt, gt_bboxes, gt_classes,
+                        bbox_preds[batch_idx], expanded_strides, x_shifts,
+                        y_shifts, cls_preds, obj_preds, "cpu",
+                    )
+                    torch.cuda.empty_cache()
                 num_fg += num_fg_img
                 cls_target = F.one_hot(
                     gt_matched_classes.to(torch.int64), self.num_classes
@@ -238,6 +217,9 @@ class YOLOv7Loss:
         obj_targets = torch.cat(obj_targets, 0)
         fg_masks = torch.cat(fg_masks, 0)
 
+        # Raw match count BEFORE the >=1 normalization clamp, so the reported
+        # metric can actually read 0 when SimOTA matched nothing.
+        raw_num_fg = num_fg
         num_fg = max(num_fg, 1)
         loss_iou = self.iou_loss(
             bbox_preds.view(-1, 4)[fg_masks], reg_targets
@@ -254,14 +236,22 @@ class YOLOv7Loss:
             "iou_loss": reg_weight * loss_iou,
             "obj_loss": loss_obj,
             "cls_loss": loss_cls,
-            "num_fg": num_fg / max(num_gts, 1),
+            "num_fg": raw_num_fg / max(num_gts, 1),
         }
 
     # -- SimOTA (adapted from Apache-2.0 YOLOX) -----------------------------
     @torch.no_grad()
     def get_assignments(self, batch_idx, num_gt, gt_bboxes, gt_classes,
                         bboxes_preds_per_image, expanded_strides,
-                        x_shifts, y_shifts, cls_preds, obj_preds):
+                        x_shifts, y_shifts, cls_preds, obj_preds, mode="gpu"):
+        if mode == "cpu":
+            gt_bboxes = gt_bboxes.cpu().float()
+            bboxes_preds_per_image = bboxes_preds_per_image.cpu().float()
+            gt_classes = gt_classes.cpu().float()
+            expanded_strides = expanded_strides.cpu().float()
+            x_shifts = x_shifts.cpu()
+            y_shifts = y_shifts.cpu()
+
         fg_mask, geometry_relation = self.get_geometry_constraint(
             gt_bboxes, expanded_strides, x_shifts, y_shifts
         )
@@ -274,13 +264,19 @@ class YOLOv7Loss:
         # nothing to match, so return an empty assignment instead of letting
         # SimOTA's topk crash. fg_mask stays all-False for this image.
         if num_in_boxes_anchor == 0:
-            return (
-                gt_classes.new_zeros(0),
-                fg_mask,
-                gt_classes.new_zeros(0, dtype=torch.float),
-                gt_classes.new_zeros(0, dtype=torch.long),
-                0,
-            )
+            gt_matched_classes = gt_classes.new_zeros(0)
+            pred_ious_this_matching = gt_classes.new_zeros(0, dtype=torch.float)
+            matched_gt_inds = gt_classes.new_zeros(0, dtype=torch.long)
+            if mode == "cpu":
+                gt_matched_classes = gt_matched_classes.cuda()
+                fg_mask = fg_mask.cuda()
+                pred_ious_this_matching = pred_ious_this_matching.cuda()
+                matched_gt_inds = matched_gt_inds.cuda()
+            return (gt_matched_classes, fg_mask, pred_ious_this_matching,
+                    matched_gt_inds, 0)
+
+        if mode == "cpu":
+            cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
 
         pair_wise_ious = bboxes_iou(gt_bboxes, bboxes_preds_per_image, False)
         gt_cls_per_image = F.one_hot(
@@ -288,9 +284,12 @@ class YOLOv7Loss:
         ).float()
         pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
 
-        # BCE on probabilities is unsafe under AMP autocast, so force fp32 for
-        # this block (matches YOLOX). device_type keeps it CPU/CUDA-agnostic.
-        with torch.autocast(device_type=cls_preds_.device.type, enabled=False):
+        # BCE on probabilities is unsafe under an active autocast region, so
+        # force it off exactly as the YOLOX source does. Hardcoding "cuda" is
+        # deliberate and host-safe: BaseTrainer only ever enables autocast for
+        # CUDA, and constructing a disabled "cuda" context works on CPU/MPS,
+        # whereas device-generic device_type crashes on MPS with torch 2.4.x.
+        with torch.amp.autocast("cuda", enabled=False):
             cls_preds_ = (
                 cls_preds_.float().sigmoid_() * obj_preds_.float().sigmoid_()
             ).sqrt()
@@ -312,6 +311,14 @@ class YOLOv7Loss:
             pred_ious_this_matching,
             matched_gt_inds,
         ) = self.simota_matching(cost, pair_wise_ious, gt_classes, num_gt, fg_mask)
+        del pair_wise_cls_loss, cost, pair_wise_ious, pair_wise_ious_loss
+
+        if mode == "cpu":
+            gt_matched_classes = gt_matched_classes.cuda()
+            fg_mask = fg_mask.cuda()
+            pred_ious_this_matching = pred_ious_this_matching.cuda()
+            matched_gt_inds = matched_gt_inds.cuda()
+
         return (gt_matched_classes, fg_mask, pred_ious_this_matching,
                 matched_gt_inds, num_fg)
 

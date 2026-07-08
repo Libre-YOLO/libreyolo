@@ -4,8 +4,8 @@
 
 Every trainable LibreYOLO model family accepts `callbacks=` and emits four
 events through its trainer. This includes YOLOv9, YOLOv9-E2E, YOLOX,
-YOLO-NAS, RT-DETR, RT-DETRv2, RT-DETRv4, RF-DETR, D-FINE, DEIM, DEIMv2,
-PicoDet, RTMDet, EC, and FOMO. Inference-only families still raise
+YOLOv7, YOLO-NAS, RT-DETR, RT-DETRv2, RT-DETRv4, RF-DETR, D-FINE, DEIM,
+DEIMv2, PicoDet, RTMDet, EC, and FOMO. Inference-only families still raise
 `NotImplementedError` from `train()`; this includes SAM, L2CS, Depth
 Anything V2, and the VLM tier.
 

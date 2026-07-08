@@ -81,8 +81,9 @@ Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/ema.py), augmentation pipeline
           (libreyolo/training/augment.py), and the SimOTA training loss
           adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
-          bboxes_iou, IoULoss, and the get_assignments/get_geometry_constraint/
-          simota_matching/get_losses assignment logic).
+          imports bboxes_iou/IoULoss from the yolox modules and adapts the
+          get_assignments/get_geometry_constraint/simota_matching/get_losses
+          assignment logic to the v7 anchor head).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)

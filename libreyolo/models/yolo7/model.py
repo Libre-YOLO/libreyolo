@@ -40,6 +40,9 @@ class LibreYOLO7(BaseModel):
     DEFAULT_TASK = "detect"
     # Letterbox + RGB + /255 + gray(114) pad — same contract as YOLO9.
     val_preprocessor_class = YOLO9ValPreprocessor
+    # Machine-readable "trainable" flag: the CLI discovers family training
+    # defaults through this (cli/config.py); None would mean inference-only.
+    TRAIN_CONFIG = YOLOv7Config
 
     # =====================================================================
     # Registry classmethods
@@ -148,7 +151,7 @@ class LibreYOLO7(BaseModel):
         project: str = _TRAIN_DEFAULTS.project,
         name: str = _TRAIN_DEFAULTS.name,
         exist_ok: bool = _TRAIN_DEFAULTS.exist_ok,
-        pretrained: bool = True,
+        pretrained: "bool | str | Path | None" = None,
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
         patience: int = _TRAIN_DEFAULTS.patience,
@@ -176,7 +179,11 @@ class LibreYOLO7(BaseModel):
             project: Root directory for training runs.
             name: Experiment name.
             exist_ok: If True, overwrite existing experiment directory.
-            pretrained: Use pretrained weights if available.
+            pretrained: Optional training initialization weights. Use True to
+                warm-start from the default COCO checkpoint
+                (``LibreYOLO7b.pt``, auto-downloaded), or pass a path/name.
+                Incompatible with ``resume=True``. Default None trains the
+                currently loaded weights (or from scratch).
             resume: If True, resume training from the loaded checkpoint.
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
@@ -199,17 +206,44 @@ class LibreYOLO7(BaseModel):
         except Exception as e:
             raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
 
+        if resume and pretrained:
+            raise ValueError("pretrained transfer cannot be combined with resume=True.")
+
+        did_pretrained = False
+        if pretrained:
+            weights = (
+                pretrained
+                if isinstance(pretrained, (str, Path))
+                else f"{self.FILENAME_PREFIX}{self.size}.pt"
+            )
+            # The published v7 checkpoints are nc=80 (COCO); load at that
+            # geometry, then the yaml_nc rebuild below transfers every
+            # shape-matching tensor (backbone/neck) into the target head count.
+            if self.nb_classes != 80:
+                self._rebuild_for_new_classes(80)
+            self._load_weights(str(weights))
+            did_pretrained = True
+
         yaml_nc = data_config.get("nc")
         yaml_names = data_config.get("names")
         if yaml_nc is None and yaml_names is not None:
             yaml_nc = len(yaml_names)
-        if yaml_nc is not None and yaml_nc != self.nb_classes:
-            self._rebuild_for_new_classes(yaml_nc)
+        rebuilt = yaml_nc is not None and int(yaml_nc) != self.nb_classes
+        if rebuilt:
+            self._rebuild_for_new_classes(int(yaml_nc))
 
         if yaml_names is not None:
             if isinstance(yaml_names, list):
                 yaml_names = {i: n for i, n in enumerate(yaml_names)}
             self.names = self._sanitize_names(yaml_names, self.nb_classes)
+
+        # Bias-prior rules (focal prior on obj/cls logits, idempotent):
+        # - nc rebuild leaves a fresh random head regardless of how the
+        #   backbone was initialized -> always prime it.
+        # - from-scratch run (no checkpoint loaded, no pretrained) -> prime.
+        # - warm start with matching nc -> keep the trained priors.
+        if rebuilt or (not did_pretrained and self.model_path is None):
+            self.model.initialize_biases(0.01)
 
         if seed >= 0:
             import random
