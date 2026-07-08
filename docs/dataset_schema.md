@@ -175,6 +175,39 @@ The class-like YAML fields are schema placeholders: use `nc: 1` and
 
 Canonical loader: `libreyolo.data.RestoreDataset`.
 
+## matte
+
+Background removal / dichotomous segmentation pairs each RGB image with a
+single-channel ground-truth alpha matte (0 = background, 255 = foreground)
+sharing the same stem:
+
+```text
+images/subject.jpg -> mattes/subject.png
+```
+
+Two layouts are accepted:
+
+- **Directory**: a root containing `images/` and a matte directory, auto-detected
+  among `mattes/`, `matte/`, `gt/`, `masks/`, `mask/`, `alpha/`. Pass the root as
+  `data=`.
+- **YAML**: `path` (root), plus per-split `val_images` / `val_mattes` (and
+  optional `train_images` / `train_mattes` for a future fine-tune), each a
+  directory relative to `path` or absolute.
+
+Matte rules:
+
+- the matte is grayscale; values are read as alpha in `[0, 1]` (`/255`);
+- a matte is resized to the prediction canvas with bilinear interpolation when
+  the shapes differ;
+- metrics are MAE and S-measure (Fan et al., ICCV 2017), computed on the
+  original image canvas; best-checkpoint fitness is S-measure.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: matte}`. Matte models expose `Results.matte`, not detections.
+
+Validation is inference-only in v1 (matte training/fine-tuning is a documented
+follow-up). Canonical pair resolver: `libreyolo.data.matte_dataset.resolve_matte_pairs`.
+
 ## pose
 
 YAML adds:

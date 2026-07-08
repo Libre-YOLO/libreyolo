@@ -405,6 +405,34 @@ from the NAFNet code and carries its own terms; users are responsible
 for dataset compliance.
 
 --------------------------------------------------------------------
+BiRefNet (Peng Zheng et al.)
+--------------------------------------------------------------------
+Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
+License: MIT
+Copyright (c) 2024 ZhengPeng (Peng Zheng).
+Citation: Zheng, P., Gao, D., Fan, D.-P., Liu, L., Laaksonen, J.,
+          Ouyang, W., and Sebe, N. "Bilateral Reference for
+          High-Resolution Dichotomous Image Segmentation." CAAI
+          Artificial Intelligence Research, 2024.
+Used for: BiRefNet background-removal model family
+          (libreyolo/models/birefnet/): the Swin Transformer v1
+          backbone and the bilateral-reference decoder (ASPP with
+          torchvision deformable convolution). The LibreYOLO port covers
+          the inference forward path, adds the matte-task contract
+          (Results.matte, cutout, transparent-PNG save), a paired
+          MAE/S-measure validator, and fixed-resolution ONNX export.
+          Parity verified: our fp32 forward matches the upstream
+          released weights with max_abs_diff == 0.
+
+NOTE - code vs. weights: The BiRefNet source code is MIT. The released
+BiRefNet (general, Swin-L) weights are tagged MIT on Hugging Face and are
+rehosted under the LibreYOLO org. The BiRefNet_lite (Swin-T) Hugging Face
+repo shows an MIT badge in its model card but carries no explicit license
+metadata (no YAML `license:` field, no LICENSE file); LibreYOLO does not
+rehost the lite weights pending an explicit license confirmation. See
+weights/LICENSE_NOTICE.txt.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models

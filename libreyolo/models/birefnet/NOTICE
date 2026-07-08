@@ -1,0 +1,35 @@
+LibreBiRefNet includes code ported from BiRefNet:
+
+Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
+License: MIT.
+Copyright (c) 2024 ZhengPeng (Peng Zheng).
+
+BiRefNet citation:
+Peng Zheng, Dehong Gao, Deng-Ping Fan, Li Liu, Jorma Laaksonen,
+Wanli Ouyang, and Nicu Sebe. "Bilateral Reference for High-Resolution
+Dichotomous Image Segmentation." CAAI Artificial Intelligence Research, 2024.
+
+The port covers the inference (eval) forward path of the released BiRefNet
+(general, Swin-L) and BiRefNet_lite (Swin-T) weights. Module and parameter names
+mirror upstream so the released state_dict loads with strict=True and the
+forward is bit-identical at fp32 (max_abs_diff == 0, verified by
+weights/parity_birefnet.py). einops (rearrange) and kornia (laplacian, a
+training-only feature) are not required at runtime; the eval decoder's patch
+split is reimplemented with native torch, and trust_remote_code is never needed.
+
+Swin backbone reuse verdict (why a second Swin lives in-tree):
+LibreYOLO already ships a shared Swin tower at libreyolo/models/swin/nn.py (the
+timm-parity vision backbone used by the open-vocabulary detectors). BiRefNet's
+backbone is the *original* Swin Transformer v1 lineage, which differs
+structurally and in its state-dict key schema:
+  - patch-merging (downsample) at the END of each stage, not the start;
+  - a per-output-stage LayerNorm (bb.norm0..3) applied to every returned
+    feature map, absent from the timm tower;
+  - explicit H/W threading through every block and the mask builder;
+  - reduction = Linear(4*dim, 2*dim), vs the timm tower's Linear(4*dim, out_dim);
+  - out_indices covering all four stages.
+The released BiRefNet weights are keyed to this original layout, so they cannot
+load into the timm tower. Forcing both conventions into the shared file would
+require a structural-and-naming mode switch touching nearly every submodule,
+degrading the timm-parity contract the open-vocabulary detectors rely on.
+A family-local Swin port is therefore the correct choice.

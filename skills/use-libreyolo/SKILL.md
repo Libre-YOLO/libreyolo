@@ -139,11 +139,12 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`. Detection — plus **RF-DETR
+`gaze`, `obb`, `point`, `depth`, `restore`, `matte`. Detection — plus **RF-DETR
 segmentation** — is the heavily-tested core; other task/family combinations
 vary in maturity, so check the README compatibility table before relying on
 one. Task outputs land on matching `Results` fields (`r.semantic_mask`,
-`r.depth_map`, `r.restored`, `r.points`, …).
+`r.depth_map`, `r.restored`, `r.points`, `r.matte`, …). Matte adds
+`r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
 
 ## Models
 
@@ -158,7 +159,8 @@ as the source of truth. By tier:
   2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
   recipe).
 - **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
-  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic).
+  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic),
+  BiRefNet (matte: background removal, sizes t/l, fixed 1024).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
