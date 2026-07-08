@@ -269,19 +269,26 @@ class BaseExporter(ABC):
         Returns:
             Path to the exported model file.
         """
-        if getattr(self.model, "task", "detect") == "point":
+        task = getattr(self.model, "task", "detect")
+        family = self.model._get_model_name()
+        if family == "yolo9" and task == "segment":
+            raise NotImplementedError(
+                "YOLO9 segmentation export is not supported. YOLO9 is "
+                "detection-only in LibreYOLO."
+            )
+        if task == "point":
             raise NotImplementedError(
                 "Export for point-task models is not implemented yet. "
                 "Add a point-aware export/runtime contract before exporting point models."
             )
-        if getattr(self.model, "task", "detect") == "semantic":
+        if task == "semantic":
             raise NotImplementedError(
                 "Export for semantic-segmentation models is not implemented yet. "
                 "Add a semantic-aware export/runtime contract (dense logits "
                 "output plus backend argmax parsing) before exporting semantic "
                 "models."
             )
-        if getattr(self.model, "task", "detect") == "depth":
+        if task == "depth":
             raise NotImplementedError(
                 "Export for depth models is not implemented yet. "
                 "Add a depth-aware export/runtime contract (dense float "

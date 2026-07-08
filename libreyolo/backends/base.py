@@ -321,6 +321,11 @@ class BaseBackend(ABC):
             default_task=self.DEFAULT_TASK,
             supported_tasks=self.SUPPORTED_TASKS,
         )
+        if self.model_family == "yolo9" and self.task == "segment":
+            raise NotImplementedError(
+                "YOLO9 segmentation support was removed. Use a supported "
+                "segmentation family instead of loading YOLO9 segment exports."
+            )
         if self.task == "point":
             raise NotImplementedError(
                 "Exported point-task inference is not implemented yet. "
@@ -1083,12 +1088,6 @@ class BaseBackend(ABC):
             boxes_input = boxes_input[keep]
             max_scores = max_scores[keep]
             class_ids = class_ids[keep]
-        elif self.task == "segment":
-            max_scores = np.max(scores, axis=1)
-            class_ids = np.argmax(scores, axis=1)
-            mask = max_scores > conf
-            boxes_input = boxes_input_all[mask]
-            max_scores, class_ids = max_scores[mask], class_ids[mask]
         else:
             anchor_idx, class_ids = np.nonzero(scores > conf)
             boxes_input = boxes_input_all[anchor_idx]
@@ -1108,8 +1107,6 @@ class BaseBackend(ABC):
         boxes = boxes_input.copy()
 
         if len(boxes) == 0:
-            if self.task == "segment":
-                return boxes, max_scores, class_ids, None
             if self.task == "pose" and keypoints_all is not None:
                 return boxes, max_scores, class_ids, None, None, keypoints_all[:0]
             return boxes, max_scores, class_ids
@@ -1126,8 +1123,6 @@ class BaseBackend(ABC):
             keypoints[..., 1] = np.clip(keypoints[..., 1], 0, orig_h)
         valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         if not valid_boxes.any():
-            if self.task == "segment":
-                return boxes[:0], max_scores[:0], class_ids[:0], None
             if self.task == "pose" and keypoints is not None:
                 return (
                     boxes[:0],
@@ -1148,25 +1143,6 @@ class BaseBackend(ABC):
 
         if self.task == "pose" and keypoints is not None:
             return boxes, max_scores, class_ids, None, None, keypoints
-
-        if self.task == "segment" and len(all_outputs) >= 3:
-            from ..models.yolo9.utils import _process_masks
-
-            proto = torch.from_numpy(all_outputs[1][0]).float()
-            coeffs_np = all_outputs[2][0].T[mask]
-            if not valid_boxes.all():
-                coeffs_np = coeffs_np[valid_boxes]
-            coeffs = torch.from_numpy(coeffs_np).float()
-            boxes_input_t = torch.from_numpy(boxes_input).float()
-            masks_out = _process_masks(
-                proto,
-                coeffs,
-                boxes_input_t,
-                input_shape=(input_h, input_w),
-                original_size=(orig_w, orig_h),
-                letterbox=True,
-            ).numpy()
-            return boxes, max_scores, class_ids, masks_out
 
         return boxes, max_scores, class_ids
 

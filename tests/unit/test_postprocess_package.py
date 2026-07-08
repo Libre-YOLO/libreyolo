@@ -26,7 +26,6 @@ def test_yolo9_reexports_are_same_objects():
     assert old._nms_keep_indices is new._nms_keep_indices
     assert old._rotated_nms_keep_indices is new._rotated_nms_keep_indices
     assert old._obb_prefilter_keep_indices is new._obb_prefilter_keep_indices
-    assert old._process_masks is new._process_masks
     assert old._input_size_hw is new._input_size_hw
     assert old._YOLO9_MAX_NMS_CANDIDATES == new._YOLO9_MAX_NMS_CANDIDATES == 30000
     assert old._YOLO9_OBB_MAX_NMS_CANDIDATES == new._YOLO9_OBB_MAX_NMS_CANDIDATES
