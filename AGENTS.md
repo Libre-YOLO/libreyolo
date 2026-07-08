@@ -9,7 +9,8 @@
 - Agents may reply with a one-click GitHub URL (no description pre-filled) so
   the human can open the PR or issue themselves.
 - When possible, work in git worktrees
-- The default branch is dev
+- `release` is the default branch that visitors land on and clone; `dev` is the
+  integration branch where all development lands before it is promoted to a release.
 ## Commit policy
 - Do not add LLMs or agent tools as co-authors in commits.
 - Keep commit messages short and factual.
@@ -49,7 +50,9 @@
   evidence.
 
 ## Pull Request (PR) policy
-- The primary development branch is "dev"; "release" is for releases. Generally open PRs to dev, not release.
+- All development PRs target `dev`, never `release`. This holds regardless of
+  which branch GitHub shows as the default: `release` is the public default
+  branch, but it only receives curated release merges, not feature PRs.
 - Before reviewing or changing PRs, read the relevant files under /docs,
   especially documented schemas, contracts, and architecture decisions.
 - Prefer one PR per problem, or per small group of tightly related problems.

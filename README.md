@@ -69,6 +69,10 @@ cd libreyolo
 pip install -e .
 ```
 
+A plain clone checks out `release`, the stable branch whose code matches these
+docs. For the latest unreleased work, switch to the integration branch with
+`git checkout dev`.
+
 ## Flagship models
 
 LibreYOLO recommends these model families because they offer the best balance
