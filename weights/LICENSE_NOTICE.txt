@@ -54,6 +54,16 @@ project the weights were derived from. Per-family summary:
     ResNet   (LibreResNet{18,34,50,101}-cls)           Apache-2.0
              upstream: timm (a1_in1k "ResNet Strikes Back" recipe), ImageNet-1k
 
+    CLIP     (LibreCLIP{b32,b16}-cls)                  MIT (weights)
+             upstream: mlfoundations/open_clip LAION-2B checkpoints;
+             see libreyolo/models/clip/NOTICE.md for the LAION
+             data-provenance note.
+
+    SigLIP2  (LibreSigLIP2{b16,so400m}-cls)            Apache-2.0
+             upstream: google/siglip2-base-patch16-256 and
+             google/siglip2-so400m-patch14-384 (Hugging Face).
+             Convert with weights/convert_siglip2_weights.py.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an

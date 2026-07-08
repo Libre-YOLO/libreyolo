@@ -59,6 +59,7 @@ file = name + ".pt"
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
+| SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
@@ -159,6 +160,8 @@ LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
+LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
+
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
 
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
@@ -200,6 +203,13 @@ LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
 data-provenance note** (see `libreyolo/models/clip/NOTICE.md`), and omit the VA
 Benchmarks section (zero-shot, not a trained-on-COCO detector).
+
+LibreSigLIP2 is the SigLIP 2 zero-shot, open-vocabulary classifier. Its HF cards
+use `pipeline_tag: zero-shot-image-classification`, `license: apache-2.0`
+(weights derive from the Apache-2.0 `google/siglip2-*` release; state the
+upstream repo and commit pin), note the vendored SentencePiece tokenizer, and
+omit the VA Benchmarks section. Conversion is a metadata wrap
+(`weights/convert_siglip2_weights.py`); learned parameters are unchanged.
 
 Common rule violations to reject before upload:
 

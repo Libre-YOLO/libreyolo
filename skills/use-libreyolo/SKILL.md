@@ -165,9 +165,9 @@ as the source of truth. By tier:
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
   suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
-- **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]`
+- **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]` / `[siglip2]`
   / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
-  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP`
+  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP` / `LibreSigLIP2`
   (zero-shot classify), and the `LibreVLM` family (vision-language
   detection). For the exact model aliases in each tier, use `libreyolo
   models` and the dedicated guide `skills/use-libreyolo-zero-shot/`.

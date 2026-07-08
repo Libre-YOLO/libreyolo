@@ -81,6 +81,12 @@ from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone 
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
 # text_projection + visual.conv1, so registration order does not matter.
 from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
+# Native SigLIP 2 zero-shot classifier: pure-torch towers (no transformers at
+# runtime; the SentencePiece tokenizer is imported lazily behind [siglip2]), so
+# it registers eagerly. can_load is uniquely keyed on logit_bias +
+# vision_model.embeddings.patch_embedding + text_model.head, so order does not
+# matter. NB: SigLIP carries logit_bias, which CLIP lacks.
+from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -658,5 +664,6 @@ __all__ = [
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
+    "LibreSigLIP2",
     "try_ensure_rfdetr",
 ]
