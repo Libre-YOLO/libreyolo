@@ -422,10 +422,12 @@ def reset_gpu_state():
 #     the dog/bicycle/car golden (tests/unit/test_yolo1.py::test_yolo1b_golden_*,
 #     gated on LIBREYOLO1B_CKPT). Its pretrained tiny weights are unrecoverable
 #     upstream, so there is no auto-download route to gate on at all.
-#   - yolo2/3/4/7 are inference-only conversions covered by the offline
-#     synthetic-weight unit suites (tests/unit/test_darknet_families.py,
-#     tests/unit/test_yolo1.py, tests/unit/test_yolo7.py) plus the external
-#     numeric-parity scripts (weights/parity_darknet.py, weights/parity_yolo7.py).
+#   - yolo2/3/4 are inference-only conversions, and yolo7 (trainable via the
+#     experimental SimOTA recipe) has no HF auto-download route either; all are
+#     covered by the offline synthetic-weight unit suites
+#     (tests/unit/test_darknet_families.py, tests/unit/test_yolo1.py,
+#     tests/unit/test_yolo7.py) plus the external numeric-parity scripts
+#     (weights/parity_darknet.py, weights/parity_yolo7.py).
 # Adding any of them here would either fail the COCO gate or need a hand-staged
 # weight the gated nightly cannot provision.
 
@@ -437,6 +439,7 @@ MODEL_CATALOG = [
     ("yolox", "m", "LibreYOLOXm.pt"),
     ("yolox", "l", "LibreYOLOXl.pt"),
     ("yolox", "x", "LibreYOLOXx.pt"),
+    ("yolo7", "b", "LibreYOLO7b.pt"),
     ("yolo9", "t", "LibreYOLO9t.pt"),
     ("yolo9", "s", "LibreYOLO9s.pt"),
     ("yolo9", "m", "LibreYOLO9m.pt"),
@@ -547,6 +550,7 @@ RTDETR_TEST_MODELS = [(f, s) for f, s, _ in MODEL_CATALOG if f == "rtdetr"]
 
 FAMILY_MARKERS = {
     "yolox": pytest.mark.yolox,
+    "yolo7": pytest.mark.yolo7,
     "yolo9": pytest.mark.yolo9,
     "yolo9_e2e": pytest.mark.yolo9_e2e,
     "yolonas": pytest.mark.yolonas,
