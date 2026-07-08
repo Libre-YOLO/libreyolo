@@ -37,7 +37,8 @@ def test_restored_image_array_save_and_results_summary(tmp_path):
     assert result.restored.array.dtype == np.uint8
     assert result.restored.array.shape == (4, 5, 3)
     assert len(result) == 1
-    assert result.summary() == [{"name": "restored", "shape": [4, 5, 3]}]
+    assert result.summary() == [{"name": "restored", "shape": [4, 5, 3], "scale": 1}]
+    assert result.restore_scale == 1
     assert np.array_equal(result[0].restored.array, arr)
 
     out = tmp_path / "restored.png"
@@ -132,6 +133,78 @@ def test_restore_task_aliases_and_filename_suffix():
     assert LibreNAFNet.detect_size_from_filename("LibreNAFNets-restore.pt") == "s"
     assert LibreNAFNet.detect_task_from_filename("LibreNAFNetl-restore.pt") == "restore"
     assert LibreNAFNet.detect_task_from_filename("LibreNAFNetl.pt") is None
+
+
+def test_nafnet_sidd_variant_filename_and_download_url():
+    fname = "LibreNAFNetl-restore-sidd.pt"
+    assert LibreNAFNet.detect_size_from_filename(fname) == "l"
+    assert LibreNAFNet.detect_task_from_filename(fname) == "restore"
+    assert LibreNAFNet.detect_variant_from_filename(fname) == "sidd"
+    # the default GoPro-style restore name carries no variant
+    assert LibreNAFNet.detect_variant_from_filename("LibreNAFNetl-restore.pt") is None
+    url = LibreNAFNet.get_download_url(fname)
+    assert url.endswith("LibreYOLO/LibreNAFNetl-restore-sidd/resolve/main/LibreNAFNetl-restore-sidd.pt")
+
+
+def test_infer_nafnet_config_distinguishes_layouts():
+    from libreyolo.models.nafnet.model import infer_nafnet_config
+    from libreyolo.models.nafnet.nn import NAFNetLocal
+
+    # A SIDD-style layout (multi-block stages) different from the GoPro default.
+    sidd_like = NAFNetLocal(
+        img_channel=3,
+        width=16,
+        middle_blk_num=3,
+        enc_blk_nums=[2, 2],
+        dec_blk_nums=[1, 2],
+        train_size=(1, 3, 64, 64),
+    )
+    cfg = infer_nafnet_config(sidd_like.state_dict())
+    assert cfg == {
+        "width": 16,
+        "middle_blk_num": 3,
+        "enc_blk_nums": [2, 2],
+        "dec_blk_nums": [1, 2],
+    }
+
+
+def test_nafnet_loads_inferred_block_layout_from_checkpoint(tmp_path):
+    from libreyolo.models import LibreYOLO
+    from libreyolo.models.nafnet.nn import NAFNetLocal
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    # Build a non-GoPro layout, wrap it, and confirm the loader rebuilds the
+    # matching architecture (a fixed size config could not load this).
+    net = NAFNetLocal(
+        img_channel=3,
+        width=64,
+        middle_blk_num=3,
+        enc_blk_nums=[2, 2, 3, 4],
+        dec_blk_nums=[2, 2, 2, 2],
+        train_size=(1, 3, 64, 64),
+    )
+    checkpoint = wrap_libreyolo_checkpoint(
+        net.state_dict(),
+        model_family="nafnet",
+        size="l",
+        task="restore",
+        nc=1,
+        names={0: "image"},
+        imgsz=256,
+        degradation="denoise",
+        dataset="SIDD",
+    )
+    path = tmp_path / "LibreNAFNetl-restore-sidd.pt"
+    torch.save(checkpoint, path)
+
+    loaded = LibreYOLO(str(path), device="cpu")
+    assert isinstance(loaded, LibreNAFNet)
+    # strict load succeeded -> the rebuilt architecture matches the checkpoint
+    assert len(loaded.model.encoders) == 4
+    assert len(loaded.model.middle_blks) == 3
+    with torch.no_grad():
+        out = loaded.model(torch.zeros(1, 3, 64, 64))
+    assert tuple(out.shape) == (1, 3, 64, 64)
 
 
 def test_libreyolo_factory_loads_metadata_wrapped_nafnet_checkpoint(tmp_path):

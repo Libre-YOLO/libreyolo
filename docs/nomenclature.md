@@ -30,10 +30,11 @@ instance segmentation; the `mobilenetv4` / `convnext` /
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
 | `yolox`     | `LibreYOLOX`    | All-caps acronym |
+| `yolo1`     | `LibreYOLO1`    | All-caps acronym + version digit (YOLOv1 / Darknet, public domain; VOC-20, fixed 448) — inference-only |
 | `yolo2`     | `LibreYOLO2`    | All-caps acronym + version digit (YOLOv2 / Darknet, public domain) — inference-only |
 | `yolo3`     | `LibreYOLO3`    | All-caps acronym + version digit (YOLOv3 / Darknet, public domain) — inference-only |
 | `yolo4`     | `LibreYOLO4`    | All-caps acronym + version digit (YOLOv4 / Darknet, public domain) — inference-only |
-| `yolo7`     | `LibreYOLO7`    | All-caps acronym + version digit (YOLOv7 / MIT MultimediaTechLab/YOLO) — inference-only |
+| `yolo7`     | `LibreYOLO7`    | All-caps acronym + version digit (YOLOv7 / MIT MultimediaTechLab/YOLO) |
 | `yolo9`     | `LibreYOLO9`    | All-caps acronym + version digit |
 | `yolo9_e2e` | `LibreYOLO9E2E` | All-caps acronym + version + variant |
 | `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
@@ -58,8 +59,11 @@ instance segmentation; the `mobilenetv4` / `convnext` /
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
+| `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot open-vocab classify); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
+| `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
+| `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 
 Casing rules observed in the table:
 
@@ -108,6 +112,7 @@ ships:
 | Family | Size codes |
 |---|---|
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
+| `yolo1`     | `t` (tiny-yolov1, 448), `b` (yolov1, 448) (both fixed 448; the FC head forbids dynamic shapes) |
 | `yolo2`     | `t` (yolov2-tiny, 416), `b` (yolov2, 608) |
 | `yolo3`     | `t` (yolov3-tiny, 416), `b` (yolov3, 416), `spp` (yolov3-spp, 608) |
 | `yolo4`     | `t` (yolov4-tiny, 416), `b` (yolov4, 608) |
@@ -135,8 +140,12 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
-| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
+| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
+| `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
+| `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
+| `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
+| `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
 
 Promptable SAM tier size aliases:
 
@@ -170,6 +179,7 @@ From `libreyolo/tasks.py`:
 | `detect`      | *(none — implicit)* |
 | `segment`     | `-seg` |
 | `semantic`    | `-sem` |
+| `panoptic`    | `-panoptic` |
 | `pose`        | `-pose` |
 | `classify`    | `-cls` |
 | `gaze`        | `-gaze` |
@@ -177,6 +187,7 @@ From `libreyolo/tasks.py`:
 | `point`       | `-point` |
 | `depth`       | `-depth` |
 | `restore`     | `-restore` |
+| `matte`       | `-matte` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -193,16 +204,38 @@ instance segmentation (per-object masks). Semantic models expose
 `Results.semantic_mask` and use per-pixel validation metrics (mIoU,
 pixel accuracy) instead of box/mask mAP.
 
+`panoptic` is the task for panoptic segmentation: every pixel gets exactly one
+non-overlapping label, unifying `semantic` "stuff" (amorphous regions) with
+`segment` "things" (countable instances). Panoptic models expose
+`Results.panoptic` (a `(H, W)` segment-id map plus `segments_info`) and are
+scored with Panoptic Quality (PQ = SQ x RQ) rather than mIoU or mask mAP. The
+canonical suffix is the full word `-panoptic` (not an abbreviation), so
+`LibreEoMTs-panoptic.pt` is a first-class panoptic checkpoint, not a `segment`
+checkpoint in disguise. NOTE (issue #555): the task, its `Results` slot, and
+the `PanopticValidator` dispatch are scaffolded; the model postprocess, the PQ
+metric, and the COCO-panoptic dataset loader are not implemented yet.
+
 `depth` is the task for dense monocular depth estimation. Models expose
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
 
-`restore` is the task for paired image restoration, including deblurring and
-denoising. Models expose `Results.restored`, a uint8 RGB `(H, W, 3)` image on
-the original image canvas. Canonical restore filenames must carry the
-`-restore` suffix; task aliases such as `deblur`, `denoise`, and `restoration`
-resolve to `restore` at the API boundary.
+`restore` is the task for paired image restoration, including deblurring,
+denoising, and super-resolution. Models expose `Results.restored`, a uint8 RGB
+`(H, W, 3)` image. For deblur/denoise the restored canvas equals the input; for
+super-resolution it is `Results.restore_scale` times larger on each axis
+(`restore_scale` is `1` for deblur/denoise and every non-super-resolution
+result). Canonical restore filenames must carry the `-restore` suffix; task
+aliases such as `deblur`, `denoise`, `restoration`, `sr`, `super-resolution`,
+and `upscale` resolve to `restore` at the API boundary.
+
+`matte` is the task for background removal / dichotomous image segmentation.
+Models expose `Results.matte`, a float `(H, W)` soft alpha map in `[0, 1]` on
+the original image canvas (`1` = foreground, `0` = background), plus
+`results.cutout()` (RGBA) and a transparent-PNG `results.save()`. Canonical
+matte filenames must carry the `-matte` suffix; task aliases such as `matting`,
+`background-removal`, `rembg`, and `dis` resolve to `matte` at the API boundary.
+See ADR 0010 for the full contract.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -213,10 +246,11 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | Family    | `SUPPORTED_TASKS`                   | Default | Notes |
 |---|---|---|---|
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
+| `yolo1`     | `("detect",)` (default)             | detect | YOLOv1 (Darknet, public domain); Pascal VOC 20 classes, fixed 448; inference-only in LibreYOLO |
 | `yolo2`     | `("detect",)` (default)             | detect | YOLOv2/YOLO9000 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo3`     | `("detect",)` (default)             | detect | YOLOv3 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo4`     | `("detect",)` (default)             | detect | YOLOv4 (Darknet, public domain); inference-only in LibreYOLO |
-| `yolo7`     | `("detect",)` (default)             | detect | YOLOv7 (MIT MultimediaTechLab/YOLO); inference-only in LibreYOLO |
+| `yolo7`     | `("detect",)` (default)             | detect | YOLOv7 (MIT MultimediaTechLab/YOLO); trainable via SimOTA loss |
 | `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
@@ -237,7 +271,9 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
-| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
+| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
+| `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
+| `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -320,6 +356,10 @@ LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 # nafnet — NAFNet restoration (restore-only)
 LibreNAFNets-restore.pt
 LibreNAFNetl-restore.pt
+
+# birefnet — BiRefNet background removal (matte-only)
+LibreBiRefNett-matte.pt          # BiRefNet_lite (Swin-T tier)
+LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)
@@ -330,6 +370,12 @@ LibreNAFNetl-restore.pt
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
 LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
+
+# siglip2: SigLIP 2 zero-shot, open-vocabulary (set_classes); multilingual
+# SentencePiece tokenizer, sigmoid-native scoring with a multi_label option.
+# Size codes bake the native resolution in, like clip's b32/b16/l14.
+LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
+LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 ```
 
 ### Open-vocabulary detection (inference-only snapshot tier)

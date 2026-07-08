@@ -55,11 +55,21 @@ def test_normalize_restore_task_aliases():
     assert normalize_task("denoise") == "restore"
 
 
+def test_normalize_matte_task_aliases():
+    assert normalize_task("matte") == "matte"
+    assert normalize_task("matting") == "matte"
+    assert normalize_task("background-removal") == "matte"
+    assert normalize_task("background_removal") == "matte"
+    assert normalize_task("rembg") == "matte"
+    assert normalize_task("dis") == "matte"
+
+
 def test_task_type_literal_is_public():
     assert set(TaskType.__args__) == {
         "detect",
         "segment",
         "semantic",
+        "panoptic",
         "pose",
         "classify",
         "gaze",
@@ -67,6 +77,7 @@ def test_task_type_literal_is_public():
         "point",
         "depth",
         "restore",
+        "matte",
     }
 
 
@@ -110,10 +121,12 @@ def test_task_suffix_helpers():
     assert suffix_to_task("-point") == "point"
     assert suffix_to_task("-depth") == "depth"
     assert suffix_to_task("-restore") == "restore"
+    assert suffix_to_task("-matte") == "matte"
     assert task_to_suffix("obb") == "obb"
     assert task_to_suffix("point") == "point"
     assert task_to_suffix("depth") == "depth"
     assert task_to_suffix("restore") == "restore"
+    assert task_to_suffix("matte") == "matte"
     assert task_to_suffix("semantic") == "sem"
     assert suffix_to_task("-unknown") is None
 

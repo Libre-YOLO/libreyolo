@@ -2,8 +2,9 @@
 name: merge-to-dev
 description: >-
   The whole dance for landing code on LibreYOLO's dev branch: branch, commit,
-  push to upstream, then hand the user a one-click compare URL that opens an
-  empty PR form for them to submit (agents must not open the PR themselves),
+  push to upstream, then hand the user a one-click compare URL that pre-fills
+  the PR title and description (including the required Code provenance section)
+  for them to review and submit (agents must not open the PR themselves),
   and once they have opened it, babysit the Greptile bot review until it is
   happy. Use whenever the user says "put this on dev", "push this to dev",
   "merge this to dev", "ship this", "open a PR for this", or hands over
@@ -17,8 +18,9 @@ There is exactly one way code lands on `dev` in `LibreYOLO/libreyolo`:
 **branch -> commit -> push to upstream -> the human opens a PR with base
 `dev`**. Never push to `dev` directly, even though the account has admin.
 And per `AGENTS.md`, the **agent never opens the PR**: it pushes the branch
-and hands over a one-click compare URL that opens the PR form empty, and the
-human submits it. When the user says "put this on dev", run the dance below
+and hands over a one-click compare URL that pre-fills the PR title and
+description (with the required Code provenance section), and the human reviews
+and submits it. When the user says "put this on dev", run the dance below
 and end your turn with that link, not with a question and not with a PR you
 opened yourself.
 
@@ -87,19 +89,44 @@ git push -u "$REMOTE" <branch>
 The compare URL below is a github.com URL, so it is unaffected by which
 remote name you pushed through.
 
-Then hand the user the one-click compare URL and stop:
+Then build the handoff URL with the **title and description pre-filled** and
+hand it over. A bare `compare/...?expand=1` link is not enough: for a
+single-commit branch GitHub fills the body from the commit message, and the
+required provenance section comes up blank. GitHub honours `title` and `body`
+query params on the compare page, so pre-fill them yourself and the human
+lands on a PR form already filled in.
 
-```
-https://github.com/LibreYOLO/libreyolo/compare/dev...<branch>?expand=1
+Write the body the way `.github/pull_request_template.md` asks: a normal
+description in whatever shape fits the change, plus, **required, a
+`## Code provenance` section**. The `provenance-check` CI gate fails the PR
+if that section is missing or empty, so it is the one part you must always
+include. Keep it short, factual prose, matching the repo's house style, no
+checkboxes and no tables:
+
+- First-party only: a `## Code provenance` heading followed by one line, e.g.
+  "Original code written for this PR; bug fixes to LibreYOLO's own first-party
+  code, no third-party code ported, adapted, or introduced; no
+  GPL/AGPL/LGPL/non-commercial/unknown-license material involved."
+- Ported or adapted code: name the upstream repository, the commit or version,
+  and its license (permissive only: MIT, Apache-2.0, BSD, or similar), and
+  update the notice files.
+
+Write the description to a scratch `body.md` (so multi-line content survives),
+then URL-encode title and body and print the link (same mechanism the
+`libreyolo-report-issue` skill uses for issues):
+
+```bash
+python -c "import urllib.parse,sys; print('https://github.com/LibreYOLO/libreyolo/compare/dev...'+sys.argv[1]+'?expand=1&title='+urllib.parse.quote(sys.argv[2])+'&body='+urllib.parse.quote(sys.argv[3]))" <branch> "<title>" "$(cat body.md)"
 ```
 
-**The agent must not open the PR.** `AGENTS.md` is explicit: "Agents must
-not open pull requests"; "Humans handle ... PR creation"; agents "may reply
-with a one-click GitHub URL (no description pre-filled) so the human can
-open the PR." The `?expand=1` compare link opens the PR form empty, which
-is exactly what the policy allows: do not use `gh pr create`, and do not
-pre-fill a description. Draft a suggested title and body in your message
-for the user to copy if they want, but the click is theirs.
+Hand the user that single pre-filled link and stop.
+
+**Pre-filling the URL is allowed; opening the PR is not.** `AGENTS.md`:
+"Agents must not open pull requests"; "Humans handle ... PR creation." So
+never run `gh pr create`; hand the pre-filled compare URL and let the human
+review, edit the prose into their own words, and submit. The `## Code
+provenance` section is the accurate part you own; never leave it blank or the
+CI gate fails.
 
 **Deliver the link without being asked.** "Pushed the branch" is not a
 finished turn; the link is the deliverable. CI (`unit-tests.yml`,
@@ -183,6 +210,11 @@ merging to dev is their click.
 - Pushing to `dev` or `release` directly. Never, admin or not.
 - Opening the PR yourself with `gh pr create`. `AGENTS.md` forbids it; hand
   the one-click compare URL and let the human submit.
+- Handing a bare `?expand=1` link with no `&body=`. It leaves the required
+  `## Code provenance` section blank, so the `provenance-check` CI gate fails.
+- Padding the description with checkbox lists or a provenance table. The
+  template is free-form prose; only a filled `## Code provenance` section is
+  required. Keep it simple.
 - Ending the turn with "want me to open a PR?". Hand the link.
 - Replying on the Greptile thread to rebut a finding. Put the rebuttal in
   your summary; the human comments if they want to.

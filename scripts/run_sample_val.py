@@ -8,12 +8,12 @@ PR curves, sample images) are saved to runs/val/<model>_<timestamp>/plots/.
 Supported models
 ----------------
   rfdetr   RF-DETR object detector / instance segmenter
-  yolo9    YOLOv9 object detector / instance segmenter
+  yolo9    YOLOv9 object detector
 
 Pretrained weights
 ------------------
   RF-DETR   fetched automatically from HuggingFace (all sizes, det + seg)
-  YOLOv9    auto-downloaded for detection; seg requires --weights
+  YOLOv9    auto-downloaded for detection
 
 Quick start
 -----------
@@ -28,9 +28,6 @@ RF-DETR-s segmentation, pretrained weights:
 
 YOLOv9-s detection, custom dataset:
     python scripts/run_sample_val.py --size s --data /path/to/data.yaml
-
-YOLOv9 segmentation, custom trained weights:
-    python scripts/run_sample_val.py --task segment --weights runs/train/exp/best.pt
 
 Save COCO-format JSON predictions alongside the plots:
     python scripts/run_sample_val.py --save-json
@@ -84,8 +81,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Path to a .pt checkpoint. "
             "When omitted, RF-DETR fetches pretrained weights from HuggingFace "
-            "and YOLOv9 auto-downloads LibreYOLO9<size>.pt. "
-            "Required for YOLOv9 segmentation."
+            "and YOLOv9 auto-downloads LibreYOLO9<size>.pt."
         ),
     )
     p.add_argument(
@@ -229,7 +225,12 @@ def val_rfdetr(args: argparse.Namespace) -> None:
 def val_yolo9(args: argparse.Namespace) -> None:
     from libreyolo.models.yolo9.model import LibreYOLO9
 
-    is_seg = args.task == "segment"
+    if args.task == "segment":
+        sys.exit(
+            "Error: YOLOv9 segmentation is not supported in LibreYOLO. "
+            "Use --model rfdetr --task segment for pretrained segmentation."
+        )
+
     device = _normalize_device(args.device)
 
     if args.weights and args.size is None:
@@ -242,12 +243,6 @@ def val_yolo9(args: argparse.Namespace) -> None:
 
         if args.weights:
             weights = args.weights
-        elif is_seg:
-            sys.exit(
-                "Error: --weights is required for YOLOv9 segmentation "
-                "(no pretrained seg weights are available for auto-download).\n"
-                "Example: --weights runs/train/exp/best.pt"
-            )
         else:
             weights = f"LibreYOLO9{size}.pt"
 

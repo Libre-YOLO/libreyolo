@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -14,6 +15,8 @@ from ..base import BaseModel
 from .config import NAFNetConfig
 from .nn import NAFNetLocal
 from .utils import preprocess_image, preprocess_numpy
+
+logger = logging.getLogger(__name__)
 
 
 NAFNET_SIZE_CONFIGS: dict[str, dict[str, object]] = {
@@ -33,6 +36,54 @@ NAFNET_SIZE_CONFIGS: dict[str, dict[str, object]] = {
 _TRAIN_DEFAULTS = NAFNetConfig()
 
 
+def infer_nafnet_config(state_dict: dict) -> Optional[dict]:
+    """Infer a NAFNet architecture config (width + block layout) from a state dict.
+
+    Different NAFNet checkpoints share the same tensor names but use different
+    block layouts (the GoPro deblur models use ``enc=[1,1,1,28], middle=1`` while
+    the SIDD denoise models use ``enc=[2,2,4,8], middle=12``). Counting the
+    per-stage block indices lets one family class load any of them.
+    """
+
+    intro = state_dict.get("intro.weight")
+    if intro is None or getattr(intro, "ndim", 0) != 4:
+        return None
+
+    def _stage_counts(prefix: str) -> list[int]:
+        stages: dict[int, set[int]] = {}
+        marker = ".beta"
+        plen = len(prefix) + 1
+        for key in state_dict:
+            if not key.startswith(prefix + ".") or not key.endswith(marker):
+                continue
+            rest = key[plen:-len(marker)]
+            parts = rest.split(".")
+            if len(parts) != 2:
+                continue
+            try:
+                stage, block = int(parts[0]), int(parts[1])
+            except ValueError:
+                continue
+            stages.setdefault(stage, set()).add(block)
+        return [len(stages[i]) for i in sorted(stages)]
+
+    middle = {
+        int(k[len("middle_blks.") :].split(".")[0])
+        for k in state_dict
+        if k.startswith("middle_blks.") and k.endswith(".beta")
+    }
+    enc = _stage_counts("encoders")
+    dec = _stage_counts("decoders")
+    if not enc or not dec or not middle:
+        return None
+    return {
+        "width": int(intro.shape[0]),
+        "middle_blk_num": len(middle),
+        "enc_blk_nums": enc,
+        "dec_blk_nums": dec,
+    }
+
+
 class LibreNAFNet(BaseModel):
     """NAFNet RGB image restoration.
 
@@ -49,6 +100,10 @@ class LibreNAFNet(BaseModel):
     TRAIN_CONFIG = NAFNetConfig
     SUPPORTS_BATCHED_PREDICT = True
     TTA_ENABLED = False
+    # Dataset/degradation weight variants (e.g. SIDD denoise vs the default GoPro
+    # deblur weights) get a filename + HF-repo suffix such as
+    # ``LibreNAFNetl-restore-sidd.pt``.
+    WEIGHT_VARIANTS: ClassVar[Tuple[str, ...]] = ("sidd",)
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -83,6 +138,10 @@ class LibreNAFNet(BaseModel):
         task: str | None = None,
         **kwargs,
     ) -> None:
+        # Peek the checkpoint to infer the block layout before the model is
+        # built. GoPro and SIDD NAFNet checkpoints share tensor names but use
+        # different block counts, so a fixed size config cannot load both.
+        self._arch_config: Optional[dict] = self._peek_arch_config(model_path, size)
         super().__init__(
             model_path=model_path,
             size=size,
@@ -96,8 +155,48 @@ class LibreNAFNet(BaseModel):
         self.nb_classes = 1
         self.names = {0: "image"}
 
+    @classmethod
+    def _peek_arch_config(cls, model_path, size) -> Optional[dict]:
+        """Best-effort read of the block config from a checkpoint before build."""
+
+        try:
+            if isinstance(model_path, dict):
+                state_dict = model_path.get("model", model_path)
+            elif isinstance(model_path, (str, Path)):
+                path = Path(cls._resolve_weights_path(str(model_path)))
+                if not path.exists():
+                    # Resolve auto-download so the block layout is known before
+                    # the architecture is built; _load_weights reuses the cache.
+                    from ...utils.download import download_weights
+
+                    download_weights(str(model_path), size)
+                    path = Path(cls._resolve_weights_path(str(model_path)))
+                if not path.exists():
+                    return None
+                # Safe peek: weights_only=True forbids pickle code execution.
+                # This only needs the tensor state dict to infer the block
+                # layout; anything unloadable falls back to the default config.
+                loaded = torch.load(str(path), map_location="cpu", weights_only=True)
+                state_dict = loaded.get("model", loaded) if isinstance(loaded, dict) else None
+            else:
+                return None
+            if not isinstance(state_dict, dict):
+                return None
+            return infer_nafnet_config(state_dict)
+        except Exception as exc:
+            # Best-effort pre-pass: any real problem resurfaces in
+            # _load_weights with a proper error, but keep the root cause
+            # visible instead of silently falling back to the default layout.
+            logger.warning(
+                "Could not infer NAFNet block config from %s (%s); "
+                "falling back to the default size config.",
+                model_path,
+                exc,
+            )
+            return None
+
     def _init_model(self) -> nn.Module:
-        cfg = NAFNET_SIZE_CONFIGS[self.size]
+        cfg = self._arch_config or NAFNET_SIZE_CONFIGS[self.size]
         return NAFNetLocal(
             img_channel=3,
             width=int(cfg["width"]),

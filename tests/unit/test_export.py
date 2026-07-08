@@ -177,6 +177,33 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="YOLO9 detection"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
+    def test_export_rejects_yolo9_segment(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "segment"
+        exporter = OnnxExporter(wrapper)
+
+        with pytest.raises(NotImplementedError, match="YOLO9 segmentation export"):
+            exporter(output_path="unused.onnx")
+
+    def test_direct_onnx_export_rejects_yolo9_segment_metadata(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+
+        with pytest.raises(NotImplementedError, match="YOLO9 segmentation ONNX export"):
+            export_onnx(
+                wrapper.model,
+                torch.zeros(1, 3, 32, 32),
+                output_path="unused.onnx",
+                opset=13,
+                simplify=False,
+                dynamic=False,
+                half=False,
+                metadata={
+                    "model_family": "yolo9",
+                    "task": "segment",
+                    "segmentation": "true",
+                },
+            )
+
     def test_coreml_embedded_nms_preflight_rejects_max_det(self):
         wrapper = _make_wrapper(model_name="yolo9")
         wrapper.task = "detect"

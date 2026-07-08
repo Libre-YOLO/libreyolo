@@ -1,0 +1,27 @@
+LibreRealESRGAN includes code ported from Real-ESRGAN and BasicSR:
+
+Architecture (RRDBNet, SRVGGNetCompact, pixel_unshuffle)
+--------------------------------------------------------
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License, Version 2.0.
+Copyright 2018-2022 BasicSR Authors.
+
+Tiling / inference helper (seam-free tiled forward)
+---------------------------------------------------
+Source: https://github.com/xinntao/Real-ESRGAN
+License: BSD 3-Clause License.
+Copyright (c) 2021, Xintao Wang. All rights reserved.
+
+The released Real-ESRGAN generator weights (RealESRGAN_x4plus,
+RealESRGAN_x2plus, realesr-general-x4v3) are distributed by the Real-ESRGAN
+project under the BSD 3-Clause License. LibreYOLO mirrors converted checkpoints
+with this provenance stated in the model cards and notices.
+
+Citations:
+Xintao Wang, Liangbin Xie, Chao Dong, and Ying Shan.
+"Real-ESRGAN: Training Real-World Blind Super-Resolution with Pure Synthetic
+Data." ICCV Workshops 2021.
+
+Xintao Wang, Ke Yu, Shixiang Wu, Jinjin Gu, Yihao Liu, Chao Dong, Yu Qiao, and
+Chen Change Loy. "ESRGAN: Enhanced Super-Resolution Generative Adversarial
+Networks." ECCV Workshops 2018.

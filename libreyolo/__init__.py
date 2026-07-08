@@ -23,11 +23,14 @@ from .models import (
     LibreYOLO3,
     LibreYOLO4,
     LibreYOLO2,
+    LibreYOLO1,
     LibreYOLO7,
     LibreL2CS,
     LibreFOMO,
     LibreDepthAnythingV2,
     LibreNAFNet,
+    LibreBiRefNet,
+    LibreRealESRGAN,
     LibreEoMT,
     LibrePIDNet,
     LibreMobileNetV4,
@@ -35,6 +38,7 @@ from .models import (
     LibreEfficientNetV2,
     LibreResNet,
     LibreCLIP,
+    LibreSigLIP2,
 )
 from .utils.results import (
     Results,
@@ -46,8 +50,10 @@ from .utils.results import (
     OBB,
     Gaze,
     SemanticMask,
+    PanopticSegmentation,
     DepthMap,
     RestoredImage,
+    Matte,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -100,6 +106,7 @@ def __getattr__(name):
         "SegmentationValidator": (".validation", "SegmentationValidator"),
         "PoseValidator": (".validation", "PoseValidator"),
         "SemanticValidator": (".validation", "SemanticValidator"),
+        "PanopticValidator": (".validation", "PanopticValidator"),
         "DepthValidator": (".validation", "DepthValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
@@ -162,11 +169,14 @@ __all__ = [
     "LibreYOLO3",
     "LibreYOLO4",
     "LibreYOLO2",
+    "LibreYOLO1",
     "LibreYOLO7",
     "LibreL2CS",
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreNAFNet",
+    "LibreBiRefNet",
+    "LibreRealESRGAN",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
@@ -174,6 +184,7 @@ __all__ = [
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
+    "LibreSigLIP2",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
@@ -203,8 +214,10 @@ __all__ = [
     "OBB",
     "Gaze",
     "SemanticMask",
+    "PanopticSegmentation",
     "DepthMap",
     "RestoredImage",
+    "Matte",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
@@ -226,6 +239,7 @@ __all__ = [
     "SegmentationValidator",
     "PoseValidator",
     "SemanticValidator",
+    "PanopticValidator",
     "DepthValidator",
     "ValidationConfig",
     "DATASETS_DIR",

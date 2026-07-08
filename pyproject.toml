@@ -130,6 +130,18 @@ clip-convert = [
     "libreyolo[clip]",
     "open_clip_torch>=2.24.0",
 ]
+siglip2 = [
+    # LibreSigLIP2 towers are native torch (no transformers at runtime). Only the
+    # multilingual SentencePiece text tokenizer (Gemma vocab) needs this.
+    "sentencepiece>=0.1.99",
+]
+siglip2-convert = [
+    # Convert-/parity-only: re-host Apache-2.0 google/siglip2-* weights as
+    # LibreSigLIP2 checkpoints (weights/convert_siglip2_weights.py) and run the
+    # parity tests against the reference SiglipModel.
+    "libreyolo[siglip2]",
+    "transformers>=5.1.0",
+]
 coreml = [
     "coremltools>=8.0",
 ]
@@ -156,6 +168,7 @@ all = [
     "libreyolo[rtdetr]",
     "libreyolo[gaze]",
     "libreyolo[clip]",
+    "libreyolo[siglip2]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
@@ -184,6 +197,8 @@ libreyolo = [
     "data/*.json",
     "models/clip/*.gz",
     "models/clip/data/*.json",
+    "models/siglip2/*.model",
+    "models/siglip2/data/*.json",
     "models/darknet/cfgs/*.cfg",
     "models/yolo7/*.yaml",
     "models/**/NOTICE",
@@ -295,6 +310,7 @@ markers = [
     "tflite: tests requiring TensorFlow Lite export",
     "coreml: tests requiring CoreML (macOS only)",
     "yolox: tests covering the YOLOX model family",
+    "yolo7: tests covering the YOLOv7 model family",
     "yolo9: tests covering the YOLO9 model family",
     "yolo9_e2e: tests covering the YOLOv9-E2E model family",
     "yolonas: tests covering the YOLO-NAS model family",
@@ -314,6 +330,7 @@ markers = [
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "openvocab: tests covering the LibreOpenVocab detector tier",
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
+    "siglip2: tests covering the LibreSigLIP2 zero-shot open-vocabulary classifier family",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",

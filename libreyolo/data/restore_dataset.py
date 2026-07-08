@@ -114,10 +114,20 @@ class RestoreDataset(Dataset):
         split: str,
         imgsz: int,
         augment: bool = False,
+        scale: int = 1,
     ):
         self.split = split
         self.imgsz = int(imgsz)
         self.augment = augment
+        self.scale = int(scale) if scale else 1
+        if self.scale < 1:
+            raise ValueError(f"restore dataset scale must be >= 1, got {scale}.")
+        if self.augment and self.scale != 1:
+            raise NotImplementedError(
+                "Coupled crop/flip augmentation is not implemented for "
+                "super-resolution pairs (scale != 1). Real-ESRGAN training is "
+                "out of scope; use augment=False for validation."
+            )
 
         split_value = data_config.get(split)
         if not split_value:
@@ -191,12 +201,23 @@ class RestoreDataset(Dataset):
         target_path = self.target_files[index]
         inp = _load_rgb(img_path)
         target = _load_rgb(target_path)
-        if inp.shape != target.shape:
+        ih, iw = inp.shape[:2]
+        th, tw = target.shape[:2]
+        if self.scale == 1:
+            if inp.shape != target.shape:
+                raise ValueError(
+                    f"Restore pair shape mismatch: {img_path} has {inp.shape[:2]}, "
+                    f"{target_path} has {target.shape[:2]}."
+                )
+        elif (th, tw) != (ih * self.scale, iw * self.scale):
             raise ValueError(
-                f"Restore pair shape mismatch: {img_path} has {inp.shape[:2]}, "
-                f"{target_path} has {target.shape[:2]}."
+                f"Super-resolution pair shape mismatch (scale {self.scale}): input "
+                f"{img_path} is {(ih, iw)} so the ground-truth target must be "
+                f"{(ih * self.scale, iw * self.scale)}, but {target_path} is {(th, tw)}. "
+                "Provide high-resolution targets at scale x the input size."
             )
-        orig_shape = inp.shape[:2]
+        orig_shape = (ih, iw)
+        target_shape = (th, tw)
         inp, target = self._augment_pair(inp, target)
 
         inp_tensor = (
@@ -213,6 +234,7 @@ class RestoreDataset(Dataset):
         )
         img_info = {
             "orig_shape": (int(orig_shape[0]), int(orig_shape[1])),
+            "target_shape": (int(target_shape[0]), int(target_shape[1])),
             "img_path": str(img_path),
             "target_path": str(target_path),
         }
@@ -236,12 +258,18 @@ def _pad_chw(tensor: torch.Tensor, h: int, w: int) -> torch.Tensor:
 
 
 def restore_collate_fn(batch):
-    """Collate restore samples into ``(imgs, targets, img_infos, img_ids)``."""
+    """Collate restore samples into ``(imgs, targets, img_infos, img_ids)``.
+
+    Inputs and targets are padded to their own maxima so super-resolution pairs
+    (where the target is ``scale`` x the input) stack correctly.
+    """
 
     max_h = max(item[0].shape[-2] for item in batch)
     max_w = max(item[0].shape[-1] for item in batch)
+    tmax_h = max(item[1].shape[-2] for item in batch)
+    tmax_w = max(item[1].shape[-1] for item in batch)
     imgs = torch.stack([_pad_chw(item[0], max_h, max_w) for item in batch], dim=0)
-    targets = torch.stack([_pad_chw(item[1], max_h, max_w) for item in batch], dim=0)
+    targets = torch.stack([_pad_chw(item[1], tmax_h, tmax_w) for item in batch], dim=0)
     img_infos = [item[2] for item in batch]
     img_ids = [item[3] for item in batch]
     return imgs, targets, img_infos, img_ids

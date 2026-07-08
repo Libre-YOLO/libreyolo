@@ -107,6 +107,39 @@ the object classes (`nc` grows by one).
 
 Canonical loader: `libreyolo.data.SemanticDataset`.
 
+## panoptic
+
+> SCAFFOLD (issue #555): the `panoptic` task is registered and its validator is
+> wired, but the dataset loader below is **not implemented yet**. This section
+> is the contract a contributor implements against; there is no canonical
+> `PanopticDataset` on disk yet.
+
+Panoptic segmentation pairs each image with a dense single-channel segment-id
+map and a per-image list describing each segment. The intended contract follows
+the COCO-panoptic format:
+
+- A PNG per image whose pixel value (or RGB-encoded value) is a **segment id**.
+  Every pixel belongs to exactly one segment; there is no overlap.
+- A JSON `segments_info` list, one entry per segment id present in the image:
+  `{"id": int, "category_id": int, "iscrowd": 0|1, "area": int}`. `category_id`
+  indexes the dataset `names`.
+
+thing-vs-stuff is a **per-category** property, not a per-segment one: as in
+COCO-panoptic, GT `segments_info` entries do **not** carry an `isthing` field;
+the split lives on the category metadata (each category is a "thing" or
+"stuff"). The prediction result payload
+(`libreyolo.utils.results.PanopticSegmentation`) uses the same convention and
+may optionally denormalize `isthing` onto each predicted segment for
+convenience. Deriving thing/stuff from `category_id` is therefore the
+producer's responsibility (the model's `_postprocess_predictions` and
+`PanopticValidator`), so the two surfaces stay consistent.
+
+Validation uses Panoptic Quality (PQ = SQ x RQ), matching predicted to
+ground-truth segments of the same category at IoU > 0.5. See
+`libreyolo/validation/panoptic_validator.py` for the metric plug points.
+
+Canonical loader: *(to be added — `libreyolo.data.PanopticDataset`)*.
+
 ## depth
 
 Depth estimation pairs each image with a dense single-channel depth map instead
@@ -174,6 +207,39 @@ The class-like YAML fields are schema placeholders: use `nc: 1` and
 `names: {0: image}`. Restore models expose `Results.restored`, not detections.
 
 Canonical loader: `libreyolo.data.RestoreDataset`.
+
+## matte
+
+Background removal / dichotomous segmentation pairs each RGB image with a
+single-channel ground-truth alpha matte (0 = background, 255 = foreground)
+sharing the same stem:
+
+```text
+images/subject.jpg -> mattes/subject.png
+```
+
+Two layouts are accepted:
+
+- **Directory**: a root containing `images/` and a matte directory, auto-detected
+  among `mattes/`, `matte/`, `gt/`, `masks/`, `mask/`, `alpha/`. Pass the root as
+  `data=`.
+- **YAML**: `path` (root), plus per-split `val_images` / `val_mattes` (and
+  optional `train_images` / `train_mattes` for a future fine-tune), each a
+  directory relative to `path` or absolute.
+
+Matte rules:
+
+- the matte is grayscale; values are read as alpha in `[0, 1]` (`/255`);
+- a matte is resized to the prediction canvas with bilinear interpolation when
+  the shapes differ;
+- metrics are MAE and S-measure (Fan et al., ICCV 2017), computed on the
+  original image canvas; best-checkpoint fitness is S-measure.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: matte}`. Matte models expose `Results.matte`, not detections.
+
+Validation is inference-only in v1 (matte training/fine-tuning is a documented
+follow-up). Canonical pair resolver: `libreyolo.data.matte_dataset.resolve_matte_pairs`.
 
 ## pose
 
