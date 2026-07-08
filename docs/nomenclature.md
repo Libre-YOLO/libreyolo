@@ -42,6 +42,9 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
+| `rtdetrv2`  | `LibreRTDETRv2` | All-caps acronym + lowercase version |
+| `rtdetrv4`  | `LibreRTDETRv4` | All-caps acronym + lowercase version |
+| `rtmdet`    | `LibreRTMDet`   | Upstream brand casing preserved (`RTMDet`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
@@ -56,6 +59,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
+| `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
 
 Casing rules observed in the table:
 
@@ -74,8 +78,9 @@ Casing rules observed in the table:
    task carried in the `-pose` / `-seg` suffix.
 
 For these checkpoint-emitting detector families the casing rule is uniform:
-**every family prefix is all-caps after `Libre`**, with the only mixed-case
-fragment being the lowercase version suffix `DEIMv2`.
+**every family prefix is all-caps after `Libre`**, with the mixed-case
+exceptions being lowercase version suffixes (`DEIMv2`, `RTDETRv2`,
+`RTDETRv4`) and preserved upstream brand casing (`RTMDet`).
 
 The VLM and promptable SAM tiers are separate categories and do not follow this
 rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
@@ -115,6 +120,9 @@ ships:
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
+| `rtdetrv2`  | `r18`, `r34`, `r50`, `r50m`, `r101` |
+| `rtdetrv4`  | `s`, `m`, `l`, `x` |
+| `rtmdet`    | `t`, `s`, `m`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
@@ -128,6 +136,7 @@ ships:
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
+| `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
 
 Promptable SAM tier size aliases:
 
@@ -215,6 +224,9 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
+| `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
+| `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
+| `rtmdet`    | `("detect",)` (default)             | detect | detect-only; training is gated experimental (`allow_experimental=True`) |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |

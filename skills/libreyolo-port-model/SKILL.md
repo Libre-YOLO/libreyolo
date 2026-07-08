@@ -17,10 +17,6 @@ your job is to ship it. Reference material (architectural patterns, ABC
 contracts, validators) is in the back half; the front half is the path you
 follow to write code.
 
-The legacy detection-only skill is preserved at
-`skills/legacy_libreyolo-add-native-detection-model/SKILL.md` for archaeology.
-Don't follow it.
-
 ## 0. Read this first — orientation
 
 You have an upstream model. Six questions get you pointed at the right
@@ -403,8 +399,11 @@ Multi-task families: one HF repo per task variant
 (`LibreYOLO/Libre<FAMILY>s` for detect, `LibreYOLO/Libre<FAMILY>s-pose` for
 pose, `LibreYOLO/Libre<FAMILY>s-seg` for segment).
 
-**Verify**: `LibreYOLO.from_pretrained("LibreYOLO/Libre<FAMILY>s")` works
-on a fresh machine / cleared cache.
+**Verify**: on a fresh machine / cleared cache (no `weights/Libre<FAMILY>s.pt`
+staged), `LibreYOLO("Libre<FAMILY>s.pt")` auto-downloads from the new HF repo
+and loads. There is no `from_pretrained` API; the bare canonical filename *is*
+the download trigger (`BaseModel.get_download_url()` builds the
+`huggingface.co/LibreYOLO/<name>/resolve/main/<name>.pt` URL).
 
 ## 6. Paste-ready templates
 
@@ -1256,4 +1255,3 @@ In priority order. Each line: *[which family hit it]* — what to do.
   - Vendored sub-component license: `libreyolo/models/deimv2/engine/backbone/dinov3/`
   - Per-group LR via `lr_ratio` + `_scale_lr` (preferred): `libreyolo/models/rtdetr/trainer.py:185-260`
   - Per-group LR via `_train_epoch` fork (older): `libreyolo/models/dfine/trainer.py:148-212`
-- **Legacy detection-only skill** (do not follow for new ports): `skills/legacy_libreyolo-add-native-detection-model/SKILL.md`.

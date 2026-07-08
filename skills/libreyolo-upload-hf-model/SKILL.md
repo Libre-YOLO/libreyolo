@@ -330,7 +330,10 @@ Add via HF UI or `huggingface_hub.add_collection_item(collection_slug, item_id=<
 4. Validate the `.pt` against the current LibreYOLO checkpoint metadata schema before upload. The source of truth is `docs/checkpoint_schema.md` and the helpers in `libreyolo/utils/serialization.py`; do not duplicate the schema in this skill. A simple load smoke test is not enough.
 5. Create the HF repo (skip if it exists): `huggingface-cli repo create LibreYOLO/<RepoName> --type model`.
 6. Upload: `huggingface-cli upload LibreYOLO/<RepoName> <local-dir> . --commit-message "Initial upload"`.
-7. Smoke test: `YOLO.from_pretrained("LibreYOLO/<RepoName>")` on a fresh machine / cleared cache.
+7. Smoke test the autodownload path on a fresh machine / cleared cache (and no
+   staged copy under `weights/`): `LibreYOLO("<RepoName>.pt")` must download
+   from the new repo and load. There is no `from_pretrained` API; the bare
+   canonical filename is the download trigger.
 8. Add to the matching collection.
 
 One commit per file if iterating — easier to revert than a batch commit.
@@ -347,7 +350,7 @@ One commit per file if iterating — easier to revert than a batch commit.
 
 ## Common traps
 
-- Relying only on `YOLO.from_pretrained(...)`; it can pass even when required checkpoint metadata is missing or stale.
+- Relying only on a load smoke test (`LibreYOLO("<RepoName>.pt")`); it can pass even when required checkpoint metadata is missing or stale. Run `validate_checkpoint_metadata` (step 4) too.
 - Uploading both `.pt` and `.pth` of the same weights (wastes HF storage, no canonical filename).
 - Copying a lowercase filename from an old release — the loader only fetches the `FILENAME_PREFIX`-cased `.pt`.
 - Writing `license: mit` in README YAML for a repo whose weights derive from an Apache-2.0 upstream — MIT re-licensing is not legal without explicit permission.
