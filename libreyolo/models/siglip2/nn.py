@@ -248,14 +248,18 @@ class SiglipMultiheadAttentionPoolingHead(nn.Module):
         v = v.view(batch, src_len, num_heads, head_dim).transpose(1, 2)
 
         attn = torch.matmul(q, k.transpose(-1, -2)) / (head_dim**0.5)
-        attn = torch.softmax(attn, dim=-1)
+        # Match SiglipAttention: compute the softmax in fp32 and cast back, so
+        # fp16 callers stay numerically stable (a no-op at fp32).
+        attn = torch.softmax(attn, dim=-1, dtype=torch.float32).to(q.dtype)
         out = torch.matmul(attn, v)
         out = out.transpose(1, 2).contiguous().view(batch, tgt_len, embed_dim)
         return F.linear(out, self.attention.out_proj.weight, self.attention.out_proj.bias)
 
     def forward(self, hidden_state: torch.Tensor) -> torch.Tensor:
         batch_size = hidden_state.shape[0]
-        probe = self.probe.repeat(batch_size, 1, 1)
+        # expand is a zero-copy view (matches the reference); repeat would
+        # allocate batch_size x 1 x dim every forward.
+        probe = self.probe.expand(batch_size, -1, -1)
         hidden_state = self._map_attention(probe, hidden_state)
         residual = hidden_state
         hidden_state = self.layernorm(hidden_state)

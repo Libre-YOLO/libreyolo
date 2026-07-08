@@ -242,6 +242,14 @@ def build_classify_transforms(
 
     mode = _interp_mode(interpolation)
     normalize = transforms.Normalize(mean=mean, std=std)
+    if augment and square_resize:
+        # The square-resize path is a val-only pipeline; combining it with the
+        # random-resized-crop train pipeline is not defined. Fail loudly rather
+        # than silently ignoring square_resize (the augment branch returns first).
+        raise ValueError(
+            "square_resize=True is only supported with augment=False "
+            "(it is a deterministic validation transform)."
+        )
     if augment:
         ops = [
             transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
