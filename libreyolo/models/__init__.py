@@ -70,6 +70,7 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
     LibreDepthAnythingV2,
 )
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
@@ -649,6 +650,7 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreNAFNet",
+    "LibreRealESRGAN",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",

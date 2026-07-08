@@ -65,6 +65,11 @@ TASK_ALIASES = {
     "restoration": "restore",
     "deblur": "restore",
     "denoise": "restore",
+    "sr": "restore",
+    "super-resolution": "restore",
+    "super_resolution": "restore",
+    "superresolution": "restore",
+    "upscale": "restore",
 }
 
 TASK_TO_SUFFIX = {
