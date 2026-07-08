@@ -20,6 +20,9 @@ import torch.nn.functional as F
 from .ms_deform import get_activation
 
 
+EVAL_CONSTANT_CACHE_LIMIT = 16
+
+
 class ConvNormLayer_fuse(nn.Module):
     def __init__(
         self,
@@ -356,7 +359,7 @@ class HybridEncoder(nn.Module):
         self.num_encoder_layers = num_encoder_layers
         self.pe_temperature = pe_temperature
         self.eval_spatial_size = eval_spatial_size
-        self._pos_embed_cache = {}
+        self._pos_embed_cache = OrderedDict()
         self.out_channels = [hidden_dim for _ in range(len(self.in_channels))]
         self.out_strides = self.feat_strides
 
@@ -439,13 +442,16 @@ class HybridEncoder(nn.Module):
                     self.pe_temperature,
                 )
                 setattr(self, f"pos_embed{idx}", pos_embed)
-                self._pos_embed_cache[
+                self._cache_pos_embed(
                     (
                         idx,
                         self.eval_spatial_size[0] // stride,
                         self.eval_spatial_size[1] // stride,
-                    )
-                ] = pos_embed
+                        pos_embed.device,
+                        pos_embed.dtype,
+                    ),
+                    pos_embed,
+                )
 
     @staticmethod
     def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.0):
@@ -466,15 +472,26 @@ class HybridEncoder(nn.Module):
             [out_w.sin(), out_w.cos(), out_h.sin(), out_h.cos()], dim=1
         )[None, :, :]
 
+    def _cache_pos_embed(self, key, pos_embed):
+        self._pos_embed_cache[key] = pos_embed
+        self._pos_embed_cache.move_to_end(key)
+        while len(self._pos_embed_cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            self._pos_embed_cache.popitem(last=False)
+
     def _get_pos_embed(self, enc_ind, h, w, src_flatten):
-        key = (enc_ind, h, w)
+        key = (enc_ind, h, w, src_flatten.device, src_flatten.dtype)
         pos_embed = self._pos_embed_cache.get(key)
         if pos_embed is None:
-            pos_embed = self.build_2d_sincos_position_embedding(
-                w, h, self.hidden_dim, self.pe_temperature
-            )
-            self._pos_embed_cache[key] = pos_embed
-        return pos_embed.to(device=src_flatten.device, dtype=src_flatten.dtype)
+            base = getattr(self, f"pos_embed{enc_ind}", None)
+            if base is None or base.shape[1] != h * w:
+                base = self.build_2d_sincos_position_embedding(
+                    w, h, self.hidden_dim, self.pe_temperature
+                )
+            pos_embed = base.to(device=src_flatten.device, dtype=src_flatten.dtype)
+            self._cache_pos_embed(key, pos_embed)
+        else:
+            self._pos_embed_cache.move_to_end(key)
+        return pos_embed
 
     def forward(self, feats):
         assert len(feats) == len(self.in_channels)
