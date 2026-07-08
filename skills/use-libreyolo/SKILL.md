@@ -157,7 +157,9 @@ as the source of truth. By tier:
   and the classic lineage: YOLO2/3/4 (inference-only) and YOLO7 (also
   trainable; experimental SimOTA recipe).
 - **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
-  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic).
+  NAFNet (restore: deblur/denoise), RealESRGAN (restore: super-resolution,
+  `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the input; big images via
+  `predict(..., tile=512)`), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`

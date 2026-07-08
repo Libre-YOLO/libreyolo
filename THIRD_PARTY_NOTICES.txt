@@ -382,7 +382,36 @@ published GoPro-trained NAFNet weights do not carry an explicit
 standalone weights license; convert only weights that you have the
 right to use and redistribute. The GoPro deblurring dataset is separate
 from the NAFNet code and carries its own terms; users are responsible
-for dataset compliance.
+for dataset compliance. The SIDD denoising weights are trained on the
+Smartphone Image Denoising Dataset (SIDD), which is distributed under
+the MIT License.
+
+--------------------------------------------------------------------
+Real-ESRGAN (Xintao Wang)
+--------------------------------------------------------------------
+Source: https://github.com/xinntao/Real-ESRGAN
+License: BSD-3-Clause
+Copyright (c) 2021 Xintao Wang.
+Citation: Wang, X., Xie, L., Dong, C., and Shan, Y. "Real-ESRGAN:
+          Training Real-World Blind Super-Resolution with Pure
+          Synthetic Data." ICCV Workshops 2021.
+Used for: the Real-ESRGAN super-resolution model family
+          (libreyolo/models/realesrgan/). The seam-free tiled forward
+          in utils.py is ported from Real-ESRGAN's inference helper.
+          The released generator weights (RealESRGAN_x4plus,
+          RealESRGAN_x2plus, realesr-general-x4v3) are BSD-3-Clause and
+          are mirrored as converted checkpoints with provenance.
+
+--------------------------------------------------------------------
+BasicSR (XPixelGroup)
+--------------------------------------------------------------------
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License 2.0
+Copyright 2018-2022 BasicSR Authors.
+Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
+          lineage in libreyolo/models/realesrgan/nn.py. Module and
+          parameter names mirror BasicSR so the released Real-ESRGAN
+          state dicts convert with a plain metadata-wrap.
 
 --------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
