@@ -136,7 +136,7 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
-| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
+| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
 
@@ -242,7 +242,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
-| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
+| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
 | `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
