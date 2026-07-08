@@ -58,6 +58,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
+| `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot open-vocab classify); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
@@ -139,6 +140,8 @@ ships:
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
 | `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
+| `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
+| `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
 
 Promptable SAM tier size aliases:
 
@@ -327,6 +330,12 @@ LibreNAFNetl-restore.pt
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
 LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
+
+# siglip2: SigLIP 2 zero-shot, open-vocabulary (set_classes); multilingual
+# SentencePiece tokenizer, sigmoid-native scoring with a multi_label option.
+# Size codes bake the native resolution in, like clip's b32/b16/l14.
+LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
+LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 ```
 
 ### Open-vocabulary detection (inference-only snapshot tier)
