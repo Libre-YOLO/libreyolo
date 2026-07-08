@@ -59,7 +59,8 @@ file = name + ".pt"
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
-| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
+| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
+| RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
@@ -159,6 +160,10 @@ LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
+LibreNAFNetl-restore-sidd.pt,
+
+LibreRealESRGANx4-restore.pt, LibreRealESRGANx2-restore.pt,
+LibreRealESRGANx4t-restore.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 

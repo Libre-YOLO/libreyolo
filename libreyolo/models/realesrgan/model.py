@@ -87,6 +87,15 @@ class LibreRealESRGAN(BaseModel):
     divisibility factor, and returns ``Results.restored`` on a canvas ``scale``
     times the input (``Results.restore_scale`` records the factor). Large inputs
     can be processed seam-free with ``model.predict(img, tile=512)``.
+
+    v1 scope notes:
+
+    * Inputs are converted to RGB; alpha channels are dropped (upstream
+      Real-ESRGAN optionally upsamples the alpha plane separately, deferred).
+    * The upstream ``realesr-general-x4v3`` model has a paired ``wdn``
+      denoise-strength companion blended via network interpolation; v1 ships
+      the base ``x4v3`` generator without the strength knob.
+    * Training is out of scope (GAN over a synthetic degradation pipeline).
     """
 
     FAMILY = "realesrgan"
