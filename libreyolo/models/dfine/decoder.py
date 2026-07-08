@@ -492,6 +492,7 @@ class DFINETransformer(nn.Module):
         self.eval_spatial_size = eval_spatial_size
         self.aux_loss = aux_loss
         self.reg_max = reg_max
+        self._anchor_cache = {}
 
         assert query_select_method in ("default", "one2many", "agnostic")
         assert cross_attn_method in ("default", "discrete")
@@ -592,6 +593,14 @@ class DFINETransformer(nn.Module):
             anchors, valid_mask = self._generate_anchors()
             self.register_buffer("anchors", anchors)
             self.register_buffer("valid_mask", valid_mask)
+            self._eval_spatial_shape_key = self._spatial_shape_key(
+                [
+                    [int(self.eval_spatial_size[0] / s), int(self.eval_spatial_size[1] / s)]
+                    for s in self.feat_strides
+                ]
+            )
+        else:
+            self._eval_spatial_shape_key = None
 
         self._reset_parameters(feat_channels)
 
@@ -732,6 +741,28 @@ class DFINETransformer(nn.Module):
 
         return anchors, valid_mask
 
+    @staticmethod
+    def _spatial_shape_key(spatial_shapes):
+        return tuple((int(h), int(w)) for h, w in spatial_shapes)
+
+    def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        key = self._spatial_shape_key(spatial_shapes)
+        if key == self._eval_spatial_shape_key and hasattr(self, "anchors"):
+            return (
+                self.anchors.to(device=memory.device, dtype=memory.dtype),
+                self.valid_mask.to(device=memory.device),
+            )
+
+        cached = self._anchor_cache.get(key)
+        if cached is None:
+            cached = self._generate_anchors(spatial_shapes)
+            self._anchor_cache[key] = cached
+        anchors, valid_mask = cached
+        return (
+            anchors.to(device=memory.device, dtype=memory.dtype),
+            valid_mask.to(device=memory.device),
+        )
+
     def _get_decoder_input(
         self,
         memory: torch.Tensor,
@@ -741,11 +772,12 @@ class DFINETransformer(nn.Module):
     ):
         if self.training or self.eval_spatial_size is None:
             anchors, valid_mask = self._generate_anchors(
-                spatial_shapes, device=memory.device
+                spatial_shapes, dtype=memory.dtype, device=memory.device
             )
         else:
-            anchors = self.anchors
-            valid_mask = self.valid_mask
+            anchors, valid_mask = self._get_anchors_for_spatial_shapes(
+                spatial_shapes, memory
+            )
         if memory.shape[0] > 1:
             anchors = anchors.repeat(memory.shape[0], 1, 1)
 

@@ -356,6 +356,7 @@ class HybridEncoder(nn.Module):
         self.num_encoder_layers = num_encoder_layers
         self.pe_temperature = pe_temperature
         self.eval_spatial_size = eval_spatial_size
+        self._pos_embed_cache = {}
         self.out_channels = [hidden_dim for _ in range(len(self.in_channels))]
         self.out_strides = self.feat_strides
 
@@ -438,6 +439,13 @@ class HybridEncoder(nn.Module):
                     self.pe_temperature,
                 )
                 setattr(self, f"pos_embed{idx}", pos_embed)
+                self._pos_embed_cache[
+                    (
+                        idx,
+                        self.eval_spatial_size[0] // stride,
+                        self.eval_spatial_size[1] // stride,
+                    )
+                ] = pos_embed
 
     @staticmethod
     def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.0):
@@ -458,6 +466,16 @@ class HybridEncoder(nn.Module):
             [out_w.sin(), out_w.cos(), out_h.sin(), out_h.cos()], dim=1
         )[None, :, :]
 
+    def _get_pos_embed(self, enc_ind, h, w, src_flatten):
+        key = (enc_ind, h, w)
+        pos_embed = self._pos_embed_cache.get(key)
+        if pos_embed is None:
+            pos_embed = self.build_2d_sincos_position_embedding(
+                w, h, self.hidden_dim, self.pe_temperature
+            )
+            self._pos_embed_cache[key] = pos_embed
+        return pos_embed.to(device=src_flatten.device, dtype=src_flatten.dtype)
+
     def forward(self, feats):
         assert len(feats) == len(self.in_channels)
         proj_feats = [self.input_proj[i](feat) for i, feat in enumerate(feats)]
@@ -469,11 +487,9 @@ class HybridEncoder(nn.Module):
                 if self.training or self.eval_spatial_size is None:
                     pos_embed = self.build_2d_sincos_position_embedding(
                         w, h, self.hidden_dim, self.pe_temperature
-                    ).to(src_flatten.device)
+                    ).to(device=src_flatten.device, dtype=src_flatten.dtype)
                 else:
-                    pos_embed = getattr(self, f"pos_embed{enc_ind}", None).to(
-                        src_flatten.device
-                    )
+                    pos_embed = self._get_pos_embed(enc_ind, h, w, src_flatten)
 
                 memory = self.encoder[i](src_flatten, pos_embed=pos_embed)
                 proj_feats[enc_ind] = (

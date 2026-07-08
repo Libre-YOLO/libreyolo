@@ -13,7 +13,7 @@ import torch
 from libreyolo.models.dfine.backbone import HGNetv2
 from libreyolo.models.dfine.decoder import DFINETransformer
 from libreyolo.models.dfine.encoder import HybridEncoder
-from libreyolo.models.dfine.nn import SIZE_CONFIGS
+from libreyolo.models.dfine.nn import LibreDFINEModel, SIZE_CONFIGS
 
 pytestmark = pytest.mark.unit
 
@@ -70,3 +70,18 @@ def test_full_pipeline_random_weights(size):
     assert out["pred_boxes"].shape == (1, 300, 4)
     # Boxes should be in [0, 1] after sigmoid.
     assert (out["pred_boxes"] >= 0).all() and (out["pred_boxes"] <= 1).all()
+
+
+def test_eval_forward_accepts_runtime_size_different_from_eval_spatial_size():
+    """Eval must rebuild fixed-size encoder/decoder constants for runtime imgsz."""
+    model = LibreDFINEModel(
+        "n", nb_classes=2, eval_spatial_size=(640, 640)
+    ).eval()
+
+    x = torch.randn(1, 3, 320, 320)
+    with torch.no_grad():
+        out = model(x)
+
+    assert set(out.keys()) == {"pred_logits", "pred_boxes"}
+    assert out["pred_logits"].shape == (1, 300, 2)
+    assert out["pred_boxes"].shape == (1, 300, 4)
