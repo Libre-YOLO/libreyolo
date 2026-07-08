@@ -58,17 +58,24 @@ class DarknetFamily(BaseModel):
     CONV_COUNT_TO_SIZE: Dict[int, str] = {}   # conv-layer count -> size code
     ANCHORS_PER_HEAD: int = 3                  # 3 for v3/v4, 5 for v2 region
     DEFAULT_SIZE: str = "b"
+    DEFAULT_NB_CLASSES: int = 80              # COCO for v2/v3/v4; VOC (20) for v1
+    # Optional {index: name} applied to a bare (no-checkpoint) model so museum
+    # families report their real labels (VOC for v1) instead of ``class_i``.
+    # A loaded checkpoint's metadata names still take precedence.
+    DEFAULT_NAMES: Dict[int, str] | None = None
 
     def __init__(
         self,
         model_path=None,
         size: str | None = None,
-        nb_classes: int = 80,
+        nb_classes: int | None = None,
         device: str = "auto",
         **kwargs,
     ):
         if size is None:
             size = self.DEFAULT_SIZE
+        if nb_classes is None:
+            nb_classes = self.DEFAULT_NB_CLASSES
         super().__init__(
             model_path=model_path,
             size=size,
@@ -76,6 +83,10 @@ class DarknetFamily(BaseModel):
             device=device,
             **kwargs,
         )
+        # Museum-family default labels (e.g. VOC for v1). A checkpoint's own
+        # metadata names, applied by _load_weights below, still win.
+        if self.DEFAULT_NAMES is not None and len(self.DEFAULT_NAMES) == self.nb_classes:
+            self.names = dict(self.DEFAULT_NAMES)
         if isinstance(model_path, str):
             self._load_weights(model_path)
 

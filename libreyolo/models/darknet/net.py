@@ -27,21 +27,35 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from .blocks import DarknetConv, DarknetMaxPool, Reorg, Upsample
+from .blocks import (
+    DarknetConnected,
+    DarknetConv,
+    DarknetDropout,
+    DarknetLocal,
+    DarknetMaxPool,
+    Reorg,
+    Upsample,
+)
 from .cfg import CfgLayer
 
 
 @dataclass
 class DetectionSpec:
-    """Decode metadata for one ``[yolo]``/``[region]`` head."""
+    """Decode metadata for one ``[yolo]``/``[region]``/``[detection]`` head."""
 
-    kind: str  # "yolo" (v3/v4) or "region" (v2)
+    kind: str  # "yolo" (v3/v4), "region" (v2), or "detection" (v1)
     layer_index: int  # index into the module list (for output ordering)
     anchors: list[tuple[float, float]]  # (w, h) pairs selected for this head
     num_classes: int
     stride: int  # network input / feature-map size
     scale_x_y: float = 1.0  # YOLOv4 center scaling (1.0 = no scaling)
-    softmax: bool = False  # YOLOv2 region uses softmax over classes
+    softmax: bool = False  # YOLOv2 region / YOLOv1 detection softmax over classes
+    # YOLOv1 ``[detection]`` head (anchorless S*S grid, boxes from a dense FC
+    # output rather than a conv feature map):
+    side: int = 0  # S: grid is side x side (7 for YOLOv1)
+    boxes_per_cell: int = 0  # B: predicted boxes per cell (2 for YOLOv1)
+    coords: int = 4  # box coordinates per box (x, y, w, h)
+    sqrt: bool = False  # YOLOv1 predicts sqrt(w)/sqrt(h); square them at decode
 
 
 def _route_indices(layer_idx: int, raw: list[int]) -> list[int]:
@@ -82,15 +96,21 @@ class DarknetNet(nn.Module):
         # input feeding module 0). Index into this list is offset by 1 so that
         # out_channels[-1] is the network input channel count.
         out_channels = [self.input_channels]
+        # Spatial size (h, w) produced by each module, same +1 offset convention.
+        # ``[connected]``/``[local]`` heads (YOLOv1) need it at build time.
+        spatial = [(self.input_height, self.input_width)]
 
         for i, layer in enumerate(layers_cfg):
             prev_ch = out_channels[-1]
+            prev_h, prev_w = spatial[-1]
             next_layer = layers_cfg[i + 1] if i + 1 < len(layers_cfg) else None
-            module, ch, meta = self._build_layer(
-                i, layer, prev_ch, out_channels, num_classes, next_layer
+            module, ch, (out_h, out_w), meta = self._build_layer(
+                i, layer, prev_ch, prev_h, prev_w, out_channels, spatial,
+                num_classes, next_layer,
             )
             modules.append(module)
             out_channels.append(ch)
+            spatial.append((out_h, out_w))
             self._layer_meta.append(meta)
 
         self.layers = modules
@@ -101,10 +121,13 @@ class DarknetNet(nn.Module):
         i: int,
         layer: CfgLayer,
         prev_ch: int,
+        prev_h: int,
+        prev_w: int,
         out_channels: list[int],
+        spatial: list[tuple[int, int]],
         num_classes_override: int | None,
         next_layer: CfgLayer | None = None,
-    ) -> tuple[nn.Module, int, dict[str, Any]]:
+    ) -> tuple[nn.Module, int, tuple[int, int], dict[str, Any]]:
         t = layer.type
         meta: dict[str, Any] = {"type": t}
 
@@ -126,20 +149,34 @@ class DarknetNet(nn.Module):
             ):
                 filters = _num_anchors_for_head(next_layer) * (5 + num_classes_override)
             module = DarknetConv(prev_ch, filters, size, stride, bn, act, pad=pad)
-            return module, filters, meta
+            pad_px = (size // 2) if pad else 0
+            out_h = (prev_h + 2 * pad_px - size) // stride + 1
+            out_w = (prev_w + 2 * pad_px - size) // stride + 1
+            return module, filters, (out_h, out_w), meta
 
         if t == "maxpool":
             size = layer.get_int("size", 2)
             stride = layer.get_int("stride", 2)
-            return DarknetMaxPool(size, stride), prev_ch, meta
+            if stride == 1 and size == 2:
+                out_h, out_w = prev_h, prev_w  # same-size stride-1 pool
+            else:
+                pad_px = (size - 1) // 2
+                out_h = (prev_h + 2 * pad_px - size) // stride + 1
+                out_w = (prev_w + 2 * pad_px - size) // stride + 1
+            return DarknetMaxPool(size, stride), prev_ch, (out_h, out_w), meta
 
         if t == "upsample":
             stride = layer.get_int("stride", 2)
-            return Upsample(stride), prev_ch, meta
+            return Upsample(stride), prev_ch, (prev_h * stride, prev_w * stride), meta
 
         if t == "reorg":
             stride = layer.get_int("stride", 2)
-            return Reorg(stride), prev_ch * stride * stride, meta
+            return (
+                Reorg(stride),
+                prev_ch * stride * stride,
+                (prev_h // stride, prev_w // stride),
+                meta,
+            )
 
         if t == "route":
             raw = layer.get_int_list("layers")
@@ -152,7 +189,9 @@ class DarknetNet(nn.Module):
             ch = sum(out_channels[idx + 1] for idx in indices)
             if groups > 1:
                 ch = ch // groups
-            return nn.Identity(), ch, meta
+            # route adopts the spatial size of its (first) source layer
+            src_h, src_w = spatial[indices[0] + 1]
+            return nn.Identity(), ch, (src_h, src_w), meta
 
         if t == "shortcut":
             frm = layer.get_int("from")
@@ -160,8 +199,35 @@ class DarknetNet(nn.Module):
             meta["from"] = frm_abs
             act = str(layer.get("activation", "linear"))
             meta["activation"] = act
-            # channel count follows the previous layer (residual add)
-            return nn.Identity(), prev_ch, meta
+            # channel/spatial count follows the previous layer (residual add)
+            return nn.Identity(), prev_ch, (prev_h, prev_w), meta
+
+        if t == "dropout":
+            # No parameters, spatial/channels unchanged. Present so module indices
+            # stay aligned with the .weights byte stream (dropout writes nothing).
+            return DarknetDropout(), prev_ch, (prev_h, prev_w), meta
+
+        if t == "local":
+            filters = layer.get_int("filters")
+            size = layer.get_int("size", 1)
+            stride = layer.get_int("stride", 1)
+            pad = bool(layer.get_int("pad", 0)) or size == 1
+            act = str(layer.get("activation", "linear"))
+            pad_px = (size // 2) if pad else 0
+            out_h = (prev_h + 2 * pad_px - size) // stride + 1
+            out_w = (prev_w + 2 * pad_px - size) // stride + 1
+            module = DarknetLocal(
+                prev_ch, filters, size, stride, pad_px, act, out_h, out_w
+            )
+            return module, filters, (out_h, out_w), meta
+
+        if t == "connected":
+            out_features = layer.get_int("output")
+            act = str(layer.get("activation", "linear"))
+            in_features = prev_ch * prev_h * prev_w
+            module = DarknetConnected(in_features, out_features, act)
+            # A fully-connected head collapses the spatial grid to 1x1.
+            return module, out_features, (1, 1), meta
 
         if t in ("yolo", "region"):
             nc = (
@@ -195,7 +261,32 @@ class DarknetNet(nn.Module):
                 )
             self.detections.append(spec)
             meta["detection"] = spec
-            return nn.Identity(), prev_ch, meta
+            return nn.Identity(), prev_ch, (prev_h, prev_w), meta
+
+        if t == "detection":
+            # YOLOv1 anchorless head: decode a dense S*S*(C + B*(coords+1)) FC
+            # vector into a grid. No learned params (the [connected] before it
+            # holds the weights); this layer only carries decode metadata.
+            nc = (
+                num_classes_override
+                if num_classes_override is not None
+                else layer.get_int("classes", 20)
+            )
+            spec = DetectionSpec(
+                kind="detection",
+                layer_index=i,
+                anchors=[],
+                num_classes=nc,
+                stride=0,  # filled in _finalize_detection_strides (input / side)
+                softmax=bool(layer.get_int("softmax", 0)),
+                side=layer.get_int("side", 7),
+                boxes_per_cell=layer.get_int("num", 2),
+                coords=layer.get_int("coords", 4),
+                sqrt=bool(layer.get_int("sqrt", 0)),
+            )
+            self.detections.append(spec)
+            meta["detection"] = spec
+            return nn.Identity(), prev_ch, (prev_h, prev_w), meta
 
         raise ValueError(f"Unsupported Darknet layer type: {t!r}")
 
@@ -229,11 +320,16 @@ class DarknetNet(nn.Module):
                 factors.append(factors[idx + 1])
             elif t == "shortcut":
                 factors.append(prev)
-            else:  # yolo/region: same factor as previous
+            else:  # local/connected/dropout/yolo/region/detection: same factor
                 factors.append(prev)
 
         for spec in self.detections:
-            spec.stride = int(factors[spec.layer_index + 1])
+            if spec.kind == "detection":
+                # YOLOv1: the decode grid is fixed at S x S, so the effective
+                # stride is input / side regardless of the FC collapse to 1x1.
+                spec.stride = int(self.input_width // spec.side)
+            else:
+                spec.stride = int(factors[spec.layer_index + 1])
 
     def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
         """Run the Darknet forward pass.
@@ -258,7 +354,7 @@ class DarknetNet(nn.Module):
                 y = outputs[-1] + outputs[meta["from"]]
                 if meta.get("activation") == "leaky":
                     y = torch.nn.functional.leaky_relu(y, 0.1, inplace=True)
-            elif t in ("yolo", "region"):
+            elif t in ("yolo", "region", "detection"):
                 y = outputs[-1]
                 detection_outputs.append(y)
             else:
