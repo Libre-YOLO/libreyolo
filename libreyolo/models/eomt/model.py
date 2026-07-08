@@ -55,12 +55,54 @@ class LibreEoMT(BaseModel):
         "segment": {"s": 640, "b": 640, "l": 640},
     }
 
+    WEIGHT_VARIANTS: ClassVar[Tuple[str, ...]] = ("1280",)
+
     semantic_resize_mode: ClassVar[str] = "split"
     semantic_imgsz_divisor: ClassVar[int] = 16
 
     _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {384: "s", 768: "b", 1024: "l"}
     _UPSTREAM_URL: ClassVar[str] = "https://github.com/tue-mps/eomt"
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
+
+    # -panoptic is a storage convention for COCO panoptic checkpoints: they live
+    # under a distinct HF repo name but are loaded with task="segment".  The base
+    # class filename regex only covers canonical task suffixes (-sem / -seg), so
+    # panoptic files need three targeted overrides below.
+    _PANOPTIC_RE: ClassVar[Any] = None  # lazily compiled
+
+    @classmethod
+    def _panoptic_re(cls):
+        import re as _re
+        if cls._PANOPTIC_RE is None:
+            cls._PANOPTIC_RE = _re.compile(
+                rf"{cls.FILENAME_PREFIX.lower()}(?P<size>s|b|l)-panoptic"
+                + _re.escape(cls.WEIGHT_EXT)
+            )
+        return cls._PANOPTIC_RE
+
+    @classmethod
+    def detect_size_from_filename(cls, filename: str) -> Optional[str]:
+        m = cls._panoptic_re().fullmatch(filename.lower())
+        if m:
+            return m.group("size")
+        return super().detect_size_from_filename(filename)
+
+    @classmethod
+    def detect_task_from_filename(cls, filename: str) -> Optional[str]:
+        if cls._panoptic_re().fullmatch(filename.lower()):
+            return "segment"
+        return super().detect_task_from_filename(filename)
+
+    @classmethod
+    def get_download_url(cls, filename: str) -> Optional[str]:
+        # Panoptic checkpoints live in their own HF repo (LibreEoMTs-panoptic,
+        # LibreEoMTb-panoptic) — reconstruct from the filename directly.
+        if cls._panoptic_re().fullmatch(filename.lower()):
+            name = Path(filename).stem
+            return (
+                f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
+            )
+        return super().get_download_url(filename)
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -149,6 +191,17 @@ class LibreEoMT(BaseModel):
         else:
             weight_source = model_path
 
+        # When no explicit task is given, try to infer from the filename so
+        # that LibreEoMT("LibreEoMTb-seg.pt") and panoptic checkpoints work
+        # without requiring the caller to spell out task=.
+        if task is None and isinstance(weight_source, (str, Path)):
+            filename = Path(weight_source).name
+            inferred = self.detect_task_from_filename(filename)
+            if inferred is None and "-panoptic" in filename.lower():
+                inferred = "segment"
+            if inferred is not None:
+                task = inferred
+
         # BaseModel._resolve_task validates task against SUPPORTED_TASKS.
         super().__init__(
             model_path=None,
@@ -193,6 +246,12 @@ class LibreEoMT(BaseModel):
 
     def _rebuild_for_new_image_size(self, new_image_size: int):
         self.input_size = int(new_image_size)
+        self.model = self._init_model()
+        self.model.to(self.device)
+
+    def _rebuild_for_new_size(self, new_size: str):
+        self.size = new_size
+        self.input_size = self._get_task_input_sizes()[new_size]
         self.model = self._init_model()
         self.model.to(self.device)
 
@@ -587,6 +646,12 @@ class LibreEoMT(BaseModel):
                 "Checkpoint does not look like a LibreEoMT model "
                 "(missing EoMT query, mask head, class head, or patch embedding keys)."
             )
+
+        # Detect backbone size (s/b/l) from embed dim before any other rebuild,
+        # since size determines the architecture that all other rebuilds use.
+        ckpt_size = loaded.get("size") or self.detect_size(state)
+        if ckpt_size is not None and ckpt_size != self.size:
+            self._rebuild_for_new_size(ckpt_size)
 
         ckpt_nc = loaded.get("nc")
         if ckpt_nc is None:

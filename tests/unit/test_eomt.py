@@ -472,6 +472,52 @@ class TestEoMTSizes:
         assert loaded.task == "segment"
         assert loaded.input_size == 640
 
+    def test_auto_task_and_size_from_filename(self, fake_eomt_seg_net, tmp_path):
+        """LibreEoMT(path) infers task and size from the checkpoint without task= kwarg."""
+        from libreyolo.models.eomt.model import LibreEoMT
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        ckpt = wrap_libreyolo_checkpoint(
+            _synthetic_eomt_state(nc=80, hidden=768),
+            model_family="eomt",
+            size="b",
+            task="segment",
+            nc=80,
+            names={i: f"c_{i}" for i in range(80)},
+            imgsz=640,
+        )
+        ckpt_path = tmp_path / "LibreEoMTb-seg.pt"
+        torch.save(ckpt, str(ckpt_path))
+
+        # No task= or size= — both auto-detected.
+        model = LibreEoMT(str(ckpt_path), device="cpu")
+        assert model.size == "b"
+        assert model.task == "segment"
+        assert model.input_size == 640
+
+    def test_auto_task_from_panoptic_filename(self, fake_eomt_seg_net, tmp_path):
+        """-panoptic.pt files auto-infer task=segment even though suffix is unknown."""
+        from libreyolo.models.eomt.model import LibreEoMT
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        names = {i: f"pan_{i}" for i in range(133)}
+        ckpt = wrap_libreyolo_checkpoint(
+            _synthetic_eomt_state(nc=133, hidden=768),
+            model_family="eomt",
+            size="b",
+            task="segment",
+            nc=133,
+            names=names,
+            imgsz=640,
+        )
+        ckpt_path = tmp_path / "LibreEoMTb-panoptic.pt"
+        torch.save(ckpt, str(ckpt_path))
+
+        model = LibreEoMT(str(ckpt_path), device="cpu")
+        assert model.size == "b"
+        assert model.task == "segment"
+        assert model.nb_classes == 133
+
     def test_converter_large_1280_segment(self, monkeypatch, tmp_path):
         converter = _load_converter_module()
 
@@ -498,6 +544,9 @@ class TestEoMTSizes:
         assert converter._default_output_path("segment", "l", 1280) == "weights/LibreEoMTl-seg-1280.pt"
         assert converter._default_output_path("segment", "s", 640) == "weights/LibreEoMTs-seg.pt"
         assert converter._default_output_path("segment", "b", 640) == "weights/LibreEoMTb-seg.pt"
+        assert converter._default_output_path("panoptic", "s", 640) == "weights/LibreEoMTs-panoptic.pt"
+        assert converter._default_output_path("panoptic", "b", 640) == "weights/LibreEoMTb-panoptic.pt"
+        assert converter._default_output_path("panoptic", "l", 640) == "weights/LibreEoMTl-panoptic.pt"
 
     def test_converter_things_only_slices_panoptic(self, monkeypatch, tmp_path):
         converter = _load_converter_module()
@@ -737,6 +786,53 @@ def test_converter_segment_rejects_wrong_nc(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="80-class"):
         converter.convert_weights("fake_source", str(tmp_path / "bad.pt"), task="segment")
+
+
+def test_converter_panoptic_task(monkeypatch, tmp_path):
+    converter = _load_converter_module()
+
+    def _fake_load(source, *, allow_unverified_source=False):
+        return _synthetic_eomt_state(nc=133, hidden=384)  # small backbone, panoptic nc
+
+    monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+    out_path = tmp_path / "LibreEoMTs-panoptic.pt"
+
+    ckpt = converter.convert_weights(
+        converter.COCO_PANOPTIC_HF_REPO_S, str(out_path), task="panoptic"
+    )
+
+    assert out_path.exists()
+    # Stored as segment in metadata (LibreYOLO has no panoptic task).
+    assert ckpt["task"] == "segment"
+    assert ckpt["nc"] == 133
+    assert ckpt["size"] == "s"
+    assert ckpt["imgsz"] == 640
+    # Verify proper class names — things and stuff.
+    assert ckpt["names"][0] == "person"
+    assert ckpt["names"][79] == "toothbrush"
+    assert ckpt["names"][80] == "banner"
+    assert ckpt["names"][132] == "rug-merged"
+
+
+def test_converter_panoptic_rejects_wrong_nc(monkeypatch, tmp_path):
+    converter = _load_converter_module()
+
+    def _fake_load(source, *, allow_unverified_source=False):
+        return _synthetic_eomt_state(nc=80)
+
+    monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
+
+    with pytest.raises(ValueError, match="133-class"):
+        converter.convert_weights("fake_source", str(tmp_path / "bad.pt"), task="panoptic")
+
+
+def test_converter_panoptic_rejects_things_only(tmp_path):
+    converter = _load_converter_module()
+
+    with pytest.raises(ValueError, match="--things-only"):
+        converter.convert_weights(
+            "fake_source", str(tmp_path / "bad.pt"), task="panoptic", things_only=True
+        )
 
 
 def test_converter_rejects_dinov3_even_with_override(tmp_path):

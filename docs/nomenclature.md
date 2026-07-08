@@ -289,12 +289,14 @@ LibreRFDETRn-obb.pt        # obb
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
 
-# eomt - semantic (ADE20K) and instance segmentation (COCO)
-LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
+# eomt - semantic (ADE20K), instance segmentation (COCO), and panoptic (COCO things+stuff)
+LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone, 512px
 LibreEoMTs-seg.pt          # EoMT-S, COCO 80-class instance segment, DINOv2 backbone, 640px
 LibreEoMTb-seg.pt          # EoMT-B, COCO 80-class instance segment, DINOv2 backbone, 640px
 LibreEoMTl-seg.pt          # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 640px
 LibreEoMTl-seg-1280.pt     # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 1280px
+LibreEoMTs-panoptic.pt     # EoMT-S, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+LibreEoMTb-panoptic.pt     # EoMT-B, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
 
 # pidnet - real-time semantic segmentation
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic

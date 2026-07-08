@@ -1,4 +1,4 @@
-"""Convert DINOv2 EoMT-L weights (ADE20K semantic / COCO instance) into LibreYOLO format."""
+"""Convert DINOv2 EoMT weights (ADE20K semantic / COCO instance / COCO panoptic) into LibreYOLO format."""
 
 from __future__ import annotations
 
@@ -47,13 +47,52 @@ _NC = _NC_SEMANTIC
 _TASK_TO_IMGSZ = {
     "semantic": _IMGSZ_SEMANTIC,
     "segment": _IMGSZ_SEGMENT,
+    "panoptic": _IMGSZ_SEGMENT,
+}
+
+# COCO panoptic 133-class contiguous ordering: things 0-79, stuff 80-132.
+# Source: EomtConfig.id2label from tue-mps/coco_panoptic_eomt_* HF repos.
+_COCO_PANOPTIC_NAMES: dict[int, str] = {
+    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
+    5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
+    10: "fire hydrant", 11: "stop sign", 12: "parking meter", 13: "bench",
+    14: "bird", 15: "cat", 16: "dog", 17: "horse", 18: "sheep", 19: "cow",
+    20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe", 24: "backpack",
+    25: "umbrella", 26: "handbag", 27: "tie", 28: "suitcase", 29: "frisbee",
+    30: "skis", 31: "snowboard", 32: "sports ball", 33: "kite",
+    34: "baseball bat", 35: "baseball glove", 36: "skateboard", 37: "surfboard",
+    38: "tennis racket", 39: "bottle", 40: "wine glass", 41: "cup",
+    42: "fork", 43: "knife", 44: "spoon", 45: "bowl", 46: "banana",
+    47: "apple", 48: "sandwich", 49: "orange", 50: "broccoli", 51: "carrot",
+    52: "hot dog", 53: "pizza", 54: "donut", 55: "cake", 56: "chair",
+    57: "couch", 58: "potted plant", 59: "bed", 60: "dining table",
+    61: "toilet", 62: "tv", 63: "laptop", 64: "mouse", 65: "remote",
+    66: "keyboard", 67: "cell phone", 68: "microwave", 69: "oven",
+    70: "toaster", 71: "sink", 72: "refrigerator", 73: "book", 74: "clock",
+    75: "vase", 76: "scissors", 77: "teddy bear", 78: "hair drier",
+    79: "toothbrush",
+    # stuff classes (80-132)
+    80: "banner", 81: "blanket", 82: "bridge", 83: "cardboard", 84: "counter",
+    85: "curtain", 86: "door-stuff", 87: "floor-wood", 88: "flower",
+    89: "fruit", 90: "gravel", 91: "house", 92: "light", 93: "mirror-stuff",
+    94: "net", 95: "pillow", 96: "platform", 97: "playingfield",
+    98: "railroad", 99: "river", 100: "road", 101: "roof", 102: "sand",
+    103: "sea", 104: "shelf", 105: "snow", 106: "stairs", 107: "tent",
+    108: "towel", 109: "wall-brick", 110: "wall-stone", 111: "wall-tile",
+    112: "wall-wood", 113: "water-other", 114: "window-blind",
+    115: "window-other", 116: "tree-merged", 117: "fence-merged",
+    118: "ceiling-merged", 119: "sky-other-merged", 120: "cabinet-merged",
+    121: "table-merged", 122: "floor-other-merged", 123: "pavement-merged",
+    124: "mountain-merged", 125: "grass-merged", 126: "dirt-merged",
+    127: "paper-merged", 128: "food-other-merged", 129: "building-other-merged",
+    130: "rock-merged", 131: "wall-other-merged", 132: "rug-merged",
 }
 
 
 def _default_output_path(task: str, size: str, imgsz: int) -> str:
     """Generate default output filename from task, backbone size, and image size."""
     default_imgsz = _TASK_TO_IMGSZ[task]
-    task_suffix = "sem" if task == "semantic" else "seg"
+    task_suffix = {"semantic": "sem", "segment": "seg", "panoptic": "panoptic"}[task]
     imgsz_suffix = f"-{imgsz}" if imgsz != default_imgsz else ""
     return f"weights/LibreEoMT{size}-{task_suffix}{imgsz_suffix}.pt"
 
@@ -212,8 +251,8 @@ def convert_weights(
     allow_unverified_source: bool = False,
     things_only: bool = False,
 ) -> dict[str, Any]:
-    if task not in ("semantic", "segment"):
-        raise ValueError(f"task must be 'semantic' or 'segment'; got {task!r}.")
+    if task not in ("semantic", "segment", "panoptic"):
+        raise ValueError(f"task must be 'semantic', 'segment', or 'panoptic'; got {task!r}.")
     if things_only and task != "segment":
         raise ValueError("--things-only is only valid with --task segment.")
 
@@ -265,6 +304,17 @@ def convert_weights(
             )
         names = _load_ade20k_names() if nc == _NC_SEMANTIC else {i: f"class_{i}" for i in range(nc)}
         effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEMANTIC)
+        ckpt_task = "semantic"
+    elif task == "panoptic":
+        if nc != _NC_PANOPTIC and not allow_unverified_source:
+            raise ValueError(
+                f"Panoptic EoMT requires COCO panoptic 133-class weights; detected nc={nc}. "
+                "Pass --allow-unverified-source to override."
+            )
+        names = _COCO_PANOPTIC_NAMES if nc == _NC_PANOPTIC else {i: f"class_{i}" for i in range(nc)}
+        effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEGMENT)
+        # LibreYOLO has no panoptic task; store as segment so the model loads correctly.
+        ckpt_task = "segment"
     else:
         if nc != 80 and not allow_unverified_source:
             raise ValueError(
@@ -273,12 +323,13 @@ def convert_weights(
             )
         names = _load_coco_names() if nc == 80 else {i: f"class_{i}" for i in range(nc)}
         effective_imgsz = imgsz if imgsz is not None else (detected_imgsz or _IMGSZ_SEGMENT)
+        ckpt_task = "segment"
 
     checkpoint = wrap_libreyolo_checkpoint(
         state_dict,
         model_family="eomt",
         size=size,
-        task=task,
+        task=ckpt_task,
         nc=nc,
         names=names,
         imgsz=effective_imgsz,
@@ -325,21 +376,25 @@ def verify_conversion(converted_path: str) -> bool:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=(
-            "Convert EoMT weights (ADE20K semantic / COCO instance) to LibreYOLO format.\n\n"
+            "Convert EoMT weights (ADE20K semantic / COCO instance / COCO panoptic) to LibreYOLO format.\n\n"
             "Approved DINOv2 sources:\n"
-            f"  semantic l-512 : {DEFAULT_HF_REPO}\n"
-            f"  segment  l-640 : {DEFAULT_SEGMENT_HF_REPO}\n"
-            f"  segment  l-1280: {COCO_HF_REPO_1280}\n"
-            f"  segment  s-640 : {COCO_PANOPTIC_HF_REPO_S}  (--things-only)\n"
-            f"  segment  b-640 : {COCO_PANOPTIC_HF_REPO_B}  (--things-only)\n"
-            f"  segment  l-640 : {COCO_PANOPTIC_HF_REPO_L}  (--things-only)\n\n"
-            "s/b backbones: convert from panoptic with --things-only --task segment."
+            f"  semantic  l-512 : {DEFAULT_HF_REPO}\n"
+            f"  segment   l-640 : {DEFAULT_SEGMENT_HF_REPO}\n"
+            f"  segment   l-1280: {COCO_HF_REPO_1280}\n"
+            f"  segment   s-640 : {COCO_PANOPTIC_HF_REPO_S}  (--things-only)\n"
+            f"  segment   b-640 : {COCO_PANOPTIC_HF_REPO_B}  (--things-only)\n"
+            f"  panoptic  s-640 : {COCO_PANOPTIC_HF_REPO_S}\n"
+            f"  panoptic  b-640 : {COCO_PANOPTIC_HF_REPO_B}\n"
+            f"  panoptic  l-640 : {COCO_PANOPTIC_HF_REPO_L}\n\n"
+            "panoptic task: keeps all 133 COCO classes (80 things + 53 stuff); stored as task=segment in metadata.\n"
+            "segment + --things-only: slices to 80 COCO things only."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _default_input = {
         "semantic": DEFAULT_HF_REPO,
         "segment": DEFAULT_SEGMENT_HF_REPO,
+        "panoptic": COCO_PANOPTIC_HF_REPO_L,
     }
     task_arg = next(
         (sys.argv[sys.argv.index("--task") + 1] for _ in [0]
@@ -367,9 +422,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--task",
-        choices=("semantic", "segment"),
+        choices=("semantic", "segment", "panoptic"),
         default="semantic",
-        help="Target task: 'semantic' (ADE20K) or 'segment' (COCO instance). Default: semantic.",
+        help=(
+            "Target task: 'semantic' (ADE20K 150-class), 'segment' (COCO 80-class instance), "
+            "or 'panoptic' (COCO 133-class things+stuff, stored as task=segment). Default: semantic."
+        ),
     )
     parser.add_argument(
         "--imgsz",
