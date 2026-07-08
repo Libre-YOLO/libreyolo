@@ -79,10 +79,16 @@ def test_cfg_parser_reads_bundled_yolov1_tiny():
 # ---------------------------------------------------------------------------
 def test_full_weights_byte_count_matches_real_file():
     # Building the full net once (194M params). Assert the serialized size equals
-    # the real yolov1.weights byte-for-byte via the state-dict numel sum, which
-    # is exactly what save_darknet_weights writes (+16 for the v0.1 header).
+    # the real yolov1.weights byte-for-byte via the state-dict numel sum instead
+    # of materializing a 777MB blob. The sum is exact because every state-dict
+    # entry is a float32 the reader/writer serializes: DarknetBatchNorm2d is a
+    # custom module with no ``num_batches_tracked`` (guarded below so a future
+    # swap to stock BatchNorm2d cannot silently skew the count).
     net = build_darknet("yolov1", num_classes=20).eval()
-    floats = sum(v.numel() for v in net.state_dict().values())
+    state = net.state_dict()
+    assert all(v.dtype == torch.float32 for v in state.values())
+    assert not any("num_batches_tracked" in k for k in state)
+    floats = sum(v.numel() for v in state.values())
     assert 16 + 4 * floats == _FULL_BYTES
 
 

@@ -211,7 +211,11 @@ class DarknetNet(nn.Module):
             filters = layer.get_int("filters")
             size = layer.get_int("size", 1)
             stride = layer.get_int("stride", 1)
-            pad = bool(layer.get_int("pad", 0)) or size == 1
+            # Unlike [convolutional], Darknet's local layer has no implicit
+            # size==1 padding enable; pad comes from the cfg alone. (The im2col
+            # output-size formula below is only exercised for size=3, the sole
+            # kernel size YOLOv1's [local] uses.)
+            pad = bool(layer.get_int("pad", 0))
             act = str(layer.get("activation", "linear"))
             pad_px = (size // 2) if pad else 0
             out_h = (prev_h + 2 * pad_px - size) // stride + 1
