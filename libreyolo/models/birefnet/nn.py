@@ -217,11 +217,19 @@ class BasicLayer(nn.Module):
             for i in range(depth)
         ])
         self.downsample = downsample(dim=dim, norm_layer=norm_layer) if downsample is not None else None
+        # The shifted-window attention mask is fixed for a given (H, W) grid;
+        # cache it so the dual-scale encoder does not rebuild the same tensor on
+        # every forward call (the input-resolution contract is fixed anyway).
+        self._attn_mask_cache: dict = {}
 
-    def forward(self, x: torch.Tensor, H: int, W: int):
+    def _get_attn_mask(self, H: int, W: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        key = (int(H), int(W), str(device), dtype)
+        cached = self._attn_mask_cache.get(key)
+        if cached is not None:
+            return cached
         Hp = int((H + self.window_size - 1) // self.window_size) * self.window_size
         Wp = int((W + self.window_size - 1) // self.window_size) * self.window_size
-        img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device)
+        img_mask = torch.zeros((1, Hp, Wp, 1), device=device)
         h_slices = (slice(0, -self.window_size), slice(-self.window_size, -self.shift_size), slice(-self.shift_size, None))
         w_slices = (slice(0, -self.window_size), slice(-self.window_size, -self.shift_size), slice(-self.shift_size, None))
         cnt = 0
@@ -231,7 +239,12 @@ class BasicLayer(nn.Module):
                 cnt += 1
         mask_windows = window_partition(img_mask, self.window_size).view(-1, self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0)).to(x.dtype)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0)).to(dtype)
+        self._attn_mask_cache[key] = attn_mask
+        return attn_mask
+
+    def forward(self, x: torch.Tensor, H: int, W: int):
+        attn_mask = self._get_attn_mask(H, W, x.device, x.dtype)
 
         for blk in self.blocks:
             blk.H, blk.W = H, W

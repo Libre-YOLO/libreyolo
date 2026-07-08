@@ -30,7 +30,6 @@ from ...utils.drawing import (
     draw_boxes,
     draw_keypoints,
     draw_masks,
-    draw_matte,
     draw_obb,
     draw_depth_map,
     draw_points,

@@ -149,12 +149,14 @@ class MatteValidator:
             if gt.shape != pred.shape:
                 from PIL import Image
 
+                # Resize in float32 ("F" mode) so the soft alpha values are not
+                # quantized to 8 bits before the metric is computed.
                 gt = np.asarray(
-                    Image.fromarray((gt * 255).astype(np.uint8)).resize(
+                    Image.fromarray(gt, mode="F").resize(
                         (pred.shape[1], pred.shape[0]), Image.BILINEAR
                     ),
                     dtype=np.float32,
-                ) / 255.0
+                )
             maes.append(matte_mae(pred, gt))
             sms.append(s_measure(pred, gt))
 

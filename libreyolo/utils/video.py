@@ -305,7 +305,14 @@ def run_video_inference(
     from PIL import Image
     from tqdm import tqdm
 
-    from .drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb, draw_points
+    from .drawing import (
+        draw_boxes,
+        draw_keypoints,
+        draw_masks,
+        draw_matte,
+        draw_obb,
+        draw_points,
+    )
 
     with VideoSource(source, vid_stride=vid_stride) as video_src:
         writer = None
@@ -364,6 +371,14 @@ def run_video_inference(
                         annotated_pil = Image.fromarray(
                             result.restored.array, mode="RGB"
                         )
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "matte", None) is not None
+                    ):
+                        # Checkerboard-composited cutout preview (video frames
+                        # cannot carry an alpha channel, so the transparency is
+                        # visualized instead).
+                        annotated_pil = draw_matte(pil_img, result.matte.array)
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:
