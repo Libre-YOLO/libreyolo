@@ -35,6 +35,7 @@ from .models import (
     LibreEfficientNetV2,
     LibreResNet,
     LibreCLIP,
+    LibreSigLIP2,
 )
 from .utils.results import (
     Results,
@@ -174,6 +175,7 @@ __all__ = [
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
+    "LibreSigLIP2",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",

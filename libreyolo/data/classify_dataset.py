@@ -214,6 +214,7 @@ def build_classify_transforms(
     interpolation="bilinear",
     auto_augment: str | None = None,
     erasing: float = 0.0,
+    square_resize: bool = False,
 ):
     """Build train/val image transforms for classification.
 
@@ -257,6 +258,16 @@ def build_classify_transforms(
                 )
             ops.append(transforms.RandomErasing(p=erasing, inplace=True))
         return transforms.Compose(ops)
+    if square_resize:
+        # Squash to a fixed square (no aspect-preserving resize + center crop).
+        # SigLIP's native eval pipeline resizes directly to (imgsz, imgsz).
+        return transforms.Compose(
+            [
+                transforms.Resize((imgsz, imgsz), interpolation=mode),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
     resize = int(math.floor(imgsz / crop_pct))
     return transforms.Compose(
         [
