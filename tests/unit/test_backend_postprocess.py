@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
+import torch.nn.functional as F
 from PIL import Image
 
 import libreyolo.backends.base as backend_base
@@ -474,6 +476,84 @@ def test_rfdetr_seg_backend_uses_variant_num_select():
     assert len(scores) == 100
     assert classes.tolist() == [0] * 100
     assert parsed_masks.shape == (100, 16, 16)
+
+
+def test_dfine_segment_backend_parses_probability_masks():
+    backend = _DummyBackend(
+        "dfine",
+        task="segment",
+        supported_tasks=("detect", "segment"),
+    )
+    logits = np.array([[[10.0], [-10.0]]], dtype=np.float32)
+    boxes = np.array(
+        [[[0.5, 0.5, 0.5, 0.5], [0.1, 0.1, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    masks = np.ones((1, 2, 4, 4), dtype=np.float32)
+
+    parsed_boxes, scores, classes, parsed_masks = backend._parse_outputs(
+        [logits, boxes, masks],
+        effective_imgsz=64,
+        original_size=(8, 8),
+        conf=0.5,
+        max_det=2,
+    )
+
+    assert parsed_boxes.shape == (1, 4)
+    np.testing.assert_allclose(parsed_boxes[0], [2.0, 2.0, 6.0, 6.0])
+    assert scores[0] > 0.99
+    np.testing.assert_array_equal(classes, [0])
+    assert parsed_masks.shape == (1, 8, 8)
+    assert parsed_masks[0, 4, 4]
+    assert not parsed_masks[0, 0, 0]
+
+
+def test_dfine_segment_backend_uses_input_size_mask_resize_path():
+    backend = _DummyBackend(
+        "dfine",
+        task="segment",
+        supported_tasks=("detect", "segment"),
+        imgsz=6,
+    )
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    boxes = np.array([[[0.5, 0.5, 1.0, 1.0]]], dtype=np.float32)
+    masks = np.array(
+        [
+            [
+                [
+                    [0.4963, 0.7682, 0.0885],
+                    [0.1320, 0.3074, 0.6341],
+                    [0.4901, 0.8964, 0.4556],
+                ]
+            ]
+        ],
+        dtype=np.float32,
+    )
+
+    _, _, _, parsed_masks = backend._parse_outputs(
+        [logits, boxes, masks],
+        effective_imgsz=6,
+        original_size=(5, 7),
+        conf=0.5,
+        max_det=1,
+    )
+
+    mask_t = torch.from_numpy(masks)
+    two_step = F.interpolate(
+        F.interpolate(mask_t, size=(6, 6), mode="bilinear", align_corners=False),
+        size=(7, 5),
+        mode="bilinear",
+        align_corners=False,
+    )[0, 0].numpy()
+    direct = F.interpolate(
+        mask_t,
+        size=(7, 5),
+        mode="bilinear",
+        align_corners=False,
+    )[0, 0].numpy()
+
+    assert not np.array_equal(two_step >= 0.5, direct >= 0.5)
+    np.testing.assert_array_equal(parsed_masks[0], two_step >= 0.5)
 
 
 def test_yolonas_pose_backend_uses_pose_preprocessor(monkeypatch):

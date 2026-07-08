@@ -220,7 +220,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
-| `dfine`     | `("detect",)` (default)             | detect | detect-only |
+| `dfine`     | `("detect", "segment")`             | detect | segment uses the D-FINE-seg mask head; same sizes as detect; COCO `-seg` weights on HF (detect-to-segment fine-tune needs an explicit transfer flag) |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
@@ -274,6 +274,10 @@ LibreYOLONASn-pose.pt      # pose (note: size n only ships for pose)
 LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
+
+# dfine - detect + segment
+LibreDFINEn.pt            # detect (default)
+LibreDFINEn-seg.pt        # segment
 
 # rfdetr - detect + segment + pose + obb
 LibreRFDETRn.pt            # detect

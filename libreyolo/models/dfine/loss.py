@@ -263,6 +263,117 @@ class DFINECriterion(nn.Module):
 
         return losses
 
+    @staticmethod
+    def _cropped_bce_loss(pred_logits, target_masks, boxes, eps=1e-6):
+        del eps
+        if pred_logits.shape[0] == 0:
+            return pred_logits.sum() * 0.0
+
+        _, h, w = pred_logits.shape
+        device = pred_logits.device
+        dtype = pred_logits.dtype
+        ys = torch.arange(h, device=device, dtype=dtype)[None, :, None]
+        xs = torch.arange(w, device=device, dtype=dtype)[None, None, :]
+        x1, y1, x2, y2 = (
+            boxes[:, 0:1, None],
+            boxes[:, 1:2, None],
+            boxes[:, 2:3, None],
+            boxes[:, 3:4, None],
+        )
+        inside = ((xs >= x1) & (xs < x2)).float() * ((ys >= y1) & (ys < y2)).float()
+        bce = F.binary_cross_entropy_with_logits(
+            pred_logits,
+            target_masks,
+            reduction="none",
+        )
+        box_area = ((x2 - x1) * (y2 - y1)).flatten().clamp(min=1.0)
+        return (bce * inside).sum(dim=(1, 2)).div(box_area).mean()
+
+    @staticmethod
+    def _cropped_dice_loss(pred_logits, target_masks, boxes, eps=1e-6):
+        if pred_logits.shape[0] == 0:
+            return pred_logits.sum() * 0.0
+
+        _, h, w = pred_logits.shape
+        device = pred_logits.device
+        dtype = pred_logits.dtype
+        ys = torch.arange(h, device=device, dtype=dtype)[None, :, None]
+        xs = torch.arange(w, device=device, dtype=dtype)[None, None, :]
+        x1, y1, x2, y2 = (
+            boxes[:, 0:1, None],
+            boxes[:, 1:2, None],
+            boxes[:, 2:3, None],
+            boxes[:, 3:4, None],
+        )
+        inside = ((xs >= x1) & (xs < x2)).float() * ((ys >= y1) & (ys < y2)).float()
+        pred = pred_logits.sigmoid() * inside
+        target = target_masks * inside
+        pred = pred.flatten(1)
+        target = target.flatten(1)
+        inter = (pred * target).sum(dim=1)
+        denom = pred.sum(dim=1) + target.sum(dim=1) + eps
+        return (1.0 - (2.0 * inter + eps) / denom).mean()
+
+    def loss_masks(self, outputs, targets, indices, num_boxes):
+        del num_boxes
+        if "pred_masks" not in outputs:
+            return {}
+
+        pred_masks = outputs["pred_masks"]
+        _, _, out_h, out_w = pred_masks.shape
+
+        pred_parts = []
+        target_parts = []
+        box_parts = []
+        for batch_idx, (target, (src_idx, matched_tgt)) in enumerate(
+            zip(targets, indices)
+        ):
+            target_masks = target.get("masks")
+            if (
+                target_masks is None
+                or target_masks.numel() == 0
+                or target_masks.dim() != 3
+                or matched_tgt.numel() == 0
+            ):
+                continue
+
+            pred_parts.append(pred_masks[batch_idx, src_idx])
+            selected_masks = target_masks[matched_tgt].unsqueeze(1).float().to(
+                pred_masks.device
+            )
+            selected_masks = F.interpolate(
+                selected_masks,
+                size=(out_h, out_w),
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(1)
+            target_parts.append(selected_masks.clamp_(0, 1))
+
+            cx, cy, w, h = target["boxes"][matched_tgt].unbind(-1)
+            x1 = ((cx - w * 0.5) * out_w).clamp(0, out_w - 1)
+            y1 = ((cy - h * 0.5) * out_h).clamp(0, out_h - 1)
+            x2 = ((cx + w * 0.5) * out_w).clamp(1, out_w)
+            y2 = ((cy + h * 0.5) * out_h).clamp(1, out_h)
+            box_parts.append(
+                torch.stack([x1, y1, x2, y2], dim=1).to(pred_masks.device)
+            )
+
+        if not pred_parts:
+            zero = pred_masks.sum() * 0.0
+            return {"loss_mask_bce": zero, "loss_mask_dice": zero}
+
+        pred_sel = torch.cat(pred_parts, dim=0)
+        target_sel = torch.cat(target_parts, dim=0)
+        target_boxes = torch.cat(box_parts, dim=0)
+        return {
+            "loss_mask_bce": self._cropped_bce_loss(pred_sel, target_sel, target_boxes),
+            "loss_mask_dice": self._cropped_dice_loss(
+                pred_sel,
+                target_sel,
+                target_boxes,
+            ),
+        }
+
     def _get_src_permutation_idx(self, indices):
         batch_idx = torch.cat(
             [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
@@ -316,6 +427,7 @@ class DFINECriterion(nn.Module):
             "focal": self.loss_labels_focal,
             "vfl": self.loss_labels_vfl,
             "local": self.loss_local,
+            "masks": self.loss_masks,
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -487,6 +599,25 @@ class DFINECriterion(nn.Module):
                     }
                     l_dict = {k + f"_dn_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
+
+            if "dn_pred_masks" in outputs and "masks" in self.losses:
+                dn_final_outputs = {
+                    "pred_masks": outputs["dn_pred_masks"],
+                    "pred_boxes": outputs["dn_outputs"][-1]["pred_boxes"],
+                }
+                l_dict = self.loss_masks(
+                    dn_final_outputs,
+                    targets,
+                    indices_dn,
+                    dn_num_boxes,
+                )
+                l_dict = {
+                    k: l_dict[k] * self.weight_dict[k]
+                    for k in l_dict
+                    if k in self.weight_dict
+                }
+                l_dict = {k + "_dn_final": v for k, v in l_dict.items()}
+                losses.update(l_dict)
 
             if "dn_pre_outputs" in outputs:
                 aux_outputs = outputs["dn_pre_outputs"]
