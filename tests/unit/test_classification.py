@@ -331,6 +331,17 @@ def test_erasing_appended_after_normalize():
     assert names.index("RandomErasing") > names.index("Normalize")
 
 
+def test_square_resize_with_augment_raises():
+    """square_resize is a val-only transform; the augment branch used to return
+    first and ignore it silently."""
+    from libreyolo.data.classify_dataset import build_classify_transforms
+
+    with pytest.raises(ValueError, match="square_resize"):
+        build_classify_transforms(224, True, square_resize=True)
+    # The val pipeline still honours it.
+    assert build_classify_transforms(224, False, square_resize=True) is not None
+
+
 def test_val_pipeline_ignores_augment_knobs():
     from libreyolo.data.classify_dataset import build_classify_transforms
 

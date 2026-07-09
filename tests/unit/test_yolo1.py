@@ -220,6 +220,23 @@ def test_postprocess_recovers_single_detection():
     assert (x1 + x2) / 2 == pytest.approx(50.0, abs=1.0)
 
 
+def test_decode_detection_rejects_batched_input():
+    # The guard must be a raised ValueError, not a bare ``assert``: ``python -O``
+    # strips asserts, and the decoder would then reshape a multi-image tensor and
+    # return image 0's detections for the whole batch.
+    spec = _det_spec(side=1, num=1, nc=1, sqrt=False)
+    preds = torch.zeros(2, 6)
+    with pytest.raises(ValueError, match="batch size 1"):
+        decode_detection(preds, spec, input_size=100)
+
+
+def test_libreyolo1_does_not_claim_batched_predict():
+    # The dense FC head is single-image. Inheriting BaseModel's True would send a
+    # stacked chunk down the batched predict path and duplicate image 0's boxes.
+    assert BaseModel.SUPPORTS_BATCHED_PREDICT is True
+    assert LibreYOLO1.SUPPORTS_BATCHED_PREDICT is False
+
+
 # ---------------------------------------------------------------------------
 # family registry discrimination
 # ---------------------------------------------------------------------------
