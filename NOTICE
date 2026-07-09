@@ -79,6 +79,17 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+SegFormer / transformers (Apache License 2.0)
+    Path:    libreyolo/models/segformer/
+    License: libreyolo/models/segformer/NOTICE  (Apache-2.0 code source)
+    Source:  https://github.com/huggingface/transformers
+
+    The SegFormer architecture (libreyolo/models/segformer/nn.py) is a
+    native re-implementation derived from HuggingFace Transformers'
+    Apache-2.0 modeling_segformer.py, not from NVIDIA's original
+    non-permissive NVlabs/SegFormer repository (cited for attribution
+    only). No pretrained weights are bundled; train from scratch.
+
 NAFNet (MIT License)
     Path:    libreyolo/models/nafnet/
     License: libreyolo/models/nafnet/NOTICE  (MIT)

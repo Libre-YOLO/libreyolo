@@ -230,6 +230,31 @@ semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
 they depend on gated non-commercial DINOv3 weights.
 
 --------------------------------------------------------------------
+SegFormer / HuggingFace Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+        (models/segformer/{configuration_segformer.py, modeling_segformer.py})
+License: Apache License 2.0
+Copyright 2021 NVIDIA and The HuggingFace Inc. team. All rights reserved.
+Citation: Xie, E., Wang, W., Yu, Z., Anandkumar, A., Alvarez, J. M., and
+          Luo, P. "SegFormer: Simple and Efficient Design for Semantic
+          Segmentation with Transformers." NeurIPS 2021.
+Used for: LibreSegformer semantic segmentation family
+          (libreyolo/models/segformer/). The MiT encoder (overlap patch
+          embeddings, efficient self-attention with spatial reduction,
+          Mix-FFN) and the all-MLP decode head are a native
+          reimplementation behaviorally derived from HuggingFace
+          Transformers' Apache-2.0 modeling_segformer.py, NOT from
+          NVIDIA's original NVlabs/SegFormer repository (NVIDIA Source
+          Code License, non-commercial/research-only — never read or
+          derived from). LibreSegformer has no runtime dependency on
+          the transformers package.
+
+NOTE - code vs. weights: LibreYOLO ships no pretrained SegFormer weights
+of any kind (no conversion script, no auto-download). All six sizes
+(b0-b5) are trained from scratch by the user.
+
+--------------------------------------------------------------------
 Grounding DINO (IDEA-Research)
 --------------------------------------------------------------------
 Source: https://github.com/IDEA-Research/GroundingDINO

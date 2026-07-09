@@ -1,0 +1,31 @@
+LibreSegformer third-party notice
+==================================
+
+LibreSegformer is a native reimplementation of SegFormer (SegFormer: Simple
+and Efficient Design for Semantic Segmentation with Transformers, Xie et al.,
+NeurIPS 2021) for semantic segmentation, covering sizes b0 through b5.
+
+Architecture reference (NOT the code source):
+  Source: https://github.com/NVlabs/SegFormer
+  License: NVIDIA Source Code License (non-commercial, research-only)
+  This repository's code was never read, copied, or derived from. It is
+  cited here only for attribution to the paper's original authors.
+
+Code source:
+  Source: https://github.com/huggingface/transformers
+          (models/segformer/{configuration_segformer.py, modeling_segformer.py})
+  License: Apache License 2.0
+  Copyright: 2021 NVIDIA and The HuggingFace Inc. team.
+  LibreSegformer's encoder (libreyolo/models/segformer/nn.py: MiT overlap
+  patch embeddings, efficient self-attention with spatial reduction, Mix-FFN)
+  and all-MLP decode head are a native PyTorch port of this Apache-2.0
+  reference implementation. There is no runtime dependency on the
+  transformers package.
+
+Weights:
+  LibreYOLO ships no pretrained SegFormer weights for any size (b0-b5). There
+  is no conversion script and no auto-download URL — the upstream
+  nvidia/segformer-b0..b5-* checkpoints are under a non-permissive,
+  non-commercial NVIDIA license and are never mirrored or redistributed.
+  Train from scratch on your own semantic dataset via
+  LibreSegformer(...).train(...).

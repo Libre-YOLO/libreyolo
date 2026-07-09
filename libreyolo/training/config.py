@@ -930,6 +930,46 @@ class RTMDetConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class SegformerConfig(TrainConfig):
+    """SegFormer training defaults — from scratch, no pretrained backbone.
+
+    LibreSegformer ships no pretrained weights (see the family NOTICE), so
+    these defaults target from-scratch convergence rather than fine-tuning:
+    AdamW + linear (poly-like) decay, higher LR than the paper's fine-tune
+    recipe. Convergence for the larger sizes (b3-b5) is unvalidated — see
+    docs/nomenclature.md.
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 6e-4
+    weight_decay: float = 0.01
+
+    scheduler: str = "linear"
+    warmup_epochs: int = 5
+    warmup_lr_start: float = 1e-6
+    min_lr_ratio: float = 0.0
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+
+    ema: bool = True
+    ema_decay: float = 0.999
+    amp: bool = True
+
+    imgsz: int = 512
+    epochs: int = 160
+    batch: int = 8
+    eval_interval: int = 1
+
+    name: str = "segformer_exp"
+
+
+@dataclass(kw_only=True)
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 

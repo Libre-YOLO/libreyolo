@@ -1,0 +1,11 @@
+{
+  "current_epoch": null,
+  "elapsed_seconds": 6.651878356933594e-05,
+  "error": {
+    "message": "RF-DETR semantic training does not support lora=True yet. Use freeze='backbone.encoder' for parameter-efficient semantic fine-tuning.",
+    "type": "ValueError"
+  },
+  "progress": 0.0,
+  "state": "failed",
+  "updated_at": "2026-07-09T11:35:08+00:00"
+}

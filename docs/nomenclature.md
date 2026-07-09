@@ -23,8 +23,8 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `eomt` and
-`pidnet` are semantic-only; the `mobilenetv4` / `convnext` /
+separate category, covered in the note below). Most are detectors; `eomt`,
+`pidnet`, and `segformer` are semantic-only; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
@@ -49,6 +49,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
+| `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family, no pretrained weights |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -127,6 +128,7 @@ ships:
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
+| `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers, all at 512) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -232,6 +234,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
 | `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
+| `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head at 512; no pretrained weights of any size (non-permissive upstream license) — trainable from scratch via `model.train(...)`; convergence for b3-b5 (deep, zero-init encoders) is unvalidated |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -246,6 +249,12 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
 LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-downloadable for this family; see `libreyolo/models/fomo/model.py`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
+
+No pretrained weights are auto-downloadable for `segformer` either, for any of
+its six sizes; the upstream `nvidia/segformer-b0..b5-*` checkpoints are under a
+non-permissive, non-commercial NVIDIA license and are never mirrored or
+converted. Train from scratch; see `libreyolo/models/segformer/model.py` and
+`libreyolo/models/segformer/NOTICE`.
 
 ## Examples by family + task
 
@@ -296,6 +305,15 @@ LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
 LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
 LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
+
+# segformer — MiT-b0..b5 semantic segmentation; no pretrained weights, train
+# from scratch (see the "no pretrained weights" note above)
+LibreSegformerb0-sem.pt
+LibreSegformerb1-sem.pt
+LibreSegformerb2-sem.pt
+LibreSegformerb3-sem.pt
+LibreSegformerb4-sem.pt
+LibreSegformerb5-sem.pt
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

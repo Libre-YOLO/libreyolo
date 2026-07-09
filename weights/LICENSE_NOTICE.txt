@@ -60,6 +60,13 @@ project the weights were derived from. Per-family summary:
              explicit standalone weights license. Convert only weights that
              you have the right to use and redistribute.
 
+    SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  no bundled weights
+             upstream code: huggingface/transformers modeling_segformer.py
+             (Apache-2.0); architecture: NVIDIA SegFormer (NeurIPS 2021,
+             cited for attribution only — code never read, non-permissive
+             NVIDIA license). No pretrained weights are shipped, mirrored,
+             or auto-downloadable for any size. Train from scratch.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
