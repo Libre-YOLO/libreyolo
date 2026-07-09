@@ -115,6 +115,13 @@ class PanopticQuality:
         gt_flat = gt_map.reshape(-1).astype(np.int64)
         pred_flat = pred_map.reshape(-1).astype(np.int64)
 
+        # Pairs are packed as gt * _OFFSET + pred for a single bincount, so an id
+        # at or above _OFFSET would unpack as a different segment and silently
+        # misattribute intersections. COCO ids fit in 24 bits; model output is
+        # not bounds-checked anywhere else.
+        self._check_id_range(gt_flat, "ground-truth")
+        self._check_id_range(pred_flat, "predicted")
+
         gt_areas = self._areas(gt_flat)
         pred_areas = self._areas(pred_flat)
         intersections = self._pair_areas(gt_flat, pred_flat)
@@ -155,10 +162,15 @@ class PanopticQuality:
                 matched_pred.add(pred_id)
 
         # --- false negatives: unmatched GT, crowd never counts ----------------
-        crowd_by_category: Dict[int, int] = {}
+        # A category may carry more than one crowd region in an image, so collect
+        # them all: keeping only the last would under-count the ignored area and
+        # turn a legitimately-excused prediction into a false positive.
+        crowd_by_category: Dict[int, List[int]] = {}
         for gt_id, gt_segment in gt_by_id.items():
             if int(gt_segment.get("iscrowd", 0)) == 1:
-                crowd_by_category[int(gt_segment["category_id"])] = gt_id
+                crowd_by_category.setdefault(
+                    int(gt_segment["category_id"]), []
+                ).append(gt_id)
                 continue
             if gt_id in matched_gt:
                 continue
@@ -172,12 +184,22 @@ class PanopticQuality:
             if pred_area == 0:
                 continue
             ignored = intersections.get((VOID_SEGMENT_ID, pred_id), 0)
-            crowd_id = crowd_by_category.get(int(pred_segment["category_id"]))
-            if crowd_id is not None:
+            for crowd_id in crowd_by_category.get(int(pred_segment["category_id"]), ()):
                 ignored += intersections.get((crowd_id, pred_id), 0)
             if ignored / pred_area > PQ_IOU_THRESHOLD:
                 continue  # removed; does not count as a false positive
             self._stat(int(pred_segment["category_id"])).fp += 1
+
+    @staticmethod
+    def _check_id_range(flat: np.ndarray, which: str) -> None:
+        if flat.size == 0:
+            return
+        if flat.min() < 0 or flat.max() >= _OFFSET:
+            raise ValueError(
+                f"{which} segment ids must lie in [0, {_OFFSET}); got "
+                f"[{int(flat.min())}, {int(flat.max())}]. Ids are packed pairwise "
+                "for the intersection histogram."
+            )
 
     @staticmethod
     def _areas(flat: np.ndarray) -> Dict[int, int]:

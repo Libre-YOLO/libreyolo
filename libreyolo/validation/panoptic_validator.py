@@ -61,8 +61,12 @@ class PanopticValidator(BaseValidator):
 
         # A thing/stuff split that disagrees with the checkpoint would not crash;
         # it would quietly mis-partition PQ_things / PQ_stuff. Fail loudly instead.
+        # `is not None` distinguishes "checkpoint carries no split" (skip) from
+        # "checkpoint says every category is stuff" (an assertion to honour).
         model_things = getattr(self.model, "thing_class_ids", None)
-        if model_things and set(int(i) for i in model_things) != dataset.thing_train_ids:
+        if model_things is not None and (
+            set(int(i) for i in model_things) != dataset.thing_train_ids
+        ):
             raise ValueError(
                 "The checkpoint's thing_class_ids disagree with the dataset's "
                 "'isthing' categories. PQ_things / PQ_stuff would be mis-split. "

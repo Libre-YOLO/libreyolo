@@ -1,9 +1,8 @@
-"""Tests for the panoptic-segmentation task scaffolding (issue #555).
+"""Tests for the panoptic-segmentation task surface (issue #555).
 
-These cover the API surface only: task registration, the PanopticSegmentation
-result payload, and that PanopticValidator is importable/dispatchable but its
-metric hooks are still unimplemented. The PQ metric and COCO-panoptic loader
-are intentionally not tested here because they are not implemented yet.
+Task registration, the PanopticSegmentation result payload, and the
+PanopticValidator's wiring and loud-failure paths. The PQ metric itself is
+covered in test_panoptic_quality.py and the loader in test_panoptic_dataset.py.
 """
 
 import numpy as np
@@ -156,3 +155,34 @@ def test_panoptic_validator_exported_from_package():
 
     assert hasattr(libreyolo, "PanopticValidator")
     assert hasattr(libreyolo, "PanopticSegmentation")
+
+
+def test_empty_thing_class_ids_still_enforces_agreement(monkeypatch, tmp_path):
+    """`thing_class_ids = set()` means 'all stuff', not 'no opinion'.
+
+    A falsy guard would skip the check and quietly mis-split PQ_things/PQ_stuff.
+    """
+    import pytest as _pytest
+
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+    from libreyolo.validation import panoptic_validator as pv
+
+    class _AllStuffModel:
+        task = "panoptic"
+        nb_classes = 2
+        thing_class_ids: set = set()
+
+    class _Dataset:
+        nc = 2
+        thing_train_ids = {0}  # dataset says category 0 IS a thing
+        names = {0: "person", 1: "sky"}
+
+    monkeypatch.setattr(pv, "resolve_panoptic_data", lambda *a, **k: {})
+    monkeypatch.setattr(pv, "PanopticDataset", lambda *a, **k: _Dataset())
+
+    validator = PanopticValidator(
+        model=_AllStuffModel(),
+        config=ValidationConfig(data=str(tmp_path / "d.yaml"), device="cpu"),
+    )
+    with _pytest.raises(ValueError, match="thing_class_ids"):
+        validator._setup_dataloader()

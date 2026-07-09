@@ -177,3 +177,59 @@ def test_empty_prediction_and_empty_gt_gives_zero_not_nan():
     pq.update(np.zeros((2, 2), dtype=np.int64), [], np.zeros((2, 2), dtype=np.int64), [])
     m = pq.compute()
     assert m["metrics/PQ"] == 0.0 and m["metrics/categories"] == 0
+
+
+# --- regressions from code review -------------------------------------------
+
+
+def test_multiple_crowd_regions_of_one_category_all_excuse_a_prediction():
+    """Two crowd segments of the same class must both count toward the ignored area.
+
+    Keeping only one would under-count the overlap and turn an excused
+    prediction into a false positive, silently lowering PQ.
+    """
+    # Two crowd regions of category 0 (ids 1 and 2), 2 px each, and a 6 px
+    # prediction spanning both. No void anywhere: id 9 is a real segment.
+    #   both crowds counted -> ignored 4/6 = 0.667 > 0.5 -> excused
+    #   only one counted    -> ignored 2/6 = 0.333       -> false positive
+    # So this fixture fails if the crowd bookkeeping keeps just one segment.
+    gt = np.array([[1, 1, 2, 2, 9, 9]])
+    pred = np.array([[5, 5, 5, 5, 5, 5]])
+    pq = PanopticQuality()
+    pq.update(
+        gt,
+        [_gt(1, 0, crowd=1), _gt(2, 0, crowd=1), _gt(9, 7)],
+        pred,
+        [_pred(5, 0)],
+    )
+    assert 0 not in pq.stats or pq.stats[0].fp == 0
+    assert pq.stats[7].fn == 1  # the real segment was still missed
+
+
+def test_single_crowd_region_still_excuses_only_up_to_its_own_area():
+    """Sanity guard for the fix above: a small crowd must not excuse everything."""
+    gt = np.array([[1, 9, 9, 9, 9, 9]])   # 1 crowd px, rest a real gt segment
+    pred = np.array([[5, 5, 5, 5, 5, 5]])  # pred area 6, only 1 px on crowd
+    pq = PanopticQuality()
+    pq.update(gt, [_gt(1, 0, crowd=1), _gt(9, 7)], pred, [_pred(5, 0)])
+    assert pq.stats[0].fp == 1  # 1/6 overlap is far below the 0.5 threshold
+
+
+def test_segment_ids_at_or_above_the_packing_offset_are_rejected():
+    """Ids >= 2**32 would unpack as a different segment and corrupt PQ."""
+    pq = PanopticQuality()
+    huge = np.array([[1 << 32]], dtype=np.int64)
+    ok = np.array([[1]], dtype=np.int64)
+    with pytest.raises(ValueError, match="predicted segment ids"):
+        pq.update(ok, [_gt(1, 0)], huge, [_pred(1 << 32, 0)])
+    with pytest.raises(ValueError, match="ground-truth segment ids"):
+        pq.update(huge, [_gt(1 << 32, 0)], ok, [_pred(1, 0)])
+
+
+def test_max_coco_segment_id_is_accepted():
+    """The largest id the COCO PNG encoding can produce must still work."""
+    max_coco_id = 255 + 256 * 255 + 65536 * 255  # 16777215, fits in 24 bits
+    gt = np.full((1, 2), max_coco_id, dtype=np.int64)
+    pq = PanopticQuality()
+    pq.update(gt, [_gt(max_coco_id, 0)], gt, [_pred(max_coco_id, 0)])
+    assert pq.compute()["metrics/PQ"] == pytest.approx(1.0)
