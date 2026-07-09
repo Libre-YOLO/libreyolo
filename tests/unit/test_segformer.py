@@ -194,6 +194,25 @@ class TestSegformerWrapper:
         with pytest.raises(ValueError, match="semantic"):
             LibreSegformer(model_path=None, size="b0", task="detect", nb_classes=3, device="cpu")
 
+    def test_loads_raw_state_dict_without_checkpoint_metadata(self, tmp_path):
+        """Regression: DDP training round-trips a *raw* state dict through a
+        tempfile (libreyolo/training/ddp_spawn.py writes plain
+        ``model.state_dict()``, no model_family/task/nc wrapper) and expects
+        the model class to reconstruct from it directly — like LibreDINOv2,
+        LibreSegformer must tolerate this, not just its own fully-wrapped
+        checkpoints. Multi-GPU training silently regresses if this breaks.
+        """
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        src = LibreSegformer(model_path=None, size="b0", task="semantic", nb_classes=3, device="cpu")
+        raw_path = tmp_path / "raw_state_dict.pt"
+        torch.save({k: v.cpu() for k, v in src.model.state_dict().items()}, raw_path)
+
+        reloaded = LibreSegformer(model_path=str(raw_path), size="b0", task="semantic", nb_classes=3, device="cpu")
+        assert reloaded.task == "semantic"
+        for key, value in src.model.state_dict().items():
+            assert torch.equal(value, reloaded.model.state_dict()[key])
+
 
 def test_segformer_train_smoke(tmp_path):
     """One epoch through the shared BaseTrainer semantic path (real, no stub)."""

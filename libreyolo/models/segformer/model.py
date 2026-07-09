@@ -28,8 +28,9 @@ from PIL import Image
 
 from ...tasks import normalize_task
 from ...training.callbacks import TrainCallbacks
+from ...training.ddp_spawn import ddp_aware
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import load_untrusted_torch_file, validate_checkpoint_metadata
+from ...utils.serialization import load_trusted_torch_file
 from ..base.model import BaseModel
 from .nn import SIZE_CONFIGS, LibreSegformerNet
 
@@ -235,12 +236,19 @@ class LibreSegformer(BaseModel):
             raise RuntimeError("Checkpoint does not look like a SegFormer semantic segmentation model.")
 
     def _load_weights(self, model_path: str | dict[str, Any]) -> None:
+        # LibreSegformer has no upstream checkpoint format to guard against —
+        # there is no conversion script and never will be (see NOTICE). Every
+        # checkpoint it ever loads is either self-produced by model.train()
+        # (full LibreYOLO metadata) or the raw, unwrapped state dict that DDP
+        # training round-trips through a tempfile (libreyolo/training/
+        # ddp_spawn.py). Both must load cleanly, so — like LibreDINOv2 — this
+        # only checks metadata fields when present, never requires them.
         if isinstance(model_path, str):
             if not Path(model_path).exists():
                 from ...utils.download import download_weights
 
                 download_weights(model_path, self.size)
-            loaded = load_untrusted_torch_file(
+            loaded = load_trusted_torch_file(
                 model_path, map_location="cpu", context="SegFormer semantic weights"
             )
         else:
@@ -248,12 +256,6 @@ class LibreSegformer(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreSegformer checkpoints must be dictionaries")
-        metadata_errors = validate_checkpoint_metadata(loaded, strict=False)
-        if metadata_errors:
-            raise ValueError(
-                "LibreSegformer only loads its own checkpoints (train from scratch "
-                "via model.train(...)); no upstream checkpoint format is supported."
-            )
 
         ckpt_family = loaded.get("model_family")
         if isinstance(ckpt_family, str) and ckpt_family and ckpt_family != self.FAMILY:
@@ -294,6 +296,7 @@ class LibreSegformer(BaseModel):
     # LibreSegformer must be trainable from scratch.
     # ------------------------------------------------------------------
 
+    @ddp_aware()
     def train(
         self,
         data: str,
