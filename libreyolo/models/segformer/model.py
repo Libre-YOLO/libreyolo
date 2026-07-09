@@ -144,11 +144,18 @@ class LibreSegformer(BaseModel):
         nb_classes: int = 150,
         device: str = "auto",
         task: str | None = None,
+        pretrained_encoder: Optional[str] = None,
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "semantic"
         if resolved_task != "semantic":
             raise ValueError(f"LibreSegformer supports only task='semantic'; got {task!r}.")
+        if model_path is not None and pretrained_encoder is not None:
+            raise ValueError(
+                "Pass only one of model_path= (a full checkpoint) or "
+                "pretrained_encoder= (an encoder-only ImageNet pretraining "
+                "checkpoint) -- combining them is ambiguous."
+            )
         super().__init__(
             model_path=model_path,
             size=size,
@@ -160,6 +167,8 @@ class LibreSegformer(BaseModel):
         self.model.eval()
         if self.model_path is not None:
             self._load_weights(str(self.model_path))
+        elif pretrained_encoder is not None:
+            self._load_pretrained_encoder(pretrained_encoder)
 
     def _init_model(self) -> nn.Module:
         return LibreSegformerNet(size=self.size, num_classes=self.nb_classes)
@@ -290,6 +299,25 @@ class LibreSegformer(BaseModel):
         if ckpt_names is not None:
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
         self.model.to(self.device).eval()
+
+    def _load_pretrained_encoder(self, path: str) -> None:
+        """Partial-load an encoder-only checkpoint from ``tools/pretrain_mit/``
+        (ImageNet-1K classification pretraining, external to this library —
+        see that directory's README for the pipeline and rationale). Only
+        ``self.model.encoder`` is populated; the decode head stays at random
+        init, ready for a fresh semantic fine-tune.
+        """
+        payload = load_trusted_torch_file(path, map_location="cpu", context="SegFormer pretrained encoder")
+        if not isinstance(payload, dict) or "encoder" not in payload:
+            raise ValueError(f"{path} is not a valid pretrained-encoder checkpoint (missing 'encoder' key).")
+        ckpt_size = payload.get("size")
+        if ckpt_size is not None and ckpt_size != self.size:
+            raise ValueError(
+                f"Pretrained encoder checkpoint was produced for size={ckpt_size!r} "
+                f"but this model is size={self.size!r}."
+            )
+        self.model.encoder.load_state_dict(payload["encoder"], strict=True)
+        self.model.to(self.device)
 
     # ------------------------------------------------------------------
     # Training — the point of this port: no pretrained weights exist, so

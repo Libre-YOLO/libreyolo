@@ -188,6 +188,51 @@ class TestSegformerWrapper:
         for key, value in encoder_state_before.items():
             assert torch.equal(value, m.model.encoder.state_dict()[key])
 
+    def test_pretrained_encoder_loads_only_encoder_weights(self, tmp_path):
+        """Regression for the tools/pretrain_mit/ bridge: an encoder-only
+        checkpoint ({"encoder": ..., "size": ...}) must populate only
+        self.model.encoder, leaving decode_head at its own random init.
+        """
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import SegformerEncoder, SIZE_CONFIGS
+
+        encoder = SegformerEncoder(SIZE_CONFIGS["b0"])
+        ckpt_path = tmp_path / "mit_b0_imagenet1k_encoder.pt"
+        torch.save({"encoder": encoder.state_dict(), "size": "b0", "source": "imagenet1k-classify"}, ckpt_path)
+
+        m = LibreSegformer(size="b0", task="semantic", nb_classes=3, device="cpu", pretrained_encoder=str(ckpt_path))
+        for key, value in encoder.state_dict().items():
+            assert torch.equal(value, m.model.encoder.state_dict()[key])
+
+    def test_pretrained_encoder_rejects_size_mismatch(self, tmp_path):
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import SegformerEncoder, SIZE_CONFIGS
+
+        encoder = SegformerEncoder(SIZE_CONFIGS["b1"])
+        ckpt_path = tmp_path / "mit_b1_imagenet1k_encoder.pt"
+        torch.save({"encoder": encoder.state_dict(), "size": "b1", "source": "imagenet1k-classify"}, ckpt_path)
+
+        with pytest.raises(ValueError, match="size"):
+            LibreSegformer(size="b0", task="semantic", nb_classes=3, device="cpu", pretrained_encoder=str(ckpt_path))
+
+    def test_model_path_and_pretrained_encoder_are_mutually_exclusive(self, tmp_path):
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import SegformerEncoder, SIZE_CONFIGS
+
+        encoder = SegformerEncoder(SIZE_CONFIGS["b0"])
+        ckpt_path = tmp_path / "mit_b0_imagenet1k_encoder.pt"
+        torch.save({"encoder": encoder.state_dict(), "size": "b0"}, ckpt_path)
+
+        with pytest.raises(ValueError, match="one of"):
+            LibreSegformer(
+                model_path=str(ckpt_path),
+                size="b0",
+                task="semantic",
+                nb_classes=3,
+                device="cpu",
+                pretrained_encoder=str(ckpt_path),
+            )
+
     def test_wrong_task_raises(self):
         from libreyolo.models.segformer.model import LibreSegformer
 
