@@ -104,7 +104,10 @@ def test_results_panoptic_slot_roundtrips():
     assert result[0].panoptic.data.shape == (3, 3)
 
 
-def test_panoptic_validator_importable_but_unimplemented():
+def test_panoptic_validator_computes_pq():
+    """The validator is no longer a stub: its metric hooks accumulate PQ."""
+    import numpy as np
+
     from libreyolo.validation import PanopticValidator, ValidationConfig
 
     assert PanopticValidator.task == "panoptic"
@@ -115,11 +118,37 @@ def test_panoptic_validator_importable_but_unimplemented():
 
     config = ValidationConfig(data="dummy.yaml", device="cpu")
     validator = PanopticValidator(model=_StubModel(), config=config)
-    # Every metric hook is scaffolding and must fail loudly until implemented.
-    with pytest.raises(NotImplementedError):
-        validator._init_metrics()
-    with pytest.raises(NotImplementedError):
-        validator._compute_metrics()
+
+    validator._init_metrics()
+    perfect = np.ones((2, 2), dtype=np.int64)
+    validator._pq.update(
+        perfect,
+        [{"id": 1, "category_id": 0, "iscrowd": 0}],
+        perfect,
+        [{"id": 1, "category_id": 0}],
+    )
+    metrics = validator._compute_metrics()
+    assert metrics["metrics/PQ"] == 1.0
+    assert metrics["fitness"] == 1.0
+
+
+def test_panoptic_postprocess_without_family_support_fails_loudly():
+    """A family that does not implement panoptic must not silently score zero."""
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+
+    class _NoPanopticModel:
+        task = "panoptic"
+        nb_classes = 133
+
+        def _postprocess(self, *args, **kwargs):
+            return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
+
+    validator = PanopticValidator(
+        model=_NoPanopticModel(), config=ValidationConfig(data="d.yaml", device="cpu")
+    )
+    validator._original_size = (4, 4)
+    with pytest.raises(ValueError, match="panoptic"):
+        validator._postprocess_predictions(preds=None, batch=None)
 
 
 def test_panoptic_validator_exported_from_package():

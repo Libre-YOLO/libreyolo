@@ -211,9 +211,10 @@ non-overlapping label, unifying `semantic` "stuff" (amorphous regions) with
 scored with Panoptic Quality (PQ = SQ x RQ) rather than mIoU or mask mAP. The
 canonical suffix is the full word `-panoptic` (not an abbreviation), so
 `LibreEoMTs-panoptic.pt` is a first-class panoptic checkpoint, not a `segment`
-checkpoint in disguise. NOTE (issue #555): the task, its `Results` slot, and
-the `PanopticValidator` dispatch are scaffolded; the model postprocess, the PQ
-metric, and the COCO-panoptic dataset loader are not implemented yet.
+checkpoint in disguise. Ground truth follows the COCO-panoptic format
+(`PanopticDataset`) and `model.val()` reports PQ / SQ / RQ split into things and
+stuff. NOTE (issue #555): the per-family panoptic postprocess is what a model
+family must still provide; a family without it raises from `_postprocess`.
 
 `depth` is the task for dense monocular depth estimation. Models expose
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the

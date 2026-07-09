@@ -1,34 +1,18 @@
 """Panoptic-segmentation validator for LibreYOLO.
 
-SCAFFOLD (issue #555): this file defines the validator's public shape only.
-The actual Panoptic Quality (PQ) computation and the COCO-panoptic
-ground-truth loader are NOT implemented here yet. A contributor porting a
-panoptic model family (e.g. ``eomt``) plugs the real logic in by filling the
-methods below; the ``val()`` dispatch, the ``panoptic`` task, and the
-:class:`~libreyolo.utils.results.PanopticSegmentation` result payload are
-already wired so this validator is reachable via ``model.val(...)`` once the
-model produces panoptic output.
+Scores a panoptic model with Panoptic Quality (PQ = SQ x RQ) over a
+COCO-panoptic split, reusing the :class:`BaseValidator` template
+(setup -> iterate -> finalize).
 
-What "done" looks like for whoever finishes this:
+Panoptic Quality is defined at the ground-truth resolution, and each model
+family owns its own preprocessing geometry (EoMT pads COCO inputs but splits
+ADE20K ones into sliding windows). So this validator delegates both ends to the
+model: :meth:`_preprocess_batch` calls the family's ``_preprocess`` and
+:meth:`_postprocess_predictions` calls its ``_postprocess``, which returns a
+segment-id map already resized onto the original canvas. Images are therefore
+processed one at a time.
 
-* ``_setup_dataloader`` builds a COCO-panoptic split. The GT contract is a PNG
-  whose RGB encodes a per-pixel segment id, plus a JSON ``segments_info`` list
-  (``id``, ``category_id``, ``iscrowd``, ``area``). See ``docs/dataset_schema.md``
-  (panoptic section) for the label spec to implement against.
-* ``_postprocess_predictions`` decodes raw model output into, per image, a
-  ``(H, W)`` segment-id map + ``segments_info`` (the same contract as
-  :class:`PanopticSegmentation`). The model's own panoptic postprocess (merge
-  thing-instances + stuff-regions into one non-overlapping map) lives on the
-  model family, not here.
-* ``_update_metrics`` accumulates, per category, the matched-IoU sum and the
-  TP / FP / FN counts using the standard PQ matching rule (a predicted segment
-  matches a GT segment of the same category iff IoU > 0.5; the match is unique).
-* ``_compute_metrics`` reduces those accumulators to Panoptic Quality::
-
-      PQ = (sum of matched IoU / TP) * (TP / (TP + 0.5*FP + 0.5*FN))
-         = SQ * RQ
-
-  reported overall and split into PQ_things / PQ_stuff, with ``fitness`` = PQ.
+The metric itself lives in :mod:`libreyolo.validation.panoptic_quality`.
 """
 
 from __future__ import annotations
@@ -38,68 +22,121 @@ from typing import Any, Dict
 
 from torch.utils.data import DataLoader
 
+from ..data.panoptic_dataset import (
+    PanopticDataset,
+    panoptic_collate_fn,
+    resolve_panoptic_data,
+)
 from .base import BaseValidator
+from .panoptic_quality import PQ_IOU_THRESHOLD, PanopticQuality
 
 logger = logging.getLogger(__name__)
 
-# Panoptic Quality matching threshold: a predicted segment matches a
-# ground-truth segment of the same category iff their IoU strictly exceeds
-# this value. Fixed by the panoptic-segmentation metric definition.
-PQ_IOU_THRESHOLD = 0.5
-
-_NOT_IMPLEMENTED = (
-    "Panoptic validation (Panoptic Quality) is not implemented yet. This is "
-    "scaffolding from issue #555: the task, the val() dispatch, and the "
-    "PanopticSegmentation result payload exist, but the PQ metric and the "
-    "COCO-panoptic dataset loader still need to be filled in. See the module "
-    "docstring in libreyolo/validation/panoptic_validator.py for the contract."
-)
-
 
 class PanopticValidator(BaseValidator):
-    """Panoptic Quality (PQ = SQ x RQ) validator for the ``panoptic`` task.
-
-    SCAFFOLD: every hook raises :class:`NotImplementedError` until the PQ
-    metric and COCO-panoptic loader are implemented. The class is intentionally
-    importable and dispatchable so downstream wiring can be tested before the
-    metric lands.
-    """
+    """Panoptic Quality (PQ = SQ x RQ) validator for the ``panoptic`` task."""
 
     task = "panoptic"
 
+    # Populated by _setup_dataloader; defaulted so _init_metrics is never a
+    # surprise AttributeError when the hooks are exercised out of order.
+    _thing_class_ids: set = frozenset()
+
     def _setup_dataloader(self) -> DataLoader:
-        # TODO(#555): build a COCO-panoptic split (PNG segment-id map + JSON
-        # segments_info). Mirror SemanticValidator._setup_dataloader for the
-        # data-resolution / class-count-check structure.
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        if not self.config.data:
+            raise ValueError("Panoptic validation requires data= (a dataset YAML).")
+        data_config = resolve_panoptic_data(
+            self.config.data,
+            allow_scripts=getattr(self.config, "allow_download_scripts", False),
+        )
+        split = self.config.split or "val"
+        dataset = PanopticDataset(data_config, split=split)
+
+        model_nc = getattr(self.model, "nb_classes", None)
+        if model_nc is not None and int(model_nc) != dataset.nc:
+            raise ValueError(
+                f"Panoptic dataset has {dataset.nc} classes but the model predicts "
+                f"{int(model_nc)}. Use a matching dataset/checkpoint."
+            )
+
+        # A thing/stuff split that disagrees with the checkpoint would not crash;
+        # it would quietly mis-partition PQ_things / PQ_stuff. Fail loudly instead.
+        model_things = getattr(self.model, "thing_class_ids", None)
+        if model_things and set(int(i) for i in model_things) != dataset.thing_train_ids:
+            raise ValueError(
+                "The checkpoint's thing_class_ids disagree with the dataset's "
+                "'isthing' categories. PQ_things / PQ_stuff would be mis-split. "
+                "Check that the dataset YAML 'names' order matches the checkpoint."
+            )
+
+        self._thing_class_ids = dataset.thing_train_ids
+        self._class_names = dict(dataset.names)
+
+        if self.config.batch_size != 1:
+            logger.info(
+                "Panoptic validation runs one image at a time (batch_size=%d ignored); "
+                "segment maps have per-image resolutions.",
+                self.config.batch_size,
+            )
+        return DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            pin_memory=False,
+            collate_fn=panoptic_collate_fn,
+        )
 
     def _init_metrics(self) -> None:
-        # TODO(#555): allocate per-category accumulators: matched-IoU sum and
-        # TP / FP / FN counts.
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        self._pq = PanopticQuality(thing_class_ids=set(self._thing_class_ids))
 
     def _preprocess_batch(self, batch: Any) -> tuple:
-        # TODO(#555): unpack (images, panoptic_targets, segments_info, img_info).
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        img_paths, seg_maps, segments_infos, infos = batch
+        # Let the model apply its own resize/pad/split geometry.
+        tensor, _, original_size, _ = self.model._preprocess(img_paths[0])
+        self._original_size = original_size
+        # The 4-tuple carries segments_info in the img_ids slot.
+        return tensor, seg_maps, infos, segments_infos
 
     def _postprocess_predictions(self, preds: Any, batch: Any) -> Any:
-        # TODO(#555): decode raw model output into per-image (segment-id map,
-        # segments_info). The model family's panoptic postprocess does the
-        # non-overlapping thing+stuff merge; this method only adapts its output
-        # to the metric's expected shape.
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        """Ask the model for a segment-id map on the original image canvas."""
+        detections = self.model._postprocess(
+            preds,
+            self.config.conf_thres,
+            self.config.iou_thres,
+            self._original_size,
+        )
+        if not isinstance(detections, dict) or "panoptic" not in detections:
+            raise ValueError(
+                f"{type(self.model).__name__}._postprocess did not return a "
+                "'panoptic' segment-id map. Does this family implement the "
+                "panoptic task?"
+            )
+        return detections
 
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
-        # TODO(#555): match predicted vs GT segments per category with
-        # IoU > PQ_IOU_THRESHOLD and accumulate TP/FP/FN + matched IoU.
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        gt_map = targets[0].numpy()
+        gt_segments = img_ids[0]
+        pred_map = preds["panoptic"].cpu().numpy()
+        pred_segments = preds.get("segments_info") or []
+        self._pq.update(gt_map, gt_segments, pred_map, pred_segments)
 
     def _compute_metrics(self) -> Dict[str, float]:
-        # TODO(#555): reduce accumulators to PQ / SQ / RQ (+ things/stuff split)
-        # and return {"metrics/PQ": ..., "fitness": PQ, ...}.
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        return self._pq.compute()
+
+    def _print_results(self, metrics: Dict[str, float]) -> None:
+        logger.info("=" * 50)
+        logger.info("LibreYOLO Panoptic Segmentation Validation Results")
+        logger.info("=" * 50)
+        logger.info("  PQ:         %.4f", metrics.get("metrics/PQ", 0.0))
+        logger.info("  SQ:         %.4f", metrics.get("metrics/SQ", 0.0))
+        logger.info("  RQ:         %.4f", metrics.get("metrics/RQ", 0.0))
+        logger.info("  PQ things:  %.4f", metrics.get("metrics/PQ_things", 0.0))
+        logger.info("  PQ stuff:   %.4f", metrics.get("metrics/PQ_stuff", 0.0))
+        logger.info("  categories: %d", int(metrics.get("metrics/categories", 0)))
+        logger.info("=" * 50)
 
 
 __all__ = ["PanopticValidator", "PQ_IOU_THRESHOLD"]
