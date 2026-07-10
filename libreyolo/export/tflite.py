@@ -1,4 +1,9 @@
-"""TensorFlow Lite export implementation via onnx2tf."""
+"""TensorFlow Lite (LiteRT) export implementation via onnx2tf.
+
+LiteRT is Google's current name for TensorFlow Lite. The output is a standard
+``.tflite`` FlatBuffer that runs on LiteRT's Interpreter and CompiledModel
+APIs (``pip install ai-edge-litert`` on the target device).
+"""
 
 from __future__ import annotations
 

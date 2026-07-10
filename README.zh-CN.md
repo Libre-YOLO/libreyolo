@@ -76,7 +76,7 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
       <th>TensorRT</th>
       <th>OpenVINO</th>
       <th>NCNN</th>
-      <th>TFLite</th>
+      <th>TFLite (LiteRT)</th>
     </tr>
   </thead>
   <tbody>

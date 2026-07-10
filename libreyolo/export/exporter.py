@@ -195,6 +195,10 @@ class BaseExporter(ABC):
 
     _registry: dict[str, type["BaseExporter"]] = {}
 
+    # Alternate names accepted by create(). "litert" is Google's current name
+    # for TensorFlow Lite; the format and .tflite suffix are unchanged.
+    _aliases: dict[str, str] = {"litert": "tflite"}
+
     # Class attributes (overridden by each subclass)
     format_name: str  # e.g. "onnx"
     suffix: str  # e.g. ".onnx"
@@ -220,6 +224,7 @@ class BaseExporter(ABC):
     def create(cls, format: str, model) -> "BaseExporter":
         """Look up *format* in the registry and return an exporter instance."""
         key = format.lower()
+        key = cls._aliases.get(key, key)
         if key not in cls._registry:
             valid = ", ".join(sorted(cls._registry))
             raise ValueError(

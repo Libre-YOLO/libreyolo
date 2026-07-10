@@ -107,6 +107,11 @@ tflite = [
     # Required for RF-DETR onnxsim preprocessing step.
     "onnx-simplifier>=0.4.36",
 ]
+# LiteRT is Google's current name for TensorFlow Lite; same export path,
+# same .tflite output. Separate extra so both names install.
+litert = [
+    "libreyolo[tflite]",
+]
 # Intentionally empty: all tracking dependencies (e.g. scipy) are core deps,
 # so `libreyolo[tracking]` installs nothing extra. Kept for a stable extra name.
 tracking = []
