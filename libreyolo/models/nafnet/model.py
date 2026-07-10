@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from ...postprocess.nafnet import postprocess as _nafnet_postprocess
+from ...training.ddp_spawn import ddp_aware
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ..base import BaseModel
@@ -251,6 +252,7 @@ class LibreNAFNet(BaseModel):
         del conf_thres, iou_thres, max_det, ratio, kwargs
         return {"restored": _nafnet_postprocess(output, original_size)}
 
+    @ddp_aware()
     def train(
         self,
         data: str,
