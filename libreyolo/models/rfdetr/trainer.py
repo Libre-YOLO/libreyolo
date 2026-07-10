@@ -28,7 +28,7 @@ from ...training.freezing import FreezeGroup
 from ...training.scheduler import BaseScheduler, CosineAnnealingScheduler, FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import RFDETRConfig
-from .imgsz import validate_imgsz
+from .imgsz import resolve_patch_window, validate_imgsz
 from ..dfine.transforms import DFINEPassThroughDataset
 from .pose_transforms import RFDETRPoseTransform
 from .seg_transforms import (
@@ -248,8 +248,7 @@ class RFDETRTrainer(BaseTrainer):
 
     def create_transforms(self):
         raw = unwrap_model(self.model)
-        patch_size = int(getattr(raw, "patch_size", 16))
-        num_windows = int(getattr(raw, "num_windows", 4))
+        patch_size, num_windows = resolve_patch_window(raw)
         # Validation always uses the literal imgsz, so divisibility is required
         # regardless of multi_scale mode.
         validate_imgsz(
@@ -335,8 +334,7 @@ class RFDETRTrainer(BaseTrainer):
         if not self.config.multi_scale or self.config.do_random_resize_via_padding:
             return []
         raw = unwrap_model(self.model)
-        patch_size = int(getattr(raw, "patch_size", 16))
-        num_windows = int(getattr(raw, "num_windows", 4))
+        patch_size, num_windows = resolve_patch_window(raw)
         return compute_multi_scale_scales(
             self.config.imgsz,
             self.config.expanded_scales,
@@ -455,8 +453,7 @@ class RFDETRTrainer(BaseTrainer):
             raise FileNotFoundError("No training images found for RF-DETR pose training")
 
         raw = unwrap_model(self.model)
-        patch_size = int(getattr(raw, "patch_size", 16))
-        num_windows = int(getattr(raw, "num_windows", 4))
+        patch_size, num_windows = resolve_patch_window(raw)
         validate_imgsz(
             self.config.imgsz,
             patch_size=patch_size,

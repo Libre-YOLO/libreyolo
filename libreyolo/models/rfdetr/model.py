@@ -681,11 +681,15 @@ class LibreRFDETR(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         """Preprocess: resize + ImageNet normalization (no letterbox)."""
+        # Only user-supplied overrides need checking: the construction-time
+        # self.input_size is always a valid native size, and this runs on the
+        # per-image hot path.
+        if input_size is not None:
+            input_size = self._validate_imgsz(
+                input_size,
+                name="RF-DETR inference imgsz",
+            )
         effective_res = input_size if input_size is not None else self.input_size
-        effective_res = self._validate_imgsz(
-            effective_res,
-            name="RF-DETR inference imgsz",
-        )
 
         img = ImageLoader.load(image, color_format=color_format)
         orig_w, orig_h = img.size
@@ -1085,19 +1089,12 @@ class LibreRFDETR(BaseModel):
         return super().export(format, opset=opset, **kwargs)
 
     def val(self, *args, workers: int = 0, **kwargs) -> Dict:
-        """Run RF-DETR validation with a Windows-safe worker default."""
-        if "imgsz" in kwargs and kwargs["imgsz"] is not None:
-            kwargs["imgsz"] = self._validate_imgsz(
-                kwargs["imgsz"],
-                name="RF-DETR validation imgsz",
-            )
-        elif len(args) >= 3 and args[2] is not None:
-            args = list(args)
-            args[2] = self._validate_imgsz(
-                args[2],
-                name="RF-DETR validation imgsz",
-            )
-            args = tuple(args)
+        """Run RF-DETR validation with a Windows-safe worker default.
+
+        No imgsz check here: every validator routes the effective imgsz
+        through ``_get_val_preprocessor``, which validates, and inspecting
+        positional args would hardcode the base signature's parameter order.
+        """
         return super().val(*args, workers=workers, **kwargs)
 
     def _restore_after_training(self, result: dict) -> None:
