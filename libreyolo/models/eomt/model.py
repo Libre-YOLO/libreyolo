@@ -914,7 +914,10 @@ class LibreEoMT(BaseModel):
         half: bool = False,
         **kwargs,
     ):
-        if self.task == "segment":
+        if self.task in ("segment", "panoptic"):
+            # segment scores mask mAP (SegmentationValidator); panoptic scores
+            # Panoptic Quality (PanopticValidator). Both use the base dispatch;
+            # only semantic needs the custom dense-mask mIoU loop below.
             return super().val(
                 data=data,
                 batch=batch,

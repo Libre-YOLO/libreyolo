@@ -689,6 +689,29 @@ def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
     assert kwargs.get("save_plots") is True
 
 
+def test_val_panoptic_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
+    """val() on a panoptic model delegates to BaseModel.val(), whose dispatch
+    selects PanopticValidator; the semantic dense-mask loop would reject
+    COCO-panoptic data with 'requires dense PNG masks'."""
+    from unittest.mock import MagicMock
+
+    from libreyolo.models.eomt.model import LibreEoMT
+    from libreyolo.models.base.model import BaseModel
+
+    model = LibreEoMT(
+        model_path=None, size="s", task="panoptic", nb_classes=133, device="cpu"
+    )
+
+    sentinel = MagicMock(return_value={"metrics/PQ": 0.0})
+    monkeypatch.setattr(BaseModel, "val", sentinel)
+
+    model.val(data="coco_panoptic.yaml")
+
+    sentinel.assert_called_once()
+    _, kwargs = sentinel.call_args
+    assert kwargs.get("data") == "coco_panoptic.yaml"
+
+
 def test_val_rejects_unknown_kwargs(fake_eomt_net):
     from libreyolo.models.eomt.model import LibreEoMT
 
