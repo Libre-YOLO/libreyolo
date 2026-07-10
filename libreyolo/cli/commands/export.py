@@ -60,10 +60,12 @@ def export_cmd(
     """Export a model to a deployment format."""
     out = OutputHandler(json_mode=json_output, quiet=quiet)
 
-    # Resolve format alias
+    # Resolve format aliases (engine -> tensorrt, litert -> tflite) so JSON
+    # output and messages always report the canonical format name.
+    from libreyolo.export.exporter import BaseExporter
+
     fmt = format.lower()
-    if fmt == "engine":
-        fmt = "tensorrt"
+    fmt = BaseExporter._aliases.get(fmt, fmt)
 
     if half and int8:
         out.warning("Both half and int8 were requested. Using INT8 precision.")

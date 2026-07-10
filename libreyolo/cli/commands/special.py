@@ -247,8 +247,13 @@ def formats_cmd(
             "fp16": cls.supports_fp16,
             "requires_onnx": cls.requires_onnx,
         }
-        if name == "tensorrt":
-            info["aliases"] = ["engine"]
+        aliases = sorted(
+            alias
+            for alias, target in BaseExporter._aliases.items()
+            if target == name
+        )
+        if aliases:
+            info["aliases"] = aliases
         formats.append(info)
 
     out = _get_output(json_output, quiet)

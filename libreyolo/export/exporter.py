@@ -197,7 +197,9 @@ class BaseExporter(ABC):
 
     # Alternate names accepted by create(). "litert" is Google's current name
     # for TensorFlow Lite; the format and .tflite suffix are unchanged.
-    _aliases: dict[str, str] = {"litert": "tflite"}
+    # The CLI and the `libreyolo formats` listing derive from this mapping,
+    # so aliases live here and nowhere else.
+    _aliases: dict[str, str] = {"engine": "tensorrt", "litert": "tflite"}
 
     # Class attributes (overridden by each subclass)
     format_name: str  # e.g. "onnx"
