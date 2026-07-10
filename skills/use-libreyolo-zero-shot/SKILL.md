@@ -100,6 +100,10 @@ model.reset_image()
   Meta's custom SAM License, not MIT or Apache-2.0. Accept its terms and run
   `hf auth login` (or set `HF_TOKEN`) before first use. The first `text=` call
   lazily loads a second model instance and therefore raises peak RAM/VRAM.
+  In a reference CPU/fp32 run at the native 1008 px frame, RSS was 3.0 GB after
+  visual inference and 5.9 GB with both models resident, with a 9.0 GB peak
+  while loading/running the first text prompt. An 8 GB host may exhaust memory
+  on the text path even when visual prompting works comfortably.
 - `text=` returns every instance matching the concept and cannot be combined
   with points or boxes. Its `conf` is a PCS detection score; visual-prompt
   `conf` remains predicted mask IoU. Text prompts default to `conf=0.3`; pass
