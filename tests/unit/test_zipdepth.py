@@ -135,6 +135,14 @@ def test_fuse_is_idempotent_and_close():
     assert torch.allclose(ref, fused, atol=1e-5)
 
 
+def test_export_rejects_batch_gt_1():
+    # The exported batch axis is static (dynamic forced off) and backends
+    # schedule one image per run, so batch != 1 artifacts are unusable.
+    model = LibreZipDepth(None, size="b", device="cpu")
+    with pytest.raises(ValueError, match="batch-1"):
+        model.export(format="onnx", batch=2)
+
+
 def test_metadata_contract():
     model = LibreZipDepth(None, size="b", device="cpu")
     assert model.task == "depth"

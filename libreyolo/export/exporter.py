@@ -288,17 +288,25 @@ class BaseExporter(ABC):
                 "output plus backend argmax parsing) before exporting semantic "
                 "models."
             )
-        if task == "depth" and dynamic:
+        if task == "depth":
             # Depth export uses the fixed-resolution dense contract: backends
             # stretch-resize to the exported canvas and resize the depth map
-            # back to the original canvas (ADR 0006).
-            warnings.warn(
-                "Depth export uses a fixed-resolution runtime contract in "
-                "v1; forcing dynamic=False.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            dynamic = False
+            # back to the original canvas (ADR 0006). The batch axis is static
+            # (dynamic is forced off) and backends schedule one image per run,
+            # so a batch != 1 artifact could never be fed correctly.
+            if batch != 1:
+                raise ValueError(
+                    "Depth export uses a fixed-resolution, batch-1 runtime "
+                    f"contract in v1; got batch={batch}."
+                )
+            if dynamic:
+                warnings.warn(
+                    "Depth export uses a fixed-resolution runtime contract in "
+                    "v1; forcing dynamic=False.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                dynamic = False
         if (
             getattr(self.model, "task", "detect") == "restore"
             and dynamic

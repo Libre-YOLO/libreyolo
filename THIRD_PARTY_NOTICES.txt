@@ -386,6 +386,7 @@ Giant) are for non-commercial use only. The offline conversion path
 ZipDepth (University of Bologna)
 --------------------------------------------------------------------
 Source: https://github.com/fabiotosi92/ZipDepth
+        (commit 6b96f4d205f8a2e5377e81c1b74cc99a47f6693a)
 License: MIT
 Copyright (c) 2026 Fabio Tosi.
 Citation: Tosi, F., Bartolomei, L., Poggi, M., and Mattoccia, S.

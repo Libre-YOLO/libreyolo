@@ -7,9 +7,10 @@ The network architecture in this directory (nn.py) is ported from the official
 ZipDepth implementation:
 
     https://github.com/fabiotosi92/ZipDepth
+    at commit 6b96f4d205f8a2e5377e81c1b74cc99a47f6693a.
     Fabio Tosi, Luca Bartolomei, Matteo Poggi, Stefano Mattoccia
     (University of Bologna), ECCV 2026.
-    License: MIT.
+    License: MIT. Copyright (c) 2026 Fabio Tosi.
 
 Module and attribute names mirror upstream so official checkpoints load
 unchanged; the LibreYOLO wrapper (model.py, utils.py) is original LibreYOLO
