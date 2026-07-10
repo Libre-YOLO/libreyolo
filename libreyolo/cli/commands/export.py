@@ -19,7 +19,7 @@ def export_cmd(
     model: str = typer.Option(..., help="Model weights (.pt)"),
     format: str = typer.Option(
         "onnx",
-        help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite, coreml",
+        help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite (alias: litert), coreml",
     ),
     imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
     batch: int = typer.Option(1, help="Export batch size"),
@@ -60,10 +60,12 @@ def export_cmd(
     """Export a model to a deployment format."""
     out = OutputHandler(json_mode=json_output, quiet=quiet)
 
-    # Resolve format alias
+    # Resolve format aliases (engine -> tensorrt, litert -> tflite) so JSON
+    # output and messages always report the canonical format name.
+    from libreyolo.export.exporter import BaseExporter
+
     fmt = format.lower()
-    if fmt == "engine":
-        fmt = "tensorrt"
+    fmt = BaseExporter._aliases.get(fmt, fmt)
 
     if half and int8:
         out.warning("Both half and int8 were requested. Using INT8 precision.")

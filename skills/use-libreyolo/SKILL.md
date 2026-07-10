@@ -37,7 +37,8 @@ libreyolo checks      # verify install, CUDA/MPS, and optional export backends
 
 The base install is lightweight. Some features need **optional extras** —
 install them as `libreyolo[extra]` (or `libreyolo[all]`). Available extras:
-`onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite`, `coreml`,
+`onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite` (alias
+`litert`; LiteRT is TensorFlow Lite's new name), `coreml`,
 `tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `openvocab`, `clip`, `label`,
 `plots`, `lora`, `tensorboard`, `mlflow`, `wandb`, `all`. `libreyolo checks`
 reports which are present.

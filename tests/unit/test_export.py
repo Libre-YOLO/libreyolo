@@ -938,6 +938,12 @@ class TestExporterValidation:
             )
             assert Path(path).exists()
 
+    def test_litert_alias_resolves_to_tflite(self):
+        wrapper = _make_wrapper()
+        exporter = BaseExporter.create("litert", wrapper)
+        assert exporter.format_name == "tflite"
+        assert exporter.suffix == ".tflite"
+
 
 class TestOutputPathGeneration:
     def test_auto_path_torchscript(self):
