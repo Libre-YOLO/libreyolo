@@ -159,7 +159,8 @@ as the source of truth. By tier:
   and the classic lineage: YOLO1/2/3/4 (inference-only; YOLO1 is the original
   2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
   recipe).
-- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
+- **Specialized:** L2CS (gaze), DepthAnything3 (recommended depth quality
+  default), DepthAnythingV2 and ZipDepth (depth alternatives), FOMO (point),
   NAFNet (restore: deblur/denoise; denoise ships as
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
   super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the

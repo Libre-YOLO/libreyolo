@@ -79,6 +79,17 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+Depth Anything 3 (Apache License 2.0)
+    Path:    libreyolo/models/depth_anything3/_vendor/
+    License: libreyolo/models/depth_anything3/NOTICE
+    Source:  https://github.com/ByteDance-Seed/Depth-Anything-3
+    Commit:  41736238f5bced4debf3f2a12375d2466874866d
+
+    The DA3MONO-LARGE ViT-L encoder and DPT head are adapted from ByteDance
+    Seed's Apache-2.0 implementation. DINOv2 subcomponents retain Meta
+    Platforms Apache-2.0 headers. Package-relative imports and dependency-free
+    tensor reshapes do not alter learned parameters or monocular outputs.
+
 NAFNet (MIT License)
     Path:    libreyolo/models/nafnet/
     License: libreyolo/models/nafnet/NOTICE  (MIT)
