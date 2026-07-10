@@ -220,6 +220,9 @@ class TrainConfig:
 class YOLOXConfig(TrainConfig):
     """YOLOX-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     momentum: float = 0.9
     warmup_epochs: int = 5
     warmup_lr_start: float = 0.0
@@ -240,9 +243,9 @@ class YOLOv7Config(YOLOXConfig):
     v7 is anchor-based but trains through the YOLOX-style pipeline (SimOTA
     assignment + mosaic/mixup), so this subclasses :class:`YOLOXConfig` and
     overrides only the real differences: v5/v7-lineage momentum, a shorter
-    warmup, slower EMA, and ``sync_bn=True`` because v7 is a BatchNorm-heavy
-    pure CNN (same rationale as :class:`YOLO9Config`, issue #484: per-rank BN
-    stats measurably degrade the converged model under DDP).
+    warmup, and slower EMA. ``sync_bn=True`` is inherited from
+    :class:`YOLOXConfig` (v7 is a BatchNorm-heavy pure CNN, same rationale
+    as :class:`YOLO9Config`, issue #484).
 
     Note: unlike YOLOX, the final no-aug epochs run without an L1 refinement
     stage — the v7 SimOTA loss has no raw-offset L1 branch.
@@ -253,7 +256,6 @@ class YOLOv7Config(YOLOXConfig):
     momentum: float = 0.937
     warmup_epochs: int = 3
     ema_decay: float = 0.9999
-    sync_bn: bool = True
 
 
 @dataclass(kw_only=True)
@@ -794,6 +796,9 @@ class ECPoseConfig(ECConfig):
 class YOLONASConfig(TrainConfig):
     """YOLO-NAS-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 5e-4
     momentum: float = 0.9
@@ -884,6 +889,9 @@ class PICODETConfig(TrainConfig):
     (skill §6: aim for fine-tune parity, not paper parity).
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "sgd"
     lr0: float = 0.1
     momentum: float = 0.9
@@ -932,6 +940,9 @@ class RTMDetConfig(TrainConfig):
     are not validated yet.
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 0.004
     momentum: float = 0.9  # unused for adamw; kept for TrainConfig compatibility
@@ -961,6 +972,9 @@ class RTMDetConfig(TrainConfig):
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adam"
     lr0: float = 3e-4
     weight_decay: float = 0.0

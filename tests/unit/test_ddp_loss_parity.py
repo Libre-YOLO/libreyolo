@@ -294,6 +294,111 @@ def test_yolo9_ddp_gradient_matches_single_gpu_all_background(tmp_path):
     )
 
 
+# =============================================================================
+# YOLOX parity: local num_fg was the last per-rank normalizer in the SimOTA
+# lineage. yolox/nn.py now reduces it via all_reduce_avg_scalar; this test
+# pins the same single-GPU equivalence the yolo9 tests pin above.
+# =============================================================================
+
+
+def _build_yolox():
+    """Deterministic yolox-t on CPU, train mode, BN frozen (same rationale as
+    ``_build_yolo9``: BN in train mode couples the samples for reasons
+    unrelated to the loss-normalizer math under test)."""
+    from libreyolo import LibreYOLOX
+
+    torch.manual_seed(0)
+    wrapper = LibreYOLOX(None, size="t", device="cpu")
+    model = wrapper.model
+    model.train()
+    _freeze_batchnorm(model)
+    return model
+
+
+def _yolox_global_batch():
+    """Fixed 2-sample batch with [cls, cx, cy, w, h] pixel-space targets (the
+    YOLOX label format). Deterministic so sample ``r`` is byte-identical in the
+    reference run and in rank ``r``'s worker."""
+    g = torch.Generator().manual_seed(1234)
+    imgs = torch.rand(2, 3, 320, 320, generator=g)
+    targets = torch.zeros(2, 8, 5)
+    targets[0, 0] = torch.tensor([0.0, 80.0, 90.0, 60.0, 80.0])
+    targets[0, 1] = torch.tensor([1.0, 200.0, 160.0, 100.0, 120.0])
+    targets[1, 0] = torch.tensor([2.0, 120.0, 100.0, 90.0, 70.0])
+    return imgs, targets
+
+
+def _reference_grad_yolox() -> torch.Tensor:
+    model = _build_yolox()
+    imgs, targets = _yolox_global_batch()
+    out = model(imgs, targets)
+    model.zero_grad(set_to_none=True)
+    out["total_loss"].backward()
+    return _flat_grad(model)
+
+
+def _yolox_parity_worker(rank: int, world_size: int, port: int, out_dir: str) -> None:
+    out_path = Path(out_dir) / f"rank_{rank}.txt"
+    try:
+        _setup_pg(rank, world_size, port)
+
+        from libreyolo.training.distributed import scale_loss_for_ddp, unwrap_model
+
+        model = _build_yolox()
+        ddp_model = nn.parallel.DistributedDataParallel(model)
+
+        imgs, targets = _yolox_global_batch()
+        out = ddp_model(imgs[rank : rank + 1], targets[rank : rank + 1])
+        loss = out["total_loss"]
+        if not torch.isfinite(loss):
+            raise RuntimeError(f"non-finite loss on rank {rank}: {loss.item()}")
+        loss = scale_loss_for_ddp(loss)
+        model.zero_grad(set_to_none=True)
+        loss.backward()
+
+        flat = _flat_grad(unwrap_model(ddp_model))
+        if rank == 0:
+            torch.save(flat, Path(out_dir) / "ddp_grad.pt")
+        dist.barrier()
+        out_path.write_text(f"ok grad_norm={float(flat.norm().item()):.6f}\n")
+    except Exception as exc:
+        out_path.write_text(f"error: {type(exc).__name__}: {exc}\n")
+        raise
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 8),
+    reason="mp.spawn on Windows needs Python 3.8+",
+)
+def test_yolox_ddp_gradient_matches_single_gpu(tmp_path):
+    """2-rank DDP gradient must match single-GPU on the same global batch.
+    Regresses if yolox's ``num_fg`` goes back to a per-rank ``max(num_fg, 1)``:
+    the norm-ratio band may still pass, but the elementwise check fails."""
+    ref = _reference_grad_yolox()
+
+    outputs = _spawn_and_check(_yolox_parity_worker, n_ranks=2, tmp_path=tmp_path)
+    for rank, text in outputs.items():
+        assert text.startswith("ok "), f"rank {rank} did not finish ok: {text!r}"
+
+    ddp = torch.load(tmp_path / "ddp_grad.pt", weights_only=False)
+
+    ref_norm = float(ref.norm().item())
+    ddp_norm = float(ddp.norm().item())
+    ratio = ddp_norm / max(ref_norm, 1e-12)
+
+    assert 0.9 < ratio < 1.1, (
+        f"DDP gradient norm is {ratio:.3f}x the single-GPU gradient "
+        f"(ref={ref_norm:.4f}, ddp={ddp_norm:.4f})."
+    )
+    assert torch.allclose(ddp, ref, rtol=2e-3, atol=1e-5), (
+        "DDP gradient diverged from single-GPU beyond fp tolerance: "
+        f"max_abs_diff={float((ddp - ref).abs().max().item()):.3e}"
+    )
+
+
 def _helper_value_worker(rank: int, world_size: int, port: int, out_dir: str) -> None:
     """Exercise ``all_reduce_avg_scalar`` itself under a real process group —
     including the non-tensor + ``device=`` form RT-DETR uses, which no other

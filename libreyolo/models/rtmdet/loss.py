@@ -27,6 +27,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...training.distributed import all_reduce_avg_scalar
+
 
 _EPS = 1.0e-7
 
@@ -507,7 +509,12 @@ class RTMDetLoss(nn.Module):
 
         bg_class_ind = self.num_classes
         pos_inds = ((labels >= 0) & (labels < bg_class_ind)).nonzero().squeeze(1)
-        avg_factor = max(float(assign_metrics.sum().item()), 1.0)
+        # Global (DDP-reduced) soft positive mass, mirroring upstream mmdet's
+        # ``reduce_mean`` on the cls avg_factor: dividing by the global factor
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``max(sum, 1)`` outside DDP.
+        avg_factor = all_reduce_avg_scalar(assign_metrics.sum())
 
         loss_cls = self.loss_cls(
             cls_preds, (labels, assign_metrics), avg_factor=avg_factor

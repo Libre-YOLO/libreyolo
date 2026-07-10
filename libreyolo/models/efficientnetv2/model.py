@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from ...training.ddp_spawn import ddp_aware
 from ...training.callbacks import TrainCallbacks
 from ...postprocess.efficientnetv2 import postprocess as _effv2_postprocess
 from ...utils.image_loader import ImageInput
@@ -179,6 +180,7 @@ class LibreEfficientNetV2(BaseModel):
 
     # ---- training --------------------------------------------------------
 
+    @ddp_aware()
     def train(
         self,
         data: str,
