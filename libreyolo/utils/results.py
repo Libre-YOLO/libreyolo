@@ -487,12 +487,11 @@ class PanopticSegmentation(_TensorPayload):
     on the producer (a model's ``_postprocess_predictions`` /
     ``PanopticValidator``), not on downstream consumers.
 
-    SCAFFOLD (issue #555): this defines the API contract only. No model family
-    populates a :class:`Results` ``panoptic`` slot yet, and no drawing/summary
-    path consumes it. A family with panoptic weights (e.g. ``eomt``) plugs its
-    panoptic postprocess in by constructing this payload; :class:`Results.plot`
-    and :meth:`Results.summary` panoptic rendering are follow-up work. The
-    matching evaluation plug point is ``PanopticValidator`` (Panoptic Quality).
+    ``predict`` populates this slot whenever a model family's ``_postprocess``
+    returns a ``panoptic`` segment-id map plus ``segments_info``; evaluation is
+    ``PanopticValidator`` (Panoptic Quality) over a ``PanopticDataset``.
+    NOTE (issue #555): :class:`Results.plot` and :meth:`Results.summary` do not
+    render panoptic output yet.
     """
 
     IGNORE_INDEX = 0  # COCO panoptic convention: segment id 0 is unlabeled/void.

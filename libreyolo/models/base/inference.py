@@ -51,6 +51,7 @@ from ...utils.results import (
     Masks,
     Matte,
     OBB,
+    PanopticSegmentation,
     Points,
     Probs,
     Results,
@@ -674,6 +675,27 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 semantic_mask=SemanticMask(semantic_t.long(), (orig_h, orig_w)),
+            )
+
+        # Panoptic: a dense non-overlapping segment-id map plus segments_info.
+        panoptic_data = detections.get("panoptic")
+        if panoptic_data is not None:
+            orig_w, orig_h = original_size
+            panoptic_t = (
+                panoptic_data
+                if isinstance(panoptic_data, torch.Tensor)
+                else torch.as_tensor(panoptic_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                panoptic=PanopticSegmentation(
+                    panoptic_t.long(),
+                    detections.get("segments_info") or [],
+                    (orig_h, orig_w),
+                ),
             )
 
         # Depth: a dense relative inverse-depth map, no boxes.
