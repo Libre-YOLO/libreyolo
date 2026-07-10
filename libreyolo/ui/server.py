@@ -121,6 +121,34 @@ def _result_count(result) -> int:
     return 0
 
 
+def _resolve_download_url(name: str) -> str | None:
+    """Resolve the Hugging Face download URL the app would use for a model name,
+    or None if no model class can build one. Mirrors the real download path."""
+    from libreyolo.cli.config import resolve_model_name
+    from libreyolo.models import try_ensure_rfdetr
+    from libreyolo.models.base.model import BaseModel
+
+    filename = Path(resolve_model_name(name)).name
+    classes = list(BaseModel._registry)
+    rf = try_ensure_rfdetr()
+    if rf is not None and rf not in classes:
+        classes.append(rf)
+    for cls in classes:
+        try:
+            url = cls.get_download_url(filename)
+        except Exception:
+            url = None
+        if url:
+            return url
+    return None
+
+
+# HTTP statuses that mean "this weight is definitively not there" (grey it out).
+# Anything else, including timeouts/connection errors, is treated as available so
+# a network hiccup never disables a model that actually works.
+_UNAVAILABLE_STATUSES = frozenset({400, 401, 403, 404, 410})
+
+
 def _load_banner_font(image_font, size: int):
     for font_name in ("arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
         try:
@@ -227,6 +255,51 @@ class _UIState:
         self._used_upload_names: set[str] = set()
         self.run_dir: Path | None = None
         self._input_dir = Path(tempfile.mkdtemp(prefix="libreyolo-ui-"))
+        self._availability: dict[str, bool] | None = None
+        self._avail_lock = threading.Lock()
+
+    def model_availability(self) -> dict[str, bool]:
+        """Map each CLI model name to whether its weights are downloadable.
+
+        A model is unavailable when no download URL can be built or the URL
+        returns a definitive not-there status. Checked once (in parallel) and
+        cached for the life of the server; network errors count as available.
+        """
+        with self._avail_lock:
+            if self._availability is not None:
+                return self._availability
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        import requests
+
+        from libreyolo.cli.config import get_all_cli_names
+
+        def check(name: str) -> tuple[str, bool]:
+            url = _resolve_download_url(name)
+            if not url:
+                return name, False
+            try:
+                resp = requests.get(
+                    url,
+                    stream=True,
+                    headers={"Range": "bytes=0-0"},
+                    timeout=8,
+                    allow_redirects=True,
+                )
+                code = resp.status_code
+                resp.close()
+                return name, code not in _UNAVAILABLE_STATUSES
+            except Exception:
+                return name, True
+
+        names = get_all_cli_names()
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            result = dict(pool.map(check, names))
+
+        with self._avail_lock:
+            self._availability = result
+        return result
 
     def _get_model(self, name: str):
         model = self._models.get(name)
@@ -365,8 +438,14 @@ class _Handler(BaseHTTPRequestHandler):
             from libreyolo.cli.config import get_all_cli_names
 
             names = sorted(get_all_cli_names())
-            default = "yolo9-t" if "yolo9-t" in names else (names[0] if names else "")
-            self._send(200, {"models": names, "default": default})
+            avail = self.state.model_availability()
+            unavailable = [n for n in names if not avail.get(n, True)]
+            usable = [n for n in names if avail.get(n, True)]
+            default = "yolo9-t" if "yolo9-t" in usable else (usable[0] if usable else "")
+            self._send(
+                200,
+                {"models": names, "unavailable": unavailable, "default": default},
+            )
         elif path == "/api/sample":
             sample = (
                 Path(__file__).resolve().parents[1]

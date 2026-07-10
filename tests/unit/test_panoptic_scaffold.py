@@ -1,9 +1,8 @@
-"""Tests for the panoptic-segmentation task scaffolding (issue #555).
+"""Tests for the panoptic-segmentation task surface (issue #555).
 
-These cover the API surface only: task registration, the PanopticSegmentation
-result payload, and that PanopticValidator is importable/dispatchable but its
-metric hooks are still unimplemented. The PQ metric and COCO-panoptic loader
-are intentionally not tested here because they are not implemented yet.
+Task registration, the PanopticSegmentation result payload, and the
+PanopticValidator's wiring and loud-failure paths. The PQ metric itself is
+covered in test_panoptic_quality.py and the loader in test_panoptic_dataset.py.
 """
 
 import numpy as np
@@ -104,7 +103,10 @@ def test_results_panoptic_slot_roundtrips():
     assert result[0].panoptic.data.shape == (3, 3)
 
 
-def test_panoptic_validator_importable_but_unimplemented():
+def test_panoptic_validator_computes_pq():
+    """The validator is no longer a stub: its metric hooks accumulate PQ."""
+    import numpy as np
+
     from libreyolo.validation import PanopticValidator, ValidationConfig
 
     assert PanopticValidator.task == "panoptic"
@@ -115,11 +117,37 @@ def test_panoptic_validator_importable_but_unimplemented():
 
     config = ValidationConfig(data="dummy.yaml", device="cpu")
     validator = PanopticValidator(model=_StubModel(), config=config)
-    # Every metric hook is scaffolding and must fail loudly until implemented.
-    with pytest.raises(NotImplementedError):
-        validator._init_metrics()
-    with pytest.raises(NotImplementedError):
-        validator._compute_metrics()
+
+    validator._init_metrics()
+    perfect = np.ones((2, 2), dtype=np.int64)
+    validator._pq.update(
+        perfect,
+        [{"id": 1, "category_id": 0, "iscrowd": 0}],
+        perfect,
+        [{"id": 1, "category_id": 0}],
+    )
+    metrics = validator._compute_metrics()
+    assert metrics["metrics/PQ"] == 1.0
+    assert metrics["fitness"] == 1.0
+
+
+def test_panoptic_postprocess_without_family_support_fails_loudly():
+    """A family that does not implement panoptic must not silently score zero."""
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+
+    class _NoPanopticModel:
+        task = "panoptic"
+        nb_classes = 133
+
+        def _postprocess(self, *args, **kwargs):
+            return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
+
+    validator = PanopticValidator(
+        model=_NoPanopticModel(), config=ValidationConfig(data="d.yaml", device="cpu")
+    )
+    validator._original_size = (4, 4)
+    with pytest.raises(ValueError, match="panoptic"):
+        validator._postprocess_predictions(preds=None, batch=None)
 
 
 def test_panoptic_validator_exported_from_package():
@@ -127,3 +155,34 @@ def test_panoptic_validator_exported_from_package():
 
     assert hasattr(libreyolo, "PanopticValidator")
     assert hasattr(libreyolo, "PanopticSegmentation")
+
+
+def test_empty_thing_class_ids_still_enforces_agreement(monkeypatch, tmp_path):
+    """`thing_class_ids = set()` means 'all stuff', not 'no opinion'.
+
+    A falsy guard would skip the check and quietly mis-split PQ_things/PQ_stuff.
+    """
+    import pytest as _pytest
+
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+    from libreyolo.validation import panoptic_validator as pv
+
+    class _AllStuffModel:
+        task = "panoptic"
+        nb_classes = 2
+        thing_class_ids: set = set()
+
+    class _Dataset:
+        nc = 2
+        thing_train_ids = {0}  # dataset says category 0 IS a thing
+        names = {0: "person", 1: "sky"}
+
+    monkeypatch.setattr(pv, "resolve_panoptic_data", lambda *a, **k: {})
+    monkeypatch.setattr(pv, "PanopticDataset", lambda *a, **k: _Dataset())
+
+    validator = PanopticValidator(
+        model=_AllStuffModel(),
+        config=ValidationConfig(data=str(tmp_path / "d.yaml"), device="cpu"),
+    )
+    with _pytest.raises(ValueError, match="thing_class_ids"):
+        validator._setup_dataloader()

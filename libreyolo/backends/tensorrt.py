@@ -424,6 +424,13 @@ class TensorRTBackend(BaseBackend):
                         orig_shape=orig_shape,
                         image_path=image_path,
                     )
+                elif self.task == "depth":
+                    result = self._build_depth_result(
+                        per_image,
+                        orig_shape=orig_shape,
+                        original_size=orig_size,
+                        image_path=image_path,
+                    )
                 else:
                     parsed = self._parse_outputs(
                         per_image,

@@ -109,36 +109,80 @@ Canonical loader: `libreyolo.data.SemanticDataset`.
 
 ## panoptic
 
-> SCAFFOLD (issue #555): the `panoptic` task is registered and its validator is
-> wired, but the dataset loader below is **not implemented yet**. This section
-> is the contract a contributor implements against; there is no canonical
-> `PanopticDataset` on disk yet.
+Panoptic segmentation pairs each image with a dense segment-id map and a
+per-image list describing each segment. LibreYOLO adopts the **COCO-panoptic
+format** verbatim (`Panoptic Segmentation`, Kirillov et al., CVPR 2019); no
+LibreYOLO-specific panoptic format exists, and none is needed.
 
-Panoptic segmentation pairs each image with a dense single-channel segment-id
-map and a per-image list describing each segment. The intended contract follows
-the COCO-panoptic format:
+### Segment-id PNG
 
-- A PNG per image whose pixel value (or RGB-encoded value) is a **segment id**.
-  Every pixel belongs to exactly one segment; there is no overlap.
-- A JSON `segments_info` list, one entry per segment id present in the image:
-  `{"id": int, "category_id": int, "iscrowd": 0|1, "area": int}`. `category_id`
-  indexes the dataset `names`.
+One RGB PNG per image, same resolution as the image, where each pixel's colour
+encodes the id of the segment it belongs to:
 
-thing-vs-stuff is a **per-category** property, not a per-segment one: as in
-COCO-panoptic, GT `segments_info` entries do **not** carry an `isthing` field;
-the split lives on the category metadata (each category is a "thing" or
-"stuff"). The prediction result payload
-(`libreyolo.utils.results.PanopticSegmentation`) uses the same convention and
-may optionally denormalize `isthing` onto each predicted segment for
-convenience. Deriving thing/stuff from `category_id` is therefore the
-producer's responsibility (the model's `_postprocess_predictions` and
-`PanopticValidator`), so the two surfaces stay consistent.
+```text
+segment_id = R + 256 * G + 256 * 256 * B
+```
 
-Validation uses Panoptic Quality (PQ = SQ x RQ), matching predicted to
-ground-truth segments of the same category at IoU > 0.5. See
-`libreyolo/validation/panoptic_validator.py` for the metric plug points.
+Every pixel belongs to exactly one segment; segments never overlap. Segment id
+`0` (RGB black) is **VOID**: unlabeled pixels, excluded from the metric.
 
-Canonical loader: *(to be added — `libreyolo.data.PanopticDataset`)*.
+### Annotations JSON
+
+```json
+{
+  "images":      [{"id": 139, "file_name": "000000000139.jpg", ...}],
+  "annotations": [{"image_id": 139, "file_name": "000000000139.png",
+                   "segments_info": [
+                     {"id": 3226956, "category_id": 1, "area": 2840,
+                      "bbox": [413, 158, 53, 138], "iscrowd": 0}]}],
+  "categories":  [{"id": 1, "name": "person", "isthing": 1, "supercategory": "person"}]
+}
+```
+
+- `annotations[].file_name` names the segment-id PNG inside `panoptic_dir`.
+- `segments_info[].id` matches a value in the PNG.
+- `iscrowd` marks group regions: they are never false negatives, and a
+  prediction mostly covering one is not a false positive.
+- **thing-vs-stuff is a per-category property.** `isthing` lives on
+  `categories`, never on `segments_info`. The prediction payload
+  (`libreyolo.utils.results.PanopticSegmentation`) may denormalize `isthing`
+  onto each predicted segment for convenience; the category metadata stays the
+  source of truth.
+
+### Class ids
+
+COCO-panoptic `category_id`s are the dataset's raw ids and are typically
+non-contiguous (COCO runs 1..200 with gaps). LibreYOLO models predict
+contiguous `0..nc-1`. Raw ids are remapped through the YAML `names` **by
+category name**, the same rule the native COCO-JSON detect loader follows: when
+`names` is present, it defines the label ids. A JSON category absent from
+`names` is an error, not a silent drop, because it would otherwise score as a
+permanent false negative.
+
+### YAML
+
+```yaml
+path: coco
+val: images/val2017
+annotations:
+  val: annotations/panoptic_val2017.json
+panoptic_dir:
+  val: annotations/panoptic_val2017   # the segment-id PNGs
+names: {0: person, 1: bicycle, ..., 132: rug-merged}
+```
+
+`annotations` and `panoptic_dir` accept either a single path or a per-split
+mapping.
+
+### Validation
+
+Panoptic Quality (`PQ = SQ x RQ`), computed at the ground-truth resolution and
+averaged over the categories that appear, then split into `PQ_things` /
+`PQ_stuff`. Matching is unique: a predicted and a ground-truth segment of the
+same category match iff IoU > 0.5. See
+`libreyolo/validation/panoptic_quality.py`.
+
+Canonical loader: `libreyolo.data.PanopticDataset`.
 
 ## depth
 

@@ -386,6 +386,32 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+ZipDepth (University of Bologna)
+--------------------------------------------------------------------
+Source: https://github.com/fabiotosi92/ZipDepth
+        (commit 6b96f4d205f8a2e5377e81c1b74cc99a47f6693a)
+License: MIT
+Copyright (c) 2026 Fabio Tosi.
+Citation: Tosi, F., Bartolomei, L., Poggi, M., and Mattoccia, S.
+          "ZipDepth: Bringing Lightweight Zero-Shot Monocular Depth
+          Anywhere, on Any Device." ECCV 2026.
+Used for: ZipDepth depth model family (libreyolo/models/zipdepth/).
+          The architecture (nn.py) is ported from upstream with
+          identical module names; the LibreYOLO wrapper adds the
+          depth-task contract, checkpoint schema, zero-shot val, and
+          fixed-resolution export metadata.
+
+NOTE - weights: The upstream repository publishes the pretrained
+checkpoints (zipdepth_base.pth, zipdepth_base_npu.pth) under the same
+MIT license; LibreYOLO mirrors byte-identical rewraps on its Hugging
+Face org (LibreYOLO/LibreZipDepth{b,bnpu}-depth). Upstream trained
+these weights by distilling pseudo-labels from Depth Anything V2 Large
+(itself CC-BY-NC-4.0) over ~14M images from 17 public datasets; the MIT
+grant on the student weights is upstream's published position, and the
+distillation lineage is documented in
+libreyolo/models/zipdepth/NOTICE.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet

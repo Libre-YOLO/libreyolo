@@ -29,6 +29,9 @@ LibreYOLO is MIT. That only stays true if every contribution is clean:
 
 ## Before opening a PR
 
+- Base your PR on `dev`, not `release`. `dev` is the integration branch where
+  all development lands; `release` only receives curated release merges. GitHub
+  may default a new PR's base to `release`, so double-check the base is `dev`.
 - For anything non-trivial, open an issue before submitting a PR so we can
   agree on the approach before review time is spent.
 - PRs must link to an issue (for anything non-trivial)

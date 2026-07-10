@@ -38,6 +38,11 @@ from .restore_dataset import (
     resolve_restore_data,
     restore_collate_fn,
 )
+from .panoptic_dataset import (
+    PanopticDataset,
+    panoptic_collate_fn,
+    resolve_panoptic_data,
+)
 from .semantic_dataset import (
     SemanticDataset,
     img2mask_paths,
@@ -94,6 +99,9 @@ __all__ = [
     "resolve_restore_data",
     "restore_collate_fn",
     "SemanticDataset",
+    "PanopticDataset",
+    "panoptic_collate_fn",
+    "resolve_panoptic_data",
     "img2mask_paths",
     "resolve_semantic_data",
     "semantic_collate_fn",

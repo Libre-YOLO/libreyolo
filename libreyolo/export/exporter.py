@@ -289,11 +289,24 @@ class BaseExporter(ABC):
                 "models."
             )
         if task == "depth":
-            raise NotImplementedError(
-                "Export for depth models is not implemented yet. "
-                "Add a depth-aware export/runtime contract (dense float "
-                "output plus backend parsing) before exporting depth models."
-            )
+            # Depth export uses the fixed-resolution dense contract: backends
+            # stretch-resize to the exported canvas and resize the depth map
+            # back to the original canvas (ADR 0006). The batch axis is static
+            # (dynamic is forced off) and backends schedule one image per run,
+            # so a batch != 1 artifact could never be fed correctly.
+            if batch != 1:
+                raise ValueError(
+                    "Depth export uses a fixed-resolution, batch-1 runtime "
+                    f"contract in v1; got batch={batch}."
+                )
+            if dynamic:
+                warnings.warn(
+                    "Depth export uses a fixed-resolution runtime contract in "
+                    "v1; forcing dynamic=False.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                dynamic = False
         if (
             getattr(self.model, "task", "detect") == "restore"
             and dynamic
@@ -512,6 +525,13 @@ class BaseExporter(ABC):
                 raise ValueError(
                     "NAFNet export imgsz must be divisible by the network "
                     f"downsample factor {padder_size}, got {imgsz}."
+                )
+        if getattr(self.model, "task", "detect") == "depth":
+            divisor = int(getattr(self.model, "depth_imgsz_divisor", 1) or 1)
+            if imgsz[0] % divisor or imgsz[1] % divisor:
+                raise ValueError(
+                    "Depth export imgsz must be divisible by the network "
+                    f"stride {divisor}, got {imgsz}."
                 )
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(

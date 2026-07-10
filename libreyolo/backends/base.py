@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -36,7 +37,16 @@ from ..utils.general import (
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
 from ..utils.predict_args import normalize_predict_kwargs
-from ..utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results, RestoredImage
+from ..utils.results import (
+    Boxes,
+    DepthMap,
+    Keypoints,
+    Masks,
+    OBB,
+    Probs,
+    Results,
+    RestoredImage,
+)
 from ..utils.video import collect_video_results, is_video_file, run_video_inference
 
 logger = logging.getLogger(__name__)
@@ -389,6 +399,8 @@ class BaseBackend(ABC):
             if self.model_family == "realesrgan":
                 return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
+        if self.task == "depth":
+            return self._preprocess_depth(image, effective_imgsz, color_format)
         if self.task == "classify":
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.model_family == "yolox":
@@ -525,6 +537,27 @@ class BaseBackend(ABC):
             arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
         img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
         return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_depth(image, input_size, color_format):
+        """Depth preprocessing for fixed-shape exported runtimes.
+
+        Native depth prediction keeps the aspect ratio (short side to the
+        model's native resolution). Exported runtimes use a fixed graph shape,
+        so backend prediction stretch-resizes to the exported canvas and the
+        depth map is resized back to the original canvas after inference
+        (ADR 0006). Padding is deliberately avoided: padded pixels would leak
+        fake depth context into real pixels through the receptive field.
+        """
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.uint8)
+        resized = cv2.resize(arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
+        chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+        img_tensor = torch.from_numpy(np.ascontiguousarray(chw)).unsqueeze(0)
+        return img_tensor, original_img, original_size, 1.0
 
     @property
     def restore_scale(self) -> int:
@@ -1943,6 +1976,46 @@ class BaseBackend(ABC):
             names=self.names,
         )
 
+    @staticmethod
+    def _parse_depth_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Decode backend depth output to an (H, W) float map on the original canvas."""
+        depth = np.asarray(all_outputs[0], dtype=np.float32)
+        if depth.ndim == 2:
+            depth = depth[None, None]
+        elif depth.ndim == 3:
+            depth = depth[:, None] if depth.shape[0] == 1 else depth[None]
+        if depth.ndim != 4 or depth.shape[1] != 1:
+            raise ValueError(
+                "Depth backend output must have shape [B, 1, H, W], "
+                f"got {tuple(np.asarray(all_outputs[0]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        depth_t = torch.from_numpy(np.ascontiguousarray(depth))
+        # align_corners=True matches the native depth families' postprocess.
+        depth_t = F.interpolate(
+            depth_t, size=(orig_h, orig_w), mode="bilinear", align_corners=True
+        )
+        return depth_t[0, 0]
+
+    def _build_depth_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        depth = self._parse_depth_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            depth_map=DepthMap(depth, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
     def _build_restore_result(
         self,
         all_outputs,
@@ -2099,6 +2172,13 @@ class BaseBackend(ABC):
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
             annotated_img = Image.fromarray(result.restored.array, mode="RGB")
+        elif result.boxes is None and getattr(result, "depth_map", None) is not None:
+            from ..utils.drawing import draw_depth_map
+
+            depth_data = result.depth_map.data
+            if isinstance(depth_data, torch.Tensor):
+                depth_data = depth_data.cpu().numpy()
+            annotated_img = draw_depth_map(original_img, depth_data)
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2293,6 +2373,8 @@ class BaseBackend(ABC):
                 orig_w, orig_h = original_size
                 restored = restored[:, :, :orig_h, :orig_w]
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
+        if self.task == "depth":
+            return {"depth": self._parse_depth_output(outputs, original_size)}
         parsed = self._parse_outputs(
             outputs,
             effective_imgsz,
@@ -2464,6 +2546,21 @@ class BaseBackend(ABC):
             return result
         if self.task == "restore":
             result = self._build_restore_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "depth":
+            result = self._build_depth_result(
                 all_outputs,
                 orig_shape=orig_shape,
                 original_size=original_size,
@@ -2690,6 +2787,13 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     image_path=image_path,
                 )
+            elif self.task == "depth":
+                result = self._build_depth_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
             else:
                 parsed = self._parse_outputs(
                     per_image,
@@ -2865,6 +2969,13 @@ class BaseBackend(ABC):
                 )
             if self.task == "restore":
                 return self._build_restore_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "depth":
+                return self._build_depth_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,

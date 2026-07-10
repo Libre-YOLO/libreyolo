@@ -258,9 +258,17 @@ INDEX_HTML = r"""<!DOCTYPE html>
   fetch("/api/models").then(function (r) { return r.json(); }).then(function (j) {
     var sel = $("model");
     sel.innerHTML = "";
+    var unavailable = {};
+    (j.unavailable || []).forEach(function (m) { unavailable[m] = true; });
     (j.models || []).forEach(function (m) {
       var o = document.createElement("option");
-      o.value = m; o.textContent = m;
+      o.value = m;
+      if (unavailable[m]) {
+        o.textContent = m + "  (no weights)";
+        o.disabled = true;  // greyed out, not selectable
+      } else {
+        o.textContent = m;
+      }
       if (m === j.default) o.selected = true;
       sel.appendChild(o);
     });
