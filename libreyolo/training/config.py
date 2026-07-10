@@ -882,16 +882,23 @@ class PICODETConfig(TrainConfig):
     LibreYOLO v1 cut: SGD + cosine + hflip + ImageNet normalise. Multi-scale
     resize and PhotoMetricDistortion are deferred to a follow-up commit
     (skill §6: aim for fine-tune parity, not paper parity).
+
+    lr0 note (issue #566): Bo's 0.4 is the total LR at total batch 512
+    (4 GPUs x 128 samples), i.e. ~7.8e-4 per image. Copying 0.1 unscaled at
+    the default batch 16 is ~8x that per image and demonstrably destroys a
+    COCO-pretrained model within a few epochs (coco128 fine-tune: 0.40 ->
+    0.14 mAP at 0.1 vs 0.40 -> 0.49 at 0.01). 0.01 matches the upstream
+    per-image rate at the default batch.
     """
 
     optimizer: str = "sgd"
-    lr0: float = 0.1
+    lr0: float = 0.01
     momentum: float = 0.9
     weight_decay: float = 4e-5
 
     scheduler: str = "cos"
     warmup_epochs: int = 1
-    warmup_lr_start: float = 0.01
+    warmup_lr_start: float = 0.001
     no_aug_epochs: int = 0
     min_lr_ratio: float = 0.0
 

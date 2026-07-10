@@ -102,3 +102,34 @@ def test_iou_pairwise_correct():
     assert iou.shape == (2, 1)
     assert abs(iou[0, 0].item() - 1.0) < 1e-6
     assert abs(iou[1, 0].item() - 25 / 100) < 1e-6
+
+
+def test_loss_accepts_fp16_predictions():
+    """Under AMP the head emits fp16 while GT boxes stay fp32; the VFL target
+    scatter used to crash with 'Index put requires ... Half/Float' and the
+    pixel-space GIoU could overflow fp16. The loss now promotes its inputs to
+    fp32 (issue #566)."""
+    from libreyolo.models.picodet.loss import PICODETLoss
+
+    torch.manual_seed(0)
+    loss_fn = PICODETLoss(num_classes=3, reg_max=7, strides=(8, 16, 32, 64))
+    sizes = [(40, 40), (20, 20), (10, 10), (5, 5)]
+    cls_scores = [torch.randn(2, 3, h, w).half() for h, w in sizes]
+    bbox_preds = [torch.randn(2, 32, h, w).half() for h, w in sizes]
+    gt_boxes = [torch.tensor([[10.0, 10.0, 300.0, 300.0]]) for _ in range(2)]
+    gt_labels = [torch.tensor([1]) for _ in range(2)]
+
+    out = loss_fn(cls_scores, bbox_preds, gt_boxes, gt_labels)
+    assert torch.isfinite(out["total_loss"])
+    assert out["num_pos"] > 0
+
+
+def test_picodet_config_finetune_lr():
+    """lr0 must stay at the per-image-equivalent fine-tune rate. The old 0.1
+    default (upstream's total-batch-512 rate, unscaled) destroys a pretrained
+    model within epochs (issue #566)."""
+    from libreyolo.training.config import PICODETConfig
+
+    cfg = PICODETConfig()
+    assert cfg.lr0 == 0.01
+    assert cfg.warmup_lr_start <= cfg.lr0 * 0.2

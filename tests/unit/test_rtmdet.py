@@ -257,3 +257,38 @@ def test_assigner_handles_empty_gt():
     out = assigner(pred_bboxes, pred_scores, priors, gt_labels, gt_bboxes, pad_flag)
     # All priors should be background (label = num_classes)
     assert (out["assigned_labels"] == 80).all()
+
+
+def test_head_init_uses_focal_prior_bias():
+    """A fresh (or rebuilt) head must start with the mmdet focal prior on
+    rtm_cls so all priors score ~0.01, not ~0.5. Without it, the first QFL
+    batch after an nc rebuild produces a ~1e5x loss/gradient shock that
+    destroys the pretrained backbone (issue #566)."""
+    import math
+
+    from libreyolo.models.rtmdet.nn import LibreRTMDetModel
+
+    model = LibreRTMDetModel(size="t", nc=3)
+    expected = -math.log((1 - 0.01) / 0.01)
+    for conv in model.head.rtm_cls:
+        assert torch.allclose(conv.bias, torch.full_like(conv.bias, expected))
+        assert float(conv.weight.std()) < 0.05  # Normal(std=0.01), not kaiming
+
+
+def test_loss_finite_with_fp16_predictions_and_large_boxes():
+    """Loss math must run in fp32: pixel-space box areas overflow fp16
+    (640^2 >> 65504) and turned the GIoU term into NaN under AMP (issue #566)."""
+    from libreyolo.models.rtmdet.loss import RTMDetLoss
+
+    torch.manual_seed(0)
+    loss_fn = RTMDetLoss(num_classes=3, strides=(8, 16, 32))
+    sizes = [(80, 80), (40, 40), (20, 20)]
+    cls_scores = [torch.randn(2, 3, h, w).half() for h, w in sizes]
+    # Large positive distances so decoded boxes span most of a 640 canvas.
+    bbox_preds = [(torch.rand(2, 4, h, w) * 400 + 200).half() for h, w in sizes]
+    gt_boxes = [torch.tensor([[10.0, 10.0, 620.0, 620.0]]) for _ in range(2)]
+    gt_labels = [torch.tensor([1]) for _ in range(2)]
+
+    out = loss_fn(cls_scores, bbox_preds, gt_boxes, gt_labels)
+    assert torch.isfinite(out["total_loss"])
+    assert torch.isfinite(out["loss_bbox"])
