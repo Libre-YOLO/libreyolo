@@ -1,8 +1,7 @@
 """Authenticated end-to-end smoke coverage for SAM 3 image inference."""
 
-import os
-
 import pytest
+from huggingface_hub import get_token
 
 pytestmark = [
     pytest.mark.e2e,
@@ -13,9 +12,9 @@ pytestmark = [
 
 pytest.importorskip("transformers", reason="LibreSAM3 requires the 'sam' extra")
 
-if not os.environ.get("HF_TOKEN"):
+if get_token() is None:
     pytest.skip(
-        "SAM 3 is gated; accept its terms and set HF_TOKEN to run this smoke test",
+        "SAM 3 is gated; accept its terms and authenticate with Hugging Face",
         allow_module_level=True,
     )
 

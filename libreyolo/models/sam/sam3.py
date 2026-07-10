@@ -44,6 +44,7 @@ class LibreSAM3(LibreSAMModel):
     FILENAME_PREFIX = "LibreSAM3"
     HF_REPOS: ClassVar[Dict[str, str]] = {"large": _GATED_REPO}
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"large": 1008}
+    DEFAULT_PCS_SCORE_THRESH: ClassVar[float] = 0.3
     _LICENSE_NOTICE_SHOWN: ClassVar[bool] = False
     _LICENSE_NOTICE: ClassVar[str] = (
         "SAM 3 weights are provided by Meta under the custom SAM License, not "
@@ -76,7 +77,7 @@ class LibreSAM3(LibreSAMModel):
             from transformers import Sam3TrackerModel, Sam3TrackerProcessor
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
-        object.__setattr__(self, "_snapshot_dir", snapshot_dir)
+        self._snapshot_dir = snapshot_dir
         model = Sam3TrackerModel.from_pretrained(
             snapshot_dir, dtype=self._resolve_dtype()
         )
@@ -100,8 +101,9 @@ class LibreSAM3(LibreSAMModel):
 
     def _set_device(self, device: str) -> "LibreSAM3":
         super()._set_device(device)
-        if self._pcs_model is not None:
-            self._pcs_model.to(self.device)
+        pcs_model = getattr(self, "_pcs_model", None)
+        if pcs_model is not None:
+            pcs_model.to(self.device)
         return self
 
     def _move_embeddings(self, embeddings, device: torch.device):
@@ -146,9 +148,11 @@ class LibreSAM3(LibreSAMModel):
     ):
         """Segment with spatial prompts or find all instances matching ``text``.
 
-        On the text path, ``conf`` is the PCS detection score. On the visual
-        path it remains the predicted mask-IoU score. Text is mutually exclusive
-        with points, boxes, labels, masks, and segment-everything controls.
+        On the text path, ``conf`` is the PCS detection score; ``None`` uses
+        ``DEFAULT_PCS_SCORE_THRESH`` (0.3), while an explicit ``0.0`` keeps all
+        candidates. On the visual path it remains the predicted mask-IoU score.
+        Text is mutually exclusive with points, boxes, labels, masks, and
+        segment-everything controls.
         """
         if text is None:
             return super().predict(
@@ -187,13 +191,17 @@ class LibreSAM3(LibreSAMModel):
         target_sizes = inputs["original_sizes"].detach().cpu().tolist()
         processed = processor.post_process_instance_segmentation(
             outputs,
+            # Keep candidates here so the shared Results assembly owns both
+            # the default/explicit threshold semantics and max_det ordering.
             threshold=0.0,
             mask_threshold=0.5,
             target_sizes=target_sizes,
         )[0]
         result_masks = torch.as_tensor(processed["masks"]).detach().cpu().bool()
         scores = torch.as_tensor(processed["scores"]).detach().cpu().float()
-        conf_thres = 0.0 if conf is None else float(conf)
+        conf_thres = (
+            self.DEFAULT_PCS_SCORE_THRESH if conf is None else float(conf)
+        )
         return self._assemble_results(
             result_masks,
             scores,

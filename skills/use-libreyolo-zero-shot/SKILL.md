@@ -102,8 +102,9 @@ model.reset_image()
   lazily loads a second model instance and therefore raises peak RAM/VRAM.
 - `text=` returns every instance matching the concept and cannot be combined
   with points or boxes. Its `conf` is a PCS detection score; visual-prompt
-  `conf` remains predicted mask IoU. Image exemplars are reserved but not yet
-  implemented.
+  `conf` remains predicted mask IoU. Text prompts default to `conf=0.3`; pass
+  `conf=0.0` explicitly to keep all candidates. Image exemplars are reserved
+  but not yet implemented.
 - Interactive loops: always `set_image` once, then prompt; re-passing the
   image per predict re-encodes and dominates latency.
 - Prompt coordinates are pixels on the original image. Multiple points with

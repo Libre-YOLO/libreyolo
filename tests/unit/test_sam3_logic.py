@@ -76,6 +76,7 @@ def test_aliases_resolve_to_sam3_without_download():
 def test_sam3_repo_and_input_frame_are_per_size():
     assert LibreSAM3.HF_REPOS == {"large": "facebook/sam3"}
     assert LibreSAM3.INPUT_SIZES == {"large": 1008}
+    assert LibreSAM3.DEFAULT_PCS_SCORE_THRESH == 0.3
     assert "*.pt" in LibreSAM3.SNAPSHOT_IGNORE_PATTERNS
 
 
@@ -116,6 +117,19 @@ def test_text_path_filters_by_score_caps_and_sets_concept_name():
     assert float(result.boxes.conf[0]) == pytest.approx(0.9)
     assert result.names == {0: "person"}
     assert model.names == {0: "object"}
+
+
+def test_text_path_default_score_threshold_and_explicit_keep_all():
+    model = _bare_sam3()
+    image = Image.new("RGB", (10, 8))
+
+    default = model.predict(image, text="person")
+    keep_all = model.predict(image, text="person", conf=0.0)
+
+    assert [float(score) for score in default.boxes.conf] == pytest.approx([0.9, 0.7])
+    assert [float(score) for score in keep_all.boxes.conf] == pytest.approx(
+        [0.2, 0.9, 0.7]
+    )
 
 
 def test_lazy_loader_instantiates_pcs_once(monkeypatch):

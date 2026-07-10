@@ -98,8 +98,10 @@ r.boxes.xyxy      # tight boxes derived from masks
   Its `text=` extension instead performs Promptable Concept Segmentation through
   a lazily loaded `Sam3Model`; text is mutually exclusive with points and boxes.
   `conf` is the PCS detection score on this path, and returned `names` maps class
-  `0` to the requested concept. A text call with `source=None` re-encodes the
-  cached image because tracker and PCS encoder caches are not shared.
+  `0` to the requested concept. `conf=None` uses the processor's standard 0.3
+  PCS score threshold, while explicit `conf=0.0` keeps all candidates. A text
+  call with `source=None` re-encodes the cached image because tracker and PCS
+  encoder caches are not shared.
 - The image-exemplar name `exemplars=` is reserved for a future PCS extension;
   exemplar prompts are not implemented.
 
