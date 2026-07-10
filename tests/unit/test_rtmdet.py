@@ -163,6 +163,16 @@ def test_train_gated_without_allow_experimental():
         m.train(data="coco128.yaml", epochs=1)
 
 
+def test_config_docstring_matches_experimental_training_status():
+    """RTMDet config docs should not claim training is unimplemented."""
+    from libreyolo.training.config import RTMDetConfig
+
+    doc = RTMDetConfig.__doc__ or ""
+    assert "implemented but experimental" in doc
+    assert "NOT yet implemented" not in doc
+    assert "NotImplementedError" not in doc
+
+
 def test_trainer_filters_targets_by_width_and_height():
     """Zero-height boxes are padding/invalid; cy=0 is still a valid coordinate."""
     from libreyolo.models.rtmdet.trainer import RTMDetTrainer

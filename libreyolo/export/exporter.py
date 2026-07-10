@@ -540,6 +540,16 @@ class BaseExporter(ABC):
                     "Depth export imgsz must be divisible by the network "
                     f"stride {divisor}, got {imgsz}."
                 )
+        if model_name == "rfdetr":
+            from ..models.rfdetr.imgsz import resolve_patch_window, validate_imgsz
+
+            patch_size, num_windows = resolve_patch_window(self.model.model)
+            imgsz = validate_imgsz(
+                imgsz,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                name="RF-DETR export imgsz",
+            )
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "
