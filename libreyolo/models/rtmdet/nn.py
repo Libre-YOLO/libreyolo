@@ -723,6 +723,9 @@ class RTMDetInsSepBNHead(nn.Module):
                 kernel_feat = layer(kernel_feat)
 
             cls_scores.append(self.rtm_cls[idx](cls_feat))
+            # Unlike the separate detection head, the official RTMDet-Ins
+            # head uses relu(raw) * stride for every size, including m/l/x.
+            # The exp_on_reg entries in _SIZE_CONFIG apply only to detection.
             bbox_preds.append(F.relu(self.rtm_reg[idx](reg_feat)) * self.strides[idx])
             kernel_preds.append(self.rtm_kernel[idx](kernel_feat))
 

@@ -51,6 +51,14 @@ def test_rtmdet_ins_forward_shapes_and_tower_aliasing():
     assert mask_feat.shape == (1, 8, 8, 8)
 
 
+@pytest.mark.parametrize("size", ["t", "s", "m", "l", "x"])
+def test_rtmdet_ins_all_sizes_use_upstream_relu_box_decode(size):
+    """RTMDet-Ins never uses detection's m/l/x exponential box decode."""
+    model = LibreRTMDetModel(size=size, nc=1, enable_mask_head=True)
+    assert isinstance(model.head, RTMDetInsSepBNHead)
+    assert not hasattr(model.head, "exp_on_reg")
+
+
 def test_rtmdet_ins_postprocess_decodes_masks_after_nms():
     cls = tuple(torch.full((1, 1, size, size), -20.0) for size in (2, 1, 1))
     reg = tuple(torch.full((1, 4, size, size), 4.0) for size in (2, 1, 1))
