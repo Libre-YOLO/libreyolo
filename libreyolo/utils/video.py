@@ -307,6 +307,7 @@ def run_video_inference(
 
     from .drawing import (
         draw_boxes,
+        draw_depth_map,
         draw_keypoints,
         draw_masks,
         draw_matte,
@@ -380,6 +381,14 @@ def run_video_inference(
                         # cannot carry an alpha channel, so the transparency is
                         # visualized instead).
                         annotated_pil = draw_matte(pil_img, result.matte.array)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "depth_map", None) is not None
+                    ):
+                        depth_np = result.depth_map.data
+                        if isinstance(depth_np, torch.Tensor):
+                            depth_np = depth_np.cpu().numpy()
+                        annotated_pil = draw_depth_map(pil_img, depth_np)
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:

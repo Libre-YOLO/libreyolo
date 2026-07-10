@@ -230,11 +230,18 @@ def export_onnx(
     is_classify = task == "classify"
     is_restore = task == "restore"
     is_matte = task == "matte"
+    is_depth = task == "depth"
     known_detr_detection = _uses_dfine_style_export_wrapper(
         model_family
     )
     num_outputs = None
-    if not is_seg and not known_detr_detection and not is_restore and not is_matte:
+    if (
+        not is_seg
+        and not known_detr_detection
+        and not is_restore
+        and not is_matte
+        and not is_depth
+    ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
 
@@ -269,6 +276,13 @@ def export_onnx(
         output_names = ["matte"]
         dynamic_axes = (
             {"images": {0: "batch"}, "matte": {0: "batch"}} if dynamic else None
+        )
+    elif is_depth:
+        # Dense relative inverse-depth map (B, 1, H, W) at the export canvas;
+        # backends resize it back to the original image canvas (ADR 0006).
+        output_names = ["depth"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "depth": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_pose:
         output_names = ["predictions", "keypoints"]
