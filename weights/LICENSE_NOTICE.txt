@@ -48,12 +48,12 @@ project the weights were derived from. Per-family summary:
              upstream: lyuwenyu/RT-DETR
              (backbone: PaddlePaddle/PaddleClas ResNet_vd, Apache-2.0)
 
-    EoMT     (LibreEoMT{s,b,l}-sem, LibreEoMT{s,b,l}-seg,   MIT
-              LibreEoMTl-seg-1280, LibreEoMT{s,b}-panoptic)
+    EoMT     (LibreEoMTl-sem, LibreEoMTl-seg,          MIT
+              LibreEoMTl-seg-1280, LibreEoMT{s,b,l}-panoptic)
              upstream: tue-mps/eomt
              (backbone: facebookresearch/dinov2, Apache-2.0)
-             Panoptic checkpoints are converted and loaded with task=segment
-             (133 COCO things+stuff classes); LibreYOLO has no panoptic task.
+             Panoptic checkpoints load as first-class task="panoptic"
+             (133 COCO classes: 80 things + 53 stuff).
 
     MobileNetV4 (LibreMobileNetV4{s,m,l}-cls)          Apache-2.0
              upstream: huggingface/pytorch-image-models (timm), ImageNet-1k

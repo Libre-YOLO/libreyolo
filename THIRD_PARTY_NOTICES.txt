@@ -249,13 +249,13 @@ Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
 Citation: Kerssies, T., Cavagnero, N., Hermans, A., Norouzi, N.,
           Averta, G., Leibe, B., Dubbelman, G., and de Geus, D.
           "Your ViT is Secretly an Image Segmentation Model." CVPR 2025.
-Used for: LibreEoMT semantic and instance segmentation family
+Used for: LibreEoMT semantic, instance, and panoptic segmentation family
           (libreyolo/models/eomt/). Runtime execution uses the Apache-2.0
           Hugging Face Transformers EoMT implementation with converted
-          MIT-licensed DINOv2 EoMT weights, sizes s/b/l:
+          MIT-licensed DINOv2 EoMT weights:
             - ADE20K 150-class semantic (l, 512px)
-            - COCO 80-class instance segmentation (s/b/l, 640px; l also 1280px)
-            - COCO 133-class panoptic, loaded as task=segment (s/b, 640px)
+            - COCO 80-class instance segmentation (l, 640px and 1280px)
+            - COCO 133-class panoptic, task="panoptic" (s/b/l, 640px)
 
 NOTE - code vs. weights: LibreYOLO ships only DINOv2-based EoMT checkpoints.
 DINOv3 EoMT variants are excluded because they depend on gated

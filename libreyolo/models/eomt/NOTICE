@@ -1,8 +1,8 @@
 LibreEoMT third-party notice
 ============================
 
-LibreEoMT integrates EoMT (Encoder-only Mask Transformer) for semantic and
-instance segmentation.
+LibreEoMT integrates EoMT (Encoder-only Mask Transformer) for semantic,
+instance, and panoptic segmentation.
 
 Upstream:
   Source: https://github.com/tue-mps/eomt
@@ -22,12 +22,14 @@ Backbone:
 Weights (all MIT licensed by upstream):
   Semantic (ADE20K 150-class, 512px, size l):
     tue-mps/ade20k_semantic_eomt_large_512
-  Instance segmentation (COCO 80-class, 640px, sizes s/b/l; l also 1280px):
-    tue-mps/coco_instance_eomt_{small,base,large}_640
+  Instance segmentation (COCO 80-class, size l at 640px and 1280px; upstream
+  ships no DINOv2 instance checkpoints at s/b):
+    tue-mps/coco_instance_eomt_large_640
     tue-mps/coco_instance_eomt_large_1280
-  Panoptic (COCO 133-class things+stuff, 640px, sizes s/b), converted and
-  loaded with task=segment since LibreYOLO has no panoptic task:
+  Panoptic (COCO 133-class, 80 things + 53 stuff, 640px, sizes s/b/l),
+  first-class task="panoptic" checkpoints carrying thing_class_ids metadata:
     tue-mps/coco_panoptic_eomt_{small,base}_640_2x
+    tue-mps/coco_panoptic_eomt_large_640
 
   ADE20K and COCO are research datasets; users remain responsible for
   dataset-license compliance when validating or fine-tuning.

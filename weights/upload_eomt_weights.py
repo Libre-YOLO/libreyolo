@@ -1,13 +1,16 @@
 """Upload LibreEoMT weights to the LibreYOLO HuggingFace organisation.
 
 Creates each repo if it does not exist yet, then uploads the local .pt file.
-All 7 EoMT checkpoints are covered (semantic, instance-segment, and panoptic).
+All 6 published EoMT checkpoints are covered (semantic, instance-segment, and
+panoptic). LibreEoMTs-seg / LibreEoMTb-seg are deliberately absent: upstream
+ships no DINOv2 instance checkpoints at s/b, and lossy things-only slices of
+the panoptic head are not published. Use the true s/b panoptic checkpoints.
 
 Usage::
 
     python weights/upload_eomt_weights.py --dry-run      # verify local files, no upload
     HF_TOKEN=... python weights/upload_eomt_weights.py   # create repos + upload all
-    HF_TOKEN=... python weights/upload_eomt_weights.py --weights weights/LibreEoMTb-seg.pt
+    HF_TOKEN=... python weights/upload_eomt_weights.py --weights weights/LibreEoMTb-panoptic.pt
 """
 
 from __future__ import annotations
@@ -26,37 +29,32 @@ WEIGHTS = [
     {
         "filename": "LibreEoMTl-sem.pt",
         "repo":     "LibreEoMTl-sem",
-        "desc":     "EoMT-L — ADE20K 150-class semantic segmentation, 512 px",
-    },
-    {
-        "filename": "LibreEoMTs-seg.pt",
-        "repo":     "LibreEoMTs-seg",
-        "desc":     "EoMT-S — COCO 80-class instance segmentation, 640 px",
-    },
-    {
-        "filename": "LibreEoMTb-seg.pt",
-        "repo":     "LibreEoMTb-seg",
-        "desc":     "EoMT-B — COCO 80-class instance segmentation, 640 px",
+        "desc":     "EoMT-L: ADE20K 150-class semantic segmentation, 512 px",
     },
     {
         "filename": "LibreEoMTl-seg.pt",
         "repo":     "LibreEoMTl-seg",
-        "desc":     "EoMT-L — COCO 80-class instance segmentation, 640 px",
+        "desc":     "EoMT-L: COCO 80-class instance segmentation, 640 px",
     },
     {
         "filename": "LibreEoMTl-seg-1280.pt",
         "repo":     "LibreEoMTl-seg-1280",
-        "desc":     "EoMT-L — COCO 80-class instance segmentation, 1280 px (high-res variant)",
+        "desc":     "EoMT-L: COCO 80-class instance segmentation, 1280 px (high-res variant)",
     },
     {
         "filename": "LibreEoMTs-panoptic.pt",
         "repo":     "LibreEoMTs-panoptic",
-        "desc":     "EoMT-S — COCO panoptic 133-class (80 things + 53 stuff), 640 px",
+        "desc":     "EoMT-S: COCO panoptic 133-class (80 things + 53 stuff), 640 px",
     },
     {
         "filename": "LibreEoMTb-panoptic.pt",
         "repo":     "LibreEoMTb-panoptic",
-        "desc":     "EoMT-B — COCO panoptic 133-class (80 things + 53 stuff), 640 px",
+        "desc":     "EoMT-B: COCO panoptic 133-class (80 things + 53 stuff), 640 px",
+    },
+    {
+        "filename": "LibreEoMTl-panoptic.pt",
+        "repo":     "LibreEoMTl-panoptic",
+        "desc":     "EoMT-L: COCO panoptic 133-class (80 things + 53 stuff), 640 px",
     },
 ]
 
