@@ -92,6 +92,11 @@ project the weights were derived from. Per-family summary:
              realesr-general-x4v3) are BSD-3-Clause; mirrored as converted
              checkpoints with provenance in the model cards.
 
+    SwinIR  (LibreSwinIR{s,m,l}-restore)               Apache-2.0
+             upstream: JingyunLiang/SwinIR
+             Official SwinIR-S x4 lightweight and SwinIR-M/L x4 real-world
+             checkpoints. Convert with weights/convert_swinir_weights.py.
+
     BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
              upstream: ZhengPeng7/BiRefNet (code MIT)
              l (general): Hugging Face weights tagged MIT -> rehosted under

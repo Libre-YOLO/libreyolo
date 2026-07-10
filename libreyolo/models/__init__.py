@@ -74,6 +74,7 @@ from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_l
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
+from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
@@ -662,6 +663,7 @@ __all__ = [
     "LibreNAFNet",
     "LibreBiRefNet",
     "LibreRealESRGAN",
+    "LibreSwinIR",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
