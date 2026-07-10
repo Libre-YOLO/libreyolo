@@ -68,6 +68,7 @@ file = name + ".pt"
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
+| ZipDepth | `LibreZipDepth` | `LibreZipDepthb-depth.pt` (MIT code + weights; `bnpu` is the NPU-decoder checkpoint) |
 | FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
 
 Never-upload families: **L2CS** (Gaze360 terms forbid redistribution) and any
@@ -184,6 +185,8 @@ LibreDINOv2l-cls.pt,
 
 LibreDepthAnythingV2s-depth.pt, LibreDepthAnythingV2b-depth.pt,
 LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
+
+LibreZipDepthb-depth.pt, LibreZipDepthbnpu-depth.pt,
 
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
