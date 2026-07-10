@@ -140,12 +140,21 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`, `matte`. Detection — plus **RF-DETR
-segmentation** — is the heavily-tested core; other task/family combinations
-vary in maturity, so check the README compatibility table before relying on
-one. Task outputs land on matching `Results` fields (`r.semantic_mask`,
-`r.depth_map`, `r.restored`, `r.points`, `r.matte`, …). Matte adds
-`r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
+`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`. Detection — plus
+**RF-DETR segmentation** — is the heavily-tested core; other task/family
+combinations vary in maturity, so check the README compatibility table before
+relying on one. Task outputs land on matching `Results` fields
+(`r.semantic_mask`, `r.depth_map`, `r.restored`, `r.points`, `r.matte`, …).
+Matte adds `r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
+
+OCR reads located text (zh/zh-TW/en/ja/pinyin with one model):
+
+```python
+model = LibreYOLO("LibrePPOCRl-ocr.pt")   # t = CPU tier, l = quality tier
+r = model("receipt.jpg")
+for poly, text, conf in zip(r.ocr.polygons, r.ocr.texts, r.ocr.conf):
+    print(text, float(conf))              # regions come in reading order
+```
 
 ## Models
 
@@ -164,7 +173,8 @@ as the source of truth. By tier:
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
   super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the
   input; big images via `predict(..., tile=512)`), BiRefNet (matte: background
-  removal, sizes t/l, fixed 1024), EoMT + PIDNet + DINOv2 (semantic).
+  removal, sizes t/l, fixed 1024), PPOCR (ocr: text detection + recognition,
+  sizes t/l), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`

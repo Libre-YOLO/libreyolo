@@ -285,6 +285,43 @@ The class-like YAML fields are schema placeholders: use `nc: 1` and
 Validation is inference-only in v1 (matte training/fine-tuning is a documented
 follow-up). Canonical pair resolver: `libreyolo.data.matte_dataset.resolve_matte_pairs`.
 
+## ocr
+
+OCR pairs each image with located text regions and their transcripts. Labels
+are one JSONL file per split, one JSON object per image:
+
+```text
+images/val/receipt.jpg -> labels/val.jsonl
+```
+
+```json
+{"image": "receipt.jpg", "regions": [{"polygon": [[10, 12], [118, 14], [117, 40], [9, 38]], "text": "TOTAL 12.50"}]}
+```
+
+OCR rules:
+
+- `polygon` is a 4-point quad `[[x, y] x 4]` in absolute pixel coordinates,
+  ordered top-left, top-right, bottom-right, bottom-left;
+- regions with unreadable text use `"text": "###"` (the ICDAR don't-care
+  convention): they are excluded from recognition scoring, and predictions
+  overlapping them are ignored (not penalized) in detection matching;
+- metrics are detection hmean (IoU > 0.5 one-to-one polygon matching),
+  end-to-end F1 (IoU > 0.5 AND exact transcript after NFKC normalization and
+  whitespace removal; case-sensitive), and 1-NED (normalized edit distance)
+  on matched pairs; best-checkpoint fitness is end-to-end F1.
+
+Two layouts are accepted:
+
+- **Directory**: a root containing `images/<split>/` and `labels/<split>.jsonl`.
+  Pass the root as `data=`.
+- **YAML**: `path` (root), plus optional `images` / `labels` directory names.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: text}`. OCR models expose `Results.ocr`, not detections.
+
+Validation is inference-only in v1 (OCR training is out of scope). Canonical
+sample resolver: `libreyolo.data.ocr_dataset.resolve_ocr_samples`.
+
 ## pose
 
 YAML adds:

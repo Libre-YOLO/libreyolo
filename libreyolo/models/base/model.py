@@ -777,6 +777,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support restoration models yet. "
                 "Use augment=False for restore models."
             )
+        if getattr(self, "task", "detect") == "ocr":
+            raise ValueError(
+                "Test-time augmentation does not support OCR models yet. "
+                "Use augment=False for OCR models."
+            )
 
         from PIL import Image as PILImage
         from ...utils.image_loader import ImageLoader
@@ -1065,6 +1070,10 @@ class BaseModel(ABC):
             raise NotImplementedError(
                 "Tracking does not support restoration models. Use predict()."
             )
+        if task == "ocr":
+            raise NotImplementedError(
+                "Tracking does not support OCR models yet. Use predict()."
+            )
 
         from ...tracking import (
             ByteTracker,
@@ -1220,6 +1229,7 @@ class BaseModel(ABC):
             DetectionValidator,
             MatteValidator,
             OBBValidator,
+            OCRValidator,
             PanopticValidator,
             PointValidator,
             PoseValidator,
@@ -1273,6 +1283,11 @@ class BaseModel(ABC):
                 "Augmented validation does not support matte models yet. "
                 "Use augment=False for matte models."
             )
+        if augment and self.task == "ocr":
+            raise ValueError(
+                "Augmented validation does not support OCR models yet. "
+                "Use augment=False for OCR models."
+            )
 
         config = ValidationConfig(
             data=data,
@@ -1314,6 +1329,8 @@ class BaseModel(ABC):
             validator_cls = RestoreValidator
         elif self.task == "matte":
             validator_cls = MatteValidator
+        elif self.task == "ocr":
+            validator_cls = OCRValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

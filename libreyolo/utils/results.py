@@ -698,6 +698,151 @@ class Matte(_TensorPayload):
         )
 
 
+class OCRRegions(_TensorPayload):
+    """Located text regions with transcripts for a single image.
+
+    ``data`` is an ``(N, 4, 2)`` float array of 4-point polygons in
+    original-image pixel coordinates, ordered top-left, top-right,
+    bottom-right, bottom-left per region. Regions are in reading order
+    (top to bottom, then left to right). ``texts`` is the list of N
+    transcripts; ``confidence`` is the per-region recognition score and
+    ``det_confidence`` the detection score, both ``(N,)`` float arrays.
+
+    Detection quads are genuine polygons (rotated text), so they do not
+    populate ``Results.boxes``; use :attr:`xyxy` for axis-aligned hulls.
+    """
+
+    def __init__(
+        self,
+        data: TensorLike,
+        texts: Optional[List[str]] = None,
+        confidence: TensorLike | None = None,
+        det_confidence: TensorLike | None = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        if isinstance(data, np.ndarray):
+            data = torch.as_tensor(data)
+        if data.numel() == 0:
+            data = data.reshape(0, 4, 2)
+        if data.ndim != 3 or data.shape[-2:] != (4, 2):
+            raise ValueError(
+                f"expected (N, 4, 2) OCR polygons but got shape {tuple(data.shape)}"
+            )
+        super().__init__(data, orig_shape)
+        n = int(data.shape[0])
+        self.texts: List[str] = list(texts) if texts is not None else [""] * n
+        if len(self.texts) != n:
+            raise ValueError(
+                f"expected {n} transcripts to match {n} polygons, got {len(self.texts)}"
+            )
+
+        def _as_scores(values):
+            if values is None:
+                if isinstance(data, torch.Tensor):
+                    return torch.zeros(n, dtype=torch.float32)
+                return np.zeros(n, dtype=np.float32)
+            if isinstance(values, torch.Tensor):
+                values = values.reshape(-1).float()
+            else:
+                values = np.asarray(values, dtype=np.float32).reshape(-1)
+            if int(values.shape[0]) != n:
+                raise ValueError(
+                    f"expected {n} scores to match {n} polygons, got {int(values.shape[0])}"
+                )
+            return values
+
+        self._conf = _as_scores(confidence)
+        self._det_conf = _as_scores(det_confidence)
+
+    @property
+    def polygons(self) -> TensorLike:
+        return self.data
+
+    @property
+    def conf(self) -> TensorLike:
+        return self._conf
+
+    @property
+    def det_conf(self) -> TensorLike:
+        return self._det_conf
+
+    @property
+    def xyxy(self) -> TensorLike:
+        """Axis-aligned bounding boxes of the polygons, ``(N, 4)``."""
+        polys = self.data
+        if isinstance(polys, torch.Tensor):
+            if len(self) == 0:
+                return torch.zeros((0, 4), dtype=torch.float32)
+            x = polys[..., 0]
+            y = polys[..., 1]
+            return torch.stack(
+                [
+                    x.min(dim=1).values,
+                    y.min(dim=1).values,
+                    x.max(dim=1).values,
+                    y.max(dim=1).values,
+                ],
+                dim=1,
+            )
+        if len(self) == 0:
+            return np.zeros((0, 4), dtype=np.float32)
+        x = polys[..., 0]
+        y = polys[..., 1]
+        return np.stack(
+            [x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1
+        )
+
+    # texts/scores are extra payload the base _TensorPayload moves (which
+    # rebuild via ``self.__class__(data, orig_shape)``) would drop. Override
+    # the move/slice methods to carry them through, mirroring
+    # PanopticSegmentation.segments_info.
+    def to(self, *args, **kwargs):
+        return self.__class__(
+            _move(self.data, *args, **kwargs),
+            self.texts,
+            _move(self._conf, *args, **kwargs),
+            _move(self._det_conf, *args, **kwargs),
+            self.orig_shape,
+        )
+
+    def cpu(self):
+        return self.__class__(
+            _cpu(self.data), self.texts, _cpu(self._conf), _cpu(self._det_conf), self.orig_shape
+        )
+
+    def cuda(self):
+        return self.__class__(
+            _cuda(self.data), self.texts, _cuda(self._conf), _cuda(self._det_conf), self.orig_shape
+        )
+
+    def numpy(self):
+        return self.__class__(
+            _numpy(self.data), self.texts, _numpy(self._conf), _numpy(self._det_conf), self.orig_shape
+        )
+
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            indices = [idx]
+        elif isinstance(idx, slice):
+            indices = list(range(len(self)))[idx]
+        else:
+            indices = [int(i) for i in np.atleast_1d(np.asarray(idx)).reshape(-1)]
+        return self.__class__(
+            _slice_first(self.data, idx) if isinstance(idx, int) else self.data[idx],
+            [self.texts[i] for i in indices],
+            self._conf[indices],
+            self._det_conf[indices],
+            self.orig_shape,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"OCRRegions(n={len(self)}, "
+            f"shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class OBB(_TensorPayload):
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
         if data.ndim == 1:
@@ -883,6 +1028,7 @@ class Results:
         "depth_map",
         "restored",
         "matte",
+        "ocr",
     )
 
     def __init__(
@@ -902,6 +1048,7 @@ class Results:
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
+        ocr: Optional[OCRRegions] = None,
         restore_scale: int = 1,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
@@ -919,6 +1066,8 @@ class Results:
             restored = RestoredImage(restored.data, orig_shape)
         if matte is not None and matte.orig_shape is None:
             matte = Matte(matte.data, orig_shape)
+        if ocr is not None and ocr.orig_shape is None:
+            ocr = OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -932,6 +1081,7 @@ class Results:
         self.depth_map = depth_map
         self.restored = restored
         self.matte = matte
+        self.ocr = ocr
         # Integer upscale factor of a restore/super-resolution result: the
         # restored canvas is ``restore_scale`` times the input. 1 for
         # deblur/denoise and every non-restore task.
@@ -960,6 +1110,7 @@ class Results:
             "depth_map": self.depth_map,
             "restored": self.restored,
             "matte": self.matte,
+            "ocr": self.ocr,
             "restore_scale": self.restore_scale,
             "speed": dict(self.speed),
             "track_id": self.track_id,
@@ -1017,6 +1168,7 @@ class Results:
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
+        ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
         track_id: Optional[TensorLike] = None,
     ) -> "Results":
@@ -1044,6 +1196,12 @@ class Results:
             self.restored = restored
         if matte is not None:
             self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+        if ocr is not None:
+            self.ocr = (
+                ocr
+                if ocr.orig_shape is not None
+                else OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape)
+            )
         if restore_scale is not None:
             self.restore_scale = int(restore_scale) if restore_scale else 1
         if track_id is not None:
@@ -1113,6 +1271,27 @@ class Results:
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
         if self.boxes is None:
+            if self.ocr is not None:
+                ocr_np = self.ocr.numpy()
+                h, w = self.orig_shape
+                rows = []
+                for i in range(len(ocr_np)):
+                    polygon = np.asarray(ocr_np.data[i], dtype=float)
+                    if normalize:
+                        polygon = polygon / np.array([w, h], dtype=float)
+                    rows.append(
+                        {
+                            "name": "text",
+                            "text": ocr_np.texts[i],
+                            "confidence": round(float(ocr_np.conf[i]), decimals),
+                            "det_confidence": round(float(ocr_np.det_conf[i]), decimals),
+                            "polygon": {
+                                "x": [round(float(x), decimals) for x in polygon[:, 0]],
+                                "y": [round(float(y), decimals) for y in polygon[:, 1]],
+                            },
+                        }
+                    )
+                return rows
             if self.points is not None:
                 points_np = self.points.numpy()
                 xy_values = points_np.xyn if normalize else points_np.xy
@@ -1271,6 +1450,8 @@ class Results:
             return 1
         if self.matte is not None:
             return 1
+        if self.ocr is not None:
+            return len(self.ocr)
         return 0
 
     def __repr__(self) -> str:
@@ -1295,6 +1476,8 @@ class Results:
                 parts.append(f"restore_scale={self.restore_scale}")
         if self.matte is not None:
             parts.append(f"matte={self.matte}")
+        if self.ocr is not None:
+            parts.append(f"ocr={self.ocr}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

@@ -98,6 +98,10 @@ def _summarize_result(result) -> tuple[str, str]:
     if getattr(result, "matte", None) is not None:
         return "matte", "alpha matte"
 
+    ocr = getattr(result, "ocr", None)
+    if ocr is not None:
+        return "ocr", _plural(len(ocr), "text region")
+
     gaze = getattr(result, "gaze", None)
     if gaze is not None:
         return "gaze", f"{len(gaze)} gaze"
@@ -117,6 +121,10 @@ def _result_count(result) -> int:
     points = getattr(result, "points", None)
     if points is not None:
         return int(len(points))
+
+    ocr = getattr(result, "ocr", None)
+    if ocr is not None:
+        return int(len(ocr))
 
     return 0
 

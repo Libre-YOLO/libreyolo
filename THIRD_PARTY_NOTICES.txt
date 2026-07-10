@@ -491,6 +491,29 @@ rehost the lite weights pending an explicit license confirmation. See
 weights/LICENSE_NOTICE.txt.
 
 --------------------------------------------------------------------
+PaddleOCR (PaddlePaddle)
+--------------------------------------------------------------------
+Source: https://github.com/PaddlePaddle/PaddleOCR (commit 211989f)
+License: Apache License 2.0
+Copyright (c) 2020 PaddlePaddle Authors.
+Citation: Cui, C., et al. "PaddleOCR 3.0 Technical Report."
+          arXiv:2507.05595, 2025.
+Used for: the LibrePPOCR text detection + recognition family
+          (libreyolo/models/ppocr/): the PP-LCNetV3 and PP-HGNetV2-B4
+          backbones, RSEFPN/LKPAN necks, DB heads, SVTR sequence
+          encoder, and CTC head are PyTorch ports of the PP-OCRv5
+          Paddle model definitions; the DB quad postprocess and CTC
+          greedy decode in libreyolo/postprocess/ppocr.py and the
+          det/rec preprocessing in libreyolo/models/ppocr/ follow the
+          upstream inference tools. The PP-OCRv5 recognition dictionary
+          (ppocr/utils/dict/ppocrv5_dict.txt) is embedded as charset
+          metadata in the converted checkpoints. Parity verified: on
+          identical input tensors our fp32 forward matches the official
+          PP-OCRv5 inference graphs with max_abs_diff <= 1e-4 (det maps)
+          and <= 6e-5 (rec probabilities, identical argmax) on both
+          tiers.
+
+--------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
 --------------------------------------------------------------------
 Source: https://github.com/huggingface/pytorch-image-models
