@@ -153,7 +153,12 @@ class GIoULoss(nn.Module):
         if avg_factor is None:
             loss = loss.mean()
         else:
-            loss = loss.sum() / max(avg_factor, 1.0)
+            # No clamp here: the caller passes an already-sanitized
+            # denominator (all_reduce_avg_scalar clamps the GLOBAL sum before
+            # dividing by world_size, so a legitimate value can be < 1 under
+            # DDP). Re-clamping to 1 would under-scale low-positive-mass
+            # multi-GPU batches by up to 1/world_size (issue #484).
+            loss = loss.sum() / avg_factor
         return self.loss_weight * loss
 
 
@@ -210,7 +215,9 @@ class QualityFocalLoss(nn.Module):
         if avg_factor is None:
             loss = loss.mean()
         else:
-            loss = loss.sum() / max(avg_factor, 1.0)
+            # No clamp here: see GIoULoss above — the caller's denominator is
+            # already sanitized and may legitimately be < 1 under DDP.
+            loss = loss.sum() / avg_factor
         return self.loss_weight * loss
 
 

@@ -399,6 +399,192 @@ def test_yolox_ddp_gradient_matches_single_gpu(tmp_path):
     )
 
 
+# =============================================================================
+# PicoDet / RTMDet parity: these families divide by an avg_factor computed
+# via all_reduce_avg_scalar, then hand it to loss helpers (VFL / QFL / GIoU).
+# A second max(avg_factor, 1) clamp inside those helpers silently destroys
+# the DDP scaling whenever the GLOBAL positive mass is below world_size —
+# the all-background cases here fail at exactly ratio 1/world_size if that
+# downstream clamp ever comes back.
+# =============================================================================
+
+
+def _sparse_gt_lists():
+    """Per-image GT lists: one box on sample 0, all-background on sample 1.
+
+    Exercises the positive-sparse DDP case where one rank contributes zero
+    positives (weight_sum reduction + used-parameter-set consistency)."""
+    return (
+        [torch.tensor([[60.0, 60.0, 140.0, 160.0]]), torch.zeros(0, 4)],
+        [torch.tensor([3]), torch.zeros(0, dtype=torch.long)],
+    )
+
+
+def _background_gt_lists():
+    """All-background GT lists: zero positive mass globally. The decisive
+    case for the downstream-clamp regression: global mass 0 gives a per-rank
+    normalizer of max(0, 1) / world_size = 0.5 < 1."""
+    return (
+        [torch.zeros(0, 4), torch.zeros(0, 4)],
+        [torch.zeros(0, dtype=torch.long), torch.zeros(0, dtype=torch.long)],
+    )
+
+
+def _build_picodet():
+    from libreyolo.models.picodet.loss import PICODETLoss
+    from libreyolo.models.picodet.model import LibrePICODET
+
+    torch.manual_seed(0)
+    wrapper = LibrePICODET(None, size="s", device="cpu")
+    model = wrapper.model
+    model.train()
+    _freeze_batchnorm(model)
+    head = model.head
+    loss_fn = PICODETLoss(
+        num_classes=getattr(head, "num_classes", 80),
+        reg_max=getattr(head, "reg_max", 7),
+        strides=tuple(getattr(head, "strides", (8, 16, 32, 64))),
+    )
+    return model, loss_fn
+
+
+def _build_rtmdet():
+    from libreyolo.models.rtmdet.loss import RTMDetLoss
+    from libreyolo.models.rtmdet.model import LibreRTMDet
+
+    torch.manual_seed(0)
+    wrapper = LibreRTMDet(None, size="t", device="cpu")
+    model = wrapper.model
+    model.train()
+    _freeze_batchnorm(model)
+    head = model.head
+    loss_fn = RTMDetLoss(
+        num_classes=getattr(head, "num_classes", 80),
+        strides=tuple(getattr(head, "strides", (8, 16, 32))),
+    )
+    return model, loss_fn
+
+
+_EXTERNAL_LOSS_BUILDERS = {
+    "picodet": _build_picodet,
+    "rtmdet": _build_rtmdet,
+}
+
+
+def _external_loss_total(model, loss_fn, imgs, gt_boxes, gt_labels):
+    """Same wiring as the family trainers' on_forward: raw model outputs into
+    the external loss module."""
+    cls_scores, bbox_preds = model(imgs)
+    out = loss_fn(cls_scores, bbox_preds, gt_boxes, gt_labels)
+    return out["total_loss"]
+
+
+def _external_imgs():
+    g = torch.Generator().manual_seed(1234)
+    return torch.rand(2, 3, 320, 320, generator=g)
+
+
+def _reference_grad_external(family: str, empty: bool) -> torch.Tensor:
+    model, loss_fn = _EXTERNAL_LOSS_BUILDERS[family]()
+    imgs = _external_imgs()
+    gt_boxes, gt_labels = _background_gt_lists() if empty else _sparse_gt_lists()
+    loss = _external_loss_total(model, loss_fn, imgs, gt_boxes, gt_labels)
+    model.zero_grad(set_to_none=True)
+    loss.backward()
+    return _flat_grad(model)
+
+
+def _external_parity_worker(
+    rank: int, world_size: int, port: int, out_dir: str, family: str, empty: bool
+) -> None:
+    out_path = Path(out_dir) / f"rank_{rank}.txt"
+    try:
+        _setup_pg(rank, world_size, port)
+
+        from libreyolo.training.distributed import scale_loss_for_ddp, unwrap_model
+
+        model, loss_fn = _EXTERNAL_LOSS_BUILDERS[family]()
+        ddp_model = nn.parallel.DistributedDataParallel(model)
+
+        imgs = _external_imgs()
+        gt_boxes, gt_labels = _background_gt_lists() if empty else _sparse_gt_lists()
+        loss = _external_loss_total(
+            ddp_model,
+            loss_fn,
+            imgs[rank : rank + 1],
+            gt_boxes[rank : rank + 1],
+            gt_labels[rank : rank + 1],
+        )
+        if not torch.isfinite(loss):
+            raise RuntimeError(f"non-finite loss on rank {rank}: {loss.item()}")
+        loss = scale_loss_for_ddp(loss)
+        model.zero_grad(set_to_none=True)
+        loss.backward()
+
+        flat = _flat_grad(unwrap_model(ddp_model))
+        if rank == 0:
+            torch.save(flat, Path(out_dir) / "ddp_grad.pt")
+        dist.barrier()
+        out_path.write_text(f"ok grad_norm={float(flat.norm().item()):.6f}\n")
+    except Exception as exc:
+        out_path.write_text(f"error: {type(exc).__name__}: {exc}\n")
+        raise
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+def _assert_external_parity(family: str, empty: bool, tmp_path) -> None:
+    ref = _reference_grad_external(family, empty)
+
+    outputs = _spawn_and_check(
+        _external_parity_worker, n_ranks=2, tmp_path=tmp_path, extra_args=(family, empty)
+    )
+    for rank, text in outputs.items():
+        assert text.startswith("ok "), f"rank {rank} did not finish ok: {text!r}"
+
+    ddp = torch.load(tmp_path / "ddp_grad.pt", weights_only=False)
+
+    ref_norm = float(ref.norm().item())
+    ddp_norm = float(ddp.norm().item())
+    ratio = ddp_norm / max(ref_norm, 1e-12)
+
+    assert 0.9 < ratio < 1.1, (
+        f"{family} DDP gradient norm is {ratio:.3f}x single-GPU "
+        f"(ref={ref_norm:.4f}, ddp={ddp_norm:.4f}). A ratio near "
+        f"1/world_size (0.5) means an avg_factor is re-clamped to 1 after "
+        f"all_reduce_avg_scalar already sanitized it."
+    )
+    assert torch.allclose(ddp, ref, rtol=2e-3, atol=1e-5), (
+        f"{family} DDP gradient diverged from single-GPU: "
+        f"max_abs_diff={float((ddp - ref).abs().max().item()):.3e}"
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 8),
+    reason="mp.spawn on Windows needs Python 3.8+",
+)
+@pytest.mark.parametrize("family", ["picodet", "rtmdet"])
+def test_external_loss_ddp_gradient_matches_single_gpu_sparse(family, tmp_path):
+    """Positive-sparse global batch: all positives live on rank 0, rank 1 is
+    all background. Checks global-normalizer parity plus DDP used-parameter
+    consistency on the background rank."""
+    _assert_external_parity(family, empty=False, tmp_path=tmp_path)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 8),
+    reason="mp.spawn on Windows needs Python 3.8+",
+)
+@pytest.mark.parametrize("family", ["picodet", "rtmdet"])
+def test_external_loss_ddp_gradient_matches_single_gpu_all_background(family, tmp_path):
+    """All-background global batch (global positive mass 0): the per-rank
+    normalizer is legitimately 0.5 < 1, which a downstream max(avg_factor, 1)
+    clamp destroys, under-scaling the gradient to exactly 1/world_size."""
+    _assert_external_parity(family, empty=True, tmp_path=tmp_path)
+
+
 def _helper_value_worker(rank: int, world_size: int, port: int, out_dir: str) -> None:
     """Exercise ``all_reduce_avg_scalar`` itself under a real process group —
     including the non-tensor + ``device=`` form RT-DETR uses, which no other

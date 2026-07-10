@@ -141,7 +141,12 @@ class VarifocalLoss(nn.Module):
         )
         if avg_factor is None:
             return self.loss_weight * loss.mean()
-        return self.loss_weight * loss.sum() / max(avg_factor, 1.0)
+        # No clamp here: the caller passes an already-sanitized denominator
+        # (all_reduce_avg_scalar clamps the GLOBAL sum before dividing by
+        # world_size, so a legitimate value can be < 1 under DDP). Re-clamping
+        # to 1 would under-scale sparse/all-background multi-GPU batches by
+        # up to 1/world_size (issue #484).
+        return self.loss_weight * loss.sum() / avg_factor
 
 
 class DistributionFocalLoss(nn.Module):
