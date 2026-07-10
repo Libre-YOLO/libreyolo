@@ -454,7 +454,12 @@ class RTMDetLoss(nn.Module):
         gt_labels_list: List[torch.Tensor],
     ) -> dict:
         device = cls_scores[0].device
-        dtype = cls_scores[0].dtype
+        # Loss math runs in fp32 regardless of autocast: fp16 pixel-space box
+        # areas overflow (640^2 >> fp16 max 65504), turning the GIoU term into
+        # NaN on the first batch (issue #566). mmdet keeps loss computation in
+        # fp32 for the same reason. Only these small flattened tensors are
+        # promoted; the model forward keeps its autocast dtype.
+        dtype = torch.float32
         batch_size = cls_scores[0].size(0)
 
         featmap_sizes = [tuple(c.shape[-2:]) for c in cls_scores]
@@ -464,11 +469,11 @@ class RTMDetLoss(nn.Module):
         flat_cls = torch.cat(
             [c.permute(0, 2, 3, 1).reshape(batch_size, -1, self.num_classes) for c in cls_scores],
             dim=1,
-        )
+        ).float()
         flat_dist = torch.cat(
             [r.permute(0, 2, 3, 1).reshape(batch_size, -1, 4) for r in bbox_preds],
             dim=1,
-        )
+        ).float()
         # Decode distances to xyxy boxes
         prior_xy = priors[:, :2]
         decoded_boxes = torch.stack(

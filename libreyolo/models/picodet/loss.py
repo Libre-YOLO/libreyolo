@@ -455,7 +455,12 @@ class PICODETLoss(nn.Module):
           GT edges in feature-space, clamped to ``reg_max - eps``.
         """
         device = cls_scores[0].device
-        dtype = cls_scores[0].dtype
+        # Loss math runs in fp32 regardless of autocast: fp16 pixel-space box
+        # areas overflow (640^2 >> fp16 max 65504, NaN GIoU) and the fp32 IoU
+        # scatter into an fp16 VFL target tensor is a dtype crash (issue #566).
+        # The model forward keeps its autocast dtype; only these small
+        # flattened tensors are promoted.
+        dtype = torch.float32
         feat_shapes = [(c.shape[-2], c.shape[-1]) for c in cls_scores]
 
         priors = _generate_priors(feat_shapes, self.strides, device, dtype)
@@ -468,11 +473,11 @@ class PICODETLoss(nn.Module):
         B = cls_scores[0].shape[0]
         cls_flat = torch.cat([
             cs.permute(0, 2, 3, 1).reshape(B, -1, self.num_classes) for cs in cls_scores
-        ], dim=1)
+        ], dim=1).float()
         bbox_flat = torch.cat([
             bp.permute(0, 2, 3, 1).reshape(B, -1, 4 * (self.reg_max + 1))
             for bp in bbox_preds
-        ], dim=1)
+        ], dim=1).float()
 
         decoded = self._batch_decode(bbox_flat, priors, strides_per_prior)
         cls_sigmoid = cls_flat.sigmoid()
