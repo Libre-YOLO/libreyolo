@@ -238,8 +238,12 @@ class SimOTAAssigner:
 
         # Assignment is no-grad bookkeeping. Keep raw BCE out of CUDA autocast:
         # PyTorch treats probability BCE as unsafe under AMP, while the actual
-        # trainable VFL path below already uses BCE-with-logits.
-        with torch.amp.autocast(valid_cls_pred.device.type, enabled=False):
+        # trainable VFL path below already uses BCE-with-logits. Hardcoding
+        # "cuda" matches the YOLOX/YOLOv7 SimOTA guards: BaseTrainer only ever
+        # enables autocast for CUDA, a disabled "cuda" context is host-safe on
+        # CPU/MPS, and device-generic device_type crashes on MPS with torch
+        # 2.4.x.
+        with torch.amp.autocast("cuda", enabled=False):
             gt_onehot = F.one_hot(
                 gt_labels.long(),
                 num_classes=cls_pred.shape[1],

@@ -176,3 +176,21 @@ def test_validator_suggests_adjacent_valid_sizes():
     """The shared message points users to nearby RF-DETR-valid square sizes."""
     with pytest.raises(ValueError, match="Use 544 or 576"):
         validate_imgsz(560, patch_size=16, num_windows=2)
+
+
+def test_validator_accepts_list_imgsz():
+    """CLI/config plumbing may hand a [h, w] list instead of a tuple."""
+    assert validate_imgsz([544, 576], patch_size=16, num_windows=2) == (544, 576)
+
+
+def test_resolve_patch_window_fallback_matches_detection_block():
+    """Models without the attrs (mocks, exotic wrappers) fall back to the
+    detection block of 32 (patch 16 x 2 windows), so real-world-valid sizes
+    such as 544 are never rejected by a guessed block of 64."""
+    from libreyolo.models.rfdetr.imgsz import resolve_patch_window
+
+    class _Bare:
+        pass
+
+    assert resolve_patch_window(_Bare()) == (16, 2)
+    validate_imgsz(544, patch_size=16, num_windows=2)

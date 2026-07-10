@@ -9,9 +9,14 @@ def resolve_patch_window(
     model: Any,
     *,
     default_patch_size: int = 16,
-    default_num_windows: int = 4,
+    default_num_windows: int = 2,
 ) -> tuple[int, int]:
-    """Return ``(patch_size, num_windows)`` from common wrapper shapes."""
+    """Return ``(patch_size, num_windows)`` from common wrapper shapes.
+
+    Real RF-DETR modules always expose ``patch_size``/``num_windows``; the
+    defaults only cover wrappers that hide them and mirror every detection
+    size config (patch 16 x 2 windows, block 32).
+    """
 
     candidates = []
     current = model
@@ -64,7 +69,7 @@ def _validate_one(
 
 
 def validate_imgsz(
-    imgsz: int | tuple[int, int],
+    imgsz: int | tuple[int, int] | list[int],
     *,
     patch_size: int,
     num_windows: int,
@@ -72,9 +77,9 @@ def validate_imgsz(
 ) -> int | tuple[int, int]:
     """Validate RF-DETR spatial divisibility and return normalized ints."""
 
-    if isinstance(imgsz, tuple):
+    if isinstance(imgsz, (tuple, list)):
         if len(imgsz) != 2:
-            raise ValueError(f"{name} tuple must be (height, width), got {imgsz}.")
+            raise ValueError(f"{name} must be (height, width), got {imgsz}.")
         h = _validate_one(
             imgsz[0],
             name=f"{name} height",

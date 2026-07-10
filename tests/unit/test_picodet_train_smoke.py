@@ -56,7 +56,11 @@ def test_simota_handles_empty_gt():
 
 
 def test_simota_bce_cost_disables_autocast(monkeypatch):
-    """Raw probability BCE must not run inside AMP autocast."""
+    """Raw probability BCE must not run inside CUDA AMP autocast.
+
+    Entering a "cuda" autocast context only flips thread-local state, so this
+    exercises the guard even on CUDA-less hosts.
+    """
     from libreyolo.models.picodet import loss as loss_module
 
     a = SimOTAAssigner()
@@ -75,15 +79,16 @@ def test_simota_bce_cost_disables_autocast(monkeypatch):
     real_bce = loss_module.F.binary_cross_entropy
 
     def wrapped_bce(*args, **kwargs):
-        seen["cpu_autocast"] = torch.is_autocast_enabled("cpu")
+        seen["cuda_autocast"] = torch.is_autocast_enabled("cuda")
         return real_bce(*args, **kwargs)
 
     monkeypatch.setattr(loss_module.F, "binary_cross_entropy", wrapped_bce)
 
-    with torch.amp.autocast("cpu"):
+    with torch.amp.autocast("cuda"):
+        assert torch.is_autocast_enabled("cuda")
         a.assign(priors, decoded, cls_pred, gt_boxes, gt_labels)
 
-    assert seen["cpu_autocast"] is False
+    assert seen["cuda_autocast"] is False
 
 
 def test_iou_pairwise_correct():
