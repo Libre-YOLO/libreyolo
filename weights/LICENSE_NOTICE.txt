@@ -104,6 +104,11 @@ project the weights were derived from. Per-family summary:
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
 
+    SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
+             upstream: facebook/sam3 on Hugging Face. Access is gated and
+             requires accepting Meta's terms. LibreYOLO downloads the weights
+             directly and does not distribute them under the MIT license.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
