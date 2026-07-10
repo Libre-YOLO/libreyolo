@@ -1,0 +1,32 @@
+ZipDepth family notice
+======================
+
+Code provenance
+---------------
+The network architecture in this directory (nn.py) is ported from the official
+ZipDepth implementation:
+
+    https://github.com/fabiotosi92/ZipDepth
+    Fabio Tosi, Luca Bartolomei, Matteo Poggi, Stefano Mattoccia
+    (University of Bologna), ECCV 2026.
+    License: MIT.
+
+Module and attribute names mirror upstream so official checkpoints load
+unchanged; the LibreYOLO wrapper (model.py, utils.py) is original LibreYOLO
+code (MIT).
+
+Weight provenance
+-----------------
+The LibreZipDepth checkpoints hosted under the LibreYOLO Hugging Face org are
+byte-identical rewraps (LibreYOLO checkpoint schema; tensors unchanged) of the
+official checkpoints shipped in the upstream repository
+(checkpoints/zipdepth_base.pth and checkpoints/zipdepth_base_npu.pth), which
+upstream publishes under the MIT license.
+
+Upstream trained these weights by distilling pseudo-labels produced by Depth
+Anything V2 Large (whose own weights are CC-BY-NC-4.0) over ~14M images from 17
+public datasets. The MIT licensing of the resulting student weights is
+upstream's published position (model outputs used as training labels are
+generally not treated as derivative works of the teacher's weights); LibreYOLO
+redistributes the checkpoints under that upstream MIT grant and documents the
+distillation lineage here for transparency.
