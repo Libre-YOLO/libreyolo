@@ -23,8 +23,8 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `eomt` and
-`pidnet` are semantic-only; the `mobilenetv4` / `convnext` /
+separate category, covered in the note below). Most are detectors; `pidnet` is semantic-only; `eomt` supports semantic,
+instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
@@ -48,7 +48,7 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `rtmdet`    | `LibreRTMDet`   | Upstream brand casing preserved (`RTMDet`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
-| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
+| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
@@ -131,7 +131,7 @@ ships:
 | `rtmdet`    | `t`, `s`, `m`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
-| `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
+| `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
@@ -215,8 +215,9 @@ canonical suffix is the full word `-panoptic` (not an abbreviation), so
 `LibreEoMTs-panoptic.pt` is a first-class panoptic checkpoint, not a `segment`
 checkpoint in disguise. Ground truth follows the COCO-panoptic format
 (`PanopticDataset`) and `model.val()` reports PQ / SQ / RQ split into things and
-stuff. NOTE (issue #555): the per-family panoptic postprocess is what a model
-family must still provide; a family without it raises from `_postprocess`.
+stuff. The per-family panoptic postprocess is what a model family provides (a
+family without it raises from `_postprocess`); the `eomt` family implements it
+as a Mask2Former-style non-overlapping thing+stuff merge.
 
 `depth` is the task for dense monocular depth estimation. Models expose
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
@@ -267,7 +268,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
-| `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
+| `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
@@ -329,8 +330,18 @@ LibreRFDETRn-obb.pt        # obb
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
 
-# eomt - EoMT-L semantic segmentation on ADE20K only
-LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
+# eomt - semantic (ADE20K), instance segmentation (COCO), and panoptic (COCO things+stuff)
+LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone, 512px
+LibreEoMTl-seg.pt          # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 640px
+LibreEoMTl-seg-1280.pt     # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 1280px
+LibreEoMTs-panoptic.pt     # EoMT-S, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+LibreEoMTb-panoptic.pt     # EoMT-B, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+LibreEoMTl-panoptic.pt     # EoMT-L, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+# NOTE: "-panoptic" is a first-class task suffix (see the task table above), so
+# these load with task="panoptic" and nc=133 (things 0-79, stuff 80-132).
+# Upstream ships no COCO *instance* checkpoint at s/b; those sizes are panoptic
+# only. Slicing a panoptic head down to the 80 things would discard the 53
+# stuff classes, so LibreYOLO does not publish LibreEoMT{s,b}-seg.
 
 # pidnet - real-time semantic segmentation
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
