@@ -24,6 +24,7 @@ from typing import Sequence, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # IMPORTANT: the mmdet RTMDet config sets ``norm_cfg=dict(type='SyncBN')`` and
 # does NOT pass ``momentum`` / ``eps``. SyncBN therefore uses PyTorch defaults,
@@ -207,7 +208,10 @@ class SPPBottleneck(nn.Module):
         mid_channels = in_channels // 2
         self.conv1 = ConvBNAct(in_channels, mid_channels, 1)
         self.poolings = nn.ModuleList(
-            [nn.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2) for ks in kernel_sizes]
+            [
+                nn.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2)
+                for ks in kernel_sizes
+            ]
         )
         conv2_channels = mid_channels * (len(kernel_sizes) + 1)
         self.conv2 = ConvBNAct(conv2_channels, out_channels, 1)
@@ -306,7 +310,9 @@ class CSPNeXtPAFPN(nn.Module):
         self.reduce_layers = nn.ModuleList()
         self.top_down_blocks = nn.ModuleList()
         for idx in range(n - 1, 0, -1):
-            self.reduce_layers.append(ConvBNAct(self.in_channels[idx], self.in_channels[idx - 1], 1))
+            self.reduce_layers.append(
+                ConvBNAct(self.in_channels[idx], self.in_channels[idx - 1], 1)
+            )
             self.top_down_blocks.append(
                 CSPLayer(
                     self.in_channels[idx - 1] * 2,
@@ -322,7 +328,11 @@ class CSPNeXtPAFPN(nn.Module):
         self.downsamples = nn.ModuleList()
         self.bottom_up_blocks = nn.ModuleList()
         for idx in range(n - 1):
-            self.downsamples.append(ConvBNAct(self.in_channels[idx], self.in_channels[idx], 3, stride=2, padding=1))
+            self.downsamples.append(
+                ConvBNAct(
+                    self.in_channels[idx], self.in_channels[idx], 3, stride=2, padding=1
+                )
+            )
             self.bottom_up_blocks.append(
                 CSPLayer(
                     self.in_channels[idx] * 2,
@@ -335,7 +345,10 @@ class CSPNeXtPAFPN(nn.Module):
             )
 
         self.out_convs = nn.ModuleList(
-            [ConvBNAct(self.in_channels[i], out_channels, 3, padding=1) for i in range(n)]
+            [
+                ConvBNAct(self.in_channels[i], out_channels, 3, padding=1)
+                for i in range(n)
+            ]
         )
 
     def forward(self, inputs: Tuple[torch.Tensor, ...]) -> Tuple[torch.Tensor, ...]:
@@ -350,7 +363,9 @@ class CSPNeXtPAFPN(nn.Module):
             feat_high = self.reduce_layers[i](feat_high)
             inner_outs[0] = feat_high
             upsample_feat = self.upsample(feat_high)
-            inner_out = self.top_down_blocks[i](torch.cat([upsample_feat, feat_low], dim=1))
+            inner_out = self.top_down_blocks[i](
+                torch.cat([upsample_feat, feat_low], dim=1)
+            )
             inner_outs.insert(0, inner_out)
 
         # bottom-up
@@ -359,7 +374,9 @@ class CSPNeXtPAFPN(nn.Module):
             feat_low = outs[-1]
             feat_high = inner_outs[idx + 1]
             downsample_feat = self.downsamples[idx](feat_low)
-            out = self.bottom_up_blocks[idx](torch.cat([downsample_feat, feat_high], dim=1))
+            out = self.bottom_up_blocks[idx](
+                torch.cat([downsample_feat, feat_high], dim=1)
+            )
             outs.append(out)
 
         # final 3x3 convs to out_channels
@@ -417,17 +434,27 @@ class RTMDetSepBNHead(nn.Module):
             reg_per_level = nn.ModuleList()
             for i in range(stacked_convs):
                 chn = in_channels if i == 0 else feat_channels
-                cls_per_level.append(ConvBNAct(chn, feat_channels, 3, stride=1, padding=1))
-                reg_per_level.append(ConvBNAct(chn, feat_channels, 3, stride=1, padding=1))
+                cls_per_level.append(
+                    ConvBNAct(chn, feat_channels, 3, stride=1, padding=1)
+                )
+                reg_per_level.append(
+                    ConvBNAct(chn, feat_channels, 3, stride=1, padding=1)
+                )
             self.cls_convs.append(cls_per_level)
             self.reg_convs.append(reg_per_level)
 
         pad = pred_kernel_size // 2
         self.rtm_cls = nn.ModuleList(
-            [nn.Conv2d(feat_channels, num_classes, pred_kernel_size, padding=pad) for _ in range(n_levels)]
+            [
+                nn.Conv2d(feat_channels, num_classes, pred_kernel_size, padding=pad)
+                for _ in range(n_levels)
+            ]
         )
         self.rtm_reg = nn.ModuleList(
-            [nn.Conv2d(feat_channels, 4, pred_kernel_size, padding=pad) for _ in range(n_levels)]
+            [
+                nn.Conv2d(feat_channels, 4, pred_kernel_size, padding=pad)
+                for _ in range(n_levels)
+            ]
         )
 
         if share_conv:
@@ -511,6 +538,198 @@ class RTMDetSepBNHead(nn.Module):
         return tuple(cls_scores), tuple(bbox_preds)
 
 
+class MaskFeatModule(nn.Module):
+    """Fuse the three FPN levels into the stride-8 RTMDet-Ins mask feature."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        feat_channels: int,
+        num_levels: int = 3,
+        num_prototypes: int = 8,
+        stacked_convs: int = 4,
+    ):
+        super().__init__()
+        self.num_levels = num_levels
+        self.fusion_conv = nn.Conv2d(num_levels * in_channels, in_channels, 1)
+        convs = []
+        for i in range(stacked_convs):
+            in_c = in_channels if i == 0 else feat_channels
+            convs.append(ConvBNAct(in_c, feat_channels, 3, padding=1))
+        self.stacked_convs = nn.Sequential(*convs)
+        self.projection = nn.Conv2d(feat_channels, num_prototypes, 1)
+
+    def forward(self, features: Tuple[torch.Tensor, ...]) -> torch.Tensor:
+        size = features[0].shape[-2:]
+        fused = [features[0]]
+        for feature in features[1 : self.num_levels]:
+            fused.append(F.interpolate(feature, size=size, mode="bilinear"))
+        return self.projection(
+            self.stacked_convs(self.fusion_conv(torch.cat(fused, dim=1)))
+        )
+
+
+class RTMDetInsSepBNHead(nn.Module):
+    """RTMDet-Ins box, class, dynamic-kernel, and mask-feature head.
+
+    The module layout follows open-mmlab/mmdetection's Apache-2.0
+    ``RTMDetInsSepBNHead`` so official checkpoints need only the syntactic
+    ``bbox_head`` to ``head`` key rename.
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        in_channels: int,
+        feat_channels: int,
+        strides: Sequence[int] = (8, 16, 32),
+        stacked_convs: int = 2,
+        share_conv: bool = True,
+        pred_kernel_size: int = 1,
+        num_prototypes: int = 8,
+        num_dyconvs: int = 3,
+        dyconv_channels: int = 8,
+    ):
+        super().__init__()
+        self.num_classes = num_classes
+        self.in_channels = in_channels
+        self.feat_channels = feat_channels
+        self.strides = list(strides)
+        self.stacked_convs = stacked_convs
+        self.share_conv = share_conv
+        self.pred_kernel_size = pred_kernel_size
+        self.num_prototypes = num_prototypes
+        self.num_dyconvs = num_dyconvs
+        self.dyconv_channels = dyconv_channels
+        self.export: bool = False
+
+        weight_nums = []
+        bias_nums = []
+        for i in range(num_dyconvs):
+            if i == 0:
+                weight_nums.append((num_prototypes + 2) * dyconv_channels)
+                bias_nums.append(dyconv_channels)
+            elif i == num_dyconvs - 1:
+                weight_nums.append(dyconv_channels)
+                bias_nums.append(1)
+            else:
+                weight_nums.append(dyconv_channels * dyconv_channels)
+                bias_nums.append(dyconv_channels)
+        self.weight_nums = weight_nums
+        self.bias_nums = bias_nums
+        self.num_gen_params = sum(weight_nums) + sum(bias_nums)
+
+        n_levels = len(self.strides)
+        self.cls_convs = nn.ModuleList()
+        self.reg_convs = nn.ModuleList()
+        self.kernel_convs = nn.ModuleList()
+        for _ in range(n_levels):
+            cls_per_level = nn.ModuleList()
+            kernel_per_level = nn.ModuleList()
+            for i in range(stacked_convs):
+                chn = in_channels if i == 0 else feat_channels
+                cls_per_level.append(
+                    ConvBNAct(chn, feat_channels, 3, stride=1, padding=1)
+                )
+                kernel_per_level.append(
+                    ConvBNAct(chn, feat_channels, 3, stride=1, padding=1)
+                )
+            self.cls_convs.append(cls_per_level)
+            # The published RTMDet-Ins head intentionally uses the same tower
+            # modules for classification and regression.
+            self.reg_convs.append(cls_per_level)
+            self.kernel_convs.append(kernel_per_level)
+
+        pad = pred_kernel_size // 2
+        self.rtm_cls = nn.ModuleList(
+            [
+                nn.Conv2d(feat_channels, num_classes, pred_kernel_size, padding=pad)
+                for _ in range(n_levels)
+            ]
+        )
+        self.rtm_reg = nn.ModuleList(
+            [
+                nn.Conv2d(feat_channels, 4, pred_kernel_size, padding=pad)
+                for _ in range(n_levels)
+            ]
+        )
+        self.rtm_kernel = nn.ModuleList(
+            [
+                nn.Conv2d(
+                    feat_channels,
+                    self.num_gen_params,
+                    pred_kernel_size,
+                    padding=pad,
+                )
+                for _ in range(n_levels)
+            ]
+        )
+
+        if share_conv:
+            for n in range(1, n_levels):
+                for i in range(stacked_convs):
+                    self.cls_convs[n][i].conv = self.cls_convs[0][i].conv
+                    self.reg_convs[n][i].conv = self.reg_convs[0][i].conv
+
+        self.mask_head = MaskFeatModule(
+            in_channels=in_channels,
+            feat_channels=feat_channels,
+            num_levels=n_levels,
+            num_prototypes=num_prototypes,
+            stacked_convs=4,
+        )
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        import math
+
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+        bias_cls = -math.log((1 - 0.01) / 0.01)
+        for cls_conv, reg_conv in zip(self.rtm_cls, self.rtm_reg):
+            nn.init.constant_(cls_conv.bias, bias_cls)
+            nn.init.constant_(reg_conv.bias, 1.0)
+
+    def forward(self, feats):
+        if self.export:
+            raise NotImplementedError(
+                "RTMDet-Ins export is not supported yet; use native PyTorch "
+                "inference for task='segment'."
+            )
+
+        mask_feat = self.mask_head(feats)
+        cls_scores = []
+        bbox_preds = []
+        kernel_preds = []
+        for idx, feat in enumerate(feats):
+            cls_feat = feat
+            reg_feat = feat
+            kernel_feat = feat
+            for layer in self.cls_convs[idx]:
+                cls_feat = layer(cls_feat)
+            for layer in self.reg_convs[idx]:
+                reg_feat = layer(reg_feat)
+            for layer in self.kernel_convs[idx]:
+                kernel_feat = layer(kernel_feat)
+
+            cls_scores.append(self.rtm_cls[idx](cls_feat))
+            bbox_preds.append(F.relu(self.rtm_reg[idx](reg_feat)) * self.strides[idx])
+            kernel_preds.append(self.rtm_kernel[idx](kernel_feat))
+
+        return (
+            tuple(cls_scores),
+            tuple(bbox_preds),
+            tuple(kernel_preds),
+            mask_feat,
+        )
+
+
 # =============================================================================
 # Per-size table and assembly
 # =============================================================================
@@ -526,15 +745,18 @@ _SIZE_CONFIG = {
 
 
 class LibreRTMDetModel(nn.Module):
-    """Top-level RTMDet detection model: backbone + neck + head."""
+    """Top-level RTMDet detection or instance-segmentation model."""
 
-    def __init__(self, size: str = "s", nc: int = 80):
+    def __init__(self, size: str = "s", nc: int = 80, enable_mask_head: bool = False):
         super().__init__()
         if size not in _SIZE_CONFIG:
-            raise ValueError(f"Unknown RTMDet size {size!r}. Must be one of {list(_SIZE_CONFIG)}.")
+            raise ValueError(
+                f"Unknown RTMDet size {size!r}. Must be one of {list(_SIZE_CONFIG)}."
+            )
         deepen, widen, neck_in, neck_out, num_csp, exp_on_reg = _SIZE_CONFIG[size]
         self.size = size
         self.nc = nc
+        self.enable_mask_head = enable_mask_head
 
         self.backbone = CSPNeXt(
             deepen_factor=deepen,
@@ -549,16 +771,19 @@ class LibreRTMDetModel(nn.Module):
             num_csp_blocks=num_csp,
             expand_ratio=0.5,
         )
-        self.head = RTMDetSepBNHead(
+        head_cls = RTMDetInsSepBNHead if enable_mask_head else RTMDetSepBNHead
+        head_kwargs = dict(
             num_classes=nc,
             in_channels=neck_out,
             feat_channels=neck_out,
             strides=(8, 16, 32),
             stacked_convs=2,
             share_conv=True,
-            exp_on_reg=exp_on_reg,
             pred_kernel_size=1,
         )
+        if not enable_mask_head:
+            head_kwargs["exp_on_reg"] = exp_on_reg
+        self.head = head_cls(**head_kwargs)
 
     def forward(self, x: torch.Tensor):
         feats = self.backbone(x)
