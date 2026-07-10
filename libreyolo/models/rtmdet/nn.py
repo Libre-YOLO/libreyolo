@@ -563,7 +563,11 @@ class MaskFeatModule(nn.Module):
         size = features[0].shape[-2:]
         fused = [features[0]]
         for feature in features[1 : self.num_levels]:
-            fused.append(F.interpolate(feature, size=size, mode="bilinear"))
+            fused.append(
+                F.interpolate(
+                    feature, size=size, mode="bilinear", align_corners=False
+                )
+            )
         return self.projection(
             self.stacked_convs(self.fusion_conv(torch.cat(fused, dim=1)))
         )

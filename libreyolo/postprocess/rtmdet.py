@@ -75,6 +75,8 @@ def postprocess(
     Returns boxes in original-image coordinates (after letterbox inverse).
     """
     if len(outputs) == 4:
+        # RTMDet-Ins uses nms_pre=1000 in every official COCO size config,
+        # while RTMDet detection uses 30000. Preserve a smaller caller value.
         return _postprocess_segment(
             outputs,
             conf_thres=conf_thres,
@@ -350,7 +352,10 @@ def _postprocess_segment(
 
     mask_logits = _decode_masks(mask_feats[0], kernels, priors)
     mask_logits = F.interpolate(
-        mask_logits.unsqueeze(0), scale_factor=8, mode="bilinear"
+        mask_logits.unsqueeze(0),
+        scale_factor=8,
+        mode="bilinear",
+        align_corners=False,
     )
     if original_size is not None:
         orig_w, orig_h = original_size
