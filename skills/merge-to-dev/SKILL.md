@@ -77,7 +77,22 @@ PYTHONPATH=. .venv/Scripts/python.exe -m pytest tests/unit/<touched-area> -q
 
 Skills/docs-only changes have no tests to run; say so and move on.
 
-### 3. Push and hand over the one-click PR link
+### 3. Pre-review with the Greptile CLI (skip if not installed)
+
+If the `greptile` CLI is available (`command -v greptile`), run a local
+review after committing and judge its findings the same way as the bot
+review in step 5: fix what's right, rebut what's wrong. Not installed?
+Skip this step; the bot still reviews the PR once it opens.
+
+```bash
+greptile review --agent -b dev   # -b release for release PRs
+```
+
+Reviews run server-side and can take 10+ minutes, so run it in the
+background rather than foreground. The exit code is 0 even when there are
+findings; read the output.
+
+### 4. Push and hand over the one-click PR link
 
 Push through the same `$REMOTE` resolved in step 1 (normally `upstream`
 here; `origin` is dead):
@@ -133,7 +148,7 @@ finished turn; the link is the deliverable. CI (`unit-tests.yml`,
 `install-smoke.yml`) runs once the human opens the PR to `dev`, so their
 click is also what starts the CI signal.
 
-### 4. Babysit Greptile (after the human opens the PR)
+### 5. Babysit Greptile (after the human opens the PR)
 
 This step needs a PR to exist, so it starts once the human has opened it
 from your link (or tells you "it's open" / "ship it"). Do not sit polling
@@ -179,7 +194,7 @@ review body does not mean it found nothing; read the summary comment. When
 re-reviewing, findings anchored to a superseded commit SHA are already
 addressed; only findings on the latest commit are live.
 
-### 5. Report
+### 6. Report
 
 End the turn with: PR URL, one-line summary of the change, CI status
 (honest about untested release PRs), Greptile verdict (score + how many
@@ -197,7 +212,7 @@ merging to dev is their click.
   and do not run the Greptile-done "checks are green" step against it.
 - **Work in a worktree**: same flow; push from the worktree. The branch is
   what matters, not which checkout it sits in.
-- **User says "ship it" on an already-open PR**: skip to step 4; the job
+- **User says "ship it" on an already-open PR**: skip to step 5; the job
   is Greptile + CI + report.
 - **Fork PRs / external contributors**: Greptile still reviews, but you
   cannot push to their branch. Do **not** post the findings as PR comments
