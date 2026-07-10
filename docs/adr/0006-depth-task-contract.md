@@ -40,6 +40,18 @@ not represent a semantic class.
 Export, tiled inference, tracking, TTA, augmented validation, and LoRA are
 explicitly rejected until each has a depth-aware runtime contract.
 
+Amendment (ZipDepth, 2026-07): export now has that contract, following the
+fixed-resolution v1 pattern from restore/matte. The exported graph emits one
+`depth` output of shape `(B, 1, H, W)` at the export canvas; exported backends
+stretch-resize the input to the canvas (no padding, so padded pixels cannot
+leak depth context through the receptive field) and bilinearly resize the depth
+map back to the original canvas with `align_corners=True`, matching native
+postprocess. Native predict keeps each family's own keep-aspect preprocessing,
+so exported-backend outputs on non-square images are a documented approximation
+of native predict. Families opt in individually; Depth Anything V2 keeps its
+family-level export block. Tiled inference, tracking, TTA, augmented
+validation, and LoRA remain rejected.
+
 ## Consequences
 
 - Depth results never fabricate boxes; `Results.boxes` is `None`.
