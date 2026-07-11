@@ -11,8 +11,10 @@ Endpoints
 ``GET  /api/sample``      bundled sample image
 ``POST /api/run/new``     start a fresh ``runs/detect/predict`` output dir
 ``POST /api/infer``       body = raw image bytes, header ``X-Filename``,
-                          query ``model`` + ``conf``; returns the rendered
-                          (annotated) image as a base64 data URL + box count
+                          query ``model`` + ``conf`` (+ optional ``classes``,
+                          a comma-separated text vocabulary for open-vocab /
+                          zero-shot models); returns the rendered (annotated)
+                          image as a base64 data URL + a task-aware summary
 ``POST /api/open-folder`` open the current results dir in the OS file manager
 """
 
@@ -55,6 +57,12 @@ def _plural(n: int, singular: str, plural: str | None = None) -> str:
 
 def _summarize_result(result) -> tuple[str, str]:
     """Return (task, label): a task name and a short human summary for the UI."""
+    # Gaze first: gaze results also carry the face boxes, so the generic
+    # boxes branch below would mislabel them as plain detection.
+    gaze = getattr(result, "gaze", None)
+    if gaze is not None:
+        return "gaze", _plural(len(gaze), "face")
+
     boxes = getattr(result, "boxes", None)
     if boxes is not None:
         n = len(boxes)
@@ -82,6 +90,10 @@ def _summarize_result(result) -> tuple[str, str]:
         conf = float(probs.top1conf)
         return "classify", f"{name} {conf * 100:.0f}%"
 
+    panoptic = getattr(result, "panoptic", None)
+    if panoptic is not None:
+        return "panoptic", _plural(len(panoptic.segments_info), "segment")
+
     semantic_mask = getattr(result, "semantic_mask", None)
     if semantic_mask is not None:
         n = len(semantic_mask.classes)
@@ -98,10 +110,6 @@ def _summarize_result(result) -> tuple[str, str]:
     if getattr(result, "matte", None) is not None:
         return "matte", "alpha matte"
 
-    gaze = getattr(result, "gaze", None)
-    if gaze is not None:
-        return "gaze", f"{len(gaze)} gaze"
-
     return "detect", "0 objects"
 
 
@@ -117,6 +125,10 @@ def _result_count(result) -> int:
     points = getattr(result, "points", None)
     if points is not None:
         return int(len(points))
+
+    panoptic = getattr(result, "panoptic", None)
+    if panoptic is not None:
+        return int(len(panoptic.segments_info))
 
     return 0
 
@@ -141,6 +153,49 @@ def _resolve_download_url(name: str) -> str | None:
         if url:
             return url
     return None
+
+
+def _self_managed_download(filename: str) -> bool:
+    """Whether a weight filename belongs to a family that fetches its own
+    weights (HF snapshot repos, Google Drive) and so has no per-file URL."""
+    from libreyolo.models.base.model import BaseModel
+
+    for cls in BaseModel._registry:
+        prefix = getattr(cls, "FILENAME_PREFIX", "")
+        if not prefix or not filename.startswith(prefix):
+            continue
+        hook = getattr(cls, "supports_autodownload", None)
+        if callable(hook):
+            return bool(hook(filename))
+        if getattr(cls, "HF_REPOS", None) or hasattr(cls, "_try_autodownload"):
+            return True
+    return False
+
+
+def _factory_openvocab_names() -> list[str]:
+    """Open-vocab detectors live behind the ``LibreOpenVocab`` factory (HF
+    snapshot weights, no CLI weight filename), so the UI lists them itself.
+    One canonical alias per model/size; the factory resolves them."""
+    try:
+        from libreyolo.models.openvocab import LibreOpenVocab  # noqa: F401
+    except Exception:  # transformers not installed
+        return []
+    return ["grounding-dino-t", "grounding-dino-b", "owlv2-b16", "owlv2-l14"]
+
+
+def _openvocab_model_names(names: list[str]) -> list[str]:
+    """Model names that accept a per-run text vocabulary (``set_classes``):
+    the factory-tier open-vocab detectors plus zero-shot classifier families
+    from the CLI registry (clip, siglip2)."""
+    from libreyolo.models.base.model import BaseModel
+
+    factory = set(_factory_openvocab_names())
+    prefixes = tuple(
+        f"{cls.FAMILY}-"
+        for cls in BaseModel._registry
+        if callable(getattr(cls, "set_classes", None)) and getattr(cls, "FAMILY", "")
+    )
+    return [n for n in names if n in factory or (prefixes and n.startswith(prefixes))]
 
 
 # HTTP statuses that mean "this weight is definitively not there" (grey it out).
@@ -254,6 +309,7 @@ class _UIState:
         self._upload_lock = threading.Lock()
         self._used_upload_names: set[str] = set()
         self.run_dir: Path | None = None
+        self._default_names: dict[str, dict] = {}  # set_classes models: original vocab
         self._input_dir = Path(tempfile.mkdtemp(prefix="libreyolo-ui-"))
         self._availability: dict[str, bool] | None = None
         self._avail_lock = threading.Lock()
@@ -275,10 +331,13 @@ class _UIState:
 
         from libreyolo.cli.config import get_all_cli_names
 
+        from libreyolo.cli.config import resolve_model_name
+
         def check(name: str) -> tuple[str, bool]:
             url = _resolve_download_url(name)
             if not url:
-                return name, False
+                filename = Path(resolve_model_name(name)).name
+                return name, _self_managed_download(filename)
             try:
                 resp = requests.get(
                     url,
@@ -296,6 +355,10 @@ class _UIState:
         names = get_all_cli_names()
         with ThreadPoolExecutor(max_workers=16) as pool:
             result = dict(pool.map(check, names))
+        # Factory-tier open-vocab models fetch HF snapshots on first use; there
+        # is no single weight URL to probe, so list them as available.
+        for name in _factory_openvocab_names():
+            result[name] = True
 
         with self._avail_lock:
             self._availability = result
@@ -304,12 +367,18 @@ class _UIState:
     def _get_model(self, name: str):
         model = self._models.get(name)
         if model is None:
-            from libreyolo import LibreYOLO
-            from libreyolo.cli.config import resolve_model_name
+            if name in _factory_openvocab_names():
+                from libreyolo.models.openvocab import LibreOpenVocab
 
-            weight = resolve_model_name(name)
-            logger.info("Loading model %s (%s)", name, weight)
-            model = LibreYOLO(weight, device=self.device)
+                logger.info("Loading open-vocab model %s", name)
+                model = LibreOpenVocab(name, device=self.device)
+            else:
+                from libreyolo import LibreYOLO
+                from libreyolo.cli.config import resolve_model_name
+
+                weight = resolve_model_name(name)
+                logger.info("Loading model %s (%s)", name, weight)
+                model = LibreYOLO(weight, device=self.device)
             self._models[name] = model
         return model
 
@@ -338,6 +407,26 @@ class _UIState:
             in_path.write_bytes(data)
         return in_path, safe
 
+    def _apply_vocabulary(self, model_name: str, model, classes: list[str] | None):
+        """Apply (or reset) the text vocabulary on a ``set_classes`` model.
+
+        Models are cached for the server's life and ``set_classes`` is sticky,
+        so the original vocabulary is remembered per model and restored when a
+        request arrives without one.
+        """
+        set_classes = getattr(model, "set_classes", None)
+        if not callable(set_classes):
+            return
+        default = self._default_names.get(model_name)
+        if default is None:
+            default = dict(model.names)
+            self._default_names[model_name] = default
+        if classes:
+            logger.info("Vocabulary: %s", ", ".join(classes))
+            set_classes(classes)
+        elif model.names != default:
+            set_classes(list(default.values()))
+
     def infer(
         self,
         model_name: str,
@@ -345,6 +434,7 @@ class _UIState:
         filename: str,
         data: bytes,
         emit=None,
+        classes: list[str] | None = None,
     ) -> dict:
         """Run inference. If ``emit`` is given, libreyolo log lines (model
         download, save path, ...) are forwarded to it live during the run."""
@@ -364,6 +454,7 @@ class _UIState:
                 # _get_model triggers weight download on first use; keep it
                 # inside the captured block so the download streams to the UI.
                 model = self._get_model(model_name)
+                self._apply_vocabulary(model_name, model, classes)
                 result = model(
                     str(in_path),
                     conf=conf,
@@ -437,14 +528,19 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/models":
             from libreyolo.cli.config import get_all_cli_names
 
-            names = sorted(get_all_cli_names())
+            names = sorted(get_all_cli_names() + _factory_openvocab_names())
             avail = self.state.model_availability()
             unavailable = [n for n in names if not avail.get(n, True)]
             usable = [n for n in names if avail.get(n, True)]
             default = "yolo9-t" if "yolo9-t" in usable else (usable[0] if usable else "")
             self._send(
                 200,
-                {"models": names, "unavailable": unavailable, "default": default},
+                {
+                    "models": names,
+                    "unavailable": unavailable,
+                    "openvocab": _openvocab_model_names(names),
+                    "default": default,
+                },
             )
         elif path == "/api/sample":
             sample = (
@@ -497,6 +593,8 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             conf = 0.25
         filename = self.headers.get("X-Filename", "image.jpg")
+        raw_classes = qs.get("classes", [""])[0]
+        classes = [c.strip() for c in raw_classes.split(",") if c.strip()] or None
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -523,7 +621,9 @@ class _Handler(BaseHTTPRequestHandler):
             write_obj({"type": "log", "line": msg})
 
         try:
-            result = self.state.infer(model, conf, filename, data, emit=emit)
+            result = self.state.infer(
+                model, conf, filename, data, emit=emit, classes=classes
+            )
             write_obj({"type": "result", **result})
         except Exception as exc:
             logger.exception("UI inference failed")

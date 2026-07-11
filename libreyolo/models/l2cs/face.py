@@ -2,11 +2,14 @@
 
 L2CS-Net needs face bounding boxes upstream of the gaze head. Rather than
 bundling a specific face detector as a hard dependency, this module defines
-a small ``FaceDetector`` protocol and three adapters:
+a small ``FaceDetector`` protocol and four adapters:
 
 * ``CallableFaceDetector`` — wraps any ``image -> list[FaceBox]`` callable.
 * ``LibreYOLOFaceDetector`` — adapts an existing LibreYOLO detector (e.g.
   a YOLO9 model fine-tuned on faces) into the protocol.
+* ``HaarCascadeFaceDetector`` — OpenCV's bundled frontal-face Haar cascade;
+  zero extra dependencies, used as the automatic fallback when no other
+  face source is given (also reachable as ``face_detector="haar"``).
 * ``RetinaFaceAdapter`` — optional, lazy-imports ``face_detection`` for
   parity with upstream L2CS-Net's pipeline. Behind the ``gaze-retinaface``
   optional extra; never imported eagerly.
@@ -19,6 +22,7 @@ for composition with external detectors).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, List, Optional, Protocol
 
 import numpy as np
@@ -112,6 +116,53 @@ class LibreYOLOFaceDetector:
             FaceBox(xyxy=(float(b[0]), float(b[1]), float(b[2]), float(b[3])),
                     score=float(s))
             for b, s in zip(xyxy, conf)
+        ]
+
+
+@dataclass
+class HaarCascadeFaceDetector:
+    """Zero-dependency frontal-face detector using OpenCV's bundled Haar cascade.
+
+    opencv-python is already a core dependency and ships the cascade XML, so
+    this detector always works out of the box. Quality is below a learned
+    detector (frontal faces only, no landmarks, no confidence scores); it is
+    the default fallback so bare ``predict()`` works, not the recommended
+    production path.
+    """
+
+    min_size_frac: float = 0.05  # smallest face, as a fraction of min(H, W)
+    scale_factor: float = 1.1
+    min_neighbors: int = 5
+    _impl: Any = field(default=None, init=False, repr=False)
+
+    def _load(self) -> None:
+        if self._impl is not None:
+            return
+        import cv2
+
+        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+        impl = cv2.CascadeClassifier(str(cascade_path))
+        if impl.empty():
+            raise RuntimeError(
+                f"Failed to load OpenCV Haar cascade from {cascade_path}."
+            )
+        self._impl = impl
+
+    def __call__(self, image_rgb: np.ndarray) -> List[FaceBox]:
+        self._load()
+        import cv2
+
+        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        min_side = int(min(gray.shape[:2]) * self.min_size_frac)
+        faces = self._impl.detectMultiScale(
+            gray,
+            scaleFactor=self.scale_factor,
+            minNeighbors=self.min_neighbors,
+            minSize=(max(24, min_side), max(24, min_side)),
+        )
+        return [
+            FaceBox(xyxy=(float(x), float(y), float(x + w), float(y + h)), score=1.0)
+            for (x, y, w, h) in faces
         ]
 
 
@@ -221,7 +272,21 @@ def resolve_face_detector(spec: Any) -> Optional[FaceDetector]:
     """
     if spec is None:
         return None
-    if isinstance(spec, (CallableFaceDetector, LibreYOLOFaceDetector, RetinaFaceAdapter)):
+    if isinstance(spec, str):
+        if spec.lower() == "haar":
+            return HaarCascadeFaceDetector()
+        raise ValueError(
+            f"Unknown face_detector name {spec!r}; the only named detector is 'haar'."
+        )
+    if isinstance(
+        spec,
+        (
+            CallableFaceDetector,
+            HaarCascadeFaceDetector,
+            LibreYOLOFaceDetector,
+            RetinaFaceAdapter,
+        ),
+    ):
         return spec
     # A LibreYOLO detection model — wrap so its boxes feed the gaze head.
     # Detected precisely via the base class rather than duck-typing on a

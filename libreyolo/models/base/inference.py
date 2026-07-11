@@ -32,6 +32,7 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_panoptic,
     draw_points,
     draw_semantic_mask,
     draw_tile_grid,
@@ -527,6 +528,19 @@ class InferenceRunner:
             if isinstance(mask_data, torch.Tensor):
                 mask_data = mask_data.cpu().numpy()
             annotated_img = draw_semantic_mask(original_img, mask_data)
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
+        if result.boxes is None and getattr(result, "panoptic", None) is not None:
+            pan_data = result.panoptic.data
+            if isinstance(pan_data, torch.Tensor):
+                pan_data = pan_data.cpu().numpy()
+            annotated_img = draw_panoptic(
+                original_img,
+                pan_data,
+                result.panoptic.segments_info,
+                class_names=result.names,
+            )
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return

@@ -430,6 +430,85 @@ def draw_semantic_mask(
     return result.convert("RGB")
 
 
+def draw_panoptic(
+    img: Image.Image,
+    panoptic_map: np.ndarray,
+    segments_info: List[Dict],
+    class_names: Dict[int, str] | None = None,
+    alpha: float = 0.55,
+    ignore_index: int = 0,
+) -> Image.Image:
+    """
+    Overlay a dense panoptic segment-id map on an image.
+
+    Thing segments are colored per segment id (so touching instances of the
+    same class stay distinguishable); stuff segments are colored per category.
+    Segments covering at least 0.5% of the image get a class-name label at
+    their centroid.
+
+    Args:
+        img: PIL Image to draw on.
+        panoptic_map: (H, W) integer numpy array of per-pixel segment IDs.
+        segments_info: One dict per segment with at least ``id``,
+            ``category_id``, and ``isthing``.
+        class_names: Optional mapping of category ID to class name.
+        alpha: Overlay opacity (0 = transparent, 1 = opaque).
+        ignore_index: Segment ID left unpainted (COCO convention: 0 = void).
+
+    Returns:
+        Annotated PIL Image with the segment-color overlay and labels.
+    """
+    seg_map = np.asarray(panoptic_map)
+    if seg_map.shape[:2] != (img.height, img.width):
+        seg_img = Image.fromarray(seg_map.astype(np.int32), mode="I")
+        seg_img = seg_img.resize((img.width, img.height), Image.NEAREST)
+        seg_map = np.asarray(seg_img)
+
+    img_draw = img.copy().convert("RGBA")
+    overlay = np.zeros((img.height, img.width, 4), dtype=np.uint8)
+    alpha_int = int(alpha * 255)
+    info_by_id = {int(seg["id"]): seg for seg in segments_info}
+
+    labels: List[Tuple[str, Tuple[int, int], Tuple[int, int, int]]] = []
+    min_label_area = 0.005 * seg_map.size
+    for seg_id in np.unique(seg_map):
+        seg_id = int(seg_id)
+        if seg_id == ignore_index:
+            continue
+        seg = info_by_id.get(seg_id)
+        if seg is not None and not seg.get("isthing", True):
+            color = _get_class_color_rgb(int(seg["category_id"]))
+        else:
+            # Things (and unlisted segments) vary by segment id so adjacent
+            # instances of one class do not blend together.
+            color = _get_class_color_rgb(seg_id * 3 + 1)
+        region = seg_map == seg_id
+        overlay[region] = (*color, alpha_int)
+
+        if seg is not None and class_names and region.sum() >= min_label_area:
+            name = class_names.get(int(seg["category_id"]))
+            if name:
+                ys, xs = np.nonzero(region)
+                labels.append((str(name), (int(xs.mean()), int(ys.mean())), color))
+
+    result = Image.alpha_composite(img_draw, Image.fromarray(overlay, mode="RGBA"))
+    result = result.convert("RGB")
+
+    if labels:
+        draw = ImageDraw.Draw(result)
+        font_size = max(12, min(img.width, img.height) // 40)
+        font = _get_font(font_size)
+        for name, (cx, cy), color in labels:
+            bbox = draw.textbbox((0, 0), name, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            x = max(0, min(img.width - tw, cx - tw // 2))
+            y = max(0, min(img.height - th, cy - th // 2))
+            draw.rectangle([x - 3, y - 2, x + tw + 3, y + th + 2], fill=(15, 23, 42))
+            draw.text((x, y), name, fill="white", font=font)
+
+    return result
+
+
 # Anchor colors for the depth colormap, near (warm) to far (cold). Linear
 # interpolation between anchors gives a smooth ramp without a matplotlib
 # dependency.

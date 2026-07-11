@@ -205,16 +205,44 @@ def test_libre_l2cs_callable_face_detector(tmp_path):
     assert isinstance(model.face_detector, type(None))  # not cached on instance
 
 
-def test_libre_l2cs_no_face_raises(tmp_path):
-    """No face_boxes and no face_detector → clear error, not a silent crash."""
+def test_libre_l2cs_defaults_to_haar(tmp_path):
+    """No face_boxes and no face_detector → bundled Haar cascade fallback,
+    cached on the model. A black image has no faces, so the result is empty
+    but well-formed rather than an error."""
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
     sd = _make_dummy_state_dict("r18")
     weights_path = tmp_path / "LibreL2CSr18.pt"
     torch.save(sd, weights_path)
 
     model = LibreL2CS(str(weights_path), size="r18", device="cpu")
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    with pytest.raises(RuntimeError, match="no face source"):
-        model(img)
+    result = model(img)
+    assert len(result.boxes) == 0
+    assert len(result.gaze) == 0
+    assert isinstance(model.face_detector, HaarCascadeFaceDetector)
+    # The same detector instance is reused on the next call.
+    detector = model.face_detector
+    model(img)
+    assert model.face_detector is detector
+
+
+def test_resolve_face_detector_haar_by_name():
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    assert isinstance(resolve_face_detector("haar"), HaarCascadeFaceDetector)
+    with pytest.raises(ValueError, match="haar"):
+        resolve_face_detector("retinanet-xxl")
+
+
+def test_haar_detector_runs_on_blank_image():
+    """The cascade loads from the bundled OpenCV data and returns a clean
+    empty list when there is nothing to find."""
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    detector = HaarCascadeFaceDetector()
+    faces = detector(np.zeros((120, 120, 3), dtype=np.uint8))
+    assert faces == []
 
 
 def test_libre_l2cs_no_faces_returns_empty(tmp_path):
