@@ -453,3 +453,19 @@ class TestSegformerReferenceFidelity:
         loaded = LibreSegformer(model_path=str(ckpt), device="cpu")  # no size= passed
         assert loaded.size == size
         assert loaded.input_size == LibreSegformer.INPUT_SIZES[size]
+
+    def test_class_rebuild_keeps_the_reference_init(self):
+        """Re-heading for a new dataset is THE fine-tuning path. A fresh nn.Conv2d
+        carries torch's default init, so the new classifier must be re-initialized
+        or it starts ~2x too wide with a non-zero bias."""
+        import torch.nn as nn
+
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        m = LibreSegformer(size="b0", nb_classes=150, device="cpu")
+        m._rebuild_for_new_classes(7)
+        head = m.model.decode_head.classifier
+
+        assert isinstance(head, nn.Conv2d) and head.out_channels == 7
+        assert head.weight.std().item() < 0.05
+        assert torch.equal(head.bias, torch.zeros_like(head.bias))

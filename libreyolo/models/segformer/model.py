@@ -236,7 +236,12 @@ class LibreSegformer(BaseModel):
     def _rebuild_for_new_classes(self, new_nb_classes: int) -> None:
         decode_head = self.model.decode_head
         in_channels = decode_head.classifier.in_channels
-        decode_head.classifier = nn.Conv2d(in_channels, new_nb_classes, kernel_size=1)
+        classifier = nn.Conv2d(in_channels, new_nb_classes, kernel_size=1)
+        # A fresh nn.Conv2d carries torch's default init, not the reference one.
+        # This is the fine-tuning path (pretrained encoder, new class head), so
+        # the head would start ~2x too wide with non-zero bias.
+        self.model._init_weights(classifier)
+        decode_head.classifier = classifier
         self.model.num_classes = new_nb_classes
         self.nb_classes = new_nb_classes
         self.names = {i: f"class_{i}" for i in range(new_nb_classes)}
