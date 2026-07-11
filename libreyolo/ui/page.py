@@ -196,6 +196,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <label class="ctl" id="classesLabel" style="display:none" title="Text vocabulary for open-vocab / zero-shot models">Classes</label>
       <input class="ctlinput" id="classes" type="text" style="display:none"
              placeholder="e.g. person, hard hat, forklift">
+      <label class="ctl" id="bboxLabel" style="display:none" title="PicoSAM3 ROI in image pixels">ROI</label>
+      <input class="ctlinput" id="bbox" type="text" style="display:none"
+             placeholder="x1,y1,x2,y2 (full image)">
       <label class="ctl">Conf</label>
       <select id="conf"><option>0.25</option><option>0.40</option><option>0.50</option></select>
     </div>
@@ -264,10 +267,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
   // ---- populate model dropdown from the real registry ----
   var openvocab = {};  // model name -> accepts a text vocabulary (classes box)
+  var boxPrompt = {};  // model name -> accepts an ROI box
   function syncClassesBox() {
     var show = !!openvocab[$("model").value];
     $("classesLabel").style.display = show ? "" : "none";
     $("classes").style.display = show ? "" : "none";
+    var showBox = !!boxPrompt[$("model").value];
+    $("bboxLabel").style.display = showBox ? "" : "none";
+    $("bbox").style.display = showBox ? "" : "none";
   }
   fetch("/api/models").then(function (r) { return r.json(); }).then(function (j) {
     var sel = $("model");
@@ -275,6 +282,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var unavailable = {};
     (j.unavailable || []).forEach(function (m) { unavailable[m] = true; });
     (j.openvocab || []).forEach(function (m) { openvocab[m] = true; });
+    (j.box_prompt || []).forEach(function (m) { boxPrompt[m] = true; });
     (j.models || []).forEach(function (m) {
       var o = document.createElement("option");
       o.value = m;
@@ -368,6 +376,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var model = $("model").value || "yolo9-t";
     var conf = $("conf").value || "0.25";
     var classes = openvocab[model] ? $("classes").value.trim() : "";
+    var bbox = boxPrompt[model] ? $("bbox").value.trim() : "";
     var outdir = "-";
 
     $("terminal").style.display = "block";
@@ -381,7 +390,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
       try {
         var resp = await fetch("/api/infer?model=" + encodeURIComponent(model) + "&conf=" + encodeURIComponent(conf) +
-          (classes ? "&classes=" + encodeURIComponent(classes) : ""),
+          (classes ? "&classes=" + encodeURIComponent(classes) : "") +
+          (bbox ? "&bbox=" + encodeURIComponent(bbox) : ""),
           { method: "POST", headers: { "X-Filename": e.name }, body: e.file });
         if (!resp.body) throw new Error("streaming not supported");
         var reader = resp.body.getReader(), dec = new TextDecoder(), buf = "";
@@ -485,6 +495,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   $("termClearBtn").addEventListener("click", termClear);
   $("model").addEventListener("change", function () { syncClassesBox(); markStale(); });
   $("conf").addEventListener("change", markStale);
+  $("bbox").addEventListener("change", markStale);
   $("classes").addEventListener("change", markStale);
   $("openFolder").addEventListener("click", function () {
     fetch("/api/open-folder", { method: "POST" }).then(function (r) { return r.json(); }).then(function (j) {

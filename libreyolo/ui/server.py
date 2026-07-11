@@ -198,6 +198,16 @@ def _factory_openvocab_names() -> list[str]:
     return ["grounding-dino-t", "grounding-dino-b", "owlv2-b16", "owlv2-l14"]
 
 
+def _factory_picosam_names() -> list[str]:
+    """Promptable edge models with a dedicated UI inference path."""
+
+    import importlib.util
+
+    if importlib.util.find_spec("huggingface_hub") is None:
+        return []
+    return ["picosam3"]
+
+
 def _openvocab_model_names(names: list[str]) -> list[str]:
     """Model names that accept a per-run text vocabulary (``set_classes``):
     the factory-tier open-vocab detectors plus zero-shot classifier families
@@ -374,6 +384,8 @@ class _UIState:
         # is no single weight URL to probe, so list them as available.
         for name in _factory_openvocab_names():
             result[name] = True
+        for name in _factory_picosam_names():
+            result[name] = True
 
         with self._avail_lock:
             self._availability = result
@@ -387,6 +399,11 @@ class _UIState:
 
                 logger.info("Loading open-vocab model %s", name)
                 model = LibreOpenVocab(name, device=self.device)
+            elif name in _factory_picosam_names():
+                from libreyolo import LibreSAM
+
+                logger.info("Loading promptable model %s", name)
+                model = LibreSAM(name, device=self.device)
             else:
                 from libreyolo import LibreYOLO
                 from libreyolo.cli.config import resolve_model_name
@@ -400,9 +417,7 @@ class _UIState:
     def new_run(self) -> Path:
         from libreyolo.utils.general import increment_path
 
-        self.run_dir = increment_path(
-            Path("runs/detect") / "predict", mkdir=True
-        )
+        self.run_dir = increment_path(Path("runs/detect") / "predict", mkdir=True)
         with self._upload_lock:
             self._used_upload_names.clear()
         return self.run_dir
@@ -450,6 +465,7 @@ class _UIState:
         data: bytes,
         emit=None,
         classes: list[str] | None = None,
+        bbox: list[float] | None = None,
     ) -> dict:
         """Run inference. If ``emit`` is given, libreyolo log lines (model
         download, save path, ...) are forwarded to it live during the run."""
@@ -470,12 +486,28 @@ class _UIState:
                 # inside the captured block so the download streams to the UI.
                 model = self._get_model(model_name)
                 self._apply_vocabulary(model_name, model, classes)
-                result = model(
-                    str(in_path),
-                    conf=conf,
-                    save=True,
-                    output_path=str(self.run_dir),
-                )
+                if model_name in _factory_picosam_names():
+                    from PIL import Image
+
+                    from libreyolo.models.base.inference import InferenceRunner
+                    from libreyolo.utils.general import resolve_save_path
+
+                    with Image.open(in_path) as uploaded:
+                        width, height = uploaded.size
+                        original = uploaded.convert("RGB")
+                    prompt_box = bbox or [0.0, 0.0, float(width), float(height)]
+                    result = model(str(in_path), conf=conf, bboxes=prompt_box)
+                    save_path = resolve_save_path(self.run_dir, safe, ext="jpg")
+                    InferenceRunner(model)._save_annotated_image(
+                        result, original, save_path
+                    )
+                else:
+                    result = model(
+                        str(in_path),
+                        conf=conf,
+                        save=True,
+                        output_path=str(self.run_dir),
+                    )
             finally:
                 if handler is not None:
                     lg.removeHandler(handler)
@@ -543,25 +575,30 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/models":
             from libreyolo.cli.config import get_all_cli_names
 
-            names = sorted(get_all_cli_names() + _factory_openvocab_names())
+            names = sorted(
+                get_all_cli_names()
+                + _factory_openvocab_names()
+                + _factory_picosam_names()
+            )
             avail = self.state.model_availability()
             unavailable = [n for n in names if not avail.get(n, True)]
             usable = [n for n in names if avail.get(n, True)]
-            default = "yolo9-t" if "yolo9-t" in usable else (usable[0] if usable else "")
+            default = (
+                "yolo9-t" if "yolo9-t" in usable else (usable[0] if usable else "")
+            )
             self._send(
                 200,
                 {
                     "models": names,
                     "unavailable": unavailable,
                     "openvocab": _openvocab_model_names(names),
+                    "box_prompt": _factory_picosam_names(),
                     "default": default,
                 },
             )
         elif path == "/api/sample":
             sample = (
-                Path(__file__).resolve().parents[1]
-                / "assets"
-                / "guggenheim-bilbao.jpg"
+                Path(__file__).resolve().parents[1] / "assets" / "guggenheim-bilbao.jpg"
             )
             try:
                 data = sample.read_bytes()
@@ -610,6 +647,17 @@ class _Handler(BaseHTTPRequestHandler):
         filename = self.headers.get("X-Filename", "image.jpg")
         raw_classes = qs.get("classes", [""])[0]
         classes = [c.strip() for c in raw_classes.split(",") if c.strip()] or None
+        raw_bbox = qs.get("bbox", [""])[0]
+        bbox = None
+        if raw_bbox:
+            try:
+                bbox = [float(value.strip()) for value in raw_bbox.split(",")]
+            except ValueError as exc:
+                raise ValueError(
+                    "bbox must contain four comma-separated numbers"
+                ) from exc
+            if len(bbox) != 4:
+                raise ValueError("bbox must contain x1,y1,x2,y2")
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -637,7 +685,13 @@ class _Handler(BaseHTTPRequestHandler):
 
         try:
             result = self.state.infer(
-                model, conf, filename, data, emit=emit, classes=classes
+                model,
+                conf,
+                filename,
+                data,
+                emit=emit,
+                classes=classes,
+                bbox=bbox,
             )
             write_obj({"type": "result", **result})
         except Exception as exc:
