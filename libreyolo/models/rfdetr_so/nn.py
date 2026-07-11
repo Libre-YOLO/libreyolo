@@ -192,6 +192,14 @@ class LibreRFDETRSOModel(LibreRFDETRModel):
                 dec_n_points=self.args.dec_n_points,
                 num_levels=len(self.config.projector_scale),
             )
+            # Stock checkpoints cannot carry the SO modules (SDE/fusion/PBM)
+            # or the projector's extra pyramid stages; seed exactly those keys
+            # from this module's fresh initialization so the parent loader's
+            # strict missing-key gate keeps guarding every stock tensor.
+            seedable = _SO_KEY_PREFIXES + ("backbone.0.projector.",)
+            for key, value in self.model.state_dict().items():
+                if key not in remapped and key.startswith(seedable):
+                    remapped[key] = value
             wrapped: dict[str, Any] = {"model": remapped}
             # Preserve the metadata the parent loader consumes.
             for key in ("args", "num_keypoints"):
