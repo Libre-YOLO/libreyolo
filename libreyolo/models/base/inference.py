@@ -28,6 +28,7 @@ from torchvision.ops import batched_nms
 
 from ...postprocess.slicing import slice_batch_outputs
 from ...utils.drawing import (
+    draw_anomaly_map,
     draw_boxes,
     draw_keypoints,
     draw_masks,
@@ -47,6 +48,7 @@ from ...utils.general import (
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.predict_args import normalize_predict_kwargs
 from ...utils.results import (
+    AnomalyMap,
     Boxes,
     DepthMap,
     Keypoints,
@@ -541,6 +543,11 @@ class InferenceRunner:
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "anomaly_map", None) is not None:
+            annotated_img = draw_anomaly_map(original_img, result.anomaly_map.array)
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "restored", None) is not None:
             result.restored.save(save_path)
             log_saved_result(result, save_path)
@@ -723,6 +730,24 @@ class InferenceRunner:
                 depth_data
                 if isinstance(depth_data, torch.Tensor)
                 else torch.as_tensor(depth_data)
+            )
+
+        anomaly_data = detections.get("anomaly_map")
+        if anomaly_data is not None:
+            orig_w, orig_h = original_size
+            anomaly_t = (
+                anomaly_data
+                if isinstance(anomaly_data, torch.Tensor)
+                else torch.as_tensor(anomaly_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                anomaly_map=AnomalyMap(anomaly_t.float(), (orig_h, orig_w)),
+                anomaly_score=float(detections["anomaly_score"]),
+                is_anomalous=detections.get("is_anomalous"),
             )
             return Results(
                 boxes=None,
@@ -1107,6 +1132,10 @@ class InferenceRunner:
             raise ValueError(
                 "Tiled inference does not support depth maps yet. "
                 "Use non-tiled inference for depth models."
+            )
+        if getattr(self.model, "task", "detect") == "anomaly":
+            raise ValueError(
+                "Tiled inference does not support anomaly maps. Use non-tiled inference."
             )
 
         if getattr(self.model, "_is_segmentation", False):

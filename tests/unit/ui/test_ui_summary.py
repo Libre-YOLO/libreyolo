@@ -34,6 +34,10 @@ def result(**attrs):
         (result(restored=object(), restore_scale=4), ("restore", "upscaled x4")),
         (result(restored=object(), restore_scale=1), ("restore", "restored")),
         (result(matte=object()), ("matte", "alpha matte")),
+        (
+            result(anomaly_map=object(), anomaly_score=1.25, is_anomalous=True),
+            ("anomaly", "anomalous 1.250"),
+        ),
         (result(gaze=[object(), object()]), ("gaze", "2 gaze")),
         (result(), ("detect", "0 objects")),
     ],

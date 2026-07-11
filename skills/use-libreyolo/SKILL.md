@@ -3,7 +3,7 @@ name: use-libreyolo
 description: >-
   Use LibreYOLO as a computer vision library: run inference, train, validate,
   export, and track with object-detection / segmentation (and pose, classify,
-  gaze, OBB, semantic, depth, point, restore) models on your own images and
+  gaze, OBB, semantic, depth, point, restore, anomaly) models on your own images and
   video. This is the
   guide for *using* the `libreyolo` pip package — not for contributing to or
   developing it. Use whenever someone wants to detect, segment, or track with a
@@ -140,11 +140,12 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`. Detection — plus
+`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`, `anomaly`. Detection — plus
 **RF-DETR segmentation** — is the heavily-tested core; other task/family
 combinations vary in maturity, so check the README compatibility table before
 relying on one. Task outputs land on matching `Results` fields
-(`r.semantic_mask`, `r.depth_map`, `r.restored`, `r.points`, `r.matte`, …).
+(`r.semantic_mask`, `r.depth_map`, `r.restored`, `r.points`, `r.matte`,
+`r.anomaly_map`, …).
 Matte adds `r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
 
 OCR reads located text (zh/zh-TW/en/ja/pinyin with one model):
@@ -170,6 +171,7 @@ as the source of truth. By tier:
   recipe).
 - **Specialized:** L2CS (gaze), DepthAnything3 (recommended depth quality
   default), DepthAnythingV2 and ZipDepth (depth alternatives), FOMO (point),
+  PatchCore (anomaly, training-free fit on good images),
   NAFNet (restore: deblur/denoise; denoise ships as
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
   super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the

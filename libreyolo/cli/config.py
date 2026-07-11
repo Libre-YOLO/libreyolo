@@ -426,6 +426,11 @@ def build_family_train_kwargs(
     user_provided: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build train kwargs, translating family-specific CLI/API mismatches."""
+    if family == "patchcore":
+        kwargs = build_train_kwargs(params)
+        if params.get("coreset") is not None:
+            kwargs["coreset"] = params["coreset"]
+        return kwargs
     if family == "rfdetr":
         return _build_rfdetr_train_kwargs(
             params, model_path=model_path, user_provided=user_provided

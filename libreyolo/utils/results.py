@@ -610,6 +610,44 @@ class DepthMap(_TensorPayload):
         )
 
 
+class AnomalyMap(_TensorPayload):
+    """Dense float anomaly heatmap for a single image."""
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) anomaly map but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    @property
+    def array(self) -> np.ndarray:
+        return np.asarray(_numpy(self.data), dtype=np.float32)
+
+    @property
+    def min(self) -> float:
+        return float(self.array.min()) if self.array.size else 0.0
+
+    @property
+    def max(self) -> float:
+        return float(self.array.max()) if self.array.size else 0.0
+
+    @property
+    def mean(self) -> float:
+        return float(self.array.mean()) if self.array.size else 0.0
+
+    def __getitem__(self, idx):
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return f"AnomalyMap(shape={tuple(self.data.shape)}, orig_shape={self.orig_shape})"
+
+
 class RestoredImage(_TensorPayload):
     """Dense restored RGB image for a single input.
 
@@ -1026,6 +1064,7 @@ class Results:
         "semantic_mask",
         "panoptic",
         "depth_map",
+        "anomaly_map",
         "restored",
         "matte",
         "ocr",
@@ -1046,6 +1085,9 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
+        anomaly_map: Optional[AnomalyMap] = None,
+        anomaly_score: Optional[float] = None,
+        is_anomalous: Optional[bool] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
@@ -1062,6 +1104,8 @@ class Results:
             points = Points(points.data, orig_shape)
         if depth_map is not None and depth_map.orig_shape is None:
             depth_map = DepthMap(depth_map.data, orig_shape)
+        if anomaly_map is not None and anomaly_map.orig_shape is None:
+            anomaly_map = AnomalyMap(anomaly_map.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
         if matte is not None and matte.orig_shape is None:
@@ -1079,6 +1123,9 @@ class Results:
         self.semantic_mask = semantic_mask
         self.panoptic = panoptic
         self.depth_map = depth_map
+        self.anomaly_map = anomaly_map
+        self.anomaly_score = None if anomaly_score is None else float(anomaly_score)
+        self.is_anomalous = None if is_anomalous is None else bool(is_anomalous)
         self.restored = restored
         self.matte = matte
         self.ocr = ocr
@@ -1108,6 +1155,9 @@ class Results:
             "semantic_mask": self.semantic_mask,
             "panoptic": self.panoptic,
             "depth_map": self.depth_map,
+            "anomaly_map": self.anomaly_map,
+            "anomaly_score": self.anomaly_score,
+            "is_anomalous": self.is_anomalous,
             "restored": self.restored,
             "matte": self.matte,
             "ocr": self.ocr,
@@ -1166,6 +1216,9 @@ class Results:
         semantic_mask: Optional[SemanticMask] = None,
         panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
+        anomaly_map: Optional[AnomalyMap] = None,
+        anomaly_score: Optional[float] = None,
+        is_anomalous: Optional[bool] = None,
         restored: Optional[RestoredImage] = None,
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
@@ -1192,6 +1245,12 @@ class Results:
             self.panoptic = panoptic
         if depth_map is not None:
             self.depth_map = depth_map
+        if anomaly_map is not None:
+            self.anomaly_map = anomaly_map
+        if anomaly_score is not None:
+            self.anomaly_score = float(anomaly_score)
+        if is_anomalous is not None:
+            self.is_anomalous = bool(is_anomalous)
         if restored is not None:
             self.restored = restored
         if matte is not None:
@@ -1249,18 +1308,34 @@ class Results:
             rgb = np.asarray(Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR))
         return rgb.astype(np.uint8)
 
-    def save(self, path: str, image: Any = None) -> str:
-        """Save a matte result as a transparent-background RGBA PNG cutout.
+    def plot(self, image: Any = None):
+        """Render a task-aware result preview for dense anomaly results."""
+        if self.anomaly_map is None:
+            raise NotImplementedError(
+                "Results.plot() is currently implemented for anomaly results. "
+                "Use predict(save=True) for other task previews."
+            )
+        from PIL import Image
+        from .drawing import draw_anomaly_map
 
-        Returns the written path. Requires the source image (via ``image`` or
-        ``self.path``).
-        """
+        h, w = self.anomaly_map.array.shape
+        source = Image.fromarray(self._source_rgb(image, (h, w)), mode="RGB")
+        return draw_anomaly_map(source, self.anomaly_map.array)
+
+    def save(self, path: str, image: Any = None) -> str:
+        """Save a matte cutout or an anomaly heatmap preview."""
         from PIL import Image
 
+        if self.anomaly_map is not None:
+            out = Path(path)
+            if out.parent and str(out.parent) not in (".", ""):
+                out.parent.mkdir(parents=True, exist_ok=True)
+            self.plot(image=image).save(out)
+            return str(out)
         if self.matte is None:
             raise NotImplementedError(
-                "Results.save() writes a transparent-PNG cutout and is defined for "
-                "matte results only. Use result.plot()/CLI --save for other tasks."
+                "Results.save() is defined for matte and anomaly results. "
+                "Use predict(save=True) for other tasks."
             )
         rgba = self.cutout(image=image)
         out = Path(path)
@@ -1268,6 +1343,18 @@ class Results:
             out.parent.mkdir(parents=True, exist_ok=True)
         Image.fromarray(rgba, mode="RGBA").save(out)
         return str(out)
+
+    def verbose(self) -> str:
+        """Return a concise human-readable result summary."""
+        if self.anomaly_map is not None:
+            decision = (
+                "anomalous" if self.is_anomalous is True
+                else "good" if self.is_anomalous is False
+                else "uncalibrated"
+            )
+            return f"{decision}, anomaly_score {float(self.anomaly_score or 0.0):.5g}"
+        rows = self.summary()
+        return ", ".join(str(row) for row in rows)
 
     def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
         if self.boxes is None:
@@ -1332,6 +1419,16 @@ class Results:
                         "min": round(self.depth_map.min, decimals),
                         "max": round(self.depth_map.max, decimals),
                         "mean": round(self.depth_map.mean, decimals),
+                    }
+                ]
+            if self.anomaly_map is not None:
+                return [
+                    {
+                        "name": "anomaly",
+                        "score": round(float(self.anomaly_score or 0.0), decimals),
+                        "is_anomalous": self.is_anomalous,
+                        "map_min": round(self.anomaly_map.min, decimals),
+                        "map_max": round(self.anomaly_map.max, decimals),
                     }
                 ]
             if self.restored is not None:
@@ -1446,6 +1543,8 @@ class Results:
             return 1
         if self.depth_map is not None:
             return 1
+        if self.anomaly_map is not None:
+            return 1
         if self.restored is not None:
             return 1
         if self.matte is not None:
@@ -1470,6 +1569,10 @@ class Results:
             parts.append(f"panoptic={self.panoptic}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
+        if self.anomaly_map is not None:
+            parts.append(f"anomaly_score={self.anomaly_score:.5g}" if self.anomaly_score is not None else "anomaly_score=None")
+            parts.append(f"is_anomalous={self.is_anomalous}")
+            parts.append(f"anomaly_map={self.anomaly_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
             if self.restore_scale != 1:

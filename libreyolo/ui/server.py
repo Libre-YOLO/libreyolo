@@ -90,6 +90,12 @@ def _summarize_result(result) -> tuple[str, str]:
     if getattr(result, "depth_map", None) is not None:
         return "depth", "depth map"
 
+    if getattr(result, "anomaly_map", None) is not None:
+        score = float(getattr(result, "anomaly_score", 0.0) or 0.0)
+        decision = getattr(result, "is_anomalous", None)
+        label = "anomalous" if decision is True else "good" if decision is False else "scored"
+        return "anomaly", f"{label} {score:.3f}"
+
     if getattr(result, "restored", None) is not None:
         scale = getattr(result, "restore_scale", 1)
         label = f"upscaled x{scale}" if scale and scale != 1 else "restored"

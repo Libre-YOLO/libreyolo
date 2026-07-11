@@ -306,6 +306,7 @@ def run_video_inference(
     from tqdm import tqdm
 
     from .drawing import (
+        draw_anomaly_map,
         draw_boxes,
         draw_depth_map,
         draw_keypoints,
@@ -389,6 +390,13 @@ def run_video_inference(
                         if isinstance(depth_np, torch.Tensor):
                             depth_np = depth_np.cpu().numpy()
                         annotated_pil = draw_depth_map(pil_img, depth_np)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "anomaly_map", None) is not None
+                    ):
+                        annotated_pil = draw_anomaly_map(
+                            pil_img, result.anomaly_map.array
+                        )
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:

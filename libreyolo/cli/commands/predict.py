@@ -344,6 +344,17 @@ def predict_cmd(
                     f"depth min={depth_map.min:.4g} "
                     f"max={depth_map.max:.4g} mean={depth_map.mean:.4g}"
                 )
+            elif getattr(r, "anomaly_map", None) is not None:
+                anomaly_map = r.anomaly_map
+                result_data["anomaly"] = {
+                    "score": round(float(r.anomaly_score), 6),
+                    "is_anomalous": r.is_anomalous,
+                    "map_shape": list(anomaly_map.data.shape),
+                    "map_min": round(float(anomaly_map.min), 6),
+                    "map_max": round(float(anomaly_map.max), 6),
+                }
+                decision = "anomalous" if r.is_anomalous is True else "good" if r.is_anomalous is False else "uncalibrated"
+                summary = f"{decision} score={r.anomaly_score:.6g}"
             else:
                 summary = "(no detections)"
 

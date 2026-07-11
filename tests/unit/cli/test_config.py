@@ -45,6 +45,10 @@ class TestResolveModelName:
         assert resolve_model_name("rfdetr-x-seg") == "LibreRFDETRx-seg.pt"
         assert resolve_model_name("rfdetr-xx-seg") == "LibreRFDETRxx-seg.pt"
 
+    def test_patchcore_size_includes_required_task_suffix(self):
+        assert resolve_model_name("patchcore-b") == "LibrePatchCoreb-anomaly.pt"
+        assert is_known_weight_filename("LibrePatchCoreb-anomaly.pt") is True
+
     def test_case_insensitive(self):
         assert resolve_model_name("YOLOX-S") == "LibreYOLOXs.pt"
         assert resolve_model_name("Yolo9-T") == "LibreYOLO9t.pt"

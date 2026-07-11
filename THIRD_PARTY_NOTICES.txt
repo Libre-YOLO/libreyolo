@@ -677,3 +677,17 @@ of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, subject to the inclusion of the above
 copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+PatchCore (Amazon Science)
+--------------------------------------------------------------------
+Source: https://github.com/amazon-science/patchcore-inspection
+Commit: fcaa92f124fb1ad74a7acf56726decd4b27cbcad
+License: Apache License 2.0
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Used for: LibrePatchCore visual anomaly detection
+          (libreyolo/models/patchcore and libreyolo/postprocess/patchcore.py),
+          including frozen multi-scale feature aggregation, greedy coreset
+          sampling, nearest-neighbor scoring, and anomaly-map generation.
+          LibreYOLO adds its native anomaly task, checkpoint, dataset,
+          validation, visualization, and CLI contracts.

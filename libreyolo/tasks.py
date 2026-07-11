@@ -21,6 +21,7 @@ TaskType = Literal[
     "restore",
     "matte",
     "ocr",
+    "anomaly",
 ]
 TASKS = (
     "detect",
@@ -36,6 +37,7 @@ TASKS = (
     "restore",
     "matte",
     "ocr",
+    "anomaly",
 )
 
 TASK_ALIASES = {
@@ -91,6 +93,10 @@ TASK_ALIASES = {
     "text": "ocr",
     "text-recognition": "ocr",
     "text_recognition": "ocr",
+    "anomaly": "anomaly",
+    "anomaly-detection": "anomaly",
+    "anomaly_detection": "anomaly",
+    "ad": "anomaly",
 }
 
 TASK_TO_SUFFIX = {
@@ -106,6 +112,7 @@ TASK_TO_SUFFIX = {
     "restore": "restore",
     "matte": "matte",
     "ocr": "ocr",
+    "anomaly": "anomaly",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

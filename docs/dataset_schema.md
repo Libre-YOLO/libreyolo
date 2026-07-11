@@ -322,6 +322,37 @@ The class-like YAML fields are schema placeholders: use `nc: 1` and
 Validation is inference-only in v1 (OCR training is out of scope). Canonical
 sample resolver: `libreyolo.data.ocr_dataset.resolve_ocr_samples`.
 
+## anomaly
+
+Visual anomaly detection uses one category per dataset root. Fitting consumes
+only normal images from `train/good`; any folder below `test/` whose name is not
+`good` is an anomalous defect class:
+
+```text
+category_root/
+  train/good/*.png
+  test/good/*.png
+  test/<defect_type>/*.png
+  ground_truth/<defect_type>/*_mask.png   # optional
+```
+
+Pass the category root directly as `data=`, or use a YAML containing `path` and
+an optional `category` subdirectory:
+
+```yaml
+path: /datasets/visa
+category: pcb1
+```
+
+Masks are optional. Validation always reports image AUROC and maximum F1. It
+also reports pixel AUROC and maximum pixel F1 when defect masks are present.
+Mask filenames use the image stem plus `_mask.png`; a same-stem `.png` is also
+accepted. LibrePatchCore calibrates its prediction threshold from `test/good`
+when that split exists, otherwise from `train/good`.
+
+No benchmark data is bundled or downloaded. Datasets with non-commercial terms
+must remain user-local and must not be mirrored by the project.
+
 ## pose
 
 YAML adds:

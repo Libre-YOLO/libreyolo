@@ -47,6 +47,25 @@ def test_train_dry_run_uses_rtdetr_defaults():
     assert data["resolved_config"]["scheduler"] == "constant"
 
 
+def test_train_dry_run_uses_patchcore_fit_defaults_without_loading_weights():
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=category",
+            "model=patchcore-b",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "patchcore"
+    assert data["resolved_config"]["epochs"] == 0
+    assert data["resolved_config"]["batch"] == 8
+    assert data["resolved_config"]["imgsz"] == 224
+
+
 def test_train_dry_run_uses_rtdetr_defaults_for_weight_filename():
     """Dry-run detects family defaults from supported weight filenames."""
     app = _make_app()

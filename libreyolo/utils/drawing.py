@@ -598,6 +598,32 @@ def draw_depth_map(
     return result
 
 
+def draw_anomaly_map(
+    img: Image.Image,
+    anomaly_map: np.ndarray,
+    alpha: float = 0.55,
+) -> Image.Image:
+    """Overlay an anomaly heatmap, with high scores rendered in warm colors."""
+    scores = np.asarray(anomaly_map, dtype=np.float32)
+    if scores.shape[:2] != (img.height, img.width):
+        scores = np.asarray(
+            Image.fromarray(scores, mode="F").resize(img.size, Image.BILINEAR),
+            dtype=np.float32,
+        )
+    finite = np.isfinite(scores)
+    normalized = np.zeros_like(scores, dtype=np.float32)
+    if finite.any():
+        values = scores[finite]
+        lo, hi = float(values.min()), float(values.max())
+        if hi > lo:
+            normalized[finite] = (values - lo) / (hi - lo)
+    indices = ((1.0 - normalized) * 255).round().astype(np.uint8)
+    colored = _depth_colormap_lut()[indices]
+    colored[~finite] = 0
+    heatmap = Image.fromarray(colored, mode="RGB")
+    return Image.blend(img.convert("RGB"), heatmap, float(alpha))
+
+
 def _checkerboard(
     height: int,
     width: int,

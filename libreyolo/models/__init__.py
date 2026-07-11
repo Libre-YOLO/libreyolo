@@ -77,6 +77,7 @@ from .depth_anything3.model import (  # noqa: E402,F401  (import registers famil
 )
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
+from .patchcore.model import LibrePatchCore  # noqa: E402,F401  (anomaly-only; memory-bank fingerprint)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
@@ -653,6 +654,7 @@ __all__ = [
     "LibreYOLO9",
     "LibreYOLO9E2E",
     "LibreYOLO9P2",
+    "LibrePatchCore",
     "LibreYOLONAS",
     "LibreDFINE",
     "LibreDEIM",

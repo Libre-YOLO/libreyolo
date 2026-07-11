@@ -32,8 +32,8 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`, or
-  `ocr`.
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`,
+  `ocr`, or `anomaly`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -61,6 +61,14 @@ Pose checkpoints additionally include:
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
+
+Anomaly checkpoints use `task: "anomaly"`, `nc: 1`, and
+`names: {0: "anomaly"}`. LibrePatchCore checkpoints store the category memory
+bank and calibration state in `model`; the frozen stock feature extractor is
+restored from torchvision. Flat metadata includes `backbone`,
+`feature_layers`, `coreset_percent`, `calibrated_threshold`, and
+`calibration_split`. A checkpoint is category-specific, not a universal
+anomaly model.
 
 Restore checkpoints use the task string `restore`, `nc: 1`, and
 `names: {0: "image"}`. The single class-like slot exists only for checkpoint

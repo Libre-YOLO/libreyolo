@@ -68,6 +68,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
+| `patchcore` | `LibrePatchCore` | Upstream brand casing preserved; anomaly-only memory-bank family |
 
 Casing rules observed in the table:
 
@@ -152,6 +153,7 @@ ships:
 | `zipdepth`  | `b` (base, GPU/CPU convex upsampling), `bnpu` (base capacity with the separately trained unfold-free upsampling head for NPU/edge compilers); both at short-side 384 |
 | `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
+| `patchcore` | `b` (WideResNet-50-2 backbone at 224) |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
 
@@ -197,6 +199,7 @@ From `libreyolo/tasks.py`:
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
+| `anomaly`     | `-anomaly` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -257,6 +260,12 @@ Detection quads are genuine polygons (rotated text) and do not populate
 aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
 the API boundary.
 
+`anomaly` is one-class visual anomaly detection. Models expose
+`Results.anomaly_score`, `Results.anomaly_map`, and `Results.is_anomalous`.
+Canonical checkpoints require the `-anomaly` suffix. Public aliases
+`anomaly-detection`, `anomaly_detection`, and `ad` normalize to `anomaly`.
+Each fitted checkpoint belongs to one inspected category.
+
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
 only when it appears in that family's `SUPPORTED_TASKS`.
@@ -296,6 +305,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
 | `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
 | `ppocr`     | `("ocr",)`                          | ocr    | PP-OCRv5 two-stage text detection + recognition (zh/zh-TW/en/ja/pinyin, one dictionary); sizes `t` (mobile)/`l` (server); one composite checkpoint bundles det.* and rec.* plus the charset; predict + `val` (hmean / e2e F1 / 1-NED); inference-only; export unsupported (two-network pipeline) |
+| `patchcore` | `("anomaly",)`                      | anomaly | training-free fit on `train/good`; category-specific memory bank; predict + image/pixel AUROC validation; export deferred |
 | `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
 | `swinir`    | `("restore",)`                     | restore | SwinIR transformer super-resolution; sizes `s`/`m`/`l`, all 4x; native predict at original resolution with window padding; optional tiled inference; inference + PSNR/SSIM `val` only (no training); fixed-resolution ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -401,6 +411,9 @@ LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
 # ppocr — PP-OCRv5 text detection + recognition (ocr-only)
 LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights
 LibrePPOCRl-ocr.pt               # server det + server rec (quality tier), Apache-2.0 weights
+
+# patchcore - category-specific anomaly detector created by model.train(data=...)
+LibrePatchCoreb-anomaly.pt
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)

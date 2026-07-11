@@ -43,6 +43,7 @@ from .models import (
     LibreCLIP,
     LibreSigLIP2,
     LibrePPOCR,
+    LibrePatchCore,
 )
 from .utils.results import (
     Results,
@@ -59,6 +60,7 @@ from .utils.results import (
     RestoredImage,
     Matte,
     OCRRegions,
+    AnomalyMap,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -113,6 +115,7 @@ def __getattr__(name):
         "SemanticValidator": (".validation", "SemanticValidator"),
         "PanopticValidator": (".validation", "PanopticValidator"),
         "DepthValidator": (".validation", "DepthValidator"),
+        "AnomalyValidator": (".validation", "AnomalyValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
         "TrackConfig": (".tracking", "TrackConfig"),
@@ -195,6 +198,7 @@ __all__ = [
     "LibreCLIP",
     "LibreSigLIP2",
     "LibrePPOCR",
+    "LibrePatchCore",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
@@ -230,6 +234,7 @@ __all__ = [
     "RestoredImage",
     "Matte",
     "OCRRegions",
+    "AnomalyMap",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking

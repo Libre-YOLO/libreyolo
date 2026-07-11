@@ -49,12 +49,14 @@ def _create_explicit_task_train_model(
     Create the requested architecture first so task-specific heads exist before
     training.
     """
-    if family not in {"yolo9", "rfdetr", "dfine"} or resume:
+    if family not in {"yolo9", "rfdetr", "dfine", "patchcore"} or resume:
         return None
 
     from libreyolo.tasks import normalize_task
 
-    if family == "yolo9":
+    if family == "patchcore":
+        from libreyolo.models.patchcore.model import LibrePatchCore as model_cls
+    elif family == "yolo9":
         from libreyolo.models.yolo9.model import LibreYOLO9 as model_cls
     elif family == "dfine":
         from libreyolo.models.dfine.model import LibreDFINE as model_cls
@@ -65,6 +67,11 @@ def _create_explicit_task_train_model(
     train_task = normalize_task(task) if task is not None else filename_task
     if train_task is None:
         return None
+    if family == "patchcore":
+        if _model_ref_exists(model_path):
+            return None
+        size = model_cls.detect_size_from_filename(Path(model_path).name)
+        return model_cls(None, size=size or "b", task="anomaly", device=device)
     if family == "dfine" and train_task != "segment":
         return None
     if task is None and filename_task == train_task and _model_ref_exists(model_path):
@@ -229,7 +236,7 @@ def train_cmd(
         None,
         help=(
             "Explicit task override: detect, segment, semantic, pose, classify, "
-            "gaze, obb, point, depth"
+            "gaze, obb, point, depth, restore, matte, anomaly"
         ),
     ),
     # Training
@@ -245,6 +252,10 @@ def train_cmd(
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
     amp: bool = typer.Option(True, help="Automatic Mixed Precision"),
     pretrained: bool = typer.Option(True, help="Use pretrained weights"),
+    coreset: Optional[float] = typer.Option(
+        None,
+        help="PatchCore memory-bank percentage, from 1 to 25",
+    ),
     lora: bool = typer.Option(
         False,
         "--lora",
@@ -394,7 +405,7 @@ def train_cmd(
             out, model=model, model_path=model_path, device=device
         )
         family = get_loaded_model_family(loaded_model)
-    if loaded_model is None:
+    if loaded_model is None and not (dry_run and family == "patchcore"):
         loaded_model = _create_explicit_task_train_model(
             family=family,
             model_path=model_path,
@@ -495,6 +506,7 @@ def train_cmd(
         "save_period": save_period,
         "log_interval": log_interval,
         "allow_download_scripts": allow_download_scripts,
+        "coreset": coreset,
     }
     if family:
         params = apply_family_defaults(
