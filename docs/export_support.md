@@ -53,9 +53,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
-| rtmdet | segment | exp | exp | exp | exp | exp |  |  |
+| rtmdet | segment |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
+| sam3 | segment |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |
@@ -265,8 +266,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `rtmdet` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `rtmdet` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtmdet` / `segment` / `onnx`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `torchscript`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `tensorrt`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `openvino`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `ncnn`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `tflite`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
+- `rtmdet` / `segment` / `coreml`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `sam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
@@ -281,6 +287,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `sam2` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
+- `sam3` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.

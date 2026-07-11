@@ -441,6 +441,30 @@ _add(
     since="1.4",
 )
 _add(
+    "blocked",
+    ("rtmdet",),
+    ("segment",),
+    EXPORT_FORMATS,
+    reason=(
+        "RTMDet-Ins export is not supported yet; the dynamic-kernel mask "
+        "decode has no exported-runtime contract. Use native PyTorch "
+        "inference for task='segment'."
+    ),
+)
+_add(
+    "experimental",
+    ("swinir",),
+    ("restore",),
+    ("onnx",),
+    reason=(
+        "The exported graph runs at a fixed canvas. Inputs smaller than the "
+        "canvas are padded before the transformer, and the window attention "
+        "and layer norms see that padding: measured drift against native "
+        "inference reaches many grey levels. Match the exported canvas size "
+        "for best fidelity."
+    ),
+)
+_add(
     "validated",
     ("dfine", "deim", "deimv2", "ec", "rtdetr", "rtdetrv2", "rtdetrv4"),
     ("detect",),
@@ -632,6 +656,7 @@ _FAMILY_BLOCKS = {
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
+    "sam3": "Promptable model export is out of scope for the v1 runtime contract.",
     "mobilesam": "Promptable model export is out of scope for the v1 runtime contract.",
     "grounding_dino": "Open-vocabulary runtime export is out of scope for v1.",
     "owlv2": "Open-vocabulary runtime export is out of scope for v1.",

@@ -236,3 +236,22 @@ def test_out_of_scope_surfaces(lightweight_model):
         lightweight_model.train(data="unused.yaml")
     with pytest.raises(NotImplementedError, match="Export"):
         lightweight_model.export(format="onnx")
+
+
+def test_apply_mono_sky_uses_per_image_statistics():
+    """Sky far-depth must come from each image's own quantile; batched
+    validation must not mix depth statistics across independent images."""
+    from libreyolo.models.depth_anything3.nn import LibreDepthAnything3Net
+
+    depth = torch.ones(2, 1, 20, 20)
+    depth[0] *= 2.0
+    depth[1] *= 5.0
+    sky = torch.zeros(2, 1, 20, 20)
+    sky[:, :, :5] = 1.0  # top quarter is sky in both images
+
+    out = LibreDepthAnything3Net._apply_mono_sky(depth, sky)
+
+    assert torch.allclose(out[0, :, :5], torch.full((1, 5, 20), 2.0))
+    assert torch.allclose(out[1, :, :5], torch.full((1, 5, 20), 5.0))
+    assert torch.equal(out[0, :, 5:], depth[0, :, 5:])
+    assert torch.equal(out[1, :, 5:], depth[1, :, 5:])
