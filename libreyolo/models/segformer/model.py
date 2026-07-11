@@ -102,6 +102,10 @@ class LibreSegformer(BaseModel):
     semantic_resize_mode: ClassVar[str] = "resize_crop"
     semantic_imgsz_divisor: ClassVar[int] = 32
     semantic_scale_jitter: ClassVar[Tuple[float, float]] = (0.5, 2.0)
+    # The reference ADE20K recipe uses no photometric jitter. SemanticDataset
+    # defaults to 0.5, so this has to be declared explicitly or training quietly
+    # runs a recipe nobody asked for.
+    semantic_hsv_prob: ClassVar[float] = 0.0
 
     # ------------------------------------------------------------------
     # Registry / can_load interface

@@ -1003,11 +1003,15 @@ class SegformerConfig(TrainConfig):
 
     mosaic_prob: float = 0.0
     mixup_prob: float = 0.0
-    hsv_prob: float = 0.0
     flip_prob: float = 0.5
     degrees: float = 0.0
     translate: float = 0.0
     shear: float = 0.0
+    # NOTE: photometric jitter is deliberately NOT declared here. The semantic
+    # pipeline builds SemanticDataset directly and never reads config.hsv_prob,
+    # so a value here would be silently ignored (it was: the recipe said 0.0
+    # while training ran at the dataset's 0.5). The live knob is
+    # LibreSegformer.semantic_hsv_prob = 0.0, per the reference recipe.
 
     ema: bool = True
     ema_decay: float = 0.999

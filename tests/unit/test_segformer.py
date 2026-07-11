@@ -477,3 +477,36 @@ class TestSegformerReferenceFidelity:
         assert isinstance(head, nn.Conv2d) and head.out_channels == 7
         assert head.weight.std().item() < 0.05
         assert torch.equal(head.bias, torch.zeros_like(head.bias))
+
+    def test_training_dataset_gets_no_photometric_jitter(self, tmp_path):
+        """The reference ADE20K recipe uses no HSV jitter, but SemanticDataset
+        defaults to 0.5. The family must actually reach the dataset, or training
+        silently runs a recipe nobody asked for."""
+        from libreyolo.data.semantic_dataset import SemanticDataset
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        assert LibreSegformer.semantic_hsv_prob == 0.0
+
+        captured = {}
+        real_init = SemanticDataset.__init__
+
+        def spy(self, *args, **kwargs):
+            captured.update(kwargs)
+            return real_init(self, *args, **kwargs)
+
+        yaml_path = _make_semantic_yaml(tmp_path)
+        SemanticDataset.__init__ = spy
+        try:
+            model = LibreSegformer(size="b0", nb_classes=2, device="cpu")
+            model.train(
+                data=str(yaml_path), epochs=1, batch=2, imgsz=64, workers=0,
+                project=str(tmp_path / "runs"), name="hsv", exist_ok=True,
+                amp=False, ema=False, warmup_epochs=0,
+            )
+        finally:
+            SemanticDataset.__init__ = real_init
+
+        assert captured.get("hsv_prob") == 0.0, (
+            f"SemanticDataset got hsv_prob={captured.get('hsv_prob')!r}; "
+            "the family's recipe never reached the dataset"
+        )

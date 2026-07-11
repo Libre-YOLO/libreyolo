@@ -928,6 +928,14 @@ class BaseTrainer(ABC):
         semantic_kwargs = {}
         if scale_jitter is not None:
             semantic_kwargs["scale_jitter"] = tuple(scale_jitter)
+        # Same deal for photometric jitter: opt in per family, or keep the
+        # SemanticDataset default. Note this deliberately does NOT read
+        # config.hsv_prob -- SemanticDataset has always used its own default for
+        # every semantic family, so honoring the config here would silently
+        # change RF-DETR's and DINOv2's training too.
+        hsv_prob = getattr(self.wrapper_model, "semantic_hsv_prob", None)
+        if hsv_prob is not None:
+            semantic_kwargs["hsv_prob"] = float(hsv_prob)
         train_dataset = SemanticDataset(
             data_config,
             split="train",
