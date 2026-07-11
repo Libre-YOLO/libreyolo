@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import inspect
+import textwrap
 
 
 OPTIONAL_MODELS = (
@@ -36,12 +38,36 @@ OPTIONAL_MODELS = (
 
 
 def _export_override(cls, base_cls) -> str:
+    """Classify a family's ``export``: ``none``, ``custom``, or ``blocked``.
+
+    ``blocked`` means every path raises. A family that exports some formats
+    and raises for the rest (PicoSAM3 ships ONNX only) is ``custom``, so walk
+    the AST for an actual export call instead of matching source text: the
+    old ``"export_" not in source`` check missed ``torch.onnx.export``.
+    """
     if cls.export is base_cls.export:
         return "none"
-    source = inspect.getsource(cls.export)
-    if "raise NotImplementedError" in source and "super().export" not in source:
-        if "export_" not in source:
-            return "blocked"
+    tree = ast.parse(textwrap.dedent(inspect.getsource(cls.export)))
+    raises_not_implemented = False
+    performs_export = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise):
+            raised = node.exc
+            if isinstance(raised, ast.Call):
+                raised = raised.func
+            if isinstance(raised, ast.Name) and raised.id == "NotImplementedError":
+                raises_not_implemented = True
+        elif isinstance(node, ast.Call):
+            called = node.func
+            name = ""
+            if isinstance(called, ast.Attribute):
+                name = called.attr
+            elif isinstance(called, ast.Name):
+                name = called.id
+            if "export" in name.lower():
+                performs_export = True
+    if raises_not_implemented and not performs_export:
+        return "blocked"
     return "custom"
 
 

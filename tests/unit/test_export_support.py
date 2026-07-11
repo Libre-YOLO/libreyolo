@@ -171,6 +171,28 @@ def test_committed_inventory_matches_runtime_inventory():
     assert committed == collect_model_inventory()
 
 
+def test_partial_exporters_are_custom_not_blocked():
+    """A family that exports some formats and raises for the rest is custom.
+
+    PicoSAM3 ships a validated ONNX export and raises for every other format.
+    Reporting it as ``blocked`` would tell inventory consumers to reject an
+    export the support matrix marks validated.
+    """
+    inventory = collect_model_inventory()
+    assert inventory["picosam3"]["export_override"] == "custom"
+    assert get_support("picosam3", "segment", "onnx").tier == "validated"
+
+    for family, metadata in inventory.items():
+        if metadata["export_override"] != "blocked":
+            continue
+        for task in metadata["tasks"]:
+            for format in EXPORT_FORMATS:
+                assert get_support(family, task, format).tier != "validated", (
+                    f"{family}/{task}/{format} is validated in the support "
+                    "matrix but the inventory reports export as blocked"
+                )
+
+
 def test_default_download_urls_keep_task_repo_suffixes():
     from libreyolo.models.base.model import BaseModel
 

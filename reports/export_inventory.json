@@ -603,7 +603,7 @@
       "pico": 96
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "sam",
     "available": true
   },
