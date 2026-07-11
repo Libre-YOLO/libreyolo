@@ -258,7 +258,7 @@ class LibreSegformer(BaseModel):
         self,
         image: ImageInput,
         color_format: str = "auto",
-        input_size: Optional[int] = None,
+        input_size: int | tuple[int, int] | None = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         effective_res = input_size if input_size is not None else self._get_input_size()
         divisor = self.semantic_imgsz_divisor

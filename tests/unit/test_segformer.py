@@ -403,15 +403,23 @@ class TestSegformerReferenceFidelity:
 
     def test_weights_are_initialized_to_reference_scale(self):
         """Torch's default init is ~5x too wide at the narrow stages; the family
-        can train from scratch, so the init is load-bearing."""
+        can train from scratch, so the init is load-bearing.
+
+        Assert the std is AT the reference 0.02, not merely below some ceiling:
+        torch's default lands at 0.021-0.036 for the wider layers, so an upper
+        bound alone would pass with no init at all.
+        """
         import torch.nn as nn
 
-        from libreyolo.models.segformer.nn import LibreSegformerNet
+        from libreyolo.models.segformer.nn import INITIALIZER_RANGE, LibreSegformerNet
 
         net = LibreSegformerNet(size="b0", num_classes=4)
-        for module in net.modules():
+        for name, module in net.named_modules():
             if isinstance(module, (nn.Linear, nn.Conv2d)):
-                assert module.weight.std().item() < 0.05
+                std = module.weight.std().item()
+                assert std == pytest.approx(INITIALIZER_RANGE, rel=0.25), (
+                    f"{name}: std={std:.4f}, expected ~{INITIALIZER_RANGE}"
+                )
                 if module.bias is not None:
                     assert torch.equal(module.bias, torch.zeros_like(module.bias))
 
