@@ -58,6 +58,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |
+| segformer | semantic |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |
@@ -301,6 +302,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `sam3` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam3` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
+- `segformer` / `semantic` / `onnx`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `torchscript`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `openvino`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.

@@ -123,6 +123,7 @@ Training capabilities are documented per family in
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |
+| segformer | semantic |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |
