@@ -57,6 +57,7 @@ The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
 | SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `LibreYOLO/LibreSAM2*` | Image segmentation only in v1. |
 | SAM 3 image | `LibreSAM("sam3")`, `LibreSAM3("large")` | `facebook/sam3` | Visual prompts plus concept text prompts; gated custom-license weights. |
 | MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
+| PicoSAM3 | `LibreSAM("picosam3")`, `LibrePicoSAM3()` | `LibreYOLO/LibrePicoSAM3` | Native 96px ROI CNN; box prompts only. |
 
 ## Public API
 
@@ -116,7 +117,7 @@ cached embeddings when possible so interactive sessions survive device changes.
 
 | Field             | Meaning                                              |
 |-------------------|------------------------------------------------------|
-| `FAMILY`          | family id (`sam`, `sam2`, `sam3`, `mobilesam`)       |
+| `FAMILY`          | family id (`sam`, `sam2`, `sam3`, `mobilesam`, `picosam3`) |
 | `FILENAME_PREFIX` | `Libre`-prefixed weights-dir prefix                  |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload            |
 | `INPUT_SIZES`     | `{size: nominal_px}` (1024; the processor owns resize)|
@@ -134,6 +135,12 @@ Hugging Face repositories; SAM-2 loads from LibreYOLO Hugging Face mirrors of
 the upstream Transformers-compatible snapshots. MobileSAM code and weights are
 Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
 checkpoint is hosted separately as `LibreMobileSAM.pt`.
+
+PicoSAM3 code and weights are Apache-2.0. LibreYOLO carries only the compact
+ROI CNN and downloads the matching `PicoSAM3_SAM3_student_best.pt` checkpoint
+from the pinned upstream Hugging Face revision. SAM 2.1 and SAM 3 appear only
+in the recorded distillation teacher chain; their code and weights are not
+vendored or redistributed by the PicoSAM3 family.
 
 SAM 3 model code is not vendored. LibreYOLO calls the Apache-2.0 Transformers
 implementation, while weights download directly from the gated
@@ -155,7 +162,9 @@ part of a separate future video plan.
 
 - SAM-2/SAM-3 video and memory paths.
 - SAM 3 image exemplars and SAM 3.1, subject to the trigger above.
-- Mask prompts (`masks=`), `train()`, `val()`, `export()`, and `track()` raise.
+- Mask prompts (`masks=`), `train()`, `val()`, and `track()` raise. SAM-1/2/3
+  and MobileSAM export also raise; PicoSAM3 alone exports its raw 96px ROI CNN
+  to ONNX.
 - "Segment everything" is a simplified grid AMG (predicted-IoU threshold +
   box-IoU dedup); it omits stability-score filtering, multi-crop, and mask-IoU
   dedup, and is documented as approximate. The prompted path is the precise API.

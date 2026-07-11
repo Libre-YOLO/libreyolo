@@ -295,6 +295,21 @@ _add(
     since="1.4",
 )
 _add(
+    "validated",
+    ("picosam3",),
+    ("segment",),
+    ("onnx",),
+    since="1.4",
+    constraint="raw fixed-96 ROI contract: roi_image -> mask_logits",
+)
+_add(
+    "blocked",
+    ("picosam3",),
+    ("segment",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason="PicoSAM3 currently exports its raw ROI CNN through ONNX only.",
+)
+_add(
     "experimental",
     ("fomo",),
     ("point",),

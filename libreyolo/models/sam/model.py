@@ -47,6 +47,7 @@ class LibreSAM1(LibreSAMModel):
 
 # alias -> (family class, size)
 _MOBILE_SAM = "mobilesam"
+_PICO_SAM3 = "picosam3"
 
 _ALIASES: Dict[str, Tuple[Type[LibreSAMModel] | str, str]] = {
     "base": (LibreSAM1, "base"),
@@ -82,6 +83,10 @@ _ALIASES: Dict[str, Tuple[Type[LibreSAMModel] | str, str]] = {
     "mobilesam_t": (_MOBILE_SAM, "tiny"),
     "mobile-sam": (_MOBILE_SAM, "tiny"),
     "mobile-sam-tiny": (_MOBILE_SAM, "tiny"),
+    "picosam3": (_PICO_SAM3, "pico"),
+    "picosam3-pico": (_PICO_SAM3, "pico"),
+    "picosam3_pico": (_PICO_SAM3, "pico"),
+    "pico-sam3": (_PICO_SAM3, "pico"),
 }
 
 _DEFAULT_MODEL = "base"
@@ -117,6 +122,10 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
         from ..mobilesam import LibreMobileSAM
 
         family_cls = LibreMobileSAM
+    elif family_cls == _PICO_SAM3:
+        from ..picosam3 import LibrePicoSAM3
+
+        family_cls = LibrePicoSAM3
     return family_cls(size=size, **kwargs)
 
 

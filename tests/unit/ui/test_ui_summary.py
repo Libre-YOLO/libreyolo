@@ -19,7 +19,10 @@ def result(**attrs):
     ("item", "expected"),
     [
         (result(boxes=[object()]), ("detect", "1 object")),
-        (result(boxes=[object(), object()], masks=object()), ("segment", "2 instances")),
+        (
+            result(boxes=[object(), object()], masks=object()),
+            ("segment", "2 instances"),
+        ),
         (result(boxes=[object()], keypoints=object()), ("pose", "1 pose")),
         (result(obb=[object(), object()]), ("obb", "2 objects")),
         (result(points=[object(), object(), object()]), ("point", "3 points")),
@@ -83,6 +86,14 @@ def test_factory_openvocab_names_resolve_in_the_factory():
 
     for name in _factory_openvocab_names():
         assert name in _ALIASES
+
+
+def test_factory_picosam_names_resolve_in_the_factory():
+    from libreyolo.models.sam.model import _ALIASES
+    from libreyolo.ui.server import _factory_picosam_names
+
+    assert _factory_picosam_names() == ["picosam3"]
+    assert all(name in _ALIASES for name in _factory_picosam_names())
 
 
 def test_apply_vocabulary_sets_and_restores():

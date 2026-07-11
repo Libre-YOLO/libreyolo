@@ -133,6 +133,18 @@ project the weights were derived from. Per-family summary:
              requires accepting Meta's terms. LibreYOLO downloads the weights
              directly and does not distribute them under the MIT license.
 
+    PicoSAM3 (LibreYOLO/LibrePicoSAM3)                 Apache-2.0
+             Converted and rehosted by LibreYOLO. Upstream sources:
+             upstream code commit:
+               1b03949e43472953bb0021685c7fc3f5fdf48fde
+             upstream weights (pietrobonazzi/picosam3) revision:
+               af49e4322b6b7cf448499fee5c073d4576f59444
+             Only PicoSAM3_SAM3_student_best.pt matches the advertised
+             PicoSAM3 architecture. The epoch-1 files are not mirrored or
+             converted because they contain the older PicoSAM2 network.
+             Distilled by upstream from SAM 2.1 and SAM 3; teacher weights
+             are not included or redistributed.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
