@@ -590,6 +590,23 @@
     "optional_extra": null,
     "available": true
   },
+  "picosam3": {
+    "class": "libreyolo.models.picosam3.model.LibrePicoSAM3",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "pico": 96
+    },
+    "default_imgsz": {
+      "pico": 96
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
   "pidnet": {
     "class": "libreyolo.models.pidnet.model.LibrePIDNet",
     "tasks": [

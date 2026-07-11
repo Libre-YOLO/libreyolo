@@ -40,6 +40,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| picosam3 | segment | ✓ |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | ppocr | ocr |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
@@ -228,6 +229,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `picosam3` / `segment` / `torchscript`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `tensorrt`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `openvino`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `ncnn`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `tflite`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
+- `picosam3` / `segment` / `coreml`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `ppocr` / `ocr` / `onnx`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `ppocr` / `ocr` / `torchscript`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.

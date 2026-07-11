@@ -105,6 +105,7 @@ Training capabilities are documented per family in
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| picosam3 | segment | ✓ |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | ppocr | ocr |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
