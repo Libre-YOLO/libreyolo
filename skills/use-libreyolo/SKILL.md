@@ -126,8 +126,11 @@ handles every run under the root (`?run=` in the URL selects one).
   model("img.jpg", save=True)        # same predict API as a .pt
   ```
 - **Object tracking** — `model.track(...)` assigns IDs across video frames.
-  Two motion trackers: **ByteTrack** (`tracker="bytetrack"`, default) and
-  **OC-SORT**. IDs come back on `r.boxes.id`. Needs `libreyolo[tracking]`.
+  Three trackers: **ByteTrack** (`tracker="bytetrack"`, default) and
+  **OC-SORT** are motion-only; **Deep OC-SORT** (`tracker="deepocsort"`)
+  adds appearance ReID (OSNet embeddings, auto-downloaded) so IDs survive
+  occlusions and crossings. IDs come back on `r.boxes.id`. Needs
+  `libreyolo[tracking]`.
 - **Tiled inference for large images** — `predict(..., tiling=True,
   overlap_ratio=0.2)` slices high-resolution images so small objects aren't
   lost, then merges detections.

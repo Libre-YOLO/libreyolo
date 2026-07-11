@@ -677,3 +677,49 @@ of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, subject to the inclusion of the above
 copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+Torchreid (deep-person-reid)
+--------------------------------------------------------------------
+Source: https://github.com/KaiyangZhou/deep-person-reid
+Commit: f8cd150fdf77e8d9e1ed143b7f308c2c609ded50
+License: MIT
+Copyright (c) 2018 Kaiyang Zhou
+Used for: the OSNet-AIN appearance (ReID) embedder used by the Deep
+          OC-SORT tracker (libreyolo/tracking/reid.py). Module names
+          mirror upstream torchreid/models/osnet_ain.py so the released
+          checkpoints load unchanged (bit-exact forward parity, see
+          tests/unit/test_reid.py).
+
+MIT License
+
+Copyright (c) 2018 Kaiyang Zhou
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+Deep OC-SORT
+--------------------------------------------------------------------
+Source: https://github.com/GerardMaggiolino/Deep-OC-SORT
+Commit: 6bb51d027b137233f5c520b6fcc4f2ae387a6ba9
+License: MIT
+Copyright (c) 2023 Gerard Maggiolino
+Used for: the adaptive appearance association (dynamic embedding EMA and
+          adaptive weighting) in the Deep OC-SORT tracker
+          (libreyolo/tracking/deepocsort.py), validated for numeric
+          track-ID parity against upstream
+          (tests/unit/test_deepocsort_parity.py).
+
+MIT License
+
+Copyright (c) 2023 Gerard Maggiolino
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.
