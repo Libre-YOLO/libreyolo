@@ -20,6 +20,7 @@ TaskType = Literal[
     "depth",
     "restore",
     "matte",
+    "ocr",
 ]
 TASKS = (
     "detect",
@@ -34,6 +35,7 @@ TASKS = (
     "depth",
     "restore",
     "matte",
+    "ocr",
 )
 
 TASK_ALIASES = {
@@ -85,6 +87,10 @@ TASK_ALIASES = {
     "super_resolution": "restore",
     "superresolution": "restore",
     "upscale": "restore",
+    "ocr": "ocr",
+    "text": "ocr",
+    "text-recognition": "ocr",
+    "text_recognition": "ocr",
 }
 
 TASK_TO_SUFFIX = {
@@ -99,6 +105,7 @@ TASK_TO_SUFFIX = {
     "depth": "depth",
     "restore": "restore",
     "matte": "matte",
+    "ocr": "ocr",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

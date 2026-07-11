@@ -275,7 +275,26 @@ def predict_cmd(
                 "original_shape": list(r.orig_shape),
                 "detections": detections,
             }
-            if getattr(r, "points", None) is not None:
+            if getattr(r, "ocr", None) is not None:
+                ocr_np = r.ocr.numpy()
+                regions = []
+                for i in range(len(ocr_np)):
+                    polygon = ocr_np.data[i]
+                    regions.append(
+                        {
+                            "text": ocr_np.texts[i],
+                            "confidence": round(float(ocr_np.conf[i]), 4),
+                            "det_confidence": round(float(ocr_np.det_conf[i]), 4),
+                            "polygon": [
+                                [round(float(x), 1), round(float(y), 1)]
+                                for x, y in polygon
+                            ],
+                        }
+                    )
+                result_data["ocr"] = regions
+                n = len(regions)
+                summary = f"{n} text region{'s' if n != 1 else ''}"
+            elif getattr(r, "points", None) is not None:
                 points_np = r.points.numpy()
                 for i in range(len(points_np)):
                     cls_id = int(points_np.cls[i])

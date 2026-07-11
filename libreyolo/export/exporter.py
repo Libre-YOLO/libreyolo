@@ -288,6 +288,14 @@ class BaseExporter(ABC):
                 "Export for point-task models is not implemented yet. "
                 "Add a point-aware export/runtime contract before exporting point models."
             )
+        if task == "ocr":
+            raise NotImplementedError(
+                "Export for OCR models is not supported: the PP-OCR pipeline is "
+                "two networks (detection + recognition) with dynamic input shapes "
+                "and per-region cropping between them, which does not fit the "
+                "single-graph export contract. Run OCR models natively with "
+                "predict()."
+            )
         if task == "semantic":
             raise NotImplementedError(
                 "Export for semantic-segmentation models is not implemented yet. "

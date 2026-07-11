@@ -1,0 +1,35 @@
+LibrePPOCR family notice
+
+This family is a PyTorch port of PP-OCRv5 from PaddleOCR.
+
+Upstream project: https://github.com/PaddlePaddle/PaddleOCR
+Upstream license: Apache License 2.0
+Reference paper: PaddleOCR 3.0 Technical Report, arXiv:2507.05595
+
+Ported components (from the upstream paths, PaddlePaddle -> PyTorch):
+- ppocr/modeling/backbones/rec_lcnetv3.py        -> libreyolo/models/ppocr/backbones.py (PPLCNetV3)
+- ppocr/modeling/backbones/rec_pphgnetv2.py      -> libreyolo/models/ppocr/backbones.py (PPHGNetV2B4)
+- ppocr/modeling/necks/db_fpn.py                 -> libreyolo/models/ppocr/det.py (RSEFPN, LKPAN)
+- ppocr/modeling/necks/intracl.py                -> libreyolo/models/ppocr/det.py (IntraCLBlock)
+- ppocr/modeling/heads/det_db_head.py            -> libreyolo/models/ppocr/det.py (DBHead, PFHeadLocal)
+- ppocr/modeling/backbones/det_mobilenet_v3.py   -> libreyolo/models/ppocr/det.py (SEModule)
+- ppocr/modeling/necks/rnn.py                    -> libreyolo/models/ppocr/rec.py (SequenceEncoder, EncoderWithSVTR)
+- ppocr/modeling/backbones/rec_svtrnet.py        -> libreyolo/models/ppocr/rec.py (Attention, Block)
+- ppocr/modeling/heads/rec_ctc_head.py           -> libreyolo/models/ppocr/rec.py (CTCHead)
+- ppocr/modeling/heads/rec_multi_head.py         -> libreyolo/models/ppocr/rec.py (MultiHead, CTC branch)
+- ppocr/postprocess/db_postprocess.py            -> libreyolo/postprocess/ppocr.py (db_postprocess)
+- ppocr/postprocess/rec_postprocess.py           -> libreyolo/postprocess/ppocr.py (ctc_decode)
+- tools/infer/predict_det.py, predict_rec.py,
+  predict_system.py, tools/infer/utility.py      -> libreyolo/models/ppocr/preprocess.py and
+                                                    libreyolo/models/ppocr/inference.py
+- ppocr/utils/dict/ppocrv5_dict.txt              -> embedded as checkpoint "charset" metadata by
+                                                    weights/convert_ppocr_weights.py
+
+Published LibrePPOCR checkpoints are converted from the official PP-OCRv5
+training checkpoints (Apache-2.0) released by the PaddleOCR project:
+PP-OCRv5_mobile_det, PP-OCRv5_server_det, PP-OCRv5_mobile_rec,
+PP-OCRv5_server_rec. Exact source files and their SHA-256 hashes are recorded
+on each Hugging Face model card and in the conversion script.
+
+The upstream code and weights are used under the terms of the Apache License,
+Version 2.0: http://www.apache.org/licenses/LICENSE-2.0

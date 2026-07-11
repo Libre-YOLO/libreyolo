@@ -94,6 +94,9 @@ from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 # vision_model.embeddings.patch_embedding + text_model.head, so order does not
 # matter. NB: SigLIP carries logit_bias, which CLIP lacks.
 from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
+# PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
+# on the composite det.*/rec.* checkpoint layout, so order does not matter.
+from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -676,5 +679,6 @@ __all__ = [
     "LibreResNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePPOCR",
     "try_ensure_rfdetr",
 ]
