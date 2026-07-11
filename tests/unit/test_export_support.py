@@ -48,7 +48,7 @@ def test_ncnn_detr_families_fail_in_preflight(family):
 
 
 def test_experimental_export_warns_in_preflight():
-    exporter = OnnxExporter(_wrapper("yolox"))
+    exporter = OnnxExporter(_wrapper("deim"))
     with pytest.warns(RuntimeWarning, match="experimental"):
         exporter._preflight(half=False, int8=False, data=None)
 
@@ -57,7 +57,7 @@ def test_tflite_support_keys_use_canonical_tasks():
     from libreyolo.export.tflite import supported_tflite_exports
 
     assert all(task in TASKS for _, task in supported_tflite_exports())
-    assert get_support("rfdetr", "segment", "tflite").tier == "experimental"
+    assert get_support("rfdetr", "segment", "tflite").tier == "blocked"
 
 
 def test_dinov2_classify_routes_to_base_onnx_export(monkeypatch):
@@ -74,16 +74,31 @@ def test_dinov2_classify_routes_to_base_onnx_export(monkeypatch):
 
     monkeypatch.setattr(BaseModel, "export", fake_export)
     assert model.export("onnx", dynamic=False) == "dinov2.onnx"
-    assert captured == {"format": "onnx", "dynamic": False}
+    assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
 
 
-def test_dinov2_semantic_remains_blocked():
+def test_dinov2_semantic_routes_to_shared_export(monkeypatch):
+    from libreyolo.models.base.model import BaseModel
     from libreyolo.models.dinov2.model import LibreDINOv2
 
     model = object.__new__(LibreDINOv2)
     model.task = "semantic"
-    with pytest.raises(NotImplementedError, match="dense-logits"):
-        model.export("onnx")
+    captured = {}
+
+    def fake_export(self, format="onnx", **kwargs):
+        captured.update(format=format, **kwargs)
+        return "dinov2-semantic.onnx"
+
+    monkeypatch.setattr(BaseModel, "export", fake_export)
+    assert model.export("onnx", dynamic=False) == "dinov2-semantic.onnx"
+    assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
+
+
+def test_observed_cpu_toolchain_blocks_are_explicit():
+    depth_ncnn = get_support("depth_anything", "depth", "ncnn")
+    fomo_tflite = get_support("fomo", "point", "tflite")
+    assert depth_ncnn.tier == "blocked" and "reshape" in depth_ncnn.reason
+    assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
 
 
 def test_committed_inventory_matches_runtime_inventory():

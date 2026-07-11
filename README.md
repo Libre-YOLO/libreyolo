@@ -87,65 +87,65 @@ and receive the heaviest testing:
 <!-- export-support:start -->
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | exp | exp | exp | exp |  |  |
-| clip | classify | ✓ | exp | exp | exp | exp |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | exp |  |  |
-| deim | detect | exp | exp | exp | exp |  |  |  |
-| deimv2 | detect | exp | exp | exp | exp |  |  |  |
-| depth_anything | depth |  |  |  |  |  |  |  |
-| dfine | detect | exp | exp | exp | exp |  |  |  |
-| dfine | segment | exp | exp | exp | exp |  |  |  |
-| dinov2 | semantic |  |  |  |  |  |  |  |
-| dinov2 | classify | exp | exp | exp | exp | exp |  |  |
-| ec | detect | exp | exp | exp | exp |  |  |  |
-| ec | pose | exp | exp | exp | exp |  |  |  |
-| ec | segment | exp | exp | exp | exp |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | exp |  |  |
-| eomt | semantic |  |  |  |  |  |  |  |
+| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
+| clip | classify | ✓ |  |  |  |  |  |  |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| deim | detect | exp | ✓ | exp | exp |  |  |  |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | classify | ✓ |  |  |  |  |  |  |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
+| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
+| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |
-| fomo | point |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |
-| l2cs | gaze |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |
 | locateanything | detect |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | exp |  |  |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | mobilesam | segment |  |  |  |  |  |  |  |
-| nafnet | restore | exp | exp | exp | exp | exp |  |  |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
-| picodet | detect | exp | exp | exp | exp | exp |  |  |
-| pidnet | semantic |  |  |  |  |  |  |  |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
-| realesrgan | restore | exp | exp | exp | exp | exp |  |  |
-| resnet | classify | ✓ | ✓ | exp | exp | exp |  |  |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | ✓ | exp |
-| rfdetr | segment | exp | exp | exp | exp |  | exp |  |
-| rfdetr | pose | exp | exp | exp | exp |  | exp |  |
-| rfdetr | obb | exp | exp | exp | exp |  |  |  |
-| rtdetr | detect | exp | exp | exp | exp |  |  | exp |
-| rtdetrv2 | detect | exp | exp | exp | exp |  |  |  |
-| rtdetrv4 | detect | exp | exp | exp | exp |  |  |  |
-| rtmdet | detect | exp | exp | exp | exp | exp |  |  |
+| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ | exp | exp | exp | exp |  |  |
+| siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
-| yolo1 | detect | exp | exp | exp | exp | exp |  |  |
-| yolo2 | detect | exp | exp | exp | exp | exp | exp |  |
-| yolo3 | detect | exp | exp | exp | exp | exp | ✓ |  |
-| yolo4 | detect | exp | exp | exp | exp | exp | exp |  |
-| yolo7 | detect | exp | exp | exp | exp | exp | exp |  |
+| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
-| yolo9_e2e | detect | exp | exp | exp | exp | exp |  |  |
-| yolo9_p2 | detect | ✓ | exp | exp | exp | exp |  |  |
-| yolonas | detect | exp | exp | exp | exp | exp |  |  |
-| yolonas | pose | exp | exp | exp | exp | exp |  |  |
-| yolox | detect | exp | exp | exp | exp | exp |  | exp |
-| zipdepth | depth | exp | exp | exp | exp | exp |  |  |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
 <!-- export-support:end -->
 
 YOLOv9-P2 is a small-object variant of YOLOv9 with an extra stride-4 detection

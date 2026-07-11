@@ -262,6 +262,13 @@ def LibreYOLO(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
+    if model_path.endswith(".tflite"):
+        from ..backends.tflite import TFLiteBackend
+
+        return TFLiteBackend(
+            model_path, nb_classes=nb_classes, device=device, task=task
+        )
+
     if model_path.endswith((".engine", ".tensorrt")):
         from ..backends.tensorrt import TensorRTBackend
 

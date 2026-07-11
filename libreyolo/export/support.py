@@ -96,6 +96,33 @@ _add(
     since="1.3",
     constraint="frozen-class labels and fixed input resolution",
 )
+_add(
+    "blocked",
+    ("clip", "siglip2"),
+    ("classify",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason=(
+        "Frozen-class vision-language export is ONNX-only in v1; re-export "
+        "the frozen ONNX graph for a different deployment runtime."
+    ),
+)
+_add(
+    "blocked",
+    ("dinov2",),
+    ("classify",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason="LibreDINOv2 classify export currently supports ONNX only.",
+)
+_add(
+    "blocked",
+    ("birefnet",),
+    ("matte",),
+    ("ncnn",),
+    reason=(
+        "BiRefNet's decoder requires torchvision deformable convolution, "
+        "which PNNX/NCNN cannot lower to a runnable graph."
+    ),
+)
 
 # Explicitly permitted but not yet parity-validated combinations.
 _add(
@@ -104,6 +131,44 @@ _add(
     ("segment", "pose"),
     ("tflite",),
     reason="The converter path is wired, but parity is not part of the export matrix yet.",
+)
+_add(
+    "blocked",
+    ("rfdetr",),
+    ("segment",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x assigns an invalid NHWC layout to the segmentation-head "
+        "Einsum (78 channels versus the required 256), so conversion fails."
+    ),
+)
+_add(
+    "experimental",
+    ("birefnet",),
+    ("matte",),
+    ("onnx",),
+    reason=(
+        "The opset-19 DeformConv graph exports, but ONNX Runtime's CPU "
+        "provider has no DeformConv implementation for runtime parity."
+    ),
+)
+_add(
+    "validated",
+    ("birefnet",),
+    ("matte",),
+    ("torchscript",),
+    since="1.4",
+    constraint="fixed 1024x1024 input",
+)
+_add(
+    "blocked",
+    ("rfdetr",),
+    ("pose",),
+    ("tflite",),
+    reason=(
+        "RF-DETR pose-x TFLite conversion exceeded the CPU timebox and 8 GB "
+        "working memory without producing an artifact on this toolchain."
+    ),
 )
 _add(
     "experimental",
@@ -126,6 +191,410 @@ _add(
     ("onnx",),
     reason="The classify graph is wired; numeric parity validation is pending.",
 )
+_add(
+    "experimental",
+    ("dinov2", "eomt"),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    reason="The dense-logits runtime contract is wired; parity validation is pending.",
+)
+_add(
+    "experimental",
+    ("dinov2", "eomt", "pidnet"),
+    ("semantic",),
+    ("tensorrt", "openvino"),
+    reason=(
+        "The dense-logits contract is wired, but this environment has no "
+        "TensorRT or OpenVINO runtime for parity validation."
+    ),
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("l2cs",),
+    ("gaze",),
+    ("onnx",),
+    since="1.4",
+    constraint="head-only contract: each input image is one face crop",
+)
+_add(
+    "validated",
+    ("nafnet",),
+    ("restore",),
+    ("onnx", "torchscript", "ncnn"),
+    since="1.4",
+    constraint="fixed-resolution export canvas",
+)
+_add(
+    "blocked",
+    ("nafnet",),
+    ("restore",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x converts the fixed-canvas graph, but LiteRT fails at "
+        "invoke time because an internal input tensor lacks data."
+    ),
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("onnx", "torchscript", "ncnn"),
+    since="1.4",
+    constraint="ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas",
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("tflite",),
+    since="1.4",
+    constraint="fixed-resolution export canvas",
+)
+_add(
+    "blocked",
+    ("depth_anything",),
+    ("depth",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x converts the DINOv2 depth graph, but LiteRT rejects "
+        "a generated FILL node because its dimensions are invalid."
+    ),
+)
+_add(
+    "validated",
+    ("yolox",),
+    ("detect",),
+    ("tflite",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("fomo",),
+    ("point",),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "experimental",
+    ("fomo",),
+    ("point",),
+    ("tensorrt", "openvino"),
+    reason=(
+        "The raw-heatmap contract is wired, but this environment has no "
+        "TensorRT or OpenVINO runtime for parity validation."
+    ),
+)
+_add(
+    "validated",
+    ("zipdepth",),
+    ("depth",),
+    ("onnx", "torchscript", "ncnn"),
+    since="1.4",
+    constraint="fixed-resolution export canvas",
+)
+_add(
+    "blocked",
+    ("zipdepth",),
+    ("depth",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x flatbuffer-direct conversion does not support the "
+        "edge-mode Pad operation in ZipDepth's convex upsampler."
+    ),
+)
+_add(
+    "validated",
+    ("picodet",),
+    ("detect",),
+    ("onnx", "torchscript", "ncnn"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolo2", "yolo3", "yolo4"),
+    ("detect",),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("yolo2", "yolo3"),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; "
+        "LiteRT cannot prepare the converted detector graph."
+    ),
+)
+_add(
+    "blocked",
+    ("yolo4",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x produces an invalid CONV_2D channel layout for YOLO4; "
+        "LiteRT fails while allocating tensors."
+    ),
+)
+_add(
+    "validated",
+    ("yolo7",),
+    ("detect",),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("yolo7",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "The converted LiteRT graph changes decoded box coordinates beyond "
+        "the detector parity tolerance."
+    ),
+)
+_add(
+    "validated",
+    ("yolo9_e2e", "yolo9_p2", "yolox"),
+    ("detect",),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolo1",),
+    ("detect",),
+    ("ncnn",),
+    since="1.4",
+    constraint="fixed 448x448 input",
+)
+_add(
+    "validated",
+    ("yolonas",),
+    ("detect", "pose"),
+    ("ncnn",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolo2", "yolo3", "yolo4"),
+    ("detect",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolo1", "yolo7", "yolo9_e2e", "yolox"),
+    ("detect",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolo9_p2",),
+    ("detect",),
+    ("torchscript",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("yolonas",),
+    ("detect", "pose"),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("rtmdet",),
+    ("detect",),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the "
+        "RTMDet NCNN graph without usable input blobs."
+    ),
+)
+_add(
+    "validated",
+    ("rtmdet",),
+    ("detect",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("dfine", "deim", "deimv2", "ec", "rtdetr", "rtdetrv2", "rtdetrv4"),
+    ("detect",),
+    ("torchscript",),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("dfine", "ec", "rtdetr"),
+    ("detect",),
+    ("onnx",),
+    since="1.4",
+)
+_add(
+    "experimental",
+    ("deim",),
+    ("detect",),
+    ("onnx",),
+    reason="Runtime parity leaves 8.7% of selected boxes outside tolerance.",
+)
+_add(
+    "experimental",
+    ("deimv2",),
+    ("detect",),
+    ("onnx",),
+    reason="ONNX top-k selection changes score and box queries beyond tolerance.",
+)
+_add(
+    "experimental",
+    ("rtdetrv2",),
+    ("detect",),
+    ("onnx",),
+    reason="Runtime parity leaves 9% of selected boxes outside tolerance.",
+)
+_add(
+    "experimental",
+    ("rtdetrv4",),
+    ("detect",),
+    ("onnx",),
+    reason="Runtime parity leaves 7.3% of selected boxes outside tolerance.",
+)
+_add(
+    "validated",
+    ("dfine",),
+    ("segment",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("ec",),
+    ("pose", "segment"),
+    ("onnx", "torchscript"),
+    since="1.4",
+    constraint="fixed 640x640 input",
+)
+_add(
+    "validated",
+    ("rfdetr",),
+    ("segment", "pose", "obb"),
+    ("onnx", "torchscript"),
+    since="1.4",
+    constraint="fixed task-native input resolution",
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    since="1.4",
+    constraint="fixed 518x518 input",
+)
+_add(
+    "validated",
+    ("dinov2",),
+    ("classify",),
+    ("onnx",),
+    since="1.4",
+    constraint="fixed 224x224 input",
+)
+_add(
+    "validated",
+    ("eomt",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    since="1.4",
+    constraint="fixed 512x512 input",
+)
+_add(
+    "blocked",
+    ("fomo",),
+    ("point",),
+    ("coreml",),
+    reason="The CoreML wrapper does not implement the raw point-heatmap contract.",
+)
+_add(
+    "validated",
+    ("fomo",),
+    ("point",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "validated",
+    ("depth_anything",),
+    ("depth",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("depth_anything",),
+    ("depth",),
+    ("ncnn",),
+    reason=(
+        "PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 "
+        "transformer graph; the produced NCNN artifact fails numeric parity."
+    ),
+)
+_add(
+    "validated",
+    ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
+    ("classify",),
+    ("ncnn", "tflite"),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("fomo",),
+    ("point",),
+    ("tflite",),
+    reason=(
+        "onnx2tf 2.4.x produces an invalid depthwise-convolution graph for the "
+        "static SAME-padded FOMO backbone on this toolchain."
+    ),
+)
+_add(
+    "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("tflite",),
+    since="1.4",
+)
+_add(
+    "blocked",
+    ("dinov2", "eomt"),
+    ("semantic",),
+    ("ncnn", "tflite"),
+    reason=(
+        "The dense-logits runtime contract is implemented, but this transformer "
+        "graph has not produced a parity-valid edge-runtime artifact."
+    ),
+)
+_add(
+    "blocked",
+    ("dinov2", "eomt", "pidnet"),
+    ("semantic",),
+    ("coreml",),
+    reason="The CoreML wrapper does not implement the dense semantic-logits contract.",
+)
 
 
 _TASK_BLOCKS = {
@@ -144,12 +613,8 @@ _TASK_BLOCKS = {
 }
 
 _FAMILY_BLOCKS = {
-    "depth_anything": (
-        "Depth Anything V2 has not been validated against the depth export contract."
-    ),
     "eomt": "EoMT export does not yet have semantic, instance, or panoptic runtime parsing.",
-    "pidnet": "PIDNet export awaits the semantic dense-logits runtime contract.",
-    "l2cs": "L2CS export awaits the gaze two-head runtime contract.",
+    "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "mobilesam": "Promptable model export is out of scope for the v1 runtime contract.",
@@ -200,6 +665,13 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
             f"NCNN export is not supported for {label}: the model requires decoder "
             "or sampling operations unavailable in NCNN. "
             "Use ONNX, OpenVINO, TorchScript, or TensorRT instead.",
+        )
+    if fmt in {"tensorrt", "openvino"}:
+        runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"
+        return SupportEntry(
+            "experimental",
+            f"The converter path is available, but this environment has no "
+            f"{runtime} runtime for numeric parity validation.",
         )
     if fmt == "tflite":
         return SupportEntry(

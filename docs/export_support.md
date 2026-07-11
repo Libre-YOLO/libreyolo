@@ -8,65 +8,65 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | exp | exp | exp | exp |  |  |
-| clip | classify | ✓ | exp | exp | exp | exp |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | exp |  |  |
-| deim | detect | exp | exp | exp | exp |  |  |  |
-| deimv2 | detect | exp | exp | exp | exp |  |  |  |
-| depth_anything | depth |  |  |  |  |  |  |  |
-| dfine | detect | exp | exp | exp | exp |  |  |  |
-| dfine | segment | exp | exp | exp | exp |  |  |  |
-| dinov2 | semantic |  |  |  |  |  |  |  |
-| dinov2 | classify | exp | exp | exp | exp | exp |  |  |
-| ec | detect | exp | exp | exp | exp |  |  |  |
-| ec | pose | exp | exp | exp | exp |  |  |  |
-| ec | segment | exp | exp | exp | exp |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | exp |  |  |
-| eomt | semantic |  |  |  |  |  |  |  |
+| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
+| clip | classify | ✓ |  |  |  |  |  |  |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| deim | detect | exp | ✓ | exp | exp |  |  |  |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | classify | ✓ |  |  |  |  |  |  |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
+| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
+| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |
-| fomo | point |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |
-| l2cs | gaze |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |
 | locateanything | detect |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | exp |  |  |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | mobilesam | segment |  |  |  |  |  |  |  |
-| nafnet | restore | exp | exp | exp | exp | exp |  |  |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
-| picodet | detect | exp | exp | exp | exp | exp |  |  |
-| pidnet | semantic |  |  |  |  |  |  |  |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
-| realesrgan | restore | exp | exp | exp | exp | exp |  |  |
-| resnet | classify | ✓ | ✓ | exp | exp | exp |  |  |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | ✓ | exp |
-| rfdetr | segment | exp | exp | exp | exp |  | exp |  |
-| rfdetr | pose | exp | exp | exp | exp |  | exp |  |
-| rfdetr | obb | exp | exp | exp | exp |  |  |  |
-| rtdetr | detect | exp | exp | exp | exp |  |  | exp |
-| rtdetrv2 | detect | exp | exp | exp | exp |  |  |  |
-| rtdetrv4 | detect | exp | exp | exp | exp |  |  |  |
-| rtmdet | detect | exp | exp | exp | exp | exp |  |  |
+| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ | exp | exp | exp | exp |  |  |
+| siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
-| yolo1 | detect | exp | exp | exp | exp | exp |  |  |
-| yolo2 | detect | exp | exp | exp | exp | exp | exp |  |
-| yolo3 | detect | exp | exp | exp | exp | exp | ✓ |  |
-| yolo4 | detect | exp | exp | exp | exp | exp | exp |  |
-| yolo7 | detect | exp | exp | exp | exp | exp | exp |  |
+| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
-| yolo9_e2e | detect | exp | exp | exp | exp | exp |  |  |
-| yolo9_p2 | detect | ✓ | exp | exp | exp | exp |  |  |
-| yolonas | detect | exp | exp | exp | exp | exp |  |  |
-| yolonas | pose | exp | exp | exp | exp | exp |  |  |
-| yolox | detect | exp | exp | exp | exp | exp |  | exp |
-| zipdepth | depth | exp | exp | exp | exp | exp |  |  |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
 
 ## Parity thresholds
 
@@ -79,11 +79,15 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 ## Blocked combinations
 
+- `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `clip` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `clip` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `convnext` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `clip` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deim` / `detect` / `ncnn`: NCNN export is not supported for DEIM: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deim` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -91,28 +95,24 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `deimv2` / `detect` / `ncnn`: NCNN export is not supported for DEIMv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deimv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `deimv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `depth_anything` / `depth` / `onnx`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `torchscript`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `tensorrt`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `openvino`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `ncnn`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `tflite`: Depth Anything V2 has not been validated against the depth export contract.
-- `depth_anything` / `depth` / `coreml`: Depth Anything V2 has not been validated against the depth export contract.
+- `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
+- `depth_anything` / `depth` / `tflite`: onnx2tf 2.4.x converts the DINOv2 depth graph, but LiteRT rejects a generated FILL node because its dimensions are invalid.
+- `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `dinov2` / `semantic` / `onnx`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `torchscript`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `tensorrt`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `openvino`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `ncnn`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `tflite`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `semantic` / `coreml`: Export for semantic-segmentation models is not implemented yet. Semantic export needs a dense-logits output and backend argmax contract.
-- `dinov2` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `dinov2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
+- `dinov2` / `classify` / `torchscript`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX only.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -122,15 +122,10 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `ec` / `segment` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `efficientnetv2` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `eomt` / `semantic` / `onnx`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `torchscript`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `tensorrt`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `openvino`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `ncnn`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `tflite`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `semantic` / `coreml`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
+- `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `eomt` / `segment` / `onnx`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
 - `eomt` / `segment` / `torchscript`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
 - `eomt` / `segment` / `tensorrt`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
@@ -152,13 +147,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `florence2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
-- `fomo` / `point` / `onnx`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `torchscript`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `tensorrt`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `openvino`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `ncnn`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `tflite`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
-- `fomo` / `point` / `coreml`: Export for point-task models is not implemented yet. Point export needs a raw heatmap output and backend peak-decoding contract.
+- `fomo` / `point` / `tflite`: onnx2tf 2.4.x produces an invalid depthwise-convolution graph for the static SAME-padded FOMO backbone on this toolchain.
+- `fomo` / `point` / `coreml`: The CoreML wrapper does not implement the raw point-heatmap contract.
 - `grounding_dino` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `grounding_dino` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
@@ -180,13 +170,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `kosmos2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
-- `l2cs` / `gaze` / `onnx`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `torchscript`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `tensorrt`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `openvino`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `ncnn`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `tflite`: L2CS export awaits the gaze two-head runtime contract.
-- `l2cs` / `gaze` / `coreml`: L2CS export awaits the gaze two-head runtime contract.
+- `l2cs` / `gaze` / `torchscript`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `tensorrt`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `openvino`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `ncnn`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `tflite`: The v1 L2CS gaze export contract supports ONNX only.
+- `l2cs` / `gaze` / `coreml`: The v1 L2CS gaze export contract supports ONNX only.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
@@ -208,7 +197,6 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `locateanything` / `point` / `ncnn`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `tflite`: Generative VLM export is out of scope for v1.
 - `locateanything` / `point` / `coreml`: Generative VLM export is out of scope for v1.
-- `mobilenetv4` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `mobilenetv4` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `mobilesam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
@@ -217,7 +205,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `mobilesam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
-- `nafnet` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `nafnet` / `restore` / `tflite`: onnx2tf 2.4.x converts the fixed-canvas graph, but LiteRT fails at invoke time because an internal input tensor lacks data.
 - `nafnet` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `owlv2` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
@@ -228,13 +216,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `pidnet` / `semantic` / `onnx`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `torchscript`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `tensorrt`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `openvino`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `ncnn`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `tflite`: PIDNet export awaits the semantic dense-logits runtime contract.
-- `pidnet` / `semantic` / `coreml`: PIDNet export awaits the semantic dense-logits runtime contract.
+- `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `qwen3vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
@@ -242,14 +224,14 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `qwen3vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
-- `realesrgan` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `realesrgan` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `resnet` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `resnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `rfdetr` / `segment` / `tflite`: onnx2tf 2.4.x assigns an invalid NHWC layout to the segmentation-head Einsum (78 channels versus the required 256), so conversion fails.
 - `rfdetr` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `pose` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `rfdetr` / `pose` / `tflite`: RF-DETR pose-x TFLite conversion exceeded the CPU timebox and 8 GB working memory without producing an artifact on this toolchain.
 - `rfdetr` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `obb` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -262,6 +244,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv4` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `sam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
@@ -278,8 +261,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `sam2` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam2` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
-- `siglip2` / `classify` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `siglip2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `smolvlm2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
@@ -289,9 +276,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `yolo1` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo2` / `detect` / `tflite`: onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; LiteRT cannot prepare the converted detector graph.
 - `yolo2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo3` / `detect` / `tflite`: onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; LiteRT cannot prepare the converted detector graph.
 - `yolo3` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo4` / `detect` / `tflite`: onnx2tf 2.4.x produces an invalid CONV_2D channel layout for YOLO4; LiteRT fails while allocating tensors.
 - `yolo4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo7` / `detect` / `tflite`: The converted LiteRT graph changes decoded box coordinates beyond the detector parity tolerance.
 - `yolo7` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo9_e2e` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolo9_e2e` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -301,6 +292,5 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `yolonas` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `pose` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolonas` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolox` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
-- `zipdepth` / `depth` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `zipdepth` / `depth` / `tflite`: onnx2tf 2.4.x flatbuffer-direct conversion does not support the edge-mode Pad operation in ZipDepth's convex upsampler.
 - `zipdepth` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.

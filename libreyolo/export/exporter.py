@@ -179,6 +179,27 @@ class _RTDETRExportWrapper(torch.nn.Module):
         return outputs["pred_logits"], outputs["pred_boxes"]
 
 
+class _SemanticExportWrapper(torch.nn.Module):
+    """Expose only dense semantic logits from task-specific native outputs."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        output = self.model(x)
+        if isinstance(output, dict):
+            if "semantic_logits" in output:
+                return output["semantic_logits"]
+            if "logits" in output:
+                return output["logits"]
+            if "predictions" in output:
+                return output["predictions"]
+        if isinstance(output, (list, tuple)):
+            return output[-1]
+        return output
+
+
 # =============================================================================
 # BaseExporter ABC
 # =============================================================================
@@ -654,7 +675,12 @@ class BaseExporter(ABC):
         rfdetr_export_snapshots = []
         rfdetr_inner = None
         family = self.model._get_model_name()
-        if family == "dfine":
+        task = getattr(self.model, "task", "detect")
+        if task == "semantic":
+            nn_model = _SemanticExportWrapper(nn_model).to(device)
+            nn_model.eval()
+            dfine_wrapped = True
+        elif family == "dfine":
             from ..models.dfine.nn import DFINEExportWrapper
 
             # deploy() (BN fusion + decoder-layer pruning + head swap) mutates
@@ -914,6 +940,15 @@ class BaseExporter(ABC):
             meta["exported_from"] = str(Path(onnx_path).name)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
+        if task == "gaze":
+            meta.update(
+                {
+                    "num_bins": int(self.model.num_bins),
+                    "bin_width_deg": float(self.model.bin_width_deg),
+                    "offset_deg": float(self.model.offset_deg),
+                    "gaze_input": "face_crop",
+                }
+            )
         return meta
 
     def _build_onnx_metadata(
@@ -983,6 +1018,15 @@ class BaseExporter(ABC):
                 meta["num_keypoints_per_class"] = json.dumps(
                     pose_meta["num_keypoints_per_class"]
                 )
+        if task == "gaze":
+            meta.update(
+                {
+                    "num_bins": str(int(self.model.num_bins)),
+                    "bin_width_deg": str(float(self.model.bin_width_deg)),
+                    "offset_deg": str(float(self.model.offset_deg)),
+                    "gaze_input": "face_crop",
+                }
+            )
         return meta
 
     def _task_metadata(self) -> tuple[str, list[str], str]:

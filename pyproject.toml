@@ -102,6 +102,8 @@ tflite = [
     # onnx2tf 2.4.3 includes the RF-DETR conversion fixes required by this path.
     # Requires Python 3.12+ (onnx2tf 2.4.x wheel constraint).
     "onnx2tf>=2.4.3; python_version >= '3.12'",
+    # Runtime used by TFLiteBackend to execute exported .tflite artifacts.
+    "ai-edge-litert>=2.1.2; python_version >= '3.12'",
     # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
     "onnx-graphsurgeon>=0.3.27",
     # Required for RF-DETR onnxsim preprocessing step.

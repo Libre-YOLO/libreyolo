@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pytest
 import torch
@@ -61,7 +63,10 @@ def test_detect_size_from_filename():
     assert (
         LibreZipDepth.detect_size_from_filename("LibreZipDepthbnpu-depth.pt") == "bnpu"
     )
-    assert LibreZipDepth.detect_size_from_filename("LibreDepthAnythingV2s-depth.pt") is None
+    assert (
+        LibreZipDepth.detect_size_from_filename("LibreDepthAnythingV2s-depth.pt")
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +146,38 @@ def test_export_rejects_batch_gt_1():
     model = LibreZipDepth(None, size="b", device="cpu")
     with pytest.raises(ValueError, match="batch-1"):
         model.export(format="onnx", batch=2)
+
+
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+def test_exported_depth_parity(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    if format == "ncnn" and (
+        importlib.util.find_spec("pnnx") is None
+        or importlib.util.find_spec("ncnn") is None
+    ):
+        pytest.skip("PNNX and NCNN are required")
+    from libreyolo import LibreYOLO
+
+    torch.manual_seed(0)
+    model = LibreZipDepth(None, size="b", device="cpu")
+    model.model.eval()
+    image = np.random.default_rng(0).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    native = model.predict(image, imgsz=64).depth_map.data.numpy()
+    artifact = model.export(
+        format=format,
+        output_path=str(tmp_path / f"zipdepth.{format}"),
+        imgsz=64,
+        dynamic=False,
+        simplify=False,
+    )
+    actual = LibreYOLO(artifact, device="cpu").predict(image).depth_map.data.numpy()
+
+    mse = float(np.mean((native - actual) ** 2))
+    peak = max(float(np.max(np.abs(native))), 1e-6)
+    psnr = float("inf") if mse == 0 else 20.0 * np.log10(peak / np.sqrt(mse))
+    assert psnr > 40.0
 
 
 def test_metadata_contract():

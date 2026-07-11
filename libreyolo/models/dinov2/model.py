@@ -673,13 +673,11 @@ class LibreDINOv2(BaseModel):
     # Export — not yet implemented
     # =========================================================================
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
+    def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         if self.task == "classify" and format.lower() == "onnx":
-            return super().export(format=format, **kwargs)
+            return super().export(format=format, opset=opset, **kwargs)
         if self.task == "semantic":
-            raise NotImplementedError(
-                "LibreDINOv2 semantic export awaits the dense-logits runtime contract."
-            )
+            return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
             "LibreDINOv2 classify export currently supports ONNX only."
         )

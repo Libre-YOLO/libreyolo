@@ -127,6 +127,18 @@ def test_backend_val_routes_pose_to_pose_validator(monkeypatch):
 
 
 def test_backend_val_routes_point_to_point_validator(monkeypatch):
+    captured = {}
+
+    class _Validator:
+        def __init__(self, model, config):
+            captured["model"] = model
+            captured["config"] = config
+
+        def __call__(self):
+            return {"metrics/mAP50-95": 0.25}
+
+    monkeypatch.setattr("libreyolo.validation.PointValidator", _Validator)
+
     class _PointBackend(BaseBackend):
         def __init__(self):
             super().__init__(
@@ -145,8 +157,12 @@ def test_backend_val_routes_point_to_point_validator(monkeypatch):
         def _run_inference(self, blob: np.ndarray) -> list:
             return []
 
-    with pytest.raises(NotImplementedError, match="Exported point-task inference is not implemented yet"):
-        _PointBackend()
+    backend = _PointBackend()
+    metrics = backend.val(data="point.yaml", workers=0, device="cpu")
+
+    assert metrics == {"metrics/mAP50-95": 0.25}
+    assert captured["model"] is backend
+    assert captured["config"].data == "point.yaml"
 
 
 def test_backend_val_rejects_augment():
@@ -155,7 +171,9 @@ def test_backend_val_rejects_augment():
 
 
 def test_backend_val_rejects_rectangular_imgsz():
-    with pytest.raises(NotImplementedError, match="Rectangular exported-backend validation"):
+    with pytest.raises(
+        NotImplementedError, match="Rectangular exported-backend validation"
+    ):
         _YoloRectBackend().val(data="data.yaml", device="cpu")
 
 

@@ -7,6 +7,8 @@ network-marked for nightly runs.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 import torch
@@ -155,7 +157,39 @@ class TestDINOv2SemanticSegmenter:
         from libreyolo.models.dinov2.model import LibreDINOv2
 
         with pytest.raises(ValueError, match="semantic"):
-            LibreDINOv2(model_path=None, size="n", task="detect", nb_classes=3, device="cpu")
+            LibreDINOv2(
+                model_path=None, size="n", task="detect", nb_classes=3, device="cpu"
+            )
+
+    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    def test_exported_semantic_parity(self, fake_backbone, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+
+        from libreyolo import LibreYOLO
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        model = LibreDINOv2(
+            model_path=None, size="n", task="semantic", nb_classes=3, device="cpu"
+        )
+        model.model.eval()
+        image = np.random.default_rng(13).integers(
+            0, 256, size=(70, 70, 3), dtype=np.uint8
+        )
+        native = model.predict(image, imgsz=70).semantic_mask.data
+        suffix = ".onnx" if format == "onnx" else ".torchscript"
+        artifact = tmp_path / f"dinov2_semantic{suffix}"
+        model.export(
+            format=format,
+            output_path=str(artifact),
+            imgsz=70,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+        agreement = (native == exported.semantic_mask.data).float().mean().item()
+        assert agreement > 0.95
 
 
 def _make_semantic_yaml(root, n_images=4, size=70):
@@ -270,6 +304,61 @@ def test_dinov2_semantic_forward_real_backbone():
         assert m.model(x).shape == (1, 4, 518, 518)
 
 
+@pytest.mark.external_data
+@pytest.mark.network
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBREYOLO_RUN_REAL_EXPORT_PARITY") != "1",
+    reason="set LIBREYOLO_RUN_REAL_EXPORT_PARITY=1 for real DINOv2 export parity",
+)
+@pytest.mark.parametrize(("task", "imgsz"), [("semantic", 518), ("classify", 224)])
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+def test_dinov2_real_export_raw_parity(tmp_path, task, imgsz, format):
+    if task == "classify" and format != "onnx":
+        pytest.skip("LibreDINOv2 classify export is intentionally ONNX-only")
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+
+    from libreyolo import LibreDINOv2, LibreYOLO
+    from libreyolo.export.exporter import OnnxExporter
+
+    torch.manual_seed(0)
+    model = LibreDINOv2(
+        model_path=None, size="n", task=task, nb_classes=3, device="cpu"
+    )
+    model.model.eval()
+    tensor = torch.rand(1, 3, imgsz, imgsz)
+    exporter = OnnxExporter(model)
+    with exporter._model_context("cpu", False, False, 1, (imgsz, imgsz)) as (
+        wrapped,
+        _,
+    ):
+        with torch.no_grad():
+            expected = wrapped(tensor)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        format=format,
+        imgsz=imgsz,
+        dynamic=False,
+        simplify=False,
+        output_path=str(tmp_path / f"dinov2-{task}.{format}"),
+    )
+    actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+
+    assert len(actual) == len(expected)
+    rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
+    for actual_output, expected_output in zip(actual, expected):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=rtol,
+            atol=atol,
+        )
+
+
 def test_all_ignore_targets_yield_finite_zero_loss(fake_backbone):
     from libreyolo.models.rfdetr.nn import RFDETRSemanticSegmenter
 
@@ -297,9 +386,12 @@ def test_dinov2_semantic_predict_rejects_non_patch_imgsz(fake_backbone, tmp_path
         m.predict(str(img_path), imgsz=100)
 
 
-def test_dinov2_semantic_train_rejects_non_patch_imgsz(fake_backbone, tmp_path):
+def test_dinov2_semantic_train_rejects_non_patch_imgsz(
+    fake_backbone, tmp_path, monkeypatch
+):
     from libreyolo.models.dinov2.model import LibreDINOv2
 
+    monkeypatch.chdir(tmp_path)
     yaml_path = _make_semantic_yaml(tmp_path)
     m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"
@@ -322,9 +414,10 @@ def test_dinov2_semantic_train_rejects_non_patch_imgsz(fake_backbone, tmp_path):
         )
 
 
-def test_dinov2_semantic_rejects_lora(fake_backbone, tmp_path):
+def test_dinov2_semantic_rejects_lora(fake_backbone, tmp_path, monkeypatch):
     from libreyolo.models.dinov2.model import LibreDINOv2
 
+    monkeypatch.chdir(tmp_path)
     yaml_path = _make_semantic_yaml(tmp_path)
     m = LibreDINOv2(
         model_path=None, size="n", task="semantic", nb_classes=2, device="cpu"

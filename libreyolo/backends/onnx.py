@@ -151,6 +151,21 @@ class OnnxBackend(BaseBackend):
                 else None
             ),
             interpolation=runtime_metadata.get("interpolation"),
+            num_bins=(
+                int(runtime_metadata["num_bins"])
+                if runtime_metadata.get("num_bins")
+                else None
+            ),
+            bin_width_deg=(
+                float(runtime_metadata["bin_width_deg"])
+                if runtime_metadata.get("bin_width_deg")
+                else None
+            ),
+            offset_deg=(
+                float(runtime_metadata["offset_deg"])
+                if runtime_metadata.get("offset_deg")
+                else None
+            ),
             **pose_metadata,
         )
 
@@ -259,7 +274,9 @@ class OnnxBackend(BaseBackend):
                 model_proto = onnx.load(onnx_path)
                 meta = {p.key: p.value for p in model_proto.metadata_props}
         except Exception as e:
-            logger.warning("Failed to read ONNX pose metadata from %s: %s", onnx_path, e)
+            logger.warning(
+                "Failed to read ONNX pose metadata from %s: %s", onnx_path, e
+            )
             return {}
 
         return _read_pose_metadata(meta)
