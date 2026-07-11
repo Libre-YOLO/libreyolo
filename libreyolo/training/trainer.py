@@ -1421,6 +1421,9 @@ class BaseTrainer(ABC):
 
     def train(self) -> Dict:
         start_time = time.time()
+        # May be stale from a previous profile_then_stop run on this instance;
+        # a leftover True would silently truncate this run's first epoch.
+        self._stop_training = False
         try:
             self.setup()
 
