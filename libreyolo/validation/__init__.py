@@ -11,6 +11,7 @@ from .point_validator import PointValidator
 from .depth_validator import DepthValidator
 from .restore_validator import RestoreValidator
 from .matte_validator import MatteValidator
+from .ocr_validator import OCRValidator
 from .semantic_validator import SemanticValidator
 from .panoptic_quality import PanopticQuality
 from .panoptic_validator import PanopticValidator
@@ -30,6 +31,7 @@ __all__ = [
     "DepthValidator",
     "RestoreValidator",
     "MatteValidator",
+    "OCRValidator",
     "SemanticValidator",
     "PanopticValidator",
     "PanopticQuality",

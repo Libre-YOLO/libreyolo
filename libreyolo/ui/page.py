@@ -56,6 +56,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     border-radius: 9px; padding: 8px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
   }
   select:hover { border-color: var(--libre-500); }
+  input.ctlinput {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border-2);
+    border-radius: 9px; padding: 8px 12px; font-size: 13px; font-family: inherit; width: 220px;
+  }
+  input.ctlinput:hover, input.ctlinput:focus { border-color: var(--libre-500); outline: none; }
 
   .stage { flex: 1; padding: 24px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
 
@@ -188,6 +193,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <label class="ctl">Model</label>
       <select id="model"><option>loading...</option></select>
+      <label class="ctl" id="classesLabel" style="display:none" title="Text vocabulary for open-vocab / zero-shot models">Classes</label>
+      <input class="ctlinput" id="classes" type="text" style="display:none"
+             placeholder="e.g. person, hard hat, forklift">
+      <label class="ctl" id="bboxLabel" style="display:none" title="PicoSAM3 ROI in image pixels">ROI</label>
+      <input class="ctlinput" id="bbox" type="text" style="display:none"
+             placeholder="x1,y1,x2,y2 (full image)">
       <label class="ctl">Conf</label>
       <select id="conf"><option>0.25</option><option>0.40</option><option>0.50</option></select>
     </div>
@@ -255,11 +266,23 @@ INDEX_HTML = r"""<!DOCTYPE html>
   $("addr").textContent = location.host;
 
   // ---- populate model dropdown from the real registry ----
+  var openvocab = {};  // model name -> accepts a text vocabulary (classes box)
+  var boxPrompt = {};  // model name -> accepts an ROI box
+  function syncClassesBox() {
+    var show = !!openvocab[$("model").value];
+    $("classesLabel").style.display = show ? "" : "none";
+    $("classes").style.display = show ? "" : "none";
+    var showBox = !!boxPrompt[$("model").value];
+    $("bboxLabel").style.display = showBox ? "" : "none";
+    $("bbox").style.display = showBox ? "" : "none";
+  }
   fetch("/api/models").then(function (r) { return r.json(); }).then(function (j) {
     var sel = $("model");
     sel.innerHTML = "";
     var unavailable = {};
     (j.unavailable || []).forEach(function (m) { unavailable[m] = true; });
+    (j.openvocab || []).forEach(function (m) { openvocab[m] = true; });
+    (j.box_prompt || []).forEach(function (m) { boxPrompt[m] = true; });
     (j.models || []).forEach(function (m) {
       var o = document.createElement("option");
       o.value = m;
@@ -272,6 +295,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       if (m === j.default) o.selected = true;
       sel.appendChild(o);
     });
+    syncClassesBox();
   }).catch(function () { $("model").innerHTML = '<option>yolo9-t</option>'; });
 
   function loadImage(url) {
@@ -351,6 +375,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
     var model = $("model").value || "yolo9-t";
     var conf = $("conf").value || "0.25";
+    var classes = openvocab[model] ? $("classes").value.trim() : "";
+    var bbox = boxPrompt[model] ? $("bbox").value.trim() : "";
     var outdir = "-";
 
     $("terminal").style.display = "block";
@@ -363,7 +389,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
       await typeCommand("libreyolo predict --model " + model + " --source " + e.name + " --conf " + conf + " --save");
 
       try {
-        var resp = await fetch("/api/infer?model=" + encodeURIComponent(model) + "&conf=" + encodeURIComponent(conf),
+        var resp = await fetch("/api/infer?model=" + encodeURIComponent(model) + "&conf=" + encodeURIComponent(conf) +
+          (classes ? "&classes=" + encodeURIComponent(classes) : "") +
+          (bbox ? "&bbox=" + encodeURIComponent(bbox) : ""),
           { method: "POST", headers: { "X-Filename": e.name }, body: e.file });
         if (!resp.body) throw new Error("streaming not supported");
         var reader = resp.body.getReader(), dec = new TextDecoder(), buf = "";
@@ -465,8 +493,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
   $("folderInput").addEventListener("change", function (ev) { addFiles(ev.target.files); ev.target.value = ""; });
   $("runBtn").addEventListener("click", runInference);
   $("termClearBtn").addEventListener("click", termClear);
-  $("model").addEventListener("change", markStale);
+  $("model").addEventListener("change", function () { syncClassesBox(); markStale(); });
   $("conf").addEventListener("change", markStale);
+  $("bbox").addEventListener("change", markStale);
+  $("classes").addEventListener("change", markStale);
   $("openFolder").addEventListener("click", function () {
     fetch("/api/open-folder", { method: "POST" }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j.ok) toast("Results folder:", j.dir || "");

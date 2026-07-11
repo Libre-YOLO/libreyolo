@@ -102,6 +102,8 @@ tflite = [
     # onnx2tf 2.4.3 includes the RF-DETR conversion fixes required by this path.
     # Requires Python 3.12+ (onnx2tf 2.4.x wheel constraint).
     "onnx2tf>=2.4.3; python_version >= '3.12'",
+    # Runtime used by TFLiteBackend to execute exported .tflite artifacts.
+    "ai-edge-litert>=2.1.2; python_version >= '3.12'",
     # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
     "onnx-graphsurgeon>=0.3.27",
     # Required for RF-DETR onnxsim preprocessing step.
@@ -261,7 +263,10 @@ requires-dist = []
 [tool.ruff]
 # Vendored from upstream DEIMv2. Keep local lint focused on the LibreYOLO
 # wrapper/integration code instead of rewriting third-party implementation files.
-extend-exclude = ["libreyolo/models/deimv2/engine"]
+extend-exclude = [
+    "libreyolo/models/deimv2/engine",
+    "libreyolo/models/depth_anything3/_vendor",
+]
 
 [tool.ty.rules]
 # Rules that catch real bugs — keep as errors

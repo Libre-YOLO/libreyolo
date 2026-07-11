@@ -32,7 +32,8 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`, or
+  `ocr`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -75,6 +76,25 @@ classes. Restoration checkpoints may also include:
   runtime also derives this from the model family and size, so the field is
   provenance metadata rather than a load-time requirement.
 
+OCR checkpoints use the task string `ocr`, `nc: 1`, and `names: {0: "text"}`.
+The single class-like slot exists only for checkpoint schema compatibility;
+OCR predictions are text quads with transcripts, not classes. The `ppocr`
+family ships one composite checkpoint per tier whose `model` state dict holds
+two submodels under the `det.*` (DB text detector) and `rec.*` (CTC text
+recognizer) key namespaces. OCR checkpoints additionally include:
+
+- `charset`: list of strings, the full CTC alphabet in output-index order
+  (index 0 is the CTC blank, then the recognition dictionary, then the space
+  character). Embedding it makes the `.pt` self-contained; loaders must read
+  the charset from the checkpoint, never from a side file.
+- `pipeline`: dict of pipeline defaults baked at conversion time
+  (`det_limit_side_len`, `det_db_thresh`, `det_db_box_thresh`,
+  `det_db_unclip_ratio`, `rec_image_shape`). Runtime arguments may override
+  them per call.
+- `components`: reserved dict for optional pipeline stages (document
+  orientation classification, image unwarping, textline 0/180 rotation).
+  Empty in v1; adding a component later must not break this schema.
+
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and
 `task`; nesting the metadata would increase migration risk before release.
@@ -108,6 +128,12 @@ both `images` and `restored`. Backend prediction runs at the native image
 resolution (reflect-padded only to the network divisibility factor) and crops
 the restored output to `scale` times the original image shape. The backend
 derives `scale` from the model family and size (`x4`/`x4t` = 4, `x2` = 2).
+
+SwinIR restore exports use a fixed-resolution v1 contract. ONNX exports emit
+one dense `restored` tensor and force `dynamic=false` because shifted-window
+attention masks are trace-shape-dependent. Backend prediction pads images that
+fit inside the exported canvas, crops the output to four times the original
+image shape, and reports `restore_scale = 4` for sizes `s`, `m`, and `l`.
 
 Embedded-NMS runtime exports may also write these flat metadata keys:
 

@@ -7,9 +7,17 @@ See ``model.py`` for the ``LibreSAM(...)`` factory and ``base.py`` for the
 from __future__ import annotations
 
 from .base import LibreSAMModel
-from .model import LibreSAM, LibreSAM1, LibreSAM2
+from .model import LibreSAM, LibreSAM1, LibreSAM2, LibreSAM3
 
-__all__ = ["LibreSAM", "LibreSAMModel", "LibreSAM1", "LibreSAM2", "LibreMobileSAM"]
+__all__ = [
+    "LibreSAM",
+    "LibreSAMModel",
+    "LibreSAM1",
+    "LibreSAM2",
+    "LibreSAM3",
+    "LibreMobileSAM",
+    "LibrePicoSAM3",
+]
 
 
 def __getattr__(name):
@@ -17,4 +25,8 @@ def __getattr__(name):
         from ..mobilesam import LibreMobileSAM
 
         return LibreMobileSAM
+    if name == "LibrePicoSAM3":
+        from ..picosam3 import LibrePicoSAM3
+
+        return LibrePicoSAM3
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

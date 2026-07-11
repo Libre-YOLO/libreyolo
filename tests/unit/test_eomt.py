@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -17,9 +18,7 @@ pytestmark = pytest.mark.unit
 
 def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
     return {
-        "embeddings.patch_embeddings.projection.weight": torch.zeros(
-            hidden, 3, 16, 16
-        ),
+        "embeddings.patch_embeddings.projection.weight": torch.zeros(hidden, 3, 16, 16),
         "query.weight": torch.zeros(100, hidden),
         "mask_head.fc1.weight": torch.zeros(hidden, hidden),
         "mask_head.fc2.weight": torch.zeros(hidden, hidden),
@@ -31,7 +30,13 @@ def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
 
 
 class _FakeEoMTNet(nn.Module):
-    def __init__(self, config: str = "l", nb_classes: int = 150, image_size: int = 512, num_queries: int = 100):
+    def __init__(
+        self,
+        config: str = "l",
+        nb_classes: int = 150,
+        image_size: int = 512,
+        num_queries: int = 100,
+    ):
         super().__init__()
         if config not in ("s", "b", "l"):
             raise ValueError(f"test fake: unsupported size {config!r}")
@@ -109,8 +114,13 @@ class TestEoMTMetadata:
     def test_detect_checkpoint_task_segment(self):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=80)) == "segment"
-        assert LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=150)) == "semantic"
+        assert (
+            LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=80)) == "segment"
+        )
+        assert (
+            LibreEoMT.detect_checkpoint_task(_synthetic_eomt_state(nc=150))
+            == "semantic"
+        )
 
     def test_detect_num_queries_and_image_size(self):
         from libreyolo.models.eomt.model import LibreEoMT
@@ -142,7 +152,9 @@ class TestEoMTMetadata:
     def test_can_load_handles_common_prefixes(self):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        state = {f"module.model.eomt.{k}": v for k, v in _synthetic_eomt_state().items()}
+        state = {
+            f"module.model.eomt.{k}": v for k, v in _synthetic_eomt_state().items()
+        }
         assert LibreEoMT.can_load(state)
         assert LibreEoMT.detect_size(state) == "l"
 
@@ -264,7 +276,7 @@ class TestEoMTPredict:
         with pytest.raises(ValueError, match="requires imgsz=512"):
             model.predict(str(img_path), imgsz=64)
 
-    def test_train_and_export_out_of_scope(self, fake_eomt_net):
+    def test_train_out_of_scope(self, fake_eomt_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
         model = LibreEoMT(
@@ -272,14 +284,105 @@ class TestEoMTPredict:
         )
         with pytest.raises(NotImplementedError):
             model.train(data="ade20k.yaml")
-        with pytest.raises(NotImplementedError):
-            model.export(format="onnx")
+
+    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    def test_exported_semantic_parity(self, fake_eomt_net, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+
+        import numpy as np
+
+        from libreyolo import LibreYOLO
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(
+            model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
+        )
+        model.model.eval()
+        image = np.random.default_rng(17).integers(
+            0, 256, size=(512, 512, 3), dtype=np.uint8
+        )
+        native = model.predict(image, imgsz=512).semantic_mask.data
+        suffix = ".onnx" if format == "onnx" else ".torchscript"
+        artifact = tmp_path / f"eomt_semantic{suffix}"
+        model.export(
+            format=format,
+            output_path=str(artifact),
+            imgsz=512,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+        agreement = (native == exported.semantic_mask.data).float().mean().item()
+        assert agreement > 0.95
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        os.environ.get("LIBREYOLO_RUN_REAL_EXPORT_PARITY") != "1",
+        reason="set LIBREYOLO_RUN_REAL_EXPORT_PARITY=1 for real EoMT export parity",
+    )
+    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    def test_real_architecture_export_raw_parity(self, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+
+        import numpy as np
+
+        from libreyolo import LibreEoMT, LibreYOLO
+        from libreyolo.export.exporter import OnnxExporter
+
+        torch.manual_seed(0)
+        model = LibreEoMT(
+            model_path=None,
+            size="s",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+        )
+        model.model.eval()
+        tensor = torch.rand(1, 3, 512, 512)
+        exporter = OnnxExporter(model)
+        with exporter._model_context("cpu", False, False, 1, (512, 512)) as (
+            wrapped,
+            _,
+        ):
+            with torch.no_grad():
+                expected = wrapped(tensor)
+        if isinstance(expected, torch.Tensor):
+            expected = (expected,)
+
+        artifact = model.export(
+            format=format,
+            imgsz=512,
+            dynamic=False,
+            simplify=False,
+            output_path=str(tmp_path / f"eomt-semantic.{format}"),
+        )
+        actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+
+        assert len(actual) == len(expected)
+        rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
+        for actual_output, expected_output in zip(actual, expected):
+            np.testing.assert_allclose(
+                actual_output,
+                expected_output.detach().cpu().numpy(),
+                rtol=rtol,
+                atol=atol,
+            )
 
 
 class _FakeEoMTNetSeg(nn.Module):
     """Fake EoMT net that returns query-level outputs for segment task testing."""
 
-    def __init__(self, config: str = "l", nb_classes: int = 80, image_size: int = 640, num_queries: int = 100):
+    def __init__(
+        self,
+        config: str = "l",
+        nb_classes: int = 80,
+        image_size: int = 640,
+        num_queries: int = 100,
+    ):
         super().__init__()
         if config not in ("s", "b", "l"):
             raise ValueError(f"test fake: unsupported size {config!r}")
@@ -291,7 +394,9 @@ class _FakeEoMTNetSeg(nn.Module):
         b, _, h, w = x.shape
         return {
             "semantic_logits": torch.zeros(b, self.nb_classes, h, w),
-            "class_queries_logits": torch.zeros(b, self.num_queries, self.nb_classes + 1),
+            "class_queries_logits": torch.zeros(
+                b, self.num_queries, self.nb_classes + 1
+            ),
             "masks_queries_logits": torch.zeros(b, self.num_queries, h, w),
         }
 
@@ -319,7 +424,9 @@ class TestEoMTSegment:
         assert model.task == "segment"
         assert model.input_size == 640
 
-    def test_segment_postprocess_returns_instance_fields(self, fake_eomt_seg_net, tmp_path):
+    def test_segment_postprocess_returns_instance_fields(
+        self, fake_eomt_seg_net, tmp_path
+    ):
         from libreyolo.models.eomt.model import LibreEoMT
 
         img_path = tmp_path / "img.jpg"
@@ -347,7 +454,7 @@ class TestEoMTSegment:
         num_queries, h, w = 4, 64, 64
         # Make query 0 confident on class 1 by giving it a high score.
         class_logits = torch.full((1, num_queries, 4), -10.0)
-        class_logits[0, 0, 1] = 10.0   # query 0 → class 1 with high confidence
+        class_logits[0, 0, 1] = 10.0  # query 0 → class 1 with high confidence
         mask_logits = torch.zeros(1, num_queries, h, w)
         mask_logits[0, 0, 16:48, 16:48] = 5.0  # query 0 has a mask patch
 
@@ -355,8 +462,9 @@ class TestEoMTSegment:
             "class_queries_logits": class_logits,
             "masks_queries_logits": mask_logits,
         }
-        det = model._postprocess_segment(output, conf_thres=0.1, iou_thres=0.5,
-                                          original_size=(w, h))
+        det = model._postprocess_segment(
+            output, conf_thres=0.1, iou_thres=0.5, original_size=(w, h)
+        )
         assert det["num_detections"] >= 1
         assert len(det["boxes"]) == det["num_detections"]
         assert det["masks"].shape[0] == det["num_detections"]
@@ -378,18 +486,21 @@ class TestEoMTSegment:
         # that would have IoU=1.0 — NMS at 0.5 would suppress one; top-k keeps both.
         # Remaining queries have uniform logits → score ≈0.25 < conf_thres=0.5.
         class_logits = torch.full((1, num_queries, 4), -10.0)
-        class_logits[0, 0, 1] = 10.0   # query 0 → class 1, score ≈1.0
-        class_logits[0, 1, 2] = 10.0   # query 1 → class 2, score ≈1.0
+        class_logits[0, 0, 1] = 10.0  # query 0 → class 1, score ≈1.0
+        class_logits[0, 1, 2] = 10.0  # query 1 → class 2, score ≈1.0
         # queries 2 and 3: uniform → score ≈0.25, filtered by conf_thres=0.5
-        mask_logits = torch.full((1, num_queries, h, w), 5.0)  # all masks fill the image
+        mask_logits = torch.full(
+            (1, num_queries, h, w), 5.0
+        )  # all masks fill the image
 
         output = {
             "class_queries_logits": class_logits,
             "masks_queries_logits": mask_logits,
         }
         # num_patches=1 (single patch) → top-k: both detections survive
-        det = model._postprocess_segment(output, conf_thres=0.5, iou_thres=0.5,
-                                          original_size=(w, h))
+        det = model._postprocess_segment(
+            output, conf_thres=0.5, iou_thres=0.5, original_size=(w, h)
+        )
         assert det["num_detections"] == 2, (
             "Single-patch segment must use top-k (DETR axiom): "
             "two overlapping queries should both survive, NMS would drop one"
@@ -425,7 +536,9 @@ class TestEoMTSizes:
     def test_small_semantic_construction(self, fake_eomt_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        model = LibreEoMT(model_path=None, size="s", task="semantic", nb_classes=150, device="cpu")
+        model = LibreEoMT(
+            model_path=None, size="s", task="semantic", nb_classes=150, device="cpu"
+        )
         assert model.size == "s"
         assert model.task == "semantic"
         assert model.input_size == 512
@@ -433,14 +546,18 @@ class TestEoMTSizes:
     def test_base_semantic_construction(self, fake_eomt_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        model = LibreEoMT(model_path=None, size="b", task="semantic", nb_classes=150, device="cpu")
+        model = LibreEoMT(
+            model_path=None, size="b", task="semantic", nb_classes=150, device="cpu"
+        )
         assert model.size == "b"
         assert model.input_size == 512
 
     def test_small_segment_construction(self, fake_eomt_seg_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        model = LibreEoMT(model_path=None, size="s", task="segment", nb_classes=80, device="cpu")
+        model = LibreEoMT(
+            model_path=None, size="s", task="segment", nb_classes=80, device="cpu"
+        )
         assert model.size == "s"
         assert model.task == "segment"
         assert model.input_size == 640
@@ -448,7 +565,9 @@ class TestEoMTSizes:
     def test_base_segment_construction(self, fake_eomt_seg_net):
         from libreyolo.models.eomt.model import LibreEoMT
 
-        model = LibreEoMT(model_path=None, size="b", task="segment", nb_classes=80, device="cpu")
+        model = LibreEoMT(
+            model_path=None, size="b", task="segment", nb_classes=80, device="cpu"
+        )
         assert model.size == "b"
         assert model.input_size == 640
 
@@ -545,14 +664,38 @@ class TestEoMTSizes:
     def test_converter_default_output_path(self):
         converter = _load_converter_module()
 
-        assert converter._default_output_path("semantic", "l", 512) == "weights/LibreEoMTl-sem.pt"
-        assert converter._default_output_path("segment", "l", 640) == "weights/LibreEoMTl-seg.pt"
-        assert converter._default_output_path("segment", "l", 1280) == "weights/LibreEoMTl-seg-1280.pt"
-        assert converter._default_output_path("segment", "s", 640) == "weights/LibreEoMTs-seg.pt"
-        assert converter._default_output_path("segment", "b", 640) == "weights/LibreEoMTb-seg.pt"
-        assert converter._default_output_path("panoptic", "s", 640) == "weights/LibreEoMTs-panoptic.pt"
-        assert converter._default_output_path("panoptic", "b", 640) == "weights/LibreEoMTb-panoptic.pt"
-        assert converter._default_output_path("panoptic", "l", 640) == "weights/LibreEoMTl-panoptic.pt"
+        assert (
+            converter._default_output_path("semantic", "l", 512)
+            == "weights/LibreEoMTl-sem.pt"
+        )
+        assert (
+            converter._default_output_path("segment", "l", 640)
+            == "weights/LibreEoMTl-seg.pt"
+        )
+        assert (
+            converter._default_output_path("segment", "l", 1280)
+            == "weights/LibreEoMTl-seg-1280.pt"
+        )
+        assert (
+            converter._default_output_path("segment", "s", 640)
+            == "weights/LibreEoMTs-seg.pt"
+        )
+        assert (
+            converter._default_output_path("segment", "b", 640)
+            == "weights/LibreEoMTb-seg.pt"
+        )
+        assert (
+            converter._default_output_path("panoptic", "s", 640)
+            == "weights/LibreEoMTs-panoptic.pt"
+        )
+        assert (
+            converter._default_output_path("panoptic", "b", 640)
+            == "weights/LibreEoMTb-panoptic.pt"
+        )
+        assert (
+            converter._default_output_path("panoptic", "l", 640)
+            == "weights/LibreEoMTl-panoptic.pt"
+        )
 
     def test_converter_things_only_slices_panoptic(self, monkeypatch, tmp_path):
         converter = _load_converter_module()
@@ -616,9 +759,7 @@ def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
         mask_dir = tmp_path / "masks" / "val"
         img_dir.mkdir(parents=True, exist_ok=True)
         mask_dir.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (64, 64), color=(20 + i, 30, 40)).save(
-            img_dir / f"img{i}.jpg"
-        )
+        Image.new("RGB", (64, 64), color=(20 + i, 30, 40)).save(img_dir / f"img{i}.jpg")
         Image.new("L", (64, 64), color=i % 2).save(mask_dir / f"img{i}.png")
 
     yaml_path = tmp_path / "data.yaml"
@@ -825,7 +966,9 @@ def test_converter_segment_rejects_wrong_nc(monkeypatch, tmp_path):
     monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
 
     with pytest.raises(ValueError, match="80-class"):
-        converter.convert_weights("fake_source", str(tmp_path / "bad.pt"), task="segment")
+        converter.convert_weights(
+            "fake_source", str(tmp_path / "bad.pt"), task="segment"
+        )
 
 
 def test_converter_panoptic_task(monkeypatch, tmp_path):
@@ -865,7 +1008,9 @@ def test_converter_panoptic_rejects_wrong_nc(monkeypatch, tmp_path):
     monkeypatch.setattr(converter, "_load_state_dict", _fake_load)
 
     with pytest.raises(ValueError, match="133-class"):
-        converter.convert_weights("fake_source", str(tmp_path / "bad.pt"), task="panoptic")
+        converter.convert_weights(
+            "fake_source", str(tmp_path / "bad.pt"), task="panoptic"
+        )
 
 
 def test_converter_panoptic_rejects_things_only(tmp_path):
@@ -934,8 +1079,8 @@ def _panoptic_stub(nc: int, thing_class_ids):
         _last_eomt_content_size=None,  # unpadded already
     )
     stub._stuff_class_ids = lambda: LibreEoMT._stuff_class_ids(stub)
-    stub._unpad_and_resize_mask_logits = (
-        lambda ml, osz: LibreEoMT._unpad_and_resize_mask_logits(stub, ml, osz)
+    stub._unpad_and_resize_mask_logits = lambda ml, osz: (
+        LibreEoMT._unpad_and_resize_mask_logits(stub, ml, osz)
     )
     return stub
 
@@ -959,12 +1104,12 @@ def _quadrant_panoptic_output(nc: int = 4):
     class_logits = torch.full((1, 6, nc + 1), -10.0)
     for q, c in enumerate(classes):
         class_logits[0, q, c] = 5.0
-    class_logits[0, 4, nc] = 5.0        # null/no-object wins
-    class_logits[0, 5, :] = 0.0         # uniform -> score 1/(nc+1) = 0.2
+    class_logits[0, 4, nc] = 5.0  # null/no-object wins
+    class_logits[0, 5, :] = 0.0  # uniform -> score 1/(nc+1) = 0.2
 
     mask_logits = torch.full((1, 6, 4, 4), -4.0)  # sigmoid ~0.018 outside
     for q, (rows, cols) in enumerate(quadrants):
-        mask_logits[0, q, rows, cols] = 4.0       # sigmoid ~0.982 inside
+        mask_logits[0, q, rows, cols] = 4.0  # sigmoid ~0.982 inside
     mask_logits[0, 4] = 4.0
     mask_logits[0, 5] = 4.0
     return {"class_queries_logits": class_logits, "masks_queries_logits": mask_logits}
@@ -987,8 +1132,8 @@ def test_panoptic_merge_fuses_stuff_and_separates_things():
     assert [e["isthing"] for e in info if e["category_id"] == 2] == [False]
 
     ids = {e["id"] for e in info}
-    assert 0 not in ids                       # 0 is reserved for void
-    assert len(ids) == 3                      # one entry per distinct segment id
+    assert 0 not in ids  # 0 is reserved for void
+    assert len(ids) == 3  # one entry per distinct segment id
     assert set(seg.unique().tolist()) == ids  # every pixel labeled, no void left
 
     # The two stuff quadrants share one segment id (fused).
@@ -1052,10 +1197,10 @@ def test_coco_content_size_matches_upstream_aspect_ratio_rule():
     from libreyolo.models.eomt.model import LibreEoMT
 
     cases = {
-        (576, 768): (480, 640),   # landscape
+        (576, 768): (480, 640),  # landscape
         (1194, 1536): (498, 640),  # landscape, rounds to 498
-        (852, 1280): (426, 640),   # landscape
-        (640, 640): (640, 640),    # already square
+        (852, 1280): (426, 640),  # landscape
+        (640, 640): (640, 640),  # already square
     }
     for (oh, ow), expected in cases.items():
         assert LibreEoMT._coco_content_size(oh, ow, 640) == expected
@@ -1071,9 +1216,11 @@ def test_preprocess_pads_for_coco_tasks_and_splits_for_semantic(fake_eomt_seg_ne
 
     img = Image.new("RGB", (768, 576), color=(120, 30, 200))
 
-    seg = LibreEoMT(model_path=None, size="l", task="segment", nb_classes=80, device="cpu")
+    seg = LibreEoMT(
+        model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+    )
     tensor, _, orig_size, _ = seg._preprocess(img, "rgb")
-    assert tuple(tensor.shape) == (1, 3, 640, 640)   # single padded image
+    assert tuple(tensor.shape) == (1, 3, 640, 640)  # single padded image
     assert seg._last_eomt_patch_offsets is None
     assert seg._last_eomt_content_size == (480, 640)
     assert orig_size == (768, 576)

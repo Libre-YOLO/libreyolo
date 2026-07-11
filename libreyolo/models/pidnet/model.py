@@ -23,7 +23,10 @@ from PIL import Image
 
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import load_untrusted_torch_file, validate_checkpoint_metadata
+from ...utils.serialization import (
+    load_untrusted_torch_file,
+    validate_checkpoint_metadata,
+)
 from ..base.model import BaseModel
 from .nn import SIZE_CONFIGS, LibrePIDNetNet
 
@@ -76,7 +79,9 @@ def _input_size_hw(input_size: int | tuple[int, int]) -> tuple[int, int]:
     if isinstance(input_size, int):
         return input_size, input_size
     if len(input_size) != 2:
-        raise ValueError(f"input_size must be int or (height, width), got {input_size!r}")
+        raise ValueError(
+            f"input_size must be int or (height, width), got {input_size!r}"
+        )
     return int(input_size[0]), int(input_size[1])
 
 
@@ -383,7 +388,8 @@ class LibrePIDNet(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError("Export is not implemented for LibrePIDNet yet.")
+        """Export dense logits through the shared semantic runtime contract."""
+        return super().export(format=format, **kwargs)
 
 
 __all__ = ["CITYSCAPES_NAMES", "LibrePIDNet", "preprocess_numpy"]

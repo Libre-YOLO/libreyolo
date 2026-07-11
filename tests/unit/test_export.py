@@ -210,9 +210,7 @@ class TestExporterFormats:
         exporter = CoreMLExporter(wrapper)
 
         with pytest.raises(NotImplementedError, match="does not support max_det"):
-            exporter._preflight(
-                half=False, int8=False, data=None, nms=True, max_det=12
-            )
+            exporter._preflight(half=False, int8=False, data=None, nms=True, max_det=12)
 
     def test_onnx_embedded_nms_preflight_rejects_non_yolo9_detect(self):
         exporter = OnnxExporter(_make_wrapper(model_name="yolox"))
@@ -220,20 +218,20 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="YOLO9 detection"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
-    def test_point_export_fails_before_artifact_creation(self, tmp_path):
-        wrapper = _make_wrapper()
+    def test_unwired_point_export_fails_before_artifact_creation(self, tmp_path):
+        wrapper = _make_wrapper(model_name="unwired")
         wrapper.task = "point"
 
-        with pytest.raises(NotImplementedError, match="point-task models"):
+        with pytest.raises(NotImplementedError, match="not wired.*point"):
             OnnxExporter(wrapper)(output_path=str(tmp_path / "point.onnx"))
 
         assert not (tmp_path / "point.onnx").exists()
 
-    def test_semantic_export_fails_before_artifact_creation(self, tmp_path):
-        wrapper = _make_wrapper()
+    def test_unwired_semantic_export_fails_before_artifact_creation(self, tmp_path):
+        wrapper = _make_wrapper(model_name="unwired")
         wrapper.task = "semantic"
 
-        with pytest.raises(NotImplementedError, match="semantic-segmentation"):
+        with pytest.raises(NotImplementedError, match="not wired.*semantic"):
             OnnxExporter(wrapper)(output_path=str(tmp_path / "sem.onnx"))
 
         assert not (tmp_path / "sem.onnx").exists()

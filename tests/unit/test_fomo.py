@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
 import torch
 
@@ -36,20 +38,26 @@ class TestFOMOBackboneShapes:
     @pytest.mark.parametrize(
         "size,imgsz,expected_hw",
         [
-            ("s", 96,  12),  # 96  / 8 = 12
+            ("s", 96, 12),  # 96  / 8 = 12
             ("m", 192, 24),  # 192 / 8 = 24
             ("l", 224, 28),  # 224 / 8 = 28
         ],
     )
-    def test_backbone_spatial_downsample(self, size: str, imgsz: int, expected_hw: int) -> None:
+    def test_backbone_spatial_downsample(
+        self, size: str, imgsz: int, expected_hw: int
+    ) -> None:
         from libreyolo.models.fomo.nn import FOMOBackbone
 
         backbone = FOMOBackbone(size).eval()
         x = torch.zeros(1, 3, imgsz, imgsz)
         with torch.no_grad():
             out = backbone(x)
-        assert out.shape[-2] == expected_hw, f"size={size}: expected H={expected_hw}, got {out.shape[-2]}"
-        assert out.shape[-1] == expected_hw, f"size={size}: expected W={expected_hw}, got {out.shape[-1]}"
+        assert out.shape[-2] == expected_hw, (
+            f"size={size}: expected H={expected_hw}, got {out.shape[-2]}"
+        )
+        assert out.shape[-1] == expected_hw, (
+            f"size={size}: expected W={expected_hw}, got {out.shape[-1]}"
+        )
 
     @pytest.mark.parametrize("size", ["s", "m", "l"])
     @pytest.mark.parametrize("nc", [1, 3])
@@ -61,7 +69,7 @@ class TestFOMOBackboneShapes:
         x = torch.zeros(1, 3, cfg["imgsz"], cfg["imgsz"])
         with torch.no_grad():
             out = model(x)
-        assert out.shape[1] == nc + 1, f"Expected {nc+1} channels, got {out.shape[1]}"
+        assert out.shape[1] == nc + 1, f"Expected {nc + 1} channels, got {out.shape[1]}"
 
     @pytest.mark.parametrize("size", ["s", "m", "l"])
     def test_model_batch_dimension_preserved(self, size: str) -> None:
@@ -95,7 +103,9 @@ class TestDetectSizeFromStateDict:
     def test_detect_unrelated_dict_returns_none(self) -> None:
         from libreyolo.models.fomo.nn import detect_size_from_state_dict
 
-        assert detect_size_from_state_dict({"unrelated.weight": torch.zeros(3, 3)}) is None
+        assert (
+            detect_size_from_state_dict({"unrelated.weight": torch.zeros(3, 3)}) is None
+        )
 
     @pytest.mark.parametrize("size", ["s", "m", "l"])
     def test_detect_roundtrip_ddp(self, size: str) -> None:
@@ -104,7 +114,9 @@ class TestDetectSizeFromStateDict:
         model = LibreFOMOModel(size=size, nc=1)
         sd = {f"module.{k}": v for k, v in model.state_dict().items()}
         detected = detect_size_from_state_dict(sd)
-        assert detected == size, f"Expected size={size!r} under DDP, detected={detected!r}"
+        assert detected == size, (
+            f"Expected size={size!r} under DDP, detected={detected!r}"
+        )
 
 
 class TestFOMONNInvalidSize:
@@ -247,6 +259,39 @@ class TestLibreFOMORandomInit:
     def test_model_attribute_is_nn_module(self) -> None:
         model = _make_random_fomo()
         assert isinstance(model.model, torch.nn.Module)
+
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+    def test_exported_point_parity(self, tmp_path: Path, format: str) -> None:
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+        if format == "ncnn" and (
+            importlib.util.find_spec("pnnx") is None
+            or importlib.util.find_spec("ncnn") is None
+        ):
+            pytest.skip("PNNX and NCNN are required")
+
+        from libreyolo import LibreYOLO
+
+        model = _make_random_fomo(size="s", nc=2)
+        model.model.eval()
+        image = np.random.default_rng(11).integers(
+            0, 256, size=(72, 100, 3), dtype=np.uint8
+        )
+        native = model.predict(image, imgsz=96, conf=0.0, max_det=25).points.data
+        suffix = f".{format}"
+        artifact = tmp_path / f"fomo{suffix}"
+        model.export(
+            format=format,
+            output_path=str(artifact),
+            imgsz=96,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(str(artifact), device="cpu").predict(
+            image, conf=0.0, max_det=25
+        )
+        torch.testing.assert_close(exported.points.data, native, atol=1e-5, rtol=1e-5)
 
 
 class TestLibreFOMODownloadURL:

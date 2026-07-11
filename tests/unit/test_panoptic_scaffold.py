@@ -186,3 +186,90 @@ def test_empty_thing_class_ids_still_enforces_agreement(monkeypatch, tmp_path):
     )
     with _pytest.raises(ValueError, match="thing_class_ids"):
         validator._setup_dataloader()
+
+
+# ---------------------------------------------------------------------------
+# Rendering + summary (predict --save and Results.summary)
+# ---------------------------------------------------------------------------
+
+
+def _quadrant_panoptic():
+    """(H, W) map: segment 1 fills the top-left quadrant, rest is void."""
+    data = np.zeros((40, 40), dtype=np.int32)
+    data[:20, :20] = 1
+    info = [{"id": 1, "category_id": 0, "isthing": True, "score": 0.9}]
+    return data, info
+
+
+def test_draw_panoptic_paints_segments_and_leaves_void():
+    from PIL import Image
+
+    from libreyolo.utils.drawing import draw_panoptic
+
+    img = Image.new("RGB", (40, 40), (255, 255, 255))
+    data, info = _quadrant_panoptic()
+    out = draw_panoptic(img, data, info, class_names=None)
+
+    assert out.size == img.size
+    arr = np.asarray(out)
+    # Segment region is tinted, void region is untouched.
+    assert (arr[:20, :20] != 255).any()
+    assert (arr[25:, 25:] == 255).all()
+
+
+def test_draw_panoptic_with_labels_and_resize():
+    """Class-name labels and a half-resolution map (NEAREST upsample) work."""
+    from PIL import Image
+
+    from libreyolo.utils.drawing import draw_panoptic
+
+    img = Image.new("RGB", (80, 80), (255, 255, 255))
+    data, info = _quadrant_panoptic()  # 40x40 map on an 80x80 image
+    out = draw_panoptic(img, data, info, class_names={0: "person"})
+    assert out.size == (80, 80)
+    assert (np.asarray(out)[:30, :30] != 255).any()
+
+
+def test_panoptic_summary_rows():
+    from libreyolo.utils.results import PanopticSegmentation, Results
+
+    data, info = _quadrant_panoptic()
+    result = Results(
+        boxes=None,
+        orig_shape=(40, 40),
+        names={0: "person"},
+        panoptic=PanopticSegmentation(data, info),
+    )
+    rows = result.summary()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["name"] == "person"
+    assert row["segment_id"] == 1
+    assert row["isthing"] is True
+    assert row["pixel_count"] == 400
+    assert row["pixel_fraction"] == pytest.approx(0.25)
+    assert row["confidence"] == pytest.approx(0.9)
+
+
+def test_save_annotated_image_renders_panoptic(tmp_path):
+    """The shared save path draws panoptic output instead of the raw source."""
+    from PIL import Image
+
+    from libreyolo.models.base.inference import InferenceRunner
+    from libreyolo.utils.results import PanopticSegmentation, Results
+
+    data, info = _quadrant_panoptic()
+    result = Results(
+        boxes=None,
+        orig_shape=(40, 40),
+        names={0: "person"},
+        panoptic=PanopticSegmentation(data, info),
+    )
+    img = Image.new("RGB", (40, 40), (255, 255, 255))
+    save_path = tmp_path / "pan.png"
+    InferenceRunner._save_annotated_image(
+        InferenceRunner.__new__(InferenceRunner), result, img, save_path
+    )
+    assert save_path.exists()
+    arr = np.asarray(Image.open(save_path).convert("RGB"))
+    assert (arr[:20, :20] != 255).any()

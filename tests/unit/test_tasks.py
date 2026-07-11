@@ -78,6 +78,7 @@ def test_task_type_literal_is_public():
         "depth",
         "restore",
         "matte",
+        "ocr",
     }
 
 

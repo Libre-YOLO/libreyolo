@@ -29,9 +29,11 @@ from .models import (
     LibreFOMO,
     LibreDepthAnythingV2,
     LibreZipDepth,
+    LibreDepthAnything3,
     LibreNAFNet,
     LibreBiRefNet,
     LibreRealESRGAN,
+    LibreSwinIR,
     LibreEoMT,
     LibrePIDNet,
     LibreMobileNetV4,
@@ -40,6 +42,7 @@ from .models import (
     LibreResNet,
     LibreCLIP,
     LibreSigLIP2,
+    LibrePPOCR,
 )
 from .utils.results import (
     Results,
@@ -55,6 +58,7 @@ from .utils.results import (
     DepthMap,
     RestoredImage,
     Matte,
+    OCRRegions,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -125,7 +129,9 @@ def __getattr__(name):
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
         "LibreSAM2": (".models.sam", "LibreSAM2"),
+        "LibreSAM3": (".models.sam", "LibreSAM3"),
         "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
+        "LibrePicoSAM3": (".models.picosam3", "LibrePicoSAM3"),
         "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
         "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
         "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
@@ -176,9 +182,11 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreZipDepth",
+    "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",
     "LibreRealESRGAN",
+    "LibreSwinIR",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreMobileNetV4",
@@ -187,6 +195,7 @@ __all__ = [
     "LibreResNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePPOCR",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
@@ -201,7 +210,9 @@ __all__ = [
     "LibreSAM",
     "LibreSAM1",
     "LibreSAM2",
+    "LibreSAM3",
     "LibreMobileSAM",
+    "LibrePicoSAM3",
     # Open-vocabulary detector tier (optional, requires libreyolo[openvocab])
     "LibreOpenVocab",
     "LibreGroundingDINO",
@@ -220,6 +231,7 @@ __all__ = [
     "DepthMap",
     "RestoredImage",
     "Matte",
+    "OCRRegions",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
