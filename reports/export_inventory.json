@@ -943,6 +943,33 @@
     "optional_extra": "sam",
     "available": true
   },
+  "segformer": {
+    "class": "libreyolo.models.segformer.model.LibreSegformer",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "b0": 512,
+      "b1": 512,
+      "b2": 512,
+      "b3": 512,
+      "b4": 512,
+      "b5": 640
+    },
+    "default_imgsz": {
+      "b0": 512,
+      "b1": 512,
+      "b2": 512,
+      "b3": 512,
+      "b4": 512,
+      "b5": 640
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": null,
+    "available": true
+  },
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
     "tasks": [

@@ -144,6 +144,25 @@ Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
           mmdetection.
 
 --------------------------------------------------------------------
+mmsegmentation (OpenMMLab)
+--------------------------------------------------------------------
+Source: https://github.com/open-mmlab/mmsegmentation
+        (mmseg/datasets/transforms/transforms.py)
+License: Apache License 2.0
+Copyright (c) OpenMMLab. All rights reserved.
+Used for: the dense random-crop sampling used by semantic training
+          (libreyolo/data/semantic_dataset.py: the optional
+          ``resize_crop`` mode and its ``crop_cat_max_ratio`` retry
+          loop). The recipe -- resize the short side, pad, then re-sample
+          a crop up to 10 times until no single class exceeds
+          ``cat_max_ratio`` of its non-ignored pixels -- is derived from
+          mmsegmentation's ``RandomCrop`` (``cat_max_ratio``), as are the
+          SegFormer ADE20K training hyper-parameters (decode-head LR
+          multiplier, no weight decay on norms and the Mix-FFN positional
+          conv, scale jitter 0.5-2.0). NOT derived from NVIDIA's
+          NVlabs/SegFormer fork of mmseg 0.x, which is non-commercial.
+
+--------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)
 --------------------------------------------------------------------
 Source: https://github.com/Bo396543018/Picodet_Pytorch (direct source,
@@ -263,6 +282,45 @@ Used for: LibreEoMT semantic, instance, and panoptic segmentation family
 NOTE - code vs. weights: LibreYOLO ships only DINOv2-based EoMT checkpoints.
 DINOv3 EoMT variants are excluded because they depend on gated
 non-commercial DINOv3 weights.
+
+--------------------------------------------------------------------
+SegFormer / HuggingFace Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+        (models/segformer/{configuration_segformer.py, modeling_segformer.py})
+License: Apache License 2.0
+Copyright 2021 NVIDIA and The HuggingFace Inc. team. All rights reserved.
+Citation: Xie, E., Wang, W., Yu, Z., Anandkumar, A., Alvarez, J. M., and
+          Luo, P. "SegFormer: Simple and Efficient Design for Semantic
+          Segmentation with Transformers." NeurIPS 2021.
+Used for: LibreSegformer semantic segmentation family
+          (libreyolo/models/segformer/). The MiT encoder (overlap patch
+          embeddings, efficient self-attention with spatial reduction,
+          Mix-FFN) and the all-MLP decode head are a native
+          reimplementation behaviorally derived from HuggingFace
+          Transformers' Apache-2.0 modeling_segformer.py, NOT from
+          NVIDIA's original NVlabs/SegFormer repository (NVIDIA Source
+          Code License, non-commercial/research-only — never read or
+          derived from). LibreSegformer has no runtime dependency on
+          the transformers package.
+
+NOTE - code vs. weights: the CODE above is Apache-2.0, but the pretrained
+WEIGHTS are NOT. LibreSegformer{b0..b5}-sem are converted from NVIDIA's
+ADE20K SegFormer checkpoints (nvidia/segformer-b0..b5-finetuned-ade-*),
+released under the NVIDIA Source Code License:
+
+    https://github.com/NVlabs/SegFormer/blob/master/LICENSE
+
+That license permits redistribution provided a complete copy of the
+license accompanies the weights and attribution notices are retained,
+but it limits USE to non-commercial "research or evaluation purposes
+only", and Section 3.2 carries the limit into every derivative work.
+These weights are therefore NON-COMMERCIAL ONLY and are not covered by
+LibreYOLO's permissive license; the restriction binds end users, not
+just LibreYOLO. A notice is printed before every auto-download.
+Conversion is a key remapping only (weights/convert_segformer_weights.py);
+learned parameters are NVIDIA's, unchanged. Models the user trains from
+scratch carry no such restriction.
 
 --------------------------------------------------------------------
 Grounding DINO (IDEA-Research)

@@ -45,6 +45,8 @@ runs/
 /data/
 *.log
 sample_images*/
+# Training-run status blob written to CWD by the trainer; never a source file.
+/status.json
 
 # Model weights & exports
 *.pt

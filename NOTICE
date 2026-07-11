@@ -79,6 +79,28 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+SegFormer / transformers (Apache License 2.0)
+    Path:    libreyolo/models/segformer/
+    License: libreyolo/models/segformer/NOTICE  (Apache-2.0 code source)
+    Source:  https://github.com/huggingface/transformers
+
+    The SegFormer architecture (libreyolo/models/segformer/nn.py) is a
+    PyTorch port derived from (and in parts copied from) HuggingFace
+    Transformers' Apache-2.0 modeling_segformer.py, not from NVIDIA's
+    original non-permissive NVlabs/SegFormer repository (cited for
+    attribution only).
+
+    The semantic training recipe it uses -- the resize_crop /
+    cat_max_ratio sampling in libreyolo/data/semantic_dataset.py and the
+    ADE20K hyper-parameters in SegformerConfig -- is derived from
+    open-mmlab/mmsegmentation (Apache-2.0). See THIRD_PARTY_NOTICES.txt.
+
+    WEIGHTS ARE NON-COMMERCIAL. The pretrained ADE20K checkpoints
+    (LibreSegformer{b0..b5}-sem) are converted from NVIDIA's SegFormer
+    release, whose license permits redistribution but restricts use to
+    research or evaluation only. They are not covered by LibreYOLO's
+    permissive license. See libreyolo/models/segformer/NOTICE.
+
 Depth Anything 3 (Apache License 2.0)
     Path:    libreyolo/models/depth_anything3/_vendor/
     License: libreyolo/models/depth_anything3/NOTICE

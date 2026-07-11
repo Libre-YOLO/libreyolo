@@ -919,12 +919,30 @@ class BaseTrainer(ABC):
                 f"Semantic training imgsz={self.config.imgsz} must be divisible "
                 f"by {int(divisor)} for this model family."
             )
+        # Family-scoped scale-jitter range. Families that do not define this
+        # attribute (default None) keep the SemanticDataset default jitter,
+        # unchanged. Input standardization is family-internal (applied in the
+        # model's forward on the raw [0, 1] tensor), so the dataset stays
+        # /255-only for every family.
+        scale_jitter = getattr(self.wrapper_model, "semantic_scale_jitter", None)
+        semantic_kwargs = {}
+        if scale_jitter is not None:
+            semantic_kwargs["scale_jitter"] = tuple(scale_jitter)
+        # Same deal for photometric jitter: opt in per family, or keep the
+        # SemanticDataset default. Note this deliberately does NOT read
+        # config.hsv_prob -- SemanticDataset has always used its own default for
+        # every semantic family, so honoring the config here would silently
+        # change RF-DETR's and DINOv2's training too.
+        hsv_prob = getattr(self.wrapper_model, "semantic_hsv_prob", None)
+        if hsv_prob is not None:
+            semantic_kwargs["hsv_prob"] = float(hsv_prob)
         train_dataset = SemanticDataset(
             data_config,
             split="train",
             imgsz=self.config.imgsz,
             augment=True,
             resize_mode=resize_mode,
+            **semantic_kwargs,
         )
 
         num_classes = train_dataset.nc

@@ -168,10 +168,18 @@ def resolve_semantic_data(data: str | Path, allow_scripts: bool = False) -> Dict
 class SemanticDataset(Dataset):
     """Dense semantic-segmentation dataset returning ``(img, mask, info, id)``.
 
-    Images are letterboxed (default) or stretched to ``imgsz``; masks follow
-    with nearest-neighbor geometry and ignore-valued padding. Training
-    augmentation applies horizontal flips, scale jitter with random crops, and
-    HSV photometric jitter on the image only (masks are never recolored).
+    Images are letterboxed (default), stretched, or (``resize_crop``) short-side-
+    resized and random-cropped to ``imgsz``; masks follow with nearest-neighbor
+    geometry and ignore-valued padding. Training augmentation applies horizontal
+    flips, scale jitter with random crops, and HSV photometric jitter on the
+    image only (masks are never recolored). ``resize_crop`` uses dense full-res
+    crops (mmseg-style) for training and letterbox geometry for validation.
+
+    Images are always scaled to ``[0, 1]`` (``/255``) and nothing else. Any
+    per-channel standardization a family needs (e.g. SegFormer's ImageNet
+    mean/std for its MiT backbone) is applied inside that family's ``forward``
+    on the raw ``[0, 1]`` tensor, so the dataset stays ``/255``-only for every
+    family and train / val / inference share one input contract.
     """
 
     def __init__(
@@ -184,10 +192,11 @@ class SemanticDataset(Dataset):
         ignore_index: int = IGNORE_INDEX,
         scale_jitter: Tuple[float, float] = (0.5, 1.5),
         hsv_prob: float = 0.5,
+        crop_cat_max_ratio: float = 0.75,
     ):
-        if resize_mode not in ("letterbox", "stretch"):
+        if resize_mode not in ("letterbox", "stretch", "resize_crop"):
             raise ValueError(
-                f"resize_mode must be 'letterbox' or 'stretch', got {resize_mode!r}"
+                f"resize_mode must be 'letterbox', 'stretch', or 'resize_crop', got {resize_mode!r}"
             )
         self.split = split
         self.imgsz = int(imgsz)
@@ -196,6 +205,9 @@ class SemanticDataset(Dataset):
         self.ignore_index = int(data_config.get("ignore_index", ignore_index))
         self.scale_jitter = scale_jitter
         self.hsv_prob = float(hsv_prob)
+        # resize_crop-only: reject a random crop whose most-common (non-ignore)
+        # class exceeds this fraction (mmseg cat_max_ratio; 1.0 disables).
+        self.crop_cat_max_ratio = float(crop_cat_max_ratio)
 
         split_value = data_config.get(split)
         if not split_value:
@@ -322,6 +334,52 @@ class SemanticDataset(Dataset):
             )
         return img, mask, ratio, (0, 0)
 
+    def _resize_and_crop(
+        self, img: np.ndarray, mask: np.ndarray, scale: float
+    ) -> Tuple[np.ndarray, np.ndarray, float, Tuple[int, int]]:
+        """mmseg-style train sampling: resize the SHORT side to ``imgsz * scale``
+        (keep aspect), pad up to ``imgsz`` if a side falls short, then random-crop
+        ``imgsz x imgsz``. Unlike ``_resize`` (which fits the LONG side and pads),
+        this yields dense full-resolution crops. When ``crop_cat_max_ratio < 1``
+        the crop is re-sampled (up to 10x) to avoid a patch dominated by a single
+        class (mmseg ``cat_max_ratio``)."""
+        h0, w0 = img.shape[:2]
+        ratio = (self.imgsz / min(h0, w0)) * scale
+        new_w = max(1, int(round(w0 * ratio)))
+        new_h = max(1, int(round(h0 * ratio)))
+
+        img_pil = Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR)
+        mask_pil = Image.fromarray(mask.astype(np.int32), mode="I").resize(
+            (new_w, new_h), Image.NEAREST
+        )
+        img = np.array(img_pil)
+        mask = np.asarray(mask_pil).astype(np.int64)
+
+        # Pad up to imgsz on any short side so a full imgsz crop is possible.
+        pad_h = max(0, self.imgsz - new_h)
+        pad_w = max(0, self.imgsz - new_w)
+        if pad_h or pad_w:
+            img = np.pad(img, ((0, pad_h), (0, pad_w), (0, 0)), constant_values=_PAD_COLOR)
+            mask = np.pad(mask, ((0, pad_h), (0, pad_w)), constant_values=self.ignore_index)
+        H, W = img.shape[:2]
+
+        top, left = 0, 0
+        for _ in range(10):
+            top = random.randint(0, H - self.imgsz)
+            left = random.randint(0, W - self.imgsz)
+            if self.crop_cat_max_ratio >= 1.0:
+                break
+            cand = mask[top : top + self.imgsz, left : left + self.imgsz]
+            labels = cand[cand != self.ignore_index]
+            if labels.size == 0:
+                break
+            _, counts = np.unique(labels, return_counts=True)
+            if counts.max() / counts.sum() <= self.crop_cat_max_ratio:
+                break
+        img = img[top : top + self.imgsz, left : left + self.imgsz]
+        mask = mask[top : top + self.imgsz, left : left + self.imgsz]
+        return img, mask, ratio, (0, 0)
+
     def __getitem__(self, index: int):
         img_path = self.img_files[index]
         with Image.open(img_path) as img_pil:
@@ -341,10 +399,13 @@ class SemanticDataset(Dataset):
                 img_bgr = np.ascontiguousarray(img[..., ::-1])
                 augment_hsv(img_bgr)
                 img = np.ascontiguousarray(img_bgr[..., ::-1])
-            if self.resize_mode == "letterbox":
+            if self.resize_mode in ("letterbox", "resize_crop"):
                 scale = random.uniform(*self.scale_jitter)
 
-        img, mask, ratio, pad = self._resize(img, mask, scale)
+        if self.resize_mode == "resize_crop" and self.augment:
+            img, mask, ratio, pad = self._resize_and_crop(img, mask, scale)
+        else:
+            img, mask, ratio, pad = self._resize(img, mask, scale)
 
         img_tensor = (
             torch.from_numpy(np.ascontiguousarray(img))

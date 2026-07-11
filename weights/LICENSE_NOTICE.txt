@@ -117,6 +117,18 @@ project the weights were derived from. Per-family summary:
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
 
+    SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  NON-COMMERCIAL weights
+             upstream code: huggingface/transformers modeling_segformer.py
+             (Apache-2.0); weights: NVIDIA's ADE20K checkpoints
+             (nvidia/segformer-b0..b5-finetuned-ade-*, b5 = 640-640) under
+             the NVIDIA Source Code License. That license allows
+             redistribution (license copy + attribution must travel with the
+             weights) but restricts USE to research or evaluation only, and
+             the restriction is viral through derivative works. Hosted with a
+             loud non-commercial notice printed before auto-download, like the
+             VisDrone research-preview weights. NOT covered by LibreYOLO's
+             permissive license. Train from scratch for unrestricted use.
+
     PP-OCRv5 (LibrePPOCR{t,l}-ocr)                     Apache-2.0
              upstream: PaddlePaddle/PaddleOCR (code and released
              weights Apache-2.0). Converted from the official

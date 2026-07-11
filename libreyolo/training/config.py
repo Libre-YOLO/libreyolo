@@ -980,6 +980,56 @@ class RTMDetConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class SegformerConfig(TrainConfig):
+    """SegFormer training defaults — the paper / mmsegmentation ADE20K recipe.
+
+    Used both to fine-tune the pretrained (non-commercial) ADE20K checkpoints on
+    a new dataset and to train from scratch for unrestricted use; see the family
+    NOTICE for the weight licensing.
+    Defaults follow SegFormer's ADE20K config: AdamW, backbone base LR 6e-5 with
+    the decode head at 10x (SegformerTrainer applies the lr_mult), LayerNorm and
+    the Mix-FFN positional conv at weight_decay=0, linear (poly-like) decay, and
+    scale-jitter 0.5..2.0 (LibreSegformer.semantic_scale_jitter). Convergence for
+    the larger sizes (b3-b5) is unvalidated — see docs/nomenclature.md.
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 6e-5
+    weight_decay: float = 0.01
+    # Decode-head LR multiplier over the backbone base LR (mmseg SegFormer uses
+    # 10x). Set to 1.0 for a uniform LR (e.g. to ablate the backbone/head split).
+    head_lr_mult: float = 10.0
+
+    scheduler: str = "linear"
+    warmup_epochs: int = 5
+    warmup_lr_start: float = 1e-6
+    min_lr_ratio: float = 0.0
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+    # NOTE: photometric jitter is deliberately NOT declared here. The semantic
+    # pipeline builds SemanticDataset directly and never reads config.hsv_prob,
+    # so a value here would be silently ignored (it was: the recipe said 0.0
+    # while training ran at the dataset's 0.5). The live knob is
+    # LibreSegformer.semantic_hsv_prob = 0.0, per the reference recipe.
+
+    ema: bool = True
+    ema_decay: float = 0.999
+    amp: bool = True
+
+    imgsz: int = 512
+    epochs: int = 160
+    batch: int = 8
+    eval_interval: int = 1
+
+    name: str = "segformer_exp"
+
+
+@dataclass(kw_only=True)
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 

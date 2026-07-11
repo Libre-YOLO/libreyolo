@@ -81,6 +81,7 @@ from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
+from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
@@ -677,6 +678,7 @@ __all__ = [
     "LibreSwinIR",
     "LibreEoMT",
     "LibrePIDNet",
+    "LibreSegformer",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
