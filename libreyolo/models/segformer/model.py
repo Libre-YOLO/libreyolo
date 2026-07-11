@@ -36,13 +36,6 @@ from .nn import SIZE_CONFIGS, LibreSegformerNet
 
 logger = logging.getLogger(__name__)
 
-# The MiT encoder is pretrained (tools/pretrain_mit/) on ImageNet-1K with
-# ImageNet mean/std standardization, and the SegFormer fine-tune recipe uses
-# the same. Training/validation apply these via SemanticDataset(mean=, std=);
-# inference must match, so preprocess_numpy() applies them here too.
-_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
-_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
-
 
 def _input_size_hw(input_size: int | tuple[int, int]) -> tuple[int, int]:
     if isinstance(input_size, int):
@@ -56,11 +49,13 @@ def preprocess_numpy(
     img_rgb_hwc: np.ndarray,
     input_size: int | tuple[int, int] = 512,
 ) -> tuple[np.ndarray, float]:
-    """Letterbox RGB image to SegFormer's canvas as CHW float32, ImageNet-normalized.
+    """Letterbox RGB image to SegFormer's canvas as CHW float32 in ``[0, 1]``.
 
-    Matches the training/validation pipeline: ``/255`` then per-channel
-    ``(x - ImageNet mean) / ImageNet std`` (the distribution the MiT encoder was
-    pretrained and fine-tuned on).
+    Matches the training/validation pipeline: ``/255`` only. ImageNet
+    standardization (the distribution the MiT encoder was pretrained and
+    fine-tuned on) is applied inside ``LibreSegformerNet.forward`` on the raw
+    ``[0, 1]`` tensor, so it must not be duplicated here (see the family docs
+    and ``nn.py``; this mirrors the RF-DETR semantic house convention).
     """
     orig_h, orig_w = img_rgb_hwc.shape[:2]
     input_h, input_w = _input_size_hw(input_size)
@@ -74,7 +69,6 @@ def preprocess_numpy(
 
     arr = np.ascontiguousarray(padded, dtype=np.float32) / 255.0
     chw = arr.transpose(2, 0, 1)
-    chw = (chw - _IMAGENET_MEAN) / _IMAGENET_STD
     return np.ascontiguousarray(chw, dtype=np.float32), ratio
 
 
@@ -94,13 +88,14 @@ class LibreSegformer(BaseModel):
     #    crops imgsz^2 (dense full-res crops, cat_max_ratio=0.75), matching mmseg
     #    rather than the fit-long-side+pad letterbox. Validation/inference still
     #    letterbox to a fixed imgsz^2 canvas (mIoU scored at that resolution).
-    #  - the MiT encoder is pretrained with ImageNet mean/std, so train and val
-    #    standardize inputs the same way; scale jitter spans 0.5..2.0.
+    #  - the MiT encoder is pretrained with ImageNet mean/std; that
+    #    standardization is applied inside LibreSegformerNet.forward on the raw
+    #    [0, 1] tensor, so the dataset/validator/preprocess feed [0, 1] only and
+    #    never pre-normalize (matching the RF-DETR semantic house convention).
+    #    Scale jitter spans 0.5..2.0.
     # Read by SegformerTrainer._setup_semantic_data and SemanticValidator.
     semantic_resize_mode: ClassVar[str] = "resize_crop"
     semantic_imgsz_divisor: ClassVar[int] = 32
-    semantic_norm_mean: ClassVar[Tuple[float, float, float]] = (0.485, 0.456, 0.406)
-    semantic_norm_std: ClassVar[Tuple[float, float, float]] = (0.229, 0.224, 0.225)
     semantic_scale_jitter: ClassVar[Tuple[float, float]] = (0.5, 2.0)
 
     # ------------------------------------------------------------------

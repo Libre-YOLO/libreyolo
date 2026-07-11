@@ -214,6 +214,7 @@ def build_classify_transforms(
     interpolation="bilinear",
     auto_augment: str | None = None,
     erasing: float = 0.0,
+    scale: tuple[float, float] = (0.5, 1.0),
     square_resize: bool = False,
 ):
     """Build train/val image transforms for classification.

@@ -23,7 +23,7 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `pidnet` is semantic-only; `eomt` supports semantic,
+separate category, covered in the note below). Most are detectors; `pidnet` and `segformer` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 

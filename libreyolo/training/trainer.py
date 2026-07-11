@@ -919,11 +919,11 @@ class BaseTrainer(ABC):
                 f"Semantic training imgsz={self.config.imgsz} must be divisible "
                 f"by {int(divisor)} for this model family."
             )
-        # Family-scoped input normalization / scale-jitter range. Families that
-        # do not define these attributes (default None) keep the /255-only
-        # pipeline and the SemanticDataset default jitter, unchanged.
-        norm_mean = getattr(self.wrapper_model, "semantic_norm_mean", None)
-        norm_std = getattr(self.wrapper_model, "semantic_norm_std", None)
+        # Family-scoped scale-jitter range. Families that do not define this
+        # attribute (default None) keep the SemanticDataset default jitter,
+        # unchanged. Input standardization is family-internal (applied in the
+        # model's forward on the raw [0, 1] tensor), so the dataset stays
+        # /255-only for every family.
         scale_jitter = getattr(self.wrapper_model, "semantic_scale_jitter", None)
         semantic_kwargs = {}
         if scale_jitter is not None:
@@ -934,8 +934,6 @@ class BaseTrainer(ABC):
             imgsz=self.config.imgsz,
             augment=True,
             resize_mode=resize_mode,
-            mean=norm_mean,
-            std=norm_std,
             **semantic_kwargs,
         )
 

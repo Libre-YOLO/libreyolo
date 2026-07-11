@@ -156,6 +156,37 @@ class TestSegformerForward:
         assert torch.isfinite(out["total_loss"])
         assert out["total_loss"].item() == pytest.approx(0.0)
 
+    def test_normalization_is_applied_exactly_once(self):
+        """ImageNet standardization must live ONLY in ``forward`` (on raw [0,1]),
+        not also in ``preprocess_numpy`` / the dataset — else the input is
+        normalized twice and the pretrained MiT encoder sees a distribution it
+        never trained on. Guards against the double-normalization regression."""
+        from libreyolo.models.segformer.model import preprocess_numpy
+
+        # preprocess_numpy must emit /255-only values in [0, 1], NOT pre-normalized.
+        img = np.full((48, 64, 3), 128, dtype=np.uint8)
+        chw, _ = preprocess_numpy(img, 64)
+        assert chw.min() >= 0.0 and chw.max() <= 1.0, (
+            "preprocess_numpy must feed [0, 1]; normalization belongs in forward"
+        )
+
+        # The wrapper must not advertise dataset-side standardization hooks
+        # (their presence would re-normalize on top of forward's internal norm).
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        assert not hasattr(LibreSegformer, "semantic_norm_mean")
+        assert not hasattr(LibreSegformer, "semantic_norm_std")
+
+        # forward owns the ImageNet standardization: it must actually transform
+        # the raw [0,1] tensor (non-identity), so normalization happens exactly
+        # once and only here.
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size="b0", num_classes=3).eval()
+        x = torch.from_numpy(chw).unsqueeze(0)
+        standardized = (x - net.pixel_mean) / net.pixel_std
+        assert not torch.allclose(standardized, x), "forward must standardize the [0,1] input"
+
 
 class TestSegformerWrapper:
     def test_wrapper_predict_returns_semantic_mask(self, tmp_path):

@@ -175,13 +175,11 @@ class SemanticDataset(Dataset):
     image only (masks are never recolored). ``resize_crop`` uses dense full-res
     crops (mmseg-style) for training and letterbox geometry for validation.
 
-    Images are always scaled to ``[0, 1]`` (``/255``). When ``mean``/``std`` are
-    given, a per-channel ``(x - mean) / std`` standardization is applied on top,
-    so a family whose encoder was pretrained on normalized inputs (e.g.
-    SegFormer's MiT backbone, pretrained with ImageNet mean/std) sees the same
-    input distribution at fine-tune and validation time. Left ``None`` (the
-    default) the pipeline stays ``/255``-only, unchanged for families that
-    expect it.
+    Images are always scaled to ``[0, 1]`` (``/255``) and nothing else. Any
+    per-channel standardization a family needs (e.g. SegFormer's ImageNet
+    mean/std for its MiT backbone) is applied inside that family's ``forward``
+    on the raw ``[0, 1]`` tensor, so the dataset stays ``/255``-only for every
+    family and train / val / inference share one input contract.
     """
 
     def __init__(
@@ -194,16 +192,12 @@ class SemanticDataset(Dataset):
         ignore_index: int = IGNORE_INDEX,
         scale_jitter: Tuple[float, float] = (0.5, 1.5),
         hsv_prob: float = 0.5,
-        mean: Tuple[float, float, float] | None = None,
-        std: Tuple[float, float, float] | None = None,
         crop_cat_max_ratio: float = 0.75,
     ):
         if resize_mode not in ("letterbox", "stretch", "resize_crop"):
             raise ValueError(
                 f"resize_mode must be 'letterbox', 'stretch', or 'resize_crop', got {resize_mode!r}"
             )
-        if (mean is None) != (std is None):
-            raise ValueError("mean and std must be provided together, or both left None.")
         self.split = split
         self.imgsz = int(imgsz)
         self.augment = augment
@@ -214,12 +208,6 @@ class SemanticDataset(Dataset):
         # resize_crop-only: reject a random crop whose most-common (non-ignore)
         # class exceeds this fraction (mmseg cat_max_ratio; 1.0 disables).
         self.crop_cat_max_ratio = float(crop_cat_max_ratio)
-        self.mean = (
-            torch.tensor(mean, dtype=torch.float32).view(3, 1, 1) if mean is not None else None
-        )
-        self.std = (
-            torch.tensor(std, dtype=torch.float32).view(3, 1, 1) if std is not None else None
-        )
 
         split_value = data_config.get(split)
         if not split_value:
@@ -425,8 +413,6 @@ class SemanticDataset(Dataset):
             .float()
             .div_(255.0)
         )
-        if self.mean is not None:
-            img_tensor = (img_tensor - self.mean) / self.std
         mask_tensor = torch.from_numpy(np.ascontiguousarray(mask)).long()
         img_info = {
             "orig_shape": (int(orig_shape[0]), int(orig_shape[1])),

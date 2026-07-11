@@ -47,19 +47,12 @@ class SemanticValidator(BaseValidator):
                 f"divisible by {int(divisor)} for this model family."
             )
         resize_mode = getattr(self.model, "semantic_resize_mode", "letterbox")
-        # Match the training input distribution: if the family standardizes
-        # inputs (mean/std), validation must too, or mIoU is measured on a
-        # different distribution than the model was trained on.
-        norm_mean = getattr(self.model, "semantic_norm_mean", None)
-        norm_std = getattr(self.model, "semantic_norm_std", None)
         dataset = SemanticDataset(
             data_config,
             split=split,
             imgsz=self.config.imgsz,
             augment=False,
             resize_mode=resize_mode,
-            mean=norm_mean,
-            std=norm_std,
         )
 
         model_nc = getattr(self.model, "nb_classes", None)
