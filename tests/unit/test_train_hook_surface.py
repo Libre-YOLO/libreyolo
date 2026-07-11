@@ -69,6 +69,7 @@ def test_trainable_models_expose_callbacks_and_loggers(model_cls: type) -> None:
         ("libreyolo.models.mobilesam.model", "LibreMobileSAM"),
         ("libreyolo.models.l2cs.model", "LibreL2CS"),
         ("libreyolo.models.depth_anything.model", "LibreDepthAnythingV2"),
+        ("libreyolo.models.depth_anything3.model", "LibreDepthAnything3"),
         ("libreyolo.models.vlm.base", "LibreVLMModel"),
     ],
 )

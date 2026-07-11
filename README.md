@@ -118,6 +118,23 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
   </tbody>
 </table>
 
+## Depth estimation
+
+Depth Anything 3 mono-large is the recommended quality default for relative
+monocular depth:
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreDepthAnything3l-depth.pt")
+result = model("image.jpg")[0]
+inverse_depth = result.depth_map.data  # (H, W), higher means closer
+```
+
+The checkpoint is Apache-2.0 and downloads from the LibreYOLO Hugging Face
+organization. Depth Anything V2 remains available for compatibility, while
+ZipDepth provides the lightweight edge tier.
+
 ## License
 
 - **Code:** MIT License

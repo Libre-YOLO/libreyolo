@@ -386,6 +386,29 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+Depth Anything 3 (ByteDance Seed)
+--------------------------------------------------------------------
+Source: https://github.com/ByteDance-Seed/Depth-Anything-3
+Pinned commit: 41736238f5bced4debf3f2a12375d2466874866d
+License: Apache License 2.0
+Copyright (c) 2025 ByteDance Ltd. and/or its affiliates.
+Used for: DA3MONO-LARGE model family (ViT-L encoder + DPT depth and sky
+          heads) vendored under libreyolo/models/depth_anything3/_vendor/.
+          The DINOv2 subcomponents retain Meta Platforms Apache-2.0
+          copyright headers. LibreYOLO adaptations remove unused runtime
+          dependencies, add internal ImageNet normalization, reproduce the
+          official sky handling, and convert positive relative depth to the
+          library's relative inverse-depth output contract.
+
+Weight source: https://huggingface.co/depth-anything/DA3MONO-LARGE
+Pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+Weight license: Apache License 2.0
+Conversion: weights/convert_depth_anything3_weights.py removes only the
+            outer model. prefix and wraps 406 unchanged tensors in the
+            LibreYOLO checkpoint schema. Only DA3MONO-LARGE is hosted.
+            CC-BY-NC-4.0 Large/Giant/Nested weights are excluded.
+
+--------------------------------------------------------------------
 ZipDepth (University of Bologna)
 --------------------------------------------------------------------
 Source: https://github.com/fabiotosi92/ZipDepth
