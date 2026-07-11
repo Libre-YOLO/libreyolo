@@ -111,30 +111,41 @@ def download_weights(model_path: str, size: str):
             "Tip: Run `huggingface-cli login` or set HF_TOKEN for faster downloads."
         )
 
+    # Stream to a temp file and rename at the end so a killed process can
+    # never leave a truncated weight at the final path (loading one fails
+    # with an opaque zip error and requires a manual delete).
+    partial = path.with_name(path.name + ".part")
     try:
         response = requests.get(url, stream=True, headers=headers)
         response.raise_for_status()
         total_size = int(response.headers.get("content-length", 0))
 
-        with open(path, "wb") as f:
+        with open(partial, "wb") as f:
             downloaded = 0
+            last_logged = -1
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
                     if total_size > 0:
                         percent = int(100 * downloaded / total_size)
-                        if percent % 25 == 0:
+                        if percent % 25 == 0 and percent != last_logged:
+                            last_logged = percent
                             logger.info(
                                 "Downloading: %d%% (%.1f/%.1f MB)",
                                 percent,
                                 downloaded / 1024 / 1024,
                                 total_size / 1024 / 1024,
                             )
-            logger.info("Download complete.")
+        if total_size > 0 and downloaded != total_size:
+            raise IOError(
+                f"Incomplete download: got {downloaded} of {total_size} bytes"
+            )
+        os.replace(partial, path)
+        logger.info("Download complete.")
     except Exception as e:
-        if path.exists():
-            path.unlink()
+        if partial.exists():
+            partial.unlink()
         raise RuntimeError(f"Failed to download weights from {url}: {e}") from e
 
     # Let the matched family verify the freshly downloaded file before anything

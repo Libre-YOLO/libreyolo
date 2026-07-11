@@ -1,0 +1,38 @@
+Depth Anything 3 family notice
+================================
+
+Code provenance
+---------------
+The vendored model code in ``_vendor/`` is adapted from the official Depth
+Anything 3 implementation:
+
+    https://github.com/ByteDance-Seed/Depth-Anything-3
+    commit 41736238f5bced4debf3f2a12375d2466874866d
+    License: Apache License 2.0
+    Copyright (c) 2025 ByteDance Ltd. and/or its affiliates
+
+The DINOv2 backbone files retain their upstream Meta Platforms copyright and
+Apache-2.0 headers. LibreYOLO vendors only the DA3MONO-LARGE ViT-L + DPT
+dependency graph. Package-relative imports and tensor reshapes replace
+upstream runtime dependencies without changing learned parameters or the
+monocular forward result. See ``licenses/Apache-2.0.txt`` for the license.
+
+Weight provenance
+-----------------
+``LibreDepthAnything3l-depth.pt`` is converted from:
+
+    https://huggingface.co/depth-anything/DA3MONO-LARGE
+    revision f465978e618db8cc79c83b8bbf24964857db1875
+    License: Apache License 2.0
+
+The converter removes only the outer ``model.`` state-dict prefix and wraps
+the 406 tensors in LibreYOLO checkpoint schema v1.0; tensor values are
+unchanged. The upstream model card states that the model was trained only on
+public academic datasets.
+
+Scope and excluded variants
+---------------------------
+Only the Apache-2.0 DA3MONO-LARGE checkpoint is wired for auto-download.
+Metric depth does not match LibreYOLO's relative inverse-depth contract, and
+the Small/Base any-view checkpoints require a future camera/multi-image API.
+CC-BY-NC-4.0 Large/Giant/Nested checkpoints are not referenced or hosted.

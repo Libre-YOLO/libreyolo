@@ -1,0 +1,20 @@
+LibrePicoSAM3 - third-party attribution
+=======================================
+
+The PicoSAM3 architecture in this directory is a native LibreYOLO port from:
+
+    Project:  PicoSAM3
+    Upstream: https://github.com/pbonazzi/picosam3
+    Commit:   1b03949e43472953bb0021685c7fc3f5fdf48fde
+    License:  Apache License 2.0
+
+The default checkpoint is downloaded from the LibreYOLO Hugging Face mirror
+(`LibreYOLO/LibrePicoSAM3`), converted with unchanged tensor values from
+`pietrobonazzi/picosam3` revision af49e4322b6b7cf448499fee5c073d4576f59444
+under Apache-2.0. Only PicoSAM3_SAM3_student_best.pt matches the ported
+architecture. The published epoch-1 artifacts contain an older architecture
+and are deliberately rejected.
+
+Upstream records SAM 2.1 and SAM 3 as distillation teachers. LibreYOLO does not
+vendor or redistribute either teacher implementation or teacher checkpoint in
+this family. No cctorch-derived source is used by this port.

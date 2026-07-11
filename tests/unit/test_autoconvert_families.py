@@ -108,6 +108,17 @@ def _rtmdet_s_upstream():
     }
 
 
+def _rtmdet_ins_s_upstream():
+    sd = _rtmdet_s_upstream()
+    sd.update(
+        {
+            "bbox_head.rtm_kernel.0.weight": torch.zeros(169, 128, 1, 1),
+            "bbox_head.mask_head.projection.weight": torch.zeros(8, 128, 1, 1),
+        }
+    )
+    return sd
+
+
 def _rtdetr_r18_upstream(v2: bool = False):
     sd = {
         "backbone.res_layers.0.blocks.0.conv1.weight": torch.zeros(4, 4, 3, 3),
@@ -188,6 +199,7 @@ CASES = [
     ("yolonas-pose", lambda: _yolonas_s(pose=True), _wrap_ema_net, "yolo_nas_pose_s_coco.pth", "yolonas", "LibreYOLONAS", "s", "pose", 1),
     ("picodet", _picodet_s_upstream, _wrap_state_dict, "picodet_s_320.pth", "picodet", "LibrePICODET", "s", "detect", 80),
     ("rtmdet", _rtmdet_s_upstream, _wrap_ema_state_dict, "rtmdet_s_coco.pth", "rtmdet", "LibreRTMDet", "s", "detect", 80),
+    ("rtmdet-ins", _rtmdet_ins_s_upstream, _wrap_ema_state_dict, "rtmdet-ins_s_coco.pth", "rtmdet", "LibreRTMDet", "s", "segment", 80),
     ("rtdetr-r18", _rtdetr_r18_upstream, _wrap_ema_module, "rtdetr_r18vd_coco.pth", "rtdetr", "LibreRTDETR", "r18", "detect", 80),
     ("rtdetrv2-r18", lambda: _rtdetr_r18_upstream(v2=True), _wrap_ema_module, "rtdetrv2_r18vd_120e_coco.pth", "rtdetrv2", "LibreRTDETRv2", "r18", "detect", 80),
     ("rtdetr-hgnetv2-l", _rtdetr_hgnetv2_l_upstream, _wrap_ema_module, "rtdetrv2_hgnetv2_l_6x_coco.pth", "rtdetr", "LibreRTDETR", "l", "detect", 80),

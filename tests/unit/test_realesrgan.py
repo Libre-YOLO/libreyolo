@@ -16,7 +16,6 @@ from libreyolo.models.realesrgan import LibreRealESRGAN
 from libreyolo.models.realesrgan.nn import RRDBNet, SRVGGNetCompact
 from libreyolo.postprocess.realesrgan import postprocess as sr_postprocess
 from libreyolo.tasks import normalize_task
-from libreyolo.utils.results import Results, RestoredImage
 
 pytestmark = pytest.mark.unit
 
@@ -35,10 +34,22 @@ def test_super_resolution_task_aliases():
 
 
 def test_filename_and_size_detection():
-    assert LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx4-restore.pt") == "x4"
-    assert LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx2-restore.pt") == "x2"
-    assert LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx4t-restore.pt") == "x4t"
-    assert LibreRealESRGAN.detect_task_from_filename("LibreRealESRGANx4-restore.pt") == "restore"
+    assert (
+        LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx4-restore.pt")
+        == "x4"
+    )
+    assert (
+        LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx2-restore.pt")
+        == "x2"
+    )
+    assert (
+        LibreRealESRGAN.detect_size_from_filename("LibreRealESRGANx4t-restore.pt")
+        == "x4t"
+    )
+    assert (
+        LibreRealESRGAN.detect_task_from_filename("LibreRealESRGANx4-restore.pt")
+        == "restore"
+    )
 
 
 @pytest.mark.parametrize("size,scale", [("x4", 4), ("x2", 2), ("x4t", 4)])
@@ -98,7 +109,9 @@ def test_predict_restored_shape_and_scale(size, scale):
     assert r.restore_scale == scale
     assert r.restored.array.shape == (20 * scale, 28 * scale, 3)
     assert r.restored.array.dtype == np.uint8
-    assert r.summary() == [{"name": "restored", "shape": [20 * scale, 28 * scale, 3], "scale": scale}]
+    assert r.summary() == [
+        {"name": "restored", "shape": [20 * scale, 28 * scale, 3], "scale": scale}
+    ]
 
 
 def test_predict_tiling_produces_correct_shape():
@@ -246,6 +259,32 @@ def test_onnx_dynamic_export_roundtrip(tmp_path):
     assert int(np.abs(native.astype(int) - onnx_out.astype(int)).max()) <= 1
 
 
+@pytest.mark.parametrize("format", ["torchscript", "ncnn", "tflite"])
+def test_fixed_export_roundtrip(tmp_path, format):
+    if format == "ncnn":
+        pytest.importorskip("pnnx")
+        pytest.importorskip("ncnn")
+    if format == "tflite":
+        pytest.importorskip("onnx2tf")
+        pytest.importorskip("ai_edge_litert")
+    from libreyolo import LibreYOLO
+
+    model = LibreRealESRGAN(size="x4t", device="cpu")
+    image = _random_image(16, 16, seed=6)
+    native = model.predict(image).restored.array
+    artifact = tmp_path / f"realesrgan.{format}"
+    model.export(
+        format=format,
+        imgsz=16,
+        dynamic=False,
+        output_path=str(artifact),
+    )
+    exported = LibreYOLO(str(artifact), device="cpu").predict(image).restored.array
+
+    assert exported.shape == native.shape == (64, 64, 3)
+    assert int(np.abs(native.astype(int) - exported.astype(int)).max()) <= 1
+
+
 # --------------------------------------------------------------------------- #
 # gated tensor parity against upstream (max_abs_diff == 0)
 # --------------------------------------------------------------------------- #
@@ -266,21 +305,30 @@ def test_tensor_parity_against_upstream():
     torch.manual_seed(0)
     x = torch.randn(1, 3, 64, 64)
     cases = [
-        (UpRRDBNet(3, 3, scale=4, num_feat=64, num_block=23, num_grow_ch=32),
-         RRDBNet(3, 3, scale=4, num_feat=64, num_block=23, num_grow_ch=32),
-         "RealESRGAN_x4plus.pth"),
-        (UpRRDBNet(3, 3, scale=2, num_feat=64, num_block=23, num_grow_ch=32),
-         RRDBNet(3, 3, scale=2, num_feat=64, num_block=23, num_grow_ch=32),
-         "RealESRGAN_x2plus.pth"),
-        (UpSRVGG(3, 3, num_feat=64, num_conv=32, upscale=4, act_type="prelu"),
-         SRVGGNetCompact(3, 3, num_feat=64, num_conv=32, upscale=4, act_type="prelu"),
-         "realesr-general-x4v3.pth"),
+        (
+            UpRRDBNet(3, 3, scale=4, num_feat=64, num_block=23, num_grow_ch=32),
+            RRDBNet(3, 3, scale=4, num_feat=64, num_block=23, num_grow_ch=32),
+            "RealESRGAN_x4plus.pth",
+        ),
+        (
+            UpRRDBNet(3, 3, scale=2, num_feat=64, num_block=23, num_grow_ch=32),
+            RRDBNet(3, 3, scale=2, num_feat=64, num_block=23, num_grow_ch=32),
+            "RealESRGAN_x2plus.pth",
+        ),
+        (
+            UpSRVGG(3, 3, num_feat=64, num_conv=32, upscale=4, act_type="prelu"),
+            SRVGGNetCompact(
+                3, 3, num_feat=64, num_conv=32, upscale=4, act_type="prelu"
+            ),
+            "realesr-general-x4v3.pth",
+        ),
     ]
     for up, mine, fname in cases:
         state = sd(fname)
         up.load_state_dict(state, strict=True)
         mine.load_state_dict(state, strict=True)
-        up.eval(); mine.eval()
+        up.eval()
+        mine.eval()
         with torch.no_grad():
             diff = (up(x) - mine(x)).abs().max().item()
         assert diff == 0.0, f"{fname}: max_abs_diff={diff}"

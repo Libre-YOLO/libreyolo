@@ -1,0 +1,18 @@
+SwinIR
+======
+
+This directory contains a modified PyTorch port of the SwinIR generator from:
+
+  Repository: https://github.com/JingyunLiang/SwinIR
+  Commit: 6545850fbf8df298df73d81f3e8cba638787c8bd
+  Upstream file: models/network_swinir.py
+  License: Apache License 2.0
+  Copyright 2021 SwinIR Authors
+
+The port preserves upstream parameter names for checkpoint compatibility. It
+removes training-only FLOP helpers and the timm runtime dependency, adds type
+annotations and small-input padding safeguards, and integrates the generator
+with LibreYOLO's restore inference, validation, tiling, and checkpoint schema.
+
+The full Apache License 2.0 text is distributed at
+licenses/Apache-2.0.txt.

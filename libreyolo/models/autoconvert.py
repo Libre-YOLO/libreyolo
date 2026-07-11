@@ -84,7 +84,7 @@ def _candidate_tensor_dicts(loaded: Any):
             for k, v in ema_state.items()
             if k.startswith("module.")
         } or ema_state
-    for key in ("ema_net", "net", "model", "state_dict"):
+    for key in ("params_ema", "params", "ema_net", "net", "model", "state_dict"):
         if isinstance(loaded.get(key), dict):
             yield loaded[key]
     yield loaded
@@ -479,6 +479,11 @@ def _wrap_claim(
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
     extra_metadata: dict[str, Any] = {}
+    if task == "restore":
+        # Restore checkpoints use a single schema placeholder, not a semantic
+        # class label. Foreign restoration releases normally carry no names.
+        nc = 1
+        names = {0: "image"}
     if task == "pose":
         num_keypoints = None
         detect_keypoints = getattr(cls, "detect_num_keypoints", None)

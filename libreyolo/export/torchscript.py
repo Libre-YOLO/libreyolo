@@ -23,7 +23,12 @@ def export_torchscript(
     Returns:
         The output_path string.
     """
-    traced = torch.jit.trace(nn_model, dummy)
+    # Several export wrappers cache shape-dependent anchors during their first
+    # forward. A second trace-check therefore observes a different Python path
+    # even though the recorded fixed-shape graph is correct. Runtime parity
+    # tests validate the saved module directly, so avoid this false-negative
+    # retrace here.
+    traced = torch.jit.trace(nn_model, dummy, check_trace=False)
     extra_files = {}
     if metadata:
         extra_files["libreyolo_metadata.json"] = json.dumps(metadata)

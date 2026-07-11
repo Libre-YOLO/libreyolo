@@ -11,6 +11,7 @@ weights aren't downloaded as part of the unit tier.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -74,7 +75,9 @@ def test_bin_decode_zero_yields_offset():
     angles = bin_logits_to_angles(logits, logits, num_bins=90)
     expected_deg = (89 / 2.0) * 4.0 - 180.0
     expected_rad = expected_deg * math.pi / 180.0
-    assert torch.allclose(angles, torch.tensor([[expected_rad, expected_rad]]), atol=1e-6)
+    assert torch.allclose(
+        angles, torch.tensor([[expected_rad, expected_rad]]), atol=1e-6
+    )
 
 
 def test_bin_decode_one_hot_picks_bin():
@@ -109,11 +112,13 @@ def test_gaze_payload_basic():
 
 def test_gaze_direction_3d_unit_norm():
     """3D direction vectors should be unit-length."""
-    angles = torch.tensor([
-        [0.0, 0.0],
-        [math.pi / 4, math.pi / 6],
-        [-math.pi / 6, math.pi / 3],
-    ])
+    angles = torch.tensor(
+        [
+            [0.0, 0.0],
+            [math.pi / 4, math.pi / 6],
+            [-math.pi / 6, math.pi / 3],
+        ]
+    )
     vecs = Gaze(angles).direction_3d
     norms = torch.linalg.vector_norm(vecs, dim=-1)
     assert torch.allclose(norms, torch.ones(3), atol=1e-6)
@@ -205,16 +210,101 @@ def test_libre_l2cs_callable_face_detector(tmp_path):
     assert isinstance(model.face_detector, type(None))  # not cached on instance
 
 
-def test_libre_l2cs_no_face_raises(tmp_path):
-    """No face_boxes and no face_detector → clear error, not a silent crash."""
+def test_libre_l2cs_bare_predict_uses_default_detector(tmp_path, monkeypatch):
+    """No face_boxes and no face_detector → default_face_detector() fallback,
+    cached on the model. Stubbed so the test is offline and works on any
+    OpenCV version; the real detectors are covered below."""
+    from libreyolo.models.l2cs import CallableFaceDetector
+    from libreyolo.models.l2cs import inference as l2cs_inference
+
     sd = _make_dummy_state_dict("r18")
     weights_path = tmp_path / "LibreL2CSr18.pt"
     torch.save(sd, weights_path)
 
+    stub = CallableFaceDetector(fn=lambda img: [])
+    calls = {"n": 0}
+
+    def fake_default():
+        calls["n"] += 1
+        return stub
+
+    monkeypatch.setattr(l2cs_inference, "default_face_detector", fake_default)
+
     model = LibreL2CS(str(weights_path), size="r18", device="cpu")
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    with pytest.raises(RuntimeError, match="no face source"):
-        model(img)
+    result = model(img)
+    assert len(result.boxes) == 0
+    assert len(result.gaze) == 0
+    assert model.face_detector is stub
+    # The detector is cached on the model, not rebuilt per call.
+    model(img)
+    assert calls["n"] == 1
+
+
+def test_resolve_face_detector_by_name():
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector, YuNetFaceDetector
+
+    assert isinstance(resolve_face_detector("haar"), HaarCascadeFaceDetector)
+    assert isinstance(resolve_face_detector("yunet"), YuNetFaceDetector)
+    assert resolve_face_detector("auto") is not None
+    with pytest.raises(ValueError, match="haar"):
+        resolve_face_detector("retinanet-xxl")
+
+
+def test_default_face_detector_matches_opencv_version():
+    """Haar on OpenCV 4 (bundled cascade), YuNet on OpenCV 5 (Haar removed)."""
+    import cv2
+
+    from libreyolo.models.l2cs import (
+        HaarCascadeFaceDetector,
+        YuNetFaceDetector,
+        default_face_detector,
+    )
+
+    detector = default_face_detector()
+    if hasattr(cv2, "CascadeClassifier"):
+        assert isinstance(detector, HaarCascadeFaceDetector)
+    else:
+        assert isinstance(detector, YuNetFaceDetector)
+
+
+def test_haar_detector_runs_on_blank_image():
+    """The cascade loads from the bundled OpenCV data and returns a clean
+    empty list when there is nothing to find (OpenCV 4 only)."""
+    import cv2
+
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    if not hasattr(cv2, "CascadeClassifier"):
+        pytest.skip("OpenCV 5 removed the Haar cascade API")
+    detector = HaarCascadeFaceDetector()
+    faces = detector(np.zeros((120, 120, 3), dtype=np.uint8))
+    assert faces == []
+
+
+def test_haar_detector_helpful_error_on_opencv5(monkeypatch):
+    """On OpenCV 5 the Haar detector fails loudly with a pointer to YuNet."""
+    import cv2
+
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    if hasattr(cv2, "CascadeClassifier"):
+        monkeypatch.delattr(cv2, "CascadeClassifier")
+    with pytest.raises(RuntimeError, match="yunet"):
+        HaarCascadeFaceDetector()(np.zeros((32, 32, 3), dtype=np.uint8))
+
+
+def test_yunet_detector_runs_on_blank_image():
+    """YuNet loads and returns [] on a blank image. Skipped unless the model
+    file is already cached locally, so the unit suite stays offline."""
+    from libreyolo.models.l2cs.face import _YUNET_FILENAME, YuNetFaceDetector
+
+    cached = Path("weights") / _YUNET_FILENAME
+    if not cached.exists():
+        pytest.skip("YuNet model not cached; skipping to stay offline")
+    detector = YuNetFaceDetector(model_path=str(cached))
+    faces = detector(np.zeros((120, 120, 3), dtype=np.uint8))
+    assert faces == []
 
 
 def test_libre_l2cs_no_faces_returns_empty(tmp_path):
@@ -264,6 +354,32 @@ def test_libre_l2cs_blocks_train_val_export(tmp_path):
         model.export("torchscript")
 
 
+def test_l2cs_onnx_face_crop_parity(tmp_path):
+    """The ONNX gaze contract decodes one already-cropped face per input."""
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+
+    from libreyolo import LibreYOLO
+
+    weights = _craft_l2cs(tmp_path, yaw_bin=80, pitch_bin=10)
+    model = LibreL2CS(weights, size="r18", device="cpu")
+    image = np.zeros((64, 80, 3), dtype=np.uint8)
+    image[..., 0] = np.arange(80, dtype=np.uint8)[None, :]
+    native = model(image, face_boxes=[(0, 0, 80, 64)])
+
+    artifact = tmp_path / "l2cs.onnx"
+    model.export(
+        "onnx",
+        output_path=str(artifact),
+        dynamic=False,
+        simplify=False,
+    )
+    exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+
+    assert exported.boxes.xyxy.tolist() == [[0.0, 0.0, 80.0, 64.0]]
+    assert torch.allclose(exported.gaze.data, native.gaze.data, atol=1e-5)
+
+
 # ---------------------------------------------------------------------------
 # Regression tests for code-review findings
 # ---------------------------------------------------------------------------
@@ -274,7 +390,7 @@ def test_preprocess_multiface_uniform_shapes():
     crops = [
         Image.fromarray(np.zeros((160, 120, 3), dtype=np.uint8)),  # 4:3
         Image.fromarray(np.zeros((100, 200, 3), dtype=np.uint8)),  # 1:2
-        Image.fromarray(np.zeros((90, 90, 3), dtype=np.uint8)),    # 1:1
+        Image.fromarray(np.zeros((90, 90, 3), dtype=np.uint8)),  # 1:1
     ]
     batch = preprocess_face_crops(crops)
     assert batch.shape == (3, 3, 448, 448)
