@@ -40,18 +40,17 @@ class LibrePicoSAM3(LibreSAMModel):
 
     FAMILY = "picosam3"
     FILENAME_PREFIX = "LibrePicoSAM3"
-    HF_REPOS: ClassVar[Dict[str, str]] = {"pico": "pietrobonazzi/picosam3"}
+    HF_REPOS: ClassVar[Dict[str, str]] = {"pico": "LibreYOLO/LibrePicoSAM3"}
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"pico": 96}
-    WEIGHT_FILE: ClassVar[str] = "PicoSAM3_SAM3_student_best.pt"
-    UPSTREAM_REVISION: ClassVar[str] = "af49e4322b6b7cf448499fee5c073d4576f59444"
+    WEIGHT_FILE: ClassVar[str] = "LibrePicoSAM3pico.pt"
 
     def __init__(self, size: str = "pico", **kwargs) -> None:
         super().__init__(size=size, **kwargs)
 
-    @staticmethod
-    def _snapshot_complete(local_dir: Path) -> bool:
+    @classmethod
+    def _snapshot_complete(cls, local_dir: Path) -> bool:
         return (local_dir / _SNAPSHOT_COMPLETE_MARKER).exists() and (
-            local_dir / LibrePicoSAM3.WEIGHT_FILE
+            local_dir / cls.WEIGHT_FILE
         ).exists()
 
     def _ensure_weights(self) -> str:
@@ -66,20 +65,18 @@ class LibrePicoSAM3(LibreSAMModel):
 
         local_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Downloading %s weights from %s@%s -> %s ...",
+            "Downloading %s weights from %s -> %s ...",
             self.FAMILY,
             repo,
-            self.UPSTREAM_REVISION,
             local_dir,
         )
         hf_hub_download(
             repo_id=repo,
             filename=self.WEIGHT_FILE,
-            revision=self.UPSTREAM_REVISION,
             local_dir=local_dir,
         )
         (local_dir / _SNAPSHOT_COMPLETE_MARKER).write_text(
-            json.dumps({"repo": repo, "revision": self.UPSTREAM_REVISION}) + "\n",
+            json.dumps({"repo": repo}) + "\n",
             encoding="utf-8",
         )
         if not self._snapshot_complete(local_dir):
@@ -240,10 +237,11 @@ class LibrePicoSAM3(LibreSAMModel):
         axes = None
         if dynamic:
             axes = {"roi_image": {0: "batch"}, "mask_logits": {0: "batch"}}
+        imgsz = self.INPUT_SIZES[self.size]
         self.model.eval()
         torch.onnx.export(
             self.model,
-            torch.zeros((1, 3, 96, 96), device=self.device),
+            torch.zeros((1, 3, imgsz, imgsz), device=self.device),
             str(destination),
             input_names=["roi_image"],
             output_names=["mask_logits"],

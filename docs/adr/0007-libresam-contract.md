@@ -57,7 +57,7 @@ The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
 | SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `LibreYOLO/LibreSAM2*` | Image segmentation only in v1. |
 | SAM 3 image | `LibreSAM("sam3")`, `LibreSAM3("large")` | `facebook/sam3` | Visual prompts plus concept text prompts; gated custom-license weights. |
 | MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
-| PicoSAM3 | `LibreSAM("picosam3")`, `LibrePicoSAM3()` | `pietrobonazzi/picosam3` | Native 96px ROI CNN; box prompts only. |
+| PicoSAM3 | `LibreSAM("picosam3")`, `LibrePicoSAM3()` | `LibreYOLO/LibrePicoSAM3` | Native 96px ROI CNN; box prompts only. |
 
 ## Public API
 

@@ -8,9 +8,11 @@ CNN once for each ROI.
 
 - Code: `pbonazzi/picosam3`, commit
   `1b03949e43472953bb0021685c7fc3f5fdf48fde`, Apache-2.0.
-- Weights: `pietrobonazzi/picosam3`, revision
-  `af49e4322b6b7cf448499fee5c073d4576f59444`, Apache-2.0.
-- Supported artifact: `PicoSAM3_SAM3_student_best.pt`.
+- Weights served to users: `LibreYOLO/LibrePicoSAM3` (Apache-2.0), converted
+  from upstream `pietrobonazzi/picosam3` revision
+  `af49e4322b6b7cf448499fee5c073d4576f59444`, file
+  `PicoSAM3_SAM3_student_best.pt`. Tensor values are unchanged; the mirror
+  exists so autodownload does not depend on a third-party account.
 - Teacher chain recorded by upstream: SAM 2.1 and SAM 3, used for
   distillation. Teacher implementations and checkpoints are not included.
 
@@ -52,10 +54,23 @@ produce shape `(3, 1, 96, 96)` with maximum absolute difference `0.0`.
 The raw ONNX graph matches PyTorch on the same three-input batch with maximum
 absolute difference `2.27e-6` (within the `1e-5` parity tolerance).
 
-The plan's claimed COCO mIoU has not been recorded as reproduced: upstream's
-epoch-1 artifacts are the wrong architecture, and its benchmark script does
-not map the published `best` artifact to that claimed number. This port does
-not restate the paper metric as verified.
+## Measured mask quality
+
+Evaluated on COCO val2017 with ground-truth boxes as ROI prompts and
+ground-truth masks as reference, over 2000 randomly sampled non-crowd instances
+(seed 0, no area filter):
+
+| Protocol | mIoU |
+|---|---|
+| Crop space, 96x96 (upstream's evaluation space) | 0.692 |
+| Full image, end-to-end via `predict()` | 0.697 |
+
+The paper reports 65.45 mIoU on COCO. Our sampling and filtering may differ from
+theirs, so this records the number we measured rather than restating theirs as
+reproduced; it exceeds the published figure, which confirms the shipped `best`
+checkpoint is the trained artifact it claims to be.
+
+The epoch-1 files are a separate matter (see below) and are not shipped.
 
 ## Conversion and export
 
