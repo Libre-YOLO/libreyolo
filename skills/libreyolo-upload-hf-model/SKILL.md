@@ -65,6 +65,7 @@ file = name + ".pt"
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
+| SegFormer | `LibreSegformer` | `LibreSegformerb0-sem.pt` (semantic-only; ADE20K. Weights are **non-commercial** — NVIDIA Source Code License, see below) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
@@ -177,6 +178,9 @@ LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
+LibreSegformerb0-sem.pt, LibreSegformerb1-sem.pt, LibreSegformerb2-sem.pt,
+LibreSegformerb3-sem.pt, LibreSegformerb4-sem.pt, LibreSegformerb5-sem.pt,
+
 LibreEoMTl-sem.pt,
 
 LibreEoMTl-seg.pt, LibreEoMTl-seg-1280.pt,
@@ -204,7 +208,15 @@ it behind `--confirm-lite-license`). DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
 (maintainer decision to host); `-visdrone` variants are a research preview
 under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
 the license stated loudly on the card); FOMO weights have no cleared hosting
-license yet. A name being *valid* does not make it *hostable*; run the gate.
+license yet. **LibreSegformer b0-b5 are NON-COMMERCIAL**: they derive from
+NVIDIA's ADE20K checkpoints under the NVIDIA Source Code License, which permits
+redistribution (a verbatim `LICENSE` copy and the attribution notices must
+travel with the weights) but limits *use* to research or evaluation, virally
+through derivative works. Their cards use `license: other` +
+`license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
+a non-commercial banner, and the loader prints the restriction before every
+auto-download. Never tag them `apache-2.0` because the *code* is Apache.
+A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
 `docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in
