@@ -16,6 +16,7 @@ __all__ = [
     "LibreSAM2",
     "LibreSAM3",
     "LibreMobileSAM",
+    "LibrePicoSAM3",
 ]
 
 
@@ -24,4 +25,8 @@ def __getattr__(name):
         from ..mobilesam import LibreMobileSAM
 
         return LibreMobileSAM
+    if name == "LibrePicoSAM3":
+        from ..picosam3 import LibrePicoSAM3
+
+        return LibrePicoSAM3
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

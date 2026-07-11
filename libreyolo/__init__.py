@@ -131,6 +131,7 @@ def __getattr__(name):
         "LibreSAM2": (".models.sam", "LibreSAM2"),
         "LibreSAM3": (".models.sam", "LibreSAM3"),
         "LibreMobileSAM": (".models.mobilesam", "LibreMobileSAM"),
+        "LibrePicoSAM3": (".models.picosam3", "LibrePicoSAM3"),
         "LibreOpenVocab": (".models.openvocab", "LibreOpenVocab"),
         "LibreGroundingDINO": (".models.openvocab", "LibreGroundingDINO"),
         "LibreOWLv2": (".models.openvocab", "LibreOWLv2"),
@@ -211,6 +212,7 @@ __all__ = [
     "LibreSAM2",
     "LibreSAM3",
     "LibreMobileSAM",
+    "LibrePicoSAM3",
     # Open-vocabulary detector tier (optional, requires libreyolo[openvocab])
     "LibreOpenVocab",
     "LibreGroundingDINO",
