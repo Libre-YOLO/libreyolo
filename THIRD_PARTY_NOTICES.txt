@@ -682,6 +682,7 @@ WITHOUT WARRANTY OF ANY KIND.
 Torchreid (deep-person-reid)
 --------------------------------------------------------------------
 Source: https://github.com/KaiyangZhou/deep-person-reid
+Commit: f8cd150fdf77e8d9e1ed143b7f308c2c609ded50
 License: MIT
 Copyright (c) 2018 Kaiyang Zhou
 Used for: the OSNet-AIN appearance (ReID) embedder used by the Deep
@@ -704,6 +705,7 @@ WITHOUT WARRANTY OF ANY KIND.
 Deep OC-SORT
 --------------------------------------------------------------------
 Source: https://github.com/GerardMaggiolino/Deep-OC-SORT
+Commit: 6bb51d027b137233f5c520b6fcc4f2ae387a6ba9
 License: MIT
 Copyright (c) 2023 Gerard Maggiolino
 Used for: the adaptive appearance association (dynamic embedding EMA and

@@ -27,6 +27,7 @@ appearance models plug in without subclassing.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import cv2
@@ -295,17 +296,27 @@ def _resolve_weights(name: str) -> Path:
     token = _get_hf_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    # Unique temp name so concurrent cold-cache processes never clobber each
+    # other's partial file; the final rename is atomic (last writer wins,
+    # both files are identical).
+    tmp = dest.with_suffix(f".part{os.getpid()}")
     try:
-        response = requests.get(url, stream=True, headers=headers)
+        response = requests.get(url, stream=True, headers=headers, timeout=(10, 60))
         response.raise_for_status()
-        tmp = dest.with_suffix(".part")
         with open(tmp, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
         tmp.replace(dest)
     except Exception as e:
-        raise RuntimeError(f"Failed to download ReID weights from {url}: {e}") from e
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Failed to download ReID weights from {url}: {e}\n"
+            "You can convert the upstream Torchreid checkpoint yourself with "
+            "weights/convert_osnet_reid_weights.py and pass it via "
+            "OSNetEmbedder(weights=...), or place it at "
+            f"{dest}."
+        ) from e
     return dest
 
 
