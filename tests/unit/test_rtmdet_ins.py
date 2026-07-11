@@ -146,3 +146,30 @@ def test_rtmdet_ins_training_and_export_are_explicitly_unsupported():
     wrapper.model.head.export = True
     with pytest.raises(NotImplementedError, match="export"):
         wrapper.model(torch.zeros(1, 3, 64, 64))
+
+
+def test_rtmdet_ins_postprocess_clamps_boxes_to_both_frames():
+    """Boxes must be clamped in-place to the input frame and, after the ratio
+    inverse, to the original frame (a fancy-indexed clamp_ silently no-ops)."""
+    cls = tuple(torch.full((1, 1, size, size), -20.0) for size in (2, 1, 1))
+    reg = tuple(torch.full((1, 4, size, size), 40.0) for size in (2, 1, 1))
+    kernels = tuple(torch.zeros(1, 169, size, size) for size in (2, 1, 1))
+    cls[0][0, 0, 1, 1] = 10.0
+    kernels[0][0, -1, 1, 1] = 10.0
+    mask_feat = torch.zeros(1, 8, 2, 2)
+
+    result = postprocess(
+        (cls, reg, kernels, mask_feat),
+        conf_thres=0.25,
+        iou_thres=0.6,
+        input_size=16,
+        original_size=(24, 12),
+        ratio=2 / 3,
+        max_det=100,
+    )
+
+    assert result["num_detections"] == 1
+    # Raw decode is (-32, -32, 48, 48): input-frame clamp gives (0, 0, 16, 16),
+    # the ratio inverse gives (0, 0, 24, 24), and the original-frame clamp
+    # caps y2 at the 12-pixel image height.
+    assert result["boxes"].tolist() == [[0.0, 0.0, 24.0, 12.0]]

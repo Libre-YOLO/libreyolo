@@ -172,6 +172,9 @@ def test_training_is_explicitly_out_of_scope():
 
 
 def test_static_onnx_roundtrip(tmp_path):
+    """Shape/dtype contract of the ONNX path (experimental tier: no numeric
+    parity guarantee; the backend pads sub-canvas inputs before the
+    transformer, which measurably diverges from native inference)."""
     pytest.importorskip("onnx")
     pytest.importorskip("onnxruntime")
     from libreyolo.backends.onnx import OnnxBackend

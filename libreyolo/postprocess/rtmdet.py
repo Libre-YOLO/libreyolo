@@ -319,8 +319,10 @@ def _postprocess_segment(
     priors = torch.cat(priors_all)
     kernels = torch.cat(kernels_all)
     boxes = _distance2bbox(priors[:, :2], distances)
-    boxes[:, [0, 2]].clamp_(0, input_size)
-    boxes[:, [1, 3]].clamp_(0, input_size)
+    # Basic slicing (a view) so the in-place clamp reaches ``boxes``; list
+    # indexing would clamp a copy and silently leave boxes unclamped.
+    boxes[:, 0::2].clamp_(0, input_size)
+    boxes[:, 1::2].clamp_(0, input_size)
 
     finite = (
         torch.isfinite(boxes).all(dim=1)
@@ -367,8 +369,8 @@ def _postprocess_segment(
             align_corners=False,
         )[..., :orig_h, :orig_w]
         boxes = boxes / ratio
-        boxes[:, [0, 2]].clamp_(0, orig_w)
-        boxes[:, [1, 3]].clamp_(0, orig_h)
+        boxes[:, 0::2].clamp_(0, orig_w)
+        boxes[:, 1::2].clamp_(0, orig_h)
 
     masks = mask_logits.sigmoid().squeeze(0) > 0.5
     return {

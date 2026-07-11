@@ -22,8 +22,11 @@ result.save("upscaled.png")
 Inputs run at native resolution and are reflect-padded to an 8-pixel window
 multiple. Tiling is optional and bounds peak memory for large images. Training
 and dynamic spatial export are outside the first release. Static ONNX export is
-supported; backend prediction pads inputs that fit within the exported canvas
-and crops the 4x result back to the expected output shape.
+available as an experimental path: backend prediction pads inputs that fit
+within the exported canvas and crops the 4x result back to the expected output
+shape, but the window attention sees that padding, so sub-canvas inputs
+measurably diverge from native inference. Export at the resolution you intend
+to run, and prefer native PyTorch inference when fidelity matters.
 
 The architecture is adapted from the official Apache-2.0 SwinIR repository at
 commit `6545850fbf8df298df73d81f3e8cba638787c8bd`. See

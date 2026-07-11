@@ -53,22 +53,32 @@ class LibreDepthAnything3Net(nn.Module):
 
     @staticmethod
     def _apply_mono_sky(depth: torch.Tensor, sky: torch.Tensor) -> torch.Tensor:
-        """Match upstream's sky-to-far-depth postprocessing."""
-        non_sky_mask = sky < 0.3
-        if non_sky_mask.sum() <= 10 or (~non_sky_mask).sum() <= 10:
-            return depth
+        """Match upstream's sky-to-far-depth postprocessing, per image.
 
-        non_sky_depth = depth[non_sky_mask]
-        if non_sky_depth.numel() > 100_000:
-            indices = torch.randint(
-                0,
-                non_sky_depth.numel(),
-                (100_000,),
-                device=non_sky_depth.device,
-            )
-            non_sky_depth = non_sky_depth[indices]
-        far_depth = torch.quantile(non_sky_depth, 0.99)
-        return torch.where(non_sky_mask, depth, far_depth)
+        Upstream applies this to the views of a single scene. LibreYOLO batches
+        are independent images (the depth validator batches them), so the
+        far-depth quantile must not mix statistics across batch items.
+        """
+        result = depth
+        for i in range(depth.shape[0]):
+            non_sky_mask = sky[i] < 0.3
+            if non_sky_mask.sum() <= 10 or (~non_sky_mask).sum() <= 10:
+                continue
+
+            non_sky_depth = depth[i][non_sky_mask]
+            if non_sky_depth.numel() > 100_000:
+                indices = torch.randint(
+                    0,
+                    non_sky_depth.numel(),
+                    (100_000,),
+                    device=non_sky_depth.device,
+                )
+                non_sky_depth = non_sky_depth[indices]
+            far_depth = torch.quantile(non_sky_depth, 0.99)
+            if result is depth:
+                result = depth.clone()
+            result[i] = torch.where(non_sky_mask, depth[i], far_depth)
+        return result
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 4 or x.shape[1] != 3:

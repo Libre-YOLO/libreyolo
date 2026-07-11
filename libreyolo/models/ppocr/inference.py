@@ -51,7 +51,9 @@ class OCRInferenceRunner:
         device: Optional[str] = None,
         imgsz: Optional[int] = None,
         rec_batch: int = 6,
-        # Detection-shaped kwargs that do not apply, rejected loudly:
+        # augment/tiling would silently change semantics, so they are rejected
+        # loudly. Other detection-shaped kwargs (iou, max_det, half, ...) are
+        # accepted and ignored so generic callers like the CLI can pass them.
         augment: bool = False,
         tiling: bool = False,
         **_: object,

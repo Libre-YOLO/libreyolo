@@ -64,6 +64,8 @@ file = name + ".pt"
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
 | RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
+| SwinIR | `LibreSwinIR` | `LibreSwinIRm-restore.pt` (4x super-resolution; sizes `s`/`m`/`l`; Apache-2.0) |
+| PPOCR | `LibrePPOCR` | `LibrePPOCRt-ocr.pt` (PP-OCRv5 text det+rec; sizes `t`/`l`; Apache-2.0) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
@@ -141,6 +143,8 @@ LibreRTDETRv4x.pt,
 
 LibreRTMDett.pt, LibreRTMDets.pt, LibreRTMDetm.pt,
 LibreRTMDetl.pt, LibreRTMDetx.pt,
+LibreRTMDett-seg.pt, LibreRTMDets-seg.pt, LibreRTMDetm-seg.pt,
+LibreRTMDetl-seg.pt, LibreRTMDetx-seg.pt,
 
 LibreRFDETRn.pt, LibreRFDETRs.pt, LibreRFDETRm.pt,
 LibreRFDETRl.pt, LibreRFDETRn-seg.pt, LibreRFDETRs-seg.pt,
@@ -173,6 +177,11 @@ LibreNAFNetl-restore-sidd.pt,
 
 LibreRealESRGANx4-restore.pt, LibreRealESRGANx2-restore.pt,
 LibreRealESRGANx4t-restore.pt,
+
+LibreSwinIRs-restore.pt, LibreSwinIRm-restore.pt,
+LibreSwinIRl-restore.pt,
+
+LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
 
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
