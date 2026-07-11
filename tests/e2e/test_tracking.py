@@ -163,6 +163,26 @@ class TestTrackingYOLOX:
                     stable += 1
         assert stable >= len(frames) // 2, "OC-SORT IDs not stable across frames"
 
+    def test_deepocsort_tracker_end_to_end(self, model, video_path):
+        """Deep OC-SORT (appearance ReID) yields stable, unique per-frame IDs."""
+        try:
+            frames = _run_tracker(model, video_path, n_frames=20, tracker="deepocsort")
+        except RuntimeError as exc:
+            if "download" in str(exc).lower():
+                pytest.skip(f"OSNet ReID weights unavailable: {exc}")
+            raise
+        assert len(frames) == 20
+        stable = 0
+        for i, f in enumerate(frames):
+            ids = f.track_id.tolist() if f.track_id is not None else []
+            assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+            if i > 0:
+                prev = _ids(frames[i - 1])
+                curr = _ids(frames[i])
+                if prev and curr and len(prev & curr) / len(prev) >= 0.5:
+                    stable += 1
+        assert stable >= len(frames) // 2, "Deep OC-SORT IDs not stable across frames"
+
     def test_save_creates_annotated_video(self, model, video_path, tmp_path):
         """save=True should write an annotated video to output_path."""
         import cv2

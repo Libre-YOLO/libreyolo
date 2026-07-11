@@ -1002,17 +1002,20 @@ class BaseModel(ABC):
         """Track objects across video frames.
 
         Runs detection on each frame and associates detections across time.
-        Two motion-based trackers are available via ``tracker``: ByteTrack
-        (default) and OC-SORT, which is more robust to occlusion and
-        non-linear motion. Yields one Results per frame with ``track_id`` set.
+        Three trackers are available via ``tracker``: ByteTrack (default) and
+        OC-SORT are motion-only; Deep OC-SORT adds appearance (ReID)
+        embeddings so identities survive long occlusions and crossing
+        targets, at the cost of a small embedding network run per frame (its
+        weights are downloaded on first use). Yields one Results per frame
+        with ``track_id`` set.
 
         Args:
             source: Path to a video file.
             track_conf: Confidence threshold for the tracker's first
                 association stage — ``track_high_thresh`` for ByteTrack,
-                ``det_thresh`` for OC-SORT. The detector runs at a lower
-                threshold internally so low-confidence detections remain
-                available for recovery. For ByteTrack it must be >=
+                ``det_thresh`` for OC-SORT and Deep OC-SORT. For the motion
+                trackers the detector runs at a lower threshold internally so
+                low-confidence detections remain available for recovery. For ByteTrack it must be >=
                 ``track_low_thresh`` (default 0.1). Ignored when *tracker_config*
                 is given, or when the matching key is passed explicitly in
                 ``tracker_kwargs``.
@@ -1025,13 +1028,15 @@ class BaseModel(ABC):
             vid_stride: Process every N-th frame.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4``.
-            tracker: Which tracker to use: ``"bytetrack"`` or ``"ocsort"``.
-                Ignored when *tracker_config* is given (the config type
-                selects the tracker).
-            tracker_config: A ``TrackConfig`` (ByteTrack) or ``OCSortConfig``
-                (OC-SORT) instance, or None to build one from **tracker_kwargs.
+            tracker: Which tracker to use: ``"bytetrack"``, ``"ocsort"`` or
+                ``"deepocsort"``. Ignored when *tracker_config* is given (the
+                config type selects the tracker).
+            tracker_config: A ``TrackConfig`` (ByteTrack), ``OCSortConfig``
+                (OC-SORT) or ``DeepOCSortConfig`` (Deep OC-SORT) instance, or
+                None to build one from **tracker_kwargs.
             **tracker_kwargs: Forwarded to the selected tracker's
-                ``from_kwargs`` (``TrackConfig`` or ``OCSortConfig``).
+                ``from_kwargs`` (``TrackConfig``, ``OCSortConfig`` or
+                ``DeepOCSortConfig``).
 
         Yields:
             Results with ``track_id`` attribute set as an (N,) int tensor.
@@ -1077,6 +1082,8 @@ class BaseModel(ABC):
 
         from ...tracking import (
             ByteTracker,
+            DeepOCSortConfig,
+            DeepOCSortTracker,
             OCSortConfig,
             OCSortTracker,
             TrackConfig,
@@ -1085,13 +1092,23 @@ class BaseModel(ABC):
         from ...utils.video import run_video_inference
 
         # A provided config picks the tracker; otherwise honour the selector.
-        if isinstance(tracker_config, OCSortConfig):
+        if isinstance(tracker_config, DeepOCSortConfig):
+            tracker = "deepocsort"
+        elif isinstance(tracker_config, OCSortConfig):
             tracker = "ocsort"
         elif isinstance(tracker_config, TrackConfig):
             tracker = "bytetrack"
         tracker = (tracker or "bytetrack").lower()
 
-        if tracker == "ocsort":
+        if tracker == "deepocsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("det_thresh", track_conf)
+                tracker_config = DeepOCSortConfig.from_kwargs(**tracker_kwargs)
+            # Deep OC-SORT has no low-score recovery band; the detector only
+            # needs to produce boxes down to det_thresh.
+            effective_conf = tracker_config.det_thresh
+            tracker_obj = DeepOCSortTracker(config=tracker_config)
+        elif tracker == "ocsort":
             if tracker_config is None:
                 tracker_kwargs.setdefault("det_thresh", track_conf)
                 tracker_config = OCSortConfig.from_kwargs(**tracker_kwargs)
@@ -1107,7 +1124,8 @@ class BaseModel(ABC):
             tracker_obj = ByteTracker(config=tracker_config)
         else:
             raise ValueError(
-                f"Unknown tracker {tracker!r}; choose 'bytetrack' or 'ocsort'."
+                f"Unknown tracker {tracker!r}; "
+                "choose 'bytetrack', 'ocsort' or 'deepocsort'."
             )
 
         source = Path(source)
@@ -1126,6 +1144,9 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
+            if isinstance(tracker_obj, DeepOCSortTracker):
+                # Appearance tracking needs the frame pixels for ReID crops.
+                return tracker_obj.update(result, pil_img)
             return tracker_obj.update(result)
 
         def annotate_tracked(pil_img, result):
