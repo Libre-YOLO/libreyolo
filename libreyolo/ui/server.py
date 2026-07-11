@@ -176,9 +176,16 @@ def _factory_openvocab_names() -> list[str]:
     """Open-vocab detectors live behind the ``LibreOpenVocab`` factory (HF
     snapshot weights, no CLI weight filename), so the UI lists them itself.
     One canonical alias per model/size; the factory resolves them."""
+    import importlib.util
+
+    # The openvocab package itself imports fine without transformers (the
+    # backend is deferred to model construction), so probe for the actual
+    # dependency rather than the package.
+    if importlib.util.find_spec("transformers") is None:
+        return []
     try:
         from libreyolo.models.openvocab import LibreOpenVocab  # noqa: F401
-    except Exception:  # transformers not installed
+    except Exception:
         return []
     return ["grounding-dino-t", "grounding-dino-b", "owlv2-b16", "owlv2-l14"]
 

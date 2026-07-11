@@ -7,9 +7,13 @@ a small ``FaceDetector`` protocol and four adapters:
 * ``CallableFaceDetector`` — wraps any ``image -> list[FaceBox]`` callable.
 * ``LibreYOLOFaceDetector`` — adapts an existing LibreYOLO detector (e.g.
   a YOLO9 model fine-tuned on faces) into the protocol.
-* ``HaarCascadeFaceDetector`` — OpenCV's bundled frontal-face Haar cascade;
-  zero extra dependencies, used as the automatic fallback when no other
-  face source is given (also reachable as ``face_detector="haar"``).
+* ``HaarCascadeFaceDetector`` — OpenCV 4's bundled frontal-face Haar cascade;
+  fully offline (``face_detector="haar"``). OpenCV 5 removed this API.
+* ``YuNetFaceDetector`` — OpenCV's ``FaceDetectorYN``; one-time ~230 KB model
+  fetch from the official OpenCV zoo, MIT (``face_detector="yunet"``).
+  ``default_face_detector()`` picks Haar on OpenCV 4 and YuNet on OpenCV 5,
+  and is the automatic fallback when no other face source is given
+  (``face_detector="auto"``).
 * ``RetinaFaceAdapter`` — optional, lazy-imports ``face_detection`` for
   parity with upstream L2CS-Net's pipeline. Behind the ``gaze-retinaface``
   optional extra; never imported eagerly.
@@ -121,13 +125,13 @@ class LibreYOLOFaceDetector:
 
 @dataclass
 class HaarCascadeFaceDetector:
-    """Zero-dependency frontal-face detector using OpenCV's bundled Haar cascade.
+    """Zero-download frontal-face detector using OpenCV 4's bundled Haar cascade.
 
-    opencv-python is already a core dependency and ships the cascade XML, so
-    this detector always works out of the box. Quality is below a learned
-    detector (frontal faces only, no landmarks, no confidence scores); it is
-    the default fallback so bare ``predict()`` works, not the recommended
-    production path.
+    opencv-python 4.x ships both the ``CascadeClassifier`` API and the cascade
+    XML, so this works fully offline. OpenCV 5 removed the Haar API from the
+    main wheel; there, use :class:`YuNetFaceDetector` (what
+    :func:`default_face_detector` picks automatically). Quality is below a
+    learned detector (frontal faces only, no landmarks, no confidence scores).
     """
 
     min_size_frac: float = 0.05  # smallest face, as a fraction of min(H, W)
@@ -140,6 +144,12 @@ class HaarCascadeFaceDetector:
             return
         import cv2
 
+        if not hasattr(cv2, "CascadeClassifier"):
+            raise RuntimeError(
+                f"OpenCV {cv2.__version__} does not include the Haar cascade "
+                "API (removed from the main wheel in OpenCV 5). Use "
+                "face_detector='yunet' or default_face_detector() instead."
+            )
         cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
         impl = cv2.CascadeClassifier(str(cascade_path))
         if impl.empty():
@@ -164,6 +174,103 @@ class HaarCascadeFaceDetector:
             FaceBox(xyxy=(float(x), float(y), float(x + w), float(y + h)), score=1.0)
             for (x, y, w, h) in faces
         ]
+
+
+_YUNET_FILENAME = "face_detection_yunet_2023mar.onnx"
+# Official OpenCV model zoo copy (Git LFS, hence the media host). MIT license
+# (Shiqi Yu, libfacedetection): https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE
+_YUNET_URL = (
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/"
+    "models/face_detection_yunet/" + _YUNET_FILENAME
+)
+
+
+@dataclass
+class YuNetFaceDetector:
+    """Face detector using OpenCV's ``FaceDetectorYN`` (YuNet).
+
+    Works on both OpenCV 4.5.4+ and OpenCV 5. The ~230 KB YuNet ONNX model is
+    not bundled with opencv-python; it is fetched once from the official
+    OpenCV model zoo (MIT license) into ``weights/`` unless ``model_path``
+    points at an existing copy.
+    """
+
+    model_path: Optional[str] = None
+    score_threshold: float = 0.6
+    nms_threshold: float = 0.3
+    _impl: Any = field(default=None, init=False, repr=False)
+
+    def _resolve_model(self) -> Path:
+        if self.model_path is not None:
+            path = Path(self.model_path)
+            if not path.exists():
+                raise FileNotFoundError(f"YuNet model not found: {path}")
+            return path
+        dest = Path("weights") / _YUNET_FILENAME
+        if dest.exists():
+            return dest
+        import logging
+
+        import requests
+
+        logging.getLogger(__name__).info(
+            "Downloading the YuNet face detector (~230 KB, MIT license) from "
+            "the OpenCV model zoo to %s ...", dest
+        )
+        resp = requests.get(_YUNET_URL, timeout=60)
+        resp.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".onnx.part")
+        tmp.write_bytes(resp.content)
+        tmp.replace(dest)
+        return dest
+
+    def _load(self) -> None:
+        if self._impl is not None:
+            return
+        import cv2
+
+        if not hasattr(cv2, "FaceDetectorYN"):
+            raise RuntimeError(
+                f"OpenCV {cv2.__version__} does not include FaceDetectorYN "
+                "(needs opencv-python >= 4.5.4)."
+            )
+        model = self._resolve_model()
+        self._impl = cv2.FaceDetectorYN.create(
+            str(model), "", (320, 320), self.score_threshold, self.nms_threshold
+        )
+
+    def __call__(self, image_rgb: np.ndarray) -> List[FaceBox]:
+        self._load()
+        h, w = image_rgb.shape[:2]
+        self._impl.setInputSize((w, h))
+        _, faces = self._impl.detect(image_rgb[:, :, ::-1].copy())  # expects BGR
+        if faces is None:
+            return []
+        out: List[FaceBox] = []
+        for row in faces:
+            x, y, bw, bh = (float(v) for v in row[:4])
+            out.append(
+                FaceBox(
+                    xyxy=(x, y, x + bw, y + bh),
+                    score=float(row[14]),
+                    landmarks=np.asarray(row[4:14], dtype=np.float32).reshape(5, 2),
+                )
+            )
+        return out
+
+
+def default_face_detector() -> FaceDetector:
+    """Best zero-configuration face detector for the installed OpenCV.
+
+    OpenCV 4 wheels bundle the Haar cascade, so that path needs no download at
+    all; OpenCV 5 removed it, so YuNet (one-time ~230 KB fetch) is used there.
+    """
+    import cv2
+
+    if hasattr(cv2, "CascadeClassifier"):
+        return HaarCascadeFaceDetector()
+    return YuNetFaceDetector()
 
 
 @dataclass
@@ -273,16 +380,23 @@ def resolve_face_detector(spec: Any) -> Optional[FaceDetector]:
     if spec is None:
         return None
     if isinstance(spec, str):
-        if spec.lower() == "haar":
+        name = spec.lower()
+        if name == "auto":
+            return default_face_detector()
+        if name == "haar":
             return HaarCascadeFaceDetector()
+        if name == "yunet":
+            return YuNetFaceDetector()
         raise ValueError(
-            f"Unknown face_detector name {spec!r}; the only named detector is 'haar'."
+            f"Unknown face_detector name {spec!r}; named detectors are "
+            "'auto', 'haar', and 'yunet'."
         )
     if isinstance(
         spec,
         (
             CallableFaceDetector,
             HaarCascadeFaceDetector,
+            YuNetFaceDetector,
             LibreYOLOFaceDetector,
             RetinaFaceAdapter,
         ),

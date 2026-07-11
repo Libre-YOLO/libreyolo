@@ -20,7 +20,7 @@ from ...utils.general import log_saved_result, resolve_save_path
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import Boxes, Gaze, Results
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
-from .face import FaceBox, FaceDetector, HaarCascadeFaceDetector, resolve_face_detector
+from .face import FaceBox, FaceDetector, default_face_detector, resolve_face_detector
 from .utils import bin_logits_to_angles, crop_face, preprocess_face_crops
 
 if TYPE_CHECKING:
@@ -206,15 +206,17 @@ class GazeInferenceRunner:
             return resolve_face_detector(explicit)
         if self.model.face_detector is not None:
             return self.model.face_detector
-        # No face source anywhere: fall back to the bundled OpenCV Haar
-        # cascade so bare predict() works. Cached on the model so the
-        # cascade loads once per model instance.
+        # No face source anywhere: fall back to OpenCV's built-in face
+        # detection (Haar on OpenCV 4, YuNet on OpenCV 5) so bare predict()
+        # works. Cached on the model so it loads once per model instance.
+        detector = default_face_detector()
         logger.info(
-            "No face detector provided; using the bundled OpenCV Haar cascade "
-            "(frontal faces only). Pass face_detector=... or face_boxes=[...] "
-            "for better face detection."
+            "No face detector provided; using OpenCV %s as a fallback. "
+            "Pass face_detector=... or face_boxes=[...] to control "
+            "face detection.",
+            type(detector).__name__,
         )
-        self.model.face_detector = HaarCascadeFaceDetector()
+        self.model.face_detector = detector
         return self.model.face_detector
 
     def _collect_faces(

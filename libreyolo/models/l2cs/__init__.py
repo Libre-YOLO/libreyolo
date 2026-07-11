@@ -7,6 +7,8 @@ from .face import (
     HaarCascadeFaceDetector,
     LibreYOLOFaceDetector,
     RetinaFaceAdapter,
+    YuNetFaceDetector,
+    default_face_detector,
     resolve_face_detector,
 )
 from .model import LibreL2CS
@@ -17,7 +19,9 @@ __all__ = [
     "FaceDetector",
     "CallableFaceDetector",
     "HaarCascadeFaceDetector",
+    "YuNetFaceDetector",
     "LibreYOLOFaceDetector",
     "RetinaFaceAdapter",
+    "default_face_detector",
     "resolve_face_detector",
 ]
