@@ -216,24 +216,18 @@ def export_onnx(
     task = metadata.get("task")
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
-    is_yolo9_pose = (
-        model_family == "yolo9"
-        and task == "pose"
-    )
-    is_rfdetr_pose = (
-        model_family == "rfdetr"
-        and task == "pose"
-    )
+    is_yolo9_pose = model_family == "yolo9" and task == "pose"
+    is_rfdetr_pose = model_family == "rfdetr" and task == "pose"
     is_ec_pose = model_family == "ec" and task == "pose"
     is_yolonas_pose = model_family == "yolonas" and task == "pose"
     is_obb = task == "obb"
     is_classify = task == "classify"
+    is_semantic = task == "semantic"
     is_restore = task == "restore"
     is_matte = task == "matte"
     is_depth = task == "depth"
-    known_detr_detection = _uses_dfine_style_export_wrapper(
-        model_family
-    )
+    is_gaze = task == "gaze"
+    known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
     if (
         not is_seg
@@ -241,6 +235,8 @@ def export_onnx(
         and not is_restore
         and not is_matte
         and not is_depth
+        and not is_semantic
+        and not is_gaze
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3
@@ -251,7 +247,32 @@ def export_onnx(
             "detection-only in LibreYOLO."
         )
 
-    if is_classify:
+    if is_semantic:
+        output_names = ["semantic_logits"]
+        dynamic_axes = (
+            {
+                "images": {0: "batch"},
+                "semantic_logits": {
+                    0: "batch",
+                    2: "mask_height",
+                    3: "mask_width",
+                },
+            }
+            if dynamic
+            else None
+        )
+    elif is_gaze:
+        output_names = ["yaw_logits", "pitch_logits"]
+        dynamic_axes = (
+            {
+                "images": {0: "faces"},
+                "yaw_logits": {0: "faces"},
+                "pitch_logits": {0: "faces"},
+            }
+            if dynamic
+            else None
+        )
+    elif is_classify:
         # Classification emits a single logits tensor (B, num_classes).
         input_name = "input" if model_family == "rfdetr" else "images"
         output_names = ["output"]

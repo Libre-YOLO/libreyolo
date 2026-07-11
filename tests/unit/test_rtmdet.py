@@ -8,6 +8,7 @@ mAP rather than a per-tensor diff (mmdet/mmcv aren't a runtime dep).
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 
@@ -41,7 +42,10 @@ def test_build_and_forward(size):
         assert reg.shape == (1, 4, h, w)
 
 
-@pytest.mark.parametrize("size,exp_on_reg", [("t", False), ("s", False), ("m", True), ("l", True), ("x", True)])
+@pytest.mark.parametrize(
+    "size,exp_on_reg",
+    [("t", False), ("s", False), ("m", True), ("l", True), ("x", True)],
+)
 def test_exp_on_reg_per_size(size, exp_on_reg):
     """tiny / s use linear reg, m / l / x use exp(reg). Empirically pinned to
     match the published COCO weight checkpoints."""
@@ -70,7 +74,11 @@ def test_grid_priors_corner_offset():
     For 640x640 input at stride 8, the very first prior is at (0, 0). Using
     offset=0.5 would put it at (4, 4). This is the trap the reviewer flagged.
     """
-    fake = [torch.zeros(1, 1, 80, 80), torch.zeros(1, 1, 40, 40), torch.zeros(1, 1, 20, 20)]
+    fake = [
+        torch.zeros(1, 1, 80, 80),
+        torch.zeros(1, 1, 40, 40),
+        torch.zeros(1, 1, 20, 20),
+    ]
     pts = _make_grid_priors(fake, [8, 16, 32])
     assert pts.shape == (8400, 2)
     assert pts[0].tolist() == [0.0, 0.0]
@@ -234,7 +242,9 @@ def test_loss_forward_backward_smoke():
     # for the corresponding column on a small synthetic batch. With EMA-loaded
     # weights all 240 see grads; with random init we see ~95%. Either is fine
     # for a smoke test — the contract is "non-trivial coverage", not "100%".
-    assert n_with_grad / n_total >= 0.9, f"only {n_with_grad}/{n_total} params got grads"
+    assert n_with_grad / n_total >= 0.9, (
+        f"only {n_with_grad}/{n_total} params got grads"
+    )
 
 
 def test_assigner_handles_empty_gt():
@@ -257,6 +267,32 @@ def test_assigner_handles_empty_gt():
     out = assigner(pred_bboxes, pred_scores, priors, gt_labels, gt_bboxes, pad_flag)
     # All priors should be background (label = num_classes)
     assert (out["assigned_labels"] == 80).all()
+
+
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+def test_exported_raw_parity(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    from libreyolo import LibreYOLO
+
+    torch.manual_seed(0)
+    model = LibreRTMDet(size="t", nb_classes=3, device="cpu")
+    model.model.eval()
+    tensor = torch.rand(1, 3, 96, 96)
+    model.model.head.export = True
+    with torch.no_grad():
+        native = model.model(tensor).numpy()
+    model.model.head.export = False
+
+    artifact = model.export(
+        format=format,
+        imgsz=96,
+        dynamic=False,
+        output_path=str(tmp_path / f"rtmdet.{format}"),
+    )
+    actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())[0]
+    np.testing.assert_allclose(actual, native, rtol=1e-4, atol=1e-4)
 
 
 def test_head_init_uses_focal_prior_bias():

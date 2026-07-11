@@ -169,11 +169,39 @@ class TestForwardAndPredict:
         with pytest.raises(ValueError, match="augment"):
             da_small.predict(str(img_path), imgsz=70, augment=True)
 
-    def test_train_and_export_out_of_scope(self, da_small):
+    def test_train_out_of_scope(self, da_small):
         with pytest.raises(NotImplementedError):
             da_small.train(data="x.yaml")
-        with pytest.raises(NotImplementedError):
-            da_small.export(format="onnx")
+
+    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    def test_exported_depth_parity(self, da_small, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+        from libreyolo import LibreYOLO
+
+        image = np.zeros((70, 70, 3), dtype=np.uint8)
+        image[..., 0] = np.arange(70, dtype=np.uint8)[None, :]
+        image[..., 1] = np.arange(70, dtype=np.uint8)[:, None]
+        image[..., 2] = 127
+        native = da_small.predict(image, imgsz=70).depth_map.data.numpy()
+
+        suffix = f".{format}"
+        artifact = tmp_path / f"depth_anything{suffix}"
+        da_small.export(
+            format=format,
+            output_path=str(artifact),
+            imgsz=70,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+        actual = exported.depth_map.data.numpy()
+
+        mse = float(np.mean((native - actual) ** 2))
+        peak = max(float(np.max(np.abs(native))), 1e-6)
+        psnr = float("inf") if mse == 0 else 20.0 * np.log10(peak / np.sqrt(mse))
+        assert psnr > 40.0
 
     def test_inherited_infer_image_is_blocked(self, da_small):
         # The vendored infer_image would double-normalize; it must redirect.

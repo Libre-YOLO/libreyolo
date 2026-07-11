@@ -109,10 +109,22 @@ def _export_pnnx_direct(nn_model, dummy, output_dir: Path, half: bool):
         traced.save(str(temp_pt))
 
         fp16_flag = 1 if half else 0
-        pnnx.export(nn_model, str(temp_pt), dummy, fp16=fp16_flag)
-
         src_param = tmpdir / "model.ncnn.param"
         src_bin = tmpdir / "model.ncnn.bin"
+        try:
+            pnnx.export(nn_model, str(temp_pt), dummy, fp16=fp16_flag)
+        except SyntaxError as exc:
+            # The Windows PNNX wheel may generate an auxiliary Python loader
+            # containing an unescaped ``C:\...`` path and fail while importing
+            # that loader after conversion. The deployable NCNN files are
+            # already complete at that point, so accept them if both exist.
+            if not src_param.exists() or not src_bin.exists():
+                raise
+            logger.warning(
+                "PNNX auxiliary loader generation failed after NCNN artifacts "
+                "were written; using the completed artifacts: %s",
+                exc,
+            )
 
         if not src_param.exists() or not src_bin.exists():
             # PNNX may use different naming; search for .ncnn.param/.ncnn.bin

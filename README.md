@@ -66,57 +66,74 @@ and receive the heaviest testing:
 
 ## Compatibility
 
-`✓` supported, `exp` experimental. Empty cells are not currently supported.
-All trainable families in the Training column accept universal training
-hooks via `callbacks=` and built-in experiment loggers via `loggers=`
-(`tensorboard`, `mlflow`, `wandb`).
-<table>
-  <thead>
-    <tr>
-      <th rowspan="2">Model family</th>
-      <th colspan="7">Inference</th>
-      <th rowspan="2">Training</th>
-      <th colspan="6">Export formats</th>
-    </tr>
-    <tr>
-      <th>Detection</th>
-      <th>Segmentation</th>
-      <th>Semantic</th>
-      <th>Classification</th>
-      <th>Pose</th>
-      <th>OBB</th>
-      <th>Gaze</th>
-      <th>ONNX</th>
-      <th>TorchScript</th>
-      <th>TensorRT</th>
-      <th>OpenVINO</th>
-      <th>NCNN</th>
-      <th>TFLite (LiteRT)</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
-    <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>exp</td></tr>
-    <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
-    <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td></tr>
-    <tr><td>YOLOv9-P2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td>exp</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>YOLO-NAS</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td></tr>
-    <tr><td>D-FINE</td><td>✓</td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
-    <tr><td>DEIM</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
-    <tr><td>DEIMv2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
-    <tr><td>RT-DETR</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td></tr>
-    <tr><td>RT-DETRv2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>RT-DETRv4</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>PicoDet</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>RTMDet</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>EC</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>MobileNetV4</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>ConvNeXt</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>EfficientNetV2</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>ResNet</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>L2CS</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-  </tbody>
-</table>
+`✓` parity-validated, `exp` experimental. Empty cells are blocked before export.
+<!-- export-support:start -->
+| Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
+| clip | classify | ✓ |  |  |  |  |  |  |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| deim | detect | exp | ✓ | exp | exp |  |  |  |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| depth_anything3 | depth |  |  |  |  |  |  |  |
+| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | classify | ✓ |  |  |  |  |  |  |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
+| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
+| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| eomt | segment |  |  |  |  |  |  |  |
+| eomt | panoptic |  |  |  |  |  |  |  |
+| florence2 | detect |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
+| grounding_dino | detect |  |  |  |  |  |  |  |
+| internvl3 | detect |  |  |  |  |  |  |  |
+| kosmos2 | detect |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  |  |  |  |  |  |
+| lfm2vl | detect |  |  |  |  |  |  |  |
+| locateanything | detect |  |  |  |  |  |  |  |
+| locateanything | point |  |  |  |  |  |  |  |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| mobilesam | segment |  |  |  |  |  |  |  |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
+| owlv2 | detect |  |  |  |  |  |  |  |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| ppocr | ocr |  |  |  |  |  |  |  |
+| qwen3vl | detect |  |  |  |  |  |  |  |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | ✓ | exp |
+| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
+| rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
+| rtmdet | segment | exp | exp | exp | exp | exp |  |  |
+| sam | segment |  |  |  |  |  |  |  |
+| sam2 | segment |  |  |  |  |  |  |  |
+| siglip2 | classify | ✓ |  |  |  |  |  |  |
+| smolvlm2 | detect |  |  |  |  |  |  |  |
+| swinir | restore | exp | exp | exp | exp | exp |  |  |
+| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
+<!-- export-support:end -->
 
 ## Depth estimation
 

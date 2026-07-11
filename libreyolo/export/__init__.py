@@ -19,5 +19,6 @@ Example::
 """
 
 from .exporter import BaseExporter
+from .support import SupportEntry, get_support
 
-__all__ = ["BaseExporter"]
+__all__ = ["BaseExporter", "SupportEntry", "get_support"]

@@ -182,7 +182,9 @@ class NcnnBackend(BaseBackend):
         model_size = meta.get("model_size") or meta.get("size")
         default_task = normalize_task(meta.get("default_task"), default="detect")
         task = normalize_task(meta.get("task"), default=default_task)
-        supported_tasks = normalize_supported_tasks(meta.get("supported_tasks", (task,)))
+        supported_tasks = normalize_supported_tasks(
+            meta.get("supported_tasks", (task,))
+        )
         imgsz = (
             _read_metadata_imgsz(
                 meta,
@@ -262,5 +264,33 @@ class NcnnBackend(BaseBackend):
             first, second = all_outputs
             if first.shape[-1] != 4 and second.shape[-1] == 4:
                 all_outputs = [second, first]
+        elif (
+            self.model_family == "yolonas"
+            and self.task == "pose"
+            and len(all_outputs) == 4
+        ):
+            boxes = next(
+                (out for out in all_outputs if out.ndim == 3 and out.shape[-1] == 4),
+                None,
+            )
+            keypoints_xy = next(
+                (out for out in all_outputs if out.ndim == 4 and out.shape[-1] == 2),
+                None,
+            )
+            remaining = [
+                out
+                for out in all_outputs
+                if out is not boxes and out is not keypoints_xy
+            ]
+            scores = next(
+                (out for out in remaining if out.shape[-1] == self.nb_classes),
+                None,
+            )
+            keypoints_conf = next((out for out in remaining if out is not scores), None)
+            if all(
+                output is not None
+                for output in (boxes, scores, keypoints_xy, keypoints_conf)
+            ):
+                all_outputs = [boxes, scores, keypoints_xy, keypoints_conf]
 
         return all_outputs

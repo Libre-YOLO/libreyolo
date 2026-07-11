@@ -1,0 +1,1231 @@
+{
+  "birefnet": {
+    "class": "libreyolo.models.birefnet.model.LibreBiRefNet",
+    "tasks": [
+      "matte"
+    ],
+    "default_task": "matte",
+    "sizes": {
+      "t": 1024,
+      "l": 1024
+    },
+    "default_imgsz": {
+      "t": 1024,
+      "l": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "clip": {
+    "class": "libreyolo.models.clip.model.LibreCLIP",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "b32": 224,
+      "b16": 224,
+      "l14": 224
+    },
+    "default_imgsz": {
+      "b32": 224,
+      "b16": 224,
+      "l14": 224
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "convnext": {
+    "class": "libreyolo.models.convnext.model.LibreConvNeXt",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "default_imgsz": {
+      "t": 224,
+      "s": 224,
+      "b": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "deim": {
+    "class": "libreyolo.models.deim.model.LibreDEIM",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "deimv2": {
+    "class": "libreyolo.models.deimv2.model.LibreDEIMv2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "atto": 320,
+      "femto": 416,
+      "pico": 640,
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "atto": 320,
+      "femto": 416,
+      "pico": 640,
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "depth_anything": {
+    "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "s": 518,
+      "b": 518,
+      "l": 518,
+      "g": 518
+    },
+    "default_imgsz": {
+      "s": 518,
+      "b": 518,
+      "l": 518,
+      "g": 518
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "depth_anything3": {
+    "class": "libreyolo.models.depth_anything3.model.LibreDepthAnything3",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "l": 504
+    },
+    "default_imgsz": {
+      "l": 504
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": null,
+    "available": true
+  },
+  "dfine": {
+    "class": "libreyolo.models.dfine.model.LibreDFINE",
+    "tasks": [
+      "detect",
+      "segment"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "n": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "n": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      },
+      "segment": {
+        "n": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "dinov2": {
+    "class": "libreyolo.models.dinov2.model.LibreDINOv2",
+    "tasks": [
+      "semantic",
+      "classify"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "n": 224,
+      "s": 224,
+      "m": 224,
+      "l": 224
+    },
+    "default_imgsz": {
+      "n": 518,
+      "s": 518,
+      "m": 518,
+      "l": 518
+    },
+    "task_sizes": {
+      "classify": {
+        "n": 224,
+        "s": 224,
+        "m": 224,
+        "l": 224
+      }
+    },
+    "export_override": "custom",
+    "optional_extra": "rfdetr",
+    "available": true
+  },
+  "ec": {
+    "class": "libreyolo.models.ec.model.LibreEC",
+    "tasks": [
+      "detect",
+      "pose",
+      "segment"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      },
+      "pose": {
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      },
+      "segment": {
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "efficientnetv2": {
+    "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "b0": 224,
+      "b1": 240,
+      "b2": 260,
+      "b3": 300
+    },
+    "default_imgsz": {
+      "b0": 224,
+      "b1": 240,
+      "b2": 260,
+      "b3": 300
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "eomt": {
+    "class": "libreyolo.models.eomt.model.LibreEoMT",
+    "tasks": [
+      "semantic",
+      "segment",
+      "panoptic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "s": 640,
+      "b": 640,
+      "l": 640
+    },
+    "default_imgsz": {
+      "s": 512,
+      "b": 512,
+      "l": 512
+    },
+    "task_sizes": {
+      "semantic": {
+        "s": 512,
+        "b": 512,
+        "l": 512
+      },
+      "segment": {
+        "s": 640,
+        "b": 640,
+        "l": 640
+      },
+      "panoptic": {
+        "s": 640,
+        "b": 640,
+        "l": 640
+      }
+    },
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "florence2": {
+    "class": "libreyolo.models.vlm.florence2.LibreFlorence2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "base": 768,
+      "large": 768
+    },
+    "default_imgsz": {
+      "base": 768,
+      "large": 768
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "fomo": {
+    "class": "libreyolo.models.fomo.model.LibreFOMO",
+    "tasks": [
+      "point"
+    ],
+    "default_task": "point",
+    "sizes": {
+      "s": 96,
+      "m": 192,
+      "l": 224
+    },
+    "default_imgsz": {
+      "s": 96,
+      "m": 192,
+      "l": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "grounding_dino": {
+    "class": "libreyolo.models.openvocab.grounding_dino.LibreGroundingDINO",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 800,
+      "b": 800
+    },
+    "default_imgsz": {
+      "t": 800,
+      "b": 800
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "openvocab",
+    "available": true
+  },
+  "internvl3": {
+    "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "1b": 448,
+      "2b": 448,
+      "8b": 448
+    },
+    "default_imgsz": {
+      "1b": 448,
+      "2b": 448,
+      "8b": 448
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "kosmos2": {
+    "class": "libreyolo.models.vlm.kosmos2.LibreKosmos2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "224": 224
+    },
+    "default_imgsz": {
+      "224": 224
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "l2cs": {
+    "class": "libreyolo.models.l2cs.model.LibreL2CS",
+    "tasks": [
+      "gaze"
+    ],
+    "default_task": "gaze",
+    "sizes": {
+      "r18": 448,
+      "r34": 448,
+      "r50": 448,
+      "r101": 448,
+      "r152": 448
+    },
+    "default_imgsz": {
+      "r18": 448,
+      "r34": 448,
+      "r50": 448,
+      "r101": 448,
+      "r152": 448
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "lfm2vl": {
+    "class": "libreyolo.models.vlm.lfm2.LibreLFM2VL",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "450m": 512,
+      "1.6b": 512
+    },
+    "default_imgsz": {
+      "450m": 512,
+      "1.6b": 512
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "locateanything": {
+    "class": "libreyolo.models.vlm.locateanything.LibreLocateAnything",
+    "tasks": [
+      "detect",
+      "point"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "3b": 2500
+    },
+    "default_imgsz": {
+      "3b": 2500
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "mobilenetv4": {
+    "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "s": 224,
+      "m": 224,
+      "l": 256
+    },
+    "default_imgsz": {
+      "s": 224,
+      "m": 224,
+      "l": 256
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "mobilesam": {
+    "class": "libreyolo.models.mobilesam.model.LibreMobileSAM",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "tiny": 1024
+    },
+    "default_imgsz": {
+      "tiny": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
+  "nafnet": {
+    "class": "libreyolo.models.nafnet.model.LibreNAFNet",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "s": 256,
+      "l": 256
+    },
+    "default_imgsz": {
+      "s": 256,
+      "l": 256
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "owlv2": {
+    "class": "libreyolo.models.openvocab.owlv2.LibreOWLv2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "b16": 960,
+      "l14": 1008
+    },
+    "default_imgsz": {
+      "b16": 960,
+      "l14": 1008
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "openvocab",
+    "available": true
+  },
+  "picodet": {
+    "class": "libreyolo.models.picodet.model.LibrePICODET",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 320,
+      "m": 416,
+      "l": 640
+    },
+    "default_imgsz": {
+      "s": 320,
+      "m": 416,
+      "l": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "pidnet": {
+    "class": "libreyolo.models.pidnet.model.LibrePIDNet",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "s": 1024,
+      "m": 1024,
+      "l": 1024
+    },
+    "default_imgsz": {
+      "s": 1024,
+      "m": 1024,
+      "l": 1024
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "ppocr": {
+    "class": "libreyolo.models.ppocr.model.LibrePPOCR",
+    "tasks": [
+      "ocr"
+    ],
+    "default_task": "ocr",
+    "sizes": {
+      "t": 960,
+      "l": 960
+    },
+    "default_imgsz": {
+      "t": 960,
+      "l": 960
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "qwen3vl": {
+    "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "2b": 1024,
+      "4b": 1024,
+      "8b": 1024
+    },
+    "default_imgsz": {
+      "2b": 1024,
+      "4b": 1024,
+      "8b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "realesrgan": {
+    "class": "libreyolo.models.realesrgan.model.LibreRealESRGAN",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "x4": 64,
+      "x2": 64,
+      "x4t": 64
+    },
+    "default_imgsz": {
+      "x4": 64,
+      "x2": 64,
+      "x4t": 64
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "resnet": {
+    "class": "libreyolo.models.resnet.model.LibreResNet",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "18": 224,
+      "34": 224,
+      "50": 224,
+      "101": 224
+    },
+    "default_imgsz": {
+      "18": 224,
+      "34": 224,
+      "50": 224,
+      "101": 224
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "rfdetr": {
+    "class": "libreyolo.models.rfdetr.model.LibreRFDETR",
+    "tasks": [
+      "detect",
+      "segment",
+      "pose",
+      "obb"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 384,
+      "s": 512,
+      "m": 576,
+      "l": 704,
+      "x": 576,
+      "xx": 768
+    },
+    "default_imgsz": {
+      "n": 384,
+      "s": 512,
+      "m": 576,
+      "l": 704
+    },
+    "task_sizes": {
+      "detect": {
+        "n": 384,
+        "s": 512,
+        "m": 576,
+        "l": 704
+      },
+      "segment": {
+        "n": 312,
+        "s": 384,
+        "m": 432,
+        "l": 504,
+        "x": 624,
+        "xx": 768
+      },
+      "pose": {
+        "x": 576
+      },
+      "obb": {
+        "n": 384,
+        "s": 512,
+        "m": 576,
+        "l": 704
+      }
+    },
+    "export_override": "custom",
+    "optional_extra": "rfdetr",
+    "available": true
+  },
+  "rtdetr": {
+    "class": "libreyolo.models.rtdetr.model.LibreRTDETR",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r18": 640,
+      "r34": 640,
+      "r50": 640,
+      "r50m": 640,
+      "r101": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "r18": 640,
+      "r34": 640,
+      "r50": 640,
+      "r50m": 640,
+      "r101": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "rtdetrv2": {
+    "class": "libreyolo.models.rtdetrv2.model.LibreRTDETRv2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "r18": 640,
+      "r34": 640,
+      "r50": 640,
+      "r50m": 640,
+      "r101": 640
+    },
+    "default_imgsz": {
+      "r18": 640,
+      "r34": 640,
+      "r50": 640,
+      "r50m": 640,
+      "r101": 640
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "rtdetrv4": {
+    "class": "libreyolo.models.rtdetrv4.model.LibreRTDETRv4",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "rtmdet": {
+    "class": "libreyolo.models.rtmdet.model.LibreRTMDet",
+    "tasks": [
+      "detect",
+      "segment"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      },
+      "segment": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "sam": {
+    "class": "libreyolo.models.sam.model.LibreSAM1",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "base": 1024,
+      "large": 1024,
+      "huge": 1024
+    },
+    "default_imgsz": {
+      "base": 1024,
+      "large": 1024,
+      "huge": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
+  "sam2": {
+    "class": "libreyolo.models.sam.sam2.LibreSAM2",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "tiny": 1024,
+      "small": 1024,
+      "base-plus": 1024,
+      "large": 1024
+    },
+    "default_imgsz": {
+      "tiny": 1024,
+      "small": 1024,
+      "base-plus": 1024,
+      "large": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
+  "siglip2": {
+    "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
+    "tasks": [
+      "classify"
+    ],
+    "default_task": "classify",
+    "sizes": {
+      "b16": 256,
+      "so400m": 384
+    },
+    "default_imgsz": {
+      "b16": 256,
+      "so400m": 384
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
+  "smolvlm2": {
+    "class": "libreyolo.models.vlm.smolvlm.LibreSmolVLM2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "2.2b": 512,
+      "500m": 512
+    },
+    "default_imgsz": {
+      "2.2b": 512,
+      "500m": 512
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
+    "available": true
+  },
+  "swinir": {
+    "class": "libreyolo.models.swinir.model.LibreSwinIR",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "s": 64,
+      "m": 64,
+      "l": 64
+    },
+    "default_imgsz": {
+      "s": 64,
+      "m": 64,
+      "l": 64
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo1": {
+    "class": "libreyolo.models.yolo1.model.LibreYOLO1",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 448,
+      "b": 448
+    },
+    "default_imgsz": {
+      "t": 448,
+      "b": 448
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo2": {
+    "class": "libreyolo.models.yolo2.model.LibreYOLO2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 416,
+      "b": 608
+    },
+    "default_imgsz": {
+      "t": 416,
+      "b": 608
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo3": {
+    "class": "libreyolo.models.yolo3.model.LibreYOLO3",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 416,
+      "b": 416,
+      "spp": 608
+    },
+    "default_imgsz": {
+      "t": 416,
+      "b": 416,
+      "spp": 608
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo4": {
+    "class": "libreyolo.models.yolo4.model.LibreYOLO4",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 416,
+      "b": 608
+    },
+    "default_imgsz": {
+      "t": 416,
+      "b": 608
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo7": {
+    "class": "libreyolo.models.yolo7.model.LibreYOLO7",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "b": 640
+    },
+    "default_imgsz": {
+      "b": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo9": {
+    "class": "libreyolo.models.yolo9.model.LibreYOLO9",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "c": 640
+    },
+    "default_imgsz": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "c": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "c": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo9_e2e": {
+    "class": "libreyolo.models.yolo9_e2e.model.LibreYOLO9E2E",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "c": 640
+    },
+    "default_imgsz": {
+      "t": 640,
+      "s": 640,
+      "m": 640,
+      "c": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "c": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolo9_p2": {
+    "class": "libreyolo.models.yolo9_p2.model.LibreYOLO9P2",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640,
+      "s": 640
+    },
+    "default_imgsz": {
+      "t": 640,
+      "s": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "t": 640,
+        "s": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolonas": {
+    "class": "libreyolo.models.yolonas.model.LibreYOLONAS",
+    "tasks": [
+      "detect",
+      "pose"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "n": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640
+    },
+    "task_sizes": {
+      "detect": {
+        "s": 640,
+        "m": 640,
+        "l": 640
+      },
+      "pose": {
+        "n": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640
+      }
+    },
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "yolox": {
+    "class": "libreyolo.models.yolox.model.LibreYOLOX",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "n": 416,
+      "t": 416,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "default_imgsz": {
+      "n": 416,
+      "t": 416,
+      "s": 640,
+      "m": 640,
+      "l": 640,
+      "x": 640
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "zipdepth": {
+    "class": "libreyolo.models.zipdepth.model.LibreZipDepth",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "b": 384,
+      "bnpu": 384
+    },
+    "default_imgsz": {
+      "b": 384,
+      "bnpu": 384
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  }
+}

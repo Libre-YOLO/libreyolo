@@ -74,7 +74,9 @@ def test_bin_decode_zero_yields_offset():
     angles = bin_logits_to_angles(logits, logits, num_bins=90)
     expected_deg = (89 / 2.0) * 4.0 - 180.0
     expected_rad = expected_deg * math.pi / 180.0
-    assert torch.allclose(angles, torch.tensor([[expected_rad, expected_rad]]), atol=1e-6)
+    assert torch.allclose(
+        angles, torch.tensor([[expected_rad, expected_rad]]), atol=1e-6
+    )
 
 
 def test_bin_decode_one_hot_picks_bin():
@@ -109,11 +111,13 @@ def test_gaze_payload_basic():
 
 def test_gaze_direction_3d_unit_norm():
     """3D direction vectors should be unit-length."""
-    angles = torch.tensor([
-        [0.0, 0.0],
-        [math.pi / 4, math.pi / 6],
-        [-math.pi / 6, math.pi / 3],
-    ])
+    angles = torch.tensor(
+        [
+            [0.0, 0.0],
+            [math.pi / 4, math.pi / 6],
+            [-math.pi / 6, math.pi / 3],
+        ]
+    )
     vecs = Gaze(angles).direction_3d
     norms = torch.linalg.vector_norm(vecs, dim=-1)
     assert torch.allclose(norms, torch.ones(3), atol=1e-6)
@@ -264,6 +268,32 @@ def test_libre_l2cs_blocks_train_val_export(tmp_path):
         model.export("torchscript")
 
 
+def test_l2cs_onnx_face_crop_parity(tmp_path):
+    """The ONNX gaze contract decodes one already-cropped face per input."""
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+
+    from libreyolo import LibreYOLO
+
+    weights = _craft_l2cs(tmp_path, yaw_bin=80, pitch_bin=10)
+    model = LibreL2CS(weights, size="r18", device="cpu")
+    image = np.zeros((64, 80, 3), dtype=np.uint8)
+    image[..., 0] = np.arange(80, dtype=np.uint8)[None, :]
+    native = model(image, face_boxes=[(0, 0, 80, 64)])
+
+    artifact = tmp_path / "l2cs.onnx"
+    model.export(
+        "onnx",
+        output_path=str(artifact),
+        dynamic=False,
+        simplify=False,
+    )
+    exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+
+    assert exported.boxes.xyxy.tolist() == [[0.0, 0.0, 80.0, 64.0]]
+    assert torch.allclose(exported.gaze.data, native.gaze.data, atol=1e-5)
+
+
 # ---------------------------------------------------------------------------
 # Regression tests for code-review findings
 # ---------------------------------------------------------------------------
@@ -274,7 +304,7 @@ def test_preprocess_multiface_uniform_shapes():
     crops = [
         Image.fromarray(np.zeros((160, 120, 3), dtype=np.uint8)),  # 4:3
         Image.fromarray(np.zeros((100, 200, 3), dtype=np.uint8)),  # 1:2
-        Image.fromarray(np.zeros((90, 90, 3), dtype=np.uint8)),    # 1:1
+        Image.fromarray(np.zeros((90, 90, 3), dtype=np.uint8)),  # 1:1
     ]
     batch = preprocess_face_crops(crops)
     assert batch.shape == (3, 3, 448, 448)

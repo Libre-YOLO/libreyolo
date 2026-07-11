@@ -111,13 +111,15 @@ class LibreEoMT(BaseModel):
         return None
 
     @classmethod
-    def detect_image_size(cls, weights_dict: dict, patch_size: int = 16) -> Optional[int]:
+    def detect_image_size(
+        cls, weights_dict: dict, patch_size: int = 16
+    ) -> Optional[int]:
         """Infer image_size from position embedding shape: sqrt(num_positions) * patch_size."""
         state = normalize_eomt_state_dict(weights_dict)
         weight = state.get("embeddings.position_embeddings.weight")
         if weight is not None and getattr(weight, "ndim", 0) >= 1:
             num_positions = int(weight.shape[0])
-            side = int(round(num_positions ** 0.5))
+            side = int(round(num_positions**0.5))
             if side * side == num_positions:
                 return side * patch_size
         return None
@@ -273,7 +275,9 @@ class LibreEoMT(BaseModel):
         for i in range(num_patches):
             start = int(i * (patch_size - overlap_per_patch))
             end = start + patch_size
-            patch = tensor[:, start:end, :] if height > width else tensor[:, :, start:end]
+            patch = (
+                tensor[:, start:end, :] if height > width else tensor[:, :, start:end]
+            )
             if patch.shape[-2:] != (patch_size, patch_size):
                 raise RuntimeError(
                     "LibreEoMT split preprocessing produced a non-square patch "
@@ -361,10 +365,18 @@ class LibreEoMT(BaseModel):
             return orig_h, orig_w
         if orig_w < orig_h:
             out_w = target
-            out_h = int(raw * orig_h / orig_w) if raw is not None else int(size * orig_h / orig_w)
+            out_h = (
+                int(raw * orig_h / orig_w)
+                if raw is not None
+                else int(size * orig_h / orig_w)
+            )
         else:
             out_h = target
-            out_w = int(raw * orig_w / orig_h) if raw is not None else int(size * orig_w / orig_h)
+            out_w = (
+                int(raw * orig_w / orig_h)
+                if raw is not None
+                else int(size * orig_w / orig_h)
+            )
         return out_h, out_w
 
     def _preprocess_pil_pad(
@@ -533,7 +545,7 @@ class LibreEoMT(BaseModel):
         if not isinstance(output, dict):
             raise ValueError("LibreEoMT panoptic forward must return a dict.")
         class_logits = output.get("class_queries_logits")  # (P, Q, C+1)
-        mask_logits = output.get("masks_queries_logits")   # (P, Q, h, w)
+        mask_logits = output.get("masks_queries_logits")  # (P, Q, h, w)
         if class_logits is None or mask_logits is None:
             raise ValueError(
                 "LibreEoMT panoptic forward did not include class_queries_logits "
@@ -614,12 +626,16 @@ class LibreEoMT(BaseModel):
             return empty
         return {"panoptic": segmentation.cpu(), "segments_info": segments_info}
 
-    def _postprocess_semantic(self, output: Any, original_size: Tuple[int, int]) -> Dict:
+    def _postprocess_semantic(
+        self, output: Any, original_size: Tuple[int, int]
+    ) -> Dict:
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("logits"))
         if logits is None:
-            raise ValueError("LibreEoMT forward output did not include semantic logits.")
+            raise ValueError(
+                "LibreEoMT forward output did not include semantic logits."
+            )
         orig_w, orig_h = original_size
         patch_offsets = getattr(self, "_last_eomt_patch_offsets", None)
         resized_shape = getattr(self, "_last_eomt_resized_shape", None)
@@ -661,7 +677,7 @@ class LibreEoMT(BaseModel):
         if not isinstance(output, dict):
             raise ValueError("LibreEoMT segment forward must return a dict.")
         class_logits = output.get("class_queries_logits")  # (B, Q, C+1)
-        mask_logits = output.get("masks_queries_logits")   # (B, Q, H, W)
+        mask_logits = output.get("masks_queries_logits")  # (B, Q, H, W)
         if class_logits is None or mask_logits is None:
             raise ValueError(
                 "LibreEoMT segment forward did not include class_queries_logits "
@@ -685,11 +701,11 @@ class LibreEoMT(BaseModel):
 
         for patch_idx in range(num_patches):
             cls_logit = class_logits[patch_idx]  # (Q, C+1)
-            msk_logit = mask_logits[patch_idx]   # (Q, H, W)
+            msk_logit = mask_logits[patch_idx]  # (Q, H, W)
 
             # DETR-style decoding: softmax, exclude null/background class
             scores_per_query = cls_logit.softmax(-1)[..., :-1]  # (Q, C)
-            scores, labels = scores_per_query.max(-1)           # (Q,), (Q,)
+            scores, labels = scores_per_query.max(-1)  # (Q,), (Q,)
 
             keep = scores > conf_thres
             if not keep.any():
@@ -741,15 +757,17 @@ class LibreEoMT(BaseModel):
                 "masks": torch.zeros((0, orig_h, orig_w), dtype=torch.float32),
             }
 
-        boxes_t = torch.cat(all_boxes, dim=0)    # (N, 4)
+        boxes_t = torch.cat(all_boxes, dim=0)  # (N, 4)
         scores_t = torch.cat(all_scores, dim=0)  # (N,)
-        labels_t = torch.cat(all_classes, dim=0) # (N,)
-        masks_t = torch.cat(all_masks, dim=0)    # (N, H, W)
+        labels_t = torch.cat(all_classes, dim=0)  # (N,)
+        masks_t = torch.cat(all_masks, dim=0)  # (N, H, W)
 
         if num_patches > 1:
             # Multi-patch: NMS merges predictions of the same object detected
             # in overlapping patches (cross-patch duplicates are expected).
-            keep_idx = batched_nms(boxes_t.float(), scores_t.float(), labels_t, iou_thres)
+            keep_idx = batched_nms(
+                boxes_t.float(), scores_t.float(), labels_t, iou_thres
+            )
             if len(keep_idx) > max_det:
                 keep_idx = keep_idx[:max_det]
         else:
@@ -887,10 +905,11 @@ class LibreEoMT(BaseModel):
             "with weights/convert_eomt_weights.py."
         )
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
+    def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
+        if self.task == "semantic":
+            return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
-            "Export is not implemented for LibreEoMT yet. Semantic export needs "
-            "a dense-logits runtime contract before this family can be exported."
+            "LibreEoMT instance and panoptic export need query-mask runtime contracts."
         )
 
     def val(
@@ -945,7 +964,9 @@ class LibreEoMT(BaseModel):
         if not 0 < iou_thres < 1:
             raise ValueError(f"iou must be in (0, 1), got {iou_thres}.")
         if args:
-            raise TypeError("LibreEoMT.val() does not accept extra positional arguments.")
+            raise TypeError(
+                "LibreEoMT.val() does not accept extra positional arguments."
+            )
         data_dir = kwargs.pop("data_dir", None)
         max_det = kwargs.pop("max_det", 300)
         iou_thresholds = kwargs.pop("iou_thresholds", None)
@@ -1110,15 +1131,21 @@ class LibreEoMT(BaseModel):
                 inference_time += time.time() - t2
 
                 t3 = time.time()
-                pred = self._postprocess(
-                    output,
-                    conf_thres=0.0,
-                    iou_thres=0.0,
-                    original_size=original_size,
-                )["semantic"].long().view(-1)
+                pred = (
+                    self._postprocess(
+                        output,
+                        conf_thres=0.0,
+                        iou_thres=0.0,
+                        original_size=original_size,
+                    )["semantic"]
+                    .long()
+                    .view(-1)
+                )
                 postprocess_time += time.time() - t3
 
-                target = torch.from_numpy(np.ascontiguousarray(target_np)).long().view(-1)
+                target = (
+                    torch.from_numpy(np.ascontiguousarray(target_np)).long().view(-1)
+                )
                 valid = target != ignore_index
                 if not bool(valid.any()):
                     continue
@@ -1130,7 +1157,11 @@ class LibreEoMT(BaseModel):
 
         total = confusion.sum()
         true_positive = confusion.diag().double()
-        union = confusion.sum(dim=0).double() + confusion.sum(dim=1).double() - true_positive
+        union = (
+            confusion.sum(dim=0).double()
+            + confusion.sum(dim=1).double()
+            - true_positive
+        )
         per_class_iou = torch.full((nc,), float("nan"), dtype=torch.float64)
         present = union > 0
         per_class_iou[present] = true_positive[present] / union[present]
@@ -1145,7 +1176,9 @@ class LibreEoMT(BaseModel):
             for class_id, value in enumerate(per_class_iou):
                 if torch.isnan(value):
                     continue
-                logger.info("  IoU %-20s %.4f", names.get(class_id, str(class_id)), float(value))
+                logger.info(
+                    "  IoU %-20s %.4f", names.get(class_id, str(class_id)), float(value)
+                )
             logger.info("  mIoU:           %.4f", miou)
             logger.info("  pixel accuracy: %.4f", accuracy)
             logger.info("=" * 50)

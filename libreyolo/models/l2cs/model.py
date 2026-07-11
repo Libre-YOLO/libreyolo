@@ -50,7 +50,7 @@ class LibreL2CS(BaseModel):
     # upstream training configuration.
     _BIN_GEOMETRY: ClassVar[Dict[int, tuple]] = {
         90: (4.0, -180.0),  # Gaze360
-        28: (3.0, -42.0),   # MPIIGaze
+        28: (3.0, -42.0),  # MPIIGaze
     }
 
     # TTA, tiling, and validation all make no sense for two-stage gaze.
@@ -70,9 +70,7 @@ class LibreL2CS(BaseModel):
     _WEIGHTS_URL = (
         "https://drive.google.com/file/d/18S956r4jnHtSeT8z8t3z8AoJZjVnNqPJ/view"
     )
-    _GAZE360_LICENSE_URL = (
-        "https://github.com/erkil1452/gaze360/blob/master/LICENSE.md"
-    )
+    _GAZE360_LICENSE_URL = "https://github.com/erkil1452/gaze360/blob/master/LICENSE.md"
     _LICENSE_NOTICE_SHOWN = False
 
     # =========================================================================
@@ -339,6 +337,7 @@ class LibreL2CS(BaseModel):
     def _runner(self):
         if getattr(self, "_runner_instance", None) is None:
             from .inference import GazeInferenceRunner
+
             self._runner_instance = GazeInferenceRunner(self)
         return self._runner_instance
 
@@ -360,15 +359,9 @@ class LibreL2CS(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        # ONNX export is planned but requires a small head wrapper. Block
-        # other formats explicitly so users don't hit a confusing failure
-        # inside the detection-shaped BaseExporter path.
         if format.lower() != "onnx":
             raise NotImplementedError(
                 f"LibreL2CS export to {format!r} is not implemented. "
-                "Only 'onnx' is planned."
+                "The v1 gaze export contract supports ONNX only."
             )
-        raise NotImplementedError(
-            "LibreL2CS ONNX export is not yet implemented. Track this on the "
-            "gaze integration PR."
-        )
+        return super().export(format=format, **kwargs)
