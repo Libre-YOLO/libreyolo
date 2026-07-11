@@ -263,29 +263,52 @@ def _spy_deepocsort(monkeypatch):
     class Spy(tk.DeepOCSortTracker):
         def __init__(self, *a, **k):
             built["cls"] = "deepocsort"
+            built["device"] = k.get("device")
             super().__init__(*a, **k)
 
     monkeypatch.setattr(tk, "DeepOCSortTracker", Spy)
     return built
 
 
+def _det_model(device: str = "cpu"):
+    return type("DetModel", (), {"task": "detect", "device": device})()
+
+
 def test_selector_string_builds_deepocsort(monkeypatch):
     built = _spy_deepocsort(monkeypatch)
-    model = type("DetModel", (), {"task": "detect"})()
     with pytest.raises(FileNotFoundError):
-        next(BaseModel.track(model, "missing.mp4", tracker="deepocsort"))
+        next(BaseModel.track(_det_model(), "missing.mp4", tracker="deepocsort"))
     assert built["cls"] == "deepocsort"
 
 
 def test_deepocsort_config_type_routes(monkeypatch):
     built = _spy_deepocsort(monkeypatch)
-    model = type("DetModel", (), {"task": "detect"})()
     with pytest.raises(FileNotFoundError):
         next(
             BaseModel.track(
-                model,
+                _det_model(),
                 "missing.mp4",
                 tracker_config=DeepOCSortConfig(det_thresh=0.4),
             )
         )
     assert built["cls"] == "deepocsort"
+
+
+def test_reid_embedder_follows_the_detector_device(monkeypatch):
+    """ReID must not grab CUDA when the caller asked for CPU tracking."""
+    built = _spy_deepocsort(monkeypatch)
+    with pytest.raises(FileNotFoundError):
+        next(BaseModel.track(_det_model("cpu"), "missing.mp4", tracker="deepocsort"))
+    assert built["device"] == "cpu"
+
+    seen = {}
+
+    class FakeEmbedder:
+        def __init__(self, variant, device=None):
+            seen["device"] = device
+
+    monkeypatch.setattr(
+        "libreyolo.tracking.reid.OSNetEmbedder", FakeEmbedder, raising=True
+    )
+    DeepOCSortTracker(device="cpu")._get_embedder()
+    assert seen["device"] == "cpu"

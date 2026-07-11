@@ -180,6 +180,10 @@ class DeepOCSortTracker:
             embeddings. When None, an
             :class:`~libreyolo.tracking.reid.OSNetEmbedder` for
             ``config.embedder`` is built lazily on the first frame.
+        device: Torch device for the lazily built embedder. Defaults to the
+            embedder's own auto-selection; ``model.track()`` passes the
+            detector's device so ReID never lands on a device the caller did
+            not ask for.
         **kwargs: Forwarded to ``DeepOCSortConfig.from_kwargs`` when config is
             None.
 
@@ -193,10 +197,15 @@ class DeepOCSortTracker:
     """
 
     def __init__(
-        self, config: DeepOCSortConfig | None = None, embedder=None, **kwargs
+        self,
+        config: DeepOCSortConfig | None = None,
+        embedder=None,
+        device: str | None = None,
+        **kwargs,
     ):
         self.config = config or DeepOCSortConfig.from_kwargs(**kwargs)
         self._embedder = embedder
+        self.device = device
         self.trackers: list[_EmbTrack] = []
         self.frame_count = 0
         self._id_count = 0
@@ -216,7 +225,9 @@ class DeepOCSortTracker:
         if self._embedder is None:
             from .reid import OSNetEmbedder
 
-            self._embedder = OSNetEmbedder(variant=self.config.embedder)
+            self._embedder = OSNetEmbedder(
+                variant=self.config.embedder, device=self.device
+            )
         return self._embedder
 
     # -- numeric core -------------------------------------------------------

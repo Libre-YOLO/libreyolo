@@ -1107,7 +1107,9 @@ class BaseModel(ABC):
             # Deep OC-SORT has no low-score recovery band; the detector only
             # needs to produce boxes down to det_thresh.
             effective_conf = tracker_config.det_thresh
-            tracker_obj = DeepOCSortTracker(config=tracker_config)
+            tracker_obj = DeepOCSortTracker(
+                config=tracker_config, device=str(self.device)
+            )
         elif tracker == "ocsort":
             if tracker_config is None:
                 tracker_kwargs.setdefault("det_thresh", track_conf)
