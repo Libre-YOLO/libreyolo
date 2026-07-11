@@ -266,7 +266,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
-| `rtmdet`    | `("detect",)` (default)             | detect | detect-only; training is gated experimental (`allow_experimental=True`) |
+| `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |

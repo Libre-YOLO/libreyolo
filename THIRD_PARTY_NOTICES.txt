@@ -133,12 +133,15 @@ Used for: RepConv fuse / re-parameterization logic
 mmdetection (OpenMMLab)
 --------------------------------------------------------------------
 Source: https://github.com/open-mmlab/mmdetection
+Commit: cfd5d3a985b0249de009b67d04f37263e11cdf3d
 License: Apache License 2.0
 Copyright (c) OpenMMLab. All rights reserved.
 Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
-          port in nn.py; QualityFocalLoss, GIoULoss,
+          port in nn.py, including the RTMDet-Ins head and mask decoder;
+          QualityFocalLoss, GIoULoss,
           DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
-          Published RTMDet COCO weights were trained with mmdetection.
+          Published RTMDet and RTMDet-Ins COCO weights were trained with
+          mmdetection.
 
 --------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)

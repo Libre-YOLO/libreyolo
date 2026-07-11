@@ -108,7 +108,7 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     <tr><td>RT-DETRv2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>RT-DETRv4</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>PicoDet</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>RTMDet</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>RTMDet</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>EC</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>MobileNetV4</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>ConvNeXt</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>

@@ -1,4 +1,4 @@
-"""LibreRTMDet family: CSPNeXt + CSPNeXtPAFPN + RTMDetSepBNHead, point-based YOLO-grid detector."""
+"""LibreRTMDet detection and RTMDet-Ins instance-segmentation family."""
 
 from .model import LibreRTMDet
 

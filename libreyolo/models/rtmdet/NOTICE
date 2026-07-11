@@ -1,0 +1,20 @@
+LibreRTMDet third-party attribution
+====================================
+
+The RTMDet detection and RTMDet-Ins instance-segmentation architecture,
+dynamic mask decoder, and official COCO checkpoints originate from:
+
+    Repository: https://github.com/open-mmlab/mmdetection
+    Commit:     cfd5d3a985b0249de009b67d04f37263e11cdf3d
+    Files:      mmdet/models/dense_heads/rtmdet_head.py
+                mmdet/models/dense_heads/rtmdet_ins_head.py
+                mmdet/configs/rtmdet/
+    License:    Apache License 2.0
+    Copyright:  Copyright (c) OpenMMLab. All rights reserved.
+
+LibreYOLO's module names follow the Apache-2.0 upstream so official state
+dictionaries load through a syntactic bbox_head-to-head rename. No code from
+the separately licensed mmyolo project was consulted or used for this port.
+
+Official RTMDet-Ins COCO mask AP references at 640 pixels are 35.4, 38.7,
+42.1, 43.7, and 44.6 for tiny, small, medium, large, and extra-large.
