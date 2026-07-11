@@ -85,10 +85,15 @@ SegFormer / transformers (Apache License 2.0)
     Source:  https://github.com/huggingface/transformers
 
     The SegFormer architecture (libreyolo/models/segformer/nn.py) is a
-    native re-implementation derived from HuggingFace Transformers'
-    Apache-2.0 modeling_segformer.py, not from NVIDIA's original
-    non-permissive NVlabs/SegFormer repository (cited for attribution
-    only).
+    PyTorch port derived from (and in parts copied from) HuggingFace
+    Transformers' Apache-2.0 modeling_segformer.py, not from NVIDIA's
+    original non-permissive NVlabs/SegFormer repository (cited for
+    attribution only).
+
+    The semantic training recipe it uses -- the resize_crop /
+    cat_max_ratio sampling in libreyolo/data/semantic_dataset.py and the
+    ADE20K hyper-parameters in SegformerConfig -- is derived from
+    open-mmlab/mmsegmentation (Apache-2.0). See THIRD_PARTY_NOTICES.txt.
 
     WEIGHTS ARE NON-COMMERCIAL. The pretrained ADE20K checkpoints
     (LibreSegformer{b0..b5}-sem) are converted from NVIDIA's SegFormer

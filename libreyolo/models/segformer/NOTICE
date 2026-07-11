@@ -18,9 +18,25 @@ Code source:
   Copyright: 2021 NVIDIA and The HuggingFace Inc. team.
   LibreSegformer's encoder (libreyolo/models/segformer/nn.py: MiT overlap
   patch embeddings, efficient self-attention with spatial reduction, Mix-FFN)
-  and all-MLP decode head are a native PyTorch port of this Apache-2.0
-  reference implementation. There is no runtime dependency on the
-  transformers package.
+  and all-MLP decode head are a PyTorch port of this Apache-2.0 reference
+  implementation, with the config plumbing stripped. It is a derivative work:
+  parts (including several forward bodies and docstrings) are copied
+  substantially verbatim, as Apache-2.0 permits with attribution. It is NOT
+  clean-room, and it is NOT derived from NVlabs/SegFormer. There is no runtime
+  dependency on the transformers package.
+
+Training-recipe source:
+  Source: https://github.com/open-mmlab/mmsegmentation
+          (mmseg/datasets/transforms/transforms.py)
+  License: Apache License 2.0
+  Copyright: (c) OpenMMLab. All rights reserved.
+  The dense random-crop sampling this family trains with -- the optional
+  ``resize_crop`` mode and its ``crop_cat_max_ratio`` retry loop in
+  libreyolo/data/semantic_dataset.py -- is derived from mmsegmentation's
+  Apache-2.0 ``RandomCrop`` (``cat_max_ratio``). The SegFormer ADE20K
+  hyper-parameters in SegformerConfig follow the same project's published
+  config. Derived from mmsegmentation itself, NOT from NVIDIA's
+  NVlabs/SegFormer fork of it (which is non-commercial).
 
 Weights (NON-COMMERCIAL — read this before using them):
   The pretrained ADE20K checkpoints LibreYOLO hosts for this family

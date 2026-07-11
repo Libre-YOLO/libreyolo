@@ -1,13 +1,17 @@
 """SegFormer network definition for LibreYOLO.
 
-Native PyTorch reimplementation of the MiT (Mix Transformer) encoder and
-all-MLP decode head from "SegFormer: Simple and Efficient Design for Semantic
-Segmentation with Transformers" (Xie et al., NeurIPS 2021). Behaviorally
-derived from HuggingFace Transformers' Apache-2.0 ``modeling_segformer.py``
-(https://github.com/huggingface/transformers), NOT from NVIDIA's original
-NVlabs/SegFormer repository (NVIDIA Source Code License, non-commercial) —
-that repository was never read or used. There is no runtime dependency on the
-``transformers`` package. See ``NOTICE`` in this directory for full attribution.
+PyTorch port of the MiT (Mix Transformer) encoder and all-MLP decode head from
+"SegFormer: Simple and Efficient Design for Semantic Segmentation with
+Transformers" (Xie et al., NeurIPS 2021).
+
+Derived from (adapted, with parts copied) HuggingFace Transformers'
+**Apache-2.0** ``modeling_segformer.py`` (https://github.com/huggingface/
+transformers), Copyright 2021 NVIDIA and The HuggingFace Inc. team, with the
+config plumbing stripped. This is a derivative work of that Apache-2.0 source,
+not clean-room. It is NOT derived from NVIDIA's original NVlabs/SegFormer
+repository (NVIDIA Source Code License, non-commercial), which was never read
+or used. There is no runtime dependency on the ``transformers`` package. See
+``NOTICE`` in this directory for full attribution.
 
 Inputs are expected as RGB float tensors in ``[0, 1]``; ImageNet normalization
 is applied inside ``forward`` so training and inference tensors share one
@@ -35,7 +39,7 @@ DROP_PATH_RATE = 0.1
 HIDDEN_DROPOUT_PROB = 0.0
 # Dropout before the decode head classifier only (reference: classifier_dropout_prob).
 CLASSIFIER_DROPOUT_PROB = 0.1
-# Std of the truncated-normal init for Linear/Conv weights (reference: initializer_range).
+# Std of the normal init for Linear/Conv weights (reference: initializer_range).
 INITIALIZER_RANGE = 0.02
 
 

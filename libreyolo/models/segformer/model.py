@@ -306,13 +306,12 @@ class LibreSegformer(BaseModel):
             raise RuntimeError("Checkpoint does not look like a SegFormer semantic segmentation model.")
 
     def _load_weights(self, model_path: str | dict[str, Any]) -> None:
-        # LibreSegformer has no upstream checkpoint format to guard against —
-        # there is no conversion script and never will be (see NOTICE). Every
-        # checkpoint it ever loads is either self-produced by model.train()
-        # (full LibreYOLO metadata) or the raw, unwrapped state dict that DDP
-        # training round-trips through a tempfile (libreyolo/training/
-        # ddp_spawn.py). Both must load cleanly, so — like LibreDINOv2 — this
-        # only checks metadata fields when present, never requires them.
+        # A checkpoint here is either converted from upstream
+        # (weights/convert_segformer_weights.py, full LibreYOLO metadata),
+        # self-produced by model.train(), or the raw unwrapped state dict that
+        # DDP training round-trips through a tempfile (libreyolo/training/
+        # ddp_spawn.py). All three must load cleanly, so — like LibreDINOv2 —
+        # this only checks metadata fields when present, never requires them.
         if isinstance(model_path, str):
             if not Path(model_path).exists():
                 from ...utils.download import download_weights
@@ -388,8 +387,9 @@ class LibreSegformer(BaseModel):
         self.model.to(self.device)
 
     # ------------------------------------------------------------------
-    # Training — the point of this port: no pretrained weights exist, so
-    # LibreSegformer must be trainable from scratch.
+    # Training — fine-tune the pretrained ADE20K checkpoints on a new dataset,
+    # or train from scratch (the only route to weights without the upstream
+    # non-commercial restriction).
     # ------------------------------------------------------------------
 
     @ddp_aware()
@@ -413,7 +413,12 @@ class LibreSegformer(BaseModel):
         loggers=None,
         **kwargs,
     ) -> Dict:
-        """Train LibreSegformer from scratch (no pretrained backbone exists)."""
+        """Fine-tune LibreSegformer, or train it from scratch.
+
+        Pass ``model_path=`` a pretrained checkpoint to fine-tune it (``nb_classes``
+        re-heads it for a new dataset). Training from scratch produces weights that
+        carry none of the upstream non-commercial restriction.
+        """
         from .trainer import SegformerTrainer
 
         train_kwargs = dict(

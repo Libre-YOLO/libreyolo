@@ -144,6 +144,25 @@ Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
           mmdetection.
 
 --------------------------------------------------------------------
+mmsegmentation (OpenMMLab)
+--------------------------------------------------------------------
+Source: https://github.com/open-mmlab/mmsegmentation
+        (mmseg/datasets/transforms/transforms.py)
+License: Apache License 2.0
+Copyright (c) OpenMMLab. All rights reserved.
+Used for: the dense random-crop sampling used by semantic training
+          (libreyolo/data/semantic_dataset.py: the optional
+          ``resize_crop`` mode and its ``crop_cat_max_ratio`` retry
+          loop). The recipe -- resize the short side, pad, then re-sample
+          a crop up to 10 times until no single class exceeds
+          ``cat_max_ratio`` of its non-ignored pixels -- is derived from
+          mmsegmentation's ``RandomCrop`` (``cat_max_ratio``), as are the
+          SegFormer ADE20K training hyper-parameters (decode-head LR
+          multiplier, no weight decay on norms and the Mix-FFN positional
+          conv, scale jitter 0.5-2.0). NOT derived from NVIDIA's
+          NVlabs/SegFormer fork of mmseg 0.x, which is non-commercial.
+
+--------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)
 --------------------------------------------------------------------
 Source: https://github.com/Bo396543018/Picodet_Pytorch (direct source,
