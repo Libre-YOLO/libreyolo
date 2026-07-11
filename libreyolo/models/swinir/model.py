@@ -10,6 +10,7 @@ training pipelines that LibreYOLO does not currently provide.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -126,8 +127,11 @@ class LibreSwinIR(BaseModel):
             task=task,
             **kwargs,
         )
-        self._tile = int(tile)
-        self._tile_pad = int(tile_pad)
+        self._default_tile = int(tile)
+        self._default_tile_pad = int(tile_pad)
+        self._tile_settings: ContextVar[tuple[int, int] | None] = ContextVar(
+            f"libreyolo_swinir_tile_settings_{id(self)}", default=None
+        )
         if model_path is not None and isinstance(model_path, (str, Path)):
             self._load_weights(str(model_path))
         self.nb_classes = 1
@@ -167,15 +171,20 @@ class LibreSwinIR(BaseModel):
     def __call__(self, source=None, **kwargs):
         tile = kwargs.pop("tile", None)
         tile_pad = kwargs.pop("tile_pad", None)
-        previous = (self._tile, self._tile_pad)
-        if tile is not None:
-            self._tile = int(tile)
-        if tile_pad is not None:
-            self._tile_pad = int(tile_pad)
+        inherited = self._tile_settings.get()
+        default_tile, default_tile_pad = inherited or (
+            self._default_tile,
+            self._default_tile_pad,
+        )
+        settings = (
+            default_tile if tile is None else int(tile),
+            default_tile_pad if tile_pad is None else int(tile_pad),
+        )
+        token = self._tile_settings.set(settings)
         try:
             return super().__call__(source, **kwargs)
         finally:
-            self._tile, self._tile_pad = previous
+            self._tile_settings.reset(token)
 
     def _preprocess(
         self,
@@ -191,12 +200,17 @@ class LibreSwinIR(BaseModel):
         )
 
     def _forward(self, input_tensor: torch.Tensor) -> Any:
+        settings = self._tile_settings.get()
+        tile_size, tile_pad = settings or (
+            self._default_tile,
+            self._default_tile_pad,
+        )
         return forward_with_optional_tiling(
             self.model,
             input_tensor,
             scale=self.restore_scale,
-            tile_size=self._tile,
-            tile_pad=self._tile_pad,
+            tile_size=tile_size,
+            tile_pad=tile_pad,
         )
 
     def _postprocess(

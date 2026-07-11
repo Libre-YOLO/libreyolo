@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 import torch
@@ -69,6 +72,56 @@ def test_tiled_predict_shape():
     image = Image.fromarray(np.zeros((16, 24, 3), dtype=np.uint8), mode="RGB")
     result = model.predict(image, tile=8, tile_pad=8)
     assert result.restored.array.shape == (64, 96, 3)
+
+
+def test_concurrent_predictions_keep_per_call_tiling(monkeypatch):
+    model = LibreSwinIR(size="s", device="cpu")
+    first_ready = threading.Event()
+    second_forward = threading.Event()
+    release_second = threading.Event()
+    observed = {}
+    observed_lock = threading.Lock()
+    original_preprocess = model._preprocess
+
+    def synchronized_preprocess(image, *args, **kwargs):
+        prepared = original_preprocess(image, *args, **kwargs)
+        is_second = np.asarray(image).mean() > 127
+        if is_second:
+            assert first_ready.wait(timeout=5)
+        else:
+            first_ready.set()
+            assert second_forward.wait(timeout=5)
+        return prepared
+
+    def recording_forward(network, image, *, scale, tile_size, tile_pad):  # noqa: ARG001
+        is_second = image.mean().item() > 0.5
+        label = "second" if is_second else "first"
+        with observed_lock:
+            observed[label] = (tile_size, tile_pad)
+        if is_second:
+            second_forward.set()
+            assert release_second.wait(timeout=5)
+        else:
+            release_second.set()
+        return image.new_zeros(
+            image.shape[0], 3, image.shape[2] * scale, image.shape[3] * scale
+        )
+
+    monkeypatch.setattr(model, "_preprocess", synchronized_preprocess)
+    monkeypatch.setattr(
+        "libreyolo.models.swinir.model.forward_with_optional_tiling",
+        recording_forward,
+    )
+
+    first_image = Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8), mode="RGB")
+    second_image = Image.fromarray(np.full((8, 8, 3), 255, dtype=np.uint8), mode="RGB")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(model.predict, first_image, tile=8, tile_pad=4)
+        second = executor.submit(model.predict, second_image, tile=16, tile_pad=12)
+        first.result(timeout=10)
+        second.result(timeout=10)
+
+    assert observed == {"first": (8, 4), "second": (16, 12)}
 
 
 def test_postprocess_crop_scale_and_quantization():
