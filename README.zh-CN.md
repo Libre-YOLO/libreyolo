@@ -32,6 +32,9 @@ cd libreyolo
 pip install -e .
 ```
 
+普通克隆会检出 `release` 分支，即代码与本文档一致的稳定分支。如需获取尚未发布的
+最新开发内容，请使用 `git checkout dev` 切换到集成分支。
+
 ONNX Runtime、OpenVINO、TensorRT、NCNN 和 RF-DETR 等可选运行时与导出依赖，请见[完整文档](https://www.libreyolo.com/docs)。
 
 ```python
@@ -73,7 +76,7 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
       <th>TensorRT</th>
       <th>OpenVINO</th>
       <th>NCNN</th>
-      <th>TFLite</th>
+      <th>TFLite (LiteRT)</th>
     </tr>
   </thead>
   <tbody>
@@ -95,13 +98,6 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
     <tr><td>L2CS</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
   </tbody>
 </table>
-
-YOLOv9-P2 是 YOLOv9 的小目标变体，增加了一个 stride-4 检测尺度，专为目标小于约
-16 像素的航拍/微小目标图像设计（常规数据集如 COCO 请使用标准 YOLOv9）。
-基于 VisDrone 训练的研究预览版权重：
-[`LibreYOLO9P2s-visdrone.pt`](https://huggingface.co/LibreYOLO/LibreYOLO9P2s-visdrone)
-（非商业许可证）；也可自行训练：
-`LibreYOLO9P2(None, size="s").train(..., pretrained="LibreYOLO9s.pt")`。
 
 ## 许可证
 

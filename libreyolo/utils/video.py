@@ -305,17 +305,26 @@ def run_video_inference(
     from PIL import Image
     from tqdm import tqdm
 
-    from .drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb, draw_points
+    from .drawing import (
+        draw_boxes,
+        draw_depth_map,
+        draw_keypoints,
+        draw_masks,
+        draw_matte,
+        draw_obb,
+        draw_points,
+    )
 
     with VideoSource(source, vid_stride=vid_stride) as video_src:
         writer = None
         out_path = None
+        effective_fps = None
         if save:
             out_path = resolve_video_save_path(source, output_path)
             effective_fps = video_src.fps / max(1, vid_stride)
-            writer = VideoWriter(
-                out_path, effective_fps, video_src.width, video_src.height
-            )
+            # The writer is created lazily from the first output frame instead
+            # of the source dimensions: restore/super-resolution results render
+            # on a canvas ``restore_scale`` times the source frame.
 
         total = video_src.total_frames // max(1, vid_stride) or None
         pbar = (
@@ -364,6 +373,22 @@ def run_video_inference(
                         annotated_pil = Image.fromarray(
                             result.restored.array, mode="RGB"
                         )
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "matte", None) is not None
+                    ):
+                        # Checkerboard-composited cutout preview (video frames
+                        # cannot carry an alpha channel, so the transparency is
+                        # visualized instead).
+                        annotated_pil = draw_matte(pil_img, result.matte.array)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "depth_map", None) is not None
+                    ):
+                        depth_np = result.depth_map.data
+                        if isinstance(depth_np, torch.Tensor):
+                            depth_np = depth_np.cpu().numpy()
+                        annotated_pil = draw_depth_map(pil_img, depth_np)
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:
@@ -408,7 +433,12 @@ def run_video_inference(
                         np.array(annotated_pil), cv2.COLOR_RGB2BGR
                     )
 
-                    if save and writer is not None:
+                    if save:
+                        if writer is None:
+                            frame_h, frame_w = annotated_bgr.shape[:2]
+                            writer = VideoWriter(
+                                out_path, effective_fps, frame_w, frame_h
+                            )
                         writer.write_frame(annotated_bgr)
 
                     if show:

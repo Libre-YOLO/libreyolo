@@ -1,4 +1,9 @@
-"""TensorFlow Lite export implementation via onnx2tf."""
+"""TensorFlow Lite (LiteRT) export implementation via onnx2tf.
+
+LiteRT is Google's current name for TensorFlow Lite. The output is a standard
+``.tflite`` FlatBuffer that runs on LiteRT's Interpreter and CompiledModel
+APIs (``pip install ai-edge-litert`` on the target device).
+"""
 
 from __future__ import annotations
 
@@ -49,10 +54,13 @@ def ensure_tflite_family_supported(
         return
 
     supported = ", ".join(_SUPPORTED_EXPORTS.values())
-    reason = _UNSUPPORTED_FAMILY_REASONS.get(
-        family,
-        "This family/task has not been validated through the ONNX-to-TFLite path yet.",
-    )
+    if family == "yolo9" and task == "segment":
+        reason = "YOLO9 segmentation export is not supported; YOLO9 TFLite is detect-only."
+    else:
+        reason = _UNSUPPORTED_FAMILY_REASONS.get(
+            family,
+            "This family/task has not been validated through the ONNX-to-TFLite path yet.",
+        )
     raise NotImplementedError(
         f"TFLite export currently supports: {supported}. "
         f"Got model family {model_family!r}, task {task!r}. {reason}"

@@ -146,7 +146,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "rtdetrv4",
     "rfdetr",
 }
-_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_EXPORT_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet", "realesrgan"}
 _RECTANGULAR_EXPORT_FORMATS = {
     "coreml",
     "ncnn",
@@ -195,6 +195,12 @@ class BaseExporter(ABC):
 
     _registry: dict[str, type["BaseExporter"]] = {}
 
+    # Alternate names accepted by create(). "litert" is Google's current name
+    # for TensorFlow Lite; the format and .tflite suffix are unchanged.
+    # The CLI and the `libreyolo formats` listing derive from this mapping,
+    # so aliases live here and nowhere else.
+    _aliases: dict[str, str] = {"engine": "tensorrt", "litert": "tflite"}
+
     # Class attributes (overridden by each subclass)
     format_name: str  # e.g. "onnx"
     suffix: str  # e.g. ".onnx"
@@ -220,6 +226,7 @@ class BaseExporter(ABC):
     def create(cls, format: str, model) -> "BaseExporter":
         """Look up *format* in the registry and return an exporter instance."""
         key = format.lower()
+        key = cls._aliases.get(key, key)
         if key not in cls._registry:
             valid = ", ".join(sorted(cls._registry))
             raise ValueError(
@@ -269,28 +276,66 @@ class BaseExporter(ABC):
         Returns:
             Path to the exported model file.
         """
-        if getattr(self.model, "task", "detect") == "point":
+        task = getattr(self.model, "task", "detect")
+        family = self.model._get_model_name()
+        if family == "yolo9" and task == "segment":
+            raise NotImplementedError(
+                "YOLO9 segmentation export is not supported. YOLO9 is "
+                "detection-only in LibreYOLO."
+            )
+        if task == "point":
             raise NotImplementedError(
                 "Export for point-task models is not implemented yet. "
                 "Add a point-aware export/runtime contract before exporting point models."
             )
-        if getattr(self.model, "task", "detect") == "semantic":
+        if task == "semantic":
             raise NotImplementedError(
                 "Export for semantic-segmentation models is not implemented yet. "
                 "Add a semantic-aware export/runtime contract (dense logits "
                 "output plus backend argmax parsing) before exporting semantic "
                 "models."
             )
-        if getattr(self.model, "task", "detect") == "depth":
-            raise NotImplementedError(
-                "Export for depth models is not implemented yet. "
-                "Add a depth-aware export/runtime contract (dense float "
-                "output plus backend parsing) before exporting depth models."
-            )
-        if getattr(self.model, "task", "detect") == "restore" and dynamic:
+        if task == "depth":
+            # Depth export uses the fixed-resolution dense contract: backends
+            # stretch-resize to the exported canvas and resize the depth map
+            # back to the original canvas (ADR 0006). The batch axis is static
+            # (dynamic is forced off) and backends schedule one image per run,
+            # so a batch != 1 artifact could never be fed correctly.
+            if batch != 1:
+                raise ValueError(
+                    "Depth export uses a fixed-resolution, batch-1 runtime "
+                    f"contract in v1; got batch={batch}."
+                )
+            if dynamic:
+                warnings.warn(
+                    "Depth export uses a fixed-resolution runtime contract in "
+                    "v1; forcing dynamic=False.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                dynamic = False
+        if (
+            getattr(self.model, "task", "detect") == "restore"
+            and dynamic
+            and self.model._get_model_name() != "realesrgan"
+        ):
+            # Real-ESRGAN generators are fully convolutional (conv + nearest
+            # interpolate + pixel shuffle/unshuffle) and export with dynamic H/W;
+            # other restore families (NAFNet) keep the fixed-resolution v1 contract.
             warnings.warn(
                 "Restore export uses a fixed-resolution runtime contract in "
                 "v1; forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
+        if getattr(self.model, "task", "detect") == "matte" and dynamic:
+            # BiRefNet's Swin relative-position tables are resolution-tied, so
+            # the matte contract is the fixed native square (1024). Forcing a
+            # dynamic graph would silently mis-interpolate them.
+            warnings.warn(
+                "Matte export uses a fixed-resolution runtime contract "
+                "(native 1024); forcing dynamic=False.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -308,6 +353,19 @@ class BaseExporter(ABC):
                 if _requires_onnx_opset17(self.model._get_model_name())
                 else 13
             )
+
+        # BiRefNet's decoder uses torchvision deform_conv2d, which maps to the
+        # standard ONNX ``DeformConv`` op (opset 19+). Force a compatible opset
+        # and register the symbolic before tracing.
+        if getattr(self.model, "task", "detect") == "matte":
+            from ..models.birefnet.export import (
+                MIN_OPSET as _MATTE_MIN_OPSET,
+                register_deform_conv2d_onnx_symbolic,
+            )
+
+            if opset < _MATTE_MIN_OPSET:
+                opset = _MATTE_MIN_OPSET
+            register_deform_conv2d_onnx_symbolic(_MATTE_MIN_OPSET)
 
         imgsz, device, output_path = self._resolve_params(
             output_path,
@@ -475,6 +533,23 @@ class BaseExporter(ABC):
                     "NAFNet export imgsz must be divisible by the network "
                     f"downsample factor {padder_size}, got {imgsz}."
                 )
+        if getattr(self.model, "task", "detect") == "depth":
+            divisor = int(getattr(self.model, "depth_imgsz_divisor", 1) or 1)
+            if imgsz[0] % divisor or imgsz[1] % divisor:
+                raise ValueError(
+                    "Depth export imgsz must be divisible by the network "
+                    f"stride {divisor}, got {imgsz}."
+                )
+        if model_name == "rfdetr":
+            from ..models.rfdetr.imgsz import resolve_patch_window, validate_imgsz
+
+            patch_size, num_windows = resolve_patch_window(self.model.model)
+            imgsz = validate_imgsz(
+                imgsz,
+                patch_size=patch_size,
+                num_windows=num_windows,
+                name="RF-DETR export imgsz",
+            )
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "
@@ -600,12 +675,13 @@ class BaseExporter(ABC):
             ).to(device)
             nn_model.eval()
             dfine_wrapped = True  # share the YOLOX-head-export skip path below
-        elif family in {"yolo2", "yolo3", "yolo4"}:
+        elif family in {"yolo1", "yolo2", "yolo3", "yolo4"}:
             from ..models.darknet.export import DarknetExportWrapper
 
-            # Bake the anchor-box decode into the graph so every export format
-            # emits a self-contained (B, 4+nc, N) tensor consumed by the shared
-            # backend decode. No learned anchors need to travel in metadata.
+            # Bake the anchor-box decode (or the YOLOv1 dense-head decode) into the
+            # graph so every export format emits a self-contained (B, 4+nc, N)
+            # tensor consumed by the shared backend decode. No learned anchors
+            # need to travel in metadata.
             nn_model = DarknetExportWrapper(nn_model).to(device)
             nn_model.eval()
             dfine_wrapped = True

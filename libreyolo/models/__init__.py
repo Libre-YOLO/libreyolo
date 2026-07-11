@@ -59,17 +59,21 @@ from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTD
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
 # Darknet-lineage detectors (public domain). Each keys can_load on a unique
-# family prefix (yolo2./yolo3./yolo4.) so registration order is not sensitive.
+# family prefix (yolo1./yolo2./yolo3./yolo4.) so registration order is not sensitive.
 from .yolo3.model import LibreYOLO3  # noqa: E402
 from .yolo4.model import LibreYOLO4  # noqa: E402
 from .yolo2.model import LibreYOLO2  # noqa: E402
+from .yolo1.model import LibreYOLO1  # noqa: E402  (VOC museum; can_load keyed on unique yolo1. FC head)
 from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
+from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
@@ -81,6 +85,12 @@ from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone 
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
 # text_projection + visual.conv1, so registration order does not matter.
 from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
+# Native SigLIP 2 zero-shot classifier: pure-torch towers (no transformers at
+# runtime; the SentencePiece tokenizer is imported lazily behind [siglip2]), so
+# it registers eagerly. can_load is uniquely keyed on logit_bias +
+# vision_model.embeddings.patch_embedding + text_model.head, so order does not
+# matter. NB: SigLIP carries logit_bias, which CLIP lacks.
+from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -643,6 +653,7 @@ __all__ = [
     "LibreYOLO3",
     "LibreYOLO4",
     "LibreYOLO2",
+    "LibreYOLO1",
     "LibreYOLO7",
     "LibreRTDETR",
     "LibreRTDETRv2",
@@ -650,6 +661,8 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreNAFNet",
+    "LibreBiRefNet",
+    "LibreRealESRGAN",
     "LibreEoMT",
     "LibrePIDNet",
     "LibreSegformer",
@@ -658,5 +671,6 @@ __all__ = [
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
+    "LibreSigLIP2",
     "try_ensure_rfdetr",
 ]

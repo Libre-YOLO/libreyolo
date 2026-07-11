@@ -1,12 +1,18 @@
 Bundled Darknet model-definition (.cfg) files
 =============================================
 
-The .cfg files in this directory are the model definitions for YOLOv2, YOLOv3,
-and YOLOv4 (and their tiny/spp variants). They originate from the Darknet
-project and are public domain:
+The .cfg files in this directory are the model definitions for YOLOv1, YOLOv2,
+YOLOv3, and YOLOv4 (and their tiny/spp variants). They originate from the
+Darknet project and are public domain:
 
     pjreddie/darknet  (YOLOv1/v2/v3)  https://github.com/pjreddie/darknet
     AlexeyAB/darknet  (YOLOv4)        https://github.com/AlexeyAB/darknet
+
+The YOLOv1 cfgs (yolov1.cfg, yolov1-tiny.cfg) reproduce pjreddie's public-domain
+yolo.cfg / tiny-yolo.cfg with the ``[connected] output`` and ``[detection] num``
+set to the values of the released yolov1.weights / tiny-yolo.weights (the classic
+7x7x30, 2-boxes-per-cell head). The LibreYOLO weight reader asserts byte-exact
+consumption of those .weights files against these cfgs.
 
 Darknet is released under the "YOLO LICENSE":
 

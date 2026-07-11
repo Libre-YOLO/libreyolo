@@ -315,14 +315,6 @@ def build_default_cases() -> list[ParityCase]:
     add_many(
         "yolo9",
         "LibreYOLO9",
-        ("t", "s", "m", "c"),
-        "segment",
-        "complete",
-        "pretrained weights may need to be staged",
-    )
-    add_many(
-        "yolo9",
-        "LibreYOLO9",
         ("s",),
         "pose",
         "complete",

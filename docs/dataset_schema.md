@@ -107,6 +107,83 @@ the object classes (`nc` grows by one).
 
 Canonical loader: `libreyolo.data.SemanticDataset`.
 
+## panoptic
+
+Panoptic segmentation pairs each image with a dense segment-id map and a
+per-image list describing each segment. LibreYOLO adopts the **COCO-panoptic
+format** verbatim (`Panoptic Segmentation`, Kirillov et al., CVPR 2019); no
+LibreYOLO-specific panoptic format exists, and none is needed.
+
+### Segment-id PNG
+
+One RGB PNG per image, same resolution as the image, where each pixel's colour
+encodes the id of the segment it belongs to:
+
+```text
+segment_id = R + 256 * G + 256 * 256 * B
+```
+
+Every pixel belongs to exactly one segment; segments never overlap. Segment id
+`0` (RGB black) is **VOID**: unlabeled pixels, excluded from the metric.
+
+### Annotations JSON
+
+```json
+{
+  "images":      [{"id": 139, "file_name": "000000000139.jpg", ...}],
+  "annotations": [{"image_id": 139, "file_name": "000000000139.png",
+                   "segments_info": [
+                     {"id": 3226956, "category_id": 1, "area": 2840,
+                      "bbox": [413, 158, 53, 138], "iscrowd": 0}]}],
+  "categories":  [{"id": 1, "name": "person", "isthing": 1, "supercategory": "person"}]
+}
+```
+
+- `annotations[].file_name` names the segment-id PNG inside `panoptic_dir`.
+- `segments_info[].id` matches a value in the PNG.
+- `iscrowd` marks group regions: they are never false negatives, and a
+  prediction mostly covering one is not a false positive.
+- **thing-vs-stuff is a per-category property.** `isthing` lives on
+  `categories`, never on `segments_info`. The prediction payload
+  (`libreyolo.utils.results.PanopticSegmentation`) may denormalize `isthing`
+  onto each predicted segment for convenience; the category metadata stays the
+  source of truth.
+
+### Class ids
+
+COCO-panoptic `category_id`s are the dataset's raw ids and are typically
+non-contiguous (COCO runs 1..200 with gaps). LibreYOLO models predict
+contiguous `0..nc-1`. Raw ids are remapped through the YAML `names` **by
+category name**, the same rule the native COCO-JSON detect loader follows: when
+`names` is present, it defines the label ids. A JSON category absent from
+`names` is an error, not a silent drop, because it would otherwise score as a
+permanent false negative.
+
+### YAML
+
+```yaml
+path: coco
+val: images/val2017
+annotations:
+  val: annotations/panoptic_val2017.json
+panoptic_dir:
+  val: annotations/panoptic_val2017   # the segment-id PNGs
+names: {0: person, 1: bicycle, ..., 132: rug-merged}
+```
+
+`annotations` and `panoptic_dir` accept either a single path or a per-split
+mapping.
+
+### Validation
+
+Panoptic Quality (`PQ = SQ x RQ`), computed at the ground-truth resolution and
+averaged over the categories that appear, then split into `PQ_things` /
+`PQ_stuff`. Matching is unique: a predicted and a ground-truth segment of the
+same category match iff IoU > 0.5. See
+`libreyolo/validation/panoptic_quality.py`.
+
+Canonical loader: `libreyolo.data.PanopticDataset`.
+
 ## depth
 
 Depth estimation pairs each image with a dense single-channel depth map instead
@@ -174,6 +251,39 @@ The class-like YAML fields are schema placeholders: use `nc: 1` and
 `names: {0: image}`. Restore models expose `Results.restored`, not detections.
 
 Canonical loader: `libreyolo.data.RestoreDataset`.
+
+## matte
+
+Background removal / dichotomous segmentation pairs each RGB image with a
+single-channel ground-truth alpha matte (0 = background, 255 = foreground)
+sharing the same stem:
+
+```text
+images/subject.jpg -> mattes/subject.png
+```
+
+Two layouts are accepted:
+
+- **Directory**: a root containing `images/` and a matte directory, auto-detected
+  among `mattes/`, `matte/`, `gt/`, `masks/`, `mask/`, `alpha/`. Pass the root as
+  `data=`.
+- **YAML**: `path` (root), plus per-split `val_images` / `val_mattes` (and
+  optional `train_images` / `train_mattes` for a future fine-tune), each a
+  directory relative to `path` or absolute.
+
+Matte rules:
+
+- the matte is grayscale; values are read as alpha in `[0, 1]` (`/255`);
+- a matte is resized to the prediction canvas with bilinear interpolation when
+  the shapes differ;
+- metrics are MAE and S-measure (Fan et al., ICCV 2017), computed on the
+  original image canvas; best-checkpoint fitness is S-measure.
+
+The class-like YAML fields are schema placeholders: use `nc: 1` and
+`names: {0: matte}`. Matte models expose `Results.matte`, not detections.
+
+Validation is inference-only in v1 (matte training/fine-tuning is a documented
+follow-up). Canonical pair resolver: `libreyolo.data.matte_dataset.resolve_matte_pairs`.
 
 ## pose
 

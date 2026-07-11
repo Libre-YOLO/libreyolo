@@ -54,6 +54,32 @@ def test_yolo9_config_enables_sync_bn():
     assert YOLO9PoseConfig().sync_bn is True
 
 
+def test_bn_heavy_cnn_configs_enable_sync_bn():
+    """Every BatchNorm-heavy pure-CNN family must default to SyncBatchNorm
+    under DDP, not only yolo9: per-rank BN stats on a small shard degrade the
+    converged model the same way for all of them (issue #484)."""
+    from libreyolo.training.config import (
+        FOMOConfig,
+        PICODETConfig,
+        RTMDetConfig,
+        YOLONASConfig,
+        YOLONASPoseConfig,
+        YOLOXConfig,
+        YOLOv7Config,
+    )
+
+    for cfg_cls in (
+        FOMOConfig,
+        PICODETConfig,
+        RTMDetConfig,
+        YOLONASConfig,
+        YOLONASPoseConfig,
+        YOLOXConfig,
+        YOLOv7Config,
+    ):
+        assert cfg_cls().sync_bn is True, cfg_cls.__name__
+
+
 # =============================================================================
 # 2. Real-model conversion
 # =============================================================================

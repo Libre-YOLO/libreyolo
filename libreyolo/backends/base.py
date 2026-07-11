@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -36,13 +37,26 @@ from ..utils.general import (
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
 from ..utils.predict_args import normalize_predict_kwargs
-from ..utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results, RestoredImage
+from ..utils.results import (
+    Boxes,
+    DepthMap,
+    Keypoints,
+    Masks,
+    OBB,
+    Probs,
+    Results,
+    RestoredImage,
+)
 from ..utils.video import collect_video_results, is_video_file, run_video_inference
 
 logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
-_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet", "realesrgan"}
+
+# Real-ESRGAN integer upscale factor per size, used by scale-aware restore decode.
+_REALESRGAN_BACKEND_SCALE = {"x4": 4, "x2": 2, "x4t": 4}
+_REALESRGAN_BACKEND_PAD_MULTIPLE = {"x4": 1, "x2": 2, "x4t": 1}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
 # one of these must fail loudly instead of being silently parsed as YOLO9.
@@ -317,6 +331,11 @@ class BaseBackend(ABC):
             default_task=self.DEFAULT_TASK,
             supported_tasks=self.SUPPORTED_TASKS,
         )
+        if self.model_family == "yolo9" and self.task == "segment":
+            raise NotImplementedError(
+                "YOLO9 segmentation support was removed. Use a supported "
+                "segmentation family instead of loading YOLO9 segment exports."
+            )
         if self.task == "point":
             raise NotImplementedError(
                 "Exported point-task inference is not implemented yet. "
@@ -377,7 +396,11 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
+            if self.model_family == "realesrgan":
+                return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
+        if self.task == "depth":
+            return self._preprocess_depth(image, effective_imgsz, color_format)
         if self.task == "classify":
             return self._preprocess_classify(image, effective_imgsz, color_format)
         if self.model_family == "yolox":
@@ -512,6 +535,62 @@ class BaseBackend(ABC):
                 else "edge"
             )
             arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+        img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
+        return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_depth(image, input_size, color_format):
+        """Depth preprocessing for fixed-shape exported runtimes.
+
+        Native depth prediction keeps the aspect ratio (short side to the
+        model's native resolution). Exported runtimes use a fixed graph shape,
+        so backend prediction stretch-resizes to the exported canvas and the
+        depth map is resized back to the original canvas after inference
+        (ADR 0006). Padding is deliberately avoided: padded pixels would leak
+        fake depth context into real pixels through the receptive field.
+        """
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.uint8)
+        resized = cv2.resize(arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
+        chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+        img_tensor = torch.from_numpy(np.ascontiguousarray(chw)).unsqueeze(0)
+        return img_tensor, original_img, original_size, 1.0
+
+    @property
+    def restore_scale(self) -> int:
+        """Integer upscale factor for restore backends (1 unless super-resolution)."""
+
+        if self.model_family == "realesrgan":
+            return _REALESRGAN_BACKEND_SCALE.get(str(self.model_size), 1)
+        return 1
+
+    def _preprocess_restore_native(self, image, color_format):
+        """Native-resolution restore preprocessing for dynamic Real-ESRGAN graphs.
+
+        Loads RGB [0, 1], reflect-pads bottom/right to the network divisibility
+        factor (2 for the x2 pixel-unshuffle variant, 1 otherwise). The dynamic
+        ONNX graph accepts any spatial size, so no fixed canvas is imposed.
+        """
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        multiple = _REALESRGAN_BACKEND_PAD_MULTIPLE.get(str(self.model_size), 1)
+        if multiple > 1:
+            orig_h, orig_w = arr.shape[:2]
+            pad_h = (multiple - orig_h % multiple) % multiple
+            pad_w = (multiple - orig_w % multiple) % multiple
+            if pad_h or pad_w:
+                mode = (
+                    "reflect"
+                    if orig_h > 1 and orig_w > 1 and pad_h < orig_h and pad_w < orig_w
+                    else "edge"
+                )
+                arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
         img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
         return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
 
@@ -1042,12 +1121,6 @@ class BaseBackend(ABC):
             boxes_input = boxes_input[keep]
             max_scores = max_scores[keep]
             class_ids = class_ids[keep]
-        elif self.task == "segment":
-            max_scores = np.max(scores, axis=1)
-            class_ids = np.argmax(scores, axis=1)
-            mask = max_scores > conf
-            boxes_input = boxes_input_all[mask]
-            max_scores, class_ids = max_scores[mask], class_ids[mask]
         else:
             anchor_idx, class_ids = np.nonzero(scores > conf)
             boxes_input = boxes_input_all[anchor_idx]
@@ -1067,8 +1140,6 @@ class BaseBackend(ABC):
         boxes = boxes_input.copy()
 
         if len(boxes) == 0:
-            if self.task == "segment":
-                return boxes, max_scores, class_ids, None
             if self.task == "pose" and keypoints_all is not None:
                 return boxes, max_scores, class_ids, None, None, keypoints_all[:0]
             return boxes, max_scores, class_ids
@@ -1085,8 +1156,6 @@ class BaseBackend(ABC):
             keypoints[..., 1] = np.clip(keypoints[..., 1], 0, orig_h)
         valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         if not valid_boxes.any():
-            if self.task == "segment":
-                return boxes[:0], max_scores[:0], class_ids[:0], None
             if self.task == "pose" and keypoints is not None:
                 return (
                     boxes[:0],
@@ -1107,25 +1176,6 @@ class BaseBackend(ABC):
 
         if self.task == "pose" and keypoints is not None:
             return boxes, max_scores, class_ids, None, None, keypoints
-
-        if self.task == "segment" and len(all_outputs) >= 3:
-            from ..models.yolo9.utils import _process_masks
-
-            proto = torch.from_numpy(all_outputs[1][0]).float()
-            coeffs_np = all_outputs[2][0].T[mask]
-            if not valid_boxes.all():
-                coeffs_np = coeffs_np[valid_boxes]
-            coeffs = torch.from_numpy(coeffs_np).float()
-            boxes_input_t = torch.from_numpy(boxes_input).float()
-            masks_out = _process_masks(
-                proto,
-                coeffs,
-                boxes_input_t,
-                input_shape=(input_h, input_w),
-                original_size=(orig_w, orig_h),
-                letterbox=True,
-            ).numpy()
-            return boxes, max_scores, class_ids, masks_out
 
         return boxes, max_scores, class_ids
 
@@ -1889,8 +1939,14 @@ class BaseBackend(ABC):
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
-    def _parse_restore_output(all_outputs, original_size: Tuple[int, int]) -> np.ndarray:
-        """Decode backend restoration output to HWC uint8 RGB on original size."""
+    def _parse_restore_output(
+        all_outputs, original_size: Tuple[int, int], scale: int = 1
+    ) -> np.ndarray:
+        """Decode backend restoration output to HWC uint8 RGB.
+
+        For super-resolution the valid canvas is ``scale`` times the input, so
+        the output is cropped to ``scale`` x the original size.
+        """
         restored = np.asarray(all_outputs[0])
         if restored.ndim == 4:
             restored = restored[0]
@@ -1902,7 +1958,7 @@ class BaseBackend(ABC):
                 f"or [H, W, 3], got {tuple(restored.shape)}."
             )
         orig_w, orig_h = original_size
-        restored = restored[:orig_h, :orig_w, :]
+        restored = restored[: orig_h * int(scale), : orig_w * int(scale), :]
         return (np.clip(restored, 0.0, 1.0) * 255.0).round().astype(np.uint8)
 
     def _build_classify_result(
@@ -1920,6 +1976,46 @@ class BaseBackend(ABC):
             names=self.names,
         )
 
+    @staticmethod
+    def _parse_depth_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Decode backend depth output to an (H, W) float map on the original canvas."""
+        depth = np.asarray(all_outputs[0], dtype=np.float32)
+        if depth.ndim == 2:
+            depth = depth[None, None]
+        elif depth.ndim == 3:
+            depth = depth[:, None] if depth.shape[0] == 1 else depth[None]
+        if depth.ndim != 4 or depth.shape[1] != 1:
+            raise ValueError(
+                "Depth backend output must have shape [B, 1, H, W], "
+                f"got {tuple(np.asarray(all_outputs[0]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        depth_t = torch.from_numpy(np.ascontiguousarray(depth))
+        # align_corners=True matches the native depth families' postprocess.
+        depth_t = F.interpolate(
+            depth_t, size=(orig_h, orig_w), mode="bilinear", align_corners=True
+        )
+        return depth_t[0, 0]
+
+    def _build_depth_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        depth = self._parse_depth_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            depth_map=DepthMap(depth, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
     def _build_restore_result(
         self,
         all_outputs,
@@ -1928,11 +2024,14 @@ class BaseBackend(ABC):
         original_size: Tuple[int, int],
         image_path,
     ) -> Results:
-        restored = self._parse_restore_output(all_outputs, original_size)
+        scale = self.restore_scale
+        restored = self._parse_restore_output(all_outputs, original_size, scale)
+        restored_hw = (int(restored.shape[0]), int(restored.shape[1]))
         return Results(
             boxes=None,
-            restored=RestoredImage(torch.from_numpy(restored), orig_shape),
+            restored=RestoredImage(torch.from_numpy(restored), restored_hw),
             orig_shape=orig_shape,
+            restore_scale=scale,
             path=str(image_path) if image_path else None,
             names=self.names,
         )
@@ -2073,6 +2172,13 @@ class BaseBackend(ABC):
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
             annotated_img = Image.fromarray(result.restored.array, mode="RGB")
+        elif result.boxes is None and getattr(result, "depth_map", None) is not None:
+            from ..utils.drawing import draw_depth_map
+
+            depth_data = result.depth_map.data
+            if isinstance(depth_data, torch.Tensor):
+                depth_data = depth_data.cpu().numpy()
+            annotated_img = draw_depth_map(original_img, depth_data)
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2267,6 +2373,8 @@ class BaseBackend(ABC):
                 orig_w, orig_h = original_size
                 restored = restored[:, :, :orig_h, :orig_w]
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
+        if self.task == "depth":
+            return {"depth": self._parse_depth_output(outputs, original_size)}
         parsed = self._parse_outputs(
             outputs,
             effective_imgsz,
@@ -2438,6 +2546,21 @@ class BaseBackend(ABC):
             return result
         if self.task == "restore":
             result = self._build_restore_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "depth":
+            result = self._build_depth_result(
                 all_outputs,
                 orig_shape=orig_shape,
                 original_size=original_size,
@@ -2664,6 +2787,13 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     image_path=image_path,
                 )
+            elif self.task == "depth":
+                result = self._build_depth_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
             else:
                 parsed = self._parse_outputs(
                     per_image,
@@ -2839,6 +2969,13 @@ class BaseBackend(ABC):
                 )
             if self.task == "restore":
                 return self._build_restore_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "depth":
+                return self._build_depth_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,

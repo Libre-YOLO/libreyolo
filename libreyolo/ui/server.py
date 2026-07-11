@@ -8,6 +8,7 @@ Endpoints
 ---------
 ``GET  /``                page (HTML)
 ``GET  /api/models``      JSON list of resolvable model names + default
+``GET  /api/sample``      bundled sample image
 ``POST /api/run/new``     start a fresh ``runs/detect/predict`` output dir
 ``POST /api/infer``       body = raw image bytes, header ``X-Filename``,
                           query ``model`` + ``conf``; returns the rendered
@@ -18,6 +19,7 @@ Endpoints
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import json
 import logging
 import os
@@ -44,6 +46,162 @@ def _sanitize_filename(name: str) -> str:
     if "." not in base:
         base += ".jpg"
     return base
+
+
+def _plural(n: int, singular: str, plural: str | None = None) -> str:
+    word = singular if n == 1 else (plural or singular + "s")
+    return f"{n} {word}"
+
+
+def _summarize_result(result) -> tuple[str, str]:
+    """Return (task, label): a task name and a short human summary for the UI."""
+    boxes = getattr(result, "boxes", None)
+    if boxes is not None:
+        n = len(boxes)
+        if getattr(result, "masks", None) is not None:
+            return "segment", _plural(n, "instance")
+        if getattr(result, "keypoints", None) is not None:
+            return "pose", _plural(n, "pose")
+        return "detect", _plural(n, "object")
+
+    obb = getattr(result, "obb", None)
+    if obb is not None:
+        return "obb", _plural(len(obb), "object")
+
+    points = getattr(result, "points", None)
+    if points is not None:
+        return "point", _plural(len(points), "point")
+
+    probs = getattr(result, "probs", None)
+    if probs is not None:
+        top1 = int(probs.top1)
+        names = getattr(result, "names", None)
+        name = str(top1)
+        if names:
+            name = str(names[top1])
+        conf = float(probs.top1conf)
+        return "classify", f"{name} {conf * 100:.0f}%"
+
+    semantic_mask = getattr(result, "semantic_mask", None)
+    if semantic_mask is not None:
+        n = len(semantic_mask.classes)
+        return "semantic", _plural(n, "region")
+
+    if getattr(result, "depth_map", None) is not None:
+        return "depth", "depth map"
+
+    if getattr(result, "restored", None) is not None:
+        scale = getattr(result, "restore_scale", 1)
+        label = f"upscaled x{scale}" if scale and scale != 1 else "restored"
+        return "restore", label
+
+    if getattr(result, "matte", None) is not None:
+        return "matte", "alpha matte"
+
+    gaze = getattr(result, "gaze", None)
+    if gaze is not None:
+        return "gaze", f"{len(gaze)} gaze"
+
+    return "detect", "0 objects"
+
+
+def _result_count(result) -> int:
+    boxes = getattr(result, "boxes", None)
+    if boxes is not None:
+        return int(len(boxes))
+
+    obb = getattr(result, "obb", None)
+    if obb is not None:
+        return int(len(obb))
+
+    points = getattr(result, "points", None)
+    if points is not None:
+        return int(len(points))
+
+    return 0
+
+
+def _resolve_download_url(name: str) -> str | None:
+    """Resolve the Hugging Face download URL the app would use for a model name,
+    or None if no model class can build one. Mirrors the real download path."""
+    from libreyolo.cli.config import resolve_model_name
+    from libreyolo.models import try_ensure_rfdetr
+    from libreyolo.models.base.model import BaseModel
+
+    filename = Path(resolve_model_name(name)).name
+    classes = list(BaseModel._registry)
+    rf = try_ensure_rfdetr()
+    if rf is not None and rf not in classes:
+        classes.append(rf)
+    for cls in classes:
+        try:
+            url = cls.get_download_url(filename)
+        except Exception:
+            url = None
+        if url:
+            return url
+    return None
+
+
+# HTTP statuses that mean "this weight is definitively not there" (grey it out).
+# Anything else, including timeouts/connection errors, is treated as available so
+# a network hiccup never disables a model that actually works.
+_UNAVAILABLE_STATUSES = frozenset({400, 401, 403, 404, 410})
+
+
+def _load_banner_font(image_font, size: int):
+    for font_name in ("arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
+        try:
+            return image_font.truetype(font_name, size=size)
+        except OSError:
+            continue
+    return image_font.load_default()
+
+
+def _text_box(draw, text: str, font) -> tuple[int, int]:
+    if hasattr(draw, "textbbox"):
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        return int(right - left), int(bottom - top)
+    width, height = draw.textsize(text, font=font)
+    return int(width), int(height)
+
+
+def _overlay_classification_label(path: Path, label: str, fallback: bytes) -> bytes:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        with Image.open(path) as image:
+            image_format = image.format or (
+                "JPEG" if path.suffix.lower() in (".jpg", ".jpeg") else "PNG"
+            )
+            image = image.convert("RGB")
+            draw = ImageDraw.Draw(image)
+            max_size = max(14, min(48, image.width // 18))
+            font = _load_banner_font(ImageFont, max_size)
+            pad = max(6, max_size // 3)
+
+            for size in range(max_size, 9, -2):
+                candidate = _load_banner_font(ImageFont, size)
+                text_w, text_h = _text_box(draw, label, candidate)
+                if text_w + pad * 2 <= image.width or size == 10:
+                    font = candidate
+                    break
+
+            text_w, text_h = _text_box(draw, label, font)
+            strip_w = min(image.width, text_w + pad * 2)
+            strip_h = min(image.height, text_h + pad * 2)
+            draw.rectangle((0, 0, strip_w, strip_h), fill=(15, 23, 42))
+            draw.text((pad, pad), label, fill=(255, 255, 255), font=font)
+
+            output = BytesIO()
+            image.save(output, format=image_format)
+            rendered = output.getvalue()
+
+        path.write_bytes(rendered)
+        return rendered
+    except Exception:
+        logger.debug("Failed to draw classification label", exc_info=True)
+        return fallback
 
 
 def _open_in_file_manager(path: Path) -> bool:
@@ -97,6 +255,51 @@ class _UIState:
         self._used_upload_names: set[str] = set()
         self.run_dir: Path | None = None
         self._input_dir = Path(tempfile.mkdtemp(prefix="libreyolo-ui-"))
+        self._availability: dict[str, bool] | None = None
+        self._avail_lock = threading.Lock()
+
+    def model_availability(self) -> dict[str, bool]:
+        """Map each CLI model name to whether its weights are downloadable.
+
+        A model is unavailable when no download URL can be built or the URL
+        returns a definitive not-there status. Checked once (in parallel) and
+        cached for the life of the server; network errors count as available.
+        """
+        with self._avail_lock:
+            if self._availability is not None:
+                return self._availability
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        import requests
+
+        from libreyolo.cli.config import get_all_cli_names
+
+        def check(name: str) -> tuple[str, bool]:
+            url = _resolve_download_url(name)
+            if not url:
+                return name, False
+            try:
+                resp = requests.get(
+                    url,
+                    stream=True,
+                    headers={"Range": "bytes=0-0"},
+                    timeout=8,
+                    allow_redirects=True,
+                )
+                code = resp.status_code
+                resp.close()
+                return name, code not in _UNAVAILABLE_STATUSES
+            except Exception:
+                return name, True
+
+        names = get_all_cli_names()
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            result = dict(pool.map(check, names))
+
+        with self._avail_lock:
+            self._availability = result
+        return result
 
     def _get_model(self, name: str):
         model = self._models.get(name)
@@ -181,14 +384,19 @@ class _UIState:
         if not saved or not Path(saved).exists():
             raise RuntimeError("annotated image was not saved")
 
-        boxes = getattr(result, "boxes", None)
-        count = len(boxes) if boxes is not None else 0
+        task, label = _summarize_result(result)
+        count = _result_count(result)
         suffix = Path(saved).suffix.lower().lstrip(".")
         mime = "jpeg" if suffix in ("jpg", "jpeg", "") else suffix
-        encoded = base64.b64encode(Path(saved).read_bytes()).decode("ascii")
+        rendered = Path(saved).read_bytes()
+        if task == "classify":
+            rendered = _overlay_classification_label(Path(saved), label, rendered)
+        encoded = base64.b64encode(rendered).decode("ascii")
         return {
             "name": safe,
             "count": int(count),
+            "task": task,
+            "label": label,
             "rendered": "data:image/" + mime + ";base64," + encoded,
             "dir": str(self.run_dir),
             "saved": str(saved),
@@ -230,8 +438,29 @@ class _Handler(BaseHTTPRequestHandler):
             from libreyolo.cli.config import get_all_cli_names
 
             names = sorted(get_all_cli_names())
-            default = "yolo9-t" if "yolo9-t" in names else (names[0] if names else "")
-            self._send(200, {"models": names, "default": default})
+            avail = self.state.model_availability()
+            unavailable = [n for n in names if not avail.get(n, True)]
+            usable = [n for n in names if avail.get(n, True)]
+            default = "yolo9-t" if "yolo9-t" in usable else (usable[0] if usable else "")
+            self._send(
+                200,
+                {"models": names, "unavailable": unavailable, "default": default},
+            )
+        elif path == "/api/sample":
+            sample = (
+                Path(__file__).resolve().parents[1]
+                / "assets"
+                / "guggenheim-bilbao.jpg"
+            )
+            try:
+                data = sample.read_bytes()
+            except FileNotFoundError:
+                self._send(404, {"error": "sample not found"})
+            except OSError as exc:
+                logger.exception("Failed to load sample image")
+                self._send(500, {"error": str(exc)})
+            else:
+                self._send(200, data, "image/jpeg")
         else:
             self._send(404, {"error": "not found"})
 

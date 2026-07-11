@@ -31,8 +31,8 @@ Required field meanings:
 - `model_family`: registered LibreYOLO family, such as `yolo9`, `rfdetr`,
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
-- `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
-  `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
+- `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -67,8 +67,13 @@ schema compatibility; restoration predictions are dense RGB images, not
 classes. Restoration checkpoints may also include:
 
 - `degradation`: optional short label for the corruption type, such as
-  `deblur` or `denoise`.
-- `dataset`: optional dataset/provenance label, such as `GoPro`.
+  `deblur`, `denoise`, or `super-resolution`.
+- `dataset`: optional dataset/provenance label, such as `GoPro` or `SIDD`.
+- `scale`: optional positive integer output-to-input upscale factor for
+  super-resolution checkpoints (for example `4` for Real-ESRGAN x4). Absent or
+  `1` means the restored image keeps the input resolution (deblur/denoise). The
+  runtime also derives this from the model family and size, so the field is
+  provenance metadata rather than a load-time requirement.
 
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and
@@ -94,7 +99,15 @@ NAFNet restore runtime exports use a fixed-resolution v1 contract. ONNX exports
 emit one dense `restored` output tensor and force `dynamic=false`; backend
 prediction pads images that fit inside the exported canvas without resizing,
 then crops the restored RGB result back to the original image shape. Dynamic
-spatial restore export and tiled exported-runtime inference are deferred.
+spatial restore export and tiled exported-runtime inference are deferred for
+NAFNet.
+
+Real-ESRGAN restore exports support dynamic spatial dims: the generators are
+fully convolutional, so ONNX exports may set dynamic `height`/`width` axes on
+both `images` and `restored`. Backend prediction runs at the native image
+resolution (reflect-padded only to the network divisibility factor) and crops
+the restored output to `scale` times the original image shape. The backend
+derives `scale` from the model family and size (`x4`/`x4t` = 4, `x2` = 2).
 
 Embedded-NMS runtime exports may also write these flat metadata keys:
 

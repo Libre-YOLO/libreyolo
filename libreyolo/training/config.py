@@ -220,6 +220,9 @@ class TrainConfig:
 class YOLOXConfig(TrainConfig):
     """YOLOX-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     momentum: float = 0.9
     warmup_epochs: int = 5
     warmup_lr_start: float = 0.0
@@ -231,6 +234,28 @@ class YOLOXConfig(TrainConfig):
     mixup_prob: float = 1.0
     ema_decay: float = 0.9998
     name: str = "exp"
+
+
+@dataclass(kw_only=True)
+class YOLOv7Config(YOLOXConfig):
+    """YOLOv7 training defaults.
+
+    v7 is anchor-based but trains through the YOLOX-style pipeline (SimOTA
+    assignment + mosaic/mixup), so this subclasses :class:`YOLOXConfig` and
+    overrides only the real differences: v5/v7-lineage momentum, a shorter
+    warmup, and slower EMA. ``sync_bn=True`` is inherited from
+    :class:`YOLOXConfig` (v7 is a BatchNorm-heavy pure CNN, same rationale
+    as :class:`YOLO9Config`, issue #484).
+
+    Note: unlike YOLOX, the final no-aug epochs run without an L1 refinement
+    stage — the v7 SimOTA loss has no raw-offset L1 branch.
+    """
+
+    # v7 ships a single size; TrainConfig's "s" default doesn't exist here.
+    size: str = "b"
+    momentum: float = 0.937
+    warmup_epochs: int = 3
+    ema_decay: float = 0.9999
 
 
 @dataclass(kw_only=True)
@@ -633,11 +658,16 @@ class DEIMv2Config(TrainConfig):
 class ECConfig(TrainConfig):
     """EC-specific training defaults (experimental).
 
-    Fine-tune defaults follow upstream EdgeCrafter's published recipe (S/M):
+    Fine-tune defaults keep the optimizer/scheduler/loss shape from
+    EdgeCrafter's published recipe (S/M):
     AdamW with backbone-LR multiplier 0.05 (≈2.5e-5 vs head 5e-4), no-decay
     on norms/biases, FlatCosine schedule with quadratic warmup, EMA 0.9999,
-    Mosaic+Mixup until ~mid-training, all strong augs disabled past
-    ``stop_epoch``. Loss = MAL + L1 + GIoU + FGL + DDF.
+    Loss = MAL + L1 + GIoU + FGL + DDF.
+
+    The current LibreYOLO detection trainer uses a per-image D-FINE-style
+    pass-through transform with ImageNet normalization. Mosaic/MixUp and the
+    strong color/geometric knobs are disabled here so the public config matches
+    the effective training path.
 
     Training has NOT been validated on a real fine-tune run — ship as
     experimental.
@@ -653,12 +683,12 @@ class ECConfig(TrainConfig):
     no_aug_epochs: int = 4
     min_lr_ratio: float = 0.5  # EC's lr_gamma in upstream
 
-    mosaic_prob: float = 0.75
-    mixup_prob: float = 0.75
-    hsv_prob: float = 0.5
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
     flip_prob: float = 0.5
-    degrees: float = 10.0
-    translate: float = 0.1
+    degrees: float = 0.0
+    translate: float = 0.0
     mosaic_scale: Tuple[float, float] = (0.5, 1.5)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 0.0
@@ -766,6 +796,9 @@ class ECPoseConfig(ECConfig):
 class YOLONASConfig(TrainConfig):
     """YOLO-NAS-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 5e-4
     momentum: float = 0.9
@@ -854,16 +887,26 @@ class PICODETConfig(TrainConfig):
     LibreYOLO v1 cut: SGD + cosine + hflip + ImageNet normalise. Multi-scale
     resize and PhotoMetricDistortion are deferred to a follow-up commit
     (skill §6: aim for fine-tune parity, not paper parity).
+
+    lr0 note (issue #566): Bo's 0.4 is the total LR at total batch 512
+    (4 GPUs x 128 samples), i.e. ~7.8e-4 per image. Copying 0.1 unscaled at
+    the default batch 16 is ~8x that per image and demonstrably destroys a
+    COCO-pretrained model within a few epochs (coco128 fine-tune: 0.40 ->
+    0.14 mAP at 0.1 vs 0.40 -> 0.49 at 0.01). 0.01 matches the upstream
+    per-image rate at the default batch.
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "sgd"
-    lr0: float = 0.1
+    lr0: float = 0.01
     momentum: float = 0.9
     weight_decay: float = 4e-5
 
     scheduler: str = "cos"
     warmup_epochs: int = 1
-    warmup_lr_start: float = 0.01
+    warmup_lr_start: float = 0.001
     no_aug_epochs: int = 0
     min_lr_ratio: float = 0.0
 
@@ -897,13 +940,16 @@ class RTMDetConfig(TrainConfig):
     - DynamicSoftLabelAssigner (topk=13)
     - QualityFocalLoss (beta=2.0, weight=1.0) + GIoULoss (weight=2.0)
 
-    Status: training is NOT yet implemented in LibreYOLO. This config exists so
-    callers can introspect intended hyperparameters. ``LibreRTMDet.train()``
-    raises ``NotImplementedError`` until the follow-up PR lands the loss,
-    DynamicSoftLabelAssigner, MlvlPointGenerator,
-    and the 2-stage pipeline-switch hook.
+    Status: training is implemented but experimental. ``LibreRTMDet.train()``
+    requires ``allow_experimental=True`` because small-dataset fine-tune
+    convergence, from-scratch paper parity, multi-GPU behavior, cached
+    Mosaic/MixUp throughput, and the strict upstream two-stage pipeline switch
+    are not validated yet.
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 0.004
     momentum: float = 0.9  # unused for adamw; kept for TrainConfig compatibility
@@ -978,6 +1024,9 @@ class SegformerConfig(TrainConfig):
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adam"
     lr0: float = 3e-4
     weight_decay: float = 0.0

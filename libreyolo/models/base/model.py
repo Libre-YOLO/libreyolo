@@ -762,6 +762,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support semantic segmentation yet. "
                 "Use augment=False for semantic models."
             )
+        if getattr(self, "task", "detect") == "panoptic":
+            raise ValueError(
+                "Test-time augmentation does not support panoptic segmentation yet. "
+                "Use augment=False for panoptic models."
+            )
         if getattr(self, "task", "detect") == "depth":
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
@@ -1051,6 +1056,11 @@ class BaseModel(ABC):
                 "Tracking does not support semantic segmentation yet. "
                 "Use predict() for semantic models."
             )
+        if task == "panoptic":
+            raise NotImplementedError(
+                "Tracking does not support panoptic segmentation yet. "
+                "Use predict() for panoptic models."
+            )
         if task == "restore":
             raise NotImplementedError(
                 "Tracking does not support restoration models. Use predict()."
@@ -1155,7 +1165,8 @@ class BaseModel(ABC):
 
         Args:
             format: Target format ("onnx", "torchscript", "tensorrt",
-                "openvino", "ncnn", "tflite").
+                "openvino", "ncnn", "tflite"). "litert" is accepted as an
+                alias for "tflite" (LiteRT is TensorFlow Lite's new name).
             **kwargs: Format-specific parameters forwarded to the exporter.
 
         Returns:
@@ -1207,7 +1218,9 @@ class BaseModel(ABC):
             ClassifyValidator,
             DepthValidator,
             DetectionValidator,
+            MatteValidator,
             OBBValidator,
+            PanopticValidator,
             PointValidator,
             PoseValidator,
             RestoreValidator,
@@ -1240,6 +1253,11 @@ class BaseModel(ABC):
                 "Augmented validation does not support semantic segmentation "
                 "yet. Use augment=False for semantic models."
             )
+        if augment and self.task == "panoptic":
+            raise ValueError(
+                "Augmented validation does not support panoptic segmentation "
+                "yet. Use augment=False for panoptic models."
+            )
         if augment and self.task == "depth":
             raise ValueError(
                 "Augmented validation does not support depth estimation yet. "
@@ -1249,6 +1267,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support restoration models yet. "
                 "Use augment=False for restore models."
+            )
+        if augment and self.task == "matte":
+            raise ValueError(
+                "Augmented validation does not support matte models yet. "
+                "Use augment=False for matte models."
             )
 
         config = ValidationConfig(
@@ -1283,10 +1306,14 @@ class BaseModel(ABC):
             validator_cls = SegmentationValidator
         elif self.task == "semantic":
             validator_cls = SemanticValidator
+        elif self.task == "panoptic":
+            validator_cls = PanopticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
+        elif self.task == "matte":
+            validator_cls = MatteValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

@@ -17,7 +17,7 @@ weight_decay: 0.0005
 nesterov: true
 
 # Scheduler
-scheduler: yoloxwarmcos
+scheduler: linear
 warmup_epochs: 5
 warmup_lr_start: 0.0
 no_aug_epochs: 15

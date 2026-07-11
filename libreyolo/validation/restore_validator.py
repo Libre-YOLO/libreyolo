@@ -102,11 +102,16 @@ class RestoreValidator(BaseValidator):
             self.config.data,
             allow_scripts=getattr(self.config, "allow_download_scripts", False),
         )
+        # Super-resolution models upscale by an integer factor; the paired GT
+        # target must be that many times the input. RestoreDataset enforces the
+        # shape relationship and errors clearly on a mismatch.
+        scale = int(getattr(self.model, "restore_scale", 1) or 1)
         dataset = RestoreDataset(
             data_config,
             split=self.config.split or "val",
             imgsz=self.config.imgsz,
             augment=False,
+            scale=scale,
         )
         return DataLoader(
             dataset,
@@ -155,7 +160,15 @@ class RestoreValidator(BaseValidator):
         preds = preds.detach().cpu().float()
         targets = targets.detach().cpu().float()
         for pred, target, info in zip(preds, targets, img_info):
-            h, w = info["orig_shape"]
+            # For super-resolution the valid region is the HR target canvas
+            # (scale x the input); for deblur/denoise it equals the input shape.
+            h, w = info.get("target_shape", info["orig_shape"])
+            if pred.shape[-2] < h or pred.shape[-1] < w:
+                raise ValueError(
+                    "Restore prediction is smaller than the ground-truth target "
+                    f"({tuple(pred.shape[-2:])} vs required {(h, w)}). For "
+                    "super-resolution ensure the model scale matches the pairs."
+                )
             pred = pred[:, :h, :w].clamp(0.0, 1.0)
             target = target[:, :h, :w].clamp(0.0, 1.0)
             self._psnr_values.append(psnr_rgb(pred, target))

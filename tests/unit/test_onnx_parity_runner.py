@@ -62,7 +62,6 @@ def test_default_cases_include_supported_onnx_scope():
 def test_default_cases_include_new_segment_and_pose_paths():
     case_ids = _case_ids()
 
-    assert "yolo9-s-segment" in case_ids
     assert "rfdetr-s-segment" in case_ids
     assert "ec-s-segment" in case_ids
     assert "yolo9-s-pose" in case_ids

@@ -380,15 +380,19 @@ class BaseTrainer(ABC):
 
         lr = self.effective_lr
         opt_name = self.config.optimizer
+        # BN and bias groups carry an explicit weight_decay=0.0: groups without
+        # the key inherit the optimizer's default, which is 0.01 for AdamW --
+        # silently decaying norm gammas and biases that every upstream recipe
+        # (paramwise norm/bias_decay_mult=0) exempts. No-op for SGD/Adam.
         param_groups = []
         if pg0:
-            param_groups.append({"params": pg0, "lr": lr})
+            param_groups.append({"params": pg0, "lr": lr, "weight_decay": 0.0})
         if pg1:
             param_groups.append(
                 {"params": pg1, "lr": lr, "weight_decay": self.config.weight_decay}
             )
         if pg2:
-            param_groups.append({"params": pg2, "lr": lr})
+            param_groups.append({"params": pg2, "lr": lr, "weight_decay": 0.0})
         if not param_groups:
             raise ValueError(
                 "No trainable parameters remain after layer freezing; "

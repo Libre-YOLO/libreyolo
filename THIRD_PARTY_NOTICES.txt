@@ -72,6 +72,26 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
+SigLIP / SigLIP 2 (Google; Hugging Face Transformers)
+--------------------------------------------------------------------
+Source: https://github.com/google-research/big_vision,
+        https://github.com/huggingface/transformers (models/siglip, models/siglip2)
+License: Apache License 2.0
+Copyright (c) Google LLC; (c) The HuggingFace Inc. team.
+Used for: the LibreSigLIP2 family (libreyolo/models/siglip2/). The image/text
+towers (libreyolo/models/siglip2/nn.py) are a clean-room native torch
+re-implementation of the SigLIP architecture, structured to match the
+transformers reference implementation (no transformers at runtime). The
+multilingual SentencePiece tokenizer model
+(libreyolo/models/siglip2/siglip2_tokenizer.model, Gemma vocabulary) is shipped
+verbatim from the Apache-2.0 google/siglip2-* Hugging Face release.
+
+The shipped LibreSigLIP2 weights are converted from the Apache-2.0
+google/siglip2-base-patch16-256 and google/siglip2-so400m-patch14-384
+checkpoints (state-dict metadata wrap only; learned parameters unchanged). See
+libreyolo/models/siglip2/NOTICE.md.
+
+--------------------------------------------------------------------
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
@@ -79,7 +99,11 @@ License: Apache License 2.0
 Copyright (c) 2021-2022 Megvii Inc. All rights reserved.
 Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/ema.py), augmentation pipeline
-          (libreyolo/training/augment.py).
+          (libreyolo/training/augment.py), and the SimOTA training loss
+          adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
+          imports bboxes_iou/IoULoss from the yolox modules and adapts the
+          get_assignments/get_geometry_constraint/simota_matching/get_losses
+          assignment logic to the v7 anchor head).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)
@@ -90,6 +114,11 @@ Copyright (c) 2024 Kin-Yiu Wong and Hao-Tang Tsui
 Used for: YOLO9 model family (libreyolo/models/yolo9/ and
           libreyolo/models/yolo9_e2e/): the architecture blocks and
           detection head in nn.py and the loss port in loss.py.
+          Also the YOLOv7 family (libreyolo/models/yolo7/): the architecture
+          (net.py, blocks.py) and the Anc2Box anchor decode reproduced in
+          postprocess/yolo7.py and mirrored by the training loss (loss.py:
+          _decode). Upstream ships no v7 training loss, so training assignment
+          is adapted from YOLOX (see the YOLOX entry above), not from here.
 
 --------------------------------------------------------------------
 RepVGG (DingXiaoH)
@@ -220,14 +249,17 @@ Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
 Citation: Kerssies, T., Cavagnero, N., Hermans, A., Norouzi, N.,
           Averta, G., Leibe, B., Dubbelman, G., and de Geus, D.
           "Your ViT is Secretly an Image Segmentation Model." CVPR 2025.
-Used for: LibreEoMT semantic segmentation family
+Used for: LibreEoMT semantic, instance, and panoptic segmentation family
           (libreyolo/models/eomt/). Runtime execution uses the Apache-2.0
           Hugging Face Transformers EoMT implementation with converted
-          MIT-licensed DINOv2 EoMT-L ADE20K weights.
+          MIT-licensed DINOv2 EoMT weights:
+            - ADE20K 150-class semantic (l, 512px)
+            - COCO 80-class instance segmentation (l, 640px and 1280px)
+            - COCO 133-class panoptic, task="panoptic" (s/b/l, 640px)
 
-NOTE - code vs. weights: LibreYOLO ships only the DINOv2-based ADE20K
-semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
-they depend on gated non-commercial DINOv3 weights.
+NOTE - code vs. weights: LibreYOLO ships only DINOv2-based EoMT checkpoints.
+DINOv3 EoMT variants are excluded because they depend on gated
+non-commercial DINOv3 weights.
 
 --------------------------------------------------------------------
 SegFormer / HuggingFace Transformers
@@ -379,6 +411,32 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+ZipDepth (University of Bologna)
+--------------------------------------------------------------------
+Source: https://github.com/fabiotosi92/ZipDepth
+        (commit 6b96f4d205f8a2e5377e81c1b74cc99a47f6693a)
+License: MIT
+Copyright (c) 2026 Fabio Tosi.
+Citation: Tosi, F., Bartolomei, L., Poggi, M., and Mattoccia, S.
+          "ZipDepth: Bringing Lightweight Zero-Shot Monocular Depth
+          Anywhere, on Any Device." ECCV 2026.
+Used for: ZipDepth depth model family (libreyolo/models/zipdepth/).
+          The architecture (nn.py) is ported from upstream with
+          identical module names; the LibreYOLO wrapper adds the
+          depth-task contract, checkpoint schema, zero-shot val, and
+          fixed-resolution export metadata.
+
+NOTE - weights: The upstream repository publishes the pretrained
+checkpoints (zipdepth_base.pth, zipdepth_base_npu.pth) under the same
+MIT license; LibreYOLO mirrors byte-identical rewraps on its Hugging
+Face org (LibreYOLO/LibreZipDepth{b,bnpu}-depth). Upstream trained
+these weights by distilling pseudo-labels from Depth Anything V2 Large
+(itself CC-BY-NC-4.0) over ~14M images from 17 public datasets; the MIT
+grant on the student weights is upstream's published position, and the
+distillation lineage is documented in
+libreyolo/models/zipdepth/NOTICE.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet
@@ -398,7 +456,64 @@ published GoPro-trained NAFNet weights do not carry an explicit
 standalone weights license; convert only weights that you have the
 right to use and redistribute. The GoPro deblurring dataset is separate
 from the NAFNet code and carries its own terms; users are responsible
-for dataset compliance.
+for dataset compliance. The SIDD denoising weights are trained on the
+Smartphone Image Denoising Dataset (SIDD), which is distributed under
+the MIT License.
+
+--------------------------------------------------------------------
+Real-ESRGAN (Xintao Wang)
+--------------------------------------------------------------------
+Source: https://github.com/xinntao/Real-ESRGAN
+License: BSD-3-Clause
+Copyright (c) 2021 Xintao Wang.
+Citation: Wang, X., Xie, L., Dong, C., and Shan, Y. "Real-ESRGAN:
+          Training Real-World Blind Super-Resolution with Pure
+          Synthetic Data." ICCV Workshops 2021.
+Used for: the Real-ESRGAN super-resolution model family
+          (libreyolo/models/realesrgan/). The seam-free tiled forward
+          in utils.py is ported from Real-ESRGAN's inference helper.
+          The released generator weights (RealESRGAN_x4plus,
+          RealESRGAN_x2plus, realesr-general-x4v3) are BSD-3-Clause and
+          are mirrored as converted checkpoints with provenance.
+
+--------------------------------------------------------------------
+BasicSR (XPixelGroup)
+--------------------------------------------------------------------
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License 2.0
+Copyright 2018-2022 BasicSR Authors.
+Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
+          lineage in libreyolo/models/realesrgan/nn.py. Module and
+          parameter names mirror BasicSR so the released Real-ESRGAN
+          state dicts convert with a plain metadata-wrap.
+
+--------------------------------------------------------------------
+BiRefNet (Peng Zheng et al.)
+--------------------------------------------------------------------
+Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
+License: MIT
+Copyright (c) 2024 ZhengPeng (Peng Zheng).
+Citation: Zheng, P., Gao, D., Fan, D.-P., Liu, L., Laaksonen, J.,
+          Ouyang, W., and Sebe, N. "Bilateral Reference for
+          High-Resolution Dichotomous Image Segmentation." CAAI
+          Artificial Intelligence Research, 2024.
+Used for: BiRefNet background-removal model family
+          (libreyolo/models/birefnet/): the Swin Transformer v1
+          backbone and the bilateral-reference decoder (ASPP with
+          torchvision deformable convolution). The LibreYOLO port covers
+          the inference forward path, adds the matte-task contract
+          (Results.matte, cutout, transparent-PNG save), a paired
+          MAE/S-measure validator, and fixed-resolution ONNX export.
+          Parity verified: our fp32 forward matches the upstream
+          released weights with max_abs_diff == 0.
+
+NOTE - code vs. weights: The BiRefNet source code is MIT. The released
+BiRefNet (general, Swin-L) weights are tagged MIT on Hugging Face and are
+rehosted under the LibreYOLO org. The BiRefNet_lite (Swin-T) Hugging Face
+repo shows an MIT badge in its model card but carries no explicit license
+metadata (no YAML `license:` field, no LICENSE file); LibreYOLO does not
+rehost the lite weights pending an explicit license confirmation. See
+weights/LICENSE_NOTICE.txt.
 
 --------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
@@ -477,13 +592,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
-Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+Darknet (YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4)
 --------------------------------------------------------------------
-Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+Source: https://github.com/pjreddie/darknet   (YOLOv1/v2/v3)
         https://github.com/AlexeyAB/darknet    (YOLOv4)
 License: Public domain ("YOLO LICENSE")
-Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
-          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+Used for: the LibreYOLO1 / LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{1,2,3,4}).
           The public-domain .cfg model definitions are bundled under
           libreyolo/models/darknet/cfgs/; only the .cfg format and the
           numerical behaviour of the Darknet layers are reproduced. No

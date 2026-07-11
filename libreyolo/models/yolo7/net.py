@@ -46,6 +46,14 @@ class YOLOv7Model(nn.Module):
         anchor_cfg = cfg["anchor"]
         self.anchors = [list(a) for a in anchor_cfg["anchor"]]  # per-head flat w,h
         self.strides = list(anchor_cfg["strides"])
+        self.anchor_num = len(self.anchors[0]) // 2
+
+        # Set by the build loop below; used for training-loss bias init. Stored
+        # as an index (not the module) to avoid a duplicate state_dict entry.
+        self._head_index: int | None = None
+        # Lazily built on the first training forward. Plain object (not a
+        # submodule) so it never enters the checkpoint.
+        self._criterion = None
 
         entries: list[tuple[str, dict]] = []
         for section in ("backbone", "head"):
@@ -71,6 +79,8 @@ class YOLOv7Model(nn.Module):
             self._sources.append(source)
             self._output_flags.append(bool(info.get("output", False)))
             output_dim.append(out_c)
+            if block_type == "MultiheadDetection":
+                self._head_index = len(self.layers) - 1
             if info.get("tags"):
                 tag_index[info["tags"]] = layer_idx
 
@@ -109,11 +119,16 @@ class YOLOv7Model(nn.Module):
             return _Concat(), sum(output_dim[i] for i in source)
         if block_type == "MultiheadDetection":
             in_channels = [output_dim[i] for i in source]
-            return MultiheadDetection(in_channels, self.num_classes), 0
+            # Pass anchor_num from the yaml so it stays the single source of
+            # truth (blocks.py's default of 3 must not silently diverge).
+            return MultiheadDetection(in_channels, self.num_classes,
+                                      anchor_num=self.anchor_num), 0
         raise ValueError(f"Unsupported v7 block type: {block_type!r}")
 
     # -- forward ------------------------------------------------------------
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, targets: torch.Tensor | None = None):
+        """Return the 3 raw head maps, or (when ``targets`` is given) a training
+        loss dict via :class:`.loss.YOLOv7Loss` (SimOTA over the anchor head)."""
         y: list[Any] = [x]
         head_out = None
         for module, block_type, source in zip(
@@ -127,4 +142,34 @@ class YOLOv7Model(nn.Module):
             else:
                 out = module(y[source])
             y.append(out)
-        return head_out
+
+        if targets is None:
+            return head_out
+        if self._criterion is None:
+            from .loss import YOLOv7Loss
+            self._criterion = YOLOv7Loss(self.num_classes, self.anchors, self.strides)
+        return self._criterion(head_out, targets)
+
+    def initialize_biases(self, prior_prob: float = 1e-2) -> None:
+        """Prime head-conv obj/cls biases for a fresh (from-scratch) head.
+
+        Standard focal-loss prior (Lin et al. 2017, as used by Apache-2.0 YOLOX's
+        ``initialize_biases``): set the objectness and class logits to
+        ``logit(prior_prob)`` so early training isn't swamped by the background
+        class. No-op if the head is absent. ``implicit_a`` starts at 0 and
+        ``implicit_m`` at 1, so at init the head output equals ``head_conv`` and
+        these biases are the effective priors.
+
+        Idempotent by design (set, not add — YOLOX ``fill_`` semantics): calling
+        it twice, e.g. via repeated ``train()`` on the same object, resets to
+        the prior instead of compounding the shift.
+        """
+        import math
+
+        if self._head_index is None:
+            return
+        head = self.layers[self._head_index]
+        bias_prior = -math.log((1 - prior_prob) / prior_prob)
+        for idet in head.heads:
+            bias = idet.head_conv.bias.data.view(self.anchor_num, -1)  # [A, 5+nc]
+            bias[:, 4:] = bias_prior  # objectness (idx 4) + class channels

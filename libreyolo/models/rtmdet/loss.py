@@ -27,6 +27,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...training.distributed import all_reduce_avg_scalar
+
 
 _EPS = 1.0e-7
 
@@ -151,7 +153,12 @@ class GIoULoss(nn.Module):
         if avg_factor is None:
             loss = loss.mean()
         else:
-            loss = loss.sum() / max(avg_factor, 1.0)
+            # No clamp here: the caller passes an already-sanitized
+            # denominator (all_reduce_avg_scalar clamps the GLOBAL sum before
+            # dividing by world_size, so a legitimate value can be < 1 under
+            # DDP). Re-clamping to 1 would under-scale low-positive-mass
+            # multi-GPU batches by up to 1/world_size (issue #484).
+            loss = loss.sum() / avg_factor
         return self.loss_weight * loss
 
 
@@ -208,7 +215,9 @@ class QualityFocalLoss(nn.Module):
         if avg_factor is None:
             loss = loss.mean()
         else:
-            loss = loss.sum() / max(avg_factor, 1.0)
+            # No clamp here: see GIoULoss above — the caller's denominator is
+            # already sanitized and may legitimately be < 1 under DDP.
+            loss = loss.sum() / avg_factor
         return self.loss_weight * loss
 
 
@@ -454,7 +463,12 @@ class RTMDetLoss(nn.Module):
         gt_labels_list: List[torch.Tensor],
     ) -> dict:
         device = cls_scores[0].device
-        dtype = cls_scores[0].dtype
+        # Loss math runs in fp32 regardless of autocast: fp16 pixel-space box
+        # areas overflow (640^2 >> fp16 max 65504), turning the GIoU term into
+        # NaN on the first batch (issue #566). mmdet keeps loss computation in
+        # fp32 for the same reason. Only these small flattened tensors are
+        # promoted; the model forward keeps its autocast dtype.
+        dtype = torch.float32
         batch_size = cls_scores[0].size(0)
 
         featmap_sizes = [tuple(c.shape[-2:]) for c in cls_scores]
@@ -464,11 +478,11 @@ class RTMDetLoss(nn.Module):
         flat_cls = torch.cat(
             [c.permute(0, 2, 3, 1).reshape(batch_size, -1, self.num_classes) for c in cls_scores],
             dim=1,
-        )
+        ).float()
         flat_dist = torch.cat(
             [r.permute(0, 2, 3, 1).reshape(batch_size, -1, 4) for r in bbox_preds],
             dim=1,
-        )
+        ).float()
         # Decode distances to xyxy boxes
         prior_xy = priors[:, :2]
         decoded_boxes = torch.stack(
@@ -507,7 +521,12 @@ class RTMDetLoss(nn.Module):
 
         bg_class_ind = self.num_classes
         pos_inds = ((labels >= 0) & (labels < bg_class_ind)).nonzero().squeeze(1)
-        avg_factor = max(float(assign_metrics.sum().item()), 1.0)
+        # Global (DDP-reduced) soft positive mass, mirroring upstream mmdet's
+        # ``reduce_mean`` on the cls avg_factor: dividing by the global factor
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``max(sum, 1)`` outside DDP.
+        avg_factor = all_reduce_avg_scalar(assign_metrics.sum())
 
         loss_cls = self.loss_cls(
             cls_preds, (labels, assign_metrics), avg_factor=avg_factor

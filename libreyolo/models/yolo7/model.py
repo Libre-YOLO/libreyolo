@@ -5,21 +5,29 @@ Source provenance: architecture and weights derive from MultimediaTechLab/YOLO
 of YOLOv7. NOT the GPL-3.0 ``WongKinYiu/yolov7``. The native modules mirror the
 upstream names so ``v7.pt`` loads with no remapping (see ``blocks.py`` / ``net.py``).
 
-Inference-only in this release. Single size ``b`` (upstream ships one v7 model).
+Single size ``b`` (upstream ships one v7 model). Inference reproduces upstream
+``Anc2Box`` exactly; training uses LibreYOLO's SimOTA loss (see :mod:`.loss`).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+from libreyolo.training.ddp_spawn import ddp_aware
 from PIL import Image
 
+from ...training.callbacks import TrainCallbacks
+from ...training.config import YOLOv7Config
 from ...utils.image_loader import ImageInput
 from ...validation.preprocessors import YOLO9ValPreprocessor
 from ..base import BaseModel
 from .net import YOLOv7Model
+
+# Single source of truth for training defaults.
+_TRAIN_DEFAULTS = YOLOv7Config()
 
 
 class LibreYOLO7(BaseModel):
@@ -32,6 +40,9 @@ class LibreYOLO7(BaseModel):
     DEFAULT_TASK = "detect"
     # Letterbox + RGB + /255 + gray(114) pad — same contract as YOLO9.
     val_preprocessor_class = YOLO9ValPreprocessor
+    # Machine-readable "trainable" flag: the CLI discovers family training
+    # defaults through this (cli/config.py); None would mean inference-only.
+    TRAIN_CONFIG = YOLOv7Config
 
     # =====================================================================
     # Registry classmethods
@@ -124,8 +135,165 @@ class LibreYOLO7(BaseModel):
             max_det=max_det,
         )
 
-    def train(self, *args, **kwargs):
-        raise NotImplementedError(
-            "LibreYOLO7 is inference-only in this LibreYOLO release. Training for "
-            "YOLOv7 is not yet implemented; use YOLO9 or RF-DETR for custom training."
+    @ddp_aware()
+    def train(
+        self,
+        data: str,
+        *,
+        epochs: int = _TRAIN_DEFAULTS.epochs,
+        batch: int = _TRAIN_DEFAULTS.batch,
+        imgsz: int = _TRAIN_DEFAULTS.imgsz,
+        lr0: float = _TRAIN_DEFAULTS.lr0,
+        optimizer: str = _TRAIN_DEFAULTS.optimizer,
+        device: str = "",
+        workers: int = _TRAIN_DEFAULTS.workers,
+        seed: int = _TRAIN_DEFAULTS.seed,
+        project: str = _TRAIN_DEFAULTS.project,
+        name: str = _TRAIN_DEFAULTS.name,
+        exist_ok: bool = _TRAIN_DEFAULTS.exist_ok,
+        pretrained: "bool | str | Path | None" = None,
+        resume: bool = _TRAIN_DEFAULTS.resume,
+        amp: bool = _TRAIN_DEFAULTS.amp,
+        patience: int = _TRAIN_DEFAULTS.patience,
+        allow_download_scripts: bool = False,
+        callbacks: TrainCallbacks = None,
+        loggers=None,
+        **kwargs,
+    ) -> dict:
+        """Train the YOLOv7 model on a dataset.
+
+        v7's anchor-based head is trained with LibreYOLO's SimOTA loss
+        (:class:`.loss.YOLOv7Loss`, adapted from the in-repo Apache-2.0 YOLOX
+        assignment). Same API as the other detectors.
+
+        Args:
+            data: Path to data.yaml file (required).
+            epochs: Number of epochs to train.
+            batch: Batch size.
+            imgsz: Input image size.
+            lr0: Initial learning rate.
+            optimizer: Optimizer name ('SGD', 'Adam', 'AdamW').
+            device: Device to train on ('' = auto-detect).
+            workers: Number of dataloader workers.
+            seed: Random seed for reproducibility.
+            project: Root directory for training runs.
+            name: Experiment name.
+            exist_ok: If True, overwrite existing experiment directory.
+            pretrained: Optional training initialization weights. Use True to
+                warm-start from the default COCO checkpoint
+                (``LibreYOLO7b.pt``, auto-downloaded), or pass a path/name.
+                Incompatible with ``resume=True``. Default None trains the
+                currently loaded weights (or from scratch).
+            resume: If True, resume training from the loaded checkpoint.
+            amp: Enable automatic mixed precision training.
+            patience: Early stopping patience.
+            callbacks: Optional training callback or iterable of callbacks.
+            loggers: Optional built-in experiment loggers.
+
+        Returns:
+            Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
+        """
+        from .trainer import YOLOv7Trainer
+        from libreyolo.data import load_data_config
+
+        try:
+            data_config = load_data_config(
+                data,
+                autodownload=True,
+                allow_scripts=allow_download_scripts,
+            )
+            data = data_config.get("yaml_file", data)
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to load dataset config '{data}': {e}")
+
+        if resume and pretrained:
+            raise ValueError("pretrained transfer cannot be combined with resume=True.")
+
+        did_pretrained = False
+        if pretrained:
+            weights = (
+                pretrained
+                if isinstance(pretrained, (str, Path))
+                else f"{self.FILENAME_PREFIX}{self.size}.pt"
+            )
+            # The published v7 checkpoints are nc=80 (COCO); load at that
+            # geometry, then the yaml_nc rebuild below transfers every
+            # shape-matching tensor (backbone/neck) into the target head count.
+            if self.nb_classes != 80:
+                self._rebuild_for_new_classes(80)
+            self._load_weights(str(weights))
+            did_pretrained = True
+
+        yaml_nc = data_config.get("nc")
+        yaml_names = data_config.get("names")
+        if yaml_nc is None and yaml_names is not None:
+            yaml_nc = len(yaml_names)
+        rebuilt = yaml_nc is not None and int(yaml_nc) != self.nb_classes
+        if rebuilt:
+            self._rebuild_for_new_classes(int(yaml_nc))
+
+        if yaml_names is not None:
+            if isinstance(yaml_names, list):
+                yaml_names = {i: n for i, n in enumerate(yaml_names)}
+            self.names = self._sanitize_names(yaml_names, self.nb_classes)
+
+        # Bias-prior rules (focal prior on obj/cls logits, idempotent):
+        # - nc rebuild leaves a fresh random head regardless of how the
+        #   backbone was initialized -> always prime it.
+        # - from-scratch run (no checkpoint loaded, no pretrained) -> prime.
+        # - warm start with matching nc -> keep the trained priors.
+        if rebuilt or (not did_pretrained and self.model_path is None):
+            self.model.initialize_biases(0.01)
+
+        if seed >= 0:
+            import random
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        trainer = YOLOv7Trainer(
+            model=self.model,
+            wrapper_model=self,
+            size=self.size,
+            num_classes=self.nb_classes,
+            data=data,
+            epochs=epochs,
+            batch=batch,
+            imgsz=imgsz,
+            lr0=lr0,
+            optimizer=optimizer.lower(),
+            device=device if device else "auto",
+            workers=workers,
+            seed=seed,
+            project=project,
+            name=name,
+            exist_ok=exist_ok,
+            resume=resume,
+            amp=amp,
+            patience=patience,
+            allow_download_scripts=allow_download_scripts,
+            callbacks=callbacks,
+            loggers=loggers,
+            **kwargs,
         )
+
+        if resume:
+            if not self.model_path:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreYOLO('last.pt'); model.train(data=..., resume=True)"
+                )
+            trainer.setup()
+            trainer.resume(str(self.model_path))
+
+        results = trainer.train()
+
+        best_ckpt = results.get("best_checkpoint")
+        if best_ckpt and Path(best_ckpt).exists():
+            self._load_weights(best_ckpt)
+
+        return results

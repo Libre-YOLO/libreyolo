@@ -214,7 +214,7 @@ def build_classify_transforms(
     interpolation="bilinear",
     auto_augment: str | None = None,
     erasing: float = 0.0,
-    scale: tuple[float, float] = (0.5, 1.0),
+    square_resize: bool = False,
 ):
     """Build train/val image transforms for classification.
 
@@ -244,6 +244,14 @@ def build_classify_transforms(
 
     mode = _interp_mode(interpolation)
     normalize = transforms.Normalize(mean=mean, std=std)
+    if augment and square_resize:
+        # The square-resize path is a val-only pipeline; combining it with the
+        # random-resized-crop train pipeline is not defined. Fail loudly rather
+        # than silently ignoring square_resize (the augment branch returns first).
+        raise ValueError(
+            "square_resize=True is only supported with augment=False "
+            "(it is a deterministic validation transform)."
+        )
     if augment:
         ops = [
             transforms.RandomResizedCrop(imgsz, scale=scale, interpolation=mode),
@@ -260,6 +268,16 @@ def build_classify_transforms(
                 )
             ops.append(transforms.RandomErasing(p=erasing, inplace=True))
         return transforms.Compose(ops)
+    if square_resize:
+        # Squash to a fixed square (no aspect-preserving resize + center crop).
+        # SigLIP's native eval pipeline resizes directly to (imgsz, imgsz).
+        return transforms.Compose(
+            [
+                transforms.Resize((imgsz, imgsz), interpolation=mode),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
     resize = int(math.floor(imgsz / crop_pct))
     return transforms.Compose(
         [

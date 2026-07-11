@@ -543,7 +543,7 @@ class TestPolygonLabelParsing:
         assert imgs_s.shape[-2:] == (16, 16)
         assert polygons_s.shape == (2, 0, 16, 16)
 
-    def test_yolo9_seg_transform_rasterizes_polygons(self):
+    def test_yolo9_transform_rasterizes_dataset_segments(self):
         from libreyolo.models.yolo9.transforms import YOLO9TrainTransform
 
         image = np.zeros((64, 64, 3), dtype=np.uint8)

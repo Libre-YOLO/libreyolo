@@ -6,8 +6,32 @@ LibreYOLO is an MIT-licensed computer vision library focused on YOLO-style
 training and inference. Contributions are welcome, but maintainer review time
 is limited. Keep changes focused, tested, and aligned with the project.
 
+## Licensing and provenance (non-negotiable)
+
+LibreYOLO is MIT. That only stays true if every contribution is clean:
+
+- Only submit code you wrote yourself, or code from a source explicitly
+  licensed under MIT, Apache-2.0, BSD, or a similarly permissive license.
+- Code derived from GPL, AGPL, LGPL, non-commercial, proprietary, or
+  unknown-license sources is not accepted in any form. This includes
+  rewrites, paraphrases, renamed variables, and "inspired by" adaptations:
+  a derivative work stays a derivative work no matter how it is reworded.
+- If your PR ports or adapts third-party code, declare it in the PR
+  description: upstream repository, commit, and license. Ported code
+  without a provenance declaration will not be merged.
+- New ported code must update the notice files (`THIRD_PARTY_NOTICES.txt`
+  and the per-family `NOTICE` convention under `libreyolo/models/`).
+- By submitting a contribution you certify that you have the right to submit
+  it under the MIT license, in the sense of the Developer Certificate of
+  Origin (<https://developercertificate.org>).
+- Licensing doubts are blocking, not nits. If you are unsure whether a
+  source is compatible, ask in the issue before writing code.
+
 ## Before opening a PR
 
+- Base your PR on `dev`, not `release`. `dev` is the integration branch where
+  all development lands; `release` only receives curated release merges. GitHub
+  may default a new PR's base to `release`, so double-check the base is `dev`.
 - For anything non-trivial, open an issue before submitting a PR so we can
   agree on the approach before review time is spent.
 - PRs must link to an issue (for anything non-trivial)
