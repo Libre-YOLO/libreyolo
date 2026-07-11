@@ -45,7 +45,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | qwen3vl | detect |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | ✓ | exp |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
@@ -138,20 +138,20 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
-- `eomt` / `segment` / `onnx`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `torchscript`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `tensorrt`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `openvino`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `ncnn`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `tflite`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `segment` / `coreml`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `onnx`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `torchscript`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `tensorrt`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `openvino`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `ncnn`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `tflite`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
-- `eomt` / `panoptic` / `coreml`: EoMT export does not yet have semantic, instance, or panoptic runtime parsing.
+- `eomt` / `segment` / `onnx`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `torchscript`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `segment` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `onnx`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `torchscript`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `tensorrt`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `openvino`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `florence2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.

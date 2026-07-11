@@ -50,7 +50,6 @@ def collect_model_inventory() -> dict[str, dict]:
     from libreyolo.models.base.model import BaseModel
 
     optional: dict[str, tuple[str, bool]] = {}
-    classes = list(BaseModel._registry)
     try_ensure_rfdetr()
     classes = list(BaseModel._registry)
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):

@@ -142,6 +142,12 @@ class TFLiteBackend(BaseBackend):
             output = self._dequantize(
                 self.interpreter.get_tensor(output_detail["index"]), output_detail
             )
+            # LiteRT does not reliably preserve useful output names across the
+            # ONNX conversion path, so fixed-family exports currently recover
+            # layout from rank and channel counts. Keep these checks task- and
+            # family-scoped: a coincidental spatial dimension equal to ``nc``
+            # must not affect unrelated outputs. Prefer explicit sidecar layout
+            # metadata once the converter can emit it consistently.
             if (
                 self.task in {"semantic", "point", "depth", "matte"}
                 and output.ndim == 4

@@ -670,7 +670,7 @@ class LibreDINOv2(BaseModel):
             model.eval()
 
     # =========================================================================
-    # Export — not yet implemented
+    # Export
     # =========================================================================
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
