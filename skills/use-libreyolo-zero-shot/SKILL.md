@@ -3,7 +3,8 @@ name: use-libreyolo-zero-shot
 description: >-
   Use LibreYOLO's zero-shot and promptable tiers: open-vocabulary detection
   with text vocabularies (LibreOpenVocab: Grounding DINO, OWLv2), promptable
-  segmentation with points/boxes (LibreSAM: SAM-1, SAM-2, MobileSAM),
+  segmentation with points/boxes or concept text (LibreSAM: SAM-1, SAM-2,
+  SAM 3, MobileSAM),
   zero-shot classification (LibreCLIP / LibreSigLIP2 set_classes), and VLM-as-detector
   (LibreVLM). Use when someone wants to detect arbitrary text-described
   classes without training ("find the forklifts", custom vocabulary),
@@ -25,7 +26,7 @@ directory, not a `Libre*<size>.pt` checkpoint).
 | You want | Tier | Install |
 |---|---|---|
 | Boxes for classes described in text | `LibreOpenVocab` | `libreyolo[openvocab]` |
-| Mask from a click / box, or segment-everything | `LibreSAM` | `libreyolo[sam]` |
+| Mask from a click / box / concept text, or segment-everything | `LibreSAM` | `libreyolo[sam]` |
 | Whole-image label from your own label set | `LibreCLIP` / `LibreSigLIP2` | `libreyolo[clip]` / `libreyolo[siglip2]` |
 | Ask an instruction-following model to find things (slow, flexible) | `LibreVLM` | `libreyolo[vlm]` |
 
@@ -82,6 +83,9 @@ r = model.predict("img.jpg", bboxes=[100, 100, 200, 200])
 r = model.predict("img.jpg")                        # segment everything (slow)
 r.masks.xy; r.boxes.xyxy                            # boxes derived from masks
 
+sam3 = LibreSAM("sam3")
+matches = sam3.predict("img.jpg", text="yellow school bus", conf=0.3)
+
 model.set_image("img.jpg")                          # encode once (the expensive part)...
 a = model.predict(points=[500, 375], labels=[1])    # ...prompt many, cheap
 model.reset_image()
@@ -89,8 +93,22 @@ model.reset_image()
 
 - Family pick: `LibreSAM("base"/"large"/"huge")` = SAM-1; `LibreSAM2`
   aliases for SAM-2 (better masks, video-capable lineage);
+  `LibreSAM("sam3")` = SAM 3 visual prompts plus concept `text=` prompts;
   `LibreMobileSAM` (tiny encoder, edge/CPU-friendly, same prompt API).
   The alias table in `libreyolo/models/sam/model.py` is authoritative.
+- SAM 3 weights come directly from the gated `facebook/sam3` repository under
+  Meta's custom SAM License, not MIT or Apache-2.0. Accept its terms and run
+  `hf auth login` (or set `HF_TOKEN`) before first use. The first `text=` call
+  lazily loads a second model instance and therefore raises peak RAM/VRAM.
+  In a reference CPU/fp32 run at the native 1008 px frame, RSS was 3.0 GB after
+  visual inference and 5.9 GB with both models resident, with a 9.0 GB peak
+  while loading/running the first text prompt. An 8 GB host may exhaust memory
+  on the text path even when visual prompting works comfortably.
+- `text=` returns every instance matching the concept and cannot be combined
+  with points or boxes. Its `conf` is a PCS detection score; visual-prompt
+  `conf` remains predicted mask IoU. Text prompts default to `conf=0.3`; pass
+  `conf=0.0` explicitly to keep all candidates. Image exemplars are reserved
+  but not yet implemented.
 - Interactive loops: always `set_image` once, then prompt; re-passing the
   image per predict re-encodes and dominates latency.
 - Prompt coordinates are pixels on the original image. Multiple points with

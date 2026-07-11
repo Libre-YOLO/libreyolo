@@ -7,9 +7,16 @@ See ``model.py`` for the ``LibreSAM(...)`` factory and ``base.py`` for the
 from __future__ import annotations
 
 from .base import LibreSAMModel
-from .model import LibreSAM, LibreSAM1, LibreSAM2
+from .model import LibreSAM, LibreSAM1, LibreSAM2, LibreSAM3
 
-__all__ = ["LibreSAM", "LibreSAMModel", "LibreSAM1", "LibreSAM2", "LibreMobileSAM"]
+__all__ = [
+    "LibreSAM",
+    "LibreSAMModel",
+    "LibreSAM1",
+    "LibreSAM2",
+    "LibreSAM3",
+    "LibreMobileSAM",
+]
 
 
 def __getattr__(name):

@@ -91,7 +91,7 @@ exceptions being lowercase version suffixes (`DEIMv2`, `RTDETRv2`,
 The VLM and promptable SAM tiers are separate categories and do not follow this
 rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
 `LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
-`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreMobileSAM`) are not registered
+`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreSAM3`, `LibreMobileSAM`) are not registered
 into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
 downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand

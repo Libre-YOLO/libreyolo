@@ -173,7 +173,8 @@ as the source of truth. By tier:
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
 - **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]` / `[siglip2]`
   / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
-  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP` / `LibreSigLIP2`
+  `LibreSAM2` / `LibreSAM3` / `LibreMobileSAM` (point/box-prompted masks;
+  SAM 3 also accepts concept `text=` prompts), `LibreCLIP` / `LibreSigLIP2`
   (zero-shot classify), and the `LibreVLM` family (vision-language
   detection). For the exact model aliases in each tier, use `libreyolo
   models` and the dedicated guide `skills/use-libreyolo-zero-shot/`.
