@@ -13,7 +13,8 @@ fine-tune-from-pretrained path that ``allow_experimental=True`` gates):
   doesn't swap the full pipeline. Acceptable for short fine-tunes; revisit
   for production training.
 - mmdet uses paramwise weight decay (norm_decay_mult=0, bias_decay_mult=0).
-  This trainer uses ``BaseTrainer``'s default param grouping.
+  ``BaseTrainer``'s param grouping now matches: norms and biases carry an
+  explicit ``weight_decay=0.0``.
 """
 
 from __future__ import annotations

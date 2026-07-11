@@ -436,6 +436,31 @@ class RTMDetSepBNHead(nn.Module):
                     self.cls_convs[n][i].conv = self.cls_convs[0][i].conv
                     self.reg_convs[n][i].conv = self.reg_convs[0][i].conv
 
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        # Mirror mmdet RTMDetSepBNHead.init_weights: Normal(std=0.01) convs,
+        # norms at 1, and the focal prior bias on rtm_cls so a fresh head
+        # scores ~0.01 everywhere instead of ~0.5. Without the prior bias, a
+        # head rebuilt for a new class count fires all priors at once and the
+        # first QFL batch produces a ~1e5x gradient shock that destroys the
+        # pretrained backbone (issue #566). Loading a checkpoint afterwards
+        # overwrites all of this, so published weights are unaffected.
+        import math
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, mean=0.0, std=0.01)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+
+        bias_cls = -math.log((1 - 0.01) / 0.01)  # bias_init_with_prob(0.01)
+        for conv in self.rtm_cls:
+            nn.init.constant_(conv.bias, bias_cls)
+
     def forward(self, feats):
         cls_scores = []
         bbox_preds = []

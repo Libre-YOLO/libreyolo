@@ -99,13 +99,6 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
   </tbody>
 </table>
 
-YOLOv9-P2 是 YOLOv9 的小目标变体，增加了一个 stride-4 检测尺度，专为目标小于约
-16 像素的航拍/微小目标图像设计（常规数据集如 COCO 请使用标准 YOLOv9）。
-基于 VisDrone 训练的研究预览版权重：
-[`LibreYOLO9P2s-visdrone.pt`](https://huggingface.co/LibreYOLO/LibreYOLO9P2s-visdrone)
-（非商业许可证）；也可自行训练：
-`LibreYOLO9P2(None, size="s").train(..., pretrained="LibreYOLO9s.pt")`。
-
 ## 许可证
 
 - **代码：** MIT License

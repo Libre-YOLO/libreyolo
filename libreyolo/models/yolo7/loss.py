@@ -36,6 +36,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ...training.distributed import all_reduce_avg_scalar
 from ..yolox.loss import IoULoss
 from ..yolox.nn import bboxes_iou
 
@@ -220,7 +221,11 @@ class YOLOv7Loss:
         # Raw match count BEFORE the >=1 normalization clamp, so the reported
         # metric can actually read 0 when SimOTA matched nothing.
         raw_num_fg = num_fg
-        num_fg = max(num_fg, 1)
+        # Global (DDP-reduced) positive count: dividing by the global count
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``max(num_fg, 1)`` outside DDP.
+        num_fg = all_reduce_avg_scalar(num_fg, device=bbox_preds.device)
         loss_iou = self.iou_loss(
             bbox_preds.view(-1, 4)[fg_masks], reg_targets
         ).sum() / num_fg

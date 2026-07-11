@@ -17,9 +17,9 @@ into self-contained PyTorch with no mmcv/mmdet dependency. The pieces:
 Recipe gaps vs Bo's upstream (documented per skill §6):
 - We use SimOTA as upstream does, but the ``iou_weight=6`` cost weight is
   exposed via :class:`PICODETLoss` so it can be tuned. Bo uses 6.
-- ``sync_num_pos`` (DDP averaging of positive-sample counts) is wired
-  via ``torch.distributed`` if available; falls back to local-only
-  count for single-GPU training.
+- ``sync_num_pos`` (DDP averaging of positive-sample counts) maps to
+  :func:`all_reduce_avg_scalar` on the VFL ``avg_factor`` and the box/DFL
+  ``weight_sum``; outside DDP both reduce to the local count.
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ from typing import List, Sequence, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ...training.distributed import all_reduce_avg_scalar
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +141,12 @@ class VarifocalLoss(nn.Module):
         )
         if avg_factor is None:
             return self.loss_weight * loss.mean()
-        return self.loss_weight * loss.sum() / max(avg_factor, 1.0)
+        # No clamp here: the caller passes an already-sanitized denominator
+        # (all_reduce_avg_scalar clamps the GLOBAL sum before dividing by
+        # world_size, so a legitimate value can be < 1 under DDP). Re-clamping
+        # to 1 would under-scale sparse/all-background multi-GPU batches by
+        # up to 1/world_size (issue #484).
+        return self.loss_weight * loss.sum() / avg_factor
 
 
 class DistributionFocalLoss(nn.Module):
@@ -455,7 +462,12 @@ class PICODETLoss(nn.Module):
           GT edges in feature-space, clamped to ``reg_max - eps``.
         """
         device = cls_scores[0].device
-        dtype = cls_scores[0].dtype
+        # Loss math runs in fp32 regardless of autocast: fp16 pixel-space box
+        # areas overflow (640^2 >> fp16 max 65504, NaN GIoU) and the fp32 IoU
+        # scatter into an fp16 VFL target tensor is a dtype crash (issue #566).
+        # The model forward keeps its autocast dtype; only these small
+        # flattened tensors are promoted.
+        dtype = torch.float32
         feat_shapes = [(c.shape[-2], c.shape[-1]) for c in cls_scores]
 
         priors = _generate_priors(feat_shapes, self.strides, device, dtype)
@@ -468,11 +480,11 @@ class PICODETLoss(nn.Module):
         B = cls_scores[0].shape[0]
         cls_flat = torch.cat([
             cs.permute(0, 2, 3, 1).reshape(B, -1, self.num_classes) for cs in cls_scores
-        ], dim=1)
+        ], dim=1).float()
         bbox_flat = torch.cat([
             bp.permute(0, 2, 3, 1).reshape(B, -1, 4 * (self.reg_max + 1))
             for bp in bbox_preds
-        ], dim=1)
+        ], dim=1).float()
 
         decoded = self._batch_decode(bbox_flat, priors, strides_per_prior)
         cls_sigmoid = cls_flat.sigmoid()
@@ -519,28 +531,42 @@ class PICODETLoss(nn.Module):
             })
             num_pos_total += int(pos_mask.sum().item())
 
-        # VFL across the whole batch (single call), normalised by total positives.
-        avg_factor = max(num_pos_total, 1)
+        # VFL across the whole batch (single call), normalised by the global
+        # (DDP-reduced) positive count, mirroring upstream PP-PicoDet's
+        # nranks averaging (issue #484). Identical to ``max(num_pos_total, 1)``
+        # outside DDP. Collectives run before the no-positive early return so
+        # every rank reaches them.
+        avg_factor = all_reduce_avg_scalar(
+            num_pos_total, device=bbox_flat.device
+        )
         loss_cls = self.vfl(
             cls_flat.reshape(-1, self.num_classes),
             cls_targets.reshape(-1, self.num_classes),
             avg_factor=avg_factor,
         )
 
+        # Box + DFL: weight each positive by ``weight_targets`` and normalise
+        # by the global (DDP-reduced) sum of weights (Bo's avg_factor
+        # convention). Computed before the early return: it is a collective.
+        all_weights = (
+            torch.cat([r["weight_targets"] for r in pos_records])
+            if pos_records
+            else bbox_flat.new_zeros(0)
+        )
+        weight_sum = all_reduce_avg_scalar(all_weights.sum(), min_value=1e-6)
+
         if not pos_records:
             zero = bbox_flat.new_zeros(())
+            # ``bbox_flat.sum() * 0`` keeps the regression tower in the
+            # autograd graph, so DDP sees the same used-parameter set on
+            # all-background ranks as on ranks with positives.
             return {
-                "total_loss": loss_cls,
+                "total_loss": loss_cls + bbox_flat.sum() * 0.0,
                 "loss_cls": loss_cls.detach(),
                 "loss_bbox": zero,
                 "loss_dfl": zero,
                 "num_pos": 0.0,
             }
-
-        # Box + DFL: weight each positive by ``weight_targets`` and normalise
-        # by the sum of weights across the batch (Bo's avg_factor convention).
-        all_weights = torch.cat([r["weight_targets"] for r in pos_records])
-        weight_sum = all_weights.sum().clamp(min=1e-6)
 
         loss_bbox = bbox_flat.new_zeros(())
         loss_dfl = bbox_flat.new_zeros(())

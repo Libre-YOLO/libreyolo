@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from ...training.distributed import all_reduce_avg_scalar
 from ...utils.general import cxcywh_to_xyxy
 from .nn import batch_distance2bbox
 
@@ -636,7 +637,12 @@ class PPYoloELoss(nn.Module):
             self._forward_batched(predictions, targets)
         )
 
-        assigned_scores_sum = torch.clamp(assigned_scores_sum, min=1.0)
+        # Global (DDP-reduced) score mass, mirroring upstream SuperGradients'
+        # all_reduce of ``assigned_scores_sum``: dividing by the global sum
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``clamp(min=1)`` outside DDP.
+        assigned_scores_sum = all_reduce_avg_scalar(assigned_scores_sum)
         cls_loss = self.classification_loss_weight * cls_loss_sum / assigned_scores_sum
         iou_loss = self.iou_loss_weight * iou_loss_sum / assigned_scores_sum
         dfl_loss = self.dfl_loss_weight * dfl_loss_sum / assigned_scores_sum
@@ -1168,7 +1174,9 @@ class YoloNASPoseLoss(nn.Module):
                 f"Unknown classification loss type: {self.classification_loss_type}"
             )
 
-        assigned_scores_sum = torch.clip(assigned_scores.sum(), min=1.0)
+        # Global (DDP-reduced) score mass; see the detection loss above
+        # (issue #484). Identical to ``clip(min=1)`` outside DDP.
+        assigned_scores_sum = all_reduce_avg_scalar(assigned_scores.sum())
         loss_cls = loss_cls / assigned_scores_sum
 
         loss_iou, loss_dfl, loss_pose_cls, loss_pose_reg = self._bbox_loss(
@@ -1224,7 +1232,7 @@ class YoloNASPoseLoss(nn.Module):
         area: Tensor,
         sigmas: Tensor,
         assigned_scores: Optional[Tensor] = None,
-        assigned_scores_sum: Optional[Tensor] = None,
+        assigned_scores_sum: Optional[float] = None,
     ) -> Tuple[Tensor, Tensor]:
         sigmas = sigmas.reshape([1, -1, 1])
         area = area.reshape([-1, 1, 1])
