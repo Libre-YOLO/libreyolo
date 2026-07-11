@@ -496,6 +496,11 @@ class TrainStepProfiler:
         """Yield batches while measuring real step time + dataload stall."""
         it = iter(iterable)
         while True:
+            if self.finished:
+                # Window closed but training continues: get out of the way so
+                # the rest of the epoch pays no per-batch instrumentation.
+                yield from it
+                return
             t0 = time.perf_counter()
             try:
                 with record_function("step/dataload"):

@@ -1339,7 +1339,8 @@ class BaseTrainer(ABC):
 
         # Optional training-step profiler (opt-in via config.profile). Built on
         # the main process; emits the breakdown + Chrome trace into save_dir.
-        # Disabled under DDP (its early-stop would desync ranks).
+        # Disabled under DDP (rank-0-only syncs, and the profile_then_stop
+        # early stop would desync ranks).
         if getattr(self.config, "profile", False):
             if self.is_distributed:
                 if is_main_process():
@@ -1465,14 +1466,24 @@ class BaseTrainer(ABC):
                 self.final_loss = epoch_loss
                 self.epoch_losses.append(epoch_loss)
 
-                is_best = self._update_best_state(epoch, val_metrics)
+                profile_truncated = bool(getattr(self, "_stop_training", False))
+                is_best = (
+                    False
+                    if profile_truncated
+                    else self._update_best_state(epoch, val_metrics)
+                )
                 # Write ``last.pt`` every epoch so a crash never costs more than
                 # a single epoch. ``best.pt`` (is_best) and periodic
                 # ``epoch_N.pt`` (save_period) stay gated inside
-                # _save_checkpoint, so those are unaffected.
-                self._save_checkpoint(
-                    epoch, epoch_loss, val_metrics, is_best=is_best
-                )
+                # _save_checkpoint, so those are unaffected. A profile-only run
+                # (profile_then_stop) truncated the epoch after the profile
+                # window, so no checkpoint is written for it: stamping the
+                # partial epoch as complete would make a later resume skip the
+                # rest of it.
+                if not profile_truncated:
+                    self._save_checkpoint(
+                        epoch, epoch_loss, val_metrics, is_best=is_best
+                    )
 
                 event = self._build_train_epoch_event(
                     epoch=epoch,
@@ -1532,7 +1543,16 @@ class BaseTrainer(ABC):
 
             total_time = time.time() - start_time
             if is_main_process():
-                logger.info(f"Training complete in {total_time / 3600:.2f} hours")
+                if getattr(self, "_stop_training", False):
+                    logger.info(
+                        "Profile-only run (profile_then_stop=True): training "
+                        f"stopped after the profile window in {total_time:.1f}s; "
+                        "the partial epoch was not validated or checkpointed"
+                    )
+                else:
+                    logger.info(
+                        f"Training complete in {total_time / 3600:.2f} hours"
+                    )
 
             results = self._build_train_results()
             end_event = self._build_train_end_event(total_time, results)
@@ -1990,8 +2010,17 @@ class BaseTrainer(ABC):
             if prof is not None:
                 prof.step()
                 if prof.finished:
-                    self._stop_training = True
-                    break
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -2001,9 +2030,13 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
-        # Validation
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
-        if self._should_validate_epoch(epoch):
+        if not getattr(self, "_stop_training", False) and self._should_validate_epoch(
+            epoch
+        ):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -2159,8 +2192,17 @@ class BaseTrainer(ABC):
             if prof is not None:
                 prof.step()
                 if prof.finished:
-                    self._stop_training = True
-                    break
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -2170,9 +2212,13 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
-        # Validation
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
-        if self._should_validate_epoch(epoch):
+        if not getattr(self, "_stop_training", False) and self._should_validate_epoch(
+            epoch
+        ):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
