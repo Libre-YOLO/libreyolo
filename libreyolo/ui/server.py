@@ -649,15 +649,15 @@ class _Handler(BaseHTTPRequestHandler):
         classes = [c.strip() for c in raw_classes.split(",") if c.strip()] or None
         raw_bbox = qs.get("bbox", [""])[0]
         bbox = None
+        bbox_error = None
         if raw_bbox:
             try:
                 bbox = [float(value.strip()) for value in raw_bbox.split(",")]
-            except ValueError as exc:
-                raise ValueError(
-                    "bbox must contain four comma-separated numbers"
-                ) from exc
-            if len(bbox) != 4:
-                raise ValueError("bbox must contain x1,y1,x2,y2")
+            except ValueError:
+                bbox_error = "bbox must contain four comma-separated numbers"
+            else:
+                if len(bbox) != 4:
+                    bbox_error = "bbox must contain x1,y1,x2,y2"
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -675,6 +675,10 @@ class _Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
+
+        if bbox_error:
+            write_obj({"type": "error", "error": bbox_error})
+            return
 
         if not data:
             write_obj({"type": "error", "error": "empty upload"})

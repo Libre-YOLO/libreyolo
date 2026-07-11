@@ -164,13 +164,13 @@ class TestTrackingYOLOX:
         assert stable >= len(frames) // 2, "OC-SORT IDs not stable across frames"
 
     def test_deepocsort_tracker_end_to_end(self, model, video_path):
-        """Deep OC-SORT (appearance ReID) yields stable, unique per-frame IDs."""
-        try:
-            frames = _run_tracker(model, video_path, n_frames=20, tracker="deepocsort")
-        except RuntimeError as exc:
-            if "download" in str(exc).lower():
-                pytest.skip(f"OSNet ReID weights unavailable: {exc}")
-            raise
+        """Deep OC-SORT (appearance ReID) yields stable, unique per-frame IDs.
+
+        The OSNet ReID weights are a published autodownload contract
+        (LibreYOLO/LibreReID-osnet); a failed download is a real failure,
+        not a skip.
+        """
+        frames = _run_tracker(model, video_path, n_frames=20, tracker="deepocsort")
         assert len(frames) == 20
         stable = 0
         for i, f in enumerate(frames):

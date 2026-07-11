@@ -137,8 +137,9 @@ Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
 checkpoint is hosted separately as `LibreMobileSAM.pt`.
 
 PicoSAM3 code and weights are Apache-2.0. LibreYOLO carries only the compact
-ROI CNN and downloads the matching `PicoSAM3_SAM3_student_best.pt` checkpoint
-from the pinned upstream Hugging Face revision. SAM 2.1 and SAM 3 appear only
+ROI CNN and downloads `LibrePicoSAM3pico.pt` from the LibreYOLO Hugging Face
+mirror, converted unchanged from the pinned upstream revision's
+`PicoSAM3_SAM3_student_best.pt`. SAM 2.1 and SAM 3 appear only
 in the recorded distillation teacher chain; their code and weights are not
 vendored or redistributed by the PicoSAM3 family.
 
