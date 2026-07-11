@@ -54,10 +54,11 @@ All six sizes, smallest to largest:
 python tools/pretrain_mit/pretrain_all_sizes.py --data /data/imagenet
 ```
 
-Cost note: the default recipe (300 epochs, DeiT-style AdamW + cosine +
-RandAugment/MixUp/CutMix) is a multi-day job per size on one GPU. Shorten
-`--epochs` if you want a partial-pretraining starting point instead — even an
-imperfectly-converged encoder should beat random init.
+Cost note: the recipe is DeiT/PVT-style (AdamW + cosine + RandAugment/MixUp
+0.8/CutMix 1.0/RandomErasing 0.25, LR linearly scaled from a reference batch of
+1024). The encoders are pretrained for **300 epochs**, matching the paper recipe,
+at multi-day-per-size cost. Lower `--epochs` for a cheaper partial-pretraining
+starting point that still beats random init.
 
 ## Feeding the result back into LibreSegformer
 

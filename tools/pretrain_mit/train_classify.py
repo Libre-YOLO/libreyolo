@@ -31,9 +31,9 @@ train/ and val/ sub-directories -- ImageNet-1K is not auto-downloadable):
     python tools/pretrain_mit/train_classify.py --size b0 --data /data/imagenet
 
 Note on cost: DeiT-style recipes for small ViT-ish encoders typically use
-~300 epochs on the full 1.28M-image ImageNet-1K train split. That is a
-multi-day job per size on a single GPU -- budget accordingly, or shorten
---epochs and accept a weaker starting point than the paper's own recipe.
+~300 epochs on the full 1.28M-image ImageNet-1K train split. The default here
+is 300 epochs to match that recipe (multi-day-per-size cost); lower --epochs
+for a cheaper partial-pretraining starting point that still beats random init.
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ import torch
 import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -70,6 +71,10 @@ from libreyolo.utils.serialization import load_trusted_torch_file  # noqa: E402
 
 ALL_SIZES = ("b0", "b1", "b2", "b3", "b4", "b5")
 
+# DeiT/PVT calibrate the base LR for a global batch of 1024; --lr0 is scaled
+# linearly from this reference to the actual batch (see train_one_size).
+REFERENCE_BATCH = 1024
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,8 +92,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--warmup-epochs", type=int, default=10)
     p.add_argument("--min-lr-ratio", type=float, default=0.01)
     p.add_argument("--label-smoothing", type=float, default=0.1)
-    p.add_argument("--mixup", type=float, default=0.2)
-    p.add_argument("--cutmix", type=float, default=0.2)
+    p.add_argument("--mixup", type=float, default=0.8, help="MixUp alpha (DeiT/PVT recipe: 0.8).")
+    p.add_argument("--cutmix", type=float, default=1.0, help="CutMix alpha (DeiT/PVT recipe: 1.0).")
+    p.add_argument("--random-erasing", type=float, default=0.25, dest="random_erasing",
+                   help="RandomErasing probability (DeiT/PVT recipe: 0.25).")
+    p.add_argument("--min-crop-scale", type=float, default=0.08, dest="min_crop_scale",
+                   help="RandomResizedCrop min area fraction (DeiT/PVT recipe: 0.08).")
     p.add_argument("--auto-augment", default="randaugment", choices=["randaugment", "autoaugment", "augmix", "none"])
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--device", default="auto")
@@ -123,7 +132,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: str) -> tuple[f
     top1_correct = 0
     top5_correct = 0
     total = 0
-    for imgs, labels, _, _ in loader:
+    for imgs, labels, _, _ in tqdm(loader, desc="  eval", leave=False, unit="batch"):
         imgs = imgs.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         logits = model(imgs)
@@ -159,7 +168,11 @@ def train_one_size(size: str, args: argparse.Namespace) -> dict:
         split="train",
         imgsz=args.imgsz,
         augment=True,
-        transform_kwargs={"auto_augment": auto_augment},
+        transform_kwargs={
+            "auto_augment": auto_augment,
+            "erasing": args.random_erasing,
+            "scale": (args.min_crop_scale, 1.0),
+        },
     )
     val_ds = ClassifyDataset(
         dataset_root,
@@ -189,9 +202,16 @@ def train_one_size(size: str, args: argparse.Namespace) -> dict:
     )
 
     model = MiTClassifier(size=size, num_classes=num_classes).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr0, weight_decay=args.weight_decay)
+    # DeiT/PVT linear LR scaling: --lr0 is calibrated for a global batch of
+    # REFERENCE_BATCH (1024). Scale it to the actual batch so every size --
+    # including the ones the launcher auto-halves to 128 -- trains at the
+    # paper-consistent rate instead of a fixed (too-high) LR.
+    effective_lr = args.lr0 * args.batch / REFERENCE_BATCH
+    print(f"[{size}] effective LR: {effective_lr:.2e} "
+          f"(--lr0 {args.lr0:.2e} x batch {args.batch} / {REFERENCE_BATCH})")
+    optimizer = torch.optim.AdamW(model.parameters(), lr=effective_lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingScheduler(
-        lr=args.lr0,
+        lr=effective_lr,
         iters_per_epoch=len(train_loader),
         total_epochs=args.epochs,
         warmup_epochs=args.warmup_epochs,
@@ -217,7 +237,13 @@ def train_one_size(size: str, args: argparse.Namespace) -> dict:
         model.train()
         epoch_start = time.monotonic()
         running_loss = 0.0
-        for imgs, labels, _, _ in train_loader:
+        pbar = tqdm(
+            train_loader,
+            desc=f"[{size}] epoch {epoch}/{args.epochs}",
+            unit="batch",
+            leave=False,
+        )
+        for step, (imgs, labels, _, _) in enumerate(pbar, start=1):
             imgs = imgs.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
@@ -237,6 +263,7 @@ def train_one_size(size: str, args: argparse.Namespace) -> dict:
 
             running_loss += loss.item()
             global_iter += 1
+            pbar.set_postfix(loss=f"{running_loss / step:.4f}", lr=f"{lr:.2e}")
 
         eval_model = ema.ema if ema is not None else model
         val_top1, val_top5 = evaluate(eval_model, val_loader, device)

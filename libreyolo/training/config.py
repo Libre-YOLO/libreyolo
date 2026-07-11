@@ -931,18 +931,23 @@ class RTMDetConfig(TrainConfig):
 
 @dataclass(kw_only=True)
 class SegformerConfig(TrainConfig):
-    """SegFormer training defaults — from scratch, no pretrained backbone.
+    """SegFormer training defaults — the paper / mmsegmentation ADE20K recipe.
 
-    LibreSegformer ships no pretrained weights (see the family NOTICE), so
-    these defaults target from-scratch convergence rather than fine-tuning:
-    AdamW + linear (poly-like) decay, higher LR than the paper's fine-tune
-    recipe. Convergence for the larger sizes (b3-b5) is unvalidated — see
-    docs/nomenclature.md.
+    LibreSegformer ships no pretrained weights (see the family NOTICE); train
+    from scratch, or fine-tune an encoder produced by tools/pretrain_mit/.
+    Defaults follow SegFormer's ADE20K config: AdamW, backbone base LR 6e-5 with
+    the decode head at 10x (SegformerTrainer applies the lr_mult), LayerNorm and
+    the Mix-FFN positional conv at weight_decay=0, linear (poly-like) decay, and
+    scale-jitter 0.5..2.0 (LibreSegformer.semantic_scale_jitter). Convergence for
+    the larger sizes (b3-b5) is unvalidated — see docs/nomenclature.md.
     """
 
     optimizer: str = "adamw"
-    lr0: float = 6e-4
+    lr0: float = 6e-5
     weight_decay: float = 0.01
+    # Decode-head LR multiplier over the backbone base LR (mmseg SegFormer uses
+    # 10x). Set to 1.0 for a uniform LR (e.g. to ablate the backbone/head split).
+    head_lr_mult: float = 10.0
 
     scheduler: str = "linear"
     warmup_epochs: int = 5

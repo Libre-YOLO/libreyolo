@@ -36,6 +36,13 @@ from .nn import SIZE_CONFIGS, LibreSegformerNet
 
 logger = logging.getLogger(__name__)
 
+# The MiT encoder is pretrained (tools/pretrain_mit/) on ImageNet-1K with
+# ImageNet mean/std standardization, and the SegFormer fine-tune recipe uses
+# the same. Training/validation apply these via SemanticDataset(mean=, std=);
+# inference must match, so preprocess_numpy() applies them here too.
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
+_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(3, 1, 1)
+
 
 def _input_size_hw(input_size: int | tuple[int, int]) -> tuple[int, int]:
     if isinstance(input_size, int):
@@ -49,7 +56,12 @@ def preprocess_numpy(
     img_rgb_hwc: np.ndarray,
     input_size: int | tuple[int, int] = 512,
 ) -> tuple[np.ndarray, float]:
-    """Letterbox RGB image to SegFormer's canvas as CHW float32 in [0, 1]."""
+    """Letterbox RGB image to SegFormer's canvas as CHW float32, ImageNet-normalized.
+
+    Matches the training/validation pipeline: ``/255`` then per-channel
+    ``(x - ImageNet mean) / ImageNet std`` (the distribution the MiT encoder was
+    pretrained and fine-tuned on).
+    """
     orig_h, orig_w = img_rgb_hwc.shape[:2]
     input_h, input_w = _input_size_hw(input_size)
     ratio = min(input_h / orig_h, input_w / orig_w)
@@ -61,7 +73,9 @@ def preprocess_numpy(
     padded[:new_h, :new_w] = resized
 
     arr = np.ascontiguousarray(padded, dtype=np.float32) / 255.0
-    return arr.transpose(2, 0, 1), ratio
+    chw = arr.transpose(2, 0, 1)
+    chw = (chw - _IMAGENET_MEAN) / _IMAGENET_STD
+    return np.ascontiguousarray(chw, dtype=np.float32), ratio
 
 
 class LibreSegformer(BaseModel):
@@ -75,8 +89,19 @@ class LibreSegformer(BaseModel):
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     INPUT_SIZES: ClassVar[Dict[str, int]] = {size: 512 for size in SIZE_CONFIGS}
 
-    semantic_resize_mode: ClassVar[str] = "letterbox"
+    # Fine-tune recipe (SegFormer paper / mmsegmentation ADE20K config):
+    #  - resize_crop: training resizes the short side to imgsz*ratio and random-
+    #    crops imgsz^2 (dense full-res crops, cat_max_ratio=0.75), matching mmseg
+    #    rather than the fit-long-side+pad letterbox. Validation/inference still
+    #    letterbox to a fixed imgsz^2 canvas (mIoU scored at that resolution).
+    #  - the MiT encoder is pretrained with ImageNet mean/std, so train and val
+    #    standardize inputs the same way; scale jitter spans 0.5..2.0.
+    # Read by SegformerTrainer._setup_semantic_data and SemanticValidator.
+    semantic_resize_mode: ClassVar[str] = "resize_crop"
     semantic_imgsz_divisor: ClassVar[int] = 32
+    semantic_norm_mean: ClassVar[Tuple[float, float, float]] = (0.485, 0.456, 0.406)
+    semantic_norm_std: ClassVar[Tuple[float, float, float]] = (0.229, 0.224, 0.225)
+    semantic_scale_jitter: ClassVar[Tuple[float, float]] = (0.5, 2.0)
 
     # ------------------------------------------------------------------
     # Registry / can_load interface

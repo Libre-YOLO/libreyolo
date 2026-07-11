@@ -214,6 +214,7 @@ def build_classify_transforms(
     interpolation="bilinear",
     auto_augment: str | None = None,
     erasing: float = 0.0,
+    scale: tuple[float, float] = (0.5, 1.0),
 ):
     """Build train/val image transforms for classification.
 
@@ -234,8 +235,10 @@ def build_classify_transforms(
     - ``erasing``: probability for ``RandomErasing``, appended after
       ``Normalize`` (tensor space, the standard placement). Must satisfy
       ``0 <= erasing < 1``.
+    - ``scale``: ``(min, max)`` area fraction for ``RandomResizedCrop`` (default
+      ``(0.5, 1.0)``, a mild crop; DeiT/PVT-style pretraining uses ``(0.08, 1.0)``).
 
-    Both only affect the ``augment=True`` branch; the val pipeline is untouched.
+    These only affect the ``augment=True`` branch; the val pipeline is untouched.
     """
     import math
 
@@ -243,7 +246,7 @@ def build_classify_transforms(
     normalize = transforms.Normalize(mean=mean, std=std)
     if augment:
         ops = [
-            transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
+            transforms.RandomResizedCrop(imgsz, scale=scale, interpolation=mode),
             transforms.RandomHorizontalFlip(),
         ]
         if auto_augment is not None:

@@ -10,13 +10,17 @@ and ``_run_semantic_validation`` without ever calling ``create_transforms``.
 
 from __future__ import annotations
 
-from typing import Dict, Type
+import logging
+from typing import Dict, List, Tuple, Type
 
 import torch
 
 from ...training.config import SegformerConfig, TrainConfig
+from ...training.distributed import is_main_process, unwrap_model
 from ...training.scheduler import FlatCosineScheduler, LinearLRScheduler
 from ...training.trainer import BaseTrainer
+
+logger = logging.getLogger(__name__)
 
 
 class SegformerTrainer(BaseTrainer):
@@ -33,6 +37,74 @@ class SegformerTrainer(BaseTrainer):
 
     def get_model_tag(self) -> str:
         return f"LibreSegformer-{self.config.size}"
+
+    def _setup_optimizer(self) -> torch.optim.Optimizer:
+        """AdamW with the SegFormer paramwise recipe (mmsegmentation ADE20K).
+
+        - decode head parameters train at ``config.head_lr_mult`` (default 10)
+          over the backbone base LR (``config.lr0``); ``_scale_lr`` re-applies
+          the multiplier on every scheduler step so the ratio holds through
+          warmup and decay. Set ``head_lr_mult=1.0`` for a uniform LR.
+        - LayerNorm/bias params (``ndim <= 1``) and the Mix-FFN positional
+          depthwise conv (``pos_block``, name contains ``dwconv``) get
+          ``weight_decay=0``; every other weight gets ``config.weight_decay``.
+
+        Frozen params (``requires_grad=False``) are skipped, so layer-freeze
+        config still works.
+        """
+        base_lr = self.effective_lr
+        wd = self.config.weight_decay
+        head_lr_mult = float(getattr(self.config, "head_lr_mult", 10.0))
+        raw = unwrap_model(self.model)
+
+        # Bucket by (lr_mult, weight_decay) so at most four param groups form
+        # (two when head_lr_mult == 1.0, i.e. a uniform LR).
+        buckets: Dict[Tuple[float, float], List[torch.nn.Parameter]] = {}
+        for name, param in raw.named_parameters():
+            if not param.requires_grad:
+                continue
+            is_head = name.startswith("decode_head.")
+            no_decay = param.ndim <= 1 or "dwconv" in name
+            lr_mult = head_lr_mult if is_head else 1.0
+            group_wd = 0.0 if no_decay else wd
+            buckets.setdefault((lr_mult, group_wd), []).append(param)
+
+        if not buckets:
+            raise ValueError(
+                "No trainable parameters remain for the SegFormer optimizer; "
+                "check the freeze configuration."
+            )
+
+        param_groups = [
+            {
+                "params": params,
+                "lr": base_lr * lr_mult,
+                "weight_decay": group_wd,
+                "lr_mult": lr_mult,
+            }
+            for (lr_mult, group_wd), params in buckets.items()
+        ]
+
+        optimizer = torch.optim.AdamW(param_groups, lr=base_lr)
+        if is_main_process():
+            logger.info("SegFormer optimizer: AdamW, backbone base lr=%s", base_lr)
+            for (lr_mult, group_wd), params in buckets.items():
+                logger.info(
+                    "  - group: lr_mult=%s (lr=%s), weight_decay=%s, params=%d",
+                    lr_mult,
+                    base_lr * lr_mult,
+                    group_wd,
+                    len(params),
+                )
+        return optimizer
+
+    def _scale_lr(self, base_lr: float, param_group: dict) -> float:
+        """Honor the per-group ``lr_mult`` set in ``_setup_optimizer`` (head=10x).
+
+        The scheduler calls this for every param group on every step, so the
+        decode-head 10x multiplier is preserved through warmup and decay.
+        """
+        return base_lr * float(param_group.get("lr_mult", 1.0))
 
     def create_transforms(self):
         raise NotImplementedError(

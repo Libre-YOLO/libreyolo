@@ -25,7 +25,7 @@ Only the two smallest sizes, quick check:
     python scripts/train_segformer_all_sizes.py --data ade20k --sizes b0,b1 --epochs 2
 
 Custom batch/imgsz/lr, single GPU:
-    python scripts/train_segformer_all_sizes.py --data ade20k --batch 16 --imgsz 512 --lr0 6e-4
+    python scripts/train_segformer_all_sizes.py --data ade20k --batch 16 --imgsz 512 --lr0 6e-5
 
 Two GPUs (DDP is spawned automatically — no torchrun needed):
     python scripts/train_segformer_all_sizes.py --data ade20k --devices 0,1
@@ -83,7 +83,21 @@ def parse_args() -> argparse.Namespace:
         help="Global batch size for every size (default: 8, auto-halved to 4 for b3/b4/b5).",
     )
     p.add_argument("--imgsz", type=int, default=512, help="Input size, must be divisible by 32 (default: 512).")
-    p.add_argument("--lr0", type=float, default=6e-4, help="Learning rate, applied to every size (default: 6e-4).")
+    p.add_argument(
+        "--lr0",
+        type=float,
+        default=6e-5,
+        help="Backbone base LR, applied to every size (default: 6e-5, the SegFormer "
+        "ADE20K recipe; the decode head trains at head-lr-mult x this).",
+    )
+    p.add_argument(
+        "--head-lr-mult",
+        type=float,
+        default=10.0,
+        dest="head_lr_mult",
+        help="Decode-head LR multiplier over the backbone base LR (default: 10.0, the "
+        "SegFormer recipe). Pass 1.0 for a uniform LR (ablate the backbone/head split).",
+    )
     p.add_argument("--devices", default="0", help="GPU index or comma-separated indices (default: 0).")
     p.add_argument("--workers", type=int, default=4, help="DataLoader worker processes (default: 4).")
     p.add_argument("--output-root", default="runs/train", help="Each size writes to <output-root>/segformer_<size>/.")
@@ -134,6 +148,7 @@ def train_one_size(size: str, args: argparse.Namespace) -> dict:
         batch=batch,
         imgsz=args.imgsz,
         lr0=args.lr0,
+        head_lr_mult=args.head_lr_mult,
         device=args.devices,
         workers=args.workers,
         project=args.output_root,

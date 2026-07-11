@@ -59,8 +59,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--warmup-epochs", type=int, default=10)
     p.add_argument("--min-lr-ratio", type=float, default=0.01)
     p.add_argument("--label-smoothing", type=float, default=0.1)
-    p.add_argument("--mixup", type=float, default=0.2)
-    p.add_argument("--cutmix", type=float, default=0.2)
+    p.add_argument("--mixup", type=float, default=0.8, help="MixUp alpha (DeiT/PVT recipe: 0.8).")
+    p.add_argument("--cutmix", type=float, default=1.0, help="CutMix alpha (DeiT/PVT recipe: 1.0).")
+    p.add_argument("--random-erasing", type=float, default=0.25, dest="random_erasing",
+                   help="RandomErasing probability (DeiT/PVT recipe: 0.25).")
+    p.add_argument("--min-crop-scale", type=float, default=0.08, dest="min_crop_scale",
+                   help="RandomResizedCrop min area fraction (DeiT/PVT recipe: 0.08).")
     p.add_argument("--auto-augment", default="randaugment", choices=["randaugment", "autoaugment", "augmix", "none"])
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--device", default="auto")
