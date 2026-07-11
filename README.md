@@ -115,9 +115,10 @@ and receive the heaviest testing:
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
-| rtmdet | segment | exp | exp | exp | exp | exp |  |  |
+| rtmdet | segment |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
+| sam3 | segment |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |

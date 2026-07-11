@@ -10,6 +10,7 @@ import inspect
 OPTIONAL_MODELS = (
     ("libreyolo.models.sam.model", "LibreSAM1", "sam", "transformers"),
     ("libreyolo.models.sam.sam2", "LibreSAM2", "sam", "transformers"),
+    ("libreyolo.models.sam.sam3", "LibreSAM3", "sam", "transformers"),
     ("libreyolo.models.mobilesam.model", "LibreMobileSAM", "sam", None),
     ("libreyolo.models.vlm.florence2", "LibreFlorence2", "vlm", "transformers"),
     ("libreyolo.models.vlm.kosmos2", "LibreKosmos2", "vlm", "transformers"),

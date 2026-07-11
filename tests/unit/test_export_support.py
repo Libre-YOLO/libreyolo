@@ -102,7 +102,7 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
 
 
 def test_committed_inventory_matches_runtime_inventory():
-    path = Path("reports/export_inventory_2026-07-10.json")
+    path = Path("reports/export_inventory_2026-07-11.json")
     committed = json.loads(path.read_text(encoding="utf-8"))
     assert committed == collect_model_inventory()
 

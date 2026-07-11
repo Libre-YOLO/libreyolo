@@ -909,6 +909,23 @@
     "optional_extra": "sam",
     "available": true
   },
+  "sam3": {
+    "class": "libreyolo.models.sam.sam3.LibreSAM3",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "large": 1008
+    },
+    "default_imgsz": {
+      "large": 1008
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
     "tasks": [
