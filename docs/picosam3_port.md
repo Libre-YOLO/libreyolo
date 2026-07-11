@@ -72,6 +72,23 @@ checkpoint is the trained artifact it claims to be.
 
 The epoch-1 files are a separate matter (see below) and are not shipped.
 
+## Where it sits against MobileSAM
+
+Same 150 COCO val2017 instances, same ground-truth box prompts, single-threaded
+CPU, measured per prompt end-to-end:
+
+| Model | Params | mIoU | CPU latency |
+|---|---|---|---|
+| PicoSAM3 | 1.37M | 0.691 | **8.6 ms/prompt** |
+| MobileSAM | 10.13M | **0.800** | 407 ms/prompt |
+
+MobileSAM is the better segmenter and should stay the default when a GPU is
+available or when quality dominates. PicoSAM3 trades roughly 11 mIoU points for
+7x fewer parameters and ~47x lower CPU latency, which is what makes CPU-only and
+in-sensor use viable: 8.6 ms per prompt is interactive on a laptop CPU, 407 ms is
+not. Its natural pairing is a LibreYOLO detector supplying boxes, turning `detect`
+into instance segmentation on hardware that cannot host a ViT encoder.
+
 ## Conversion and export
 
 `weights/convert_picosam3_weights.py` strictly validates the architecture and
