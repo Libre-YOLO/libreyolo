@@ -21,6 +21,9 @@ from libreyolo.tasks import task_to_suffix
 
 pytestmark = pytest.mark.unit
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+INVENTORY_SNAPSHOT = REPO_ROOT / "reports" / "export_inventory.json"
+
 
 def _wrapper(family: str, task: str = "detect") -> MagicMock:
     model = MagicMock()
@@ -30,9 +33,7 @@ def _wrapper(family: str, task: str = "detect") -> MagicMock:
 
 
 def test_matrix_keys_use_canonical_registry_values():
-    inventory = json.loads(
-        Path("reports/export_inventory.json").read_text(encoding="utf-8")
-    )
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
     families = set(inventory)
     for family, task, fmt in SUPPORT:
         assert family in families
@@ -135,13 +136,38 @@ def test_readme_generator_reports_missing_compatibility_anchor():
         _replace_readme("# README without compatibility", "generated")
 
 
+def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeypatch):
+    from tools import gen_compat_table
+
+    monkeypatch.chdir(tmp_path)
+    assert gen_compat_table.INVENTORY_PATH.exists()
+    rows, _ = gen_compat_table._rows()
+    assert rows
+
+
+def test_dump_inventory_refuses_partial_overwrite(tmp_path):
+    from tools.dump_model_inventory import write_inventory
+
+    output = tmp_path / "export_inventory.json"
+    fake = {"zzz_fake_family": {"tasks": ["detect"]}}
+    output.write_text(json.dumps(fake), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="zzz_fake_family"):
+        write_inventory(output)
+    assert json.loads(output.read_text(encoding="utf-8")) == fake
+
+    inventory = write_inventory(output, allow_family_removal=True)
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert "zzz_fake_family" not in written
+    assert written == inventory
+
+
 @pytest.mark.skipif(
     importlib.util.find_spec("transformers") is None,
     reason="the canonical inventory snapshot includes transformer-backed families",
 )
 def test_committed_inventory_matches_runtime_inventory():
-    path = Path("reports/export_inventory.json")
-    committed = json.loads(path.read_text(encoding="utf-8"))
+    committed = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
     assert committed == collect_model_inventory()
 
 
@@ -173,9 +199,9 @@ def test_default_download_urls_keep_task_repo_suffixes():
 
 def test_generated_export_docs_are_current():
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path.cwd())
+    env["PYTHONPATH"] = str(REPO_ROOT)
     result = subprocess.run(
-        [sys.executable, "tools/gen_compat_table.py", "--check"],
+        [sys.executable, str(REPO_ROOT / "tools" / "gen_compat_table.py"), "--check"],
         capture_output=True,
         text=True,
         env=env,

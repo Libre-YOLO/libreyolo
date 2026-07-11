@@ -9,7 +9,12 @@ from pathlib import Path
 
 START = "<!-- export-support:start -->"
 END = "<!-- export-support:end -->"
-INVENTORY_PATH = Path("reports/export_inventory.json")
+# Repository-owned paths are anchored to this script's location so the tool
+# works no matter which directory it is invoked from.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+INVENTORY_PATH = REPO_ROOT / "reports" / "export_inventory.json"
+README_PATH = REPO_ROOT / "README.md"
+DOCS_PATH = REPO_ROOT / "docs" / "export_support.md"
 MARKERS = {"validated": "✓", "experimental": "exp", "blocked": ""}
 
 
@@ -107,8 +112,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    readme_path = Path("README.md")
-    docs_path = Path("docs/export_support.md")
+    readme_path = README_PATH
+    docs_path = DOCS_PATH
     readme = _replace_readme(
         readme_path.read_text(encoding="utf-8"), render_readme_table()
     )
