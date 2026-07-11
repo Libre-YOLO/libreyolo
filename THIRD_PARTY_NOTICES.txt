@@ -723,3 +723,17 @@ of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, subject to the inclusion of the above
 copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
+--------------------------------------------------------------------
+PicoSAM3
+--------------------------------------------------------------------
+Source: https://github.com/pbonazzi/picosam3
+Commit: 1b03949e43472953bb0021685c7fc3f5fdf48fde
+License: Apache License 2.0
+Used for: the native LibrePicoSAM3 ROI segmentation network in
+          libreyolo/models/picosam3. The port uses the upstream
+          depthwise-separable encoder-decoder, dilated bottleneck, ECA block,
+          ROI preprocessing geometry, and ImageNet normalization. It does not
+          vendor the repository's SAM teacher implementations or cctorch code.
+
+The full Apache License 2.0 text is included at
+libreyolo/models/picosam3/LICENSE.
