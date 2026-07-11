@@ -598,6 +598,10 @@ _add(
 
 
 _TASK_BLOCKS = {
+    "ocr": (
+        "OCR uses two networks for detection and recognition with dynamic "
+        "per-region cropping, so it does not fit the single-graph export contract."
+    ),
     "point": (
         "Export for point-task models is not implemented yet. Point export needs a "
         "raw heatmap output and backend peak-decoding contract."

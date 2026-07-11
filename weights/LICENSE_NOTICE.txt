@@ -117,6 +117,17 @@ project the weights were derived from. Per-family summary:
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
 
+    PP-OCRv5 (LibrePPOCR{t,l}-ocr)                     Apache-2.0
+             upstream: PaddlePaddle/PaddleOCR (code and released
+             weights Apache-2.0). Converted from the official
+             PP-OCRv5_{mobile,server}_{det,rec} training checkpoints;
+             exact source files and SHA-256 hashes are recorded on the
+             Hugging Face model cards and in
+             weights/convert_ppocr_weights.py. The PP-OCRv5 recognition
+             dictionary ships inside each checkpoint as charset
+             metadata (Apache-2.0, attribution in
+             libreyolo/models/ppocr/NOTICE).
+
     SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
              upstream: facebook/sam3 on Hugging Face. Access is gated and
              requires accepting Meta's terms. LibreYOLO downloads the weights

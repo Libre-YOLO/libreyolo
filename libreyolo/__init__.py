@@ -42,6 +42,7 @@ from .models import (
     LibreResNet,
     LibreCLIP,
     LibreSigLIP2,
+    LibrePPOCR,
 )
 from .utils.results import (
     Results,
@@ -57,6 +58,7 @@ from .utils.results import (
     DepthMap,
     RestoredImage,
     Matte,
+    OCRRegions,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -192,6 +194,7 @@ __all__ = [
     "LibreResNet",
     "LibreCLIP",
     "LibreSigLIP2",
+    "LibrePPOCR",
     "LibreDINOv2",
     # VLM-as-detector tier (optional, requires libreyolo[vlm])
     "LibreVLM",
@@ -226,6 +229,7 @@ __all__ = [
     "DepthMap",
     "RestoredImage",
     "Matte",
+    "OCRRegions",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking

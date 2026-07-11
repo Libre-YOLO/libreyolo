@@ -611,6 +611,25 @@
     "optional_extra": null,
     "available": true
   },
+  "ppocr": {
+    "class": "libreyolo.models.ppocr.model.LibrePPOCR",
+    "tasks": [
+      "ocr"
+    ],
+    "default_task": "ocr",
+    "sizes": {
+      "t": 960,
+      "l": 960
+    },
+    "default_imgsz": {
+      "t": 960,
+      "l": 960
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "qwen3vl": {
     "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",
     "tasks": [

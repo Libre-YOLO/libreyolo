@@ -103,6 +103,7 @@ and receive the heaviest testing:
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| ppocr | ocr |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |

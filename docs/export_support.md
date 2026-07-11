@@ -41,6 +41,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| ppocr | ocr |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
@@ -227,6 +228,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `pidnet` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
+- `ppocr` / `ocr` / `onnx`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `torchscript`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `tensorrt`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `openvino`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `ncnn`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `tflite`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
+- `ppocr` / `ocr` / `coreml`: OCR uses two networks for detection and recognition with dynamic per-region cropping, so it does not fit the single-graph export contract.
 - `qwen3vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `qwen3vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
