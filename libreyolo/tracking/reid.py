@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 import cv2
@@ -296,14 +297,19 @@ def _resolve_weights(name: str) -> Path:
     token = _get_hf_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    # Unique temp name so concurrent cold-cache processes never clobber each
-    # other's partial file; the final rename is atomic (last writer wins,
-    # both files are identical).
-    tmp = dest.with_suffix(f".part{os.getpid()}")
+    # Atomically-created temp file so concurrent cold-cache downloads (threads
+    # or processes) never clobber each other's partial file; the final rename
+    # is atomic (last writer wins, both files are identical).
+    fd, tmp_name = tempfile.mkstemp(suffix=".part", dir=cache_dir)
+    tmp = Path(tmp_name)
     try:
-        response = requests.get(url, stream=True, headers=headers, timeout=(10, 60))
-        response.raise_for_status()
-        with open(tmp, "wb") as f:
+        # fdopen first so the descriptor is always closed (Windows cannot
+        # unlink a file that is still open).
+        with os.fdopen(fd, "wb") as f:
+            response = requests.get(
+                url, stream=True, headers=headers, timeout=(10, 60)
+            )
+            response.raise_for_status()
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
