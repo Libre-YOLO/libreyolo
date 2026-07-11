@@ -136,6 +136,12 @@ class LibreL2CS(BaseModel):
         return None
 
     @classmethod
+    def supports_autodownload(cls, filename: str) -> bool:
+        """Only the Gaze360 ResNet-50 checkpoint exists upstream, so only the
+        r50 weight name can be fetched automatically (via gdown)."""
+        return cls.detect_size_from_filename(filename) == "r50"
+
+    @classmethod
     def _notify_license_once(cls) -> None:
         """Print the Gaze360 weights license once, before an auto-download."""
         if cls._LICENSE_NOTICE_SHOWN:

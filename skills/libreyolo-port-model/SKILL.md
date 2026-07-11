@@ -336,6 +336,18 @@ inherit existing). Set `uses_letterbox`, `custom_normalization`,
 
 **Verify**: `model.predict("test.jpg")` runs end-to-end. `model.val(data="coco128.yaml")` runs.
 
+**Verify in `libreyolo ui`** (required): the UI dropdown is built from
+`get_all_cli_names()`, so a registered family appears automatically, but the
+result card only works if `save=True` writes an annotated image: the server
+calls `model(img, conf=..., save=True)` and shows the saved file plus a
+task-aware summary from `_summarize_result` in `libreyolo/ui/server.py`.
+Launch `libreyolo ui`, drop a test image, run your smallest size, and confirm:
+(1) inference does not require extra kwargs the UI cannot supply (prompts,
+auxiliary detectors); (2) an annotated image renders, not the unchanged
+source; (3) the summary is task-appropriate, not a fallback "0 objects".
+If the port introduces a new `Results` slot, extend `_summarize_result` (and
+`Results.plot` if the slot has no drawing path) in the same PR.
+
 ### Commit 7 — ONNX export
 
 For YOLO-grid: 1 output `"output"`, opset 13. For DETR: 2 outputs

@@ -490,8 +490,8 @@ class PanopticSegmentation(_TensorPayload):
     ``predict`` populates this slot whenever a model family's ``_postprocess``
     returns a ``panoptic`` segment-id map plus ``segments_info``; evaluation is
     ``PanopticValidator`` (Panoptic Quality) over a ``PanopticDataset``.
-    NOTE (issue #555): :class:`Results.plot` and :meth:`Results.summary` do not
-    render panoptic output yet.
+    ``predict(save=True)`` renders the map via ``draw_panoptic`` and
+    ``Results.summary`` reports one row per segment.
     """
 
     IGNORE_INDEX = 0  # COCO panoptic convention: segment id 0 is unlabeled/void.
@@ -1309,6 +1309,25 @@ class Results:
                             },
                         }
                     )
+                return rows
+            if self.panoptic is not None:
+                pan_np = _numpy(self.panoptic.data)
+                total = int(pan_np.size)
+                rows = []
+                for seg in self.panoptic.segments_info:
+                    cat_id = int(seg["category_id"])
+                    count = int((pan_np == int(seg["id"])).sum())
+                    row = {
+                        "name": self.names.get(cat_id, str(cat_id)),
+                        "class": cat_id,
+                        "segment_id": int(seg["id"]),
+                        "isthing": bool(seg.get("isthing", True)),
+                        "pixel_count": count,
+                        "pixel_fraction": round(count / total, decimals),
+                    }
+                    if "score" in seg:
+                        row["confidence"] = round(float(seg["score"]), decimals)
+                    rows.append(row)
                 return rows
             if self.semantic_mask is not None:
                 mask_np = _numpy(self.semantic_mask.data)

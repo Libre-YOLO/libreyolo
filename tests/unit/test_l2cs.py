@@ -11,6 +11,7 @@ weights aren't downloaded as part of the unit tier.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -209,16 +210,101 @@ def test_libre_l2cs_callable_face_detector(tmp_path):
     assert isinstance(model.face_detector, type(None))  # not cached on instance
 
 
-def test_libre_l2cs_no_face_raises(tmp_path):
-    """No face_boxes and no face_detector → clear error, not a silent crash."""
+def test_libre_l2cs_bare_predict_uses_default_detector(tmp_path, monkeypatch):
+    """No face_boxes and no face_detector → default_face_detector() fallback,
+    cached on the model. Stubbed so the test is offline and works on any
+    OpenCV version; the real detectors are covered below."""
+    from libreyolo.models.l2cs import CallableFaceDetector
+    from libreyolo.models.l2cs import inference as l2cs_inference
+
     sd = _make_dummy_state_dict("r18")
     weights_path = tmp_path / "LibreL2CSr18.pt"
     torch.save(sd, weights_path)
 
+    stub = CallableFaceDetector(fn=lambda img: [])
+    calls = {"n": 0}
+
+    def fake_default():
+        calls["n"] += 1
+        return stub
+
+    monkeypatch.setattr(l2cs_inference, "default_face_detector", fake_default)
+
     model = LibreL2CS(str(weights_path), size="r18", device="cpu")
     img = Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8))
-    with pytest.raises(RuntimeError, match="no face source"):
-        model(img)
+    result = model(img)
+    assert len(result.boxes) == 0
+    assert len(result.gaze) == 0
+    assert model.face_detector is stub
+    # The detector is cached on the model, not rebuilt per call.
+    model(img)
+    assert calls["n"] == 1
+
+
+def test_resolve_face_detector_by_name():
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector, YuNetFaceDetector
+
+    assert isinstance(resolve_face_detector("haar"), HaarCascadeFaceDetector)
+    assert isinstance(resolve_face_detector("yunet"), YuNetFaceDetector)
+    assert resolve_face_detector("auto") is not None
+    with pytest.raises(ValueError, match="haar"):
+        resolve_face_detector("retinanet-xxl")
+
+
+def test_default_face_detector_matches_opencv_version():
+    """Haar on OpenCV 4 (bundled cascade), YuNet on OpenCV 5 (Haar removed)."""
+    import cv2
+
+    from libreyolo.models.l2cs import (
+        HaarCascadeFaceDetector,
+        YuNetFaceDetector,
+        default_face_detector,
+    )
+
+    detector = default_face_detector()
+    if hasattr(cv2, "CascadeClassifier"):
+        assert isinstance(detector, HaarCascadeFaceDetector)
+    else:
+        assert isinstance(detector, YuNetFaceDetector)
+
+
+def test_haar_detector_runs_on_blank_image():
+    """The cascade loads from the bundled OpenCV data and returns a clean
+    empty list when there is nothing to find (OpenCV 4 only)."""
+    import cv2
+
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    if not hasattr(cv2, "CascadeClassifier"):
+        pytest.skip("OpenCV 5 removed the Haar cascade API")
+    detector = HaarCascadeFaceDetector()
+    faces = detector(np.zeros((120, 120, 3), dtype=np.uint8))
+    assert faces == []
+
+
+def test_haar_detector_helpful_error_on_opencv5(monkeypatch):
+    """On OpenCV 5 the Haar detector fails loudly with a pointer to YuNet."""
+    import cv2
+
+    from libreyolo.models.l2cs import HaarCascadeFaceDetector
+
+    if hasattr(cv2, "CascadeClassifier"):
+        monkeypatch.delattr(cv2, "CascadeClassifier")
+    with pytest.raises(RuntimeError, match="yunet"):
+        HaarCascadeFaceDetector()(np.zeros((32, 32, 3), dtype=np.uint8))
+
+
+def test_yunet_detector_runs_on_blank_image():
+    """YuNet loads and returns [] on a blank image. Skipped unless the model
+    file is already cached locally, so the unit suite stays offline."""
+    from libreyolo.models.l2cs.face import _YUNET_FILENAME, YuNetFaceDetector
+
+    cached = Path("weights") / _YUNET_FILENAME
+    if not cached.exists():
+        pytest.skip("YuNet model not cached; skipping to stay offline")
+    detector = YuNetFaceDetector(model_path=str(cached))
+    faces = detector(np.zeros((120, 120, 3), dtype=np.uint8))
+    assert faces == []
 
 
 def test_libre_l2cs_no_faces_returns_empty(tmp_path):
