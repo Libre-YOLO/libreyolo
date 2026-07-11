@@ -263,7 +263,10 @@ requires-dist = []
 [tool.ruff]
 # Vendored from upstream DEIMv2. Keep local lint focused on the LibreYOLO
 # wrapper/integration code instead of rewriting third-party implementation files.
-extend-exclude = ["libreyolo/models/deimv2/engine"]
+extend-exclude = [
+    "libreyolo/models/deimv2/engine",
+    "libreyolo/models/depth_anything3/_vendor",
+]
 
 [tool.ty.rules]
 # Rules that catch real bugs — keep as errors

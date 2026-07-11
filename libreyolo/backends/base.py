@@ -66,6 +66,7 @@ _RECTANGULAR_BACKEND_FAMILIES = {
 
 # Real-ESRGAN integer upscale factor per size, used by scale-aware restore decode.
 _REALESRGAN_BACKEND_SCALE = {"x4": 4, "x2": 2, "x4t": 4}
+_SWINIR_BACKEND_SCALE = {"s": 4, "m": 4, "l": 4}
 _REALESRGAN_BACKEND_PAD_MULTIPLE = {"x4": 1, "x2": 2, "x4t": 1}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
@@ -652,6 +653,8 @@ class BaseBackend(ABC):
 
         if self.model_family == "realesrgan":
             return _REALESRGAN_BACKEND_SCALE.get(str(self.model_size), 1)
+        if self.model_family == "swinir":
+            return _SWINIR_BACKEND_SCALE.get(str(self.model_size), 1)
         return 1
 
     def _preprocess_restore_native(self, image, color_format):

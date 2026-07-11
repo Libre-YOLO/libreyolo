@@ -139,6 +139,23 @@
     "optional_extra": null,
     "available": true
   },
+  "depth_anything3": {
+    "class": "libreyolo.models.depth_anything3.model.LibreDepthAnything3",
+    "tasks": [
+      "depth"
+    ],
+    "default_task": "depth",
+    "sizes": {
+      "l": 504
+    },
+    "default_imgsz": {
+      "l": 504
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": null,
+    "available": true
+  },
   "dfine": {
     "class": "libreyolo.models.dfine.model.LibreDFINE",
     "tasks": [
@@ -791,7 +808,8 @@
   "rtmdet": {
     "class": "libreyolo.models.rtmdet.model.LibreRTMDet",
     "tasks": [
-      "detect"
+      "detect",
+      "segment"
     ],
     "default_task": "detect",
     "sizes": {
@@ -808,7 +826,22 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      },
+      "segment": {
+        "t": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
     "available": true
@@ -893,6 +926,27 @@
     "task_sizes": {},
     "export_override": "blocked",
     "optional_extra": "vlm",
+    "available": true
+  },
+  "swinir": {
+    "class": "libreyolo.models.swinir.model.LibreSwinIR",
+    "tasks": [
+      "restore"
+    ],
+    "default_task": "restore",
+    "sizes": {
+      "s": 64,
+      "m": 64,
+      "l": 64
+    },
+    "default_imgsz": {
+      "s": 64,
+      "m": 64,
+      "l": 64
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
     "available": true
   },
   "yolo1": {

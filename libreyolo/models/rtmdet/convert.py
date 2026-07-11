@@ -1,4 +1,4 @@
-"""Upstream RTMDet checkpoint key remapping.
+"""Upstream RTMDet and RTMDet-Ins checkpoint key remapping.
 
 Upstream mm-series RTMDet checkpoints name the detection head ``bbox_head``
 where LibreRTMDet uses ``head``, and carry normalization constants under
@@ -20,7 +20,11 @@ DROP_PREFIXES = ("data_preprocessor.",)
 
 
 def is_upstream_state_dict(state_dict: dict) -> bool:
-    """True for mm-series ``bbox_head`` naming (vs LibreRTMDet's ``head``)."""
+    """True for mm-series ``bbox_head`` naming (vs LibreRTMDet's ``head``).
+
+    This covers both detection heads and RTMDet-Ins heads carrying
+    ``rtm_kernel`` and ``mask_head`` tensors.
+    """
     return any(
         k.startswith("bbox_head.") and ("rtm_cls" in k or "rtm_reg" in k)
         for k in state_dict

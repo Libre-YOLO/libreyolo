@@ -14,6 +14,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | deim | detect | exp | ✓ | exp | exp |  |  |  |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| depth_anything3 | depth |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
@@ -51,10 +52,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
+| rtmdet | segment | exp | exp | exp | exp | exp |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
+| swinir | restore | exp | exp | exp | exp | exp |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
@@ -98,6 +101,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `depth_anything` / `depth` / `ncnn`: PNNX 20260526 reports unsupported batch-index reshapes in the DINOv2 transformer graph; the produced NCNN artifact fails numeric parity.
 - `depth_anything` / `depth` / `tflite`: onnx2tf 2.4.x converts the DINOv2 depth graph, but LiteRT rejects a generated FILL node because its dimensions are invalid.
 - `depth_anything` / `depth` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `depth_anything3` / `depth` / `onnx`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `torchscript`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `tensorrt`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `openvino`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `ncnn`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `tflite`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
+- `depth_anything3` / `depth` / `coreml`: Depth Anything 3 currently rejects export for every format; its depth graph has not been added to the exported-runtime contract.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -247,6 +257,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `rtmdet` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `rtmdet` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `sam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
 - `sam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
@@ -274,6 +286,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `smolvlm2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `swinir` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo1` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; LiteRT cannot prepare the converted detector graph.

@@ -76,6 +76,7 @@ and receive the heaviest testing:
 | deim | detect | exp | ✓ | exp | exp |  |  |  |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| depth_anything3 | depth |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
@@ -113,10 +114,12 @@ and receive the heaviest testing:
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
 | rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
+| rtmdet | segment | exp | exp | exp | exp | exp |  |  |
 | sam | segment |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |
+| swinir | restore | exp | exp | exp | exp | exp |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
@@ -130,6 +133,23 @@ and receive the heaviest testing:
 | yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
 | zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
 <!-- export-support:end -->
+
+## Depth estimation
+
+Depth Anything 3 mono-large is the recommended quality default for relative
+monocular depth:
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreDepthAnything3l-depth.pt")
+result = model("image.jpg")[0]
+inverse_depth = result.depth_map.data  # (H, W), higher means closer
+```
+
+The checkpoint is Apache-2.0 and downloads from the LibreYOLO Hugging Face
+organization. Depth Anything V2 remains available for compatibility, while
+ZipDepth provides the lightweight edge tier.
 
 ## License
 

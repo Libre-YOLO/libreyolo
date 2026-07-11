@@ -133,12 +133,15 @@ Used for: RepConv fuse / re-parameterization logic
 mmdetection (OpenMMLab)
 --------------------------------------------------------------------
 Source: https://github.com/open-mmlab/mmdetection
+Commit: cfd5d3a985b0249de009b67d04f37263e11cdf3d
 License: Apache License 2.0
 Copyright (c) OpenMMLab. All rights reserved.
 Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
-          port in nn.py; QualityFocalLoss, GIoULoss,
+          port in nn.py, including the RTMDet-Ins head and mask decoder;
+          QualityFocalLoss, GIoULoss,
           DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
-          Published RTMDet COCO weights were trained with mmdetection.
+          Published RTMDet and RTMDet-Ins COCO weights were trained with
+          mmdetection.
 
 --------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)
@@ -386,6 +389,29 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+Depth Anything 3 (ByteDance Seed)
+--------------------------------------------------------------------
+Source: https://github.com/ByteDance-Seed/Depth-Anything-3
+Pinned commit: 41736238f5bced4debf3f2a12375d2466874866d
+License: Apache License 2.0
+Copyright (c) 2025 ByteDance Ltd. and/or its affiliates.
+Used for: DA3MONO-LARGE model family (ViT-L encoder + DPT depth and sky
+          heads) vendored under libreyolo/models/depth_anything3/_vendor/.
+          The DINOv2 subcomponents retain Meta Platforms Apache-2.0
+          copyright headers. LibreYOLO adaptations remove unused runtime
+          dependencies, add internal ImageNet normalization, reproduce the
+          official sky handling, and convert positive relative depth to the
+          library's relative inverse-depth output contract.
+
+Weight source: https://huggingface.co/depth-anything/DA3MONO-LARGE
+Pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+Weight license: Apache License 2.0
+Conversion: weights/convert_depth_anything3_weights.py removes only the
+            outer model. prefix and wraps 406 unchanged tensors in the
+            LibreYOLO checkpoint schema. Only DA3MONO-LARGE is hosted.
+            CC-BY-NC-4.0 Large/Giant/Nested weights are excluded.
+
+--------------------------------------------------------------------
 ZipDepth (University of Bologna)
 --------------------------------------------------------------------
 Source: https://github.com/fabiotosi92/ZipDepth
@@ -461,6 +487,27 @@ Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
           lineage in libreyolo/models/realesrgan/nn.py. Module and
           parameter names mirror BasicSR so the released Real-ESRGAN
           state dicts convert with a plain metadata-wrap.
+
+--------------------------------------------------------------------
+SwinIR (Jingyun Liang et al.)
+--------------------------------------------------------------------
+Source: https://github.com/JingyunLiang/SwinIR
+        (commit 6545850fbf8df298df73d81f3e8cba638787c8bd)
+License: Apache License 2.0
+Copyright 2021 SwinIR Authors.
+Citation: Liang, J., Cao, J., Sun, G., Zhang, K., Van Gool, L., and
+          Timofte, R. "SwinIR: Image Restoration Using Swin
+          Transformer." ICCV Workshops 2021.
+Used for: the SwinIR super-resolution generator in
+          libreyolo/models/swinir/nn.py. Module and parameter names
+          mirror upstream so the official released checkpoints load
+          without tensor remapping. The LibreYOLO wrapper adds the
+          restore task, native-resolution preprocessing, tiling,
+          validation, and checkpoint metadata.
+
+NOTE - weights: the official SwinIR-S x4 lightweight and SwinIR-M/L x4
+real-world checkpoints are published with the Apache-2.0 project release.
+LibreYOLO does not bundle checkpoint files in the source distribution.
 
 --------------------------------------------------------------------
 BiRefNet (Peng Zheng et al.)

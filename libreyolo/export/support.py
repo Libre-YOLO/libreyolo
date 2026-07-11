@@ -613,6 +613,10 @@ _TASK_BLOCKS = {
 }
 
 _FAMILY_BLOCKS = {
+    "depth_anything3": (
+        "Depth Anything 3 currently rejects export for every format; its "
+        "depth graph has not been added to the exported-runtime contract."
+    ),
     "eomt": "EoMT export does not yet have semantic, instance, or panoptic runtime parsing.",
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",

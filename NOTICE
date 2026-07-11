@@ -79,6 +79,17 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+Depth Anything 3 (Apache License 2.0)
+    Path:    libreyolo/models/depth_anything3/_vendor/
+    License: libreyolo/models/depth_anything3/NOTICE
+    Source:  https://github.com/ByteDance-Seed/Depth-Anything-3
+    Commit:  41736238f5bced4debf3f2a12375d2466874866d
+
+    The DA3MONO-LARGE ViT-L encoder and DPT head are adapted from ByteDance
+    Seed's Apache-2.0 implementation. DINOv2 subcomponents retain Meta
+    Platforms Apache-2.0 headers. Package-relative imports and dependency-free
+    tensor reshapes do not alter learned parameters or monocular outputs.
+
 NAFNet (MIT License)
     Path:    libreyolo/models/nafnet/
     License: libreyolo/models/nafnet/NOTICE  (MIT)
@@ -108,6 +119,18 @@ Real-ESRGAN / BasicSR (BSD-3-Clause / Apache-2.0)
     realesr-general-x4v3) are distributed under the BSD-3-Clause License;
     LibreYOLO mirrors converted checkpoints with this provenance stated in the
     model cards.
+
+SwinIR (Apache-2.0)
+    Path:    libreyolo/models/swinir/
+    License: libreyolo/models/swinir/NOTICE
+    Source:  https://github.com/JingyunLiang/SwinIR
+             commit 6545850fbf8df298df73d81f3e8cba638787c8bd
+
+    The LibreSwinIR generator is a modified port of the official SwinIR
+    network_swinir.py implementation. Upstream parameter names are preserved
+    for strict loading of the Apache-2.0 released checkpoints. LibreYOLO adds
+    restore-task integration, preprocessing, postprocessing, validation, and
+    checkpoint metadata.
 
 Darknet YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4 (public domain)
     Path:    libreyolo/models/darknet/, libreyolo/models/yolo1|yolo2|yolo3|yolo4/
