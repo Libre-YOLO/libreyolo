@@ -55,6 +55,7 @@ The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
 |---|---|---|---|
 | SAM-1 | `LibreSAM("base")`, `LibreSAM1("base")` | `facebook/sam-vit-*` | Default promptable family. |
 | SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `LibreYOLO/LibreSAM2*` | Image segmentation only in v1. |
+| SAM 3 image | `LibreSAM("sam3")`, `LibreSAM3("large")` | `facebook/sam3` | Visual prompts plus concept text prompts; gated custom-license weights. |
 | MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
 
 ## Public API
@@ -77,6 +78,9 @@ a = model.predict(points=[500, 375], labels=[1])           # ...prompt cheaply
 b = model.predict(bboxes=[100, 100, 200, 200])
 model.reset_image()
 
+sam3 = LibreSAM("sam3")
+r = sam3.predict("img.jpg", text="yellow school bus")  # all matching instances
+
 r.masks.xy        # polygons
 r.boxes.xyxy      # tight boxes derived from masks
 ```
@@ -90,6 +94,16 @@ r.boxes.xyxy      # tight boxes derived from masks
   confidence). `None` keeps all in the prompted path and applies the family grid
   threshold in "segment everything"; `0.0` disables filtering in either mode.
 - `device=` on `predict` moves the model and invalidates the cached embedding.
+- SAM 3 visual prompts follow the same contract through `Sam3TrackerModel`.
+  Its `text=` extension instead performs Promptable Concept Segmentation through
+  a lazily loaded `Sam3Model`; text is mutually exclusive with points and boxes.
+  `conf` is the PCS detection score on this path, and returned `names` maps class
+  `0` to the requested concept. `conf=None` uses the processor's standard 0.3
+  PCS score threshold, while explicit `conf=0.0` keeps all candidates. A text
+  call with `source=None` re-encodes the cached image because tracker and PCS
+  encoder caches are not shared.
+- The image-exemplar name `exemplars=` is reserved for a future PCS extension;
+  exemplar prompts are not implemented.
 
 ## Internal Contract
 
@@ -102,7 +116,7 @@ cached embeddings when possible so interactive sessions survive device changes.
 
 | Field             | Meaning                                              |
 |-------------------|------------------------------------------------------|
-| `FAMILY`          | family id (`sam`, `sam2`, `mobilesam`)               |
+| `FAMILY`          | family id (`sam`, `sam2`, `sam3`, `mobilesam`)       |
 | `FILENAME_PREFIX` | `Libre`-prefixed weights-dir prefix                  |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload            |
 | `INPUT_SIZES`     | `{size: nominal_px}` (1024; the processor owns resize)|
@@ -121,14 +135,26 @@ the upstream Transformers-compatible snapshots. MobileSAM code and weights are
 Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
 checkpoint is hosted separately as `LibreMobileSAM.pt`.
 
-SAM-3's custom "SAM License" is gated (download requires accepting Meta's
-terms) and would follow the existing LibreVLM license-notice pattern when added;
-the tier must not vendor SAM-licensed modeling code.
+SAM 3 model code is not vendored. LibreYOLO calls the Apache-2.0 Transformers
+implementation, while weights download directly from the gated
+`facebook/sam3` repository. Users must accept Meta's custom SAM License and
+authenticate with Hugging Face. The weights are not MIT or Apache-2.0 and are
+not redistributed by LibreYOLO. Loading logs a license notice before download.
+The SAM 3 and tracker classes first shipped in Transformers 5.0.0; LibreYOLO's
+`sam` extra already has the stricter `transformers>=5.3.0` floor.
+
+SAM 3.1 is explicitly deferred. Its custom-license implementation cannot be
+vendored into this MIT repository, and Transformers does not yet support the
+3.1 checkpoint. The implementation keeps `HF_REPOS` keyed per size so a future
+checkpoint can be added cheaply. The exact trigger is Transformers gaining SAM
+3.1 image-model support; then add the repo/alias, rerun parity and smoke tests,
+and evaluate whether image checkpoint outputs change. Object Multiplex remains
+part of a separate future video plan.
 
 ## Out Of Scope (v1)
 
-- SAM-2 video/memory and SAM-3 (concept/open-vocab seg, gated). Both slot onto
-  this same tier later.
+- SAM-2/SAM-3 video and memory paths.
+- SAM 3 image exemplars and SAM 3.1, subject to the trigger above.
 - Mask prompts (`masks=`), `train()`, `val()`, `export()`, and `track()` raise.
 - "Segment everything" is a simplified grid AMG (predicted-IoU threshold +
   box-IoU dedup); it omits stability-score filtering, multi-crop, and mask-IoU

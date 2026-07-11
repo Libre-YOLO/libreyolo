@@ -133,12 +133,15 @@ Used for: RepConv fuse / re-parameterization logic
 mmdetection (OpenMMLab)
 --------------------------------------------------------------------
 Source: https://github.com/open-mmlab/mmdetection
+Commit: cfd5d3a985b0249de009b67d04f37263e11cdf3d
 License: Apache License 2.0
 Copyright (c) OpenMMLab. All rights reserved.
 Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
-          port in nn.py; QualityFocalLoss, GIoULoss,
+          port in nn.py, including the RTMDet-Ins head and mask decoder;
+          QualityFocalLoss, GIoULoss,
           DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
-          Published RTMDet COCO weights were trained with mmdetection.
+          Published RTMDet and RTMDet-Ins COCO weights were trained with
+          mmdetection.
 
 --------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)
@@ -384,6 +387,29 @@ license. Users remain responsible for complying with each checkpoint's
 license — in particular, the CC-BY-NC-4.0 checkpoints (Base/Large/
 Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
+
+--------------------------------------------------------------------
+Depth Anything 3 (ByteDance Seed)
+--------------------------------------------------------------------
+Source: https://github.com/ByteDance-Seed/Depth-Anything-3
+Pinned commit: 41736238f5bced4debf3f2a12375d2466874866d
+License: Apache License 2.0
+Copyright (c) 2025 ByteDance Ltd. and/or its affiliates.
+Used for: DA3MONO-LARGE model family (ViT-L encoder + DPT depth and sky
+          heads) vendored under libreyolo/models/depth_anything3/_vendor/.
+          The DINOv2 subcomponents retain Meta Platforms Apache-2.0
+          copyright headers. LibreYOLO adaptations remove unused runtime
+          dependencies, add internal ImageNet normalization, reproduce the
+          official sky handling, and convert positive relative depth to the
+          library's relative inverse-depth output contract.
+
+Weight source: https://huggingface.co/depth-anything/DA3MONO-LARGE
+Pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+Weight license: Apache License 2.0
+Conversion: weights/convert_depth_anything3_weights.py removes only the
+            outer model. prefix and wraps 406 unchanged tensors in the
+            LibreYOLO checkpoint schema. Only DA3MONO-LARGE is hosted.
+            CC-BY-NC-4.0 Large/Giant/Nested weights are excluded.
 
 --------------------------------------------------------------------
 ZipDepth (University of Bologna)

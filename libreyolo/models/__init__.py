@@ -71,6 +71,9 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
     LibreDepthAnythingV2,
 )
 from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
+from .depth_anything3.model import (  # noqa: E402,F401  (import registers family)
+    LibreDepthAnything3,
+)
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
@@ -662,6 +665,7 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",
     "LibreRealESRGAN",

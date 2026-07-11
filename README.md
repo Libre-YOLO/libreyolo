@@ -108,7 +108,7 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     <tr><td>RT-DETRv2</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>RT-DETRv4</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>PicoDet</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td>exp</td><td>exp</td><td></td><td></td><td></td><td></td></tr>
-    <tr><td>RTMDet</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>RTMDet</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>EC</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td><td>exp</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>MobileNetV4</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
     <tr><td>ConvNeXt</td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -117,6 +117,23 @@ hooks via `callbacks=` and built-in experiment loggers via `loggers=`
     <tr><td>L2CS</td><td></td><td></td><td></td><td></td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
   </tbody>
 </table>
+
+## Depth estimation
+
+Depth Anything 3 mono-large is the recommended quality default for relative
+monocular depth:
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreDepthAnything3l-depth.pt")
+result = model("image.jpg")[0]
+inverse_depth = result.depth_map.data  # (H, W), higher means closer
+```
+
+The checkpoint is Apache-2.0 and downloads from the LibreYOLO Hugging Face
+organization. Depth Anything V2 remains available for compatibility, while
+ZipDepth provides the lightweight edge tier.
 
 ## License
 

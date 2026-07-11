@@ -78,6 +78,14 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    Depth Anything 3 (LibreDepthAnything3l-depth)      Apache-2.0
+             upstream: depth-anything/DA3MONO-LARGE
+             pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+             Tensors are unchanged; conversion strips the outer model.
+             prefix and adds LibreYOLO checkpoint metadata. Metric and
+             any-view checkpoints are not hosted. CC-BY-NC-4.0
+             Large/Giant/Nested checkpoints are explicitly excluded.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an
@@ -114,6 +122,11 @@ project the weights were derived from. Per-family summary:
              dictionary ships inside each checkpoint as charset
              metadata (Apache-2.0, attribution in
              libreyolo/models/ppocr/NOTICE).
+
+    SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
+             upstream: facebook/sam3 on Hugging Face. Access is gated and
+             requires accepting Meta's terms. LibreYOLO downloads the weights
+             directly and does not distribute them under the MIT license.
 
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting

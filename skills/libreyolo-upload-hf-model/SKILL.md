@@ -68,6 +68,7 @@ file = name + ".pt"
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
+| DepthAnything3 | `LibreDepthAnything3` | `LibreDepthAnything3l-depth.pt` (DA3MONO-LARGE; Apache-2.0) |
 | ZipDepth | `LibreZipDepth` | `LibreZipDepthb-depth.pt` (MIT code + weights; `bnpu` is the NPU-decoder checkpoint) |
 | FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
 
@@ -190,6 +191,8 @@ LibreDINOv2l-cls.pt,
 
 LibreDepthAnythingV2s-depth.pt, LibreDepthAnythingV2b-depth.pt,
 LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
+
+LibreDepthAnything3l-depth.pt,
 
 LibreZipDepthb-depth.pt, LibreZipDepthbnpu-depth.pt,
 

@@ -281,6 +281,7 @@ class LibreSAMModel(BaseModel):
         bboxes=None,
         labels=None,
         masks=None,
+        text: str | None = None,
         conf: Optional[float] = None,
         multimask: Optional[bool] = None,
         max_det: int = 300,
@@ -302,6 +303,8 @@ class LibreSAMModel(BaseModel):
             bboxes: ``[x1, y1, x2, y2]`` or a list of them (one mask per box).
             labels: Point labels, ``1`` positive / ``0`` negative (default all
                 positive), shaped to match ``points``.
+            text: Concept prompt. Text prompts require SAM 3; spatial-prompt
+                families raise ``NotImplementedError``.
             conf: Drop masks whose *predicted IoU* (mask-quality score, not a
                 detection confidence) is below this. ``None`` keeps all in the
                 prompted path and applies the family's grid threshold in
@@ -317,6 +320,10 @@ class LibreSAMModel(BaseModel):
                 ``DEFAULT_POINTS_PER_SIDE``; on CPU the default of 32 runs
                 ~1024 decoder passes and is slow — lower it for interactivity).
         """
+        if text is not None:
+            raise NotImplementedError(
+                "Text prompts require SAM 3; load LibreSAM('sam3')."
+            )
         if masks is not None:
             raise NotImplementedError(
                 "Mask prompts are not supported in LibreSAM v1; use points= or bboxes=."
@@ -489,7 +496,7 @@ class LibreSAMModel(BaseModel):
         return sel.bool(), conf.float()
 
     def _assemble_results(
-        self, masks, conf, img, image_path, *, conf_thres, max_det
+        self, masks, conf, img, image_path, *, conf_thres, max_det, names=None
     ) -> Results:
         from torchvision.ops import masks_to_boxes
 
@@ -508,7 +515,7 @@ class LibreSAMModel(BaseModel):
             masks, conf = masks[top], conf[top]
 
         if masks.shape[0] == 0:
-            return self._empty_results(orig_shape, image_path)
+            return self._empty_results(orig_shape, image_path, names=names)
 
         boxes = masks_to_boxes(masks.float())
         cls = torch.zeros(masks.shape[0], dtype=torch.float32)
@@ -516,11 +523,11 @@ class LibreSAMModel(BaseModel):
             boxes=Boxes(boxes, conf, cls),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
-            names=self.names,
+            names=self.names if names is None else names,
             masks=Masks(masks, orig_shape),
         )
 
-    def _empty_results(self, orig_shape, image_path) -> Results:
+    def _empty_results(self, orig_shape, image_path, *, names=None) -> Results:
         return Results(
             boxes=Boxes(
                 torch.zeros((0, 4), dtype=torch.float32),
@@ -529,7 +536,7 @@ class LibreSAMModel(BaseModel):
             ),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
-            names=self.names,
+            names=self.names if names is None else names,
         )
 
     def _segment_everything(
