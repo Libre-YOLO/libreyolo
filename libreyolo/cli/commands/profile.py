@@ -99,8 +99,9 @@ def run_cmd(
     import torch
     from libreyolo import LibreYOLO
 
-    # Enough total iterations to fill warmup+steps even on a tiny dataset; the
-    # profiler early-stops once the window is full, so extra epochs never run.
+    # Enough total iterations to fill warmup+steps even on a tiny dataset;
+    # profile_then_stop ends the run once the window is full, so extra epochs
+    # never run.
     epochs = warmup + steps + 5
     trials, trial_profiles, trial_paths, last_dir = [], [], [], None
     for i in range(max(1, repeat)):
@@ -108,7 +109,8 @@ def run_cmd(
         model = LibreYOLO(model_path=weights, size=size, device=device)
         model.train(
             data=data, epochs=epochs, batch=batch, imgsz=imgsz, workers=workers,
-            amp=amp, device=device, profile=True, profile_steps=steps,
+            amp=amp, device=device, profile=True, profile_then_stop=True,
+            profile_steps=steps,
             profile_warmup=warmup, profile_open=False, no_aug_epochs=0,
             project=project, name=name, exist_ok=True,
         )

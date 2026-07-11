@@ -43,6 +43,10 @@ libreyolo profile run <data> --weights LibreYOLO9t.pt --size t --repeat 3 --json
 ```
 
 - `<data>` is a dataset yaml/name (e.g. `coco128`). `--batch -1` auto-fits ~70% VRAM.
+- `profile run` stops right after the profile window (it passes
+  `profile_then_stop=True`). In contrast, `model.train(..., profile=True)`
+  profiles the window and then **keeps training**, so it is safe on a real or
+  resumed run.
 - **Always `--repeat 3`+** — a single run *lies* when launch-bound; `--repeat`
   gives mean ± stdev and is what makes a later `compare` significant. The
   aggregate is `runs/profile/profile_repeat.json` — use **that** path (not a
