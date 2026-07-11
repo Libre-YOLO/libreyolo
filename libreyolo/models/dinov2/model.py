@@ -95,7 +95,9 @@ class _DINOv2ModelWrapper(nn.Module):
         if isinstance(state_dict, dict):
             if "model" in state_dict and isinstance(state_dict["model"], dict):
                 state_dict = state_dict["model"]
-            elif "state_dict" in state_dict and isinstance(state_dict["state_dict"], dict):
+            elif "state_dict" in state_dict and isinstance(
+                state_dict["state_dict"], dict
+            ):
                 state_dict = state_dict["state_dict"]
         return self.segmenter.load_state_dict(state_dict, strict=strict)
 
@@ -142,7 +144,9 @@ class _DINOv2ClassifierWrapper(nn.Module):
         if isinstance(state_dict, dict):
             if "model" in state_dict and isinstance(state_dict["model"], dict):
                 state_dict = state_dict["model"]
-            elif "state_dict" in state_dict and isinstance(state_dict["state_dict"], dict):
+            elif "state_dict" in state_dict and isinstance(
+                state_dict["state_dict"], dict
+            ):
                 state_dict = state_dict["state_dict"]
         return self.classifier.load_state_dict(state_dict, strict=strict)
 
@@ -206,7 +210,9 @@ class LibreDINOv2(BaseModel):
         if not any(k.startswith("backbone.") for k in weights_dict):
             return False
         is_semantic = "predict.weight" in weights_dict
-        is_classify = "linear.weight" in weights_dict and "predict.weight" not in weights_dict
+        is_classify = (
+            "linear.weight" in weights_dict and "predict.weight" not in weights_dict
+        )
         return is_semantic or is_classify
 
     @classmethod
@@ -358,7 +364,9 @@ class LibreDINOv2(BaseModel):
         return False
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
-        core = self.model.classifier if self.task == "classify" else self.model.segmenter
+        core = (
+            self.model.classifier if self.task == "classify" else self.model.segmenter
+        )
         layers: Dict[str, nn.Module] = {}
         backbone = getattr(core, "backbone", None)
         if backbone is not None:
@@ -611,9 +619,7 @@ class LibreDINOv2(BaseModel):
                 f"Conflicting DINOv2 batch values: batch={batch} and batch_size={batch_size}"
             )
         if lr0 is not None and lr is not None and lr0 != lr:
-            raise ValueError(
-                f"Conflicting DINOv2 LR values: lr0={lr0} and lr={lr}"
-            )
+            raise ValueError(f"Conflicting DINOv2 LR values: lr0={lr0} and lr={lr}")
 
         resolved_batch = batch if batch is not None else batch_size
         resolved_lr0 = lr0 if lr0 is not None else lr
@@ -664,10 +670,14 @@ class LibreDINOv2(BaseModel):
             model.eval()
 
     # =========================================================================
-    # Export — not yet implemented
+    # Export
     # =========================================================================
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
+    def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
+        if self.task == "classify" and format.lower() == "onnx":
+            return super().export(format=format, opset=opset, **kwargs)
+        if self.task == "semantic":
+            return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
-            "Export is not yet implemented for LibreDINOv2."
+            "LibreDINOv2 classify export currently supports ONNX only."
         )

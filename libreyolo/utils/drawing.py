@@ -355,6 +355,116 @@ def draw_points(
     return img_draw
 
 
+# Fonts that can render CJK glyphs, tried in order for OCR transcripts.
+# The default label fonts (Arial/DejaVu) draw tofu boxes for Chinese and
+# Japanese text, which PP-OCR transcripts routinely contain.
+CJK_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+    "C:/Windows/Fonts/simsun.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+)
+
+_warned_no_cjk_font = False
+
+
+@lru_cache(maxsize=8)
+def _get_cjk_font(font_size: int) -> ImageFont.FreeTypeFont | None:
+    """Load and cache a CJK-capable font, or ``None`` if the system has none."""
+    for font in CJK_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(font, font_size)
+        except OSError:
+            continue
+    return None
+
+
+def _text_needs_cjk(text: str) -> bool:
+    return any(
+        "⺀" <= ch <= "鿿"
+        or "぀" <= ch <= "ヿ"
+        or "豈" <= ch <= "﫿"
+        or "＀" <= ch <= "￯"
+        for ch in text
+    )
+
+
+def draw_ocr_regions(
+    img: Image.Image,
+    polygons: Sequence,
+    texts: Sequence[str],
+    scores: Sequence[float],
+) -> Image.Image:
+    """Draw OCR text-region polygons and render each transcript nearby.
+
+    Transcripts containing CJK characters need a CJK-capable font; when the
+    system has none, boxes are still drawn and a single warning is logged.
+    """
+    global _warned_no_cjk_font
+    import logging
+
+    img_draw = img.copy()
+    draw = ImageDraw.Draw(img_draw)
+
+    max_dim = max(img.size)
+    scale = max_dim / 640.0
+    stroke = max(2, int(round(2 * scale)))
+    font_size = max(12, int(14 * scale))
+    plain_font = _get_font(font_size)
+    cjk_font = _get_cjk_font(font_size)
+    label_padding = max(2, int(2 * scale))
+    color = get_class_color(0)
+
+    for polygon, text, score in zip(polygons, texts, scores):
+        pts = [(float(p[0]), float(p[1])) for p in polygon]
+        draw.polygon(pts, outline=color, width=stroke)
+
+        label = f"{text} {float(score):.2f}" if text else f"{float(score):.2f}"
+        font = plain_font
+        if _text_needs_cjk(label):
+            if cjk_font is not None:
+                font = cjk_font
+            else:
+                if not _warned_no_cjk_font:
+                    logging.getLogger(__name__).warning(
+                        "No CJK-capable font found on this system; OCR polygons "
+                        "are drawn but CJK transcripts are omitted from the overlay."
+                    )
+                    _warned_no_cjk_font = True
+                continue
+
+        full_bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = full_bbox[2] - full_bbox[0]
+        text_height = full_bbox[3] - full_bbox[1]
+        top_left_x = min(p[0] for p in pts)
+        top_left_y = min(p[1] for p in pts)
+        label_x = min(max(0, top_left_x), max(0, img.width - text_width - label_padding * 2))
+        label_y = top_left_y - text_height - label_padding * 2
+        if label_y < 0:
+            label_y = top_left_y
+        draw.rectangle(
+            [
+                label_x,
+                label_y,
+                label_x + text_width + label_padding * 2,
+                label_y + text_height + label_padding * 2,
+            ],
+            fill=color,
+        )
+        draw.text(
+            (label_x + label_padding, label_y + label_padding),
+            label,
+            fill="white",
+            font=font,
+        )
+
+    return img_draw
+
+
 def draw_masks(
     img: Image.Image,
     masks: np.ndarray,

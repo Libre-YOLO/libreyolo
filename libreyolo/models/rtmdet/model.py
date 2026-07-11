@@ -1,11 +1,12 @@
 """LibreRTMDet: BaseModel subclass wiring RTMDet into the LibreYOLO factory.
 
 Port of RTMDet (Lyu et al., 2022) from open-mmlab/mmdetection
-(Apache-2.0). Sizes: t / s / m / l / x. Detection-only in the first PR;
-RTMDet-Ins (segmentation) lands as a follow-up.
+(Apache-2.0). Sizes: t / s / m / l / x. Supports detection and RTMDet-Ins
+instance segmentation inference and validation.
 
-Training is wired but experimental: ``model.train(..., allow_experimental=True)``.
-Inference is bit-equivalent to upstream mmdet on the same checkpoint.
+Detection training is wired but experimental via ``allow_experimental=True``.
+RTMDet-Ins training is not implemented. Inference is compatible with official
+mmdetection checkpoints.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ _TRAIN_DEFAULTS = RTMDetConfig()
 
 
 class LibreRTMDet(BaseModel):
-    """RTMDet detector (CSPNeXt backbone + CSPNeXtPAFPN neck + decoupled SepBN head).
+    """RTMDet detection and RTMDet-Ins instance segmentation.
 
     Args:
         model_path: path to a LibreRTMDet weight file, or None for a fresh model.
@@ -44,13 +45,19 @@ class LibreRTMDet(BaseModel):
 
         >>> model = LibreYOLO("LibreRTMDett.pt")
         >>> result = model("image.jpg", save=True)
+        >>> segmenter = LibreYOLO("LibreRTMDett-seg.pt")
+        >>> masks = segmenter("image.jpg")[0].masks
     """
 
     FAMILY = "rtmdet"
     FILENAME_PREFIX = "LibreRTMDet"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "l": 640, "x": 640}
-    SUPPORTED_TASKS = ("detect",)
+    SUPPORTED_TASKS = ("detect", "segment")
     DEFAULT_TASK = "detect"
+    TASK_INPUT_SIZES = {
+        "detect": INPUT_SIZES,
+        "segment": INPUT_SIZES,
+    }
     TRAIN_CONFIG = RTMDetConfig
     val_preprocessor_class = RTMDetValPreprocessor
 
@@ -63,9 +70,7 @@ class LibreRTMDet(BaseModel):
         # `rtm_cls` / `rtm_reg` are unique to RTMDet (no other family in the
         # registry uses these prefixes). Both `bbox_head.rtm_cls` (upstream)
         # and `head.rtm_cls` (LibreRTMDet checkpoints) match.
-        return any(
-            "rtm_cls" in k or "rtm_reg" in k for k in weights_dict
-        )
+        return any("rtm_cls" in k or "rtm_reg" in k for k in weights_dict)
 
     @classmethod
     def detect_size(cls, weights_dict: dict) -> Optional[str]:
@@ -82,6 +87,12 @@ class LibreRTMDet(BaseModel):
         for key in ("head.rtm_cls.0.weight", "bbox_head.rtm_cls.0.weight"):
             if key in weights_dict:
                 return int(weights_dict[key].shape[0])
+        return None
+
+    @classmethod
+    def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
+        if any("rtm_kernel" in key or ".mask_head." in key for key in weights_dict):
+            return "segment"
         return None
 
     @classmethod
@@ -103,6 +114,7 @@ class LibreRTMDet(BaseModel):
         size: str = "s",
         nb_classes: int = 80,
         device: str = "auto",
+        task: str | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -110,6 +122,7 @@ class LibreRTMDet(BaseModel):
             size=size,
             nb_classes=nb_classes,
             device=device,
+            task=task,
             **kwargs,
         )
         if isinstance(model_path, str):
@@ -120,14 +133,43 @@ class LibreRTMDet(BaseModel):
     # =========================================================================
 
     def _init_model(self) -> nn.Module:
-        return LibreRTMDetModel(size=self.size, nc=self.nb_classes)
+        return LibreRTMDetModel(
+            size=self.size,
+            nc=self.nb_classes,
+            enable_mask_head=self.task == "segment",
+        )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
-        return {
+        layers = {
             "backbone": self.model.backbone,
             "neck": self.model.neck,
             "head": self.model.head,
         }
+        if self.task == "segment":
+            layers["mask_head"] = self.model.head.mask_head
+        return layers
+
+    @property
+    def _is_segmentation(self) -> bool:
+        return self.task == "segment"
+
+    def _validate_loaded_state_dict_for_task(
+        self,
+        state_dict: dict,
+        checkpoint: dict | None = None,
+    ) -> None:
+        detected_task = self.detect_checkpoint_task(state_dict)
+        if detected_task == "segment" and self.task != "segment":
+            raise RuntimeError(
+                "RTMDet-Ins segmentation checkpoints must be loaded with "
+                "task='segment' or a '-seg' filename suffix."
+            )
+        if self.task == "segment" and detected_task is None:
+            raise RuntimeError(
+                "This RTMDet checkpoint has no instance-segmentation mask head, "
+                "but the model was initialized for task='segment'. Use an "
+                "RTMDet-Ins '-seg' checkpoint."
+            )
 
     def _strict_loading(self) -> bool:
         # share_conv aliasing means the saved state_dict has fewer keys than the
@@ -239,6 +281,11 @@ class LibreRTMDet(BaseModel):
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger
                 instance, or an iterable mixing both.
         """
+        if self.task == "segment":
+            raise NotImplementedError(
+                "RTMDet-Ins training is not implemented yet. Instance "
+                "segmentation currently supports inference and validation."
+            )
         if not allow_experimental:
             raise RuntimeError(
                 "RTMDet training is experimental. The loss + assigner follow "
@@ -261,7 +308,9 @@ class LibreRTMDet(BaseModel):
 
         try:
             data_config = load_data_config(
-                data, autodownload=True, allow_scripts=allow_download_scripts,
+                data,
+                autodownload=True,
+                allow_scripts=allow_download_scripts,
             )
             data = data_config.get("yaml_file", data)
         except Exception as e:

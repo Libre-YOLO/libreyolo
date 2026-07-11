@@ -1,10 +1,14 @@
-"""Convert open-mmlab RTMDet checkpoints to LibreRTMDet.
+"""Convert open-mmlab RTMDet and RTMDet-Ins checkpoints to LibreRTMDet.
 
 Usage::
 
     python weights/convert_rtmdet_weights.py \\
         /path/to/rtmdet_tiny_8xb32-300e_coco_*.pth \\
         weights/LibreRTMDett.pt --size t
+
+    python weights/convert_rtmdet_weights.py \
+        /path/to/rtmdet-ins_tiny_8xb32-300e_coco_*.pth \
+        weights/LibreRTMDett-seg.pt --size t --task segment
 
 The upstream `.pth` is mmengine-pickled and contains EMA weights. We:
 
@@ -28,6 +32,7 @@ import sys
 import types
 from pathlib import Path
 from typing import Any
+
 
 # Stub mmengine/mmcv before torch.load so unpickling succeeds without the
 # upstream packages installed.
@@ -87,7 +92,9 @@ def _select_state_dict(ckpt: dict) -> dict:
     if "ema_state_dict" in ckpt:
         sd = ckpt["ema_state_dict"]
         # mmengine ExpMomentumEMA prefixes module params with "module."
-        return {k[len("module.") :]: v for k, v in sd.items() if k.startswith("module.")}
+        return {
+            k[len("module.") :]: v for k, v in sd.items() if k.startswith("module.")
+        }
     if "state_dict" in ckpt:
         return ckpt["state_dict"]
     return ckpt
@@ -98,6 +105,7 @@ def convert(
     output_path: str | Path,
     size: str,
     nc: int = 80,
+    task: str | None = None,
 ) -> Path:
     print(f"[convert_rtmdet] loading {input_path}")
     ckpt: Any = torch.load(input_path, map_location="cpu", weights_only=False)
@@ -107,12 +115,27 @@ def convert(
     raw_sd = _select_state_dict(ckpt)
     print(f"[convert_rtmdet] source has {len(raw_sd)} parameters")
 
+    detected_task = (
+        "segment"
+        if any("rtm_kernel" in key or ".mask_head." in key for key in raw_sd)
+        else "detect"
+    )
+    if task is None:
+        task = detected_task
+    elif task != detected_task:
+        raise RuntimeError(
+            f"Requested task={task!r}, but checkpoint tensors identify "
+            f"task={detected_task!r}."
+        )
+
     libre_sd = _remap_keys(raw_sd)
 
     # Sanity: build a fresh model and check what loads cleanly.
-    model = LibreRTMDetModel(size=size, nc=nc)
+    model = LibreRTMDetModel(size=size, nc=nc, enable_mask_head=task == "segment")
     incompat = model.load_state_dict(libre_sd, strict=False)
-    missing = [k for k in incompat.missing_keys if not k.endswith("num_batches_tracked")]
+    missing = [
+        k for k in incompat.missing_keys if not k.endswith("num_batches_tracked")
+    ]
     unexpected = [
         k for k in incompat.unexpected_keys if not k.endswith("num_batches_tracked")
     ]
@@ -121,7 +144,9 @@ def convert(
         for k in missing[:10]:
             print(f"    - {k}")
     if unexpected:
-        print(f"[convert_rtmdet] WARNING: {len(unexpected)} unexpected keys (showing 10):")
+        print(
+            f"[convert_rtmdet] WARNING: {len(unexpected)} unexpected keys (showing 10):"
+        )
         for k in unexpected[:10]:
             print(f"    + {k}")
     if not missing and not unexpected:
@@ -134,8 +159,8 @@ def convert(
         model_family="rtmdet",
         size=size,
         nc=nc,
-        task="detect",
-        supported_tasks=("detect",),
+        task=task,
+        supported_tasks=("detect", "segment"),
         default_task="detect",
     )
 
@@ -158,9 +183,21 @@ def main():
         help="model size",
     )
     parser.add_argument("--nc", type=int, default=80, help="number of classes")
+    parser.add_argument(
+        "--task",
+        choices=["detect", "segment"],
+        default=None,
+        help="checkpoint task (auto-detected when omitted)",
+    )
     args = parser.parse_args()
 
-    convert(args.input, args.output, size=args.size, nc=args.nc)
+    convert(
+        args.input,
+        args.output,
+        size=args.size,
+        nc=args.nc,
+        task=args.task,
+    )
 
 
 if __name__ == "__main__":

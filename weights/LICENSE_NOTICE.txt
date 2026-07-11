@@ -78,6 +78,14 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    Depth Anything 3 (LibreDepthAnything3l-depth)      Apache-2.0
+             upstream: depth-anything/DA3MONO-LARGE
+             pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+             Tensors are unchanged; conversion strips the outer model.
+             prefix and adds LibreYOLO checkpoint metadata. Metric and
+             any-view checkpoints are not hosted. CC-BY-NC-4.0
+             Large/Giant/Nested checkpoints are explicitly excluded.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an
@@ -92,6 +100,11 @@ project the weights were derived from. Per-family summary:
              realesr-general-x4v3) are BSD-3-Clause; mirrored as converted
              checkpoints with provenance in the model cards.
 
+    SwinIR  (LibreSwinIR{s,m,l}-restore)               Apache-2.0
+             upstream: JingyunLiang/SwinIR
+             Official SwinIR-S x4 lightweight and SwinIR-M/L x4 real-world
+             checkpoints. Convert with weights/convert_swinir_weights.py.
+
     BiRefNet (LibreBiRefNet{t,l}-matte)                see per-size note
              upstream: ZhengPeng7/BiRefNet (code MIT)
              l (general): Hugging Face weights tagged MIT -> rehosted under
@@ -103,6 +116,22 @@ project the weights were derived from. Per-family summary:
                converter and a ready-to-run upload script are provided so the
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
+
+    PP-OCRv5 (LibrePPOCR{t,l}-ocr)                     Apache-2.0
+             upstream: PaddlePaddle/PaddleOCR (code and released
+             weights Apache-2.0). Converted from the official
+             PP-OCRv5_{mobile,server}_{det,rec} training checkpoints;
+             exact source files and SHA-256 hashes are recorded on the
+             Hugging Face model cards and in
+             weights/convert_ppocr_weights.py. The PP-OCRv5 recognition
+             dictionary ships inside each checkpoint as charset
+             metadata (Apache-2.0, attribution in
+             libreyolo/models/ppocr/NOTICE).
+
+    SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
+             upstream: facebook/sam3 on Hugging Face. Access is gated and
+             requires accepting Meta's terms. LibreYOLO downloads the weights
+             directly and does not distribute them under the MIT license.
 
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting

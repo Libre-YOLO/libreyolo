@@ -39,6 +39,44 @@ class _DummyBackend(BaseBackend):
         raise NotImplementedError
 
 
+def test_matte_backend_decodes_logits_and_resizes():
+    backend = _DummyBackend(
+        "birefnet", task="matte", supported_tasks=("matte",), imgsz=16
+    )
+    logits = np.zeros((1, 1, 16, 16), dtype=np.float32)
+    logits[..., 4:12, 4:12] = 20.0
+    result = backend._build_matte_result(
+        [logits], orig_shape=(8, 10), original_size=(10, 8), image_path=None
+    )
+
+    assert result.matte.data.shape == (8, 10)
+    assert float(result.matte.data.max()) > 0.99
+    assert float(result.matte.data.min()) == pytest.approx(0.5)
+
+
+def test_gaze_backend_decodes_head_logits_for_full_crop():
+    backend = _DummyBackend(
+        "l2cs",
+        task="gaze",
+        supported_tasks=("gaze",),
+        imgsz=448,
+        num_bins=90,
+        bin_width_deg=4.0,
+        offset_deg=-180.0,
+    )
+    yaw = np.full((1, 90), -50.0, dtype=np.float32)
+    pitch = np.full((1, 90), -50.0, dtype=np.float32)
+    yaw[0, 80] = 50.0
+    pitch[0, 10] = 50.0
+    result = backend._build_gaze_result(
+        [yaw, pitch], orig_shape=(64, 80), image_path=None
+    )
+
+    assert result.boxes.xyxy.tolist() == [[0.0, 0.0, 80.0, 64.0]]
+    assert float(result.gaze.pitch_deg[0]) == pytest.approx(-140.0, abs=1e-4)
+    assert float(result.gaze.yaw_deg[0]) == pytest.approx(140.0, abs=1e-4)
+
+
 def test_removed_family_export_is_rejected():
     """A removed-family (DAMO-YOLO) exported artifact must fail loudly instead of
     silently falling through to YOLO9 preprocessing/parsing."""
@@ -279,13 +317,11 @@ def test_rfdetr_pose_backend_parses_keypoints_not_masks():
     keypoints[0, 0, :, 1] = [0.5, 0.25]
     keypoints[0, 0, :, 2] = [2.0, -2.0]
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
-        backend._parse_rfdetr(
-            [boxes, logits, keypoints],
-            orig_w=200,
-            orig_h=100,
-            conf=0.5,
-        )
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.5,
     )
 
     assert masks is None
@@ -318,13 +354,11 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     keypoints[0, 0, 17, :7] = [0.25, 0.5, 2.0, 0.0, 0.0, 1.0, 0.0]
     keypoints[0, 0, 18, :7] = [0.75, 0.25, -2.0, 0.0, 0.0, 1.0, 0.0]
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
-        backend._parse_rfdetr(
-            [boxes, logits, keypoints],
-            orig_w=200,
-            orig_h=100,
-            conf=0.5,
-        )
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.5,
     )
 
     assert masks is None
@@ -357,12 +391,14 @@ def test_rfdetr_grouppose_backend_honors_requested_max_det():
     keypoints = np.zeros((1, 1, 34, 8), dtype=np.float32)
     keypoints[0, 0, 17, :7] = [0.25, 0.5, 2.0, 0.0, 0.0, 1.0, 0.0]
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
-        [boxes, logits, keypoints],
-        64,
-        (200, 100),
-        conf=0.0,
-        max_det=1,
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_outputs(
+            [boxes, logits, keypoints],
+            64,
+            (200, 100),
+            conf=0.0,
+            max_det=1,
+        )
     )
 
     assert masks is None
@@ -400,13 +436,11 @@ def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
     keypoints[0, 0, class_offset + 4 : class_offset + 17, 4] = -10.0
     keypoints[0, 0, class_offset + 4 : class_offset + 17, 6] = -10.0
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
-        backend._parse_rfdetr(
-            [boxes, logits, keypoints],
-            orig_w=200,
-            orig_h=100,
-            conf=0.5,
-        )
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.5,
     )
 
     assert masks is None
@@ -590,7 +624,9 @@ def test_deimv2_backend_uses_dino_val_preprocessor_for_dino_sizes():
     assert isinstance(
         dino_backend._get_val_preprocessor(img_size=640), DEIMv2DINOValPreprocessor
     )
-    assert isinstance(hgnet_backend._get_val_preprocessor(img_size=640), DEIMv2ValPreprocessor)
+    assert isinstance(
+        hgnet_backend._get_val_preprocessor(img_size=640), DEIMv2ValPreprocessor
+    )
     assert not isinstance(
         hgnet_backend._get_val_preprocessor(img_size=640),
         DEIMv2DINOValPreprocessor,
@@ -603,7 +639,7 @@ def test_ec_segment_backend_parses_masks():
         task="segment",
         supported_tasks=("detect", "segment"),
     )
-    logits = np.array([[[ -10.0, 10.0], [-10.0, -10.0]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 10.0], [-10.0, -10.0]]], dtype=np.float32)
     boxes = np.array([[[0.5, 0.5, 0.25, 0.5], [0.1, 0.1, 0.1, 0.1]]], dtype=np.float32)
     masks = np.array(
         [[[[1.0, 1.0], [1.0, 1.0]], [[-1.0, -1.0], [-1.0, -1.0]]]],
@@ -686,7 +722,9 @@ def test_ec_pose_backend_parses_flattened_keypoints():
     assert obb is None
     np.testing.assert_array_equal(classes, [0])
     np.testing.assert_allclose(boxes, [[50.0, 25.0, 150.0, 50.0]])
-    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[50.0, 50.0], [150.0, 25.0]])
+    np.testing.assert_allclose(
+        parsed_keypoints[0, :, :2], [[50.0, 50.0], [150.0, 25.0]]
+    )
     np.testing.assert_allclose(parsed_keypoints[0, :, 2], [1.0, 1.0])
     assert scores[0] > 0.99
 
@@ -701,8 +739,8 @@ def test_ec_pose_backend_uses_exported_boxes_when_present():
     boxes = np.array([[[0.5, 0.5, 0.8, 0.6]]], dtype=np.float32)
     keypoints = np.array([[[0.45, 0.45, 0.55, 0.55]]], dtype=np.float32)
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
-        [logits, boxes, keypoints], 64, (200, 100), conf=0.5
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_outputs([logits, boxes, keypoints], 64, (200, 100), conf=0.5)
     )
 
     assert scores.shape == (1,)
@@ -710,7 +748,9 @@ def test_ec_pose_backend_uses_exported_boxes_when_present():
     assert masks is None
     assert obb is None
     np.testing.assert_allclose(parsed_boxes, [[20.0, 20.0, 180.0, 80.0]])
-    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[90.0, 45.0], [110.0, 55.0]])
+    np.testing.assert_allclose(
+        parsed_keypoints[0, :, :2], [[90.0, 45.0], [110.0, 55.0]]
+    )
 
 
 def test_ec_pose_backend_does_not_clip_keypoints():
@@ -726,7 +766,9 @@ def test_ec_pose_backend_does_not_clip_keypoints():
         [logits, keypoints], 64, (200, 100), conf=0.5
     )
 
-    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[-50.0, 125.0], [100.0, 50.0]])
+    np.testing.assert_allclose(
+        parsed_keypoints[0, :, :2], [[-50.0, 125.0], [100.0, 50.0]]
+    )
     np.testing.assert_allclose(boxes, [[-50.0, 50.0, 100.0, 125.0]])
 
 
@@ -863,12 +905,14 @@ def test_yolonas_pose_backend_parses_keypoints_and_bottom_right_letterbox():
     )
     keypoints_conf = np.array([[[0.8, 0.7], [0.1, 0.1]]], dtype=np.float32)
 
-    parsed_boxes, parsed_scores, classes, masks, obb, keypoints = backend._parse_outputs(
-        [boxes, scores, keypoints_xy, keypoints_conf],
-        100,
-        (200, 100),
-        conf=0.5,
-        ratio=None,
+    parsed_boxes, parsed_scores, classes, masks, obb, keypoints = (
+        backend._parse_outputs(
+            [boxes, scores, keypoints_xy, keypoints_conf],
+            100,
+            (200, 100),
+            conf=0.5,
+            ratio=None,
+        )
     )
 
     assert masks is None
@@ -922,13 +966,15 @@ def test_yolonas_pose_backend_preselects_requested_max_det():
     keypoints_xy = np.zeros((1, count, 2, 2), dtype=np.float32)
     keypoints_conf = np.ones((1, count, 2), dtype=np.float32)
 
-    parsed_boxes, parsed_scores, classes, masks, obb, keypoints = backend._parse_outputs(
-        [boxes, scores, keypoints_xy, keypoints_conf],
-        100,
-        (200, 100),
-        conf=0.0,
-        ratio=None,
-        max_det=count,
+    parsed_boxes, parsed_scores, classes, masks, obb, keypoints = (
+        backend._parse_outputs(
+            [boxes, scores, keypoints_xy, keypoints_conf],
+            100,
+            (200, 100),
+            conf=0.0,
+            ratio=None,
+            max_det=count,
+        )
     )
 
     assert parsed_boxes.shape == (count, 4)
@@ -1100,8 +1146,8 @@ def test_rfdetr_pose_backend_reshapes_batched_flattened_keypoints():
         dtype=np.float32,
     )
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
-        [boxes, logits, keypoints], 64, (100, 200), conf=0.5
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_outputs([boxes, logits, keypoints], 64, (100, 200), conf=0.5)
     )
 
     assert parsed_boxes.shape == (2, 4)
@@ -1129,8 +1175,8 @@ def test_rfdetr_pose_backend_accepts_xy_only_keypoints():
     logits = np.array([[[10.0]]], dtype=np.float32)
     keypoints = np.array([[[0.1, 0.2, 0.3, 0.4]]], dtype=np.float32)
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
-        [boxes, logits, keypoints], 64, (100, 200), conf=0.5
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_outputs([boxes, logits, keypoints], 64, (100, 200), conf=0.5)
     )
 
     assert parsed_boxes.shape == (1, 4)
@@ -1183,10 +1229,12 @@ def test_rfdetr_classic_pose_slices_background_logits_before_topk():
         dtype=np.float32,
     )
     logits = np.array([[[-10.0, 12.0], [9.0, -12.0]]], dtype=np.float32)
-    keypoints = np.array([[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]], dtype=np.float32)
+    keypoints = np.array(
+        [[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]], dtype=np.float32
+    )
 
-    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = backend._parse_outputs(
-        [boxes, logits, keypoints], 64, (100, 200), conf=0.6
+    parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
+        backend._parse_outputs([boxes, logits, keypoints], 64, (100, 200), conf=0.6)
     )
 
     assert parsed_boxes.shape == (1, 4)
@@ -1194,7 +1242,9 @@ def test_rfdetr_classic_pose_slices_background_logits_before_topk():
     assert classes.tolist() == [0]
     assert masks is None
     assert obb is None
-    np.testing.assert_allclose(parsed_keypoints[0, :, :2], [[50.0, 120.0], [70.0, 160.0]])
+    np.testing.assert_allclose(
+        parsed_keypoints[0, :, :2], [[50.0, 120.0], [70.0, 160.0]]
+    )
 
 
 def test_rfdetr_pose_backend_rejects_invalid_grouppose_schema():
@@ -1336,9 +1386,7 @@ def test_embedded_nms_backend_applies_post_clip_nms():
 
     assert masks is None
     assert len(result.boxes) == 1
-    np.testing.assert_allclose(
-        result.boxes.xyxy.numpy(), [[0.0, 0.0, 100.0, 50.0]]
-    )
+    np.testing.assert_allclose(result.boxes.xyxy.numpy(), [[0.0, 0.0, 100.0, 50.0]])
     np.testing.assert_allclose(result.boxes.conf.numpy(), [0.9])
 
 
@@ -1703,6 +1751,6 @@ def test_backend_rejects_unsupported_explicit_task():
         _DummyBackend("yolo9", task="segment", supported_tasks=("detect",))
 
 
-def test_backend_rejects_point_task_until_parser_exists():
-    with pytest.raises(NotImplementedError, match="point-task inference"):
-        _DummyBackend("fomo", task="point", supported_tasks=("point",))
+def test_backend_accepts_fomo_point_task_with_shared_parser():
+    backend = _DummyBackend("fomo", task="point", supported_tasks=("point",))
+    assert backend.task == "point"

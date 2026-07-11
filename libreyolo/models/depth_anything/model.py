@@ -164,9 +164,7 @@ class LibreDepthAnythingV2(BaseModel):
         color_format: str = "auto",
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
-        effective_res = (
-            input_size if input_size is not None else self._get_input_size()
-        )
+        effective_res = input_size if input_size is not None else self._get_input_size()
         if effective_res % self.depth_imgsz_divisor:
             raise ValueError(
                 f"Depth Anything V2 imgsz={effective_res} must be divisible by "
@@ -230,7 +228,5 @@ class LibreDepthAnythingV2(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError(
-            "Export is not implemented for Depth Anything V2 yet (depth export is "
-            "out of scope per ADR 0006: depth task contract)."
-        )
+        """Export through the shared fixed-resolution depth contract."""
+        return super().export(format=format, **kwargs)

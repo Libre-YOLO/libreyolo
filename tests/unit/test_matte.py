@@ -7,6 +7,7 @@ paired-folder resolution, checkpoint discrimination, and the train() guard.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,66 @@ from PIL import Image
 pytestmark = pytest.mark.unit
 
 FIXT = Path(__file__).resolve().parents[1] / "fixtures" / "matte8"
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    os.environ.get("LIBREYOLO_RUN_REAL_EXPORT_PARITY") != "1",
+    reason="set LIBREYOLO_RUN_REAL_EXPORT_PARITY=1 for BiRefNet export parity",
+)
+@pytest.mark.parametrize(
+    "format",
+    [
+        pytest.param(
+            "onnx",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="ONNX Runtime CPU has no DeformConv(19) implementation",
+            ),
+        ),
+        "torchscript",
+    ],
+)
+def test_birefnet_real_export_raw_parity(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+
+    from libreyolo import LibreBiRefNet, LibreYOLO
+    from libreyolo.export.exporter import OnnxExporter
+
+    torch.manual_seed(0)
+    model = LibreBiRefNet(None, size="t", device="cpu")
+    model.model.eval()
+    tensor = torch.rand(1, 3, 1024, 1024)
+    exporter = OnnxExporter(model)
+    with exporter._model_context("cpu", False, False, 1, (1024, 1024)) as (
+        wrapped,
+        _,
+    ):
+        with torch.no_grad():
+            expected = wrapped(tensor)
+    if isinstance(expected, torch.Tensor):
+        expected = (expected,)
+
+    artifact = model.export(
+        format=format,
+        imgsz=1024,
+        dynamic=False,
+        simplify=False,
+        output_path=str(tmp_path / f"birefnet-matte.{format}"),
+    )
+    actual = LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+
+    assert len(actual) == len(expected)
+    rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
+    for actual_output, expected_output in zip(actual, expected):
+        np.testing.assert_allclose(
+            actual_output,
+            expected_output.detach().cpu().numpy(),
+            rtol=rtol,
+            atol=atol,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -57,7 +118,9 @@ def test_results_matte_cutout_and_save(tmp_path):
     matte = np.zeros((h, w), np.float32)
     matte[6:18, 8:24] = 1.0
     rgb = (np.random.default_rng(0).integers(0, 255, (h, w, 3))).astype(np.uint8)
-    r = Results(boxes=None, orig_shape=(h, w), path=None, names={0: "matte"}, matte=Matte(matte))
+    r = Results(
+        boxes=None, orig_shape=(h, w), path=None, names={0: "matte"}, matte=Matte(matte)
+    )
 
     cut = r.cutout(image=rgb)
     assert cut.shape == (h, w, 4) and cut.dtype == np.uint8

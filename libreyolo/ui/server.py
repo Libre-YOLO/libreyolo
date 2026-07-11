@@ -110,6 +110,10 @@ def _summarize_result(result) -> tuple[str, str]:
     if getattr(result, "matte", None) is not None:
         return "matte", "alpha matte"
 
+    ocr = getattr(result, "ocr", None)
+    if ocr is not None:
+        return "ocr", _plural(len(ocr), "text region")
+
     return "detect", "0 objects"
 
 
@@ -129,6 +133,10 @@ def _result_count(result) -> int:
     panoptic = getattr(result, "panoptic", None)
     if panoptic is not None:
         return int(len(panoptic.segments_info))
+
+    ocr = getattr(result, "ocr", None)
+    if ocr is not None:
+        return int(len(ocr))
 
     return 0
 

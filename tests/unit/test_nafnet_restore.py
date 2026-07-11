@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import importlib.util
 import random
 from pathlib import Path
 
@@ -100,30 +101,44 @@ def test_exported_backend_restore_preprocess_rejects_images_larger_than_canvas()
         BaseBackend._preprocess_restore(img, input_size=(16, 16), color_format="rgb")
 
 
-def test_nafnet_fixed_onnx_export_roundtrip(tmp_path):
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+def test_nafnet_fixed_export_roundtrip(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    if format == "ncnn" and (
+        importlib.util.find_spec("pnnx") is None
+        or importlib.util.find_spec("ncnn") is None
+    ):
+        pytest.skip("PNNX and NCNN are required")
+    from libreyolo import LibreYOLO
 
-    from libreyolo.backends.onnx import OnnxBackend
-
-    export_path = tmp_path / "nafnet_restore.onnx"
+    export_path = tmp_path / f"nafnet_restore.{format}"
     model = LibreNAFNet(model_path=None, size="s", device="cpu")
     model.model.eval()
 
+    image = Image.fromarray(
+        np.random.default_rng(0).integers(0, 256, (12, 13, 3), dtype=np.uint8),
+        mode="RGB",
+    )
+    native = model(image).restored.array
+
     path = model.export(
-        format="onnx",
+        format=format,
         output_path=str(export_path),
         imgsz=16,
-        dynamic=True,
+        dynamic=False,
         simplify=False,
         opset=13,
     )
-    backend = OnnxBackend(path, device="cpu")
-    result = backend(Image.fromarray(np.zeros((5, 7, 3), dtype=np.uint8), mode="RGB"))
+    result = LibreYOLO(path, device="cpu")(image)
 
     assert result.boxes is None
-    assert result.restored.array.shape == (5, 7, 3)
+    assert result.restored.array.shape == (12, 13, 3)
     assert result.restored.array.dtype == np.uint8
+    assert (
+        int(np.abs(native.astype(int) - result.restored.array.astype(int)).max()) <= 1
+    )
 
 
 def test_restore_task_aliases_and_filename_suffix():
@@ -143,7 +158,9 @@ def test_nafnet_sidd_variant_filename_and_download_url():
     # the default GoPro-style restore name carries no variant
     assert LibreNAFNet.detect_variant_from_filename("LibreNAFNetl-restore.pt") is None
     url = LibreNAFNet.get_download_url(fname)
-    assert url.endswith("LibreYOLO/LibreNAFNetl-restore-sidd/resolve/main/LibreNAFNetl-restore-sidd.pt")
+    assert url.endswith(
+        "LibreYOLO/LibreNAFNetl-restore-sidd/resolve/main/LibreNAFNetl-restore-sidd.pt"
+    )
 
 
 def test_infer_nafnet_config_distinguishes_layouts():
@@ -340,8 +357,8 @@ def _make_restore_pair(root: Path, imgsz: int):
     target_dir = root / "targets" / "train"
     input_dir.mkdir(parents=True)
     target_dir.mkdir(parents=True)
-    base = (np.arange(imgsz * imgsz * 3) % 256).astype(np.uint8).reshape(
-        imgsz, imgsz, 3
+    base = (
+        (np.arange(imgsz * imgsz * 3) % 256).astype(np.uint8).reshape(imgsz, imgsz, 3)
     )
     target = (255 - base).astype(np.uint8)
     Image.fromarray(base, mode="RGB").save(input_dir / "sample.png")
@@ -412,8 +429,12 @@ def test_restore_vflip_and_rot90_actually_occur_and_match_prediction(tmp_path):
 
     random.seed(seed)
     inp, tgt, _, _ = dataset[0]
-    assert torch.equal(inp, torch.from_numpy(exp_inp).permute(2, 0, 1).float().div(255.0))
-    assert torch.equal(tgt, torch.from_numpy(exp_tgt).permute(2, 0, 1).float().div(255.0))
+    assert torch.equal(
+        inp, torch.from_numpy(exp_inp).permute(2, 0, 1).float().div(255.0)
+    )
+    assert torch.equal(
+        tgt, torch.from_numpy(exp_tgt).permute(2, 0, 1).float().div(255.0)
+    )
 
 
 def test_restore_augment_false_is_native_and_untransformed(tmp_path):

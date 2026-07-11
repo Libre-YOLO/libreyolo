@@ -48,6 +48,8 @@ def result(**attrs):
             result(panoptic=SimpleNamespace(segments_info=[{}, {}, {}])),
             ("panoptic", "3 segments"),
         ),
+        (result(ocr=[object(), object()]), ("ocr", "2 text regions")),
+        (result(ocr=[object()]), ("ocr", "1 text region")),
         (result(), ("detect", "0 objects")),
     ],
 )

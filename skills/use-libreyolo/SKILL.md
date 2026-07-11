@@ -140,12 +140,21 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`, `matte`. Detection — plus **RF-DETR
-segmentation** — is the heavily-tested core; other task/family combinations
-vary in maturity, so check the README compatibility table before relying on
-one. Task outputs land on matching `Results` fields (`r.semantic_mask`,
-`r.depth_map`, `r.restored`, `r.points`, `r.matte`, …). Matte adds
-`r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
+`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`. Detection — plus
+**RF-DETR segmentation** — is the heavily-tested core; other task/family
+combinations vary in maturity, so check the README compatibility table before
+relying on one. Task outputs land on matching `Results` fields
+(`r.semantic_mask`, `r.depth_map`, `r.restored`, `r.points`, `r.matte`, …).
+Matte adds `r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
+
+OCR reads located text (zh/zh-TW/en/ja/pinyin with one model):
+
+```python
+model = LibreYOLO("LibrePPOCRl-ocr.pt")   # t = CPU tier, l = quality tier
+r = model("receipt.jpg")
+for poly, text, conf in zip(r.ocr.polygons, r.ocr.texts, r.ocr.conf):
+    print(text, float(conf))              # regions come in reading order
+```
 
 ## Models
 
@@ -159,12 +168,14 @@ as the source of truth. By tier:
   and the classic lineage: YOLO1/2/3/4 (inference-only; YOLO1 is the original
   2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
   recipe).
-- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
+- **Specialized:** L2CS (gaze), DepthAnything3 (recommended depth quality
+  default), DepthAnythingV2 and ZipDepth (depth alternatives), FOMO (point),
   NAFNet (restore: deblur/denoise; denoise ships as
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
   super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the
   input; big images via `predict(..., tile=512)`), BiRefNet (matte: background
-  removal, sizes t/l, fixed 1024), EoMT + PIDNet + DINOv2 (semantic).
+  removal, sizes t/l, fixed 1024), PPOCR (ocr: text detection + recognition,
+  sizes t/l), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
@@ -172,7 +183,8 @@ as the source of truth. By tier:
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
 - **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]` / `[siglip2]`
   / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
-  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP` / `LibreSigLIP2`
+  `LibreSAM2` / `LibreSAM3` / `LibreMobileSAM` (point/box-prompted masks;
+  SAM 3 also accepts concept `text=` prompts), `LibreCLIP` / `LibreSigLIP2`
   (zero-shot classify), and the `LibreVLM` family (vision-language
   detection). For the exact model aliases in each tier, use `libreyolo
   models` and the dedicated guide `skills/use-libreyolo-zero-shot/`.

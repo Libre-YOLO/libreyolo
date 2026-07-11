@@ -62,9 +62,12 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot open-vocab classify); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
+| `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
 | `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
+| `depth_anything3` | `LibreDepthAnything3` | CamelCase preserved + version (Depth Anything 3), depth-only |
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
+| `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
 
 Casing rules observed in the table:
 
@@ -90,7 +93,7 @@ exceptions being lowercase version suffixes (`DEIMv2`, `RTDETRv2`,
 The VLM and promptable SAM tiers are separate categories and do not follow this
 rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
 `LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
-`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreMobileSAM`) are not registered
+`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreSAM3`, `LibreMobileSAM`) are not registered
 into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
 downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand
@@ -143,9 +146,12 @@ ships:
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
 | `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
 | `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
+| `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
 | `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
+| `depth_anything3` | `l` (DA3MONO-LARGE ViT-L, native upper-bound 504) |
 | `zipdepth`  | `b` (base, GPU/CPU convex upsampling), `bnpu` (base capacity with the separately trained unfold-free upsampling head for NPU/edge compilers); both at short-side 384 |
 | `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
+| `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
 
@@ -190,6 +196,7 @@ From `libreyolo/tasks.py`:
 | `depth`       | `-depth` |
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
+| `ocr`         | `-ocr` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -241,6 +248,15 @@ matte filenames must carry the `-matte` suffix; task aliases such as `matting`,
 `background-removal`, `rembg`, and `dis` resolve to `matte` at the API boundary.
 See ADR 0010 for the full contract.
 
+`ocr` is the task for located text: detection quads plus transcripts. Models
+expose `Results.ocr`, a list of text regions each carrying a 4-point `polygon`
+in original-image coordinates, the recognized `text`, and recognition plus
+detection confidences, in reading order (top to bottom, then left to right).
+Detection quads are genuine polygons (rotated text) and do not populate
+`Results.boxes`. Canonical ocr filenames must carry the `-ocr` suffix; task
+aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
+the API boundary.
+
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
 only when it appears in that family's `SUPPORTED_TASKS`.
@@ -264,7 +280,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
 | `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
-| `rtmdet`    | `("detect",)` (default)             | detect | detect-only; training is gated experimental (`allow_experimental=True`) |
+| `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
@@ -275,10 +291,13 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
+| `depth_anything3` | `("depth",)`                  | depth  | Depth Anything 3 mono (ViT-L + DPT); size `l` at upper-bound 504; recommended quality default; Apache-2.0 code/weights; predict + zero-shot `val`; not trainable in LibreYOLO |
 | `zipdepth`  | `("depth",)`                        | depth  | ZipDepth lightweight CNN (RepVGG encoder + FPN decoder, DA2-L distilled); sizes `b`/`bnpu` at short-side 384; predict + zero-shot `val` + fixed-resolution ONNX/TorchScript export; MIT code and weights; not trainable in LibreYOLO |
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
 | `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
+| `ppocr`     | `("ocr",)`                          | ocr    | PP-OCRv5 two-stage text detection + recognition (zh/zh-TW/en/ja/pinyin, one dictionary); sizes `t` (mobile)/`l` (server); one composite checkpoint bundles det.* and rec.* plus the charset; predict + `val` (hmean / e2e F1 / 1-NED); inference-only; export unsupported (two-network pipeline) |
 | `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
+| `swinir`    | `("restore",)`                     | restore | SwinIR transformer super-resolution; sizes `s`/`m`/`l`, all 4x; native predict at original resolution with window padding; optional tiled inference; inference + PSNR/SSIM `val` only (no training); fixed-resolution ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -359,6 +378,9 @@ LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 
+# depth_anything3 — Depth Anything 3 mono (recommended depth quality default)
+LibreDepthAnything3l-depth.pt    # DA3MONO-LARGE ViT-L (Apache-2.0 weights)
+
 # zipdepth — ZipDepth lightweight CNN (depth-only, MIT weights)
 LibreZipDepthb-depth.pt          # base, convex upsampling (GPU/CPU default)
 LibreZipDepthbnpu-depth.pt       # base, unfold-free upsampling (NPU/edge export)
@@ -367,9 +389,18 @@ LibreZipDepthbnpu-depth.pt       # base, unfold-free upsampling (NPU/edge export
 LibreNAFNets-restore.pt
 LibreNAFNetl-restore.pt
 
+# swinir: SwinIR super-resolution (restore-only, all 4x)
+LibreSwinIRs-restore.pt
+LibreSwinIRm-restore.pt
+LibreSwinIRl-restore.pt
+
 # birefnet — BiRefNet background removal (matte-only)
 LibreBiRefNett-matte.pt          # BiRefNet_lite (Swin-T tier)
 LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
+
+# ppocr — PP-OCRv5 text detection + recognition (ocr-only)
+LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights
+LibrePPOCRl-ocr.pt               # server det + server rec (quality tier), Apache-2.0 weights
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)

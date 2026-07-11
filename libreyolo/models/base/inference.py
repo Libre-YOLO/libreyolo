@@ -22,6 +22,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import torch
 from torchvision.ops import batched_nms
 
@@ -32,6 +33,7 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_ocr_regions,
     draw_panoptic,
     draw_points,
     draw_semantic_mask,
@@ -52,6 +54,7 @@ from ...utils.results import (
     Masks,
     Matte,
     OBB,
+    OCRRegions,
     PanopticSegmentation,
     Points,
     Probs,
@@ -564,6 +567,20 @@ class InferenceRunner:
             result.save(png_path, image=original_img)
             log_saved_result(result, png_path)
             return
+        if result.boxes is None and getattr(result, "ocr", None) is not None:
+            if len(result.ocr) > 0:
+                ocr_np = result.ocr.numpy()
+                annotated_img = draw_ocr_regions(
+                    original_img,
+                    ocr_np.data,
+                    ocr_np.texts,
+                    ocr_np.conf,
+                )
+            else:
+                annotated_img = original_img.copy()
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "points", None) is not None:
             if len(result.points) > 0:
                 annotated_img = draw_points(
@@ -766,6 +783,32 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 matte=Matte(matte_t.float(), (orig_h, orig_w)),
+            )
+
+        # OCR: polygons + transcripts, no axis-aligned boxes.
+        ocr_data = detections.get("ocr")
+        if ocr_data is not None:
+            orig_w, orig_h = original_size
+            polygons = ocr_data.get("polygons")
+            polygons_t = (
+                polygons.float()
+                if isinstance(polygons, torch.Tensor)
+                else torch.as_tensor(np.asarray(polygons), dtype=torch.float32)
+                if polygons is not None and len(polygons)
+                else torch.zeros((0, 4, 2), dtype=torch.float32)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                ocr=OCRRegions(
+                    polygons_t,
+                    ocr_data.get("texts"),
+                    ocr_data.get("confidences"),
+                    ocr_data.get("det_confidences"),
+                    (orig_h, orig_w),
+                ),
             )
 
         points_data = detections.get("points")
