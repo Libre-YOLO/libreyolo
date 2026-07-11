@@ -397,3 +397,27 @@ def test_match_image_one_to_one():
     counts = match_image(preds, ["x", "x"], gt)
     assert counts["det_matches"] == 1
     assert counts["num_pred"] == 2  # the second stays a false positive
+
+
+def test_match_image_optimal_assignment_in_crowded_layouts():
+    """A greedy best-IoU-first pass would strand pred B here.
+
+    Pred A overlaps both GTs (best IoU 0.82 with GT1, 0.67 with GT2); pred B
+    only clears the threshold with GT1 (0.67). Greedy takes A-GT1 first and
+    ends with 1 match; the optimal one-to-one assignment pairs A-GT2 and
+    B-GT1 for 2 matches.
+    """
+    from libreyolo.validation.ocr_validator import match_image
+
+    def box(x1, x2):
+        return np.array([[x1, 0], [x2, 0], [x2, 10], [x1, 10]], dtype=np.float64)
+
+    gt = [
+        {"polygon": box(0, 20), "text": "one"},
+        {"polygon": box(6, 26), "text": "two"},
+    ]
+    pred_a = box(2, 22)
+    pred_b = box(0, 16)
+    counts = match_image([pred_a, pred_b], ["two", "one"], gt)
+    assert counts["det_matches"] == 2
+    assert counts["e2e_matches"] == 2

@@ -146,7 +146,12 @@ def match_image(
     pred_texts: Sequence[str],
     gt_regions: Sequence[dict],
 ) -> Dict[str, float]:
-    """Greedy one-to-one IoU matching for one image.
+    """Optimal one-to-one IoU matching for one image.
+
+    Uses a linear-sum assignment over the IoU > 0.5 candidate pairs so the
+    maximum number of valid pairs is matched (a greedy best-IoU-first pass
+    can strand a prediction in crowded layouts when its only ground truth
+    was taken by a prediction that had another option).
 
     Returns the raw counts the corpus metrics aggregate over.
     """
@@ -162,31 +167,34 @@ def match_image(
         if not ignored:
             kept_idx.append(i)
 
-    # All candidate pairs above threshold, best IoU first, one-to-one.
-    pairs = []
+    # Reward matrix over valid pairs: 1 per matchable pair (cardinality
+    # dominates) plus the IoU as a tie-break so equal-cardinality solutions
+    # prefer better-aligned pairs.
+    reward = np.zeros((len(kept_idx), len(care_gt)), dtype=np.float64)
     for pi_pos, pi in enumerate(kept_idx):
         for gi, gt in enumerate(care_gt):
             iou = polygon_iou(pred_polys[pi], gt["polygon"])
             if iou > _IOU_THRESHOLD:
-                pairs.append((iou, pi_pos, gi))
-    pairs.sort(key=lambda item: -item[0])
+                reward[pi_pos, gi] = 1.0 + iou
 
-    matched_pred: set = set()
-    matched_gt: set = set()
     det_matches = 0
     e2e_matches = 0
     ned_scores: List[float] = []
-    for _, pi_pos, gi in pairs:
-        if pi_pos in matched_pred or gi in matched_gt:
-            continue
-        matched_pred.add(pi_pos)
-        matched_gt.add(gi)
-        det_matches += 1
-        pred_text = pred_texts[kept_idx[pi_pos]]
-        gt_text = care_gt[gi]["text"]
-        ned_scores.append(one_minus_ned(normalize_text(pred_text), normalize_text(gt_text)))
-        if normalize_text(pred_text) == normalize_text(gt_text):
-            e2e_matches += 1
+    if reward.size and reward.any():
+        from scipy.optimize import linear_sum_assignment
+
+        rows, cols = linear_sum_assignment(reward, maximize=True)
+        for pi_pos, gi in zip(rows, cols):
+            if reward[pi_pos, gi] <= 0:
+                continue  # assignment filler below the IoU threshold
+            det_matches += 1
+            pred_text = pred_texts[kept_idx[pi_pos]]
+            gt_text = care_gt[gi]["text"]
+            ned_scores.append(
+                one_minus_ned(normalize_text(pred_text), normalize_text(gt_text))
+            )
+            if normalize_text(pred_text) == normalize_text(gt_text):
+                e2e_matches += 1
 
     return {
         "num_pred": len(kept_idx),
