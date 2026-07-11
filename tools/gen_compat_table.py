@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 
 START = "<!-- export-support:start -->"
 END = "<!-- export-support:end -->"
+INVENTORY_PATH = Path("reports/export_inventory.json")
 MARKERS = {"validated": "✓", "experimental": "exp", "blocked": ""}
 
 
 def _rows() -> tuple[list[str], list[str]]:
     from libreyolo.export.support import EXPORT_FORMATS, get_support
-    from libreyolo.models.inventory import collect_model_inventory
+
+    if not INVENTORY_PATH.exists():
+        raise FileNotFoundError(
+            f"Canonical model inventory is missing: {INVENTORY_PATH}. "
+            "Run tools/dump_model_inventory.py in the fully provisioned environment."
+        )
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
 
     header = ["Family", "Task", *EXPORT_FORMATS]
     readme = [
@@ -21,7 +29,7 @@ def _rows() -> tuple[list[str], list[str]]:
         "| " + " | ".join(["---", "---", *(["---:"] * len(EXPORT_FORMATS))]) + " |",
     ]
     blocked = []
-    for family, metadata in collect_model_inventory().items():
+    for family, metadata in inventory.items():
         for task in metadata["tasks"]:
             entries = [get_support(family, task, fmt) for fmt in EXPORT_FORMATS]
             readme.append(
@@ -78,9 +86,20 @@ def _replace_readme(text: str, generated: str) -> str:
         start = text.index(START)
         end = text.index(END, start) + len(END)
         return text[:start] + generated + text[end:]
-    heading = text.index("## Compatibility")
-    table_start = text.index("<table>", heading)
-    table_end = text.index("</table>", table_start) + len("</table>")
+    heading = text.find("## Compatibility")
+    if heading < 0:
+        raise ValueError(
+            "README.md has neither export-support markers nor a "
+            "'## Compatibility' section."
+        )
+    table_start = text.find("<table>", heading)
+    table_end_start = text.find("</table>", table_start)
+    if table_start < 0 or table_end_start < 0:
+        raise ValueError(
+            "README.md compatibility section has no replaceable table; "
+            "restore the export-support markers."
+        )
+    table_end = table_end_start + len("</table>")
     return text[:table_start] + generated + text[table_end:]
 
 

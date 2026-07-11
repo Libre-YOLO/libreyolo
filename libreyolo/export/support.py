@@ -44,10 +44,20 @@ def _add(
     constraint: str | None = None,
 ) -> None:
     entry = SupportEntry(tier, reason, since, constraint)
-    for family in families:
-        for task in tasks:
-            for fmt in formats:
-                SUPPORT[(family, task, fmt)] = entry
+    keys = [
+        (family, task, fmt) for family in families for task in tasks for fmt in formats
+    ]
+    seen: set[tuple[str, str, str]] = set()
+    duplicates = []
+    for key in keys:
+        if key in SUPPORT or key in seen:
+            duplicates.append(key)
+        seen.add(key)
+    if duplicates:
+        rendered = ", ".join(repr(key) for key in duplicates)
+        raise ValueError(f"Duplicate export support entries: {rendered}")
+    for key in keys:
+        SUPPORT[key] = entry
 
 
 # Existing parity-backed paths. New validated rows must land with a parity test.
@@ -55,7 +65,18 @@ _add(
     "validated",
     ("yolo9",),
     ("detect",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "coreml"),
+    ("onnx", "torchscript", "ncnn", "tflite"),
+    since="1.3",
+)
+_add(
+    "validated",
+    ("yolo9",),
+    ("detect",),
+    ("tensorrt", "openvino"),
+    reason=(
+        "Runtime parity coverage lives in tests/e2e/test_tensorrt.py and "
+        "tests/e2e/test_openvino.py."
+    ),
     since="1.3",
 )
 _add(
@@ -70,16 +91,29 @@ _add(
     "validated",
     ("rfdetr",),
     ("detect",),
-    ("onnx", "torchscript", "tensorrt", "openvino"),
+    ("onnx", "torchscript"),
     since="1.3",
 )
-_add("validated", ("rfdetr",), ("detect",), ("tflite",), since="1.3")
 _add(
     "validated",
-    ("yolo3",),
+    ("rfdetr",),
+    ("detect",),
+    ("tensorrt", "openvino"),
+    reason=(
+        "Runtime parity coverage lives in tests/e2e/test_tensorrt.py and "
+        "tests/e2e/test_openvino.py."
+    ),
+    since="1.3",
+)
+_add(
+    "experimental",
+    ("rfdetr",),
     ("detect",),
     ("tflite",),
-    since="1.3",
+    reason=(
+        "The RF-DETR converter path is available, but the project does not "
+        "yet have a runtime parity test for the generated LiteRT artifact."
+    ),
 )
 _add(
     "validated",
@@ -125,13 +159,6 @@ _add(
 )
 
 # Explicitly permitted but not yet parity-validated combinations.
-_add(
-    "experimental",
-    ("rfdetr",),
-    ("segment", "pose"),
-    ("tflite",),
-    reason="The converter path is wired, but parity is not part of the export matrix yet.",
-)
 _add(
     "blocked",
     ("rfdetr",),
@@ -179,33 +206,12 @@ _add(
 )
 _add(
     "experimental",
-    ("yolo2", "yolo4", "yolo7"),
-    ("detect",),
-    ("tflite",),
-    reason="The shared converter path is wired, but family-specific parity is pending.",
-)
-_add(
-    "experimental",
-    ("dinov2",),
-    ("classify",),
-    ("onnx",),
-    reason="The classify graph is wired; numeric parity validation is pending.",
-)
-_add(
-    "experimental",
-    ("dinov2", "eomt"),
-    ("semantic",),
-    ("onnx", "torchscript"),
-    reason="The dense-logits runtime contract is wired; parity validation is pending.",
-)
-_add(
-    "experimental",
     ("dinov2", "eomt", "pidnet"),
     ("semantic",),
     ("tensorrt", "openvino"),
     reason=(
-        "The dense-logits contract is wired, but this environment has no "
-        "TensorRT or OpenVINO runtime for parity validation."
+        "The dense-logits contract is wired, but the project has not yet "
+        "recorded TensorRT or OpenVINO runtime parity for these families."
     ),
 )
 _add(
@@ -294,8 +300,8 @@ _add(
     ("point",),
     ("tensorrt", "openvino"),
     reason=(
-        "The raw-heatmap contract is wired, but this environment has no "
-        "TensorRT or OpenVINO runtime for parity validation."
+        "The raw-heatmap contract is wired, but the project has not yet "
+        "recorded TensorRT or OpenVINO runtime parity for FOMO."
     ),
 )
 _add(
@@ -603,16 +609,17 @@ _TASK_BLOCKS = {
         "per-region cropping, so it does not fit the single-graph export contract."
     ),
     "point": (
-        "Export for point-task models is not implemented yet. Point export needs a "
-        "raw heatmap output and backend peak-decoding contract."
+        "This family is not wired to the shared point heatmap and backend "
+        "peak-decoding export contract."
     ),
     "semantic": (
-        "Export for semantic-segmentation models is not implemented yet. Semantic "
-        "export needs a dense-logits output and backend argmax contract."
+        "This family is not wired to the shared dense-logits and backend "
+        "argmax semantic export contract."
     ),
     "panoptic": "Panoptic export does not yet have a backend runtime contract.",
     "gaze": (
-        "Gaze export needs a two-head logits wrapper and backend expectation decode."
+        "This family is not wired to the shared two-head logits and backend "
+        "expectation-decoding gaze export contract."
     ),
 }
 
@@ -621,7 +628,7 @@ _FAMILY_BLOCKS = {
         "Depth Anything 3 currently rejects export for every format; its "
         "depth graph has not been added to the exported-runtime contract."
     ),
-    "eomt": "EoMT export does not yet have semantic, instance, or panoptic runtime parsing.",
+    "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
@@ -678,8 +685,8 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"
         return SupportEntry(
             "experimental",
-            f"The converter path is available, but this environment has no "
-            f"{runtime} runtime for numeric parity validation.",
+            f"The converter path is available, but the project has not yet "
+            f"recorded {runtime} runtime parity for this family and task.",
         )
     if fmt == "tflite":
         return SupportEntry(

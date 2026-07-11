@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date
 from pathlib import Path
 
 
@@ -15,7 +14,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("reports") / f"export_inventory_{date.today().isoformat()}.json",
+        default=Path("reports/export_inventory.json"),
     )
     args = parser.parse_args()
     inventory = collect_model_inventory()

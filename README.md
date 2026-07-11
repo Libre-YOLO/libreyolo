@@ -66,6 +66,9 @@ and receive the heaviest testing:
 
 ## Compatibility
 
+Training capabilities are documented per family in
+[`docs/nomenclature.md`](docs/nomenclature.md).
+
 `✓` parity-validated, `exp` experimental. Empty cells are blocked before export.
 <!-- export-support:start -->
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
@@ -107,7 +110,7 @@ and receive the heaviest testing:
 | qwen3vl | detect |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | ✓ | exp |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |

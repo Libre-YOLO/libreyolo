@@ -269,6 +269,10 @@ class NcnnBackend(BaseBackend):
             and self.task == "pose"
             and len(all_outputs) == 4
         ):
+            # PNNX output names are positional and do not carry the semantic
+            # names used by the other backends. Recover the known YOLO-NAS pose
+            # tuple from rank and final dimensions; keep this family-scoped to
+            # avoid treating coincidental dimensions in other models as scores.
             boxes = next(
                 (out for out in all_outputs if out.ndim == 3 and out.shape[-1] == 4),
                 None,

@@ -30,11 +30,24 @@ def _wrapper(family: str, task: str = "detect") -> MagicMock:
 
 
 def test_matrix_keys_use_canonical_registry_values():
-    families = set(collect_model_inventory())
+    inventory = json.loads(
+        Path("reports/export_inventory.json").read_text(encoding="utf-8")
+    )
+    families = set(inventory)
     for family, task, fmt in SUPPORT:
         assert family in families
         assert task in TASKS
         assert fmt in EXPORT_FORMATS
+
+
+def test_matrix_rejects_duplicate_explicit_keys():
+    from libreyolo.export import support
+
+    key = ("yolo9", "detect", "onnx")
+    original = support.SUPPORT[key]
+    with pytest.raises(ValueError, match="Duplicate export support entries"):
+        support._add("validated", (key[0],), (key[1],), (key[2],))
+    assert support.SUPPORT[key] is original
 
 
 @pytest.mark.parametrize(
@@ -57,6 +70,8 @@ def test_tflite_support_keys_use_canonical_tasks():
     from libreyolo.export.tflite import supported_tflite_exports
 
     assert all(task in TASKS for _, task in supported_tflite_exports())
+    assert get_support("yolo3", "detect", "tflite").tier == "blocked"
+    assert get_support("rfdetr", "detect", "tflite").tier == "experimental"
     assert get_support("rfdetr", "segment", "tflite").tier == "blocked"
 
 
@@ -101,8 +116,31 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
     assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
 
 
+def test_fallback_reasons_describe_project_support_not_developer_environment():
+    semantic = get_support("unwired_family", "semantic", "onnx")
+    tensorrt = get_support("unwired_family", "detect", "tensorrt")
+    eomt_segment = get_support("eomt", "segment", "onnx")
+
+    assert "not wired" in semantic.reason
+    assert "project has not yet recorded" in tensorrt.reason
+    assert "this environment" not in tensorrt.reason
+    assert "instance and panoptic" in eomt_segment.reason
+    assert "semantic" not in eomt_segment.reason
+
+
+def test_readme_generator_reports_missing_compatibility_anchor():
+    from tools.gen_compat_table import _replace_readme
+
+    with pytest.raises(ValueError, match="neither export-support markers"):
+        _replace_readme("# README without compatibility", "generated")
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("transformers") is None,
+    reason="the canonical inventory snapshot includes transformer-backed families",
+)
 def test_committed_inventory_matches_runtime_inventory():
-    path = Path("reports/export_inventory_2026-07-10.json")
+    path = Path("reports/export_inventory.json")
     committed = json.loads(path.read_text(encoding="utf-8"))
     assert committed == collect_model_inventory()
 
