@@ -22,10 +22,34 @@ Code source:
   reference implementation. There is no runtime dependency on the
   transformers package.
 
-Weights:
-  LibreYOLO ships no pretrained SegFormer weights for any size (b0-b5). There
-  is no conversion script and no auto-download URL — the upstream
-  nvidia/segformer-b0..b5-* checkpoints are under a non-permissive,
-  non-commercial NVIDIA license and are never mirrored or redistributed.
-  Train from scratch on your own semantic dataset via
-  LibreSegformer(...).train(...).
+Weights (NON-COMMERCIAL — read this before using them):
+  The pretrained ADE20K checkpoints LibreYOLO hosts for this family
+  (LibreSegformer{b0..b5}-sem) are converted from NVIDIA's SegFormer release
+  (nvidia/segformer-b0..b5-finetuned-ade-*, b5 being the 640-640 variant).
+  Conversion is a state-dict key remapping only; the learned parameters are
+  NVIDIA's, unchanged. See weights/convert_segformer_weights.py.
+
+  Source:  https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512
+           (and its b1-b5 siblings)
+  License: NVIDIA Source Code License for SegFormer
+           https://github.com/NVlabs/SegFormer/blob/master/LICENSE
+
+  That license PERMITS redistribution of the work and of derivative works,
+  provided a complete copy of the license accompanies them and all attribution
+  notices are retained. It LIMITS USE to non-commercial purposes, defined as
+  "research or evaluation purposes only", and its Section 3.2 carries that
+  limit forward into every derivative work. The limitation therefore cannot be
+  relicensed away, and it binds LibreYOLO's users, not just LibreYOLO:
+
+      These weights are for NON-COMMERCIAL use only. They are NOT covered by
+      LibreYOLO's permissive license.
+
+  The checkpoints were fine-tuned on ADE20K, whose own image terms restrict
+  use to non-commercial research and education, independently reinforcing the
+  same limit.
+
+  LibreSegformer prints this restriction before every auto-download
+  (LibreSegformer.get_download_notice). The architecture, the LibreYOLO code,
+  and any model YOU train from scratch with it are unaffected and carry
+  LibreYOLO's normal permissive terms. For unrestricted use, train from
+  scratch via LibreSegformer(...).train(...).

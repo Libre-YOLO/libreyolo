@@ -979,8 +979,9 @@ class RTMDetConfig(TrainConfig):
 class SegformerConfig(TrainConfig):
     """SegFormer training defaults — the paper / mmsegmentation ADE20K recipe.
 
-    LibreSegformer ships no pretrained weights (see the family NOTICE); train
-    from scratch, or fine-tune an encoder produced by tools/pretrain_mit/.
+    Used both to fine-tune the pretrained (non-commercial) ADE20K checkpoints on
+    a new dataset and to train from scratch for unrestricted use; see the family
+    NOTICE for the weight licensing.
     Defaults follow SegFormer's ADE20K config: AdamW, backbone base LR 6e-5 with
     the decode head at 10x (SegformerTrainer applies the lr_mult), LayerNorm and
     the Mix-FFN positional conv at weight_decay=0, linear (poly-like) decay, and

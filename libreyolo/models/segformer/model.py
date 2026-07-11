@@ -5,12 +5,16 @@ Transformers", Xie et al., NeurIPS 2021) is a lightweight ViT-style encoder
 (MiT, Mix Transformer) paired with an all-MLP decode head. This family covers
 all six standard sizes, b0 through b5.
 
-LibreSegformer ships NO pretrained weights: the upstream NVIDIA checkpoints
-(``nvidia/segformer-b0..b5-*``) are under a non-permissive, non-commercial
-license and are never downloaded, converted, or redistributed by LibreYOLO.
-Train from scratch on your own semantic dataset via
-``LibreSegformer(...).train(...)``. See ``NOTICE`` in this directory for the
-full licensing rationale.
+Weights: the pretrained ADE20K checkpoints derive from NVIDIA's SegFormer
+release, which is distributed under the NVIDIA Source Code License. That
+license permits redistribution (with the license and attribution attached) but
+restricts *use* to non-commercial research or evaluation. LibreYOLO therefore
+hosts converted checkpoints and prints a non-commercial notice before each
+auto-download (see ``get_download_notice``), exactly as it does for the
+VisDrone research-preview weights. The architecture and LibreYOLO itself stay
+permissively licensed; only these pretrained weights are restricted. For
+unrestricted use, train from scratch via ``LibreSegformer(...).train(...)``.
+See ``NOTICE`` in this directory for the full licensing rationale.
 """
 
 from __future__ import annotations
@@ -73,7 +77,7 @@ def preprocess_numpy(
 
 
 class LibreSegformer(BaseModel):
-    """SegFormer b0-b5 family for dense semantic segmentation, trained from scratch."""
+    """SegFormer b0-b5 family for dense semantic segmentation (ADE20K, 150 classes)."""
 
     FAMILY: ClassVar[str] = "segformer"
     FILENAME_PREFIX: ClassVar[str] = "LibreSegformer"
@@ -81,7 +85,8 @@ class LibreSegformer(BaseModel):
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic",)
     DEFAULT_TASK: ClassVar[str] = "semantic"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
-    INPUT_SIZES: ClassVar[Dict[str, int]] = {size: 512 for size in SIZE_CONFIGS}
+    # b0-b4 are fine-tuned on ADE20K at 512; b5 is the one trained at 640.
+    INPUT_SIZES: ClassVar[Dict[str, int]] = {**{size: 512 for size in SIZE_CONFIGS}, "b5": 640}
 
     # Fine-tune recipe (SegFormer paper / mmsegmentation ADE20K config):
     #  - resize_crop: training resizes the short side to imgsz*ratio and random-
@@ -143,15 +148,38 @@ class LibreSegformer(BaseModel):
 
     @classmethod
     def convert_upstream_state_dict(cls, state_dict: dict) -> Optional[dict]:
-        return None
+        """Map a raw upstream SegFormer state dict onto LibreSegformer keys.
+
+        The module tree matches the Apache-2.0 reference exactly, so the only
+        difference is the encoder prefix (upstream ``segformer.``, here
+        ``encoder.``). Learned parameters are unchanged. Returns None when the
+        input is not an upstream SegFormer checkpoint.
+        """
+        keys = set(state_dict)
+        if not any(k.startswith("segformer.") for k in keys):
+            return None
+        if "decode_head.classifier.weight" not in keys:
+            return None
+        converted = {}
+        for key, value in state_dict.items():
+            if key.startswith("segformer."):
+                converted["encoder." + key[len("segformer.") :]] = value
+            elif key.startswith("decode_head."):
+                converted[key] = value
+            else:
+                return None  # unknown layout; refuse rather than half-convert
+        return converted
 
     @classmethod
-    def get_download_url(cls, _filename: str) -> Optional[str]:
-        # LibreSegformer ships no pretrained weights of any size (b0-b5): the
-        # upstream nvidia/segformer checkpoints are under a non-permissive,
-        # non-commercial license and are never mirrored or auto-downloaded.
-        # Train from scratch. See NOTICE in this directory.
-        return None
+    def get_download_notice(cls, filename: str, url: str) -> Optional[str]:
+        return (
+            f"{Path(filename).name} derives from NVIDIA's SegFormer checkpoints, "
+            "released under the NVIDIA Source Code License: these weights are for "
+            "NON-COMMERCIAL use (research or evaluation) only and are NOT covered "
+            "by LibreYOLO's permissive license. The architecture and LibreYOLO "
+            "itself remain freely usable; only these pretrained weights are "
+            "restricted. Train from scratch for unrestricted use."
+        )
 
     # ------------------------------------------------------------------
     # Construction
@@ -193,6 +221,18 @@ class LibreSegformer(BaseModel):
     def _init_model(self) -> nn.Module:
         return LibreSegformerNet(size=self.size, num_classes=self.nb_classes)
 
+    def _rebuild_for_new_size(self, new_size: str) -> None:
+        """Re-instantiate the net at the checkpoint's size (b0-b5).
+
+        Size determines every layer shape, so this must run before any other
+        rebuild. Without it, loading e.g. LibreSegformerb1-sem.pt into the
+        default b0 model dies on a wall of shape mismatches.
+        """
+        self.size = new_size
+        self.input_size = self.INPUT_SIZES[new_size]
+        self.model = self._init_model()
+        self.model.to(self.device)
+
     def _rebuild_for_new_classes(self, new_nb_classes: int) -> None:
         decode_head = self.model.decode_head
         in_channels = decode_head.classifier.in_channels
@@ -216,10 +256,11 @@ class LibreSegformer(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         effective_res = input_size if input_size is not None else self._get_input_size()
-        if effective_res % self.semantic_imgsz_divisor:
+        divisor = self.semantic_imgsz_divisor
+        if any(side % divisor for side in _input_size_hw(effective_res)):
             raise ValueError(
                 f"LibreSegformer semantic imgsz={effective_res} must be divisible "
-                f"by {self.semantic_imgsz_divisor} (encoder stride product)."
+                f"by {divisor} (encoder stride product)."
             )
         img = ImageLoader.load(image, color_format=color_format)
         orig_w, orig_h = img.size
@@ -307,6 +348,12 @@ class LibreSegformer(BaseModel):
         else:
             state = loaded
 
+        # Size determines every layer shape, so resolve it before any other
+        # rebuild. The state dict is authoritative; the metadata is a hint.
+        ckpt_size = self.detect_size(state) or loaded.get("size")
+        if ckpt_size is not None and ckpt_size != self.size:
+            self._rebuild_for_new_size(str(ckpt_size))
+
         ckpt_nc = loaded.get("nc") or self.detect_nb_classes(state)
         if ckpt_nc is not None and int(ckpt_nc) != self.nb_classes:
             self._rebuild_for_new_classes(int(ckpt_nc))
@@ -321,11 +368,12 @@ class LibreSegformer(BaseModel):
         self.model.to(self.device).eval()
 
     def _load_pretrained_encoder(self, path: str) -> None:
-        """Partial-load an encoder-only checkpoint from ``tools/pretrain_mit/``
-        (ImageNet-1K classification pretraining, external to this library —
-        see that directory's README for the pipeline and rationale). Only
-        ``self.model.encoder`` is populated; the decode head stays at random
-        init, ready for a fresh semantic fine-tune.
+        """Partial-load an encoder-only checkpoint (e.g. one produced by your own
+        MiT pretraining run). Only ``self.model.encoder`` is populated; the decode
+        head stays at random init, ready for a fresh semantic fine-tune.
+
+        Most users want ``model_path=`` instead: that loads a full pretrained
+        checkpoint and ``nb_classes=`` re-heads it for a new dataset.
         """
         payload = load_trusted_torch_file(path, map_location="cpu", context="SegFormer pretrained encoder")
         if not isinstance(payload, dict) or "encoder" not in payload:

@@ -88,7 +88,13 @@ SegFormer / transformers (Apache License 2.0)
     native re-implementation derived from HuggingFace Transformers'
     Apache-2.0 modeling_segformer.py, not from NVIDIA's original
     non-permissive NVlabs/SegFormer repository (cited for attribution
-    only). No pretrained weights are bundled; train from scratch.
+    only).
+
+    WEIGHTS ARE NON-COMMERCIAL. The pretrained ADE20K checkpoints
+    (LibreSegformer{b0..b5}-sem) are converted from NVIDIA's SegFormer
+    release, whose license permits redistribution but restricts use to
+    research or evaluation only. They are not covered by LibreYOLO's
+    permissive license. See libreyolo/models/segformer/NOTICE.
 
 NAFNet (MIT License)
     Path:    libreyolo/models/nafnet/

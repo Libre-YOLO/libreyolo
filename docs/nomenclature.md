@@ -50,7 +50,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
-| `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family, no pretrained weights |
+| `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family; weights are non-commercial |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -134,7 +134,7 @@ ships:
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
-| `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers, all at 512) |
+| `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers; ADE20K at 512, b5 at 640) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -272,7 +272,7 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
 | `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
-| `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head at 512; no pretrained weights of any size (non-permissive upstream license) — trainable from scratch via `model.train(...)`; convergence for b3-b5 (deep, zero-init encoders) is unvalidated |
+| `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -291,11 +291,13 @@ Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
 LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-downloadable for this family; see `libreyolo/models/fomo/model.py`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
 
-No pretrained weights are auto-downloadable for `segformer` either, for any of
-its six sizes; the upstream `nvidia/segformer-b0..b5-*` checkpoints are under a
-non-permissive, non-commercial NVIDIA license and are never mirrored or
-converted. Train from scratch; see `libreyolo/models/segformer/model.py` and
-`libreyolo/models/segformer/NOTICE`.
+`segformer` weights are auto-downloadable but **non-commercial**. All six sizes
+are converted from NVIDIA's ADE20K checkpoints, whose license permits
+redistribution (with the license attached) but restricts use to research or
+evaluation only. LibreYOLO hosts them and prints that restriction before each
+download, exactly as it does for the VisDrone research-preview weights. They are
+not covered by LibreYOLO's permissive license; train from scratch for
+unrestricted use. See `libreyolo/models/segformer/NOTICE`.
 
 ## Examples by family + task
 
@@ -357,8 +359,8 @@ LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
 LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
 LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
 
-# segformer — MiT-b0..b5 semantic segmentation; no pretrained weights, train
-# from scratch (see the "no pretrained weights" note above)
+# segformer — MiT-b0..b5 ADE20K semantic segmentation; weights are
+# NON-COMMERCIAL (see the note above)
 LibreSegformerb0-sem.pt
 LibreSegformerb1-sem.pt
 LibreSegformerb2-sem.pt

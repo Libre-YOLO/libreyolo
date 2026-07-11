@@ -23,9 +23,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 IGNORE_INDEX = 255
-LAYER_NORM_EPS = 1e-6
+# Every LayerNorm in the Apache-2.0 reference implementation is built as
+# ``nn.LayerNorm(dim)``, i.e. with PyTorch's default eps. The ``layer_norm_eps``
+# field shipped in the upstream configs (1e-6) is read by nothing in that
+# implementation, so 1e-5 is the value the published checkpoints are actually
+# consumed with, and the one that reproduces them exactly. Setting 1e-6 here
+# instead costs ~3e-3 of logit and buys nothing.
+LAYER_NORM_EPS = 1e-5
 DROP_PATH_RATE = 0.1
+# Dropout inside the Mix-FFN (reference: hidden_dropout_prob, default 0.0).
+HIDDEN_DROPOUT_PROB = 0.0
+# Dropout before the decode head classifier only (reference: classifier_dropout_prob).
 CLASSIFIER_DROPOUT_PROB = 0.1
+# Std of the truncated-normal init for Linear/Conv weights (reference: initializer_range).
+INITIALIZER_RANGE = 0.02
 
 
 @dataclass(frozen=True)
@@ -150,7 +161,7 @@ class MixMLP(nn.Module):
         self.dwconv = DepthWiseConv(hidden_features)
         self.act = nn.GELU()
         self.fc2 = nn.Linear(hidden_features, in_features)
-        self.dropout = nn.Dropout(CLASSIFIER_DROPOUT_PROB)
+        self.dropout = nn.Dropout(HIDDEN_DROPOUT_PROB)
 
     def forward(self, hidden_states: torch.Tensor, height: int, width: int) -> torch.Tensor:
         hidden_states = self.fc1(hidden_states)
@@ -353,12 +364,29 @@ class LibreSegformerNet(nn.Module):
         self.num_classes = int(num_classes)
         self.encoder = SegformerEncoder(cfg)
         self.decode_head = SegformerDecodeHead(cfg, self.num_classes)
+        self.apply(self._init_weights)
         self.register_buffer(
             "pixel_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1), persistent=False
         )
         self.register_buffer(
             "pixel_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1), persistent=False
         )
+
+    @staticmethod
+    @torch.no_grad()
+    def _init_weights(module: nn.Module) -> None:
+        """Reference init (the Apache-2.0 one: normal(0, 0.02), zeroed biases).
+        PyTorch's default (kaiming-uniform, non-zero bias) is far wider than 0.02
+        at the narrow stages, and this family can train from scratch, so the init
+        is load-bearing rather than cosmetic.
+        """
+        if isinstance(module, (nn.Linear, nn.Conv2d)):
+            nn.init.normal_(module.weight, mean=0.0, std=INITIALIZER_RANGE)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, (nn.LayerNorm, nn.BatchNorm2d)):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
 
     def forward(self, x: torch.Tensor, targets: torch.Tensor | None = None):
         h, w = x.shape[-2], x.shape[-1]

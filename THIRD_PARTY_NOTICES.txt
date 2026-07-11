@@ -282,9 +282,23 @@ Used for: LibreSegformer semantic segmentation family
           derived from). LibreSegformer has no runtime dependency on
           the transformers package.
 
-NOTE - code vs. weights: LibreYOLO ships no pretrained SegFormer weights
-of any kind (no conversion script, no auto-download). All six sizes
-(b0-b5) are trained from scratch by the user.
+NOTE - code vs. weights: the CODE above is Apache-2.0, but the pretrained
+WEIGHTS are NOT. LibreSegformer{b0..b5}-sem are converted from NVIDIA's
+ADE20K SegFormer checkpoints (nvidia/segformer-b0..b5-finetuned-ade-*),
+released under the NVIDIA Source Code License:
+
+    https://github.com/NVlabs/SegFormer/blob/master/LICENSE
+
+That license permits redistribution provided a complete copy of the
+license accompanies the weights and attribution notices are retained,
+but it limits USE to non-commercial "research or evaluation purposes
+only", and Section 3.2 carries the limit into every derivative work.
+These weights are therefore NON-COMMERCIAL ONLY and are not covered by
+LibreYOLO's permissive license; the restriction binds end users, not
+just LibreYOLO. A notice is printed before every auto-download.
+Conversion is a key remapping only (weights/convert_segformer_weights.py);
+learned parameters are NVIDIA's, unchanged. Models the user trains from
+scratch carry no such restriction.
 
 --------------------------------------------------------------------
 Grounding DINO (IDEA-Research)

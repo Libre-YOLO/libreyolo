@@ -59,10 +59,31 @@ class TestSegformerMetadata:
         assert LibreSegformer.DEFAULT_TASK == "semantic"
         assert set(LibreSegformer.INPUT_SIZES) == set(ALL_SIZES)
 
-    def test_get_download_url_is_none(self):
+    def test_get_download_url_points_at_the_hosted_weight(self):
         from libreyolo.models.segformer.model import LibreSegformer
 
-        assert LibreSegformer.get_download_url("LibreSegformerb0-sem.pt") is None
+        url = LibreSegformer.get_download_url("LibreSegformerb0-sem.pt")
+        assert url == (
+            "https://huggingface.co/LibreYOLO/LibreSegformerb0-sem/resolve/main/"
+            "LibreSegformerb0-sem.pt"
+        )
+
+    def test_download_notice_states_the_non_commercial_restriction(self):
+        """The weights are NC while the library is permissive, so the restriction
+        has to reach the user before the bytes do."""
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        notice = LibreSegformer.get_download_notice("LibreSegformerb0-sem.pt", "http://x")
+        assert notice is not None
+        assert "NON-COMMERCIAL" in notice
+
+    def test_b5_input_size_is_640(self):
+        """Upstream fine-tuned b0-b4 at 512 but b5 at 640; a 512 default would
+        silently evaluate b5 off-resolution."""
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        assert LibreSegformer.INPUT_SIZES["b4"] == 512
+        assert LibreSegformer.INPUT_SIZES["b5"] == 640
 
     @pytest.mark.parametrize("size", ALL_SIZES)
     def test_can_load_detects_size_and_classes(self, size):
@@ -350,3 +371,85 @@ def test_segformer_checkpoint_round_trip(tmp_path):
     img_path = sorted((tmp_path / "images" / "val").glob("*.jpg"))[0]
     result = reloaded.predict(str(img_path), imgsz=64)
     assert result.semantic_mask is not None
+
+
+class TestSegformerReferenceFidelity:
+    """The published weights only reproduce upstream numbers if these constants
+    match the reference implementation exactly. Each of these was wrong once."""
+
+    def test_layernorm_eps_matches_reference(self):
+        """The reference builds every LayerNorm with torch's default eps (1e-5).
+        `layer_norm_eps: 1e-6` in the upstream configs is read by nothing; using
+        it shifts every logit and breaks bit-exactness with the released weights.
+        """
+        import torch.nn as nn
+
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size="b0", num_classes=4)
+        eps = {m.eps for m in net.modules() if isinstance(m, nn.LayerNorm)}
+        assert eps == {1e-5}
+
+    def test_mix_ffn_has_no_dropout(self):
+        """Mix-FFN dropout is `hidden_dropout_prob` (0.0). Only the decode-head
+        classifier uses `classifier_dropout_prob` (0.1)."""
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size="b0", num_classes=4)
+        for stage in net.encoder.stages:
+            for block in stage.blocks:
+                assert block.mlp.dropout.p == 0.0
+        assert net.decode_head.dropout.p == 0.1
+
+    def test_weights_are_initialized_to_reference_scale(self):
+        """Torch's default init is ~5x too wide at the narrow stages; the family
+        can train from scratch, so the init is load-bearing."""
+        import torch.nn as nn
+
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size="b0", num_classes=4)
+        for module in net.modules():
+            if isinstance(module, (nn.Linear, nn.Conv2d)):
+                assert module.weight.std().item() < 0.05
+                if module.bias is not None:
+                    assert torch.equal(module.bias, torch.zeros_like(module.bias))
+
+    def test_convert_upstream_state_dict_remaps_encoder_prefix(self):
+        """Upstream ships the encoder under `segformer.`; we use `encoder.`."""
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size="b0", num_classes=150)
+        upstream = {
+            ("segformer." + k[len("encoder.") :] if k.startswith("encoder.") else k): v
+            for k, v in net.state_dict().items()
+        }
+        converted = LibreSegformer.convert_upstream_state_dict(upstream)
+        assert converted is not None
+        # strict load is the real assertion: no key dropped, renamed, or invented
+        LibreSegformerNet(size="b0", num_classes=150).load_state_dict(converted, strict=True)
+
+    def test_convert_upstream_state_dict_rejects_foreign_checkpoints(self):
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        assert LibreSegformer.convert_upstream_state_dict({"backbone.conv.weight": torch.zeros(1)}) is None
+
+    @pytest.mark.parametrize("size", ["b1", "b2"])
+    def test_loading_a_checkpoint_rebuilds_for_its_size(self, size, tmp_path):
+        """Size determines every layer shape. Loading a non-default size without
+        passing size= must still work: the loader has to re-instantiate the net
+        from the checkpoint, not blindly strict-load into the b0 default."""
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+
+        net = LibreSegformerNet(size=size, num_classes=150)
+        ckpt = tmp_path / f"LibreSegformer{size}-sem.pt"
+        torch.save(
+            {"model": net.state_dict(), "model_family": "segformer", "task": "semantic",
+             "nc": 150, "size": size},
+            ckpt,
+        )
+        loaded = LibreSegformer(model_path=str(ckpt), device="cpu")  # no size= passed
+        assert loaded.size == size
+        assert loaded.input_size == LibreSegformer.INPUT_SIZES[size]
