@@ -133,6 +133,18 @@ PaddleOCR / PP-OCRv5 (Apache-2.0)
     are converted from the official Apache-2.0 PP-OCRv5 training checkpoints
     and embed the PP-OCRv5 recognition dictionary as charset metadata.
 
+SwinIR (Apache-2.0)
+    Path:    libreyolo/models/swinir/
+    License: libreyolo/models/swinir/NOTICE
+    Source:  https://github.com/JingyunLiang/SwinIR
+             commit 6545850fbf8df298df73d81f3e8cba638787c8bd
+
+    The LibreSwinIR generator is a modified port of the official SwinIR
+    network_swinir.py implementation. Upstream parameter names are preserved
+    for strict loading of the Apache-2.0 released checkpoints. LibreYOLO adds
+    restore-task integration, preprocessing, postprocessing, validation, and
+    checkpoint metadata.
+
 Darknet YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4 (public domain)
     Path:    libreyolo/models/darknet/, libreyolo/models/yolo1|yolo2|yolo3|yolo4/
     License: libreyolo/models/darknet/cfgs/NOTICE  (public domain)

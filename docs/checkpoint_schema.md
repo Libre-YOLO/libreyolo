@@ -129,6 +129,12 @@ resolution (reflect-padded only to the network divisibility factor) and crops
 the restored output to `scale` times the original image shape. The backend
 derives `scale` from the model family and size (`x4`/`x4t` = 4, `x2` = 2).
 
+SwinIR restore exports use a fixed-resolution v1 contract. ONNX exports emit
+one dense `restored` tensor and force `dynamic=false` because shifted-window
+attention masks are trace-shape-dependent. Backend prediction pads images that
+fit inside the exported canvas, crops the output to four times the original
+image shape, and reports `restore_scale = 4` for sizes `s`, `m`, and `l`.
+
 Embedded-NMS runtime exports may also write these flat metadata keys:
 
 - `nms`: string boolean. `"true"` means the exported graph includes an

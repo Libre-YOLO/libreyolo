@@ -489,6 +489,27 @@ Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
           state dicts convert with a plain metadata-wrap.
 
 --------------------------------------------------------------------
+SwinIR (Jingyun Liang et al.)
+--------------------------------------------------------------------
+Source: https://github.com/JingyunLiang/SwinIR
+        (commit 6545850fbf8df298df73d81f3e8cba638787c8bd)
+License: Apache License 2.0
+Copyright 2021 SwinIR Authors.
+Citation: Liang, J., Cao, J., Sun, G., Zhang, K., Van Gool, L., and
+          Timofte, R. "SwinIR: Image Restoration Using Swin
+          Transformer." ICCV Workshops 2021.
+Used for: the SwinIR super-resolution generator in
+          libreyolo/models/swinir/nn.py. Module and parameter names
+          mirror upstream so the official released checkpoints load
+          without tensor remapping. The LibreYOLO wrapper adds the
+          restore task, native-resolution preprocessing, tiling,
+          validation, and checkpoint metadata.
+
+NOTE - weights: the official SwinIR-S x4 lightweight and SwinIR-M/L x4
+real-world checkpoints are published with the Apache-2.0 project release.
+LibreYOLO does not bundle checkpoint files in the source distribution.
+
+--------------------------------------------------------------------
 BiRefNet (Peng Zheng et al.)
 --------------------------------------------------------------------
 Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
