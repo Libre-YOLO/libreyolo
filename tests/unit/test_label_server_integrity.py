@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from unittest import mock
 
 import pytest
@@ -42,16 +43,18 @@ def _make_dataset(root: Path, *, image_name: str = "a.jpg") -> Path:
 
 
 @contextmanager
-def _label_server(yaml_path: Path):
+def _label_server(yaml_path: Path, *, host: str = "127.0.0.1"):
     from libreyolo.label import server
 
     with mock.patch.object(server._LabelState, "register_current", lambda *a, **k: None):
         httpd, url, _session = server.serve(
-            str(yaml_path), port=0, open_browser=False, assist=False
+            str(yaml_path), host=host, port=0, open_browser=False, assist=False
         )
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:
+            if host in ("0.0.0.0", "::", ""):
+                url = f"http://127.0.0.1:{httpd.server_address[1]}"
             yield url
         finally:
             httpd.shutdown()
@@ -79,8 +82,106 @@ def _post(url: str, path: str, body: bytes) -> tuple[int, dict]:
             return exc.code, json.load(exc)
 
 
+def _request_json(
+    url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    body: bytes | None = None,
+    headers: dict | None = None,
+) -> tuple[int, dict]:
+    request = urllib.request.Request(
+        url + path,
+        data=body,
+        headers=headers or {},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        with exc:
+            return exc.code, json.load(exc)
+
+
 def _box(cx: float = 0.5) -> dict:
     return {"type": "box", "cls": 0, "cx": cx, "cy": 0.5, "w": 0.2, "h": 0.2}
+
+
+def test_loopback_host_header_matrix_blocks_dns_rebinding_on_get(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        port = urlsplit(url).port
+        cases = (
+            (f"127.0.0.1:{port}", 200),
+            (f"LOCALHOST:{port}", 200),
+            (f"127.0.0.42:{port}", 200),
+            (f"[::1]:{port}", 200),
+            (f"localhost.:{port}", 200),
+            (f"attacker.example:{port}", 403),
+            (f"192.168.1.20:{port}", 403),
+            ("127.0.0.1:80", 403),
+            (f"[::]:{port}", 403),
+        )
+        for host, expected in cases:
+            status, _response = _request_json(
+                url, "/api/dataset", headers={"Host": host}
+            )
+            assert status == expected, host
+
+
+def test_share_host_header_matrix_allows_numeric_lan_hosts_only(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path, host="0.0.0.0") as url:
+        port = urlsplit(url).port
+        cases = (
+            (f"127.0.0.1:{port}", 200),
+            (f"localhost:{port}", 200),
+            (f"192.168.1.20:{port}", 200),
+            (f"10.12.0.8:{port}", 200),
+            (f"[fd00::1234]:{port}", 200),
+            (f"attacker.example:{port}", 403),
+            (f"0.0.0.0:{port}", 403),
+            (f"224.0.0.1:{port}", 403),
+            (f"[::]:{port}", 403),
+        )
+        for host, expected in cases:
+            status, _response = _request_json(
+                url, "/api/dataset", headers={"Host": host}
+            )
+            assert status == expected, host
+
+
+def test_post_origin_matrix_normalizes_authority_and_rejects_opaque_origins(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        port = urlsplit(url).port
+        cases = (
+            (f"LOCALHOST:{port}", None, 404),
+            (f"LOCALHOST:{port}", f"HTTP://localhost:{port}", 404),
+            (f"localhost.:{port}", f"http://LOCALHOST:{port}", 404),
+            (f"localhost:{port}", "null", 403),
+            (f"localhost:{port}", "file://localhost", 403),
+            (f"localhost:{port}", f"https://localhost:{port}", 403),
+            (f"localhost:{port}", "http://localhost", 403),
+            (f"localhost:{port}", f"http://localhost:{port}/path", 403),
+            (f"localhost:{port}", f"http://localhost:{port}?", 403),
+            (f"localhost:{port}", f"http://localhost:{port}#", 403),
+            (f"localhost:{port}", f"http://attacker.example:{port}", 403),
+            (f"attacker.example:{port}", f"http://attacker.example:{port}", 403),
+        )
+        for host, origin, expected in cases:
+            headers = {"Host": host, "Content-Type": "application/json"}
+            if origin is not None:
+                headers["Origin"] = origin
+            status, _response = _request_json(
+                url,
+                "/not-found",
+                method="POST",
+                body=b"{}",
+                headers=headers,
+            )
+            assert status == expected, (host, origin)
 
 
 def test_label_post_requires_explicit_payload_epoch_and_revision(tmp_path):
@@ -310,6 +411,107 @@ def test_delete_matches_current_project_by_root_and_detaches(monkeypatch, tmp_pa
     assert result == {"trash": "trash/project", "closed": True, "epoch": 1}
     assert state.session is None and state._data is None
     assert {Path(value) for value in forgotten} == {tmp_path, yaml_path}
+
+
+def test_delete_rejects_project_subtree_and_keeps_live_session(monkeypatch, tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    session = DatasetSession(str(yaml_path))
+    state = _LabelState(session, assist=False)
+    state._data = str(yaml_path)
+    trashed = []
+    monkeypatch.setattr(
+        "libreyolo.label.server.trash_project",
+        lambda data: trashed.append(data) or "trash/project",
+    )
+    monkeypatch.setattr("libreyolo.label.server.projects.list_projects", lambda: [])
+
+    with pytest.raises(ValueError, match="exact registered project root"):
+        state.delete_project(str(tmp_path / "images"), expected_epoch=0)
+
+    assert trashed == []
+    assert state.session is session
+    assert state._data == str(yaml_path)
+    assert state.epoch == 0
+
+
+def test_delete_allows_exact_registered_project_root(monkeypatch, tmp_path):
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    state = _LabelState(None, assist=False)
+    trashed = []
+    forgotten = []
+    monkeypatch.setattr(
+        "libreyolo.label.server.projects.list_projects",
+        lambda: [{"data": str(yaml_path)}],
+    )
+    monkeypatch.setattr(
+        "libreyolo.label.server.trash_project",
+        lambda data: trashed.append(data) or "trash/project",
+    )
+    monkeypatch.setattr("libreyolo.label.server.projects.forget", forgotten.append)
+
+    result = state.delete_project(str(tmp_path))
+
+    assert result == {"trash": "trash/project", "closed": False, "epoch": 0}
+    assert trashed == [str(tmp_path.resolve())]
+    assert {Path(value) for value in forgotten} == {tmp_path, yaml_path}
+
+
+def test_delete_detaches_live_session_even_if_registry_cleanup_fails(
+    monkeypatch, tmp_path
+):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    state = _LabelState(DatasetSession(str(yaml_path)), assist=False)
+    state._data = str(yaml_path)
+    monkeypatch.setattr(
+        "libreyolo.label.server.trash_project", lambda data: "trash/project"
+    )
+    monkeypatch.setattr(
+        "libreyolo.label.server.projects.forget",
+        lambda data: (_ for _ in ()).throw(OSError("registry unavailable")),
+    )
+
+    result = state.delete_project(str(tmp_path), expected_epoch=0)
+
+    assert result == {"trash": "trash/project", "closed": True, "epoch": 1}
+    assert state.session is None and state._data is None
+
+
+def test_project_meta_write_failure_rolls_back_memory_and_registry(monkeypatch, tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    sidecar = tmp_path / "librelabel.json"
+    sidecar.write_text('{"name": "Original"}', encoding="utf-8")
+    session = DatasetSession(str(yaml_path))
+    state = _LabelState(session, assist=False)
+    state._data = str(yaml_path)
+    before_memory = dict(session._sidecar)
+    before_disk = sidecar.read_bytes()
+    renamed = []
+    monkeypatch.setattr(
+        "libreyolo.label.dataset._write_json_atomic",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("read only")),
+    )
+    monkeypatch.setattr(
+        "libreyolo.label.server.projects.rename",
+        lambda *args: renamed.append(args),
+    )
+
+    with pytest.raises(PermissionError, match="read only"):
+        state.update_project_meta({"name": "Changed"}, expected_epoch=0)
+
+    assert session._sidecar == before_memory
+    assert sidecar.read_bytes() == before_disk
+    assert renamed == []
 
 
 def test_boost_start_requires_current_epoch(monkeypatch, tmp_path):

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import math
 import json
+import math
 import multiprocessing
+import queue
 import threading
 import zipfile
 from pathlib import Path
@@ -38,6 +39,29 @@ def _process_upload(root, name, payload, ready, start, outcomes):
         outcomes.put(("error", type(exc).__name__))
     else:
         outcomes.put(("ok", name))
+
+
+def _process_label_write(yaml_path, cx, ready, start, attempting, outcomes):
+    """Spawn-safe worker for the cross-process label CAS regression."""
+    session = DatasetSession(yaml_path)
+    revision = session.label_rev(0)
+    ready.put(revision)
+    start.wait(10)
+    attempting.put(True)
+    annotation = {
+        "type": "box",
+        "cls": 0,
+        "cx": cx,
+        "cy": 0.5,
+        "w": 0.2,
+        "h": 0.2,
+    }
+    try:
+        session.write_label(0, [annotation], expected_rev=revision)
+    except Exception as exc:  # noqa: BLE001 - serialized test outcome
+        outcomes.put(("error", type(exc).__name__, str(exc)))
+    else:
+        outcomes.put(("ok", cx, ""))
 
 
 def _dataset(root: Path, names=("cat", "dog"), task: str | None = "detect") -> DatasetSession:
@@ -903,6 +927,59 @@ def test_cross_process_upload_lock_canonicalizes_directory_alias(tmp_path):
 
     assert sorted(kind for kind, _value in results) == ["error", "ok"]
     assert len(list((root / "images" / "train").glob("same.*"))) == 1
+
+
+def test_cross_process_label_compare_and_swap_has_exactly_one_winner(tmp_path):
+    from libreyolo.label.dataset import _interprocess_path_lock
+
+    root = tmp_path / "dataset"
+    image_dir = root / "images" / "train"
+    image_dir.mkdir(parents=True)
+    Image.new("RGB", (20, 12), "red").save(image_dir / "a.jpg")
+    yaml_path = root / "data.yaml"
+    yaml_path.write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\nnc: 1\nnames: [thing]\n",
+        encoding="utf-8",
+    )
+    label_path = root / "labels" / "train" / "a.txt"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Queue()
+    start = context.Event()
+    attempting = context.Queue()
+    outcomes = context.Queue()
+    processes = [
+        context.Process(
+            target=_process_label_write,
+            args=(str(yaml_path), cx, ready, start, attempting, outcomes),
+        )
+        for cx in (0.25, 0.75)
+    ]
+
+    try:
+        for process in processes:
+            process.start()
+        assert [ready.get(timeout=10), ready.get(timeout=10)] == [0, 0]
+        with _interprocess_path_lock(label_path):
+            start.set()
+            assert attempting.get(timeout=10) is True
+            assert attempting.get(timeout=10) is True
+            with pytest.raises(queue.Empty):
+                outcomes.get(timeout=0.25)
+        results = [outcomes.get(timeout=10), outcomes.get(timeout=10)]
+    finally:
+        for process in processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+    assert all(process.exitcode == 0 for process in processes)
+    assert sorted(result[0] for result in results) == ["error", "ok"]
+    failure = next(result for result in results if result[0] == "error")
+    assert failure[1] == "RuntimeError"
+    assert "changed by someone else" in failure[2]
+    saved = DatasetSession(str(yaml_path)).read_label(0)[0]
+    assert saved[0]["cx"] in (0.25, 0.75)
 
 
 def test_upload_temp_cleanup_failure_does_not_hide_success(tmp_path, monkeypatch):

@@ -40,6 +40,7 @@ from .labelio import (
 
 
 _UPLOAD_LOCK = threading.RLock()
+_LABEL_LOCK = threading.RLock()
 
 
 def _path_identity(path) -> str:
@@ -53,11 +54,11 @@ def _path_identity(path) -> str:
 
 
 @contextmanager
-def _interprocess_upload_lock(dst: Path):
-    """Serialize upload/finalize operations for one destination across processes."""
-    lock_root = Path(tempfile.gettempdir()) / "librelabel-upload-locks"
+def _interprocess_path_lock(path: Path, *, namespace: str = "librelabel-locks"):
+    """Serialize one canonical filesystem target across LibreLabel processes."""
+    lock_root = Path(tempfile.gettempdir()) / namespace
     lock_root.mkdir(parents=True, exist_ok=True)
-    identity = _path_identity(dst).encode("utf-8")
+    identity = _path_identity(path).encode("utf-8")
     lock_path = lock_root / (hashlib.sha256(identity).hexdigest() + ".lock")
     with open(lock_path, "a+b") as handle:
         if os.name == "nt":
@@ -82,6 +83,15 @@ def _interprocess_upload_lock(dst: Path):
                 yield
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _interprocess_upload_lock(dst: Path):
+    """Serialize upload/finalize operations for one destination across processes."""
+    # Keep the historical namespace so concurrently running older LibreLabel
+    # processes still participate in the same upload/finalization lock.
+    with _interprocess_path_lock(dst, namespace="librelabel-upload-locks"):
+        yield
 
 
 def _publish_no_clobber(temp_path: Path, target: Path) -> None:
@@ -326,10 +336,7 @@ def update_sidecar(data: str, **fields) -> str:
     for k, v in fields.items():
         if v is not None:
             sc[k] = v
-    try:
-        _write_json_atomic(root / "librelabel.json", sc)
-    except OSError:
-        pass
+    _write_json_atomic(root / "librelabel.json", sc)
     return str(root)
 
 
@@ -1131,6 +1138,12 @@ class DatasetSession:
         """
         self._check_index(idx)
         lp = self._items[idx][1]
+        with _LABEL_LOCK, _interprocess_path_lock(lp):
+            return self._read_label_unlocked(idx)
+
+    def _read_label_unlocked(self, idx: int) -> Tuple[List[dict], bool]:
+        """Read one label while the caller owns its canonical filesystem lock."""
+        lp = self._items[idx][1]
         if not lp.exists():
             return [], self.writable   # a read-only session stays inert even for unlabeled images
         text = lp.read_text(encoding="utf-8")
@@ -1154,6 +1167,14 @@ class DatasetSession:
             or (self._task not in ("segment", "obb") and has_obb_shaped_rows(text)))
         return annotations, editable
 
+    def read_label_with_rev(self, idx: int) -> tuple[List[dict], bool, int]:
+        """Return annotations, editability, and one matching content revision."""
+        self._check_index(idx)
+        lp = self._items[idx][1]
+        with _LABEL_LOCK, _interprocess_path_lock(lp):
+            annotations, editable = self._read_label_unlocked(idx)
+            return annotations, editable, self._label_rev_unlocked(idx)
+
     def label_rev(self, idx: int) -> int:
         """A content revision token for optimistic label-write concurrency.
 
@@ -1162,6 +1183,12 @@ class DatasetSession:
         bytes change; zero remains the sentinel for an absent file.
         """
         self._check_index(idx)
+        lp = self._items[idx][1]
+        with _LABEL_LOCK, _interprocess_path_lock(lp):
+            return self._label_rev_unlocked(idx)
+
+    def _label_rev_unlocked(self, idx: int) -> int:
+        """Return a content revision while the caller owns the label lock."""
         lp = self._items[idx][1]
         try:
             data = lp.read_bytes()
@@ -1179,6 +1206,30 @@ class DatasetSession:
         the write is refused so collaborative edits don't clobber each other.
         """
         self._check_index(idx)
+        lp = self._items[idx][1]
+        with _LABEL_LOCK, _interprocess_path_lock(lp):
+            return self._write_label_unlocked(idx, annotations, expected_rev)
+
+    def write_label_with_rev(
+        self,
+        idx: int,
+        annotations: List[dict],
+        expected_rev: Optional[int] = None,
+    ) -> tuple[int, int]:
+        """Atomically compare, write, and return the resulting content revision."""
+        self._check_index(idx)
+        lp = self._items[idx][1]
+        with _LABEL_LOCK, _interprocess_path_lock(lp):
+            count = self._write_label_unlocked(idx, annotations, expected_rev)
+            return count, self._label_rev_unlocked(idx)
+
+    def _write_label_unlocked(
+        self,
+        idx: int,
+        annotations: List[dict],
+        expected_rev: Optional[int],
+    ) -> int:
+        """Validate and write while the caller owns the canonical label lock."""
         if idx in self._deleted:
             # Tombstoned by duplicate/leakage cleanup: a stale client must not be
             # able to recreate a label file for a removed image.
@@ -1186,7 +1237,7 @@ class DatasetSession:
         if not self.writable:
             raise RuntimeError(self.reason)
         lp = self._items[idx][1]
-        if expected_rev is not None and self.label_rev(idx) != expected_rev:
+        if expected_rev is not None and self._label_rev_unlocked(idx) != expected_rev:
             raise RuntimeError("This image was changed by someone else since you opened it; "
                                "reload it before saving so their labels aren't overwritten.")
         if lp.exists():

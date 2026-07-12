@@ -21,6 +21,7 @@ Endpoints
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -30,7 +31,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 from . import projects
 from .assist import AssistEngine
@@ -79,8 +80,8 @@ def _nonnegative_int(value, name: str) -> int:
     return out
 
 
-def _project_root_key(data) -> str:
-    """Canonical project-root identity for either a dataset dir or YAML path."""
+def _project_root_path(data) -> Path:
+    """Return the canonical project root for either a dataset dir or YAML path."""
     p = Path(str(data)).expanduser()
     # A directory may legitimately end in .yaml/.yml.  Only strip the filename
     # suffix when the supplied path is not an existing directory.
@@ -90,7 +91,12 @@ def _project_root_key(data) -> str:
         p = p.resolve(strict=False)
     except (OSError, RuntimeError):
         p = Path(os.path.abspath(str(p)))
-    return os.path.normcase(str(p)).casefold()
+    return p
+
+
+def _project_root_key(data) -> str:
+    """Canonical project-root identity for either a dataset dir or YAML path."""
+    return os.path.normcase(str(_project_root_path(data))).casefold()
 
 
 def _unique_json_object(pairs):
@@ -105,6 +111,58 @@ def _unique_json_object(pairs):
 
 def _redact_paths(msg: str) -> str:
     return _ABS_PATH_RE.sub("<path>", str(msg))
+
+
+def _normalize_host_name(value: str) -> str:
+    """Normalize one DNS name or IP literal without resolving DNS."""
+    name = str(value).strip().lower()
+    if name.endswith("."):
+        name = name[:-1]
+    if not name or len(name) > 253 or "%" in name:
+        raise ValueError("invalid host")
+    try:
+        return ipaddress.ip_address(name).compressed.lower()
+    except ValueError:
+        labels = name.split(".")
+        if any(
+            not label
+            or len(label) > 63
+            or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+            for label in labels
+        ):
+            raise ValueError("invalid host") from None
+        return name
+
+
+def _parse_authority(authority: str, *, default_port: int) -> tuple[str, int]:
+    """Parse and normalize an HTTP authority, rejecting ambiguous spellings."""
+    raw = str(authority)
+    if not raw or raw != raw.strip() or any(char.isspace() for char in raw):
+        raise ValueError("invalid authority")
+    if any(char in raw for char in "/?#@"):
+        raise ValueError("invalid authority")
+    try:
+        parsed = urlsplit("//" + raw)
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("invalid authority")
+        host = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError):
+        raise ValueError("invalid authority") from None
+    if not host:
+        raise ValueError("invalid authority")
+    if ":" in host and not raw.startswith("["):
+        raise ValueError("IPv6 host literals must be bracketed")
+    if raw.endswith(":"):
+        raise ValueError("invalid authority")
+    return _normalize_host_name(host), default_port if port is None else port
+
+
+def _ip_is_loopback(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(mapped and mapped.is_loopback)
 
 
 def _lan_ip() -> str:
@@ -338,8 +396,8 @@ class _LabelState:
         (which its next save would then use to pass the conflict check)."""
         with self._lock:
             session = self._session_for_epoch_locked(None, "reading labels")
-            anns, editable = session.read_label(idx)
-            return anns, editable, session.label_rev(idx), self.epoch
+            anns, editable, revision = session.read_label_with_rev(idx)
+            return anns, editable, revision, self.epoch
 
     def dataset_meta(self):
         """Return metadata and its matching epoch from one session snapshot."""
@@ -354,8 +412,9 @@ class _LabelState:
     def write_label(self, idx: int, boxes, epoch=None, expected_rev=None) -> tuple:
         with self._lock:  # serialize concurrent saves to the same tree (check+write atomic)
             session = self._session_for_epoch_locked(epoch, "saving")
-            count = session.write_label(idx, boxes, expected_rev=expected_rev)
-            return count, session.label_rev(idx)
+            return session.write_label_with_rev(
+                idx, boxes, expected_rev=expected_rev
+            )
 
     def store_pending(self, idx: int, sugg, sess) -> bool:
         """Store prelabel suggestions iff still on ``sess`` -- atomically with the
@@ -435,23 +494,53 @@ class _LabelState:
     def delete_project(self, data, *, expected_epoch=None) -> dict:
         """Trash a project and atomically detach it if it is the live session."""
         with self._lock:
-            is_current = (
-                self.session is not None
-                and _project_root_key(data) == _project_root_key(self.session.yaml_file)
+            submitted_key = _project_root_key(data)
+            current_root = (
+                _project_root_path(self.session.yaml_file)
+                if self.session is not None
+                else None
             )
+            current_key = (
+                _project_root_key(current_root) if current_root is not None else None
+            )
+            registered_roots = {}
+            registered_aliases = {}
+            for entry in projects.list_projects():
+                registered_data = entry.get("data") if isinstance(entry, dict) else None
+                if not registered_data:
+                    continue
+                root = _project_root_path(registered_data)
+                key = _project_root_key(root)
+                registered_roots[key] = root
+                registered_aliases.setdefault(key, set()).add(str(registered_data))
+
+            is_current = current_key is not None and submitted_key == current_key
+            if is_current:
+                target = current_root
+            else:
+                target = registered_roots.get(submitted_key)
+            if target is None:
+                raise ValueError(
+                    "only an open project or an exact registered project root can be deleted"
+                )
             if is_current:
                 if expected_epoch is None:
                     raise ValueError("epoch is required when deleting the open project")
                 if expected_epoch != self.epoch:
                     raise _ProjectConflict("project changed - reload before deleting")
-            aliases = {str(data)}
+            aliases = {str(data), *registered_aliases.get(submitted_key, set())}
             if is_current:
                 aliases.update(self._session_aliases_locked(self.session, data))
-            trashed = trash_project(str(data))
-            for alias in aliases:
-                projects.forget(alias)
+            trashed = trash_project(str(target))
             if is_current:
+                # The filesystem move succeeded, so the old path must stop being a
+                # live session before registry convenience cleanup can run.
                 self._drop_session_locked()
+            for alias in aliases:
+                try:
+                    projects.forget(alias)
+                except Exception:  # noqa: BLE001 - registry is convenience data
+                    logger.exception("project registry cleanup failed")
             return {"trash": trashed, "closed": is_current, "epoch": self.epoch}
 
     def start_boost(self, *, expected_epoch: int, **kwargs) -> dict:
@@ -541,6 +630,9 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
+            if not self._host_allowed():
+                self._send(403, {"error": "host not allowed"})
+                return
             sessionless = path in ("/", "/index.html", "/api/dataset", "/api/projects",
                                    "/api/server", "/api/assist/status", "/api/boost/status")
             if self.state.session is None and path.startswith("/api/") and not sessionless:
@@ -679,11 +771,11 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
-            if not self._same_origin():
-                self._send(403, {"error": "cross-origin request blocked"})
-                return
             if not self._host_allowed():
                 self._send(403, {"error": "host not allowed"})
+                return
+            if not self._same_origin():
+                self._send(403, {"error": "cross-origin request blocked"})
                 return
             # Host-admin only: switching the project, pruning duplicates, and the
             # heavy full-dataset compute streams all rebind/clobber server-global
@@ -1059,31 +1151,89 @@ class _Handler(BaseHTTPRequestHandler):
         return True
 
     def _same_origin(self) -> bool:
-        """Block cross-origin state-changing requests (CSRF). A browser always sets
-        ``Origin`` on POST; a foreign site's Origin won't match our Host, so we
-        reject it before any write. Non-browser tools (no Origin) are allowed."""
-        origin = self.headers.get("Origin")
-        if not origin:
+        """Compare a browser Origin to the normalized HTTP request authority."""
+        origins = self.headers.get_all("Origin") or []
+        if not origins:
             return True
-        try:
-            return urlparse(origin).netloc == (self.headers.get("Host") or "")
-        except Exception:  # noqa: BLE001
+        if len(origins) != 1:
             return False
+        origin = origins[0]
+        if not origin or origin != origin.strip() or origin.lower() == "null":
+            return False
+        try:
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme.lower() != "http"
+                or not parsed.netloc
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or "?" in origin
+                or "#" in origin
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                return False
+            origin_authority = _parse_authority(parsed.netloc, default_port=80)
+        except (TypeError, ValueError):
+            return False
+        return origin_authority == self._request_authority()
+
+    def _request_authority(self) -> Optional[tuple[str, int]]:
+        hosts = self.headers.get_all("Host") or []
+        if len(hosts) != 1:
+            return None
+        try:
+            authority = _parse_authority(hosts[0], default_port=80)
+        except (TypeError, ValueError):
+            return None
+        return authority if authority[1] == self.state.port else None
 
     def _host_allowed(self) -> bool:
-        """Defend against DNS rebinding: ``_same_origin`` passes when a malicious page
-        rebinds its own hostname to 127.0.0.1 (both Origin and Host read
-        ``attacker.example``). On a loopback bind the only legitimate Host is a
-        loopback name, so reject anything else. Wildcard / NIC binds are explicit
-        exposures and keep their LAN Host."""
-        bind = (self.state.host or "").strip().lower()
-        if bind not in ("127.0.0.1", "::1", "localhost", ""):
-            return True   # wildcard / concrete-NIC bind: a LAN Host is legitimate
-        host_hdr = (self.headers.get("Host") or "").strip().lower()
-        if not host_hdr:
-            return True   # non-browser client without a Host header
-        name = host_hdr.rsplit(":", 1)[0].strip("[]") if not host_hdr.endswith("]") else host_hdr.strip("[]")
-        return self._is_loopback(name)
+        """Allow only the configured host or explicit local numeric addresses."""
+        authority = self._request_authority()
+        if authority is None:
+            return False
+        name, _port = authority
+        try:
+            address = ipaddress.ip_address(name)
+        except ValueError:
+            address = None
+
+        bind_raw = (self.state.host or "").strip().lower().strip("[]")
+        try:
+            bind_name = _normalize_host_name(bind_raw) if bind_raw else ""
+        except ValueError:
+            return False
+        try:
+            bind_address = ipaddress.ip_address(bind_name) if bind_name else None
+        except ValueError:
+            bind_address = None
+
+        wildcard = not bind_name or bool(bind_address and bind_address.is_unspecified)
+        if name == "localhost":
+            return wildcard or bind_name == "localhost" or bool(
+                bind_address and _ip_is_loopback(bind_address)
+            )
+        if address is None:
+            # A deliberately configured DNS bind may use its exact name. Arbitrary
+            # DNS Host values are never accepted, including on --share.
+            return bool(bind_address is None and bind_name and name == bind_name)
+        if address.is_unspecified or address.is_multicast:
+            return False
+        if _ip_is_loopback(address):
+            return wildcard or bind_name == "localhost" or bool(
+                bind_address and _ip_is_loopback(bind_address)
+            )
+        if address.is_reserved:
+            return False
+        if wildcard:
+            return True
+        if bind_address is None:
+            return False
+        if _ip_is_loopback(bind_address):
+            return False
+        return address == bind_address
 
     @staticmethod
     def _model_conf(qs: dict) -> tuple:
