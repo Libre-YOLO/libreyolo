@@ -267,7 +267,14 @@ def test_dangling_symlink_created_during_verification_is_preserved(
     download.download_weights(str(destination), "n")
 
     assert destination.is_symlink()
-    assert destination.readlink() == missing_target
+    actual_target = os.path.normcase(os.path.normpath(str(destination.readlink())))
+    expected_target = os.path.normcase(os.path.normpath(str(missing_target)))
+    if os.name == "nt":
+        # pathlib may expose Windows symlink targets with the equivalent
+        # extended-length ``\\?\`` prefix on hosted runners.
+        actual_target = actual_target.removeprefix("\\\\?\\")
+        expected_target = expected_target.removeprefix("\\\\?\\")
+    assert actual_target == expected_target
     assert os.path.lexists(destination)
     assert not destination.exists()
     assert list(tmp_path.glob("*.part")) == []
