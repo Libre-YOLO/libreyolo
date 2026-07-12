@@ -34,10 +34,10 @@ def _module_device(module: torch.nn.Module, fallback: Any) -> torch.device:
 @contextmanager
 def validation_model_state(model: Any, device: Any):
     """Temporarily move a native model to ``device`` and exact eval state."""
-    module = model.model
-    # Exported-runtime backends expose a lightweight ``.model.eval()``
-    # compatibility proxy rather than a movable ``torch.nn.Module``. Their
-    # runtime provider owns placement, so preserve the existing backend path.
+    module = getattr(model, "model", None)
+    # Exported runtimes need not expose an inner torch module. Their runtime
+    # provider owns placement and evaluation semantics, so there is no native
+    # state to transact in that case.
     if not isinstance(module, torch.nn.Module):
         yield
         return
@@ -167,7 +167,7 @@ class BaseValidator(ABC):
             logger.info("Batch size: %d", self.config.batch_size)
 
     def _run_validation(self) -> None:
-        self.model.model.eval()
+        self._set_model_eval()
 
         if self.config.augment:
             self._run_validation_augmented()
@@ -205,6 +205,17 @@ class BaseValidator(ABC):
     def _run_validation_augmented(self) -> None:
         """TTA validation — subclasses override to call model._predict_augment per image."""
         raise NotImplementedError
+
+    def _set_model_eval(self) -> None:
+        """Enter eval mode when the wrapped runtime exposes that operation."""
+        module = getattr(self.model, "model", None)
+        eval_fn = getattr(module, "eval", None)
+        if callable(eval_fn):
+            eval_fn()
+            return
+        eval_fn = getattr(self.model, "eval", None)
+        if callable(eval_fn):
+            eval_fn()
 
     def _finalize(self) -> Dict[str, float]:
         metrics = self._compute_metrics()
@@ -278,7 +289,7 @@ class BaseValidator(ABC):
         if hasattr(self.model, "_original_size"):
             self.model._original_size = (imgsz, imgsz)
 
-        self.model.model.eval()
+        self._set_model_eval()
         with torch.no_grad():
             for _ in range(n_warmup):
                 try:

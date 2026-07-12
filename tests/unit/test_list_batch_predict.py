@@ -331,6 +331,7 @@ def test_tensorrt_batched_in_memory_images_keep_path_none_and_indexed_saves():
             torch.zeros(1, 3, imgsz, imgsz),
             np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
             (imgsz, imgsz),
+            1.0,
         )
 
     def infer(batched_input):
@@ -868,6 +869,7 @@ def test_backend_without_batch_support_stays_sequential():
     backend._run_inference = run_inference
     backend._parse_outputs = _marker_parse_outputs
     backend._build_result = _marker_build_result
+    backend._supports_batched_inference = lambda: False
 
     images = [np.full((8, 8, 3), v, dtype=np.uint8) for v in (10, 60)]
     results = BaseBackend._process_in_batches(backend, images, batch=2)

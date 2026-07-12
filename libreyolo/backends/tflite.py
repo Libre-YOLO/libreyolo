@@ -11,7 +11,12 @@ import numpy as np
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    _read_classification_metadata,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,11 @@ class TFLiteBackend(BaseBackend):
             default_task=default_task,
             supported_tasks=supported_tasks,
         )
+        classification_metadata = (
+            _read_classification_metadata(metadata)
+            if resolved_task == "classify"
+            else {}
+        )
         resolved_nc = int(
             nb_classes
             if nb_classes is not None
@@ -101,10 +111,7 @@ class TFLiteBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
-            crop_pct=(
-                float(metadata["crop_pct"]) if metadata.get("crop_pct") else None
-            ),
-            interpolation=metadata.get("interpolation"),
+            **classification_metadata,
             **_read_pose_metadata(metadata),
         )
 

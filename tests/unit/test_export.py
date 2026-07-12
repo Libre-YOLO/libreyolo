@@ -148,6 +148,16 @@ class TestExporterFormats:
         assert TFLiteExporter.requires_onnx is True
         assert TFLiteExporter.supports_fp16 is False
 
+    def test_ncnn_rejects_requested_fp16_before_artifact_creation(self, tmp_path):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        output = tmp_path / "model_ncnn"
+
+        with pytest.raises(NotImplementedError, match="NCNN FP16"):
+            NcnnExporter(wrapper)(output_path=str(output), half=True)
+
+        assert not output.exists()
+
     def test_unsupported_exporter_rejects_embedded_nms(self):
         exporter = TorchScriptExporter(_make_wrapper())
 
@@ -174,7 +184,7 @@ class TestExporterFormats:
         wrapper.task = "segment"
         exporter = CoreMLExporter(wrapper)
 
-        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+        with pytest.raises(NotImplementedError, match="segmentation export"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
     def test_export_rejects_yolo9_segment(self):
@@ -274,6 +284,39 @@ class TestExporterFormats:
         assert onnx_metadata["task"] == "obb"
         assert onnx_metadata["obb"] == "true"
 
+    def test_classifier_metadata_is_complete_for_all_artifact_kinds(self):
+        wrapper = _make_wrapper(model_name="convnext")
+        wrapper.task = "classify"
+        wrapper.SUPPORTED_TASKS = ("classify",)
+        wrapper.DEFAULT_TASK = "classify"
+        wrapper.crop_pct = 0.95
+        wrapper.interpolation = "bicubic"
+        wrapper.classification_mean = (0.1, 0.2, 0.3)
+        wrapper.classification_std = (0.4, 0.5, 0.6)
+        wrapper.classification_square_resize = True
+        wrapper.classification_activation = "sigmoid"
+
+        native = TorchScriptExporter(wrapper)._build_metadata(
+            precision="fp32", dynamic=False, onnx_path=None
+        )
+        onnx = OnnxExporter(wrapper)._build_onnx_metadata(
+            dynamic=False,
+            half=False,
+        )
+
+        assert native["classification_mean"] == [0.1, 0.2, 0.3]
+        assert native["classification_std"] == [0.4, 0.5, 0.6]
+        assert native["classification_crop_pct"] == 0.95
+        assert native["classification_interpolation"] == "bicubic"
+        assert native["classification_square_resize"] is True
+        assert native["classification_activation"] == "sigmoid"
+        assert json.loads(onnx["classification_mean"]) == [0.1, 0.2, 0.3]
+        assert json.loads(onnx["classification_std"]) == [0.4, 0.5, 0.6]
+        assert onnx["classification_crop_pct"] == "0.95"
+        assert onnx["classification_interpolation"] == "bicubic"
+        assert onnx["classification_square_resize"] == "true"
+        assert onnx["classification_activation"] == "sigmoid"
+
     def test_rfdetr_export_metadata_is_single_task(self):
         wrapper = _make_wrapper(model_name="rfdetr")
         wrapper.task = "segment"
@@ -365,7 +408,50 @@ class TestExporterFormats:
         assert captured["metadata"]["trt_min_batch"] == 2
         assert captured["metadata"]["trt_opt_batch"] == 4
         assert captured["metadata"]["trt_max_batch"] == 16
+        assert captured["input_shape"] == (1, 3, 32, 32)
         assert "trt_max_batch" not in metadata
+
+    def test_tensorrt_config_disables_dynamic_before_intermediate_onnx(
+        self, monkeypatch, tmp_path
+    ):
+        from libreyolo.export.config import DynamicBatchConfig, TensorRTExportConfig
+
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = TensorRTExporter(wrapper)
+        captured = {}
+        config = TensorRTExportConfig(
+            precision="fp32",
+            dynamic=DynamicBatchConfig(enabled=False),
+        )
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+
+        def fake_intermediate(
+            nn_model, dummy, output_path, opset, simplify, dynamic
+        ):
+            captured["intermediate_dynamic"] = dynamic
+            return str(tmp_path / "intermediate.onnx")
+
+        def fake_export(nn_model, dummy, *, output_path, dynamic, **kwargs):
+            captured["export_dynamic"] = dynamic
+            return output_path
+
+        monkeypatch.setattr(exporter, "_export_intermediate_onnx", fake_intermediate)
+        monkeypatch.setattr(exporter, "_export", fake_export)
+
+        result = exporter(
+            output_path=str(tmp_path / "model.engine"),
+            dynamic=True,
+            trt_config=config,
+            device="cpu",
+        )
+
+        assert result == str(tmp_path / "model.engine")
+        assert captured == {
+            "intermediate_dynamic": False,
+            "export_dynamic": False,
+        }
 
     def test_rfdetr_export_defaults_to_cpu(self):
         wrapper = _make_wrapper(model_name="rfdetr")
@@ -667,10 +753,13 @@ class TestExporterFormats:
             batch,
             fraction,
             allow_download_scripts=False,
+            *,
+            input_shape=None,
         ):
             captured["data"] = data
             captured["imgsz"] = imgsz
             captured["batch"] = batch
+            captured["input_shape"] = input_shape
             return object()
 
         def fake_export(nn_model, dummy, *, output_path, calibration_data, **kwargs):
@@ -699,6 +788,7 @@ class TestExporterFormats:
         assert captured["data"] == "coco8.yaml"
         assert captured["imgsz"] == (32, 32)
         assert captured["batch"] == 2
+        assert captured["input_shape"] == (2, 3, 32, 32)
         assert captured["dummy_dtype"] == torch.float32
         assert captured["param_dtype"] == torch.float32
         assert captured["half"] is False
@@ -707,14 +797,18 @@ class TestExporterFormats:
         assert "8-image fallback is not representative" in caplog.text
 
     @pytest.mark.parametrize(
-        ("family", "task"),
-        [("rfdetr", "detect"), ("yolo9", "segment"), ("yolo9_e2e", "detect")],
+        ("family", "task", "error"),
+        [
+            ("rfdetr", "detect", "YOLO9 detection"),
+            ("yolo9", "segment", "segmentation export"),
+            ("yolo9_e2e", "detect", "YOLO9 detection"),
+        ],
     )
-    def test_onnx_int8_scope_is_yolo9_detect_only(self, family, task):
+    def test_onnx_int8_scope_is_yolo9_detect_only(self, family, task, error):
         wrapper = _make_wrapper(model_name=family, input_size=32)
         wrapper.task = task
 
-        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+        with pytest.raises(NotImplementedError, match=error):
             OnnxExporter(wrapper)._preflight(
                 half=False,
                 int8=True,
@@ -889,9 +983,12 @@ class TestExporterFormats:
             batch,
             fraction,
             allow_download_scripts=False,
+            *,
+            input_shape=None,
         ):
             captured["imgsz"] = imgsz
             captured["batch"] = batch
+            captured["input_shape"] = input_shape
             return object()
 
         def fake_export(nn_model, dummy, *, output_path, calibration_data, **kwargs):
@@ -917,6 +1014,7 @@ class TestExporterFormats:
         assert captured["imgsz"] == (16, 32)
         assert captured["batch"] == 2
         assert captured["dummy_shape"] == (2, 3, 16, 32)
+        assert captured["input_shape"] == (2, 3, 16, 32)
         assert captured["calibration_data"] is not None
 
 
@@ -1149,6 +1247,87 @@ class TestModelStateRestored:
 
         param = next(wrapper.model.parameters())
         assert param.dtype == torch.float32
+
+    def test_mixed_modes_dtypes_values_and_gradients_restore_after_failure(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper()
+        wrapper.model.train()
+        wrapper.model.conv.eval()
+        wrapper.model.fc.train()
+        wrapper.model.fc.double()
+        wrapper.model.register_buffer(
+            "mixed_precision_buffer",
+            torch.tensor([1.123456789], dtype=torch.float64),
+        )
+        wrapper.model.conv.weight.grad = torch.randn_like(wrapper.model.conv.weight)
+
+        modes = {
+            name: module.training for name, module in wrapper.model.named_modules()
+        }
+        tensors = {
+            name: value.detach().clone()
+            for name, value in (
+                *wrapper.model.named_parameters(),
+                *wrapper.model.named_buffers(),
+            )
+        }
+        dtypes = {name: value.dtype for name, value in tensors.items()}
+        grad = wrapper.model.conv.weight.grad.detach().clone()
+
+        exporter = TorchScriptExporter(wrapper)
+
+        def fail_export(nn_model, dummy, **kwargs):
+            assert dummy.dtype == torch.float16
+            assert all(
+                value.dtype == torch.float16
+                for value in (*nn_model.parameters(), *nn_model.buffers())
+                if value.is_floating_point()
+            )
+            raise RuntimeError("synthetic export failure")
+
+        monkeypatch.setattr(exporter, "_export", fail_export)
+        with pytest.raises(RuntimeError, match="synthetic export failure"):
+            exporter(
+                output_path=str(tmp_path / "failed.torchscript"),
+                half=True,
+                dynamic=False,
+            )
+
+        assert {
+            name: module.training for name, module in wrapper.model.named_modules()
+        } == modes
+        for name, value in (
+            *wrapper.model.named_parameters(),
+            *wrapper.model.named_buffers(),
+        ):
+            assert value.dtype == dtypes[name]
+            assert torch.equal(value, tensors[name])
+        assert torch.equal(wrapper.model.conv.weight.grad, grad)
+
+    def test_setup_failure_restores_export_flags_before_yield(self, monkeypatch):
+        wrapper = _make_wrapper()
+        wrapper.model.head = nn.Module()
+        wrapper.model.head.export = False
+        exporter = TorchScriptExporter(wrapper)
+
+        def fail_dummy(*args, **kwargs):
+            assert wrapper.model.head.export is True
+            raise RuntimeError("synthetic dummy allocation failure")
+
+        monkeypatch.setattr(exporter_module.torch, "randn", fail_dummy)
+
+        with pytest.raises(RuntimeError, match="dummy allocation failure"):
+            with exporter._model_context(
+                torch.device("cpu"),
+                False,
+                False,
+                1,
+                (32, 32),
+            ):
+                pass
+
+        assert wrapper.model.head.export is False
 
 
 # ---------------------------------------------------------------------------

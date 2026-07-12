@@ -150,8 +150,12 @@ def postprocess(
     # ``conf_thres``. Multi-label per anchor (vs argmax) so anchors with two
     # strong classes emit both candidates.
     valid_scores, class_ids, valid_boxes = _per_level_filter_topk(
-        cls_scores, bbox_preds, strides=strides, reg_max=reg_max,
-        score_thr=conf_thres, nms_pre=1000,
+        cls_scores,
+        bbox_preds,
+        strides=strides,
+        reg_max=reg_max,
+        score_thr=conf_thres,
+        nms_pre=1000,
         canvas_size=(input_size, input_size),
     )
     if valid_scores.numel() == 0:
@@ -178,6 +182,13 @@ def postprocess(
 
     if valid_scores.numel() == 0:
         return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
+
+    # torchvision's CPU NMS kernels require fp32/fp64. Exported FP16 runtime
+    # outputs are valid inputs to postprocess, so promote before suppression.
+    if valid_boxes.dtype in {torch.float16, torch.bfloat16}:
+        valid_boxes = valid_boxes.float()
+    if valid_scores.dtype in {torch.float16, torch.bfloat16}:
+        valid_scores = valid_scores.float()
 
     # Single batched NMS across all classes (one C++ call).
     keep = tvo.batched_nms(valid_boxes, valid_scores, class_ids, iou_thres)

@@ -1,6 +1,7 @@
 """ncnn export implementation via PNNX."""
 
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +11,20 @@ from typing import Optional
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def _is_missing_optional_pnnx_loader(exc: FileNotFoundError, traced_path: Path) -> bool:
+    """Return whether PNNX failed to load its optional generated Python helper."""
+    loader_name = f"{traced_path.stem}_pnnx.py"
+    filenames = [
+        value
+        for value in (getattr(exc, "filename", None), getattr(exc, "filename2", None))
+        if value is not None
+    ]
+    if filenames:
+        return any(Path(str(value)).name == loader_name for value in filenames)
+    pattern = rf"(?<![A-Za-z0-9_.-]){re.escape(loader_name)}(?![A-Za-z0-9_.-])"
+    return re.search(pattern, str(exc)) is not None
 
 
 def check_ncnn_export_available() -> None:
@@ -125,6 +140,22 @@ def _export_pnnx_direct(nn_model, dummy, output_dir: Path, half: bool):
                 "were written; using the completed artifacts: %s",
                 exc,
             )
+        except FileNotFoundError as exc:
+            # Some PNNX wheels remove or fail to import their generated
+            # ``<trace>_pnnx.py`` inspection helper after conversion. This is
+            # safe to ignore only for that exact helper and only when the
+            # matching deployable artifact pair is already present.
+            if (
+                not _is_missing_optional_pnnx_loader(exc, temp_pt)
+                or not src_param.is_file()
+                or not src_bin.is_file()
+            ):
+                raise
+            logger.warning(
+                "PNNX optional loader was unavailable after NCNN artifacts "
+                "were written; using the completed artifacts: %s",
+                exc,
+            )
 
         if not src_param.exists() or not src_bin.exists():
             # PNNX may use different naming; search for .ncnn.param/.ncnn.bin
@@ -216,7 +247,7 @@ def _save_metadata(output_dir: Path, metadata: dict) -> None:
     """Save metadata.yaml for ncnn model."""
     metadata_path = output_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+        yaml.safe_dump(metadata, f, default_flow_style=False, sort_keys=False)
     logger.info("Saved metadata: %s", metadata_path)
 
 
@@ -242,7 +273,8 @@ def export_ncnn(
         nn_model: PyTorch model (nn.Module) in eval mode.
         dummy: Dummy input tensor for tracing.
         output_path: Output directory for ncnn model files.
-        half: Export in FP16 precision (default: False).
+        half: Reserved compatibility flag. ``True`` is rejected because the
+            current PNNX path does not produce a distinct FP16 artifact.
         opset: ONNX opset version for fallback path (default: 13).
         simplify: Simplify ONNX graph in fallback path (default: True).
         metadata: Optional dict of model metadata to save as metadata.yaml.
@@ -251,9 +283,14 @@ def export_ncnn(
         Path to exported ncnn model directory.
 
     Raises:
+        NotImplementedError: If ``half=True`` is requested.
         ImportError: If pnnx is not installed.
         RuntimeError: If both direct and fallback export paths fail.
     """
+    if half:
+        raise NotImplementedError(
+            "NCNN FP16 export is not supported; omit half=True for FP32."
+        )
     check_ncnn_export_available()
 
     output_dir = Path(output_path)

@@ -256,7 +256,7 @@ def formats_cmd(
 ) -> None:
     """List supported export formats."""
     from libreyolo.export.exporter import BaseExporter
-    from libreyolo.export.support import get_support
+    from libreyolo.export.support import get_export_capabilities
     from libreyolo.models.inventory import collect_model_inventory
     from libreyolo.tasks import normalize_task
 
@@ -293,6 +293,7 @@ def formats_cmd(
             "extension": cls.suffix,
             "int8": cls.supports_int8,
             "fp16": cls.supports_fp16,
+            "dynamic": name in {"onnx", "tensorrt", "openvino"},
             "requires_onnx": cls.requires_onnx,
         }
         aliases = sorted(
@@ -301,10 +302,18 @@ def formats_cmd(
         if aliases:
             info["aliases"] = aliases
         if family is not None and selected_task is not None:
-            support = get_support(family, selected_task, name)
-            info["tier"] = support.tier
-            info["reason"] = support.reason
-            info["constraint"] = support.constraint
+            capabilities = get_export_capabilities(family, selected_task, name)
+            support = capabilities.support
+            info.update(
+                {
+                    "dynamic": capabilities.supports_dynamic,
+                    "fp16": capabilities.supports_fp16,
+                    "int8": capabilities.supports_int8,
+                    "tier": support.tier,
+                    "reason": support.reason,
+                    "constraint": support.constraint,
+                }
+            )
         formats.append(info)
 
     out = _get_output(json_output, quiet)
@@ -316,7 +325,8 @@ def formats_cmd(
             alias = f" (alias: {', '.join(f['aliases'])})" if f.get("aliases") else ""
             lines.append(f"  {f['name']}{alias}")
             lines.append(
-                f"    Extension: {f['extension']}, FP16: {f['fp16']}, INT8: {f['int8']}"
+                f"    Extension: {f['extension']}, Dynamic: {f['dynamic']}, "
+                f"FP16: {f['fp16']}, INT8: {f['int8']}"
             )
             if "tier" in f:
                 lines.append(f"    Tier: {f['tier']} ({f['reason']})")

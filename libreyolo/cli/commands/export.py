@@ -21,7 +21,9 @@ def export_cmd(
         "onnx",
         help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite (alias: litert), coreml",
     ),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Input image size (e.g. 640 or 640,480)"
+    ),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
@@ -75,11 +77,12 @@ def export_cmd(
         exit_with_error(
             out,
             "nms_unsupported_format",
-            "Embedded NMS (--nms) is only supported for ONNX and CoreML, "
-            f"not {fmt!r}.",
+            f"Embedded NMS (--nms) is only supported for ONNX and CoreML, not {fmt!r}.",
         )
     if nms and fmt == "onnx" and dynamic:
-        out.warning("Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False.")
+        out.warning(
+            "Embedded ONNX NMS uses a fixed batch-1 graph. Using dynamic=False."
+        )
         dynamic = False
     if nms and fmt == "coreml" and max_det != 300:
         exit_with_error(
@@ -100,6 +103,26 @@ def export_cmd(
     loaded_model = load_model_or_exit(
         out, model=model, model_path=model_path, device=device
     )
+
+    from libreyolo.export.support import get_export_capabilities
+
+    model_family = getattr(loaded_model, "FAMILY", "")
+    if not model_family and hasattr(loaded_model, "_get_model_name"):
+        model_family = loaded_model._get_model_name()
+    model_task = getattr(loaded_model, "task", "detect")
+    if not isinstance(model_task, str):
+        model_task = "detect"
+    capabilities = get_export_capabilities(model_family, model_task, fmt)
+    if (
+        dynamic
+        and fmt != "tflite"
+        and capabilities.support.tier != "blocked"
+        and not capabilities.supports_dynamic
+    ):
+        out.warning(
+            f"{fmt.upper()} export uses a fixed input graph. Using dynamic=False."
+        )
+        dynamic = False
 
     # Build export kwargs
     export_kwargs: dict = {
@@ -122,16 +145,28 @@ def export_cmd(
         if "," in imgsz:
             parts = imgsz.split(",")
             if len(parts) != 2:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.",
+                )
             try:
                 export_kwargs["imgsz"] = (int(parts[0]), int(parts[1]))
             except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz values: {imgsz}. Use integer dimensions.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz values: {imgsz}. Use integer dimensions.",
+                )
         else:
             try:
                 export_kwargs["imgsz"] = int(imgsz)
             except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
+                exit_with_error(
+                    out,
+                    "invalid_imgsz",
+                    f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.",
+                )
     if data is not None:
         export_kwargs["data"] = data
     if data is not None or int8:
@@ -185,7 +220,7 @@ def export_cmd(
 
     data_out = {
         "source_model": model,
-        "model_family": loaded_model.FAMILY,
+        "model_family": model_family,
         "format": fmt,
         "output_path": str(output_path),
         "file_size_mb": round(size_mb, 1),
@@ -197,7 +232,7 @@ def export_cmd(
 
     if not json_output:
         data_out["_human_text"] = (
-            f"Exported {loaded_model.FAMILY}-{loaded_model.size} to {fmt.upper()}: "
+            f"Exported {model_family}-{loaded_model.size} to {fmt.upper()}: "
             f"{output_path} ({size_mb:.1f} MB)\n"
             f"  Input: [{batch}, 3, {input_h}, {input_w}], "
             f"dynamic={dynamic}, half={half}, int8={int8}"

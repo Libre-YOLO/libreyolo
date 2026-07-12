@@ -80,7 +80,7 @@ def _should_skip_onnx_simplify() -> bool:
     )
 
 
-def _postprocess_onnx(
+def finalize_onnx_artifact(
     path: str,
     *,
     simplify: bool,
@@ -88,7 +88,12 @@ def _postprocess_onnx(
     half: bool,
     metadata: dict,
 ) -> None:
-    """Load the ONNX file, optionally simplify, embed metadata, and save."""
+    """Validate and finalize an ONNX artifact with shared LibreYOLO metadata.
+
+    Custom-family exporters use this after tracing so simplification, metadata
+    replacement, checker validation, and the macOS-arm safety guard stay
+    identical to the unified exporter path.
+    """
     try:
         import onnx
     except ImportError:
@@ -128,6 +133,11 @@ def _postprocess_onnx(
 
     onnx.checker.check_model(model_proto)
     onnx.save(model_proto, path)
+
+
+# Backward-compatible private alias for callers inside this module. New custom
+# exporters should use the public helper above.
+_postprocess_onnx = finalize_onnx_artifact
 
 
 def _detect_num_outputs(nn_model, dummy):

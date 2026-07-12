@@ -104,6 +104,10 @@ def postprocess(
     if boxes.numel() == 0:
         return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
 
+    if boxes.dtype in {torch.float16, torch.bfloat16}:
+        boxes = boxes.float()
+    if scores.dtype in {torch.float16, torch.bfloat16}:
+        scores = scores.float()
     keep = torchvision.ops.batched_nms(boxes, scores, class_ids, iou_thres)
     if keep.numel() > max_det:
         keep = keep[:max_det]
@@ -194,7 +198,9 @@ def postprocess_pose(
         scores = output["scores"]
         pose_xy = output["keypoints_xy"]
         pose_conf = output["keypoints_conf"]
-    elif isinstance(output, tuple) and len(output) == 2 and isinstance(output[0], tuple):
+    elif (
+        isinstance(output, tuple) and len(output) == 2 and isinstance(output[0], tuple)
+    ):
         bboxes, scores, pose_xy, pose_conf = output[0]
     else:
         bboxes, scores, pose_xy, pose_conf = output
@@ -229,6 +235,7 @@ def postprocess_pose(
     scores = scores[mask].float()
     pose_xy = pose_xy[mask].float()
     pose_conf = pose_conf[mask].float()
+
     if class_ids is not None:
         class_ids = class_ids[mask]
 

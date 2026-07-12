@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 
 import pytest
 import torch
@@ -152,13 +153,58 @@ def test_conversion_round_trip_writes_provenance_metadata(tmp_path):
     PicoSAM3Network().load_state_dict(checkpoint["model"], strict=True)
 
 
+@pytest.mark.parametrize(
+    "kwargs,error,match",
+    [
+        ({"half": True}, NotImplementedError, "half=True"),
+        ({"int8": True}, NotImplementedError, "int8=True"),
+        (
+            {"int8": True, "fraction": 0.5, "allow_download_scripts": False},
+            NotImplementedError,
+            "int8=True",
+        ),
+        ({"batch": 0}, ValueError, "positive integer"),
+        ({"batch": True}, ValueError, "positive integer"),
+        ({"imgsz": 128}, ValueError, "requires imgsz=96"),
+        ({"imgsz": (96, 95)}, ValueError, "requires imgsz=96"),
+    ],
+)
+def test_export_rejects_unsupported_requests(tmp_path, kwargs, error, match):
+    output = tmp_path / "should-not-exist.onnx"
+    with pytest.raises(error, match=match):
+        _bare_picosam3().export(output_path=output, **kwargs)
+    assert not output.exists()
+
+
 def test_raw_onnx_export_matches_pytorch(tmp_path):
+    onnx = pytest.importorskip("onnx")
     ort = pytest.importorskip("onnxruntime")
     model = _bare_picosam3()
     output = tmp_path / "picosam3.onnx"
-    model.export(output=output)
+    result = model.export(
+        output_path=output,
+        opset=None,
+        simplify=False,
+        dynamic=False,
+        half=False,
+        int8=False,
+        imgsz=(96, 96),
+        batch=2,
+        device="cpu",
+        verbose=False,
+    )
 
-    inputs = torch.randn((3, 3, 96, 96))
+    assert result == str(output)
+    proto = onnx.load(output)
+    metadata = {entry.key: entry.value for entry in proto.metadata_props}
+    assert proto.graph.input[0].type.tensor_type.shape.dim[0].dim_value == 2
+    assert metadata["model_family"] == "picosam3"
+    assert metadata["task"] == "segment"
+    assert json.loads(metadata["supported_tasks"]) == ["segment"]
+    assert metadata["imgsz"] == "96"
+    assert metadata["dynamic"] == "False"
+
+    inputs = torch.randn((2, 3, 96, 96))
     with torch.no_grad():
         expected = model.model(inputs).numpy()
     session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])

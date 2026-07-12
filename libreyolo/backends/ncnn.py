@@ -8,7 +8,12 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    _read_classification_metadata,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,7 @@ class NcnnBackend(BaseBackend):
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
         pose_metadata = {}
+        classification_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -78,6 +84,7 @@ class NcnnBackend(BaseBackend):
                 resolved_nb_classes,
                 names,
                 pose_metadata,
+                classification_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -113,12 +120,15 @@ class NcnnBackend(BaseBackend):
         input_names_fn = getattr(self.net, "input_names", None)
         output_names_fn = getattr(self.net, "output_names", None)
         if callable(input_names_fn) and callable(output_names_fn):
-            self._input_names = list(input_names_fn())
-            self._output_names = list(output_names_fn())
+            runtime_inputs = list(input_names_fn())
+            runtime_outputs = list(output_names_fn())
         else:
-            self._input_names, self._output_names = self._discover_blob_names(
-                param_path
-            )
+            runtime_inputs = []
+            runtime_outputs = []
+        parsed_inputs, parsed_outputs = self._parse_blob_names(param_path)
+        self._input_names = runtime_inputs or parsed_inputs or ["in0"]
+        self._output_names = runtime_outputs or parsed_outputs or ["out0"]
+        self._output_names_are_fallback = not runtime_outputs and not parsed_outputs
 
         super().__init__(
             model_path=str(model_dir),
@@ -131,29 +141,55 @@ class NcnnBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **classification_metadata,
             **pose_metadata,
         )
 
     @staticmethod
-    def _discover_blob_names(param_path: Path):
-        """Read the .param file to discover input and output blob names.
-
-        Falls back to 'in0'/'out0' convention if parsing fails.
-        """
-        input_names = []
-        output_names = []
+    def _parse_blob_names(param_path: Path) -> tuple[list[str], list[str]]:
+        """Parse graph inputs and terminal output blobs from an ncnn param file."""
+        input_names: list[str] = []
+        produced_names: list[str] = []
+        consumed_names: set[str] = set()
         try:
             with open(param_path) as f:
                 lines = f.readlines()
+            # A layer row is: type, name, bottom_count, top_count, then the
+            # declared bottom/top blob names followed by numeric parameters.
             for line in lines:
                 parts = line.strip().split()
-                if not parts:
+                if len(parts) < 4:
                     continue
                 layer_type = parts[0]
-                if layer_type == "Input" and len(parts) >= 4:
-                    input_names.append(parts[-1])
-        except Exception:
-            pass
+                try:
+                    bottom_count = int(parts[2])
+                    top_count = int(parts[3])
+                except ValueError:
+                    continue
+                names_end = 4 + bottom_count + top_count
+                if bottom_count < 0 or top_count < 0 or len(parts) < names_end:
+                    continue
+
+                bottoms = parts[4 : 4 + bottom_count]
+                tops = parts[4 + bottom_count : names_end]
+                consumed_names.update(bottoms)
+                for name in tops:
+                    if name not in produced_names:
+                        produced_names.append(name)
+                if layer_type == "Input":
+                    for name in tops:
+                        if name not in input_names:
+                            input_names.append(name)
+        except (OSError, UnicodeError):
+            return [], []
+
+        output_names = [name for name in produced_names if name not in consumed_names]
+        return input_names, output_names
+
+    @staticmethod
+    def _discover_blob_names(param_path: Path):
+        """Discover names, falling back only when graph metadata is unavailable."""
+        input_names, output_names = NcnnBackend._parse_blob_names(param_path)
 
         if not input_names:
             input_names = ["in0"]
@@ -166,7 +202,9 @@ class NcnnBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
+            Tuple of (model_family, model_size, task, supported_tasks,
+            default_task, imgsz, nb_classes, names, pose metadata,
+            classification metadata).
         """
         import yaml
 
@@ -216,6 +254,7 @@ class NcnnBackend(BaseBackend):
             nb_classes,
             names,
             _read_pose_metadata(meta),
+            _read_classification_metadata(meta) if task == "classify" else {},
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:
@@ -246,15 +285,17 @@ class NcnnBackend(BaseBackend):
         all_outputs = []
         for out_name in self._output_names:
             ret, mat_out = ex.extract(out_name)
-            if ret != 0:
+            if ret != 0 and self._output_names_are_fallback:
                 for fallback in ("out0", "output", "output0"):
+                    if fallback == out_name:
+                        continue
                     ret, mat_out = ex.extract(fallback)
                     if ret == 0:
                         break
-                if ret != 0:
-                    raise RuntimeError(
-                        f"Failed to extract output '{out_name}' from ncnn model"
-                    )
+            if ret != 0:
+                raise RuntimeError(
+                    f"Failed to extract output '{out_name}' from ncnn model"
+                )
             all_outputs.append(np.array(mat_out).reshape(1, *np.array(mat_out).shape))
 
         # YOLO-NAS exports two outputs (scores, boxes) from pnnx as out1/out0.

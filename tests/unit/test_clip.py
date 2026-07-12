@@ -7,6 +7,8 @@ against open_clip and accuracy live in ``test_clip_parity.py`` (external_data).
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 import torch
@@ -71,7 +73,9 @@ class TestRegistry:
         }
         assert LibreCLIP.can_load(good)
         # Missing any one signature key -> not a CLIP checkpoint.
-        assert not LibreCLIP.can_load({k: v for k, v in good.items() if k != "logit_scale"})
+        assert not LibreCLIP.can_load(
+            {k: v for k, v in good.items() if k != "logit_scale"}
+        )
         assert not LibreCLIP.can_load({"backbone.0.weight": torch.zeros(1)})
 
     @pytest.mark.parametrize(
@@ -223,15 +227,109 @@ class TestScope:
         with pytest.raises(NotImplementedError):
             tiny_clip.export(format="torchscript")
 
+    def test_export_accepts_standard_cli_arguments(
+        self, tiny_clip, monkeypatch, tmp_path
+    ):
+        captured = {}
+
+        def fake_export(model, **kwargs):
+            captured["model"] = model
+            captured.update(kwargs)
+            return kwargs["output"]
+
+        monkeypatch.setattr(
+            "libreyolo.models.clip.export.export_frozen_onnx", fake_export
+        )
+        output = tmp_path / "clip.onnx"
+
+        result = tiny_clip.export(
+            format="onnx",
+            output_path=output,
+            opset=None,
+            simplify=False,
+            dynamic=False,
+            half=False,
+            int8=False,
+            imgsz=(32, 32),
+            batch=2,
+            device="cpu",
+            verbose=True,
+        )
+
+        assert result == str(output)
+        assert captured == {
+            "model": tiny_clip,
+            "imgsz": 32,
+            "opset": None,
+            "output": str(output),
+            "batch": 2,
+            "dynamic": False,
+            "device": "cpu",
+            "simplify": False,
+            "verbose": True,
+        }
+
+    @pytest.mark.parametrize(
+        "kwargs,error,match",
+        [
+            ({"half": True}, NotImplementedError, "half=True"),
+            ({"int8": True}, NotImplementedError, "int8=True"),
+            (
+                {"int8": True, "fraction": 0.5, "allow_download_scripts": False},
+                NotImplementedError,
+                "int8=True",
+            ),
+            ({"batch": 0}, ValueError, "positive integer"),
+            ({"batch": True}, ValueError, "positive integer"),
+            ({"imgsz": 64}, ValueError, "only supports imgsz=32"),
+            ({"imgsz": (32, 31)}, ValueError, "only supports imgsz=32"),
+        ],
+    )
+    def test_export_rejects_unsupported_requests(
+        self, tiny_clip, tmp_path, kwargs, error, match
+    ):
+        output = tmp_path / "should-not-exist.onnx"
+        with pytest.raises(error, match=match):
+            tiny_clip.export(output_path=output, **kwargs)
+        assert not output.exists()
+
     def test_frozen_onnx_roundtrip(self, tiny_clip, tmp_path):
-        pytest.importorskip("onnx")
+        onnx = pytest.importorskip("onnx")
         ort = pytest.importorskip("onnxruntime")
         tiny_clip.set_classes(["a cat", "a dog", "a truck"])
-        out = tiny_clip.export(format="onnx", output=str(tmp_path / "clip.onnx"))
+        out = tiny_clip.export(
+            format="onnx",
+            output_path=tmp_path / "clip.onnx",
+            opset=None,
+            batch=2,
+            dynamic=False,
+            device="cpu",
+            simplify=False,
+            verbose=False,
+        )
+        proto = onnx.load(out)
+        metadata = {entry.key: entry.value for entry in proto.metadata_props}
+        assert proto.graph.input[0].type.tensor_type.shape.dim[0].dim_value == 2
+        assert metadata["model_family"] == "clip"
+        assert metadata["task"] == "classify"
+        assert json.loads(metadata["names"]) == {
+            "0": "a cat",
+            "1": "a dog",
+            "2": "a truck",
+        }
+        assert json.loads(metadata["classification_mean"]) == pytest.approx(
+            [0.48145466, 0.4578275, 0.40821073]
+        )
+        assert metadata["classification_crop_pct"] == "1.0"
+        assert metadata["classification_interpolation"] == "bicubic"
+        assert metadata["classification_square_resize"] == "false"
+        assert metadata["classification_activation"] == "softmax"
         sess = ort.InferenceSession(out, providers=["CPUExecutionProvider"])
-        x = np.zeros((1, 3, tiny_clip.input_size, tiny_clip.input_size), dtype=np.float32)
+        x = np.zeros(
+            (2, 3, tiny_clip.input_size, tiny_clip.input_size), dtype=np.float32
+        )
         (logits,) = sess.run(None, {"images": x})
-        assert logits.shape == (1, 3)
+        assert logits.shape == (2, 3)
         # ONNX frozen head must match the eager zero-shot logits.
         with torch.no_grad():
             eager = tiny_clip._forward(torch.from_numpy(x)).cpu().numpy()

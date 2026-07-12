@@ -1463,6 +1463,57 @@ def test_classify_backend_postprocess_returns_probs():
     assert det["probs"].argmax().item() == 1
 
 
+def test_classify_backend_uses_metadata_declared_sigmoid_activation():
+    backend = _DummyBackend(
+        "siglip2",
+        task="classify",
+        supported_tasks=("classify",),
+        imgsz=8,
+        classification_activation="sigmoid",
+    )
+    probs = backend._parse_classify_probs([np.array([[0.0, 2.0]], dtype=np.float32)])
+
+    torch.testing.assert_close(probs, torch.tensor([0.5, 0.8807971]))
+
+
+def test_classification_metadata_parser_preserves_complete_contract():
+    parsed = backend_base._read_classification_metadata(
+        {
+            "classification_mean": "[0.1, 0.2, 0.3]",
+            "classification_std": [0.4, 0.5, 0.6],
+            "classification_crop_pct": "1.0",
+            "classification_interpolation": "bicubic",
+            "classification_square_resize": "true",
+            "classification_activation": "sigmoid",
+        }
+    )
+
+    assert parsed == {
+        "crop_pct": 1.0,
+        "interpolation": "bicubic",
+        "classification_mean": (0.1, 0.2, 0.3),
+        "classification_std": (0.4, 0.5, 0.6),
+        "classification_square_resize": True,
+        "classification_activation": "sigmoid",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("classification_mean", "bad", "classification_mean"),
+        ("classification_std", [1, 0, 1], "classification_std"),
+        ("classification_crop_pct", 0, "classification_crop_pct"),
+        ("classification_interpolation", "area", "classification_interpolation"),
+        ("classification_square_resize", "yes", "classification_square_resize"),
+        ("classification_activation", "none", "classification_activation"),
+    ],
+)
+def test_classification_metadata_parser_rejects_malformed_contract(key, value, match):
+    with pytest.raises(ValueError, match=match):
+        backend_base._read_classification_metadata({key: value})
+
+
 def test_classify_backend_predict_returns_probs_and_saves_original(
     tmp_path, monkeypatch
 ):

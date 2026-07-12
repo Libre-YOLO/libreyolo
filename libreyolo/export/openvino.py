@@ -63,7 +63,7 @@ def _save_metadata(output_dir: Path, metadata: dict) -> None:
     """Save metadata.yaml for OpenVINO model."""
     metadata_path = output_dir / "metadata.yaml"
     with open(metadata_path, "w") as f:
-        yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
+        yaml.safe_dump(metadata, f, default_flow_style=False, sort_keys=False)
     logger.info("Saved metadata: %s", metadata_path)
 
 

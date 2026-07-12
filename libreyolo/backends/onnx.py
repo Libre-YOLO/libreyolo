@@ -12,11 +12,67 @@ from .base import (
     BaseBackend,
     ImageSize,
     MetadataImageSizeError,
+    _read_classification_metadata,
     _read_metadata_imgsz,
     _read_pose_metadata,
 )
 
 logger = logging.getLogger(__name__)
+
+
+_ONNX_TENSOR_DTYPES = {
+    "tensor(bool)": np.bool_,
+    "tensor(double)": np.float64,
+    "tensor(float)": np.float32,
+    "tensor(float16)": np.float16,
+    "tensor(int8)": np.int8,
+    "tensor(int16)": np.int16,
+    "tensor(int32)": np.int32,
+    "tensor(int64)": np.int64,
+    "tensor(uint8)": np.uint8,
+    "tensor(uint16)": np.uint16,
+    "tensor(uint32)": np.uint32,
+    "tensor(uint64)": np.uint64,
+}
+
+
+def _resolve_onnx_providers(device, available_providers) -> tuple[list, str]:
+    """Resolve ONNX Runtime providers without warning for an explicit CPU."""
+    key = str(device).lower()
+    if key == "auto":
+        if "CUDAExecutionProvider" in available_providers:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"], "cuda"
+        return ["CPUExecutionProvider"], "cpu"
+    if key == "cpu":
+        return ["CPUExecutionProvider"], "cpu"
+    if key in {"cuda", "gpu"} or key.startswith("cuda:"):
+        indexed_device = None
+        if key.startswith("cuda:"):
+            try:
+                indexed_device = int(key.split(":", 1)[1])
+            except ValueError as exc:
+                raise ValueError(f"Invalid ONNX CUDA device {device!r}.") from exc
+            if indexed_device < 0:
+                raise ValueError(f"Invalid ONNX CUDA device {device!r}.")
+        if "CUDAExecutionProvider" in available_providers:
+            cuda_provider = (
+                "CUDAExecutionProvider"
+                if indexed_device is None
+                else ("CUDAExecutionProvider", {"device_id": indexed_device})
+            )
+            resolved = "cuda" if indexed_device is None else f"cuda:{indexed_device}"
+            return [cuda_provider, "CPUExecutionProvider"], resolved
+        logger.warning(
+            "Requested device %r but CUDAExecutionProvider is not available; "
+            "falling back to CPU.",
+            device,
+        )
+        return ["CPUExecutionProvider"], "cpu"
+    logger.warning(
+        "Requested device %r is not supported by the ONNX backend; falling back to CPU.",
+        device,
+    )
+    return ["CPUExecutionProvider"], "cpu"
 
 
 class OnnxBackend(BaseBackend):
@@ -51,37 +107,15 @@ class OnnxBackend(BaseBackend):
         if not Path(onnx_path).exists():
             raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
 
-        available_providers = ort.get_available_providers()
-        if device == "auto":
-            if "CUDAExecutionProvider" in available_providers:
-                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-                resolved_device = "cuda"
-            else:
-                providers = ["CPUExecutionProvider"]
-                resolved_device = "cpu"
-        elif device in ("cuda", "gpu") or device.startswith("cuda:"):
-            if "CUDAExecutionProvider" in available_providers:
-                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-                resolved_device = "cuda"
-            else:
-                providers = ["CPUExecutionProvider"]
-                resolved_device = "cpu"
-                logger.warning(
-                    "Requested device %r but CUDAExecutionProvider is not "
-                    "available; falling back to CPU.",
-                    device,
-                )
-        else:
-            providers = ["CPUExecutionProvider"]
-            resolved_device = "cpu"
-            logger.warning(
-                "Requested device %r is not supported by the ONNX backend; "
-                "falling back to CPU.",
-                device,
-            )
+        providers, resolved_device = _resolve_onnx_providers(
+            device,
+            ort.get_available_providers(),
+        )
 
         self.session = ort.InferenceSession(onnx_path, providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
+        input_info = self.session.get_inputs()[0]
+        self.input_name = input_info.name
+        self.input_dtype = self._numpy_dtype_for_onnx_type(input_info.type)
         self.output_names = [output.name for output in self.session.get_outputs()]
         try:
             runtime_metadata = dict(
@@ -89,6 +123,7 @@ class OnnxBackend(BaseBackend):
             )
         except Exception:
             runtime_metadata = {}
+        metadata = runtime_metadata or self._load_embedded_metadata(onnx_path)
 
         (
             model_family,
@@ -100,10 +135,10 @@ class OnnxBackend(BaseBackend):
             embedded_nms,
             metadata_imgsz,
         ) = self._read_onnx_metadata(
-            onnx_path, nb_classes, runtime_metadata=runtime_metadata
+            onnx_path, nb_classes, runtime_metadata=metadata
         )
         pose_metadata = self._read_onnx_pose_metadata(
-            onnx_path, runtime_metadata=runtime_metadata
+            onnx_path, runtime_metadata=metadata
         )
         # Models exported with nms=True emit final (1, max_det, 6) detections.
         # Newer YOLO9 ONNX exports also include a raw auxiliary output so the
@@ -114,11 +149,14 @@ class OnnxBackend(BaseBackend):
             if embedded_nms and "raw" in self.output_names
             else None
         )
-        input_shape = self.session.get_inputs()[0].shape
+        input_shape = input_info.shape
         # Dynamic-batch exports carry a symbolic dim ("batch") or None at
         # axis 0; static exports carry an int.
         self._dynamic_batch_axis = bool(input_shape) and not isinstance(
             input_shape[0], int
+        )
+        dynamic_spatial = len(input_shape) == 4 and any(
+            not isinstance(dim, int) for dim in input_shape[2:4]
         )
         static_imgsz = self._read_static_input_imgsz(input_shape)
         if static_imgsz is not None:
@@ -133,6 +171,11 @@ class OnnxBackend(BaseBackend):
             default_task=default_task,
             supported_tasks=supported_tasks,
         )
+        classification_metadata = (
+            _read_classification_metadata(metadata)
+            if resolved_task == "classify"
+            else {}
+        )
 
         super().__init__(
             model_path=onnx_path,
@@ -145,27 +188,23 @@ class OnnxBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
-            crop_pct=(
-                float(runtime_metadata["crop_pct"])
-                if runtime_metadata.get("crop_pct")
-                else None
-            ),
-            interpolation=runtime_metadata.get("interpolation"),
+            dynamic_spatial=dynamic_spatial,
             num_bins=(
-                int(runtime_metadata["num_bins"])
-                if runtime_metadata.get("num_bins")
+                int(metadata["num_bins"])
+                if metadata.get("num_bins")
                 else None
             ),
             bin_width_deg=(
-                float(runtime_metadata["bin_width_deg"])
-                if runtime_metadata.get("bin_width_deg")
+                float(metadata["bin_width_deg"])
+                if metadata.get("bin_width_deg")
                 else None
             ),
             offset_deg=(
-                float(runtime_metadata["offset_deg"])
-                if runtime_metadata.get("offset_deg")
+                float(metadata["offset_deg"])
+                if metadata.get("offset_deg")
                 else None
             ),
+            **classification_metadata,
             **pose_metadata,
         )
 
@@ -177,6 +216,18 @@ class OnnxBackend(BaseBackend):
         if not isinstance(h, int) or not isinstance(w, int) or h <= 0 or w <= 0:
             return None
         return h if h == w else (h, w)
+
+    @staticmethod
+    def _load_embedded_metadata(onnx_path: str) -> dict:
+        """Load the complete metadata map directly from an ONNX artifact."""
+        try:
+            import onnx
+
+            model_proto = onnx.load(onnx_path)
+            return {entry.key: entry.value for entry in model_proto.metadata_props}
+        except Exception as exc:
+            logger.warning("Failed to load ONNX metadata from %s: %s", onnx_path, exc)
+            return {}
 
     @staticmethod
     def _read_onnx_metadata(
@@ -199,12 +250,11 @@ class OnnxBackend(BaseBackend):
         imgsz = None
         embedded_nms = False
         try:
-            meta = dict(runtime_metadata or {})
-            if not meta:
-                import onnx
-
-                model_proto = onnx.load(onnx_path)
-                meta = {p.key: p.value for p in model_proto.metadata_props}
+            meta = (
+                dict(runtime_metadata)
+                if runtime_metadata is not None
+                else OnnxBackend._load_embedded_metadata(onnx_path)
+            )
             warn_on_metadata_schema_version(
                 meta,
                 artifact=f"ONNX metadata for {onnx_path}",
@@ -267,12 +317,11 @@ class OnnxBackend(BaseBackend):
         runtime_metadata: dict | None = None,
     ) -> dict:
         try:
-            meta = dict(runtime_metadata or {})
-            if not meta:
-                import onnx
-
-                model_proto = onnx.load(onnx_path)
-                meta = {p.key: p.value for p in model_proto.metadata_props}
+            meta = (
+                dict(runtime_metadata)
+                if runtime_metadata is not None
+                else OnnxBackend._load_embedded_metadata(onnx_path)
+            )
         except Exception as e:
             logger.warning(
                 "Failed to read ONNX pose metadata from %s: %s", onnx_path, e
@@ -286,6 +335,18 @@ class OnnxBackend(BaseBackend):
         # dynamic batch axis accepts stacked blobs directly.
         return self._dynamic_batch_axis and not self.embedded_nms
 
+    @staticmethod
+    def _numpy_dtype_for_onnx_type(type_name: str) -> np.dtype:
+        """Translate an ONNX Runtime tensor type into its NumPy dtype."""
+        try:
+            return np.dtype(_ONNX_TENSOR_DTYPES[type_name])
+        except KeyError as exc:
+            raise TypeError(
+                "Unsupported ONNX Runtime input type "
+                f"{type_name!r}; this backend cannot construct a matching NumPy input."
+            ) from exc
+
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run ONNX Runtime inference."""
-        return self.session.run(None, {self.input_name: blob})
+        runtime_blob = np.ascontiguousarray(blob, dtype=self.input_dtype)
+        return self.session.run(None, {self.input_name: runtime_blob})

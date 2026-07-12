@@ -22,7 +22,9 @@ ImageSize = Union[int, Tuple[int, int]]
 def _input_size_hw(input_size: ImageSize) -> Tuple[int, int]:
     if isinstance(input_size, tuple):
         if len(input_size) != 2:
-            raise ValueError(f"input_size must be int or (height, width), got {input_size}")
+            raise ValueError(
+                f"input_size must be int or (height, width), got {input_size}"
+            )
         h, w = int(input_size[0]), int(input_size[1])
     else:
         h = w = int(input_size)
@@ -57,6 +59,12 @@ def _nms_keep_indices(
     # (boxes.max() + 1) and only separates classes when all coords are
     # non-negative. Translation-invariant for IoU.
     nms_boxes = boxes - boxes.min().clamp(max=0)
+    # torchvision's CPU NMS kernels do not accept fp16/bfloat16. Exported
+    # FP16 runtimes can return either, so run only suppression in fp32.
+    if nms_boxes.dtype in {torch.float16, torch.bfloat16}:
+        nms_boxes = nms_boxes.float()
+    if scores.dtype in {torch.float16, torch.bfloat16}:
+        scores = scores.float()
     keep = batched_nms(nms_boxes, scores, class_ids, iou_thres)
     if len(keep) == 0:
         return torch.zeros(0, dtype=torch.long, device=boxes.device)
@@ -104,7 +112,12 @@ def _xywhr_to_xyxy(xywhr: torch.Tensor) -> torch.Tensor:
     x = corners[..., 0]
     y = corners[..., 1]
     return torch.stack(
-        [x.min(dim=1).values, y.min(dim=1).values, x.max(dim=1).values, y.max(dim=1).values],
+        [
+            x.min(dim=1).values,
+            y.min(dim=1).values,
+            x.max(dim=1).values,
+            y.max(dim=1).values,
+        ],
         dim=1,
     )
 
@@ -296,7 +309,9 @@ def postprocess(
             max_scores = max_scores[pre_keep]
             class_ids = class_ids[pre_keep]
 
-        keep = _rotated_nms_keep_indices(xywhr, max_scores, class_ids, iou_thres, max_det)
+        keep = _rotated_nms_keep_indices(
+            xywhr, max_scores, class_ids, iou_thres, max_det
+        )
         if len(keep) == 0:
             return {
                 "boxes": [],
