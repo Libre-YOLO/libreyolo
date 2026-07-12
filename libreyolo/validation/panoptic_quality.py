@@ -37,6 +37,7 @@ Ground-truth crowd segments therefore never become false negatives.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Dict, Iterable, List, Sequence, Set
 
 import numpy as np
@@ -85,6 +86,7 @@ class PanopticQuality:
 
     thing_class_ids: Set[int] = field(default_factory=set)
     stats: Dict[int, CategoryStat] = field(default_factory=dict)
+    num_classes: int | None = None
 
     def _stat(self, category_id: int) -> CategoryStat:
         return self.stats.setdefault(category_id, CategoryStat())
@@ -103,17 +105,21 @@ class PanopticQuality:
         ``id``, ``category_id`` and ``iscrowd``; ``pred_segments`` needs ``id``
         and ``category_id``.
         """
+        gt_map = np.asarray(gt_map)
+        pred_map = np.asarray(pred_map)
         if gt_map.shape != pred_map.shape:
             raise ValueError(
                 f"gt_map {gt_map.shape} and pred_map {pred_map.shape} must match. "
                 "Panoptic Quality is computed at the ground-truth resolution."
             )
 
-        gt_by_id = {int(s["id"]): s for s in gt_segments}
-        pred_by_id = {int(s["id"]): s for s in pred_segments}
+        gt_map = self._validate_map(gt_map, "ground-truth")
+        pred_map = self._validate_map(pred_map, "predicted")
+        gt_by_id = self._validate_segments(gt_map, gt_segments, "ground-truth")
+        pred_by_id = self._validate_segments(pred_map, pred_segments, "predicted")
 
-        gt_flat = gt_map.reshape(-1).astype(np.int64)
-        pred_flat = pred_map.reshape(-1).astype(np.int64)
+        gt_flat = gt_map.reshape(-1)
+        pred_flat = pred_map.reshape(-1)
 
         # Pairs are packed as gt * _OFFSET + pred for a single bincount, so an id
         # at or above _OFFSET would unpack as a different segment and silently
@@ -191,6 +197,138 @@ class PanopticQuality:
             self._stat(int(pred_segment["category_id"])).fp += 1
 
     @staticmethod
+    def _integral_value(value, context: str) -> int:
+        if isinstance(value, (bool, np.bool_)):
+            raise ValueError(f"{context} must be an integer, not a boolean.")
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{context} must be an integer.") from exc
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError(f"{context} must be a finite integer; got {value!r}.")
+        return int(numeric)
+
+    @classmethod
+    def _validate_map(cls, segment_map: np.ndarray, which: str) -> np.ndarray:
+        array = np.asarray(segment_map)
+        if array.ndim != 2:
+            raise ValueError(
+                f"{which} panoptic map must have shape [H, W], got {array.shape}."
+            )
+        is_integer = np.issubdtype(array.dtype, np.integer)
+        is_floating = np.issubdtype(array.dtype, np.floating)
+        if not (is_integer or is_floating):
+            raise ValueError(f"{which} panoptic map must contain numeric segment ids.")
+        if is_floating:
+            if not np.isfinite(array).all():
+                raise ValueError(
+                    f"{which} panoptic map contains non-finite segment ids."
+                )
+            if not np.equal(array, np.floor(array)).all():
+                raise ValueError(
+                    f"{which} panoptic map segment ids must be integer-valued."
+                )
+        if array.size:
+            minimum = int(array.min())
+            maximum = int(array.max())
+            if minimum < 0 or maximum >= _OFFSET:
+                raise ValueError(
+                    f"{which} segment ids must lie in [0, {_OFFSET}); got "
+                    f"[{minimum}, {maximum}]. Ids are packed pairwise for the "
+                    "intersection histogram."
+                )
+        return array.astype(np.int64, copy=False)
+
+    def _validate_segments(
+        self,
+        segment_map: np.ndarray,
+        segments: Sequence[dict],
+        which: str,
+    ) -> Dict[int, dict]:
+        if segments is None or isinstance(segments, (str, bytes, dict)):
+            raise ValueError(f"{which} segments_info must be a sequence of mappings.")
+        try:
+            segment_list = list(segments)
+        except TypeError as exc:
+            raise ValueError(
+                f"{which} segments_info must be a sequence of mappings."
+            ) from exc
+        by_id: Dict[int, dict] = {}
+        for index, segment in enumerate(segment_list):
+            if not isinstance(segment, dict):
+                raise ValueError(
+                    f"{which} segments_info[{index}] must be a mapping."
+                )
+            if "id" not in segment or "category_id" not in segment:
+                raise ValueError(
+                    f"{which} segments_info[{index}] requires 'id' and "
+                    "'category_id'."
+                )
+            segment_id = self._integral_value(
+                segment["id"], f"{which} segments_info[{index}].id"
+            )
+            if segment_id == VOID_SEGMENT_ID:
+                raise ValueError(
+                    f"{which} segments_info must not describe void segment id 0."
+                )
+            if segment_id < 0 or segment_id >= _OFFSET:
+                raise ValueError(
+                    f"{which} segments_info id {segment_id} must lie in "
+                    f"[1, {_OFFSET})."
+                )
+            if segment_id in by_id:
+                raise ValueError(
+                    f"{which} segments_info contains duplicate id {segment_id}."
+                )
+            category_id = self._integral_value(
+                segment["category_id"],
+                f"{which} segments_info[{index}].category_id",
+            )
+            if category_id < 0 or (
+                self.num_classes is not None and category_id >= self.num_classes
+            ):
+                expected = (
+                    f"[0, {self.num_classes})"
+                    if self.num_classes is not None
+                    else "a non-negative integer"
+                )
+                raise ValueError(
+                    f"{which} segment {segment_id} category_id must be {expected}; "
+                    f"got {category_id}."
+                )
+            normalized = dict(segment)
+            normalized["id"] = segment_id
+            normalized["category_id"] = category_id
+            if "iscrowd" in segment:
+                iscrowd = self._integral_value(
+                    segment["iscrowd"],
+                    f"{which} segments_info[{index}].iscrowd",
+                )
+                if iscrowd not in (0, 1):
+                    raise ValueError(
+                        f"{which} segment {segment_id} iscrowd must be 0 or 1; "
+                        f"got {iscrowd}."
+                    )
+                normalized["iscrowd"] = iscrowd
+            by_id[segment_id] = normalized
+
+        map_ids = set(int(i) for i in np.unique(segment_map))
+        map_ids.discard(VOID_SEGMENT_ID)
+        metadata_ids = set(by_id)
+        unlisted = sorted(map_ids - metadata_ids)
+        phantom = sorted(metadata_ids - map_ids)
+        if unlisted or phantom:
+            details = []
+            if unlisted:
+                details.append(f"map ids missing from segments_info: {unlisted}")
+            if phantom:
+                details.append(f"segments_info ids absent from the map: {phantom}")
+            raise ValueError(
+                f"{which} panoptic map/metadata mismatch: " + "; ".join(details) + "."
+            )
+        return by_id
+
+    @staticmethod
     def _check_id_range(flat: np.ndarray, which: str) -> None:
         if flat.size == 0:
             return
@@ -208,7 +346,12 @@ class PanopticQuality:
 
     @staticmethod
     def _pair_areas(gt_flat: np.ndarray, pred_flat: np.ndarray) -> Dict[tuple, int]:
-        packed = gt_flat * _OFFSET + pred_flat
+        # The packed key spans the complete uint64 range. Using signed int64
+        # here would overflow for otherwise valid ids above 2**31.
+        packed = (
+            gt_flat.astype(np.uint64, copy=False) * np.uint64(_OFFSET)
+            + pred_flat.astype(np.uint64, copy=False)
+        )
         keys, counts = np.unique(packed, return_counts=True)
         return {
             (int(k // _OFFSET), int(k % _OFFSET)): int(c) for k, c in zip(keys, counts)

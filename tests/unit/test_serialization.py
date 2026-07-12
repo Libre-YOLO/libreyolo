@@ -183,8 +183,10 @@ def test_validate_checkpoint_metadata_pads_missing_name_indices():
         "imgsz": 640,
     }
 
-    with pytest.warns(RuntimeWarning, match="padding"):
-        assert serialization.validate_checkpoint_metadata(checkpoint, strict=True) == []
+    errors = serialization.validate_checkpoint_metadata(checkpoint)
+    assert any("missing indices [1]" in error for error in errors)
+    with pytest.raises(serialization.CheckpointMetadataError, match="missing indices"):
+        serialization.validate_checkpoint_metadata(checkpoint, strict=True)
     with pytest.warns(RuntimeWarning, match="padding"):
         assert serialization.normalize_checkpoint_names(checkpoint["names"], 3) == {
             0: "cat",
@@ -192,6 +194,88 @@ def test_validate_checkpoint_metadata_pads_missing_name_indices():
             2: "dog",
         }
     assert checkpoint["names"] == {0: "cat", 2: "dog"}
+
+
+def test_wrap_checkpoint_rejects_sparse_writer_names():
+    with pytest.raises(serialization.CheckpointMetadataError, match="missing indices"):
+        serialization.wrap_libreyolo_checkpoint(
+            {"layer.weight": 1},
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=3,
+            names={0: "cat", 2: "dog"},
+            imgsz=640,
+        )
+
+
+def test_load_parser_rejects_sparse_declared_v1_metadata():
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": 1},
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=3,
+        names={0: "cat", 1: "bird", 2: "dog"},
+        imgsz=640,
+    )
+    checkpoint["names"] = {0: "cat", 2: "dog"}
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="missing indices"):
+        serialization.parse_checkpoint_metadata_for_load(checkpoint)
+
+
+def test_load_parser_warns_and_pads_sparse_legacy_metadata():
+    checkpoint = {
+        "state_dict": {"layer.weight": 1},
+        "task": "detect",
+        "nc": 3,
+        "names": {0: "cat", 2: "dog"},
+    }
+
+    with pytest.warns(RuntimeWarning) as caught:
+        parsed, is_native_v1 = serialization.parse_checkpoint_metadata_for_load(
+            checkpoint,
+            context="legacy unit checkpoint",
+        )
+
+    assert is_native_v1 is False
+    assert parsed["names"] == {0: "cat", 1: "class_1", 2: "dog"}
+    assert any("legacy or incomplete metadata" in str(item.message) for item in caught)
+    assert any("padding" in str(item.message) for item in caught)
+
+
+def test_validate_native_checkpoint_rejects_non_string_name_values():
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": 1},
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=1,
+        names={0: "cat"},
+        imgsz=640,
+    )
+    checkpoint["names"] = {0: 123}
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="must be a string"):
+        serialization.validate_checkpoint_metadata(checkpoint, strict=True)
+
+
+def test_wrap_checkpoint_rejects_required_field_in_extra_metadata():
+    with pytest.raises(
+        serialization.CheckpointMetadataError,
+        match="cannot override required fields: model",
+    ):
+        serialization.wrap_libreyolo_checkpoint(
+            {"layer.weight": 1},
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=1,
+            names={0: "cat"},
+            imgsz=640,
+            **{"model": {"other.weight": 2}},
+        )
 
 
 def test_validate_checkpoint_metadata_rejects_out_of_range_names():

@@ -9,14 +9,14 @@ Adapted for LibreYOLO.
 """
 
 import logging
-import warnings
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
 
-from .utils import img2label_paths, polygon_to_cxcywh
+from .labels import label_row_error, parse_yolo_box_or_segment_label_line
+from .utils import img2label_paths
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ def parse_yolo_label_line(
     num_classes: int,
     label_path: Optional[Path] = None,
     return_segment: bool = False,
+    line_number: int | None = None,
 ) -> Optional[Tuple]:
     """
     Parse a single line from a YOLO label file.
@@ -37,11 +38,12 @@ def parse_yolo_label_line(
         img_w: Image width in pixels
         img_h: Image height in pixels
         num_classes: Total number of classes
-        label_path: Path to label file (for warnings)
+        label_path: Path to label file (for error context)
+        line_number: One-based row number in ``label_path``.
 
     Returns:
         Tuple of (class_id, x1, y1, x2, y2, area) in pixel coordinates,
-        or None if invalid/skipped.
+        or None for a blank row.
 
     YOLO format: class_id center_x center_y width height
     (normalized coordinates in [0, 1])
@@ -50,47 +52,20 @@ def parse_yolo_label_line(
     if not line:
         return None
 
-    parts = line.split()
-    if len(parts) < 5:
-        return None
-
-    # Parse values with error handling
-    try:
-        class_id = int(parts[0])
-
-        segment = None
-        if len(parts) > 5:
-            # Segmentation format: derive bbox from polygon vertices.
-            coords = [float(p) for p in parts[1:]]
-            cx, cy, bw, bh = polygon_to_cxcywh(coords)
-            if return_segment and len(coords) >= 6:
-                segment = []
-                for x, y in zip(coords[0::2], coords[1::2]):
-                    segment.extend(
-                        [
-                            float(max(0, min(img_w, x * img_w))),
-                            float(max(0, min(img_h, y * img_h))),
-                        ]
-                    )
-        else:
-            # Detection format: class_id cx cy w h
-            cx = float(parts[1])
-            cy = float(parts[2])
-            bw = float(parts[3])
-            bh = float(parts[4])
-    except ValueError as e:
-        if label_path:
-            warnings.warn(
-                f"Invalid label format in {label_path}: '{line[:50]}...' - {e}"
-            )
-        return None
-
-    # Validate class ID
-    if class_id < 0 or class_id >= num_classes:
-        warnings.warn(
-            f"Class ID {class_id} out of range [0, {num_classes - 1}] in {label_path}. Skipping."
+    class_id, (cx, cy, bw, bh), coordinates = (
+        parse_yolo_box_or_segment_label_line(
+            line,
+            num_classes=num_classes,
+            label_path=label_path,
+            line_number=line_number,
         )
-        return None
+    )
+
+    segment = None
+    if return_segment and coordinates is not None:
+        segment = []
+        for x, y in zip(coordinates[0::2], coordinates[1::2]):
+            segment.extend([float(x * img_w), float(y * img_h)])
 
     # Convert from normalized cxcywh to pixel xyxy
     x1 = (cx - bw / 2) * img_w
@@ -106,7 +81,11 @@ def parse_yolo_label_line(
 
     # Skip invalid boxes (zero or negative area after clamping)
     if x2 <= x1 or y2 <= y1:
-        return None
+        raise label_row_error(
+            "YOLO box has no positive area inside the image",
+            label_path=label_path,
+            line_number=line_number,
+        )
 
     # Compute area from clamped box
     area = (x2 - x1) * (y2 - y1)
@@ -224,7 +203,7 @@ class YOLOCocoAPI:
             label_path = label_files[idx]
             if label_path.exists():
                 with open(label_path, "r") as f:
-                    for line in f:
+                    for line_number, line in enumerate(f, start=1):
                         parsed = parse_yolo_label_line(
                             line,
                             w,
@@ -232,6 +211,7 @@ class YOLOCocoAPI:
                             num_classes,
                             label_path,
                             return_segment=load_segments,
+                            line_number=line_number,
                         )
                         if parsed is None:
                             continue

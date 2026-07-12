@@ -231,6 +231,92 @@ def img2label_paths(img_paths: List[Path]) -> List[Path]:
     return label_paths
 
 
+def _canonicalize_class_space(config: Dict, yaml_path: Path) -> None:
+    """Validate dataset class metadata and store one canonical representation."""
+    if "nc" in config:
+        nc = config["nc"]
+        if isinstance(nc, str) and nc.strip().isdigit():
+            nc = int(nc)
+            config["nc"] = nc
+        if isinstance(nc, bool) or not isinstance(nc, int) or nc < 1:
+            raise ValueError(
+                f"Dataset config {yaml_path} field 'nc' must be a positive integer, "
+                f"got {nc!r}."
+            )
+
+    if "names" not in config:
+        raise ValueError(
+            f"Dataset config {yaml_path} must define field 'names'. "
+            "The optional 'nc' field is derived from names when omitted."
+        )
+
+    raw_names = config["names"]
+    if isinstance(raw_names, list):
+        indexed_names = list(enumerate(raw_names))
+    elif isinstance(raw_names, dict):
+        indexed_names = []
+        seen_indices = set()
+        for raw_index, name in raw_names.items():
+            if isinstance(raw_index, bool):
+                raise ValueError(
+                    f"Dataset config {yaml_path} field 'names' keys must be "
+                    f"non-negative integers, got {raw_index!r}."
+                )
+            if isinstance(raw_index, int):
+                index = raw_index
+            elif isinstance(raw_index, str) and raw_index.strip().isdigit():
+                index = int(raw_index)
+            else:
+                raise ValueError(
+                    f"Dataset config {yaml_path} field 'names' keys must be "
+                    f"non-negative integers, got {raw_index!r}."
+                )
+            if index in seen_indices:
+                raise ValueError(
+                    f"Dataset config {yaml_path} field 'names' contains duplicate "
+                    f"class index {index}."
+                )
+            seen_indices.add(index)
+            indexed_names.append((index, name))
+    else:
+        raise ValueError(
+            f"Dataset config {yaml_path} field 'names' must be a list or an "
+            "integer-keyed mapping."
+        )
+
+    if not indexed_names:
+        raise ValueError(
+            f"Dataset config {yaml_path} field 'names' must contain at least one class."
+        )
+
+    canonical_names = {}
+    for index, name in indexed_names:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Dataset config {yaml_path} class name at index {index} must be "
+                f"a non-empty string, got {name!r}."
+            )
+        canonical_names[index] = name
+
+    expected_indices = list(range(len(canonical_names)))
+    actual_indices = sorted(canonical_names)
+    if actual_indices != expected_indices:
+        raise ValueError(
+            f"Dataset config {yaml_path} field 'names' must use contiguous class "
+            f"indices 0..{len(canonical_names) - 1}, got {actual_indices}."
+        )
+
+    configured_nc = config.get("nc")
+    if configured_nc is not None and configured_nc != len(canonical_names):
+        raise ValueError(
+            f"Dataset config {yaml_path} has nc={configured_nc} but "
+            f"{len(canonical_names)} class names."
+        )
+
+    config["names"] = {index: canonical_names[index] for index in expected_indices}
+    config["nc"] = len(canonical_names)
+
+
 def load_data_config(
     data: str, autodownload: bool = True, allow_scripts: bool = False
 ) -> Dict:
@@ -266,12 +352,53 @@ def load_data_config(
         >>> config = load_data_config("coco8")
         >>> print(config["train"])  # Path to training images
     """
+    return _load_data_config_impl(
+        data,
+        autodownload=autodownload,
+        allow_scripts=allow_scripts,
+        validate_class_space=True,
+    )
+
+
+def _load_data_config_for_diagnostics(
+    data: str, autodownload: bool = False
+) -> Dict:
+    """Resolve paths for internal diagnostics without masking YAML defects.
+
+    This helper is private and is not exported from :mod:`libreyolo.data`.
+    Normal training and validation use :func:`load_data_config`, which always
+    enforces the class-space contract. LibreDoctor reports malformed raw
+    ``nc``/``names`` metadata itself and needs the remaining paths resolved so
+    those findings can run.
+    """
+    return _load_data_config_impl(
+        data,
+        autodownload=autodownload,
+        allow_scripts=False,
+        validate_class_space=False,
+    )
+
+
+def _load_data_config_impl(
+    data: str,
+    *,
+    autodownload: bool,
+    allow_scripts: bool,
+    validate_class_space: bool,
+) -> Dict:
+    """Shared implementation for strict loading and diagnostic inspection."""
     # Resolve YAML path
     yaml_path = resolve_dataset_yaml(data)
 
     # Load YAML
-    with open(yaml_path, "r") as f:
+    with open(yaml_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Dataset config {yaml_path} must contain a YAML mapping at its root."
+        )
+    if validate_class_space:
+        _canonicalize_class_space(config, yaml_path)
 
     # Resolve dataset root path
     dataset_path = _resolve_dataset_path(config, yaml_path)
@@ -281,6 +408,8 @@ def load_data_config(
     # Check if dataset exists, download if needed
     if autodownload:
         config = check_dataset(config, yaml_path, allow_scripts=allow_scripts)
+        if validate_class_space:
+            _canonicalize_class_space(config, yaml_path)
 
     # Resolve train/val/test paths and pre-compute image lists when possible.
     for split in ("train", "val", "test"):

@@ -351,10 +351,15 @@ def LibreYOLO(
                     f"Please specify size explicitly or provide a valid weights file path."
                 )
 
+        download_error = None
         try:
             download_weights(model_path, size)
         except Exception as e:
+            download_error = e
             logger.warning("Auto-download failed: %s", e)
+
+        if not Path(model_path).exists() and download_error is not None:
+            raise download_error
 
     if not Path(model_path).exists():
         raise FileNotFoundError(f"Model weights file not found: {model_path}")

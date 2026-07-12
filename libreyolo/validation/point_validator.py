@@ -13,6 +13,11 @@ from torch.utils.data import DataLoader
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,11 +221,13 @@ class PointValidator(BaseValidator):
             split=self.config.split,
             img_size=img_size,
             preproc=self.val_preproc,
+            num_classes=int(self.nc),
         ) if img_files is None else YOLODataset(
             img_files=img_files,
             label_files=label_files,
             img_size=img_size,
             preproc=self.val_preproc,
+            num_classes=int(self.nc),
         )
 
         use_cuda = self.device.type == "cuda"
@@ -311,20 +318,25 @@ class PointValidator(BaseValidator):
             if "points" in result:
                 pts = result["points"]
                 if isinstance(pts, torch.Tensor):
-                    pts = pts.cpu().numpy()
+                    pts = pts.detach().cpu().numpy()
                 pts = np.asarray(pts, dtype=np.float64)
 
-                if pts.ndim == 1 and len(pts) == 4:
+                if pts.size == 0:
+                    pts = np.zeros((0, 4), dtype=np.float64)
+                elif pts.ndim == 1 and len(pts) == 4:
                     pts = pts[np.newaxis, :]
 
-                if pts.ndim == 2 and pts.shape[1] == 4:
-                    xy_pixels = pts[:, :2]
-                    classes = pts[:, 2].astype(np.int64)
-                    scores = pts[:, 3].astype(np.float32)
-                else:
-                    xy_pixels = np.zeros((0, 2), dtype=np.float64)
-                    scores = np.zeros(0, dtype=np.float32)
-                    classes = np.zeros(0, dtype=np.int64)
+                if pts.ndim != 2 or pts.shape[1] != 4:
+                    raise ValueError(
+                        "Point validation predictions must have shape [N, 4] "
+                        f"(x, y, class, score), got {pts.shape}."
+                    )
+                require_finite(pts, f"Point validation prediction {i}")
+                xy_pixels = pts[:, :2]
+                classes = require_class_ids(
+                    pts[:, 2], self.nc, f"Point validation prediction {i} classes"
+                ).cpu().numpy()
+                scores = pts[:, 3].astype(np.float32)
 
                 if len(xy_pixels) > 0:
                     xy_norm = xy_pixels.copy()
@@ -359,24 +371,93 @@ class PointValidator(BaseValidator):
         import torch
 
         if isinstance(targets, torch.Tensor):
-            targets_np = targets.cpu().numpy()
+            targets_np = targets.detach().cpu().numpy()
         else:
             targets_np = np.asarray(targets)
+        if targets_np.ndim != 3 or targets_np.shape[-1] < 5:
+            raise ValueError(
+                "Point validation targets must have shape [B, N, 5+], got "
+                f"{targets_np.shape}."
+            )
+        require_finite(targets_np, "Point validation targets")
+        batches = {
+            "predictions": preds,
+            "targets": targets_np,
+            "image_info": img_info,
+        }
+        if img_ids is not None:
+            batches["image_ids"] = img_ids
+        require_matching_batch_sizes("Point validation", **batches)
 
+        records: List[_ImageRecord] = []
         for i, pred in enumerate(preds):
+            context = f"Point validation prediction {i}"
+            if not isinstance(pred, dict):
+                raise ValueError(f"{context} must be a mapping.")
+            missing = {"xy_norm", "scores", "classes"} - set(pred)
+            if missing:
+                raise ValueError(f"{context} is missing keys: {sorted(missing)}.")
+            pred_xy = np.asarray(pred["xy_norm"])
+            pred_scores = np.asarray(pred["scores"])
+            pred_classes = np.asarray(pred["classes"])
+            if pred_xy.ndim != 2 or pred_xy.shape[1] != 2:
+                raise ValueError(
+                    f"{context} coordinates must have shape [N, 2], got "
+                    f"{pred_xy.shape}."
+                )
+            if pred_scores.ndim != 1 or pred_classes.ndim != 1:
+                raise ValueError(
+                    f"{context} scores and classes must have shape [N], got "
+                    f"{pred_scores.shape} and {pred_classes.shape}."
+                )
+            require_matching_batch_sizes(
+                context,
+                coordinates=pred_xy,
+                scores=pred_scores,
+                classes=pred_classes,
+            )
+            require_finite(pred_xy, f"{context} coordinates")
+            require_finite(pred_scores, f"{context} scores")
+            pred_classes = require_class_ids(
+                pred_classes, self.nc, f"{context} classes"
+            ).cpu().numpy()
             orig_h, orig_w = img_info[i]
             gt_xy_norm, gt_cls = self._parse_gt_points(
                 targets_np[i], orig_h, orig_w
             )
-            self._records.append(
+            gt_xy_norm = np.asarray(gt_xy_norm)
+            gt_cls = np.asarray(gt_cls)
+            if gt_xy_norm.ndim != 2 or gt_xy_norm.shape[1] != 2:
+                raise ValueError(
+                    f"Point validation targets {i} coordinates must have shape "
+                    f"[N, 2], got {gt_xy_norm.shape}."
+                )
+            if gt_cls.ndim != 1:
+                raise ValueError(
+                    f"Point validation targets {i} classes must have shape [N], "
+                    f"got {gt_cls.shape}."
+                )
+            require_matching_batch_sizes(
+                f"Point validation targets {i}",
+                coordinates=gt_xy_norm,
+                classes=gt_cls,
+            )
+            require_finite(
+                gt_xy_norm, f"Point validation targets {i} coordinates"
+            )
+            gt_cls = require_class_ids(
+                gt_cls, self.nc, f"Point validation targets {i} classes"
+            ).cpu().numpy()
+            records.append(
                 _ImageRecord(
-                    pred_xy=pred["xy_norm"],
-                    pred_scores=pred["scores"],
-                    pred_classes=pred["classes"],
+                    pred_xy=pred_xy,
+                    pred_scores=pred_scores,
+                    pred_classes=pred_classes,
                     gt_xy=gt_xy_norm,
                     gt_classes=gt_cls,
                 )
             )
+        self._records.extend(records)
 
     def _parse_gt_points(
         self, gt_row: np.ndarray, orig_h: int, orig_w: int
@@ -399,6 +480,7 @@ class PointValidator(BaseValidator):
 
         if arr.shape[1] < 5:
             return np.zeros((0, 2), np.float64), np.zeros(0, np.int64)
+        require_finite(arr, "Point validation targets")
 
         is_pixel_scaled = len(arr) > 0 and float(np.abs(arr[:, 1:5]).max()) > 1.5
 
@@ -424,7 +506,9 @@ class PointValidator(BaseValidator):
             x_norm = np.clip(x_orig_px / float(orig_w), 0.0, 1.0)
             y_norm = np.clip(y_orig_px / float(orig_h), 0.0, 1.0)
             xy_norm = np.stack([x_norm, y_norm], axis=1).astype(np.float64)
-            classes = np.clip(vgt[:, 4].astype(int), 0, self.nc - 1)
+            classes = require_class_ids(
+                vgt[:, 4], self.nc, "Point validation targets"
+            ).cpu().numpy()
         else:
             valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
             vgt = arr[valid]
@@ -435,7 +519,9 @@ class PointValidator(BaseValidator):
                  np.clip(vgt[:, 2], 0.0, 1.0)],
                 axis=1,
             ).astype(np.float64)
-            classes = np.clip(vgt[:, 0].astype(int), 0, self.nc - 1)
+            classes = require_class_ids(
+                vgt[:, 0], self.nc, "Point validation targets"
+            ).cpu().numpy()
 
         return xy_norm, classes.astype(np.int64)
 

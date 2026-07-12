@@ -11,6 +11,11 @@ from torch.utils.data import DataLoader
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +261,7 @@ class DetectionValidator(BaseValidator):
                 split=split_name,
                 img_size=img_size,
                 preproc=self.val_preproc,
+                num_classes=int(self.nc),
                 **dataset_kwargs,
             )
 
@@ -627,6 +633,27 @@ class DetectionValidator(BaseValidator):
                 "img_ids are required for COCO evaluation but were not provided "
                 "by the dataloader."
             )
+        target_tensor = torch.as_tensor(targets)
+        if target_tensor.ndim != 3 or target_tensor.shape[-1] != 5:
+            raise ValueError(
+                "Detection validation targets must have shape [B, N, 5], got "
+                f"{tuple(target_tensor.shape)}."
+            )
+        require_finite(target_tensor, "Detection validation targets")
+        require_matching_batch_sizes(
+            "Detection validation",
+            predictions=preds,
+            targets=target_tensor,
+            image_info=img_info,
+            image_ids=img_ids,
+        )
+        for index, (orig_h, orig_w) in enumerate(img_info):
+            # Parsing is also the ground-truth schema/class-space gate. Run it
+            # independently of optional plotting so invalid active labels can
+            # never reach metric accumulation unnoticed.
+            self._parse_gt_boxes(target_tensor[index], int(orig_h), int(orig_w))
+        for i in range(len(preds)):
+            self._validate_prediction(preds[i], i)
         for i in range(len(preds)):
             self.coco_evaluator.update(preds[i], img_ids[i])
 
@@ -636,6 +663,44 @@ class DetectionValidator(BaseValidator):
                 self._track_plots_data(preds, targets, img_info, img_ids)
             except Exception as exc:
                 logger.warning("Failed to collect validation plot data: %s", exc)
+
+    def _validate_prediction(self, prediction: Dict[str, Any], index: int) -> None:
+        context = f"Detection validation prediction {index}"
+        if not isinstance(prediction, dict):
+            raise ValueError(f"{context} must be a mapping.")
+        missing = {"boxes", "scores", "classes"} - set(prediction)
+        if missing:
+            raise ValueError(f"{context} is missing keys: {sorted(missing)}.")
+
+        boxes = torch.as_tensor(prediction["boxes"])
+        scores = torch.as_tensor(prediction["scores"])
+        classes = torch.as_tensor(prediction["classes"])
+        if boxes.ndim != 2 or boxes.shape[1] != 4:
+            raise ValueError(
+                f"{context} boxes must have shape [N, 4], got {tuple(boxes.shape)}."
+            )
+        if scores.ndim != 1 or classes.ndim != 1:
+            raise ValueError(
+                f"{context} scores and classes must have shape [N], got "
+                f"{tuple(scores.shape)} and {tuple(classes.shape)}."
+            )
+        require_matching_batch_sizes(
+            context, boxes=boxes, scores=scores, classes=classes
+        )
+        require_finite(boxes, f"{context} boxes")
+        require_finite(scores, f"{context} scores")
+        require_class_ids(classes, self.nc, f"{context} classes")
+
+        masks = prediction.get("masks")
+        if masks is not None:
+            masks = torch.as_tensor(masks)
+            if masks.ndim != 3:
+                raise ValueError(
+                    f"{context} masks must have shape [N, H, W], got "
+                    f"{tuple(masks.shape)}."
+                )
+            require_matching_batch_sizes(context, boxes=boxes, masks=masks)
+            require_finite(masks, f"{context} masks")
 
     def _parse_gt_boxes(
         self, gt_row: torch.Tensor, orig_h: int, orig_w: int
@@ -647,22 +712,24 @@ class DetectionValidator(BaseValidator):
           COCO  — [x1_scaled, y1_scaled, x2_scaled, y2_scaled, cls]  pixel coords
                   pre-scaled by the dataset letterbox ratio
         """
-        arr = gt_row.cpu().numpy().astype(np.float32)
+        row_tensor = torch.as_tensor(gt_row).detach().cpu()
+        if row_tensor.ndim != 2 or row_tensor.shape[1] != 5:
+            raise ValueError(
+                "Detection validation targets must have shape [N, 5], got "
+                f"{tuple(row_tensor.shape)}."
+            )
+        require_finite(row_tensor, "Detection validation targets")
+        arr = row_tensor.numpy().astype(np.float32)
 
         # The validator dataloaders emit [x1, y1, x2, y2, cls] rows in scaled
         # pixel space. Prefer that schema whenever it forms a valid box so
         # tiny boxes near the origin are not mistaken for normalized YOLO rows.
-        cls_col = arr[:, 4]
-        class_like = (
-            (cls_col >= 0)
-            & (cls_col < self.nc)
-            & np.isclose(cls_col, np.round(cls_col))
-        )
-        valid_xyxy = (
-            class_like & (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
-        )
+        valid_xyxy = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
         vgt_xyxy = arr[valid_xyxy]
         if len(vgt_xyxy):
+            gt_classes = require_class_ids(
+                vgt_xyxy[:, 4], self.nc, "Detection validation targets"
+            ).cpu().numpy()
             uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
             if uses_lb:
                 r, off_x, off_y = self.val_preproc.letterbox_scale(
@@ -679,7 +746,6 @@ class DetectionValidator(BaseValidator):
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
                 gt_boxes = gt.astype(np.float32)
-            gt_classes = np.clip(vgt_xyxy[:, 4].astype(int), 0, self.nc - 1)
             return gt_boxes, gt_classes
 
         # If any value in columns 1-4 exceeds 1.5 the coords must be pixels
@@ -710,7 +776,9 @@ class DetectionValidator(BaseValidator):
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
                 gt_boxes = gt.astype(np.float32)
-            gt_classes = np.clip(vgt[:, 4].astype(int), 0, self.nc - 1)
+            gt_classes = require_class_ids(
+                vgt[:, 4], self.nc, "Detection validation targets"
+            ).cpu().numpy()
         else:
             # YOLO [cls, cx_norm, cy_norm, w_norm, h_norm]
             valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
@@ -722,7 +790,9 @@ class DetectionValidator(BaseValidator):
             bw = vgt[:, 3] * orig_w
             bh = vgt[:, 4] * orig_h
             gt_boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1).astype(np.float32)
-            gt_classes = np.clip(vgt[:, 0].astype(int), 0, self.nc - 1)
+            gt_classes = require_class_ids(
+                vgt[:, 0], self.nc, "Detection validation targets"
+            ).cpu().numpy()
 
         return gt_boxes, gt_classes
 

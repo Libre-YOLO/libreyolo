@@ -43,6 +43,7 @@ def _make_dataset_yaml(root: Path, n_images: int = 2) -> Path:
             [
                 f"path: {root.as_posix()}",
                 "val: images/val",
+                "names: [depth]",
                 "",
             ]
         )
@@ -177,7 +178,9 @@ def test_invalid_pixels_are_excluded(tmp_path):
     depth[:, : IMGSZ // 2] = NEAR_DEPTH
     _write_depth(tmp_path / "depths" / "val" / "a.png", depth)
     yaml_path = tmp_path / "data.yaml"
-    yaml_path.write_text(f"path: {tmp_path.as_posix()}\nval: images/val\n")
+    yaml_path.write_text(
+        f"path: {tmp_path.as_posix()}\nval: images/val\nnames: [depth]\n"
+    )
 
     config = ValidationConfig(
         data=str(yaml_path),
@@ -205,7 +208,9 @@ def test_all_invalid_pixels_raise(tmp_path):
     depth = np.zeros((IMGSZ, IMGSZ), dtype=np.float64)
     _write_depth(tmp_path / "depths" / "val" / "a.png", depth)
     yaml_path = tmp_path / "data.yaml"
-    yaml_path.write_text(f"path: {tmp_path.as_posix()}\nval: images/val\n")
+    yaml_path.write_text(
+        f"path: {tmp_path.as_posix()}\nval: images/val\nnames: [depth]\n"
+    )
 
     config = ValidationConfig(
         data=str(yaml_path),

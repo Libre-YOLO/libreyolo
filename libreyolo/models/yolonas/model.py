@@ -171,20 +171,28 @@ class LibreYOLONAS(BaseModel):
         **kwargs,
     ):
         resolved_task = normalize_task(task) if task is not None else None
+        has_checkpoint_names = bool(
+            isinstance(model_path, dict) and model_path.get("names") is not None
+        )
         self.reg_max = reg_max
         # Default keypoint count; overridden from checkpoint metadata/state
         # before model construction or from dataset kpt_shape in train().
         self.num_keypoints = self.POSE_NUM_KEYPOINTS
         self.keypoint_dim = self.KEYPOINT_DIM
         if isinstance(model_path, dict):
-            model_path = unwrap_yolonas_checkpoint(model_path)
+            state = unwrap_yolonas_checkpoint(model_path)
+            if not (
+                {"schema_version", "model_family", "task", "nc", "names"}
+                & set(model_path)
+            ):
+                model_path = state
             if resolved_task == "pose":
-                ckpt_k = self.detect_num_keypoints(model_path)
+                ckpt_k = self.detect_num_keypoints(state)
                 if ckpt_k is not None:
                     self.num_keypoints = ckpt_k
                 # Recover the class count from the state dict so a multi-class
                 # pose checkpoint builds the right head width.
-                ckpt_nc = self.detect_nb_classes(model_path)
+                ckpt_nc = self.detect_nb_classes(state)
                 nb_classes = ckpt_nc if ckpt_nc is not None else 1
         elif resolved_task == "pose":
             # Fresh model or file path: default to single-class (person) pose.
@@ -199,7 +207,7 @@ class LibreYOLONAS(BaseModel):
             task=resolved_task,
             **kwargs,
         )
-        if self.task == "pose":
+        if self.task == "pose" and not has_checkpoint_names:
             # Placeholder names; overridden by checkpoint metadata in
             # _load_weights or by the dataset yaml at train() time.
             if self.nb_classes == 1:
@@ -406,26 +414,38 @@ class LibreYOLONAS(BaseModel):
             )
 
     def _load_weights(self, model_path: str):
-        if not Path(model_path).exists():
-            # YOLO-NAS weights are not mirrored on the LibreYOLO HF org (Deci's
-            # proprietary license), so fetch them on demand from Deci's public
-            # CDN — the same auto-download path every other family uses — rather
-            # than hard-failing on a missing file. download_weights checksum-
-            # verifies the fetched pickle (via verify_downloaded_file) before we
-            # unpickle it below.
-            from ...utils.download import download_weights
+        # YOLO-NAS cache entries are checksum-pinned because loading these
+        # third-party pickles requires full torch deserialization. Verify an
+        # existing cache, or atomically download and verify a replacement,
+        # before unpickling anything.
+        from ...utils.download import download_weights
 
-            download_weights(model_path, self.size)
+        download_weights(model_path, self.size)
         if not Path(model_path).exists():
             raise FileNotFoundError(f"Model weights file not found: {model_path}")
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
-            state_dict = unwrap_yolonas_checkpoint(loaded)
-            state_dict = self._strip_ddp_prefix(dict(state_dict))
-            state_dict = self._prepare_state_dict(state_dict)
+            if not isinstance(loaded, dict):
+                raise TypeError("YOLO-NAS checkpoints must be dictionaries")
+            loaded, is_native_v1 = self._parse_checkpoint_metadata(
+                loaded,
+                context=f"YOLO-NAS weights from {model_path}",
+            )
+            state_dict = dict(unwrap_yolonas_checkpoint(loaded))
+            if not is_native_v1:
+                state_dict = self._prepare_state_dict(
+                    self._strip_ddp_prefix(state_dict)
+                )
 
             ckpt_is_pose = self.is_pose_state_dict(state_dict)
+            tensor_task = "pose" if ckpt_is_pose else "detect"
+            declared_task = loaded.get("task")
+            if declared_task is not None and normalize_task(declared_task) != tensor_task:
+                raise RuntimeError(
+                    f"Checkpoint metadata declares task={normalize_task(declared_task)!r}, "
+                    f"but its tensors identify a YOLO-NAS {tensor_task} model."
+                )
             if ckpt_is_pose and self.task != "pose":
                 raise RuntimeError(
                     "Checkpoint is a YOLO-NAS pose model but this instance was "
@@ -462,16 +482,32 @@ class LibreYOLONAS(BaseModel):
                         f"Use the correct model class for this checkpoint."
                     )
 
-                ckpt_nc = loaded.get("nc")
+                ckpt_names = loaded.get("names")
+                ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+                if ckpt_nc is None and ckpt_names is not None:
+                    if not isinstance(ckpt_names, (dict, list)):
+                        raise ValueError(
+                            "checkpoint names must be a dict[int, str] or list[str]"
+                        )
+                    ckpt_nc = len(ckpt_names)
+                if ckpt_nc is None:
+                    ckpt_nc = self._normalize_checkpoint_nc(
+                        self.detect_nb_classes(state_dict)
+                    )
                 if ckpt_nc is not None and ckpt_nc != self.nb_classes:
                     self._rebuild_for_new_classes(int(ckpt_nc))
 
-                ckpt_names = loaded.get("names")
                 effective_nc = int(ckpt_nc) if ckpt_nc is not None else self.nb_classes
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._load_state_dict_checked(
+                state_dict,
+                checkpoint=loaded if isinstance(loaded, dict) else None,
+                checkpoint_task=tensor_task,
+                context=f"YOLO-NAS weights from {model_path}",
+            )
+            self.model.to(self.device).eval()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load YOLO-NAS weights from {model_path}: {e}"

@@ -86,8 +86,15 @@ def test_rtmdet_ins_postprocess_decodes_masks_after_nms():
 
 
 def test_rtmdet_ins_factory_resolves_segment_checkpoint(tmp_path):
+    source = LibreRTMDet(
+        model_path=None,
+        size="t",
+        task="segment",
+        nb_classes=2,
+        device="cpu",
+    )
     checkpoint = wrap_libreyolo_checkpoint(
-        _minimal_state(segment=True),
+        source.model.state_dict(),
         model_family="rtmdet",
         size="t",
         task="segment",

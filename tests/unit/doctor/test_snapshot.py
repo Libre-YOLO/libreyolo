@@ -100,6 +100,28 @@ class TestBuildSnapshot:
         snap = build_snapshot(str(ds.yaml_path))
         assert snap.names == {0: "人", 1: "犬"}
 
+    @pytest.mark.parametrize(
+        "class_space",
+        [
+            {"nc": 5, "names": ["cat", "dog"]},
+            {"nc": 5.0},
+            {"names": []},
+        ],
+    )
+    def test_malformed_class_space_keeps_diagnostic_snapshot_readable(
+        self, make_dataset, class_space
+    ):
+        ds = make_dataset()
+        ds.sample("train", "a.jpg")
+        ds.sample("val", "b.jpg")
+        ds.set_yaml(**class_space)
+        image_path = ds.root / "images" / "train" / "a.jpg"
+
+        snap = build_snapshot(str(ds.yaml_path))
+
+        assert snap.split("train").records[0].path == image_path
+        assert snap.config["train_img_files"] == [image_path]
+
 
 class TestFormatGuard:
     def test_clean_detection_passes(self, make_dataset):

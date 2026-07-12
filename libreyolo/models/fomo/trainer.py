@@ -14,7 +14,6 @@ from ...training.distributed import (
     is_main_process,
     unwrap_model,
 )
-from .nn import CONFIGS
 from ...validation.fomo_validator import FOMOValidator
 from .dataset import build_fomo_datasets
 
@@ -194,10 +193,9 @@ class FOMOTrainer(BaseTrainer):
             )
 
             if self.wrapper_model is None:
-                logger.error(
+                raise RuntimeError(
                     "Validation requires wrapper_model to be provided to trainer"
                 )
-                return None
 
             eval_pytorch_model = (
                 self.ema_model.ema if self.ema_model else unwrap_model(self.model)
@@ -227,7 +225,11 @@ class FOMOTrainer(BaseTrainer):
 
             raw_metrics = self._scalar_mapping(results)
             best_key = getattr(self, "best_metric_key", "metrics/grid_F1")
-            best_metric = raw_metrics.get(best_key, 0.0)
+            best_metric = self._require_validation_metric(
+                raw_metrics,
+                (best_key,),
+                context="FOMO validation",
+            )
 
             metrics = {
                 "mAP50": raw_metrics.get("metrics/grid_F1", 0.0),
@@ -273,7 +275,4 @@ class FOMOTrainer(BaseTrainer):
             raise
 
     def _checkpoint_extra_metadata(self) -> Dict[str, Any]:
-        return {
-            "task": "point",
-            "best_metric_key": "metrics/grid_F1",
-        }
+        return {}

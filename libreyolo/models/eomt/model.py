@@ -21,7 +21,12 @@ from torchvision.transforms.v2 import functional as TVF
 
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import load_untrusted_torch_file
+from ...utils.serialization import (
+    enforce_checkpoint_load_report,
+    inspect_state_dict_load,
+    inspect_load_state_dict_result,
+    load_untrusted_torch_file,
+)
 from ..base.model import BaseModel
 from .nn import LibreEoMTNet, normalize_eomt_state_dict
 
@@ -804,21 +809,11 @@ class LibreEoMT(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreEoMT checkpoints must be dictionaries.")
-
-        has_libreyolo_metadata = isinstance(loaded.get("model"), dict) and all(
-            key in loaded
-            for key in (
-                "schema_version",
-                "libreyolo_version",
-                "model_family",
-                "size",
-                "task",
-                "nc",
-                "names",
-                "imgsz",
-            )
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context="LibreEoMT checkpoint",
         )
-        if not has_libreyolo_metadata:
+        if not is_native_v1:
             raise RuntimeError(
                 "Raw EoMT state dicts are not loaded directly. Convert the "
                 "approved DINOv2 ADE20K checkpoint with "
@@ -843,8 +838,7 @@ class LibreEoMT(BaseModel):
                     "when constructing LibreEoMT, or use the correct checkpoint."
                 )
 
-        state = _extract_state(loaded)
-        state = normalize_eomt_state_dict(state)
+        state = dict(_extract_state(loaded))
         if not self.can_load(state):
             raise RuntimeError(
                 "Checkpoint does not look like a LibreEoMT model "
@@ -878,13 +872,29 @@ class LibreEoMT(BaseModel):
         if ckpt_imgsz is not None and int(ckpt_imgsz) != self.input_size:
             self._rebuild_for_new_image_size(int(ckpt_imgsz))
 
-        result = self.model.load_state_dict(state, strict=self._strict_loading())
-        missing = list(getattr(result, "missing_keys", []) or [])
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        if missing:
-            logger.debug("LibreEoMT missing checkpoint keys: %s", missing[:8])
-        if unexpected:
-            logger.debug("LibreEoMT unexpected checkpoint keys: %s", unexpected[:8])
+        policy = self._checkpoint_load_policy(loaded, self.task)
+        target_state = self.model.state_dict()
+        pre_load_report = None
+        if target_state:
+            pre_load_report = inspect_state_dict_load(
+                self.model,
+                state,
+                policy=policy,
+            )
+            enforce_checkpoint_load_report(
+                pre_load_report,
+                policy=policy,
+                context="LibreEoMT checkpoint",
+            )
+        result = self.model.load_state_dict(state, strict=True)
+        report = pre_load_report or inspect_load_state_dict_result(
+            self.model, result, policy=policy
+        )
+        enforce_checkpoint_load_report(
+            report,
+            policy=policy,
+            context="LibreEoMT checkpoint",
+        )
 
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:
@@ -894,9 +904,21 @@ class LibreEoMT(BaseModel):
         # the panoptic merge needs it to know which categories to fuse.
         ckpt_thing_ids = loaded.get("thing_class_ids")
         if ckpt_thing_ids is not None:
-            self.thing_class_ids = [int(i) for i in ckpt_thing_ids]
+            if not isinstance(ckpt_thing_ids, (list, tuple)) or any(
+                isinstance(item, bool) or not isinstance(item, int)
+                for item in ckpt_thing_ids
+            ):
+                raise ValueError("thing_class_ids must be a list of integer class IDs.")
+            thing_ids = list(ckpt_thing_ids)
+            if len(set(thing_ids)) != len(thing_ids) or any(
+                item < 0 or item >= self.nb_classes for item in thing_ids
+            ):
+                raise ValueError(
+                    "thing_class_ids must be unique and within 0..nc-1."
+                )
+            self.thing_class_ids = thing_ids
 
-        self.model.to(self.device)
+        self.model.to(self.device).eval()
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(

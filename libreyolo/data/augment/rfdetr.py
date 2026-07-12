@@ -25,7 +25,13 @@ from typing import Optional, Sequence
 import cv2
 import numpy as np
 
-from ..obb import normalize_obb_angle, scale_xywhr
+from ..obb import (
+    canonicalize_xywhr,
+    normalize_obb_angle,
+    scale_xywhr,
+    xywhr_to_corners,
+)
+from ..pose_metadata import validate_flip_idx
 from .constants import IMAGENET_MEAN as _IMAGENET_MEAN
 from .constants import IMAGENET_STD as _IMAGENET_STD
 from .copy_paste import copy_paste as _copy_paste_instances
@@ -277,6 +283,64 @@ def _rasterize_segments(segments, image_shape, mask_shape, max_masks):
     return masks
 
 
+def _crop_obbs_to_square(
+    boxes: np.ndarray,
+    angles: np.ndarray,
+    *,
+    left: int,
+    top: int,
+    size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Intersect rotated rectangles with a square crop and refit each result."""
+    if len(boxes) == 0:
+        return np.zeros((0, 5), dtype=np.float32), np.zeros((0,), dtype=bool)
+
+    xywhr = np.stack(
+        (
+            (boxes[:, 0] + boxes[:, 2]) * 0.5,
+            (boxes[:, 1] + boxes[:, 3]) * 0.5,
+            boxes[:, 2] - boxes[:, 0],
+            boxes[:, 3] - boxes[:, 1],
+            angles,
+        ),
+        axis=1,
+    ).astype(np.float32, copy=False)
+    crop = np.array(
+        [
+            [left, top],
+            [left + size, top],
+            [left + size, top + size],
+            [left, top + size],
+        ],
+        dtype=np.float32,
+    )
+
+    keep = np.zeros((len(xywhr),), dtype=bool)
+    fitted: list[np.ndarray] = []
+    offset = np.array([left, top], dtype=np.float32)
+    for index, rectangle in enumerate(xywhr):
+        corners = xywhr_to_corners(rectangle).astype(np.float32, copy=False)
+        area, intersection = cv2.intersectConvexConvex(corners, crop)
+        if intersection is None or not np.isfinite(area) or area <= 0.0:
+            continue
+        points = intersection.reshape(-1, 2) - offset
+        if len(points) < 3 or not np.isfinite(points).all():
+            continue
+        (cx, cy), (width, height), angle_degrees = cv2.minAreaRect(points)
+        try:
+            refit = canonicalize_xywhr(
+                (cx, cy, width, height, np.deg2rad(angle_degrees))
+            )
+        except ValueError:
+            continue
+        keep[index] = True
+        fitted.append(refit)
+
+    if not fitted:
+        return np.zeros((0, 5), dtype=np.float32), keep
+    return np.stack(fitted).astype(np.float32, copy=False), keep
+
+
 class RFDETRSegTransform:
     """Per-sample seg transform: square resize + flip + ImageNet norm + polygon rasterization.
 
@@ -419,8 +483,40 @@ class RFDETRSegTransform:
                 left = random.randint(0, max(0, w_mid - crop_size))
                 segments_t = _materialize_dense_masks_for_crop(segments_t, (h_mid, w_mid))
                 image = image[top : top + crop_size, left : left + crop_size]
-                boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]] - left, 0.0, float(crop_size))
-                boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]] - top, 0.0, float(crop_size))
+                if self.target_dim == 6:
+                    clipped_xywhr, keep = _crop_obbs_to_square(
+                        boxes,
+                        angles,
+                        left=left,
+                        top=top,
+                        size=crop_size,
+                    )
+                    labels = labels[keep]
+                    segments_t = _filter_segments(segments_t, keep)
+                    if len(clipped_xywhr):
+                        boxes = np.column_stack(
+                            (
+                                clipped_xywhr[:, 0] - clipped_xywhr[:, 2] * 0.5,
+                                clipped_xywhr[:, 1] - clipped_xywhr[:, 3] * 0.5,
+                                clipped_xywhr[:, 0] + clipped_xywhr[:, 2] * 0.5,
+                                clipped_xywhr[:, 1] + clipped_xywhr[:, 3] * 0.5,
+                            )
+                        ).astype(np.float32, copy=False)
+                        angles = clipped_xywhr[:, 4]
+                    else:
+                        boxes = np.zeros((0, 4), dtype=np.float32)
+                        angles = np.zeros((0,), dtype=np.float32)
+                else:
+                    boxes[:, [0, 2]] = np.clip(
+                        boxes[:, [0, 2]] - left,
+                        0.0,
+                        float(crop_size),
+                    )
+                    boxes[:, [1, 3]] = np.clip(
+                        boxes[:, [1, 3]] - top,
+                        0.0,
+                        float(crop_size),
+                    )
                 segments_t = _crop_segments(segments_t, left, top, crop_size, crop_size)
 
         # RF-DETR's square training/inference path resizes directly to the model
@@ -477,6 +573,22 @@ class RFDETRSegTransform:
         else:
             packed = np.zeros((0, self.target_dim), dtype=np.float32)
 
+        mask_shape = (target_h, target_w)
+        masks = _rasterize_segments(
+            segments_t,
+            image_shape=(target_h, target_w),
+            mask_shape=mask_shape,
+            max_masks=self.max_labels,
+        )
+        if segments_t is not None:
+            aligned = min(len(packed), len(masks))
+            packed = packed[:aligned]
+            masks = masks[:aligned]
+            if aligned:
+                has_foreground = masks.reshape(aligned, -1).any(axis=1)
+                packed = packed[has_foreground]
+                masks = masks[has_foreground]
+
         padded = np.zeros((self.max_labels, self.target_dim), dtype=np.float32)
         n = min(len(packed), self.max_labels)
         if n:
@@ -487,14 +599,6 @@ class RFDETRSegTransform:
         if self.imagenet_norm:
             img_out = (img_out - _IMAGENET_MEAN) / _IMAGENET_STD
         img_out = np.ascontiguousarray(img_out)
-
-        mask_shape = (target_h, target_w)
-        masks = _rasterize_segments(
-            segments_t,
-            image_shape=(target_h, target_w),
-            mask_shape=mask_shape,
-            max_masks=self.max_labels,
-        )
 
         return img_out, padded, masks
 
@@ -680,9 +784,10 @@ class RFDETRPoseTransform:
             patch_size=patch_size,
             num_windows=num_windows,
         )
+        validated_flip_idx = validate_flip_idx(flip_idx, self.num_keypoints)
         self.flip_idx = (
-            np.asarray(flip_idx, dtype=np.int64)
-            if flip_idx is not None and len(flip_idx) == self.num_keypoints
+            np.asarray(validated_flip_idx, dtype=np.int64)
+            if validated_flip_idx is not None
             else None
         )
         if self.flip_idx is None:

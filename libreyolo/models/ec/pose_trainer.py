@@ -201,6 +201,7 @@ class ECPoseTrainer(BaseTrainer):
             preproc=preproc,
             keypoint_dim=self.config.keypoint_dim,
             decode_scale=self.config.decode_scale,
+            num_classes=int(self.num_classes),
         )
 
     def _setup_data(self):

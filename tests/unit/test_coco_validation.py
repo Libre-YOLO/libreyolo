@@ -579,9 +579,20 @@ def test_segmentation_validator_updates_bbox_and_mask_evaluators():
     validator.bbox_evaluator = _DummyEvaluator()
     validator.coco_evaluator = validator.bbox_evaluator  # alias mirrors _init_metrics
     validator.mask_evaluator = _DummyEvaluator()
+    validator.nc = 1
 
-    pred = {"boxes": [], "scores": [], "classes": [], "masks": []}
-    validator._update_metrics([pred], targets=None, img_info=[], img_ids=[123])
+    pred = {
+        "boxes": torch.zeros((0, 4)),
+        "scores": torch.zeros(0),
+        "classes": torch.zeros(0, dtype=torch.long),
+        "masks": torch.zeros((0, 1, 1)),
+    }
+    validator._update_metrics(
+        [pred],
+        targets=torch.zeros((1, 0, 5)),
+        img_info=[(1, 1)],
+        img_ids=[123],
+    )
 
     assert validator.bbox_evaluator.updates == [(pred, 123)]
     assert validator.mask_evaluator.updates == [(pred, 123)]

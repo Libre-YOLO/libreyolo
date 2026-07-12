@@ -452,6 +452,159 @@ def test_first_zero_validation_metric_counts_as_best():
     assert trainer.best_epoch == 1
 
 
+def test_nonfinite_metric_cannot_poison_later_best_state():
+    trainer = DummyTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+    )
+
+    invalid_is_best = trainer._update_best_state(
+        0,
+        {
+            "mAP50": float("nan"),
+            "mAP50_95": float("nan"),
+            "best_metric": float("nan"),
+        },
+    )
+    finite_is_best = trainer._update_best_state(
+        1,
+        {"mAP50": 0.5, "mAP50_95": 0.4, "best_metric": 0.4},
+    )
+
+    assert invalid_is_best is False
+    assert finite_is_best is True
+    assert trainer.best_mAP50 == pytest.approx(0.5)
+    assert trainer.best_mAP50_95 == pytest.approx(0.4)
+    assert trainer.best_epoch == 2
+
+
+def test_missing_fitness_metric_counts_as_invalid_validation():
+    trainer = DummyTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+    )
+
+    is_best = trainer._update_best_state(
+        0,
+        {"mAP50": 0.5, "metrics": {"metrics/accuracy_top1": 0.5}},
+    )
+
+    assert is_best is False
+    assert trainer.best_epoch == 0
+    assert trainer.best_mAP50_95 == pytest.approx(0.0)
+    assert trainer.patience_counter == 1
+
+
+def test_nonfinite_validation_scalars_are_omitted_from_epoch_event(tmp_path):
+    trainer = DummyTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+        epochs=1,
+    )
+    trainer.save_dir = tmp_path
+
+    event = trainer._build_train_epoch_event(
+        epoch=0,
+        train_loss=1.0,
+        train_loss_items={"box": 0.1},
+        lr={"group0": 0.01},
+        val_metrics={
+            "best_metric": float("nan"),
+            "metrics": {"metrics/mAP50-95": float("inf")},
+        },
+        is_best=False,
+        epoch_seconds=0.1,
+    )
+
+    assert event.current_metric is None
+    assert event.val_metrics == {}
+    assert event.best_metric is None
+
+
+@pytest.mark.parametrize("loss", [float("nan"), float("inf"), -float("inf")])
+def test_epoch_result_rejects_nonfinite_loss(loss):
+    trainer = DummyTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+    )
+
+    with pytest.raises(ValueError, match="finite scalar"):
+        trainer._normalize_epoch_result((loss, None))
+
+
+def test_classification_validator_failure_aborts_training_validation(
+    tmp_path, monkeypatch
+):
+    import libreyolo.validation as validation_module
+
+    model = nn.Linear(1, 1)
+    wrapper = type("Wrapper", (), {"model": model, "task": "classify"})()
+    trainer = DummyTrainer(
+        model=model,
+        wrapper_model=wrapper,
+        data="unused",
+        device="cpu",
+        ema=False,
+    )
+    trainer.save_dir = tmp_path
+
+    class FailingValidator:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def run(self):
+            raise ValueError("non-finite classification logits")
+
+    monkeypatch.setattr(validation_module, "ClassifyValidator", FailingValidator)
+
+    with pytest.raises(RuntimeError, match="Classification training validation"):
+        trainer._run_classify_validation(0)
+    assert wrapper.model is model
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    [
+        "task",
+        "best_metric",
+        "best_metric_name",
+        "train_model",
+        "ema",
+        "ema_updates",
+        "distiller",
+        "scaler",
+        "rng_state",
+    ],
+)
+def test_checkpoint_extension_cannot_override_core_metadata(tmp_path, reserved_key):
+    trainer = DummyTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+    )
+    trainer.save_dir = tmp_path
+    trainer.optimizer = torch.optim.SGD(trainer.model.parameters(), lr=0.01)
+    trainer.num_classes = 1
+    trainer.config.num_classes = 1
+    trainer._checkpoint_extra_metadata = lambda: {reserved_key: "injected"}
+
+    with pytest.raises(
+        ValueError, match=rf"cannot override core fields: {reserved_key}"
+    ):
+        trainer._save_checkpoint(epoch=0, loss=1.0, is_best=False)
+
+    assert not (tmp_path / "weights" / "last.pt").exists()
+
+
 def test_yolo9_loss_components_match_epoch_event_names():
     from libreyolo.models.yolo9.trainer import YOLO9Trainer
 

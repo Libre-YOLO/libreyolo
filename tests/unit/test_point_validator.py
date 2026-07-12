@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import List
 
@@ -783,6 +782,7 @@ def test_point_validator_postprocess_standard_payload_shape():
                 "points": [[32.0, 16.0, 1.0, 0.95], [48.0, 48.0, 0.0, 0.82]],
             }
     v.model = _FakeModel()
+    v.nc = 2
     v._actual_imgsz = 64
     v.val_preproc = type("_FakePreproc", (), {"uses_letterbox": False})()
     

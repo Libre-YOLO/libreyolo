@@ -16,7 +16,10 @@ from ...training.config import YOLO9Config
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import (
+    NATIVE_CHECKPOINT_LOAD_POLICY,
     REQUIRED_CHECKPOINT_METADATA_KEYS,
+    enforce_checkpoint_load_report,
+    inspect_state_dict_load,
     load_untrusted_torch_file,
     validate_checkpoint_metadata,
 )
@@ -214,11 +217,18 @@ class LibreYOLO9(BaseModel):
     ) -> dict:
         """Remap legacy 'detect.*' keys to 'head.*' for backward compatibility."""
         remapped = {}
+        source_keys = {}
         for key, value in state_dict.items():
             new_key = (
                 key.replace("detect.", "head.", 1) if key.startswith("detect.") else key
             )
+            if new_key in remapped:
+                raise ValueError(
+                    "Checkpoint key normalization collision: "
+                    f"{source_keys[new_key]!r} and {key!r} both map to {new_key!r}."
+                )
             remapped[new_key] = value
+            source_keys[new_key] = key
         return remapped
 
     def _rebuild_for_new_classes(self, new_nc: int):
@@ -322,6 +332,7 @@ class LibreYOLO9(BaseModel):
             map_location="cpu",
             context="transfer weights",
         )
+        ckpt_family = ""
         if isinstance(loaded, dict):
             metadata_keys = set(REQUIRED_CHECKPOINT_METADATA_KEYS) - {"model"}
             if metadata_keys & set(loaded):
@@ -361,15 +372,52 @@ class LibreYOLO9(BaseModel):
         else:
             state_dict = loaded
 
-        state_dict = self._prepare_state_dict(self._strip_ddp_prefix(state_dict))
+        state_dict = self._strip_ddp_prefix(state_dict)
+        compatible_family_transfer = bool(
+            ckpt_family
+            and ckpt_family in getattr(self, "TRANSFER_COMPATIBLE_FAMILIES", ())
+        ) or bool(
+            not ckpt_family
+            and self._get_model_name() == "yolo9_p2"
+            and not any(key.startswith("neck.elan_up3.") for key in state_dict)
+        )
+        state_dict = self._prepare_state_dict(state_dict)
         total_tensors = len(state_dict)
         self._align_class_towers_for_transfer(state_dict)
 
         current = self.model.state_dict()
+        if compatible_family_transfer:
+            policy = NATIVE_CHECKPOINT_LOAD_POLICY.allowing(
+                name="yolo9-compatible-family-transfer",
+                missing=(
+                    "neck.down0.*",
+                    "neck.elan_down0.*",
+                    "neck.elan_up3.*",
+                    "head.cv2.0.*",
+                    "head.cv3.0.*",
+                ),
+                shape_mismatch=("head.cv3.*.2.*",),
+            )
+        else:
+            policy = NATIVE_CHECKPOINT_LOAD_POLICY.allowing(
+                name="yolo9-class-head-transfer",
+                shape_mismatch=("head.cv3.*.2.*",),
+            )
+        report = inspect_state_dict_load(
+            self.model,
+            state_dict,
+            policy=policy,
+        )
+        enforce_checkpoint_load_report(
+            report,
+            policy=policy,
+            context="YOLO9 transfer checkpoint",
+        )
+        loaded_keys = set(report.loaded_keys)
         matched = {
             key: value
             for key, value in state_dict.items()
-            if key in current and current[key].shape == value.shape
+            if key in loaded_keys
         }
         current.update(matched)
         self.model.load_state_dict(current, strict=True)

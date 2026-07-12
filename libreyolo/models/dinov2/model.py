@@ -481,6 +481,10 @@ class LibreDINOv2(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreDINOv2 checkpoints must be dictionaries")
+        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context=f"DINOv2 {self.task} checkpoint",
+        )
 
         if self.task == "classify":
             return self._load_classify_weights(loaded)
@@ -501,33 +505,32 @@ class LibreDINOv2(BaseModel):
             )
 
         # Detect and rebuild for checkpoint class count.
-        ckpt_nc = loaded.get("nc")
+        state = self._extract_state(loaded)
+        ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
         if ckpt_nc is None:
             names = loaded.get("names")
+            if names is not None and not isinstance(names, (dict, list)):
+                raise ValueError(
+                    "checkpoint names must be a dict[int, str] or list[str]"
+                )
             ckpt_nc = len(names) if names else None
         if ckpt_nc is None:
-            state = self._extract_state(loaded)
             pw = state.get("predict.weight")
             ckpt_nc = int(pw.shape[0]) if pw is not None else None
         if ckpt_nc is not None and ckpt_nc != self.nb_classes:
             self._rebuild_for_new_classes(int(ckpt_nc))
 
-        result = self.model.load_state_dict(loaded, strict=False)
-        missing = list(getattr(result, "missing_keys", []) or [])
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        if any(k.startswith("predict.") for k in missing) or any(
-            ("class_embed" in k or "transformer" in k or "query" in k)
-            for k in unexpected
-        ):
-            raise RuntimeError(
-                "Checkpoint does not look like a LibreDINOv2 semantic model "
-                "(weights do not match backbone + dense decoder)."
-            )
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="semantic",
+            context="DINOv2 semantic checkpoint",
+        )
 
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
-        self.model.to(self.device)
+        self.model.to(self.device).eval()
 
     def _load_classify_weights(self, loaded: dict) -> None:
         """Load a LibreDINOv2 classification checkpoint.
@@ -558,24 +561,26 @@ class LibreDINOv2(BaseModel):
                 "(no 'linear.weight' classifier head found)."
             )
         ckpt_nc = int(lw.shape[0])
+        declared_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+        if declared_nc is not None and declared_nc != ckpt_nc:
+            raise RuntimeError(
+                "DINOv2 classification checkpoint metadata declares "
+                f"nc={declared_nc}, but linear.weight encodes nc={ckpt_nc}."
+            )
         if ckpt_nc != self.nb_classes:
             self._rebuild_for_new_classes(ckpt_nc)
 
-        result = self.model.load_state_dict(loaded, strict=False)
-        unexpected = list(getattr(result, "unexpected_keys", []) or [])
-        if any(
-            ("class_embed" in k or "transformer" in k or k.startswith("predict."))
-            for k in unexpected
-        ):
-            raise RuntimeError(
-                "Checkpoint does not look like a LibreDINOv2 classification model "
-                "(weights match a detector or dense head, not backbone + linear)."
-            )
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="classify",
+            context="DINOv2 classification checkpoint",
+        )
 
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
-        self.model.to(self.device)
+        self.model.to(self.device).eval()
 
     # =========================================================================
     # Training

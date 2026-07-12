@@ -35,24 +35,9 @@ def test_factory_detects_dfine_segment_state_dict(tmp_path):
         enable_mask_head=True,
     )
     state = model.state_dict()
-    partial = {
-        "encoder.lateral_convs.0.conv.weight": state[
-            "encoder.lateral_convs.0.conv.weight"
-        ],
-        "decoder.dec_score_head.0.bias": state["decoder.dec_score_head.0.bias"],
-        "decoder.pre_bbox_head.layers.0.weight": state[
-            "decoder.pre_bbox_head.layers.0.weight"
-        ],
-        "decoder.mask_head.layers.0.weight": state[
-            "decoder.mask_head.layers.0.weight"
-        ],
-    }
-    for key, value in state.items():
-        if key.startswith("encoder.input_proj.") and "conv.weight" in key:
-            partial[key] = value
 
     path = tmp_path / "LibreDFINEn.pt"
-    torch.save(partial, path)
+    torch.save(state, path)
 
     loaded = LibreYOLO(str(path), device="cpu")
 

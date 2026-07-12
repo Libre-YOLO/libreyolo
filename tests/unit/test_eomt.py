@@ -29,6 +29,25 @@ def _synthetic_eomt_state(nc: int = 150, hidden: int = 1024) -> dict:
     }
 
 
+def _install_fake_eomt_parameters(
+    module: nn.Module, *, nc: int, hidden: int, num_queries: int
+) -> None:
+    """Give the fake the same measured state schema as its synthetic fixture."""
+    module.embeddings = nn.Module()
+    module.embeddings.patch_embeddings = nn.Module()
+    module.embeddings.patch_embeddings.projection = nn.Conv2d(
+        3, hidden, 16, bias=False
+    )
+    module.query = nn.Embedding(num_queries, hidden)
+    module.mask_head = nn.Module()
+    module.mask_head.fc1 = nn.Linear(hidden, hidden, bias=False)
+    module.mask_head.fc2 = nn.Linear(hidden, hidden, bias=False)
+    module.mask_head.fc3 = nn.Linear(hidden, hidden, bias=False)
+    module.class_predictor = nn.Linear(hidden, nc + 1)
+    module.criterion = nn.Module()
+    module.criterion.register_buffer("empty_weight", torch.zeros(nc + 1))
+
+
 class _FakeEoMTNet(nn.Module):
     def __init__(
         self,
@@ -43,17 +62,23 @@ class _FakeEoMTNet(nn.Module):
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
         self.num_queries = int(num_queries)
-        self.proj = nn.Conv2d(3, self.nb_classes, 1)
+        self.hidden_size = {"s": 384, "b": 768, "l": 1024}[config]
+        _install_fake_eomt_parameters(
+            self,
+            nc=self.nb_classes,
+            hidden=self.hidden_size,
+            num_queries=self.num_queries,
+        )
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        return {"semantic_logits": self.proj(x)}
+        logits = x.mean(dim=1, keepdim=True).expand(-1, self.nb_classes, -1, -1)
+        return {"semantic_logits": logits}
 
     def load_state_dict(self, state_dict, strict: bool = True):
         from torch.nn.modules.module import _IncompatibleKeys
 
         self.loaded_state_dict = dict(state_dict)
         return _IncompatibleKeys([], [])
-
 
 @pytest.fixture
 def fake_eomt_net(monkeypatch):
@@ -389,6 +414,13 @@ class _FakeEoMTNetSeg(nn.Module):
         self.nb_classes = int(nb_classes)
         self.image_size = int(image_size)
         self.num_queries = int(num_queries)
+        self.hidden_size = {"s": 384, "b": 768, "l": 1024}[config]
+        _install_fake_eomt_parameters(
+            self,
+            nc=self.nb_classes,
+            hidden=self.hidden_size,
+            num_queries=self.num_queries,
+        )
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         b, _, h, w = x.shape
@@ -404,7 +436,6 @@ class _FakeEoMTNetSeg(nn.Module):
         from torch.nn.modules.module import _IncompatibleKeys
 
         return _IncompatibleKeys([], [])
-
 
 @pytest.fixture
 def fake_eomt_seg_net(monkeypatch):
@@ -886,6 +917,34 @@ def test_checkpoint_round_trip_through_factory(fake_eomt_net, tmp_path):
     assert loaded.size == "l"
     assert loaded.nb_classes == 150
     assert loaded.names[0] == "ade_0"
+
+
+def test_eomt_rejects_sparse_declared_v1_names(fake_eomt_net):
+    from libreyolo.models.eomt.model import LibreEoMT
+    from libreyolo.utils.serialization import (
+        CheckpointMetadataError,
+        wrap_libreyolo_checkpoint,
+    )
+
+    checkpoint = wrap_libreyolo_checkpoint(
+        _synthetic_eomt_state(nc=3),
+        model_family="eomt",
+        size="l",
+        task="semantic",
+        nc=3,
+        names={0: "left", 1: "middle", 2: "right"},
+        imgsz=512,
+    )
+    checkpoint["names"] = {0: "left", 2: "right"}
+
+    with pytest.raises(CheckpointMetadataError, match="missing indices"):
+        LibreEoMT(
+            model_path=checkpoint,
+            size="l",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+        )
 
 
 def test_raw_state_dict_load_requires_converter(fake_eomt_net):

@@ -250,6 +250,22 @@ class YOLO9TrainTransform:
         else:
             targets_t = np.hstack((labels_t, boxes_norm))
 
+        masks = None
+        if return_masks:
+            masks = _rasterize_segments(
+                segments_t,
+                image_shape=input_dim,
+                mask_shape=mask_shape,
+                max_masks=self.max_labels,
+            )
+            aligned = min(len(targets_t), len(masks))
+            targets_t = targets_t[:aligned]
+            masks = masks[:aligned]
+            if aligned:
+                has_foreground = masks.reshape(aligned, -1).any(axis=1)
+                targets_t = targets_t[has_foreground]
+                masks = masks[has_foreground]
+
         # Pad to max_labels
         padded_labels = np.zeros((self.max_labels, targets_t.shape[1]), dtype=np.float32)
         # Fill class with -1 to indicate padding
@@ -259,12 +275,6 @@ class YOLO9TrainTransform:
         padded_labels[:n] = targets_t[:n]
 
         if return_masks:
-            masks = _rasterize_segments(
-                segments_t,
-                image_shape=input_dim,
-                mask_shape=mask_shape,
-                max_masks=self.max_labels,
-            )
             return image_t, padded_labels, masks
 
         return image_t, padded_labels

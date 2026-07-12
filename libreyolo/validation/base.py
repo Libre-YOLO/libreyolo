@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .config import ValidationConfig
+from .contracts import require_finite
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,14 @@ class BaseValidator(ABC):
 
     def _finalize(self) -> Dict[str, float]:
         metrics = self._compute_metrics()
+        if not isinstance(metrics, dict):
+            raise ValueError(
+                f"{type(self).__name__}._compute_metrics must return a mapping."
+            )
+        require_finite(
+            list(metrics.values()),
+            f"{type(self).__name__} validation metrics",
+        )
 
         if self.config.verbose:
             self._print_results(metrics)

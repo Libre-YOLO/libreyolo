@@ -22,6 +22,7 @@ from libreyolo.models.yolonas.nn import LibreYOLONASPoseModel
 from libreyolo.models.yolonas.utils import postprocess_pose
 from libreyolo.tasks import resolve_task
 from libreyolo.utils.results import Boxes, Keypoints, Results
+from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = [pytest.mark.unit, pytest.mark.yolonas]
 
@@ -107,6 +108,28 @@ class TestPoseFamilyClassWiring:
         assert model.nb_classes == 1
         assert model.names == {0: "person"}
         assert isinstance(model.model, LibreYOLONASPoseModel)
+
+    def test_pose_in_memory_checkpoint_preserves_custom_class_name(self):
+        source = LibreYOLONAS(
+            model_path=None, size="n", task="pose", device="cpu"
+        )
+        checkpoint = wrap_libreyolo_checkpoint(
+            source.model.state_dict(),
+            model_family="yolonas",
+            size="n",
+            task="pose",
+            nc=1,
+            names={0: "athlete"},
+            imgsz=640,
+            num_keypoints=17,
+            keypoint_dim=3,
+        )
+
+        loaded = LibreYOLONAS(
+            model_path=checkpoint, size="n", task="pose", device="cpu"
+        )
+
+        assert loaded.names == {0: "athlete"}
 
     def test_detect_init_unchanged(self):
         model = LibreYOLONAS(model_path=None, size="s")

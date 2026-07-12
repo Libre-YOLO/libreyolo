@@ -23,10 +23,7 @@ from PIL import Image
 
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import (
-    load_untrusted_torch_file,
-    validate_checkpoint_metadata,
-)
+from ...utils.serialization import load_untrusted_torch_file
 from ..base.model import BaseModel
 from .nn import SIZE_CONFIGS, LibrePIDNetNet
 
@@ -187,6 +184,9 @@ class LibrePIDNet(BaseModel):
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "semantic"
+        has_checkpoint_names = bool(
+            isinstance(model_path, dict) and model_path.get("names") is not None
+        )
         if resolved_task != "semantic":
             raise ValueError(
                 f"LibrePIDNet supports only task='semantic'; got {task!r}."
@@ -199,7 +199,7 @@ class LibrePIDNet(BaseModel):
             task=resolved_task,
             **kwargs,
         )
-        if self.nb_classes == 19:
+        if self.nb_classes == 19 and not has_checkpoint_names:
             self.names = dict(CITYSCAPES_NAMES)
         self.model.eval()
         if self.model_path is not None:
@@ -288,15 +288,20 @@ class LibrePIDNet(BaseModel):
     def _strict_loading(self) -> bool:
         return False
 
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        return policy.allowing(
+            name=f"pidnet-{policy.name}",
+            missing=("pixel_mean", "pixel_std", "*.num_batches_tracked"),
+        )
+
     def _prepare_state_dict(self, state_dict: dict) -> dict:
         prepared = {}
-        target_keys = set(self.model.state_dict())
         for raw_key, value in state_dict.items():
             key = _strip_known_prefix(str(raw_key))
             if key.startswith(_AUX_HEAD_PREFIXES):
                 continue
-            if key in target_keys:
-                prepared[key] = value
+            prepared[key] = value
         return prepared
 
     def _validate_loaded_state_dict_for_task(
@@ -323,8 +328,11 @@ class LibrePIDNet(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibrePIDNet checkpoints must be dictionaries")
-        metadata_errors = validate_checkpoint_metadata(loaded, strict=False)
-        if metadata_errors:
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context="PIDNet semantic checkpoint",
+        )
+        if not is_native_v1:
             raise ValueError(
                 "Raw upstream PIDNet checkpoints must be converted before loading. "
                 "Use weights/convert_pidnet_weights.py to create a LibreYOLO "
@@ -351,27 +359,22 @@ class LibrePIDNet(BaseModel):
             raw_state = loaded["state_dict"]
         else:
             raw_state = loaded
-        state = self._prepare_state_dict(raw_state)
+        state = dict(raw_state)
         ckpt_nc = loaded.get("nc") or self.detect_nb_classes(state)
         if ckpt_nc is not None and int(ckpt_nc) != self.nb_classes:
             self._rebuild_for_checkpoint_classes(int(ckpt_nc), state)
-            state = self._prepare_state_dict(raw_state)
+            state = dict(raw_state)
 
         if not self.can_load(state):
             raise RuntimeError(
                 "Checkpoint does not look like a PIDNet semantic segmentation model."
             )
-        result = self.model.load_state_dict(state, strict=False)
-        missing = list(getattr(result, "missing_keys", []) or [])
-        missing_required = [
-            key
-            for key in missing
-            if not key.startswith(("pixel_mean", "pixel_std"))
-            and not key.endswith("num_batches_tracked")
-        ]
-        if missing_required:
-            preview = ", ".join(missing_required[:5])
-            raise RuntimeError(f"PIDNet checkpoint is missing model keys: {preview}")
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="semantic",
+            context="PIDNet semantic checkpoint",
+        )
 
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:

@@ -471,6 +471,43 @@ def test_num_bins_inferred_from_state_dict():
     assert LibreL2CS._detect_num_bins({"not": "a checkpoint"}) is None
 
 
+def test_legacy_fc_finetune_is_the_only_ignored_unexpected_key(tmp_path):
+    state = build_l2cs("r18", num_bins=28).state_dict()
+    state["fc_finetune.weight"] = torch.zeros(1, 1)
+    accepted = tmp_path / "legacy-fc.pt"
+    torch.save(state, accepted)
+
+    loaded = LibreL2CS(str(accepted), size="r18", device="cpu")
+    assert loaded.model.training is False
+
+    state["foreign.weight"] = torch.zeros(1)
+    rejected = tmp_path / "legacy-foreign.pt"
+    torch.save(state, rejected)
+    with pytest.raises(RuntimeError, match="unexpected checkpoint keys"):
+        LibreL2CS(str(rejected), size="r18", device="cpu")
+
+
+def test_native_l2cs_checkpoint_does_not_allow_legacy_fc_finetune(tmp_path):
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    state = build_l2cs("r18", num_bins=28).state_dict()
+    state["fc_finetune.weight"] = torch.zeros(1, 1)
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="l2cs",
+        size="r18",
+        task="gaze",
+        nc=1,
+        names={0: "face"},
+        imgsz=448,
+    )
+    path = tmp_path / "native-with-legacy-key.pt"
+    torch.save(checkpoint, path)
+
+    with pytest.raises(RuntimeError, match="unexpected checkpoint keys"):
+        LibreL2CS(str(path), size="r18", device="cpu")
+
+
 def test_resolve_face_detector_rejects_unknown():
     """Finding #7: a non-model, non-callable object is rejected, not mis-wrapped."""
 

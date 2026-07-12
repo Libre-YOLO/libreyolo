@@ -493,6 +493,43 @@ def _make_dfine_trainer(model: nn.Module, accum: int = 1, num_batches: int = 4):
     return trainer
 
 
+@pytest.mark.parametrize(
+    "make_trainer",
+    [_make_deim_trainer, _make_dfine_trainer],
+    ids=["deim", "dfine"],
+)
+@pytest.mark.parametrize("accum", [1, 2], ids=["normal", "accumulation"])
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf")], ids=["nan", "inf"])
+@_requires_libreyolo
+def test_deim_dfine_reject_nonfinite_loss_before_backward_and_step(
+    make_trainer, accum, invalid_value
+):
+    """Custom loops must stop before gradients or parameters are mutated."""
+    model = _TinyModel()
+    trainer = make_trainer(model, accum=accum, num_batches=1)
+    state_before = _hash_state_dict(model)
+    step_calls = []
+    original_step = trainer.optimizer.step
+
+    def _recording_step(*args, **kwargs):
+        step_calls.append(1)
+        return original_step(*args, **kwargs)
+
+    def _invalid_forward(imgs, targets, polygons=None):
+        loss = trainer.model(imgs).mean() * invalid_value
+        return {"total_loss": loss}
+
+    trainer.optimizer.step = _recording_step
+    trainer.on_forward = _invalid_forward
+
+    with pytest.raises(FloatingPointError, match="finite scalar loss"):
+        trainer._train_epoch(0)
+
+    assert step_calls == []
+    assert _hash_state_dict(model) == state_before
+    assert all(parameter.grad is None for parameter in model.parameters())
+
+
 @_requires_libreyolo
 def test_deim_step_count_matches_accum():
     """DEIMTrainer: optimizer.step() fires ceil(N/accum) times for N divisible by accum."""

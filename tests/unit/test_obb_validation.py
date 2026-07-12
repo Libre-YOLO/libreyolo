@@ -1,6 +1,5 @@
 """Unit tests for OBB validation metrics."""
 
-import logging
 from pathlib import Path
 
 import numpy as np
@@ -215,7 +214,7 @@ def test_obb_validator_infers_nc_from_names_when_nc_is_missing(tmp_path):
     assert metrics["metrics/mAP50"] == pytest.approx(1.0)
 
 
-def test_obb_validator_pads_short_names_to_nc(tmp_path):
+def test_obb_validator_rejects_names_nc_mismatch(tmp_path):
     data_yaml = _write_obb_dataset(tmp_path)
     data_yaml.write_text(
         "path: " + str(tmp_path).replace("\\", "/") + "\n"
@@ -236,14 +235,11 @@ def test_obb_validator_pads_short_names_to_nc(tmp_path):
     )
     validator = OBBValidator(_WideDummyOBBModel(), config)
 
-    metrics = validator.run()
-
-    assert validator.nc == 2
-    assert validator.class_names == ["rect", "class_1"]
-    assert metrics["metrics/mAP50"] == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="nc=2 but 1 class names"):
+        validator.run()
 
 
-def test_obb_validator_skips_invalid_ground_truth_rows(tmp_path, caplog):
+def test_obb_validator_rejects_invalid_ground_truth_rows(tmp_path):
     data_yaml = _write_obb_dataset(tmp_path)
     label_file = tmp_path / "labels" / "val" / "sample.txt"
     label_file.write_text(
@@ -261,8 +257,8 @@ def test_obb_validator_skips_invalid_ground_truth_rows(tmp_path, caplog):
         save_dir=str(tmp_path / "val_run"),
     )
 
-    with caplog.at_level(logging.WARNING):
-        metrics = OBBValidator(_DummyOBBModel(), config).run()
+    with pytest.raises(ValueError) as exc_info:
+        OBBValidator(_DummyOBBModel(), config).run()
 
-    assert metrics["metrics/mAP50"] == pytest.approx(1.0)
-    assert "Skipped 1 invalid YOLO OBB label rows" in caplog.text
+    assert f"{label_file}:2:" in str(exc_info.value)
+    assert "non-degenerate" in str(exc_info.value)

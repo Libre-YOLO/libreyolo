@@ -21,6 +21,7 @@ from ..data.restore_dataset import (
     restore_collate_fn,
 )
 from .base import BaseValidator
+from .contracts import require_finite, require_matching_batch_sizes
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,22 @@ _METRIC_KEYS = ("metrics/PSNR", "metrics/SSIM")
 _MAX_PSNR = 100.0
 
 
+def _validate_rgb_pair(pred: torch.Tensor, target: torch.Tensor, metric: str) -> None:
+    if pred.ndim != 3 or target.ndim != 3:
+        raise ValueError(f"{metric} expects [C, H, W] tensors.")
+    if pred.shape != target.shape:
+        raise ValueError(
+            f"{metric} prediction and target shapes must match, got "
+            f"{tuple(pred.shape)} and {tuple(target.shape)}."
+        )
+    require_finite(pred, f"{metric} prediction")
+    require_finite(target, f"{metric} target")
+
+
 def psnr_rgb(pred: torch.Tensor, target: torch.Tensor, data_range: float = 1.0) -> float:
     """Compute RGB PSNR for tensors with matching ``[C, H, W]`` shape."""
 
+    _validate_rgb_pair(pred, target, "PSNR")
     mse = torch.mean((pred.float() - target.float()).pow(2))
     if float(mse) == 0.0:
         return _MAX_PSNR
@@ -60,8 +74,7 @@ def _gaussian_window(
 def ssim_rgb(pred: torch.Tensor, target: torch.Tensor, data_range: float = 1.0) -> float:
     """Compute RGB SSIM with a fixed 11x11 Gaussian window."""
 
-    if pred.ndim != 3 or target.ndim != 3:
-        raise ValueError("SSIM expects [C, H, W] tensors.")
+    _validate_rgb_pair(pred, target, "SSIM")
     if min(pred.shape[-2:]) < 11:
         return 1.0 if torch.allclose(pred, target) else 0.0
     pred = pred.float().unsqueeze(0)
@@ -145,7 +158,17 @@ class RestoreValidator(BaseValidator):
             raise ValueError(
                 f"Restore validation expects [B, 3, H, W] output, got {tuple(output.shape)}."
             )
-        target_hw = tuple(batch[1].shape[-2:])
+        targets = torch.as_tensor(batch[1])
+        if targets.ndim != 4 or targets.shape[1] != 3:
+            raise ValueError(
+                "Restore validation expects [B, 3, H, W] targets, got "
+                f"{tuple(targets.shape)}."
+            )
+        require_matching_batch_sizes(
+            "Restore validation", predictions=output, targets=targets
+        )
+        require_finite(output, "Restore validation output")
+        target_hw = tuple(targets.shape[-2:])
         output = output[:, :, : target_hw[0], : target_hw[1]]
         return output.clamp(0.0, 1.0)
 
@@ -157,8 +180,26 @@ class RestoreValidator(BaseValidator):
         img_ids: Any = None,
     ) -> None:
         del img_ids
-        preds = preds.detach().cpu().float()
-        targets = targets.detach().cpu().float()
+        preds = torch.as_tensor(preds).detach().cpu().float()
+        targets = torch.as_tensor(targets).detach().cpu().float()
+        if (
+            preds.ndim != 4
+            or targets.ndim != 4
+            or preds.shape[1] != 3
+            or targets.shape[1] != 3
+        ):
+            raise ValueError(
+                "Restore validation metrics expect [B, 3, H, W] predictions "
+                f"and targets, got {tuple(preds.shape)} and {tuple(targets.shape)}."
+            )
+        require_matching_batch_sizes(
+            "Restore validation",
+            predictions=preds,
+            targets=targets,
+            image_info=img_info,
+        )
+        psnr_values: list[float] = []
+        ssim_values: list[float] = []
         for pred, target, info in zip(preds, targets, img_info):
             # For super-resolution the valid region is the HR target canvas
             # (scale x the input); for deblur/denoise it equals the input shape.
@@ -171,17 +212,17 @@ class RestoreValidator(BaseValidator):
                 )
             pred = pred[:, :h, :w].clamp(0.0, 1.0)
             target = target[:, :h, :w].clamp(0.0, 1.0)
-            self._psnr_values.append(psnr_rgb(pred, target))
-            self._ssim_values.append(ssim_rgb(pred, target))
+            psnr_values.append(psnr_rgb(pred, target))
+            ssim_values.append(ssim_rgb(pred, target))
+        self._psnr_values.extend(psnr_values)
+        self._ssim_values.extend(ssim_values)
 
     def _compute_metrics(self) -> Dict[str, float]:
         if not self._psnr_values:
             raise ValueError("Restore validation found no paired images.")
-        # PSNR is now capped to a finite value per image (see _MAX_PSNR), but
-        # guard against any stray non-finite value so the aggregate / fitness
-        # never becomes inf/nan and breaks best-checkpoint selection.
-        finite_psnr = [value for value in self._psnr_values if math.isfinite(value)]
-        psnr = sum(finite_psnr) / len(finite_psnr) if finite_psnr else 0.0
+        require_finite(self._psnr_values, "Restore validation PSNR values")
+        require_finite(self._ssim_values, "Restore validation SSIM values")
+        psnr = sum(self._psnr_values) / len(self._psnr_values)
         ssim = sum(self._ssim_values) / len(self._ssim_values)
         return {
             "metrics/PSNR": psnr,

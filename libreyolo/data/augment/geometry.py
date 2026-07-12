@@ -170,6 +170,13 @@ def random_affine(
 
     if len(targets) > 0:
         targets = apply_affine_to_bboxes(targets, target_size, M, scale)
+        boxes = targets[:, :4]
+        keep = (
+            np.isfinite(boxes).all(axis=1)
+            & ((boxes[:, 2] - boxes[:, 0]) > 0.0)
+            & ((boxes[:, 3] - boxes[:, 1]) > 0.0)
+        )
+        targets = targets[keep]
 
     return img, targets
 

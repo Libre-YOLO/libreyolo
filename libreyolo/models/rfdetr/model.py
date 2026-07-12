@@ -14,7 +14,11 @@ from ..base import BaseModel
 from ...data import load_data_config
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import load_trusted_torch_file
+from ...utils.serialization import (
+    enforce_checkpoint_load_report,
+    inspect_load_state_dict_result,
+    load_trusted_torch_file,
+)
 from .nn import (
     LibreRFDETRModel,
     RFDETR_CONFIGS,
@@ -878,6 +882,10 @@ class LibreRFDETR(BaseModel):
 
             if not isinstance(loaded, dict):
                 raise TypeError("RF-DETR checkpoints must be dictionaries")
+            loaded, is_native_v1 = self._parse_checkpoint_metadata(
+                loaded,
+                context="RF-DETR checkpoint",
+            )
 
             ckpt_family = loaded.get("model_family", "")
             if ckpt_family and ckpt_family != self.FAMILY:
@@ -919,6 +927,21 @@ class LibreRFDETR(BaseModel):
             )
 
             loaded_state = _checkpoint_model_state(loaded)
+            if is_native_v1:
+                declared_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+                tensor_nc = self.detect_nb_classes(loaded_state)
+                coco_normalized = declared_nc == 80 and tensor_nc == 90
+                if (
+                    declared_nc is not None
+                    and tensor_nc is not None
+                    and declared_nc != tensor_nc
+                    and not coco_normalized
+                ):
+                    raise RuntimeError(
+                        "RF-DETR checkpoint metadata declares "
+                        f"nc={declared_nc}, but its class head encodes "
+                        f"nc={tensor_nc}."
+                    )
             # A pose checkpoint is recognised either by the legacy clean-room
             # ``keypoint_head.*`` weights or by the GroupPose markers ported from
             # RF-DETR v1.8.0 (the released keypoint preview carries its keypoint
@@ -952,16 +975,59 @@ class LibreRFDETR(BaseModel):
             ):
                 apply_lora_to_rfdetr(self.model.model)
 
-            missing, unexpected = self.model.load_state_dict(loaded, strict=False)
-            if unexpected:
+            result = self.model.load_state_dict(
+                loaded,
+                strict=False,
+                canonical_v1=is_native_v1,
+            )
+            missing = list(getattr(result, "missing_keys", []) or [])
+            if not hasattr(result, "missing_keys") and result:
+                missing = list(result[0] or [])
+
+            missing_angle = [k for k in missing if k.startswith("angle_embed.")]
+            if (
+                self.task == "obb"
+                and missing_angle
+                and not self._allow_detect_to_obb_transfer
+            ):
                 raise RuntimeError(
-                    f"Unexpected RF-DETR checkpoint keys: {sorted(unexpected)[:10]}"
-                    + (
-                        f" (+{len(unexpected) - 10} more)"
-                        if len(unexpected) > 10
-                        else ""
-                    )
+                    "RF-DETR OBB checkpoints must include angle_embed.* weights. "
+                    "Detect-to-OBB initialization is only supported through "
+                    "explicit training transfer."
                 )
+
+            policy = self._checkpoint_load_policy(loaded, normalized_ckpt_task)
+            allowed_missing: list[str] = []
+            inner = getattr(self.model, "model", None)
+            uses_grouppose = bool(
+                getattr(inner, "use_grouppose_keypoints", False)
+            )
+            if policy.allow_partial_missing and not uses_grouppose:
+                # Old detection checkpoints predate this zero-sized buffer.
+                allowed_missing.append("_kp_active_mask")
+            if detect_pose_transfer:
+                allowed_missing.extend(("*keypoint*", "_kp_active_mask"))
+            if self._allow_detect_to_obb_transfer:
+                allowed_missing.append("angle_embed.*")
+            if allowed_missing:
+                policy = policy.allowing(
+                    name=(
+                        "rfdetr-explicit-head-transfer"
+                        if detect_pose_transfer or self._allow_detect_to_obb_transfer
+                        else "rfdetr-legacy-buffer-compatibility"
+                    ),
+                    missing=tuple(allowed_missing),
+                )
+            report = inspect_load_state_dict_result(
+                self.model,
+                result,
+                policy=policy,
+            )
+            enforce_checkpoint_load_report(
+                report,
+                policy=policy,
+                context="RF-DETR checkpoint",
+            )
 
             if self._is_pose and not pose_checkpoint and not detect_pose_transfer:
                 raise RuntimeError(
@@ -975,7 +1041,7 @@ class LibreRFDETR(BaseModel):
                 self.model.nb_classes = 1
                 self.model.args.num_classes = 0
 
-            ckpt_nc = loaded.get("nc")
+            ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
             if detect_pose_transfer:
                 self.nb_classes = 1
             elif ckpt_nc is not None:
@@ -1015,61 +1081,16 @@ class LibreRFDETR(BaseModel):
                 if isinstance(args, dict)
                 else getattr(args, "class_names", None)
             )
-            if class_names:
-                self.names = {
-                    i: str(name)
-                    for i, name in enumerate(class_names[: self.nb_classes])
-                }
-            if self._is_pose and self.nb_classes == 1:
-                self.names = {0: "person"}
-
-            if missing:
-                # ``strict=False`` is expected for class/head adaptation and older
-                # checkpoints, but missing non-head tensors should stay visible.
-                ignored = ["class_embed.", "transformer.enc_out_class_embed."]
-                if detect_pose_transfer:
-                    ignored.append("keypoint_head.")
-                missing_angle = [k for k in missing if k.startswith("angle_embed.")]
-                if (
-                    self.task == "obb"
-                    and missing_angle
-                    and not self._allow_detect_to_obb_transfer
-                ):
-                    raise RuntimeError(
-                        "RF-DETR OBB checkpoints must include angle_embed.* weights. "
-                        "Detect-to-OBB initialization is only supported through "
-                        "explicit training transfer."
-                    )
-
-                ignored = [
-                    "class_embed.",
-                    "transformer.enc_out_class_embed.",
-                ]
-                if detect_pose_transfer:
-                    ignored.append("keypoint_head.")
-                if self._allow_detect_to_obb_transfer:
-                    ignored.append("angle_embed.")
-                inner = getattr(self.model, "model", None)
-                uses_grouppose = bool(
-                    getattr(inner, "use_grouppose_keypoints", False)
+            if ckpt_names is None and class_names:
+                self.names = self._sanitize_names(
+                    list(class_names)[: self.nb_classes],
+                    self.nb_classes,
                 )
-                ignored_exact = set()
-                if not uses_grouppose:
-                    ignored_exact.add("_kp_active_mask")
-                important = [
-                    k
-                    for k in missing
-                    if k not in ignored_exact and not k.startswith(tuple(ignored))
-                ]
-                if important:
-                    raise RuntimeError(
-                        f"Missing RF-DETR checkpoint keys: {sorted(important)[:10]}"
-                        + (
-                            f" (+{len(important) - 10} more)"
-                            if len(important) > 10
-                            else ""
-                        )
-                    )
+            device = getattr(self, "device", None)
+            if device is not None:
+                self.model.to(device)
+            self.model.eval()
+
         except RuntimeError:
             raise
         except Exception as e:

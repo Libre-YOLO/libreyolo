@@ -22,6 +22,11 @@ from ..data.semantic_dataset import (
     semantic_collate_fn,
 )
 from .base import BaseValidator
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,30 +96,74 @@ class SemanticValidator(BaseValidator):
             logits = logits[0]
         logits = torch.as_tensor(logits)
 
-        targets = batch[1]
+        targets = torch.as_tensor(batch[1])
+        if targets.ndim != 3:
+            raise ValueError(
+                "Semantic validation expects [B, H, W] targets, got shape "
+                f"{tuple(targets.shape)}."
+            )
         target_hw = tuple(targets.shape[-2:])
         if logits.ndim != 4:
             raise ValueError(
                 f"Semantic validation expects [B, C, H, W] logits, got shape "
                 f"{tuple(logits.shape)}."
             )
+        if logits.shape[1] != self._num_classes:
+            raise ValueError(
+                "Semantic validation class count mismatch: logits have "
+                f"{logits.shape[1]} classes but the dataset has "
+                f"{self._num_classes}."
+            )
+        require_matching_batch_sizes(
+            "Semantic validation", predictions=logits, targets=targets
+        )
         if tuple(logits.shape[-2:]) != target_hw:
             logits = F.interpolate(
                 logits.float(), size=target_hw, mode="bilinear", align_corners=False
             )
+        valid = targets != self._ignore_index
+        require_class_ids(
+            targets[valid], self._num_classes, "Semantic validation targets"
+        )
+        require_finite(
+            logits,
+            "Semantic validation logits",
+            where=valid.unsqueeze(1).expand_as(logits),
+        )
         return logits.argmax(dim=1)
 
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
-        pred_maps = preds.detach().cpu().long().view(-1)
-        target_maps = targets.detach().cpu().long().view(-1)
+        pred_maps = torch.as_tensor(preds).detach().cpu()
+        target_maps = torch.as_tensor(targets).detach().cpu()
+        if pred_maps.ndim != 3 or target_maps.ndim != 3:
+            raise ValueError(
+                "Semantic validation metrics expect [B, H, W] prediction and "
+                f"target maps, got {tuple(pred_maps.shape)} and "
+                f"{tuple(target_maps.shape)}."
+            )
+        require_matching_batch_sizes(
+            "Semantic validation", predictions=pred_maps, targets=target_maps
+        )
+        if pred_maps.shape != target_maps.shape:
+            raise ValueError(
+                "Semantic validation prediction and target shapes must match, got "
+                f"{tuple(pred_maps.shape)} and {tuple(target_maps.shape)}."
+            )
+
+        pred_maps = pred_maps.reshape(-1)
+        target_maps = target_maps.reshape(-1)
 
         valid = target_maps != self._ignore_index
         if not bool(valid.any()):
             return
-        target_valid = target_maps[valid]
-        pred_valid = pred_maps[valid].clamp_(0, self._num_classes - 1)
+        target_valid = require_class_ids(
+            target_maps[valid], self._num_classes, "Semantic validation targets"
+        )
+        pred_valid = require_class_ids(
+            pred_maps[valid], self._num_classes, "Semantic validation predictions"
+        )
 
         index = target_valid * self._num_classes + pred_valid
         counts = torch.bincount(index, minlength=self._num_classes**2)

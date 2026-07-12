@@ -212,7 +212,12 @@ def _make_depth_dataset(root):
     config = root / "data.yaml"
     config.write_text(
         yaml.safe_dump(
-            {"path": str(root), "train": "images/train", "val": "images/val"}
+            {
+                "path": str(root),
+                "train": "images/train",
+                "val": "images/val",
+                "names": ["depth"],
+            }
         )
     )
     return config

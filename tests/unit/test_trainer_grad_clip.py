@@ -58,19 +58,6 @@ class MultiBatchLoader:
         return self.num_batches
 
 
-class DummyLoss:
-    def __init__(self, param, events):
-        self.param = param
-        self.events = events
-
-    def backward(self):
-        self.events.append("backward")
-        self.param.grad = torch.ones_like(self.param)
-
-    def item(self):
-        return 1.0
-
-
 class ScaledLoss:
     def __init__(self, loss, events):
         self.loss = loss
@@ -126,7 +113,14 @@ def _build_trainer(*, clip_max_norm=None, scaler=None, events=None):
 
     def on_forward(imgs, targets, polygons=None):
         events.append("forward")
-        return {"total_loss": DummyLoss(param, events)}
+        loss = (param * 0).sum() + 1.0
+
+        def record_backward(grad):
+            events.append("backward")
+            return grad
+
+        loss.register_hook(record_backward)
+        return {"total_loss": loss}
 
     trainer.on_forward = on_forward
     return trainer, param, events

@@ -29,6 +29,11 @@ from libreyolo.data.obb import (
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
 from .config import ValidationConfig
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 from .detection_validator import val_collate_fn
 
 if TYPE_CHECKING:
@@ -334,8 +339,32 @@ class OBBValidator(BaseValidator):
                 letterbox=uses_letterbox,
                 max_det=self.config.max_det,
             )
+            if not isinstance(result, dict) or "num_detections" not in result:
+                raise ValueError(
+                    f"OBB postprocessing for image {i} must return a mapping with "
+                    "'num_detections'."
+                )
+            count = torch.as_tensor(result["num_detections"])
+            if count.numel() != 1 or count.dtype == torch.bool or count.is_complex():
+                raise ValueError(
+                    f"OBB postprocessing for image {i} returned an invalid "
+                    "num_detections value."
+                )
+            require_finite(count, f"OBB postprocessing image {i} num_detections")
+            count_value = float(count.item())
+            if not count_value.is_integer() or count_value < 0:
+                raise ValueError(
+                    f"OBB postprocessing for image {i} num_detections must be a "
+                    f"non-negative integer, got {count_value!r}."
+                )
+            num_detections = int(count_value)
             raw_obb = result.get("obb")
-            if result["num_detections"] > 0 and raw_obb is not None:
+            if num_detections > 0 and raw_obb is None:
+                raise ValueError(
+                    f"OBB postprocessing for image {i} reported {num_detections} "
+                    "detections without an 'obb' payload."
+                )
+            if raw_obb is not None:
                 obb = (
                     raw_obb.to(self.device).float()
                     if isinstance(raw_obb, torch.Tensor)
@@ -343,6 +372,11 @@ class OBBValidator(BaseValidator):
                 )
             else:
                 obb = torch.zeros((0, 7), dtype=torch.float32, device=self.device)
+            if obb.ndim == 0 or len(obb) != num_detections:
+                raise ValueError(
+                    f"OBB postprocessing for image {i} reported {num_detections} "
+                    f"detections but returned {len(obb) if obb.ndim else 0} rows."
+                )
             detections.append({"obb": obb})
         return detections
 
@@ -356,17 +390,50 @@ class OBBValidator(BaseValidator):
         img_info: List,
         img_ids: List | None = None,
     ) -> None:
-        del targets, img_info
         if img_ids is None:
             raise RuntimeError("img_ids are required for OBB validation")
+        target_tensor = torch.as_tensor(targets)
+        if target_tensor.ndim != 3 or target_tensor.shape[-1] < 5:
+            raise ValueError(
+                "OBB validation targets must have shape [B, N, 5+], got "
+                f"{tuple(target_tensor.shape)}."
+            )
+        require_finite(target_tensor, "OBB validation targets")
+        active_targets = (target_tensor[..., 2] > target_tensor[..., 0]) & (
+            target_tensor[..., 3] > target_tensor[..., 1]
+        )
+        require_class_ids(
+            target_tensor[..., 4][active_targets],
+            self.nc,
+            "OBB validation targets",
+        )
+        require_matching_batch_sizes(
+            "OBB validation",
+            predictions=preds,
+            targets=target_tensor,
+            image_info=img_info,
+            image_ids=img_ids,
+        )
 
-        for pred, img_id in zip(preds, img_ids):
+        validated: List[torch.Tensor] = []
+        for index, pred in enumerate(preds):
+            context = f"OBB validation prediction {index}"
+            if not isinstance(pred, dict) or "obb" not in pred:
+                raise ValueError(f"{context} requires an 'obb' payload.")
+            obb = torch.as_tensor(pred["obb"])
+            if obb.ndim != 2 or obb.shape[1] != 7:
+                raise ValueError(
+                    f"{context} must have shape [N, 7], got {tuple(obb.shape)}."
+                )
+            require_finite(obb, context)
+            require_class_ids(obb[:, -1], self.nc, f"{context} classes")
+            validated.append(obb)
+
+        for obb_tensor, img_id in zip(validated, img_ids):
             image_key = int(img_id.item()) if hasattr(img_id, "item") else int(img_id)
-            obb = pred["obb"].detach().cpu().numpy()
+            obb = obb_tensor.detach().cpu().numpy()
             for row in obb:
                 cls_id = int(row[-1])
-                if cls_id < 0 or cls_id >= self.nc:
-                    continue
                 self._predictions_by_class.setdefault(cls_id, []).append(
                     {
                         "image_id": image_key,

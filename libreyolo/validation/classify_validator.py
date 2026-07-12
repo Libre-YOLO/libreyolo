@@ -20,6 +20,11 @@ from ..data.classify_dataset import (
 )
 from ..utils.general import COCO_CLASSES
 from .base import BaseValidator
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,12 +141,40 @@ class ClassifyValidator(BaseValidator):
         logits = preds
         if isinstance(logits, dict):
             logits = logits.get("logits", logits.get("predictions"))
-        logits = logits.detach().float().cpu()
-        targets = targets.detach().cpu().view(-1)
+        if logits is None:
+            raise ValueError(
+                "Classification validation requires a 'logits' or 'predictions' "
+                "output."
+            )
+        logits = torch.as_tensor(logits).detach().float().cpu()
+        targets = torch.as_tensor(targets).detach().cpu()
+        if logits.ndim != 2:
+            raise ValueError(
+                "Classification validation expects [B, C] logits, got shape "
+                f"{tuple(logits.shape)}."
+            )
+        if targets.ndim != 1:
+            raise ValueError(
+                "Classification validation expects [B] targets, got shape "
+                f"{tuple(targets.shape)}."
+            )
+        require_matching_batch_sizes(
+            "Classification validation", predictions=logits, targets=targets
+        )
 
         # NOTE: "top5" is really top-min(5, num_classes). For nc < 5 it
         # degrades to top-nc, so accuracy_top5 == 1.0 trivially when nc <= 5.
         num_classes = logits.shape[1]
+        expected_classes = int(getattr(self, "_num_classes", num_classes))
+        if num_classes != expected_classes:
+            raise ValueError(
+                "Classification validation class count mismatch: logits have "
+                f"{num_classes} classes but the dataset has {expected_classes}."
+            )
+        require_finite(logits, "Classification validation logits")
+        targets = require_class_ids(
+            targets, expected_classes, "Classification validation targets"
+        )
         k = min(5, num_classes)
         topk = logits.topk(k, dim=1).indices  # [B, k]
         correct = topk == targets.unsqueeze(1)

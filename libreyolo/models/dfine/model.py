@@ -135,7 +135,10 @@ class LibreDFINE(BaseModel):
         # Must be set before super().__init__ — weight loading (and its task
         # validation hook) runs inside the base constructor.
         self._allow_detect_to_segment_transfer = bool(allow_detect_to_segment_transfer)
-        if isinstance(model_path, dict):
+        if isinstance(model_path, dict) and not (
+            {"schema_version", "model_family", "task", "nc", "names"}
+            & set(model_path)
+        ):
             model_path = unwrap_dfine_checkpoint(model_path)
         super().__init__(
             model_path=model_path,
@@ -234,6 +237,26 @@ class LibreDFINE(BaseModel):
         # D-FINE checkpoints carry buffers (anchors, valid_mask) that are
         # regenerated at forward time from eval_spatial_size. Tolerate drift.
         return False
+
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        missing = ("decoder.anchors", "decoder.valid_mask")
+        if (
+            self.task == "segment"
+            and checkpoint_task == "detect"
+            and self._allow_detect_to_segment_transfer
+        ):
+            missing += ("decoder.mask_decoder.*", "decoder.mask_head.*")
+        return policy.allowing(
+            name=(
+                "dfine-detect-to-segment-transfer"
+                if len(missing) > 2
+                else f"dfine-{policy.name}"
+            ),
+            missing=missing,
+            unexpected=("decoder.anchors", "decoder.valid_mask"),
+            shape_mismatch=("decoder.anchors", "decoder.valid_mask"),
+        )
 
     def _validate_loaded_state_dict_for_task(
         self,
@@ -395,12 +418,20 @@ class LibreDFINE(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
-            state_dict = unwrap_dfine_checkpoint(loaded)
-            state_dict = self._strip_ddp_prefix(dict(state_dict))
+            if not isinstance(loaded, dict):
+                raise TypeError("D-FINE checkpoints must be dictionaries")
+            loaded, is_native_v1 = self._parse_checkpoint_metadata(
+                loaded,
+                context=f"D-FINE weights from {model_path}",
+            )
+            state_dict = dict(unwrap_dfine_checkpoint(loaded))
+            if not is_native_v1:
+                state_dict = self._strip_ddp_prefix(state_dict)
             self._validate_loaded_state_dict_for_task(
                 state_dict, loaded if isinstance(loaded, dict) else None
             )
 
+            normalized_ckpt_task = None
             if isinstance(loaded, dict):
                 ckpt_family = loaded.get("model_family", "")
                 own_family = self._get_model_name()
@@ -423,28 +454,31 @@ class LibreDFINE(BaseModel):
                             f"but this model was initialized for task='{self.task}'. "
                             "Pass the matching task."
                         )
-                ckpt_nc = loaded.get("nc")
+                ckpt_names = loaded.get("names")
+                ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+                if ckpt_nc is None and ckpt_names is not None:
+                    if not isinstance(ckpt_names, (dict, list)):
+                        raise ValueError(
+                            "checkpoint names must be a dict[int, str] or list[str]"
+                        )
+                    ckpt_nc = len(ckpt_names)
+                if ckpt_nc is None:
+                    ckpt_nc = self._normalize_checkpoint_nc(
+                        self.detect_nb_classes(state_dict)
+                    )
                 if ckpt_nc is not None and ckpt_nc != self.nb_classes:
                     self._rebuild_for_new_classes(int(ckpt_nc))
-                ckpt_names = loaded.get("names")
                 effective_nc = int(ckpt_nc) if ckpt_nc is not None else self.nb_classes
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            missing, unexpected = self.model.load_state_dict(
-                state_dict, strict=self._strict_loading()
+            self._load_state_dict_checked(
+                state_dict,
+                checkpoint=loaded if isinstance(loaded, dict) else None,
+                checkpoint_task=normalized_ckpt_task,
+                context=f"D-FINE weights from {model_path}",
             )
-            # Loudly surface unexpected keys during bring-up — silent drift here
-            # has historically masked whole-module misalignment.
-            if unexpected:
-                raise RuntimeError(
-                    f"Unexpected keys when loading D-FINE weights: {sorted(unexpected)[:10]}"
-                    + (
-                        f" (+{len(unexpected) - 10} more)"
-                        if len(unexpected) > 10
-                        else ""
-                    )
-                )
+            self.model.to(self.device).eval()
         except RuntimeError:
             raise
         except Exception as e:

@@ -11,6 +11,7 @@ import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
 
 from ...training.callbacks import TrainCallbacks
+from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...training.config import DEIMConfig
 from ...validation.preprocessors import DEIMValPreprocessor
@@ -102,7 +103,10 @@ class LibreDEIM(BaseModel):
         device: str = "auto",
         **kwargs,
     ):
-        if isinstance(model_path, dict):
+        if isinstance(model_path, dict) and not (
+            {"schema_version", "model_family", "task", "nc", "names"}
+            & set(model_path)
+        ):
             model_path = unwrap_deim_checkpoint(model_path)
         super().__init__(
             model_path=model_path,
@@ -178,6 +182,15 @@ class LibreDEIM(BaseModel):
         # DEIM checkpoints carry buffers (anchors, valid_mask) that are
         # regenerated at forward time from eval_spatial_size. Tolerate drift.
         return False
+
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        return policy.allowing(
+            name=f"deim-{policy.name}",
+            missing=("decoder.anchors", "decoder.valid_mask"),
+            unexpected=("decoder.anchors", "decoder.valid_mask"),
+            shape_mismatch=("decoder.anchors", "decoder.valid_mask"),
+        )
 
     @ddp_aware()
     def train(
@@ -311,8 +324,15 @@ class LibreDEIM(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
-            state_dict = unwrap_deim_checkpoint(loaded)
-            state_dict = self._strip_ddp_prefix(dict(state_dict))
+            if not isinstance(loaded, dict):
+                raise TypeError("DEIM checkpoints must be dictionaries")
+            loaded, is_native_v1 = self._parse_checkpoint_metadata(
+                loaded,
+                context=f"DEIM weights from {model_path}",
+            )
+            state_dict = dict(unwrap_deim_checkpoint(loaded))
+            if not is_native_v1:
+                state_dict = self._strip_ddp_prefix(state_dict)
 
             if isinstance(loaded, dict):
                 ckpt_family = loaded.get("model_family", "")
@@ -322,28 +342,36 @@ class LibreDEIM(BaseModel):
                         f"Checkpoint was trained with model_family='{ckpt_family}' "
                         f"but is being loaded into '{own_family}'."
                     )
-                ckpt_nc = loaded.get("nc")
+                ckpt_task = loaded.get("task")
+                if ckpt_task is not None and normalize_task(ckpt_task) != self.task:
+                    raise RuntimeError(
+                        f"Checkpoint was trained for task={normalize_task(ckpt_task)!r} "
+                        f"but this model was initialized for task={self.task!r}."
+                    )
+                ckpt_names = loaded.get("names")
+                ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+                if ckpt_nc is None and ckpt_names is not None:
+                    if not isinstance(ckpt_names, (dict, list)):
+                        raise ValueError(
+                            "checkpoint names must be a dict[int, str] or list[str]"
+                        )
+                    ckpt_nc = len(ckpt_names)
+                if ckpt_nc is None:
+                    ckpt_nc = self._normalize_checkpoint_nc(
+                        self.detect_nb_classes(state_dict)
+                    )
                 if ckpt_nc is not None and ckpt_nc != self.nb_classes:
                     self._rebuild_for_new_classes(int(ckpt_nc))
-                ckpt_names = loaded.get("names")
                 effective_nc = int(ckpt_nc) if ckpt_nc is not None else self.nb_classes
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            missing, unexpected = self.model.load_state_dict(
-                state_dict, strict=self._strict_loading()
+            self._load_state_dict_checked(
+                state_dict,
+                checkpoint=loaded if isinstance(loaded, dict) else None,
+                context=f"DEIM weights from {model_path}",
             )
-            # Loudly surface unexpected keys during bring-up — silent drift here
-            # has historically masked whole-module misalignment.
-            if unexpected:
-                raise RuntimeError(
-                    f"Unexpected keys when loading DEIM weights: {sorted(unexpected)[:10]}"
-                    + (
-                        f" (+{len(unexpected) - 10} more)"
-                        if len(unexpected) > 10
-                        else ""
-                    )
-                )
+            self.model.to(self.device).eval()
         except RuntimeError:
             raise
         except Exception as e:

@@ -7,6 +7,8 @@ import json
 import numpy as np
 import torch
 
+from .contracts import require_finite, require_matching_batch_sizes
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,33 +51,85 @@ class COCOEvaluator:
         masks = predictions.get("masks")
 
         if isinstance(boxes, torch.Tensor):
-            boxes = boxes.cpu().numpy()
+            boxes = boxes.detach().cpu().numpy()
         if isinstance(scores, torch.Tensor):
-            scores = scores.cpu().numpy()
+            scores = scores.detach().cpu().numpy()
         if isinstance(classes, torch.Tensor):
-            classes = classes.cpu().numpy()
+            classes = classes.detach().cpu().numpy()
         if isinstance(masks, torch.Tensor):
-            masks = masks.cpu().numpy()
+            masks = masks.detach().cpu().numpy()
 
         boxes = np.array(boxes) if not isinstance(boxes, np.ndarray) else boxes
         scores = np.array(scores) if not isinstance(scores, np.ndarray) else scores
         classes = np.array(classes) if not isinstance(classes, np.ndarray) else classes
         masks = np.array(masks) if masks is not None and not isinstance(masks, np.ndarray) else masks
 
+        if boxes.ndim != 2 or boxes.shape[1:] != (4,):
+            raise ValueError(
+                f"COCO predictions boxes must have shape [N, 4], got {boxes.shape}."
+            )
+        if scores.ndim != 1 or classes.ndim != 1:
+            raise ValueError(
+                "COCO predictions scores and classes must have shape [N], got "
+                f"{scores.shape} and {classes.shape}."
+            )
+        require_matching_batch_sizes(
+            "COCO predictions", boxes=boxes, scores=scores, classes=classes
+        )
+        require_finite(boxes, "COCO prediction boxes")
+        require_finite(scores, "COCO prediction scores")
+        require_finite(classes, "COCO prediction classes")
+        if classes.size and not np.equal(classes, np.round(classes)).all():
+            raise ValueError("COCO prediction classes must be integer-valued.")
+        if masks is not None:
+            if masks.ndim != 3:
+                raise ValueError(
+                    f"COCO prediction masks must have shape [N, H, W], got {masks.shape}."
+                )
+            require_matching_batch_sizes(
+                "COCO predictions", boxes=boxes, masks=masks
+            )
+            require_finite(masks, "COCO prediction masks")
+
         if self.iou_type == "segm" and masks is None:
             self._img_ids.add(image_id)
             return
 
-        for idx, (box, score, label) in enumerate(zip(boxes, scores, classes)):
+        labels = classes.astype(np.int64, copy=False)
+        dataset_categories = set(int(i) for i in self.coco_gt.getCatIds())
+        if self.label_to_category_id is not None:
+            invalid = sorted(
+                set(int(label) for label in labels) - set(self.label_to_category_id)
+            )
+            if invalid:
+                raise ValueError(
+                    f"COCO prediction classes {invalid} are outside the model's "
+                    "configured class space."
+                )
+            mapped_categories = [
+                self.label_to_category_id[int(label)] for label in labels
+            ]
+        else:
+            invalid = sorted(set(int(label) for label in labels) - dataset_categories)
+            if dataset_categories and invalid:
+                raise ValueError(
+                    f"COCO prediction classes {invalid} are not dataset categories; "
+                    f"expected one of {sorted(dataset_categories)}."
+                )
+            mapped_categories = [int(label) for label in labels]
+
+        invalid_categories = sorted(set(mapped_categories) - dataset_categories)
+        if dataset_categories and invalid_categories:
+            raise ValueError(
+                f"COCO prediction categories {invalid_categories} are not present "
+                f"in the dataset; expected one of {sorted(dataset_categories)}."
+            )
+
+        for idx, (box, score, category_id) in enumerate(
+            zip(boxes, scores, mapped_categories)
+        ):
             x1, y1, x2, y2 = box
             w, h = x2 - x1, y2 - y1
-
-            label = int(label)
-            category_id = (
-                self.label_to_category_id.get(label, label)
-                if self.label_to_category_id is not None
-                else label
-            )
 
             result = {
                 "image_id": int(image_id),

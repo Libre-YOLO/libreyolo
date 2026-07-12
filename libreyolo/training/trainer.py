@@ -7,8 +7,11 @@ import contextlib
 import inspect
 import logging
 import math
+import os
+import shutil
 import sys
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
@@ -57,6 +60,7 @@ from ..data import (
     resolve_default_coco_image_dir,
 )
 from ..utils.serialization import (
+    REQUIRED_CHECKPOINT_METADATA_KEYS,
     SCHEMA_VERSION,
     build_class_names,
     load_trusted_torch_file,
@@ -66,6 +70,76 @@ from ..utils.serialization import (
 
 
 logger = logging.getLogger(__name__)
+
+_TRAINING_CHECKPOINT_CORE_KEYS = set(REQUIRED_CHECKPOINT_METADATA_KEYS) | {
+    "epoch",
+    "optimizer",
+    "config",
+    "loss",
+    "best_mAP50_95",
+    "best_mAP50",
+    "best_metric_key",
+    "best_metric_value",
+    "best_epoch",
+    "is_ema_weights",
+    "best_metric",
+    "best_metric_name",
+    "train_model",
+    "ema",
+    "ema_updates",
+    "distiller",
+    "scaler",
+    "rng_state",
+}
+
+
+def _atomic_save_checkpoint(checkpoint: Dict[str, Any], targets: List[Path]) -> None:
+    """Serialize and validate once, then atomically publish to every target."""
+    if not targets:
+        return
+
+    targets = [Path(target) for target in targets]
+    directory = targets[0].parent
+    if any(target.parent != directory for target in targets):
+        raise ValueError("Atomic checkpoint targets must share one directory.")
+    directory.mkdir(parents=True, exist_ok=True)
+
+    serialized = directory / f".checkpoint.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(serialized, "xb") as file:
+            torch.save(checkpoint, file)
+            file.flush()
+            os.fsync(file.fileno())
+
+        reloaded = load_trusted_torch_file(
+            serialized,
+            map_location="cpu",
+            context="newly serialized training checkpoint",
+        )
+        validate_checkpoint_metadata(reloaded, strict=True)
+        del reloaded
+
+        for target in targets:
+            staged = directory / f".{target.name}.{uuid.uuid4().hex}.tmp"
+            try:
+                try:
+                    os.link(serialized, staged)
+                except OSError:
+                    shutil.copyfile(serialized, staged)
+                    with open(staged, "rb+") as file:
+                        file.flush()
+                        os.fsync(file.fileno())
+                os.replace(staged, target)
+            finally:
+                try:
+                    staged.unlink()
+                except FileNotFoundError:
+                    pass
+    finally:
+        try:
+            serialized.unlink()
+        except FileNotFoundError:
+            pass
 
 
 class BaseTrainer(ABC):
@@ -625,7 +699,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
@@ -666,7 +740,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
@@ -695,7 +769,7 @@ class BaseTrainer(ABC):
                     preproc=preproc,
                     load_segments=load_segments,
                     load_obb=load_obb,
-                    num_classes=self.num_classes if load_obb else None,
+                    num_classes=self.num_classes,
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")
@@ -1675,11 +1749,13 @@ class BaseTrainer(ABC):
         if isinstance(value, torch.Tensor):
             if value.numel() != 1:
                 return None
-            return float(value.detach().item())
+            scalar = float(value.detach().item())
+            return scalar if math.isfinite(scalar) else None
         try:
-            return float(value)
+            scalar = float(value)
         except (TypeError, ValueError):
             return None
+        return scalar if math.isfinite(scalar) else None
 
     def _scalar_mapping(self, values: Optional[Mapping]) -> Dict[str, float]:
         if not isinstance(values, Mapping):
@@ -1691,6 +1767,68 @@ class BaseTrainer(ABC):
             if scalar is not None:
                 scalars[str(name)] = scalar
         return scalars
+
+    def _require_validation_metric(
+        self,
+        metrics: Mapping[str, Any],
+        keys: Tuple[str, ...],
+        *,
+        context: str,
+    ) -> float:
+        """Return the first finite required metric or fail the validation phase."""
+        for key in keys:
+            if key not in metrics:
+                continue
+            value = self._as_float(metrics[key])
+            if value is None:
+                raise ValueError(
+                    f"{context} metric {key!r} must be a finite scalar, "
+                    f"got {metrics[key]!r}."
+                )
+            return value
+        raise ValueError(
+            f"{context} did not return required metric "
+            + " or ".join(repr(key) for key in keys)
+            + "."
+        )
+
+    def _require_finite_training_loss(
+        self, value: Any, *, context: str
+    ) -> torch.Tensor:
+        """Fail every rank before backward if any rank produced an invalid loss."""
+        is_tensor = isinstance(value, torch.Tensor)
+        local_valid = bool(
+            is_tensor
+            and value.numel() == 1
+            and not value.is_complex()
+            and bool(torch.isfinite(value.detach()).all())
+        )
+        all_valid = local_valid
+        if is_distributed():
+            import torch.distributed as dist
+
+            device = value.device if is_tensor else self.device
+            valid_flag = torch.tensor(
+                int(local_valid),
+                dtype=torch.int32,
+                device=device,
+            )
+            dist.all_reduce(valid_flag, op=dist.ReduceOp.MIN)
+            all_valid = bool(valid_flag.item())
+
+        if not all_valid:
+            if local_valid:
+                detail = "a different distributed rank produced an invalid loss"
+            elif is_tensor and value.numel() == 1:
+                detail = f"got {value.detach().item()!r}"
+            elif is_tensor:
+                detail = f"got tensor shape {tuple(value.shape)}"
+            else:
+                detail = f"got {type(value).__name__}"
+            raise FloatingPointError(
+                f"{context} must produce one finite scalar loss; {detail}."
+            )
+        return value
 
     def _current_lrs(self) -> Dict[str, float]:
         if self.optimizer is None:
@@ -1743,15 +1881,27 @@ class BaseTrainer(ABC):
                 "(loss, val_metrics, loss_items, lr)"
             )
 
-        return float(epoch_loss), val_metrics, dict(loss_items), dict(lr)
+        normalized_loss = self._as_float(epoch_loss)
+        if normalized_loss is None:
+            raise ValueError(
+                f"Training epoch loss must be a finite scalar, got {epoch_loss!r}."
+            )
 
-    def _best_metric_value(self, val_metrics: Optional[Dict[str, Any]]) -> float:
+        return normalized_loss, val_metrics, dict(loss_items), dict(lr)
+
+    def _best_metric_value(
+        self, val_metrics: Optional[Dict[str, Any]]
+    ) -> Optional[float]:
         if not val_metrics:
-            return 0.0
+            return None
 
-        value = val_metrics.get("best_metric", val_metrics.get("mAP50_95", 0.0))
-        scalar = self._as_float(value)
-        return scalar if scalar is not None else 0.0
+        if "best_metric" in val_metrics:
+            value = val_metrics["best_metric"]
+        elif "mAP50_95" in val_metrics:
+            value = val_metrics["mAP50_95"]
+        else:
+            return None
+        return self._as_float(value)
 
     def _best_metric_name(self, val_metrics: Optional[Dict[str, Any]]) -> str:
         if val_metrics:
@@ -1822,11 +1972,22 @@ class BaseTrainer(ABC):
             return False
 
         best_metric = self._best_metric_value(val_metrics)
+        mAP50 = self._as_float(val_metrics.get("mAP50", 0.0))
+        if best_metric is None or mAP50 is None:
+            logger.warning(
+                "Ignoring missing or non-finite validation metric at epoch %d: %r",
+                epoch + 1,
+                val_metrics.get(
+                    "best_metric", val_metrics.get("mAP50_95")
+                ),
+            )
+            self.patience_counter += 1
+            return False
+
         is_best = self.best_epoch == 0 or best_metric > self.best_mAP50_95
         if is_best:
             self.best_mAP50_95 = best_metric
-            mAP50 = self._as_float(val_metrics.get("mAP50", 0.0))
-            self.best_mAP50 = mAP50 if mAP50 is not None else 0.0
+            self.best_mAP50 = mAP50
             self.best_epoch = epoch + 1
             self.patience_counter = 0
         else:
@@ -1970,6 +2131,10 @@ class BaseTrainer(ABC):
                             distill_loss = distiller.compute_loss()
                             total_loss_raw = total_loss_raw + distill_loss
                             self._distill_loss_val = distill_loss.item()
+                total_loss_raw = self._require_finite_training_loss(
+                    total_loss_raw,
+                    context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                )
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
@@ -1989,6 +2154,10 @@ class BaseTrainer(ABC):
                         distill_loss = distiller.compute_loss()
                         total_loss_raw = total_loss_raw + distill_loss
                         self._distill_loss_val = distill_loss.item()
+                total_loss_raw = self._require_finite_training_loss(
+                    total_loss_raw,
+                    context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                )
                 loss = scale_loss_for_ddp(total_loss_raw)
                 self.optimizer.zero_grad()
                 with self._prof_phase("backward"):
@@ -2152,6 +2321,10 @@ class BaseTrainer(ABC):
                             distill_loss = distiller.compute_loss()
                             total_loss_raw = total_loss_raw + distill_loss
                             self._distill_loss_val = distill_loss.item()
+                        total_loss_raw = self._require_finite_training_loss(
+                            total_loss_raw,
+                            context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                        )
                         loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
@@ -2172,6 +2345,10 @@ class BaseTrainer(ABC):
                         distill_loss = distiller.compute_loss()
                         total_loss_raw = total_loss_raw + distill_loss
                         self._distill_loss_val = distill_loss.item()
+                    total_loss_raw = self._require_finite_training_loss(
+                        total_loss_raw,
+                        context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                    )
                     loss = total_loss_raw / actual_window
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
@@ -2328,10 +2505,9 @@ class BaseTrainer(ABC):
             )
 
             if self.wrapper_model is None:
-                logger.error(
+                raise RuntimeError(
                     "Validation requires wrapper_model to be provided to trainer"
                 )
-                return None
             # Validator wants the un-DDP-wrapped module.
             eval_pytorch_model = (
                 self.ema_model.ema if self.ema_model else unwrap_model(self.model)
@@ -2358,8 +2534,10 @@ class BaseTrainer(ABC):
             best_key = getattr(self, "best_metric_key", "metrics/mAP50-95")
             if task == "point" and best_key == "metrics/mAP50-95":
                 best_key = "fitness"
-            best_metric = raw_metrics.get(
-                best_key, raw_metrics.get("metrics/mAP50-95", 0.0)
+            best_metric = self._require_validation_metric(
+                raw_metrics,
+                (best_key, "metrics/mAP50-95"),
+                context=f"{task} validation",
             )
             if task == "point":
                 primary_th = getattr(validator, "_primary_threshold", 0.01)
@@ -2391,7 +2569,7 @@ class BaseTrainer(ABC):
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
-            return None
+            raise RuntimeError("Training validation failed.") from e
 
     def _run_classify_validation(
         self, epoch: int
@@ -2401,8 +2579,9 @@ class BaseTrainer(ABC):
             from libreyolo.validation import ClassifyValidator, ValidationConfig
 
             if self.wrapper_model is None:
-                logger.error("Validation requires wrapper_model to be provided to trainer")
-                return None
+                raise RuntimeError(
+                    "Validation requires wrapper_model to be provided to trainer"
+                )
 
             logger.info(f"Running classification validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
@@ -2428,7 +2607,11 @@ class BaseTrainer(ABC):
                 self.wrapper_model.model = original_model
 
             raw_metrics = self._scalar_mapping(results)
-            top1 = raw_metrics.get("metrics/accuracy_top1", 0.0)
+            top1 = self._require_validation_metric(
+                raw_metrics,
+                ("metrics/accuracy_top1",),
+                context="classification validation",
+            )
             top5 = raw_metrics.get("metrics/accuracy_top5", 0.0)
             logger.info("Validation - top1: %.4f, top5: %.4f", top1, top5)
             return {
@@ -2443,7 +2626,7 @@ class BaseTrainer(ABC):
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
-            return None
+            raise RuntimeError("Classification training validation failed.") from e
 
     def _run_semantic_validation(
         self, epoch: int
@@ -2453,8 +2636,9 @@ class BaseTrainer(ABC):
             from libreyolo.validation import SemanticValidator, ValidationConfig
 
             if self.wrapper_model is None:
-                logger.error("Validation requires wrapper_model to be provided to trainer")
-                return None
+                raise RuntimeError(
+                    "Validation requires wrapper_model to be provided to trainer"
+                )
 
             logger.info(f"Running semantic validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
@@ -2480,7 +2664,11 @@ class BaseTrainer(ABC):
                 self.wrapper_model.model = original_model
 
             raw_metrics = self._scalar_mapping(results)
-            miou = raw_metrics.get("metrics/mIoU", 0.0)
+            miou = self._require_validation_metric(
+                raw_metrics,
+                ("metrics/mIoU",),
+                context="semantic validation",
+            )
             accuracy = raw_metrics.get("metrics/pixel_accuracy", 0.0)
             logger.info("Validation - mIoU: %.4f, pixel accuracy: %.4f", miou, accuracy)
             return {
@@ -2495,7 +2683,7 @@ class BaseTrainer(ABC):
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
-            return None
+            raise RuntimeError("Semantic training validation failed.") from e
 
     def _run_depth_validation(
         self, epoch: int
@@ -2505,8 +2693,9 @@ class BaseTrainer(ABC):
             from libreyolo.validation import DepthValidator, ValidationConfig
 
             if self.wrapper_model is None:
-                logger.error("Validation requires wrapper_model to be provided to trainer")
-                return None
+                raise RuntimeError(
+                    "Validation requires wrapper_model to be provided to trainer"
+                )
 
             logger.info(f"Running depth validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
@@ -2533,7 +2722,11 @@ class BaseTrainer(ABC):
                 self.wrapper_model.model = original_model
 
             raw_metrics = self._scalar_mapping(results)
-            delta1 = raw_metrics.get("metrics/delta1", 0.0)
+            delta1 = self._require_validation_metric(
+                raw_metrics,
+                ("metrics/delta1",),
+                context="depth validation",
+            )
             abs_rel = raw_metrics.get("metrics/abs_rel", 0.0)
             logger.info("Validation - delta1: %.4f, AbsRel: %.4f", delta1, abs_rel)
             return {
@@ -2548,7 +2741,7 @@ class BaseTrainer(ABC):
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
-            return None
+            raise RuntimeError("Depth training validation failed.") from e
 
     def _run_restore_validation(
         self, epoch: int
@@ -2558,8 +2751,9 @@ class BaseTrainer(ABC):
             from libreyolo.validation import RestoreValidator, ValidationConfig
 
             if self.wrapper_model is None:
-                logger.error("Validation requires wrapper_model to be provided to trainer")
-                return None
+                raise RuntimeError(
+                    "Validation requires wrapper_model to be provided to trainer"
+                )
 
             logger.info(f"Running restore validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
@@ -2586,7 +2780,11 @@ class BaseTrainer(ABC):
                 self.wrapper_model.model = original_model
 
             raw_metrics = self._scalar_mapping(results)
-            psnr = raw_metrics.get("metrics/PSNR", 0.0)
+            psnr = self._require_validation_metric(
+                raw_metrics,
+                ("metrics/PSNR",),
+                context="restore validation",
+            )
             ssim = raw_metrics.get("metrics/SSIM", 0.0)
             logger.info("Validation - PSNR: %.4f, SSIM: %.4f", psnr, ssim)
             return {
@@ -2601,7 +2799,7 @@ class BaseTrainer(ABC):
             import traceback
 
             logger.debug(f"Validation traceback:\n{traceback.format_exc()}")
-            return None
+            raise RuntimeError("Restore training validation failed.") from e
 
     # =========================================================================
     # Checkpointing
@@ -2614,6 +2812,11 @@ class BaseTrainer(ABC):
         val_metrics: Optional[Dict[str, Any]] = None,
         is_best: Optional[bool] = None,
     ):
+        loss_value = self._as_float(loss)
+        if loss_value is None:
+            raise ValueError(f"Checkpoint loss must be finite, got {loss!r}.")
+        loss = loss_value
+
         if is_best is None:
             is_best = self._update_best_state(epoch, val_metrics)
 
@@ -2652,6 +2855,19 @@ class BaseTrainer(ABC):
                 "imgsz=640; set config.imgsz to avoid this compatibility fallback."
             )
 
+        extra_metadata = self._checkpoint_extra_metadata()
+        if not isinstance(extra_metadata, Mapping):
+            raise TypeError("_checkpoint_extra_metadata() must return a mapping.")
+        extra_metadata = dict(extra_metadata)
+        reserved_extras = sorted(
+            set(extra_metadata) & _TRAINING_CHECKPOINT_CORE_KEYS
+        )
+        if reserved_extras:
+            raise ValueError(
+                "Checkpoint extension metadata cannot override core fields: "
+                + ", ".join(reserved_extras)
+            )
+
         checkpoint = wrap_libreyolo_checkpoint(
             model_to_save.state_dict(),
             model_family=self.get_model_family(),
@@ -2670,8 +2886,8 @@ class BaseTrainer(ABC):
             best_metric_value=self.best_mAP50_95,
             best_epoch=self.best_epoch,
             is_ema_weights=self.ema_model is not None,
+            **extra_metadata,
         )
-        checkpoint.update(self._checkpoint_extra_metadata())
         checkpoint["best_metric"] = self.best_mAP50_95
         checkpoint["best_metric_name"] = checkpoint["best_metric_key"]
         if self.ema_model is not None:
@@ -2717,21 +2933,25 @@ class BaseTrainer(ABC):
         weights_dir.mkdir(exist_ok=True)
 
         latest_path = weights_dir / "last.pt"
-        torch.save(checkpoint, latest_path)
+        targets = [latest_path]
 
         if is_best:
             best_path = weights_dir / "best.pt"
-            torch.save(checkpoint, best_path)
+            targets.append(best_path)
+
+        if self.config.save_period > 0 and (epoch + 1) % self.config.save_period == 0:
+            epoch_path = weights_dir / f"epoch_{epoch + 1}.pt"
+            targets.append(epoch_path)
+
+        _atomic_save_checkpoint(checkpoint, targets)
+
+        if is_best:
             metric_key = checkpoint["best_metric_key"]
             metric_value = self.best_mAP50_95
             logger.info(
                 f"New best model saved - Epoch {epoch + 1}: "
                 f"{metric_key}={metric_value:.4f}"
             )
-
-        if self.config.save_period > 0 and (epoch + 1) % self.config.save_period == 0:
-            epoch_path = weights_dir / f"epoch_{epoch + 1}.pt"
-            torch.save(checkpoint, epoch_path)
 
         logger.info(f"Checkpoint saved: {latest_path}")
 
@@ -2808,16 +3028,30 @@ class BaseTrainer(ABC):
                 self.best_mAP50 = 0.0
                 self.best_epoch = 0
             else:
-                self.best_mAP50_95 = checkpoint.get(
-                    "best_metric_value",
-                    checkpoint.get("best_mAP50_95", 0.0),
+                restored_best = self._as_float(
+                    checkpoint.get(
+                        "best_metric_value",
+                        checkpoint.get("best_mAP50_95", 0.0),
+                    )
                 )
-                self.best_mAP50 = checkpoint.get("best_mAP50", 0.0)
-                self.best_epoch = checkpoint.get("best_epoch", 0)
-                logger.info(
-                    f"Restored best metrics: mAP50={self.best_mAP50:.4f}, "
-                    f"mAP50-95={self.best_mAP50_95:.4f} (epoch {self.best_epoch})"
-                )
+                restored_map50 = self._as_float(checkpoint.get("best_mAP50", 0.0))
+                if restored_best is None or restored_map50 is None:
+                    logger.warning(
+                        "Checkpoint contains non-finite best metrics. Resetting "
+                        "best metric tracking so later finite metrics can improve."
+                    )
+                    self.best_mAP50_95 = 0.0
+                    self.best_mAP50 = 0.0
+                    self.best_epoch = 0
+                else:
+                    self.best_mAP50_95 = restored_best
+                    self.best_mAP50 = restored_map50
+                    self.best_epoch = int(checkpoint.get("best_epoch", 0))
+                    logger.info(
+                        f"Restored best metrics: mAP50={self.best_mAP50:.4f}, "
+                        f"mAP50-95={self.best_mAP50_95:.4f} "
+                        f"(epoch {self.best_epoch})"
+                    )
         elif "loss" in checkpoint:
             logger.warning(
                 "Old checkpoint format detected (loss-based). Converting to mAP tracking."

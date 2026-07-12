@@ -70,6 +70,47 @@ def test_rfdetr_obb_transform_drops_crop_collapsed_boxes(monkeypatch):
     assert labels.sum() == 0
 
 
+def test_rfdetr_obb_crop_intersects_rotated_corners_before_refit(monkeypatch):
+    import libreyolo.data.augment.rfdetr as transforms
+    from libreyolo.data.augment.rfdetr import RFDETRDetTransform
+
+    random_values = iter([1.0, 0.0])
+    monkeypatch.setattr(transforms.random, "random", lambda: next(random_values))
+    monkeypatch.setattr(transforms.random, "choice", lambda _seq: 100)
+    randint_values = iter([50, 25, 50])
+    monkeypatch.setattr(
+        transforms.random,
+        "randint",
+        lambda _minimum, _maximum: next(randint_values),
+    )
+
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    targets = np.array(
+        [[20.0, 40.0, 80.0, 60.0, 0.0, np.pi / 4]],
+        dtype=np.float32,
+    )
+    transform = RFDETRDetTransform(
+        max_labels=2,
+        flip_prob=0.0,
+        imgsz=50,
+        crop_resize_prob=1.0,
+        crop_intermediate_sizes=(100,),
+        crop_min_size=50,
+        crop_max_size=50,
+        target_dim=6,
+    )
+
+    _, labels = transform(image, targets, (50, 50))
+
+    np.testing.assert_allclose(
+        labels[0],
+        [0.0, 7.071068, 32.071068, 40.0, 20.0, np.pi / 4],
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    assert labels[1:].sum() == 0
+
+
 def test_rfdetr_postprocess_returns_obb_payload():
     from libreyolo.models.rfdetr.utils import postprocess
 
@@ -118,7 +159,7 @@ def test_rfdetr_obb_load_rejects_detect_checkpoint_without_transfer_flag():
     class DummyRFDETR(torch.nn.Module):
         nb_classes = 80
 
-        def load_state_dict(self, state_dict, strict=False):
+        def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
             return ["angle_embed.weight", "angle_embed.bias"], []
 
     wrapper = object.__new__(LibreRFDETR)
@@ -146,7 +187,7 @@ def test_rfdetr_obb_load_rejects_missing_angle_head_without_metadata():
     class DummyRFDETR(torch.nn.Module):
         nb_classes = 80
 
-        def load_state_dict(self, state_dict, strict=False):
+        def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
             return ["angle_embed.weight", "angle_embed.bias"], []
 
     wrapper = object.__new__(LibreRFDETR)
@@ -166,7 +207,7 @@ def test_rfdetr_obb_load_allows_detect_checkpoint_for_training_transfer():
     class DummyRFDETR(torch.nn.Module):
         nb_classes = 80
 
-        def load_state_dict(self, state_dict, strict=False):
+        def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
             return ["angle_embed.weight", "angle_embed.bias"], []
 
     wrapper = object.__new__(LibreRFDETR)
@@ -185,6 +226,42 @@ def test_rfdetr_obb_load_allows_detect_checkpoint_for_training_transfer():
             "model": {},
         }
     )
+
+
+def test_rfdetr_top_level_names_override_nested_args_metadata():
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    class DummyRFDETR(torch.nn.Module):
+        nb_classes = 2
+
+        def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
+            from torch.nn.modules.module import _IncompatibleKeys
+
+            return _IncompatibleKeys([], [])
+
+    wrapper = object.__new__(LibreRFDETR)
+    wrapper.task = "detect"
+    wrapper.model = DummyRFDETR()
+    wrapper.nb_classes = 2
+    wrapper._model_num_classes = 2
+    wrapper._allow_detect_to_obb_transfer = False
+    wrapper._allow_detect_to_pose_transfer = False
+    checkpoint = wrap_libreyolo_checkpoint(
+        {},
+        model_family="rfdetr",
+        size="n",
+        task="detect",
+        nc=2,
+        names={0: "top-left", 1: "top-right"},
+        imgsz=384,
+        args={"class_names": ["nested-left", "nested-right"]},
+    )
+
+    wrapper._load_weights(checkpoint)
+
+    assert wrapper.names == {0: "top-left", 1: "top-right"}
+    assert wrapper.model.training is False
 
 
 def test_rfdetr_angle_loss_is_pi_periodic():

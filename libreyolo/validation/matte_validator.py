@@ -24,6 +24,7 @@ from typing import Dict, List
 import numpy as np
 
 from ..data.matte_dataset import resolve_matte_pairs
+from .contracts import require_finite
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,26 @@ def matte_mae(pred: np.ndarray, gt: np.ndarray) -> float:
     """Mean absolute error between two ``[0, 1]`` alpha maps of equal shape."""
     pred = np.asarray(pred, dtype=np.float64)
     gt = np.asarray(gt, dtype=np.float64)
+    _validate_matte_pair(pred, gt, "Matte MAE")
     return float(np.abs(pred - gt).mean())
+
+
+def _validate_matte_pair(pred: np.ndarray, gt: np.ndarray, context: str) -> None:
+    if pred.ndim != 2 or gt.ndim != 2:
+        raise ValueError(
+            f"{context} expects [H, W] maps, got {pred.shape} and {gt.shape}."
+        )
+    if pred.shape != gt.shape:
+        raise ValueError(
+            f"{context} prediction and target shapes must match, got "
+            f"{pred.shape} and {gt.shape}."
+        )
+    require_finite(pred, f"{context} prediction")
+    require_finite(gt, f"{context} target")
+    if pred.size and ((pred < 0.0).any() or (pred > 1.0).any()):
+        raise ValueError(f"{context} prediction values must lie in [0, 1].")
+    if gt.size and ((gt < 0.0).any() or (gt > 1.0).any()):
+        raise ValueError(f"{context} target values must lie in [0, 1].")
 
 
 def _object(pred_region: np.ndarray) -> float:
@@ -110,8 +130,11 @@ def _s_region(pred: np.ndarray, gt: np.ndarray) -> float:
 
 def s_measure(pred: np.ndarray, gt: np.ndarray, alpha: float = 0.5) -> float:
     """Structure measure (Fan et al., ICCV 2017) for two ``[0, 1]`` alpha maps."""
-    pred = np.clip(np.asarray(pred, dtype=np.float64), 0.0, 1.0)
-    gt = np.clip(np.asarray(gt, dtype=np.float64), 0.0, 1.0)
+    pred = np.asarray(pred, dtype=np.float64)
+    gt = np.asarray(gt, dtype=np.float64)
+    _validate_matte_pair(pred, gt, "S-measure")
+    if not np.isfinite(alpha) or not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"S-measure alpha must lie in [0, 1], got {alpha!r}.")
     y = float(gt.mean())
     if y == 0.0:  # all background
         return float(1.0 - pred.mean())
@@ -164,6 +187,7 @@ class MatteValidator:
             "metrics/MAE": float(np.mean(maes)),
             "metrics/Smeasure": float(np.mean(sms)),
         }
+        require_finite(list(metrics.values()), "Matte validation metrics")
         metrics["fitness"] = metrics["metrics/Smeasure"]
         if getattr(self.config, "verbose", True):
             self._print_results(metrics, len(pairs))

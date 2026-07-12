@@ -1,7 +1,6 @@
 """Tests for dataset annotation loading."""
 
 import json
-import logging
 import math
 
 import numpy as np
@@ -119,7 +118,7 @@ def test_yolo_dataset_obb_uses_pixel_geometry_for_rectangular_images(tmp_path):
     assert labels[0, 5] == pytest.approx(angle, abs=1e-3)
 
 
-def test_yolo_dataset_skips_invalid_obb_rows_with_warning(tmp_path, caplog):
+def test_yolo_dataset_rejects_invalid_obb_row_with_context(tmp_path):
     image_dir = tmp_path / "images"
     label_dir = tmp_path / "labels"
     image_dir.mkdir()
@@ -138,8 +137,8 @@ def test_yolo_dataset_skips_invalid_obb_rows_with_warning(tmp_path, caplog):
         + "\n"
     )
 
-    with caplog.at_level(logging.WARNING):
-        dataset = YOLODataset(
+    with pytest.raises(ValueError) as exc_info:
+        YOLODataset(
             img_files=[image_dir / "sample.jpg"],
             label_files=[label_dir / "sample.txt"],
             img_size=(64, 64),
@@ -147,10 +146,8 @@ def test_yolo_dataset_skips_invalid_obb_rows_with_warning(tmp_path, caplog):
             num_classes=1,
         )
 
-    labels, _, _, _ = dataset.annotations[0]
-    assert labels.shape == (2, 6)
-    assert "Skipped 2 invalid YOLO OBB label rows" in caplog.text
-    assert "sample.txt" in caplog.text
+    assert f"{label_dir / 'sample.txt'}:2:" in str(exc_info.value)
+    assert "non-degenerate" in str(exc_info.value)
 
 
 def test_yolo_dataset_rejects_segments_and_obb_together(tmp_path):
@@ -309,6 +306,114 @@ def test_coco_dataset_loads_obb_from_segmentation_and_bbox_fallback(tmp_path):
     assert by_name["seg.jpg"][0, 5] == pytest.approx(0.0, abs=1e-6)
     assert by_name["bbox.jpg"][0, 5] == pytest.approx(-math.pi / 2, abs=1e-6)
     assert by_name["bad_obb.jpg"][0, 5] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_coco_negative_origin_clipping_preserves_far_edge_for_box_and_obb(tmp_path):
+    pytest.importorskip("pycocotools")
+
+    image_dir = tmp_path / "images" / "train"
+    ann_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    ann_dir.mkdir()
+    Image.new("RGB", (100, 100), color="white").save(image_dir / "sample.jpg")
+    annotation_path = ann_dir / "train.json"
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"id": 1, "file_name": "sample.jpg", "width": 100, "height": 100}
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 9,
+                        "bbox": [-10, 5, 20, 10],
+                        "area": 200,
+                        "iscrowd": 0,
+                    },
+                    {
+                        "id": 2,
+                        "image_id": 1,
+                        "category_id": 9,
+                        "bbox": [-20, 5, 10, 10],
+                        "area": 100,
+                        "iscrowd": 0,
+                    },
+                ],
+                "categories": [{"id": 9, "name": "vehicle"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    common = {
+        "data_dir": str(tmp_path),
+        "json_file": "annotations/train.json",
+        "name": "images/train",
+        "img_size": (100, 100),
+        "num_classes": 1,
+        "names": {0: "vehicle"},
+    }
+    detection = COCODataset(**common)
+    obb = COCODataset(**common, load_obb=True)
+
+    detection_labels = detection.annotations[0][0]
+    obb_labels = obb.annotations[0][0]
+    assert detection_labels.shape == (1, 5)
+    assert obb_labels.shape == (1, 6)
+    np.testing.assert_allclose(detection_labels[0, :4], [0, 5, 10, 15])
+    np.testing.assert_allclose(obb_labels[0, :4], [0, 5, 10, 15], atol=1e-5)
+
+
+def test_coco_segment_dataset_drops_positive_box_without_foreground_mask(tmp_path):
+    pytest.importorskip("pycocotools")
+
+    image_dir = tmp_path / "images" / "train"
+    annotation_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    annotation_dir.mkdir()
+    Image.new("RGB", (32, 32), color="white").save(image_dir / "sample.jpg")
+    (annotation_dir / "train.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": "sample.jpg",
+                        "width": 32,
+                        "height": 32,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 1,
+                        "bbox": [4, 4, 16, 16],
+                        "area": 256,
+                        "segmentation": [],
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [{"id": 1, "name": "object"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dataset = COCODataset(
+        data_dir=str(tmp_path),
+        json_file="annotations/train.json",
+        name="images/train",
+        img_size=(32, 32),
+        load_segments=True,
+        num_classes=1,
+        names={0: "object"},
+    )
+
+    assert dataset.annotations[0][0].shape == (0, 5)
+    assert dataset.segments[0] == []
 
 
 def test_coco_dataset_validates_yaml_category_names(tmp_path):
