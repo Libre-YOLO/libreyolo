@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from functools import wraps
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional
 
@@ -35,6 +37,7 @@ from .prompts import (
     normalize_boxes,
     normalize_labels,
     normalize_points,
+    validate_max_det,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +62,17 @@ def _is_empty_prompt(prompt) -> bool:
         return len(prompt) == 0
     except TypeError:
         return False
+
+
+def _synchronized_image_state(method):
+    """Serialize operations that read or mutate an interactive image session."""
+
+    @wraps(method)
+    def synchronized(self, *args, **kwargs):
+        with self._get_image_state_lock():
+            return method(self, *args, **kwargs)
+
+    return synchronized
 
 
 class LibreSAMModel(BaseModel):
@@ -114,6 +128,7 @@ class LibreSAMModel(BaseModel):
                 f"Invalid size {size!r} for {type(self).__name__}. "
                 f"Must be one of: {', '.join(self.HF_REPOS)}"
             )
+        self._image_state_lock = threading.RLock()
         self._default_multimask = multimask
         # Single foreground class; promptable masks are class-agnostic "object".
         super().__init__(
@@ -242,11 +257,20 @@ class LibreSAMModel(BaseModel):
     # Interactive image session (encode once, prompt many)
     # =========================================================================
 
+    def _get_image_state_lock(self) -> threading.RLock:
+        lock = getattr(self, "_image_state_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._image_state_lock = lock
+        return lock
+
+    @_synchronized_image_state
     def _clear_image_state(self) -> None:
         self._image = None
         self._image_path = None
         self._image_embeddings = None
 
+    @_synchronized_image_state
     def set_image(
         self, source: ImageInput, color_format: str = "auto"
     ) -> "LibreSAMModel":
@@ -264,6 +288,7 @@ class LibreSAMModel(BaseModel):
         self._image_path = source if isinstance(source, (str, Path)) else None
         return self
 
+    @_synchronized_image_state
     def reset_image(self) -> "LibreSAMModel":
         """Drop the cached image and embeddings from ``set_image()``."""
         self._clear_image_state()
@@ -273,6 +298,7 @@ class LibreSAMModel(BaseModel):
     # Prediction
     # =========================================================================
 
+    @_synchronized_image_state
     def predict(
         self,
         source: Optional[ImageInput] = None,
@@ -320,6 +346,7 @@ class LibreSAMModel(BaseModel):
                 ``DEFAULT_POINTS_PER_SIDE``; on CPU the default of 32 runs
                 ~1024 decoder passes and is slow — lower it for interactivity).
         """
+        max_det = validate_max_det(max_det)
         if text is not None:
             raise NotImplementedError(
                 "Text prompts require SAM 3; load LibreSAM('sam3')."
@@ -365,9 +392,9 @@ class LibreSAMModel(BaseModel):
                 cached_emb=cached_emb,
             )
 
-        npoints = normalize_points(points)
+        npoints = normalize_points(points, image_size=img.size)
         nlabels = normalize_labels(labels, npoints)
-        nboxes = normalize_boxes(bboxes)
+        nboxes = normalize_boxes(bboxes, image_size=img.size)
         if npoints is not None and nboxes is not None and len(npoints) != len(nboxes):
             raise ValueError(
                 f"points has {len(npoints)} objects but bboxes has "
@@ -392,6 +419,7 @@ class LibreSAMModel(BaseModel):
         """Move cached image embeddings to ``device``."""
         return embeddings.to(device)
 
+    @_synchronized_image_state
     def _set_device(self, device: str) -> "LibreSAMModel":
         """Move the model to ``device``, keeping any ``set_image()`` session.
 
@@ -415,6 +443,7 @@ class LibreSAMModel(BaseModel):
 
     # ---- prediction internals ------------------------------------------------
 
+    @_synchronized_image_state
     def _resolve_image(self, source, color_format):
         """Return ``(pil_image, path, cached_embeddings_or_None)``."""
         if source is not None:

@@ -43,6 +43,11 @@ class TestSetClasses:
         with pytest.raises(ValueError):
             m.set_classes([])
 
+    def test_blank_label_raises(self):
+        m = _bare_model()
+        with pytest.raises(ValueError, match="must not be blank"):
+            m.set_classes(["person", "   "])
+
     def test_string_or_scalar_raises(self):
         # A bare string would enumerate into one-character classes; reject it.
         m = _bare_model()
@@ -377,6 +382,66 @@ class TestOverrideConfThreshold:
         det = self._kosmos()._postprocess(None, 1.5, 0.5, (100, 100))
         assert det["num_detections"] == 0
 
+    def test_florence_validates_clips_and_suppresses_boxes(self):
+        from libreyolo.models.vlm.florence2 import LibreFlorence2
+
+        m = object.__new__(LibreFlorence2)
+        m._name_to_id = {"boat": 0}
+        m.processor = _StubProc(
+            {
+                LibreFlorence2.TASK: {
+                    "bboxes": [
+                        [float("nan"), 0, 5, 5],
+                        [float("inf"), 0, 5, 5],
+                        [-4, -3, 12, 12],
+                        [0, 0, 11, 11],
+                        [15, 15, 30, 30],
+                        [9, 9, 2, 2],
+                        [1, 2, 3],
+                    ],
+                    "bboxes_labels": ["boat"] * 7,
+                }
+            }
+        )
+
+        det = m._postprocess(None, 0.0, 0.5, (20, 20))
+
+        assert det == {
+            "boxes": [[0.0, 0.0, 12.0, 12.0], [15.0, 15.0, 20.0, 20.0]],
+            "scores": [1.0, 1.0],
+            "classes": [0, 0],
+            "num_detections": 2,
+        }
+
+    def test_kosmos_validates_shape_and_applies_nms(self):
+        m = self._kosmos()
+        m.processor = _StubProc(
+            (
+                "boats",
+                [
+                    (
+                        "boat",
+                        (0, 5),
+                        [
+                            [0.1, 0.1, 0.5, 0.5],
+                            [0.11, 0.11, 0.51, 0.51],
+                            [float("nan"), 0.0, 1.0, 1.0],
+                            [0.8, 0.8, 1.2, 1.2],
+                            [0.1, 0.2, 0.3],
+                        ],
+                    )
+                ],
+            )
+        )
+
+        det = m._postprocess(None, 0.0, 0.5, (100, 80))
+
+        assert det["boxes"] == [
+            [10.0, 8.0, 50.0, 40.0],
+            [80.0, 64.0, 100.0, 80.0],
+        ]
+        assert det["num_detections"] == 2
+
 
 class TestKosmosMatchLabel:
     """Kosmos-2's lenient noun-phrase to vocabulary matching (pure, offline)."""
@@ -394,6 +459,10 @@ class TestKosmosMatchLabel:
     def test_lenient_plural_phrase(self):
         # Kosmos grounds noun phrases ("the boats"); lenient substring still maps.
         assert self._kosmos(["boat"])._match_label("the boats") == 0
+
+    def test_longest_match_wins_independently_of_vocabulary_order(self):
+        assert self._kosmos(["car", "red car"])._match_label("the red car") == 1
+        assert self._kosmos(["red car", "car"])._match_label("the red car") == 0
 
     def test_out_of_vocab_returns_none(self):
         assert self._kosmos(["boat"])._match_label("airplane") is None

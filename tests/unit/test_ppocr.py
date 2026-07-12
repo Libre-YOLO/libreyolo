@@ -240,6 +240,77 @@ def test_rec_batches_bucket_by_aspect():
     assert batches[1][1].shape[3] == int(48 * (800 / 48))
 
 
+def test_rec_batches_honor_checkpoint_image_shape():
+    from libreyolo.models.ppocr.preprocess import rec_batches
+
+    crops = [np.zeros((16, 32, 3), dtype=np.uint8)]
+    [(indices, batch)] = rec_batches(
+        crops,
+        batch_size=1,
+        rec_image_shape=[3, 48, 128],
+    )
+    assert indices == [0]
+    assert batch.shape == (1, 3, 48, 128)
+
+
+def test_rec_image_shape_rejects_height_incompatible_with_ctc_encoder():
+    from libreyolo.models.ppocr.preprocess import normalize_rec_image_shape
+
+    with pytest.raises(ValueError, match="height-1 CTC encoder"):
+        normalize_rec_image_shape([3, 32, 128])
+
+
+def test_detector_limit_uses_checkpoint_pipeline_unless_imgsz_overrides():
+    from libreyolo.models.ppocr.inference import _resolve_detector_limit
+
+    pipeline = {"det_limit_side_len": 768}
+    assert _resolve_detector_limit(None, pipeline, 960) == 768
+    assert _resolve_detector_limit(640, pipeline, 960) == 640
+    with pytest.raises(ValueError, match="positive integer"):
+        _resolve_detector_limit(None, {"det_limit_side_len": float("nan")}, 960)
+
+
+def test_tiny_detector_map_is_cropped_to_unpadded_source_extent():
+    from libreyolo.models.ppocr.inference import _crop_probability_to_source_extent
+    from libreyolo.models.ppocr.preprocess import det_resize
+    from libreyolo.postprocess.ppocr import db_postprocess
+
+    image = np.zeros((10, 20, 3), dtype=np.uint8)
+    resized, ratio_h, ratio_w = det_resize(image)
+    assert resized.shape[:2] == (32, 32)
+
+    probability = np.ones(resized.shape[:2], dtype=np.float32)
+    cropped = _crop_probability_to_source_extent(
+        probability,
+        resized_shape=resized.shape[:2],
+        source_shape=image.shape[:2],
+        ratio_h=ratio_h,
+        ratio_w=ratio_w,
+    )
+    assert cropped.shape == image.shape[:2]
+
+    probability.fill(0.0)
+    probability[1:9, 1:19] = 1.0
+    cropped = _crop_probability_to_source_extent(
+        probability,
+        resized_shape=resized.shape[:2],
+        source_shape=image.shape[:2],
+        ratio_h=ratio_h,
+        ratio_w=ratio_w,
+    )
+    quads, _ = db_postprocess(
+        cropped,
+        dest_width=20,
+        dest_height=10,
+        box_thresh=0.5,
+        unclip_ratio=0.0,
+        min_size=1,
+    )
+    assert quads.shape == (1, 4, 2)
+    assert quads[0, :, 0].max() >= 18
+    assert quads[0, :, 1].max() >= 8
+
+
 # --------------------------------------------------------------------------
 # Checkpoint discrimination
 # --------------------------------------------------------------------------
@@ -265,6 +336,36 @@ def test_can_load_and_size_detection():
     assert LibrePPOCR.detect_size(_composite_keys("l")) == "l"
     assert LibrePPOCR.detect_checkpoint_task(_composite_keys("l")) == "ocr"
     assert LibrePPOCR.detect_nb_classes(_composite_keys("t")) == 1
+
+
+def test_checkpoint_charset_rebuilds_ctc_head_before_strict_load():
+    from libreyolo.models.ppocr.model import LibrePPOCR, LibrePPOCRModel
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    charset = ["blank", "a", "b", " "]
+    source = LibrePPOCRModel("t", num_classes=len(charset))
+    checkpoint = wrap_libreyolo_checkpoint(
+        source.state_dict(),
+        model_family="ppocr",
+        size="t",
+        task="ocr",
+        nc=1,
+        names={0: "text"},
+        imgsz=960,
+        charset=charset,
+        pipeline={"rec_image_shape": [3, 48, 128]},
+        components={},
+    )
+
+    loaded = LibrePPOCR(
+        model_path=checkpoint,
+        size="t",
+        device="cpu",
+    )
+
+    assert loaded.model.rec.head.ctc_head.fc.out_features == len(charset)
+    assert loaded.charset == charset
+    assert loaded.pipeline_config["rec_image_shape"] == [3, 48, 128]
 
 
 def test_can_load_rejects_foreign_checkpoints():
@@ -436,6 +537,49 @@ def test_match_image_one_to_one():
     counts = match_image(preds, ["x", "x"], gt)
     assert counts["det_matches"] == 1
     assert counts["num_pred"] == 2  # the second stays a false positive
+
+
+def test_match_image_ignores_prediction_contained_by_dont_care_region():
+    from libreyolo.validation.ocr_validator import match_image
+
+    gt = [{"polygon": _square(0, 0, 100), "text": "###"}]
+    counts = match_image([_square(20, 20, 10)], ["ignored"], gt)
+    assert counts["num_pred"] == 0
+
+
+def test_match_image_uses_separate_transcript_aware_assignment():
+    from libreyolo.validation.ocr_validator import match_image
+
+    def box(x1, x2):
+        return np.array([[x1, 0], [x2, 0], [x2, 10], [x1, 10]], dtype=np.float64)
+
+    gt = [
+        {"polygon": box(0, 20), "text": "one"},
+        {"polygon": box(4, 24), "text": "two"},
+    ]
+    # IoU-optimal detection pairs are the identical boxes, but the crossed
+    # pairs both remain above threshold and are the transcript-correct choice.
+    counts = match_image(
+        [box(0, 20), box(4, 24)],
+        ["two", "one"],
+        gt,
+    )
+    assert counts["det_matches"] == 2
+    assert counts["e2e_matches"] == 2
+
+
+def test_ocr_assignment_prioritizes_cardinality_over_total_iou():
+    from libreyolo.validation.ocr_validator import _maximum_cardinality_assignment
+
+    ious = np.zeros((5, 5), dtype=np.float64)
+    for index in range(4):
+        ious[index, index] = 1.0
+    for index in range(5):
+        ious[index, (index + 1) % 5] = 0.51
+    eligible = ious > 0.5
+
+    rows, _ = _maximum_cardinality_assignment(eligible, ious)
+    assert len(rows) == 5
 
 
 def test_match_image_optimal_assignment_in_crowded_layouts():

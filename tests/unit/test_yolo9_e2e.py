@@ -152,6 +152,29 @@ def test_yolo9_e2e_postprocess_topk_no_nms_caps_at_max_det():
     assert (diffs <= 1e-6).all()
 
 
+def test_yolo9_e2e_masks_nan_scores_before_first_topk():
+    from libreyolo.models.yolo9_e2e.utils import postprocess
+
+    predictions = torch.zeros(1, 5, 2)
+    predictions[0, :4, 0] = torch.tensor([10.0, 10.0, 20.0, 20.0])
+    predictions[0, :4, 1] = torch.tensor([30.0, 30.0, 40.0, 40.0])
+    predictions[0, 4, 0] = float("nan")
+    predictions[0, 4, 1] = 0.9
+
+    out = postprocess(
+        {"predictions": predictions},
+        conf_thres=0.25,
+        max_det=1,
+    )
+
+    assert out["num_detections"] == 1
+    torch.testing.assert_close(out["scores"], torch.tensor([0.9]))
+    torch.testing.assert_close(
+        out["boxes"],
+        torch.tensor([[30.0, 30.0, 40.0, 40.0]]),
+    )
+
+
 def test_yolo9_e2e_postprocess_defaults_to_letterbox_inverse():
     """E2E predict geometry matches YOLO9 letterboxed inputs."""
     from libreyolo.models.yolo9_e2e.utils import postprocess

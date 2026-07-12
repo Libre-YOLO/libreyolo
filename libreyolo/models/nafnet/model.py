@@ -239,6 +239,11 @@ class LibreNAFNet(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
+    @staticmethod
+    def _preprocess_validation_batch(images: torch.Tensor) -> torch.Tensor:
+        """Keep native geometry and opt into per-sample restore validation."""
+        return images
+
     def _postprocess(
         self,
         output: Any,

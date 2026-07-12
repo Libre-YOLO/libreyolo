@@ -32,16 +32,33 @@ def _keypoint_log_mean_trace(active_keypoints: torch.Tensor) -> torch.Tensor:
     log space for numerical stability. Supports a leading batch dimension so it
     can be called once per keypoint class group.
     """
-    log_l11 = active_keypoints[..., 4]
-    l21 = active_keypoints[..., 5]
-    log_l22 = active_keypoints[..., 6]
-    w_find = active_keypoints[..., 2].sigmoid()
+    finite = torch.isfinite(active_keypoints[..., [2, 4, 5, 6]]).all(dim=-1)
+    safe_keypoints = torch.where(
+        finite.unsqueeze(-1), active_keypoints, torch.zeros_like(active_keypoints)
+    )
+    log_l11 = safe_keypoints[..., 4]
+    l21 = safe_keypoints[..., 5]
+    log_l22 = safe_keypoints[..., 6]
+    w_find = safe_keypoints[..., 2].sigmoid()
     log_t1 = -2.0 * log_l11
     log_t2 = -2.0 * log_l22
     log_t3 = 2.0 * torch.log(l21.abs().clamp(min=1e-12)) + log_t1 + log_t2
     log_trace_sigma = torch.logsumexp(torch.stack([log_t1, log_t2, log_t3], dim=-1), dim=-1)
     log_w_find = torch.log(w_find.clamp(min=1e-12))
-    return torch.logsumexp(log_trace_sigma + log_w_find, dim=-1) - torch.logsumexp(log_w_find, dim=-1)
+    has_finite = finite.any(dim=-1)
+    reduction_mask = finite.clone()
+    reduction_mask[..., 0] |= ~has_finite
+    neg_inf = torch.full_like(log_w_find, float("-inf"))
+    log_numerator = torch.logsumexp(
+        torch.where(reduction_mask, log_trace_sigma + log_w_find, neg_inf), dim=-1
+    )
+    log_denominator = torch.logsumexp(
+        torch.where(reduction_mask, log_w_find, neg_inf), dim=-1
+    )
+    result = log_numerator - log_denominator
+    return torch.where(
+        has_finite & torch.isfinite(result), result, torch.zeros_like(result)
+    )
 
 
 def _postprocess_grouppose_keypoints(
@@ -123,7 +140,10 @@ def _postprocess_grouppose_keypoints(
                 selected_keypoints[class_mask, :num_active]
             )
         scores_i = scores_i.clone()
-        scores_i[valid_indices] = scores_i[valid_indices] * torch.exp(-trace_alpha * log_mean_traces)
+        fused_scores = scores_i[valid_indices] * torch.exp(-trace_alpha * log_mean_traces)
+        scores_i[valid_indices] = torch.nan_to_num(
+            fused_scores, nan=0.0, posinf=1.0, neginf=0.0
+        ).clamp_(0.0, 1.0)
 
     img_h, img_w = target_size
     for class_idx in range(num_keypoint_classes):
@@ -170,6 +190,7 @@ def postprocess(
     num_select: int = 300,
     num_keypoints_per_class: Optional[Sequence[int]] = None,
     trace_alpha: float = 0.2,
+    class_id_map: Optional[Sequence[int]] = None,
 ) -> list[dict[str, torch.Tensor]]:
     """
     Postprocess RF-DETR outputs to get final detections.
@@ -192,6 +213,10 @@ def postprocess(
             confidence + trace-fusion scoring). Ignored for non-keypoint outputs.
         trace_alpha: Keypoint uncertainty fusion weight (default 0.2, matching
             RF-DETR). ``0`` disables fusion. Only used for GroupPose keypoints.
+        class_id_map: Optional internal-to-public class mapping. Entries set to
+            ``-1`` are excluded before top-K selection so non-public/background
+            logits cannot consume detection slots. When omitted for GroupPose,
+            the mapping is derived from the keypoint-bearing classes.
 
     Returns:
         List of dictionaries, one per image, each containing:
@@ -210,16 +235,58 @@ def postprocess(
 
     prob = out_logits.sigmoid()
 
-    # Top-K across all (queries × classes)
+    # Restrict top-K candidates to public classes. RF-DETR checkpoints may
+    # expose an N+1/background column (or COCO's sparse 91-column layout); those
+    # internal logits must not consume a public detection slot.
     batch_size = out_logits.shape[0]
     num_classes = out_logits.shape[2]
+    if class_id_map is None and num_keypoints_per_class is not None:
+        if len(num_keypoints_per_class) != num_classes:
+            raise ValueError(
+                "GroupPose keypoint schema length must match the RF-DETR logit width: "
+                f"{len(num_keypoints_per_class)} vs {num_classes}."
+            )
+        public_idx = 0
+        derived_map = []
+        for count in num_keypoints_per_class:
+            if int(count) > 0:
+                derived_map.append(public_idx)
+                public_idx += 1
+            else:
+                derived_map.append(-1)
+        class_id_map = derived_map
+    if class_id_map is None:
+        class_id_map = list(range(num_classes))
+    if len(class_id_map) != num_classes:
+        raise ValueError(
+            "RF-DETR class_id_map length must match the logit width: "
+            f"{len(class_id_map)} vs {num_classes}."
+        )
 
-    topk_values, topk_indexes = torch.topk(prob.view(batch_size, -1), num_select, dim=1)
+    class_map = torch.as_tensor(class_id_map, dtype=torch.long, device=out_logits.device)
+    if (class_map < -1).any():
+        raise ValueError("RF-DETR class_id_map entries must be public IDs or -1.")
+    valid_internal_classes = (class_map >= 0).nonzero(as_tuple=True)[0]
+    num_selectable_classes = int(valid_internal_classes.numel())
+    candidate_prob = prob.index_select(2, valid_internal_classes)
+
+    k = min(max(int(num_select), 0), out_logits.shape[1] * num_selectable_classes)
+    flat_candidate_prob = candidate_prob.reshape(
+        batch_size, out_logits.shape[1] * num_selectable_classes
+    )
+    topk_values, topk_indexes = torch.topk(flat_candidate_prob, k, dim=1)
 
     scores = topk_values
 
-    topk_boxes = topk_indexes // num_classes  # Which query
-    labels = topk_indexes % num_classes  # Which class
+    if num_selectable_classes:
+        topk_boxes = topk_indexes // num_selectable_classes  # Which query
+        candidate_labels = topk_indexes % num_selectable_classes
+        internal_labels = valid_internal_classes[candidate_labels]
+        labels = class_map[internal_labels]
+    else:
+        topk_boxes = topk_indexes
+        internal_labels = topk_indexes
+        labels = topk_indexes
 
     boxes = cxcywh_to_xyxy(out_bbox)
 
@@ -296,62 +363,24 @@ def postprocess(
             # keypoints are (Q, num_classes * max_K, D); the predicted-class slot
             # is gathered per query, xy scaled to original pixels, confidence =
             # findable.sigmoid(), and trace fusion adjusts the object scores.
-            # NOTE: the slot select uses ``labels[i]`` (the model's INTERNAL
-            # GroupPose class index) so keypoint xy/conf stay byte-identical to
-            # upstream; the emitted detection label is remapped below.
+            # NOTE: the slot select uses ``internal_labels[i]`` (the model's INTERNAL
+            # GroupPose class index) so keypoint xy/conf stay aligned with the
+            # selected public detection class.
             scores_i, keypoints_i, precision_i = _postprocess_grouppose_keypoints(
                 out_keypoints[i],
                 topk_boxes[i],
-                labels[i],
+                internal_labels[i],
                 scores[i],
                 target_sizes[i],
                 num_keypoints_per_class or [],
                 trace_alpha,
             )
 
-            # Class-index remap (LibreYOLO contiguous pose convention).
-            #
-            # The GroupPose schema ``num_keypoints_per_class`` (e.g. ``[0, 17]``)
-            # makes the keypoint-bearing "person" class the INTERNAL index 1, so
-            # the model emits detection label 1. LibreYOLO's person-only pose
-            # convention is contiguous index 0 (nc=1, names={0: "person"}). Map
-            # the internal predicted class to its position among the
-            # keypoint-bearing classes (``kp_classes.index(internal)``), so
-            # person -> 0. Detections whose predicted class is NOT a
-            # keypoint-bearing class (e.g. internal class 0, the empty slot) are
-            # not valid pose detections and are dropped -- upstream returns only
-            # the person class. Keypoints/scores/boxes for the kept detections are
-            # left byte-identical (they are only re-indexed, not recomputed).
-            kp_classes = [
-                cls_idx
-                for cls_idx, count in enumerate(num_keypoints_per_class or [])
-                if count > 0
-            ]
-            labels_i = labels[i]
-            if kp_classes:
-                kp_class_tensor = torch.as_tensor(
-                    kp_classes, dtype=labels_i.dtype, device=labels_i.device
-                )
-                # remap[internal] = contiguous index, or -1 when not keypoint-bearing.
-                remap = labels_i.new_full((num_classes,), -1)
-                remap[kp_class_tensor] = torch.arange(
-                    len(kp_classes), dtype=labels_i.dtype, device=labels_i.device
-                )
-                contiguous_labels = remap[labels_i]
-                keep_kp = contiguous_labels >= 0
-            else:
-                # No keypoint-bearing class in the schema: nothing is a valid
-                # pose detection. Keep the (empty-mask) filter consistent.
-                contiguous_labels = labels_i
-                keep_kp = labels_i.new_zeros(labels_i.shape, dtype=torch.bool)
-
-            res_i["labels"] = contiguous_labels[keep_kp]
-            res_i["boxes"] = boxes[i][keep_kp]
-            # Trace fusion may rescale scores; keep boxes/scores/keypoints in
-            # lockstep so the downstream confidence threshold filters all heads.
-            res_i["scores"] = scores_i[keep_kp]
-            res_i["keypoints"] = keypoints_i[keep_kp]
-            res_i["keypoint_precision_cholesky"] = precision_i[keep_kp]
+            # Invalid/non-keypoint classes were removed before top-K. Keep all
+            # selected heads in lockstep and emit the already-public labels.
+            res_i["scores"] = scores_i
+            res_i["keypoints"] = keypoints_i
+            res_i["keypoint_precision_cholesky"] = precision_i
         elif out_keypoints is not None:
             res_i["keypoints"] = _postprocess_classic_keypoints(
                 out_keypoints[i],

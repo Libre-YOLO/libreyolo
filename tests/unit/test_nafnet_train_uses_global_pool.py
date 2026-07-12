@@ -16,6 +16,9 @@ These tests prove:
 
 from __future__ import annotations
 
+import copy
+from types import SimpleNamespace
+
 import torch
 import torch.nn as nn
 import pytest
@@ -28,6 +31,7 @@ from libreyolo.models.nafnet.nn import (
     use_global_pooling,
 )
 from libreyolo.models.nafnet.trainer import NAFNetTrainer
+from libreyolo.training.trainer import BaseTrainer
 
 pytestmark = pytest.mark.unit
 
@@ -73,7 +77,7 @@ def test_trainer_forwards_through_global_pooling():
     assert all(p.output_size == 1 for p in pools)
     # on_setup mutates the shared model in place (so optimizer/EMA see it).
     assert trainer.model is local
-    assert len(trainer._tlc_restore) == _NUM_SCA
+    assert trainer._pooling_prepared is True
 
 
 def test_trainer_restores_tlc_pooling_for_inference():
@@ -86,10 +90,10 @@ def test_trainer_restores_tlc_pooling_for_inference():
 
     trainer._restore_inference_pooling()
 
-    # TLC local pooling is back for inference; the exact original modules return.
+    # TLC local pooling is back for inference using the configured crop geometry.
     assert _count(local, AvgPool2d) == _NUM_SCA
     assert _count(local, nn.AdaptiveAvgPool2d) == 0
-    assert trainer._tlc_restore is None
+    assert trainer._pooling_prepared is False
 
 
 def test_use_global_pooling_is_reversible_and_weight_preserving():
@@ -155,3 +159,58 @@ def test_tlc_equals_global_at_train_size_but_can_diverge_larger():
     x_big = torch.rand(1, 3, 192, 192)  # > base_size (1.5 * 64 = 96)
     with torch.no_grad():
         assert not torch.allclose(plain(x_big), local(x_big), atol=1e-4)
+
+
+@pytest.mark.parametrize("use_ema", [False, True])
+def test_training_validation_temporarily_uses_configured_tlc_pooling(
+    monkeypatch, use_ema
+):
+    local = _make_local()
+    trainer = NAFNetTrainer(
+        model=local, size="s", device="cpu", imgsz=32, epochs=1
+    )
+    trainer.on_setup()
+    if use_ema:
+        trainer.ema_model = SimpleNamespace(ema=copy.deepcopy(trainer.model))
+    observed = {}
+
+    def fake_validation(self, epoch):
+        eval_model = self.ema_model.ema if self.ema_model else self.model
+        pools = [m for m in eval_model.modules() if isinstance(m, AvgPool2d)]
+        observed["epoch"] = epoch
+        observed["local"] = len(pools)
+        observed["global"] = _count(eval_model, nn.AdaptiveAvgPool2d)
+        observed["train_sizes"] = {tuple(pool.train_size) for pool in pools}
+        return {"metrics/PSNR": 1.0}
+
+    monkeypatch.setattr(BaseTrainer, "_run_restore_validation", fake_validation)
+
+    result = trainer._run_restore_validation(3)
+
+    assert result == {"metrics/PSNR": 1.0}
+    assert observed == {
+        "epoch": 3,
+        "local": _NUM_SCA,
+        "global": 0,
+        "train_sizes": {(1, 3, 32, 32)},
+    }
+    assert _count(trainer.model, AvgPool2d) == 0
+    assert _count(trainer.model, nn.AdaptiveAvgPool2d) == _NUM_SCA
+    if use_ema:
+        assert _count(trainer.ema_model.ema, AvgPool2d) == 0
+        assert _count(trainer.ema_model.ema, nn.AdaptiveAvgPool2d) == _NUM_SCA
+
+
+def test_post_training_pooling_uses_configured_crop_not_constructor_size():
+    local = _make_local()  # Constructed for 64x64 inference.
+    trainer = NAFNetTrainer(
+        model=local, size="s", device="cpu", imgsz=32, epochs=1
+    )
+    trainer.on_setup()
+
+    trainer._restore_inference_pooling()
+
+    pools = [m for m in local.modules() if isinstance(m, AvgPool2d)]
+    assert len(pools) == _NUM_SCA
+    assert {tuple(pool.train_size) for pool in pools} == {(1, 3, 32, 32)}
+    assert {tuple(pool.base_size) for pool in pools} == {(48, 48)}

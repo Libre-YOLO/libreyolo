@@ -328,6 +328,97 @@ def test_dinov2_classify_rejects_metadata_head_class_mismatch(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(
+    ("visible_samples", "batch_size", "minimum_batch_size", "expected"),
+    [
+        (5, 4, 2, True),
+        (6, 4, 2, False),
+        (5, 4, 1, False),
+        (1, 1, 1, False),
+    ],
+)
+def test_classification_loader_drops_only_invalid_partial_batches(
+    visible_samples, batch_size, minimum_batch_size, expected
+):
+    from libreyolo.training.trainer import _classification_drop_last
+
+    assert (
+        _classification_drop_last(
+            visible_samples,
+            batch_size,
+            minimum_batch_size,
+            family="test",
+        )
+        is expected
+    )
+
+
+def test_classification_loader_rejects_unavoidable_singleton_for_mobilenet():
+    from libreyolo.training.trainer import _classification_drop_last
+
+    with pytest.raises(ValueError, match="at least 2 samples per rank"):
+        _classification_drop_last(1, 4, 2, family="mobilenetv4")
+    with pytest.raises(ValueError, match="per-rank batch size >= 2"):
+        _classification_drop_last(4, 1, 2, family="mobilenetv4")
+
+
+def test_batchnorm_classifiers_declare_a_two_sample_training_minimum():
+    from libreyolo.models.convnext.model import LibreConvNeXt
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.models.efficientnetv2.model import LibreEfficientNetV2
+    from libreyolo.models.mobilenetv4.model import LibreMobileNetV4
+    from libreyolo.models.resnet.model import LibreResNet
+
+    for classifier in (LibreMobileNetV4, LibreResNet, LibreEfficientNetV2):
+        assert classifier.MIN_TRAIN_BATCH_SIZE == 2
+    for classifier in (LibreConvNeXt, LibreDINOv2):
+        assert getattr(classifier, "MIN_TRAIN_BATCH_SIZE", 1) == 1
+
+
+@pytest.mark.parametrize("family", ["resnet", "efficientnetv2"])
+def test_batchnorm_classifier_loader_drops_a_singleton_partial_batch(
+    tmp_path, family
+):
+    if family == "resnet":
+        from libreyolo.models.resnet.model import LibreResNet as Model
+        from libreyolo.models.resnet.trainer import ResNetTrainer as Trainer
+
+        size = "18"
+    else:
+        from libreyolo.models.efficientnetv2.model import LibreEfficientNetV2 as Model
+        from libreyolo.models.efficientnetv2.trainer import (
+            EfficientNetV2Trainer as Trainer,
+        )
+
+        size = "b0"
+
+    data_root = tmp_path / family
+    _make_imagefolder(data_root, n_classes=1, n_per=5, size=32)
+    wrapper = Model(size=size, device="cpu")
+    trainer = Trainer(
+        model=wrapper.model,
+        wrapper_model=wrapper,
+        size=size,
+        num_classes=wrapper.nb_classes,
+        data=str(data_root),
+        imgsz=32,
+        batch=4,
+        workers=0,
+        device="cpu",
+        project=str(tmp_path / "runs"),
+        name=family,
+        exist_ok=True,
+    )
+
+    trainer._setup_classify_data()
+    images, targets, *_ = next(iter(trainer.train_loader))
+    output = trainer.on_forward(images, targets)
+
+    assert trainer.train_loader.drop_last is True
+    assert images.shape[0] == 4
+    assert torch.isfinite(output["total_loss"])
+
+
 def test_classify_family_train_end_to_end(tmp_path):
     """A classify family must actually fine-tune through the shared trainer.
 

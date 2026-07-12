@@ -12,7 +12,13 @@ from typing import Any, ClassVar, Dict
 
 import torch
 
-from .base import _INSTALL_HINT, _is_empty_prompt, LibreSAMModel
+from .base import (
+    _INSTALL_HINT,
+    _is_empty_prompt,
+    _synchronized_image_state,
+    LibreSAMModel,
+)
+from .prompts import validate_max_det
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +105,7 @@ class LibreSAM3(LibreSAMModel):
         self._pcs_processor = Sam3Processor.from_pretrained(self._snapshot_dir)
         return self._pcs_model, self._pcs_processor
 
+    @_synchronized_image_state
     def _set_device(self, device: str) -> "LibreSAM3":
         super()._set_device(device)
         pcs_model = getattr(self, "_pcs_model", None)
@@ -130,6 +137,7 @@ class LibreSAM3(LibreSAMModel):
             }
         return inputs
 
+    @_synchronized_image_state
     def predict(
         self,
         source=None,
@@ -154,6 +162,7 @@ class LibreSAM3(LibreSAMModel):
         Text is mutually exclusive with points, boxes, labels, masks, and
         segment-everything controls.
         """
+        max_det = validate_max_det(max_det)
         if text is None:
             return super().predict(
                 source,

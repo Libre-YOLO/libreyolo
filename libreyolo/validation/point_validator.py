@@ -42,8 +42,21 @@ def _euclidean_distance_matrix(
 def _hungarian_match(
     dist_matrix: np.ndarray, threshold: float, pred_scores: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Apply the Hungarian algorithm and split matches by distance threshold."""
+    """Match cardinality first, then confidence order, then distance."""
+    dist_matrix = np.asarray(dist_matrix, dtype=np.float64)
+    pred_scores = np.asarray(pred_scores, dtype=np.float64)
+    if dist_matrix.ndim != 2:
+        raise ValueError("Point matching distances must be a 2D matrix.")
     n_pred, n_gt = dist_matrix.shape
+    if pred_scores.shape != (n_pred,):
+        raise ValueError(
+            "Point matching scores must have shape [N_pred], got "
+            f"{pred_scores.shape}."
+        )
+    if not np.isfinite(pred_scores).all():
+        raise ValueError("Point matching scores must be finite.")
+    if not np.isfinite(threshold) or threshold < 0:
+        raise ValueError("Point matching threshold must be finite and non-negative.")
 
     if n_pred == 0 or n_gt == 0:
         return (
@@ -52,14 +65,40 @@ def _hungarian_match(
             np.arange(n_gt, dtype=np.int64),
         )
 
-    cost_matrix = dist_matrix.copy()
-    cost_matrix[cost_matrix > threshold] = 1e6
-    cost_matrix = cost_matrix - pred_scores[:, np.newaxis] * 10.0
+    eligible = np.isfinite(dist_matrix) & (dist_matrix <= threshold)
+    if not eligible.any():
+        return (
+            np.empty((0, 2), dtype=np.int64),
+            np.arange(n_pred, dtype=np.int64),
+            np.arange(n_gt, dtype=np.int64),
+        )
 
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    # Distinct confidence ranks come before distance; equal-score candidates
+    # fall through to the distance tie-break.  All secondary rewards are
+    # bounded below one in aggregate, so one additional eligible pair always
+    # wins.  Confidence-rank differences in turn dominate aggregate distance
+    # differences.
+    unique_scores = np.unique(pred_scores)
+    confidence_rank = np.searchsorted(unique_scores, pred_scores) + 1.0
+    max_pairs = min(n_pred, n_gt)
+    confidence_unit = 0.5 / (
+        (max_pairs + 1.0) * (len(unique_scores) + 1.0)
+    )
+    distance_unit = confidence_unit / (2.0 * (max_pairs + 1.0))
+    if threshold > 0:
+        proximity = np.clip(1.0 - dist_matrix / threshold, 0.0, 1.0)
+    else:
+        proximity = (dist_matrix == 0).astype(np.float64)
+    reward = np.where(
+        eligible,
+        1.0
+        + confidence_rank[:, np.newaxis] * confidence_unit
+        + proximity * distance_unit,
+        0.0,
+    )
 
-    dists = dist_matrix[row_ind, col_ind]
-    valid = dists <= threshold
+    row_ind, col_ind = linear_sum_assignment(reward, maximize=True)
+    valid = eligible[row_ind, col_ind]
     tp_pairs = np.stack([row_ind[valid], col_ind[valid]], axis=1).astype(np.int64)
 
     matched_pred = set(row_ind[valid].tolist())
@@ -482,46 +521,34 @@ class PointValidator(BaseValidator):
             return np.zeros((0, 2), np.float64), np.zeros(0, np.int64)
         require_finite(arr, "Point validation targets")
 
-        is_pixel_scaled = len(arr) > 0 and float(np.abs(arr[:, 1:5]).max()) > 1.5
+        # Validation preprocessors have one explicit target contract:
+        # ``[x1, y1, x2, y2, class]`` in the validation canvas.  Guessing a
+        # normalized YOLO row from its numeric range accidentally treated the
+        # class column as geometry and dropped valid one-pixel class-zero boxes.
+        valid = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
+        vgt = arr[valid]
+        if len(vgt) == 0:
+            return np.zeros((0, 2), np.float64), np.zeros(0, np.int64)
 
-        if is_pixel_scaled:
-            valid = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
-            vgt = arr[valid]
-            if len(vgt) == 0:
-                return np.zeros((0, 2), np.float64), np.zeros(0, np.int64)
-
-            uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
-            if uses_lb:
-                r, off_x, off_y = self.val_preproc.letterbox_scale(
-                    orig_h, orig_w, self._actual_imgsz
-                )
-                x_orig_px = ((vgt[:, 0] + vgt[:, 2]) / 2.0 - off_x) / r
-                y_orig_px = ((vgt[:, 1] + vgt[:, 3]) / 2.0 - off_y) / r
-            else:
-                sx = self._actual_imgsz / float(orig_w)
-                sy = self._actual_imgsz / float(orig_h)
-                x_orig_px = (vgt[:, 0] + vgt[:, 2]) / 2.0 / sx
-                y_orig_px = (vgt[:, 1] + vgt[:, 3]) / 2.0 / sy
-
-            x_norm = np.clip(x_orig_px / float(orig_w), 0.0, 1.0)
-            y_norm = np.clip(y_orig_px / float(orig_h), 0.0, 1.0)
-            xy_norm = np.stack([x_norm, y_norm], axis=1).astype(np.float64)
-            classes = require_class_ids(
-                vgt[:, 4], self.nc, "Point validation targets"
-            ).cpu().numpy()
+        uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
+        if uses_lb:
+            r, off_x, off_y = self.val_preproc.letterbox_scale(
+                orig_h, orig_w, self._actual_imgsz
+            )
+            x_orig_px = ((vgt[:, 0] + vgt[:, 2]) / 2.0 - off_x) / r
+            y_orig_px = ((vgt[:, 1] + vgt[:, 3]) / 2.0 - off_y) / r
         else:
-            valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
-            vgt = arr[valid]
-            if len(vgt) == 0:
-                return np.zeros((0, 2), np.float64), np.zeros(0, np.int64)
-            xy_norm = np.stack(
-                [np.clip(vgt[:, 1], 0.0, 1.0),
-                 np.clip(vgt[:, 2], 0.0, 1.0)],
-                axis=1,
-            ).astype(np.float64)
-            classes = require_class_ids(
-                vgt[:, 0], self.nc, "Point validation targets"
-            ).cpu().numpy()
+            sx = self._actual_imgsz / float(orig_w)
+            sy = self._actual_imgsz / float(orig_h)
+            x_orig_px = (vgt[:, 0] + vgt[:, 2]) / 2.0 / sx
+            y_orig_px = (vgt[:, 1] + vgt[:, 3]) / 2.0 / sy
+
+        x_norm = np.clip(x_orig_px / float(orig_w), 0.0, 1.0)
+        y_norm = np.clip(y_orig_px / float(orig_h), 0.0, 1.0)
+        xy_norm = np.stack([x_norm, y_norm], axis=1).astype(np.float64)
+        classes = require_class_ids(
+            vgt[:, 4], self.nc, "Point validation targets"
+        ).cpu().numpy()
 
         return xy_norm, classes.astype(np.int64)
 

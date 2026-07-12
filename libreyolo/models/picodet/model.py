@@ -120,6 +120,38 @@ class LibrePICODET(BaseModel):
         # or auxiliary keys we drop. Strict loading would refuse them.
         return False
 
+    def _rebuild_for_new_classes(self, new_nb_classes: int):
+        """Rebuild class channels while preserving the shared DFL predictor."""
+        old_head = self.model.head
+        old_num_classes = int(old_head.num_classes)
+        old_predictors = list(old_head.gfl_cls)
+
+        super()._rebuild_for_new_classes(int(new_nb_classes))
+
+        new_head = self.model.head
+        shared_classes = min(old_num_classes, int(new_head.num_classes))
+        with torch.no_grad():
+            for old_predictor, new_predictor in zip(
+                old_predictors, new_head.gfl_cls
+            ):
+                old_regression = old_predictor.weight[old_num_classes:]
+                new_regression = new_predictor.weight[new_head.num_classes:]
+                if old_regression.shape != new_regression.shape:
+                    raise RuntimeError(
+                        "PicoDet class rebuild changed the shared DFL predictor shape."
+                    )
+                new_predictor.weight[:shared_classes].copy_(
+                    old_predictor.weight[:shared_classes]
+                )
+                new_regression.copy_(old_regression)
+                if old_predictor.bias is not None and new_predictor.bias is not None:
+                    new_predictor.bias[:shared_classes].copy_(
+                        old_predictor.bias[:shared_classes]
+                    )
+                    new_predictor.bias[new_head.num_classes:].copy_(
+                        old_predictor.bias[old_num_classes:]
+                    )
+
     # ---- inference -------------------------------------------------------
 
     @staticmethod

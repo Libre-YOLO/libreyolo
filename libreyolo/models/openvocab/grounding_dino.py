@@ -9,8 +9,10 @@ import torch
 from .base import (
     _INSTALL_HINT,
     _contains_subsequence,
+    _has_leading_article,
     _label_tokens,
     _normalize_label,
+    _prompt_label,
     LibreOpenVocabDetector,
 )
 
@@ -51,8 +53,8 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
         return model, processor
 
     def _class_phrase(self, class_id: int) -> str:
-        name = str(self.names[class_id]).strip().lower()
-        return f"a {name}"
+        name = _prompt_label(self.names[class_id])
+        return name if _has_leading_article(name) else f"a {name}"
 
     def _prompt(self, class_ids: list[int] | None = None) -> str:
         class_ids = list(range(len(self.names))) if class_ids is None else class_ids
@@ -133,30 +135,39 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
             target_sizes=[(height, width)],
         )
         result = results[0]
-        boxes = torch.as_tensor(result.get("boxes", []), dtype=torch.float32).reshape(
-            -1, 4
-        )
-        scores = torch.as_tensor(result.get("scores", []), dtype=torch.float32).reshape(
-            -1
-        )
+        try:
+            raw_boxes = list(result.get("boxes", []))
+            raw_scores = list(result.get("scores", []))
+        except (TypeError, ValueError):
+            raw_boxes, raw_scores = [], []
         phrases = self._read_text_labels(result)
+        boxes = []
+        scores = []
         class_ids = []
-        keep_indices = []
-        for index, phrase in enumerate(phrases[: min(len(phrases), boxes.shape[0])]):
+        count = min(len(phrases), len(raw_boxes), len(raw_scores))
+        for index, phrase in enumerate(phrases[:count]):
             class_id = self._phrase_to_class_id(phrase)
-            if class_id is not None:
-                keep_indices.append(index)
-                class_ids.append(class_id)
-        if not keep_indices:
+            if class_id is None:
+                continue
+            try:
+                box = torch.as_tensor(raw_boxes[index], dtype=torch.float32)
+                score = float(raw_scores[index])
+            except (TypeError, ValueError, RuntimeError):
+                continue
+            if box.ndim != 1 or box.numel() != 4:
+                continue
+            boxes.append(box)
+            scores.append(score)
+            class_ids.append(class_id)
+        if not boxes:
             return (
                 torch.zeros((0, 4), dtype=torch.float32),
                 torch.zeros((0,), dtype=torch.float32),
                 torch.zeros((0,), dtype=torch.int64),
             )
-        keep = torch.as_tensor(keep_indices, dtype=torch.long)
         return (
-            boxes[keep],
-            scores[keep],
+            torch.stack(boxes),
+            torch.as_tensor(scores, dtype=torch.float32),
             torch.as_tensor(class_ids, dtype=torch.int64),
         )
 
@@ -188,6 +199,7 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
             original_size=original_size,
             max_det=max_det,
             classes=kwargs.get("classes"),
+            iou_thres=iou_thres,
         )
 
     @staticmethod
@@ -197,7 +209,12 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
             labels = result.get("labels", [])
         if isinstance(labels, torch.Tensor):
             return []
-        return [str(label) for label in labels]
+        if isinstance(labels, (str, bytes)):
+            return [str(labels)]
+        try:
+            return [str(label) for label in labels]
+        except TypeError:
+            return [str(labels)]
 
     def _phrase_to_class_id(self, phrase: str) -> Optional[int]:
         norm = _normalize_label(phrase)

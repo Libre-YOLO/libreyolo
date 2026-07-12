@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+import threading
 
 import pytest
 import torch
@@ -84,6 +85,74 @@ def test_multiple_boxes_are_batched_and_set_image_is_reused():
         assert len(result.masks) == 2
     finally:
         model.reset_image()
+
+
+@pytest.mark.parametrize("max_det", [-1, 0, 1.5, True])
+def test_predict_rejects_invalid_max_det_before_inference(max_det):
+    with pytest.raises(ValueError, match="integer >= 1"):
+        _bare_picosam3().predict(
+            Image.new("RGB", (16, 16)),
+            bboxes=[1, 1, 8, 8],
+            max_det=max_det,
+        )
+
+
+def test_predict_serializes_forward_with_device_changes():
+    model = _bare_picosam3()
+    forward_started = threading.Event()
+    allow_forward = threading.Event()
+    device_call_started = threading.Event()
+    device_call_done = threading.Event()
+    errors = []
+
+    class BlockingModel(torch.nn.Module):
+        def forward(self, batch):
+            forward_started.set()
+            if not allow_forward.wait(timeout=2):
+                raise TimeoutError("test did not release PicoSAM3 forward")
+            return torch.ones(
+                (batch.shape[0], 1, 96, 96),
+                device=batch.device,
+                dtype=batch.dtype,
+            )
+
+    model.model = BlockingModel().eval()
+
+    def run_predict():
+        try:
+            model.predict(
+                Image.new("RGB", (16, 16)),
+                bboxes=[1, 1, 8, 8],
+            )
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    def set_device():
+        device_call_started.set()
+        try:
+            model._set_device("cpu")
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            device_call_done.set()
+
+    prediction = threading.Thread(target=run_predict)
+    prediction.start()
+    assert forward_started.wait(timeout=2)
+
+    device_change = threading.Thread(target=set_device)
+    device_change.start()
+    assert device_call_started.wait(timeout=2)
+    assert not device_call_done.wait(timeout=0.05), (
+        "device mutation escaped while PicoSAM3 prediction held the session lock"
+    )
+
+    allow_forward.set()
+    prediction.join(timeout=2)
+    device_change.join(timeout=2)
+    assert not prediction.is_alive()
+    assert not device_change.is_alive()
+    assert not errors
 
 
 @pytest.mark.parametrize(

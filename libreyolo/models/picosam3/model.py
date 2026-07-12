@@ -18,8 +18,13 @@ from ...utils.serialization import (
     unwrap_libreyolo_checkpoint,
 )
 from ..manifest import get_artifact_spec
-from ..sam.base import _INSTALL_HINT, _SNAPSHOT_COMPLETE_MARKER, LibreSAMModel
-from ..sam.prompts import normalize_boxes
+from ..sam.base import (
+    _INSTALL_HINT,
+    _SNAPSHOT_COMPLETE_MARKER,
+    LibreSAMModel,
+    _synchronized_image_state,
+)
+from ..sam.prompts import normalize_boxes, validate_max_det
 from .nn import PicoSAM3Network
 from .preprocess import padded_square_roi, place_roi_logits, preprocess_roi
 
@@ -157,6 +162,7 @@ class LibrePicoSAM3(LibreSAMModel):
         self._model_dtype = next(model.parameters()).dtype
         return model
 
+    @_synchronized_image_state
     def set_image(
         self, source: ImageInput, color_format: str = "auto"
     ) -> "LibrePicoSAM3":
@@ -167,6 +173,7 @@ class LibrePicoSAM3(LibreSAMModel):
         self._image_embeddings = None
         return self
 
+    @_synchronized_image_state
     def predict(
         self,
         source: Optional[ImageInput] = None,
@@ -185,6 +192,7 @@ class LibrePicoSAM3(LibreSAMModel):
     ):
         """Segment the ROI inside each xyxy box prompt."""
 
+        max_det = validate_max_det(max_det)
         unsupported = []
         if points is not None:
             unsupported.append("points")
@@ -212,8 +220,6 @@ class LibrePicoSAM3(LibreSAMModel):
                 "PicoSAM3 requires bboxes=; segment-everything mode is not "
                 "supported. Use LibreSAM2 or LibreSAM3 for that mode."
             )
-        if max_det < 1:
-            raise ValueError("max_det must be >= 1.")
         conf_thres = 0.0 if conf is None else float(conf)
         if not 0.0 <= conf_thres <= 1.0:
             raise ValueError("conf must be between 0.0 and 1.0.")

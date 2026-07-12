@@ -100,6 +100,11 @@ class TestTrackConfig:
         with pytest.raises(ValueError, match="minimum_consecutive_frames must be >= 1"):
             TrackConfig(minimum_consecutive_frames=0)
 
+    @pytest.mark.parametrize("field", ["frame_rate", "track_buffer"])
+    def test_rejects_nan_for_one_sided_numeric_fields(self, field):
+        with pytest.raises(ValueError, match=rf"{field} must be finite"):
+            TrackConfig(**{field: float("nan")})
+
 
 # --------------------------------------------------------------------------
 # KalmanFilter

@@ -41,6 +41,9 @@ class LibreResNet(BaseModel):
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreResNet<size>-cls.pt
     TRAIN_CONFIG = ResNetConfig
+    # Small accepted training resolutions can reduce the last feature map to
+    # 1x1, where a singleton batch is invalid for the backbone BatchNorm layers.
+    MIN_TRAIN_BATCH_SIZE = 2
 
     # timm a1 eval crop_pct (matches the upstream benchmark preprocessing).
     CROP_PCT = {"18": 0.95, "34": 0.95, "50": 0.95, "101": 0.95}

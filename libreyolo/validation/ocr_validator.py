@@ -4,8 +4,8 @@ Metrics on the OCR dataset schema (``docs/dataset_schema.md``):
 
 - **Detection hmean**: ICDAR-style precision/recall/F1 with one-to-one
   polygon matching at IoU > 0.5. Ground-truth regions marked ``"###"``
-  (unreadable) are don't-care: they are not counted as targets and any
-  prediction overlapping one is dropped from the precision denominator.
+  (unreadable) are don't-care: they are not counted as targets and predictions
+  whose area is mostly covered by one are dropped from the precision denominator.
 - **End-to-end F1** (headline): a match additionally requires the exact
   transcript after normalization. Normalization is Unicode NFKC plus removal
   of all whitespace; matching stays case-sensitive (case is part of what an
@@ -106,6 +106,45 @@ def polygon_iou(a: np.ndarray, b: np.ndarray) -> float:
     return float(inter / union) if union > 0 else 0.0
 
 
+def _prediction_area_coverage(prediction: np.ndarray, region: np.ndarray) -> float:
+    """Return the fraction of a prediction covered by an ignore region."""
+    prediction = np.asarray(prediction, dtype=np.float64)
+    region = np.asarray(region, dtype=np.float64)
+    pred_area = _polygon_area(prediction)
+    if pred_area <= 0:
+        return 0.0
+    intersection = _clip_polygon(prediction, region)
+    if len(intersection) < 3:
+        return 0.0
+    return min(1.0, _polygon_area(intersection) / pred_area)
+
+
+def _maximum_cardinality_assignment(
+    eligible: np.ndarray,
+    tie_break: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Match the most eligible pairs, using a bounded tie-break second."""
+    eligible = np.asarray(eligible, dtype=bool)
+    tie_break = np.asarray(tie_break, dtype=np.float64)
+    if eligible.shape != tie_break.shape or eligible.ndim != 2:
+        raise ValueError("OCR assignment matrices must be matching 2D arrays.")
+    if eligible.size == 0 or not eligible.any():
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+
+    # The total tie-break contribution is strictly below one, so gaining one
+    # eligible edge always beats any aggregate IoU improvement.  This is the
+    # cardinality guarantee that a plain ``1 + IoU`` reward does not provide.
+    max_pairs = min(eligible.shape)
+    bounded_tie = np.clip(tie_break, 0.0, 1.0) / (max_pairs + 1.0)
+    reward = np.where(eligible, 1.0 + bounded_tie, 0.0)
+
+    from scipy.optimize import linear_sum_assignment
+
+    rows, cols = linear_sum_assignment(reward, maximize=True)
+    valid = eligible[rows, cols]
+    return rows[valid].astype(np.int64), cols[valid].astype(np.int64)
+
+
 # =============================================================================
 # Text metrics
 # =============================================================================
@@ -157,10 +196,9 @@ def match_image(
 ) -> Dict[str, float]:
     """Optimal one-to-one IoU matching for one image.
 
-    Uses a linear-sum assignment over the IoU > 0.5 candidate pairs so the
-    maximum number of valid pairs is matched (a greedy best-IoU-first pass
-    can strand a prediction in crowded layouts when its only ground truth
-    was taken by a prediction that had another option).
+    Detection and transcript-aware end-to-end counts use separate linear-sum
+    assignments over their IoU > 0.5 candidate pairs.  Each maximizes the
+    number of valid pairs before using IoU as a tie-break.
 
     Returns the raw counts the corpus metrics aggregate over.
     """
@@ -205,49 +243,53 @@ def match_image(
     care_gt = [g for g in gt_regions if g["text"] != DONT_CARE]
     dont_care_gt = [g for g in gt_regions if g["text"] == DONT_CARE]
 
-    # Drop predictions that sit on don't-care regions (not penalized).
+    # Drop predictions whose own area is mostly covered by a don't-care
+    # region.  IoU is unsuitable here: a small prediction fully contained in
+    # a large ignore polygon has low IoU but must not count as a false positive.
     kept_idx: List[int] = []
     for i, poly in enumerate(pred_polys):
         ignored = any(
-            polygon_iou(poly, g["polygon"]) > _IOU_THRESHOLD for g in dont_care_gt
+            _prediction_area_coverage(poly, g["polygon"]) > _IOU_THRESHOLD
+            for g in dont_care_gt
         )
         if not ignored:
             kept_idx.append(i)
 
-    # Reward matrix over valid pairs: 1 per matchable pair (cardinality
-    # dominates) plus the IoU as a tie-break so equal-cardinality solutions
-    # prefer better-aligned pairs.
-    reward = np.zeros((len(kept_idx), len(care_gt)), dtype=np.float64)
+    ious = np.zeros((len(kept_idx), len(care_gt)), dtype=np.float64)
+    eligible = np.zeros_like(ious, dtype=bool)
     for pi_pos, pi in enumerate(kept_idx):
         for gi, gt in enumerate(care_gt):
             iou = polygon_iou(pred_polys[pi], gt["polygon"])
             if iou > _IOU_THRESHOLD:
-                reward[pi_pos, gi] = 1.0 + iou
+                eligible[pi_pos, gi] = True
+                ious[pi_pos, gi] = iou
 
-    det_matches = 0
-    e2e_matches = 0
     ned_scores: List[float] = []
-    if reward.size and reward.any():
-        from scipy.optimize import linear_sum_assignment
+    det_rows, det_cols = _maximum_cardinality_assignment(eligible, ious)
+    normalized_preds = [normalize_text(pred_texts[i]) for i in kept_idx]
+    normalized_gt = [normalize_text(gt["text"]) for gt in care_gt]
+    for pi_pos, gi in zip(det_rows, det_cols):
+        ned_scores.append(
+            one_minus_ned(normalized_preds[pi_pos], normalized_gt[gi])
+        )
 
-        rows, cols = linear_sum_assignment(reward, maximize=True)
-        for pi_pos, gi in zip(rows, cols):
-            if reward[pi_pos, gi] <= 0:
-                continue  # assignment filler below the IoU threshold
-            det_matches += 1
-            pred_text = pred_texts[kept_idx[pi_pos]]
-            gt_text = care_gt[gi]["text"]
-            ned_scores.append(
-                one_minus_ned(normalize_text(pred_text), normalize_text(gt_text))
-            )
-            if normalize_text(pred_text) == normalize_text(gt_text):
-                e2e_matches += 1
+    # End-to-end matching is a separate transcript-aware assignment.  Reusing
+    # the detection-optimal pairs can report zero text matches even when a
+    # different geometrically valid one-to-one assignment reads every region.
+    transcript_equal = np.zeros_like(eligible)
+    for pi_pos, pred_text in enumerate(normalized_preds):
+        for gi, gt_text in enumerate(normalized_gt):
+            transcript_equal[pi_pos, gi] = pred_text == gt_text
+    e2e_rows, _ = _maximum_cardinality_assignment(
+        eligible & transcript_equal,
+        ious,
+    )
 
     return {
         "num_pred": len(kept_idx),
         "num_gt": len(care_gt),
-        "det_matches": det_matches,
-        "e2e_matches": e2e_matches,
+        "det_matches": len(det_rows),
+        "e2e_matches": len(e2e_rows),
         "ned_scores": ned_scores,
     }
 

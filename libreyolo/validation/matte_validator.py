@@ -111,7 +111,7 @@ def _s_region(pred: np.ndarray, gt: np.ndarray) -> float:
         cx = min(max(cx, 0), w - 1)
         cy = min(max(cy, 0), h - 1)
 
-    # Four quadrants around the GT centroid, weighted by GT area fraction.
+    # Four quadrants around the GT centroid, weighted by spatial area.
     quads = [
         (gt[: cy + 1, : cx + 1], pred[: cy + 1, : cx + 1]),
         (gt[: cy + 1, cx + 1:], pred[: cy + 1, cx + 1:]),
@@ -123,7 +123,7 @@ def _s_region(pred: np.ndarray, gt: np.ndarray) -> float:
     for g_q, p_q in quads:
         if g_q.size == 0:
             continue
-        w_q = float(g_q.sum() / (total + _EPS)) if total > 0 else g_q.size / area
+        w_q = g_q.size / area
         score += w_q * _ssim(p_q, g_q)
     return score
 
@@ -172,11 +172,11 @@ class MatteValidator:
             if gt.shape != pred.shape:
                 from PIL import Image
 
-                # Resize in float32 ("F" mode) so the soft alpha values are not
-                # quantized to 8 bits before the metric is computed.
-                gt = np.asarray(
-                    Image.fromarray(gt, mode="F").resize(
-                        (pred.shape[1], pred.shape[0]), Image.BILINEAR
+                # Metrics are defined on the native ground-truth canvas. Resize
+                # the prediction up/down to that canvas; never alter the target.
+                pred = np.asarray(
+                    Image.fromarray(pred, mode="F").resize(
+                        (gt.shape[1], gt.shape[0]), Image.BILINEAR
                     ),
                     dtype=np.float32,
                 )

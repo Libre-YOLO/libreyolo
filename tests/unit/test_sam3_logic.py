@@ -132,6 +132,13 @@ def test_text_path_default_score_threshold_and_explicit_keep_all():
     )
 
 
+def test_text_path_rejects_nonpositive_max_det_before_inference():
+    with pytest.raises(ValueError, match="integer >= 1"):
+        _bare_sam3().predict(
+            Image.new("RGB", (10, 8)), text="person", max_det=0
+        )
+
+
 def test_lazy_loader_instantiates_pcs_once(monkeypatch):
     model = _bare_sam3()
     model._pcs_model = None

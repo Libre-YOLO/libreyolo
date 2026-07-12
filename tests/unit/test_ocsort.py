@@ -55,6 +55,8 @@ def test_config_defaults():
         {"min_hits": -1},
         {"delta_t": 0},
         {"inertia": -0.5},
+        {"max_age": float("nan")},
+        {"inertia": float("nan")},
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs):

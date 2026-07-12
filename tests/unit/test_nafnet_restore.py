@@ -68,6 +68,12 @@ def test_nafnet_preprocess_keeps_native_resolution_and_pads_to_stride():
     assert tuple(tensor.shape) == (1, 3, 32, 32)
 
 
+def test_nafnet_validation_batch_hook_preserves_native_tensor_identity():
+    images = torch.rand(1, 3, 37, 53)
+
+    assert LibreNAFNet._preprocess_validation_batch(images) is images
+
+
 def test_librenafnet_predict_returns_restored_original_shape():
     model = LibreNAFNet(model_path=None, size="s", device="cpu")
     model.model.eval()

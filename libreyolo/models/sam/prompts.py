@@ -21,6 +21,8 @@ offline without torch, transformers, or model weights.
 
 from __future__ import annotations
 
+import math
+from numbers import Integral
 from typing import List, Optional, Sequence
 
 
@@ -47,7 +49,40 @@ def _depth(x) -> int:
     return d
 
 
-def normalize_points(points) -> Optional[List[List[List[float]]]]:
+def _image_bounds(image_size) -> tuple[float, float] | None:
+    if image_size is None:
+        return None
+    try:
+        width, height = (float(value) for value in image_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("image_size must be a finite positive (width, height) pair.") from exc
+    if not all(math.isfinite(value) and value > 0 for value in (width, height)):
+        raise ValueError("image_size must be a finite positive (width, height) pair.")
+    return width, height
+
+
+def _finite_coordinate(value, *, kind: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{kind} coordinates must be finite numbers; got {value!r}.")
+    try:
+        coordinate = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{kind} coordinates must be finite numbers; got {value!r}."
+        ) from exc
+    if not math.isfinite(coordinate):
+        raise ValueError(f"{kind} coordinates must be finite numbers; got {value!r}.")
+    return coordinate
+
+
+def validate_max_det(max_det) -> int:
+    """Return a valid positive integer mask cap or raise before inference."""
+    if isinstance(max_det, bool) or not isinstance(max_det, Integral) or max_det < 1:
+        raise ValueError("max_det must be an integer >= 1.")
+    return int(max_det)
+
+
+def normalize_points(points, image_size=None) -> Optional[List[List[List[float]]]]:
     """Coerce user points into ``[point_batch, num_points, 2]``.
 
     Returns ``None`` when ``points`` is ``None`` so callers can omit the key.
@@ -80,6 +115,19 @@ def normalize_points(points) -> Optional[List[List[List[float]]]]:
             f"counts {[len(obj) for obj in canonical]}. Pad them to equal length "
             "or prompt the objects in separate predict() calls."
         )
+    bounds = _image_bounds(image_size)
+    for obj in canonical:
+        for point in obj:
+            x = _finite_coordinate(point[0], kind="point")
+            y = _finite_coordinate(point[1], kind="point")
+            if bounds is not None:
+                width, height = bounds
+                if not (0.0 <= x < width and 0.0 <= y < height):
+                    raise ValueError(
+                        f"point {[x, y]!r} is outside image bounds "
+                        f"[0, {width}) x [0, {height})."
+                    )
+            point[:] = [x, y]
     return canonical
 
 
@@ -145,7 +193,7 @@ def normalize_labels(
     return out
 
 
-def normalize_boxes(boxes) -> Optional[List[List[float]]]:
+def normalize_boxes(boxes, image_size=None) -> Optional[List[List[float]]]:
     """Coerce user boxes into ``[num_boxes, 4]`` xyxy. ``None`` passes through."""
     if boxes is None:
         return None
@@ -160,9 +208,25 @@ def normalize_boxes(boxes) -> Optional[List[List[float]]]:
             "boxes must be [x1, y1, x2, y2] or [[x1, y1, x2, y2], ...]; "
             f"got nesting depth {d}."
         )
+    bounds = _image_bounds(image_size)
     for b in out:
         if len(b) != 4:
             raise ValueError(f"each box must be [x1, y1, x2, y2]; got {b!r}.")
+        x1, y1, x2, y2 = (
+            _finite_coordinate(value, kind="box") for value in b
+        )
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError(
+                f"each box must satisfy x2 > x1 and y2 > y1; got {b!r}."
+            )
+        if bounds is not None:
+            width, height = bounds
+            if not (0.0 <= x1 < x2 <= width and 0.0 <= y1 < y2 <= height):
+                raise ValueError(
+                    f"box {[x1, y1, x2, y2]!r} is outside image bounds "
+                    f"[0, {width}] x [0, {height}]."
+                )
+        b[:] = [x1, y1, x2, y2]
     return out
 
 

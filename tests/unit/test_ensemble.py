@@ -91,6 +91,13 @@ class TestConstruction:
             LibreEnsemble(members, weights=[1.0, 0.0])
         with pytest.raises(ValueError, match="positive"):
             LibreEnsemble(members, weights=[float("nan"), 1.0])
+        with pytest.raises(ValueError, match="finite"):
+            LibreEnsemble(members, weights=[float("inf"), 1.0])
+
+    @pytest.mark.parametrize("fusion_iou", [float("nan"), float("inf"), -0.1, 1.1])
+    def test_rejects_invalid_fusion_iou(self, fusion_iou):
+        with pytest.raises(ValueError, match="fusion_iou must be a finite value"):
+            LibreEnsemble(list(_pair_members()), fusion_iou=fusion_iou)
 
     def test_rejects_bool_min_votes(self):
         with pytest.raises(ValueError, match="positive int"):
@@ -102,6 +109,16 @@ class TestConstruction:
 
 
 class TestNamesUnion:
+    def test_rejects_class_id_casting_and_duplicate_names(self):
+        with pytest.raises(TypeError, match="keys must be non-negative integers"):
+            LibreEnsemble(
+                [StubMember({0: "cat", "0": "dog"}), StubMember({0: "cat"})]
+            )
+        with pytest.raises(ValueError, match="class names must be unique"):
+            LibreEnsemble(
+                [StubMember({0: "cat", 1: "cat"}), StubMember({0: "cat"})]
+            )
+
     def test_identical_names_pass_through(self):
         ens = LibreEnsemble(list(_pair_members()))
         assert ens.names == COCOISH
@@ -212,6 +229,16 @@ class TestPredict:
         assert len(result) == 3
         assert torch.all(result.boxes.conf[:-1] >= result.boxes.conf[1:])
 
+    def test_negative_one_max_det_keeps_every_fused_detection(self, image):
+        a = StubMember(
+            COCOISH,
+            boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
+            scores=[0.9, 0.8],
+            cls=[0, 1],
+        )
+        result = LibreEnsemble([a, StubMember(COCOISH)])(image, max_det=-1)
+        assert len(result) == 2
+
     def test_classes_filter_uses_union_ids(self, image):
         a = StubMember(
             COCOISH, boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
@@ -269,6 +296,11 @@ class TestPredict:
         with pytest.raises(RuntimeError, match="outside its names"):
             LibreEnsemble([a, StubMember(COCOISH)])(image)
 
+    def test_fractional_member_class_id_raises(self, image):
+        a = StubMember(COCOISH, boxes=[[0, 0, 10, 10]], scores=[0.9], cls=[0.5])
+        with pytest.raises(ValueError, match="fractional ids"):
+            LibreEnsemble([a, StubMember(COCOISH)])(image)
+
     def test_custom_fusion_callable(self, image):
         seen = {}
 
@@ -298,6 +330,21 @@ class TestPredict:
 
         ens = LibreEnsemble(list(_pair_members()), fusion=bad_labels)
         with pytest.raises(ValueError, match="inconsistent shapes"):
+            ens(image)
+
+    @pytest.mark.parametrize(
+        ("output", "message"),
+        [
+            (([[0, 0, float("nan"), 10]], [0.9], [0]), "must be finite"),
+            (([[0, 0, 10, 10]], [1.1], [0]), "scores must be in"),
+            (([[10, 0, 0, 10]], [0.9], [0]), "x2 >= x1"),
+            (([[0, 0, 10, 10]], [0.9], [0.5]), "fractional ids"),
+            (([[0, 0, 10, 10]], [0.9], [7]), "labels must be in"),
+        ],
+    )
+    def test_custom_fusion_numeric_contract_is_validated(self, image, output, message):
+        ens = LibreEnsemble(list(_pair_members()), fusion=lambda *args, **kwargs: output)
+        with pytest.raises(ValueError, match=message):
             ens(image)
 
     def test_video_raises(self):
@@ -391,6 +438,13 @@ class TestExternalDetector:
             lambda img: ([[0, 0, 10, 10]], [0.9], [4]), names={0: "person"}
         )
         with pytest.raises(ValueError, match="class ids"):
+            det(image)
+
+    def test_rejects_fractional_class_id(self, image):
+        det = ExternalDetector(
+            lambda img: ([[0, 0, 10, 10]], [0.9], [0.5]), names={0: "person"}
+        )
+        with pytest.raises(ValueError, match="fractional ids"):
             det(image)
 
     def test_as_ensemble_member(self, image):

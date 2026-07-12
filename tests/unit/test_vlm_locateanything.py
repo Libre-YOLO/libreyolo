@@ -1,6 +1,7 @@
 """Offline tests for the LocateAnything VLM adapter."""
 
 import pytest
+import torch
 from inspect import signature
 
 from libreyolo.models.vlm.locateanything import (
@@ -181,6 +182,24 @@ class TestLocateAnythingPrompt:
         m._custom_prompt = "custom"
 
         assert m._detection_prompt() == "custom"
+
+    def test_prediction_forward_strips_prompt_tokens(self):
+        m = _bare()
+        m._model_dtype = None
+        m.tokenizer = object()
+        m.generation_mode = "hybrid"
+        m.do_sample = False
+        m.verbose = False
+
+        class Model:
+            def generate(self, **kwargs):
+                assert kwargs["input_ids"].tolist() == [[10, 11]]
+                return torch.tensor([[10, 11, 90, 91]])
+
+        m.model = Model()
+        output = m._forward({"input_ids": torch.tensor([[10, 11]])})
+
+        assert output.tolist() == [[90, 91]]
 
 
 class TestLocateAnythingLicenseNotice:

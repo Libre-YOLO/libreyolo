@@ -10,6 +10,7 @@ runner property.
 from __future__ import annotations
 
 import logging
+from numbers import Integral
 from pathlib import Path
 from typing import TYPE_CHECKING, Generator, List, Optional, Union
 
@@ -26,12 +27,54 @@ from ...utils.general import (
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import OCRRegions, Results
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
-from .preprocess import det_normalize, det_resize, get_rotate_crop_image, rec_batches
+from .preprocess import (
+    det_normalize,
+    det_resize,
+    get_rotate_crop_image,
+    normalize_rec_image_shape,
+    rec_batches,
+)
 
 if TYPE_CHECKING:
     from .model import LibrePPOCR
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_detector_limit(
+    imgsz: Optional[int], pipeline: dict, default: int
+) -> int:
+    """Resolve explicit runtime size over the checkpoint detector pipeline size."""
+    value = (
+        imgsz
+        if imgsz is not None
+        else pipeline.get("det_limit_side_len", default)
+    )
+    if isinstance(value, bool) or not isinstance(value, Integral) or value <= 0:
+        raise ValueError(
+            "PPOCR det_limit_side_len/imgsz must be a positive integer, "
+            f"got {value!r}."
+        )
+    return int(value)
+
+
+def _crop_probability_to_source_extent(
+    prob_map: np.ndarray,
+    *,
+    resized_shape: tuple[int, int],
+    source_shape: tuple[int, int],
+    ratio_h: float,
+    ratio_w: float,
+) -> np.ndarray:
+    """Remove the padded part of a detector map before source scaling."""
+    resized_h, resized_w = resized_shape
+    source_h, source_w = source_shape
+    map_h, map_w = prob_map.shape[:2]
+    valid_h = int(np.ceil(source_h * ratio_h * map_h / resized_h))
+    valid_w = int(np.ceil(source_w * ratio_w * map_w / resized_w))
+    valid_h = min(map_h, max(1, valid_h))
+    valid_w = min(map_w, max(1, valid_w))
+    return prob_map[:valid_h, :valid_w]
 
 
 class OCRInferenceRunner:
@@ -243,14 +286,23 @@ class OCRInferenceRunner:
         orig_shape = (src_h, src_w)
 
         pipeline = model.pipeline_config
-        limit = imgsz if imgsz is not None else model._get_input_size()
+        limit = _resolve_detector_limit(
+            imgsz, pipeline, int(model._get_input_size())
+        )
 
         # Stage 1: detection.
-        resized, _, _ = det_resize(img_bgr, limit_side_len=limit)
+        resized, ratio_h, ratio_w = det_resize(img_bgr, limit_side_len=limit)
         det_input = det_normalize(resized).to(model.device)
         with torch.no_grad():
             prob = model.model.det(det_input)
         prob_map = prob[0, 0].detach().float().cpu().numpy()
+        prob_map = _crop_probability_to_source_extent(
+            prob_map,
+            resized_shape=resized.shape[:2],
+            source_shape=(src_h, src_w),
+            ratio_h=ratio_h,
+            ratio_w=ratio_w,
+        )
         quads, det_scores = db_postprocess(
             prob_map,
             src_w,
@@ -294,7 +346,14 @@ class OCRInferenceRunner:
 
         texts: List[str] = [""] * len(crops)
         rec_scores = np.zeros(len(crops), dtype=np.float32)
-        for chunk_indices, batch in rec_batches(crops, batch_size=max(1, int(rec_batch))):
+        rec_image_shape = normalize_rec_image_shape(
+            pipeline.get("rec_image_shape", (3, 48, 320))
+        )
+        for chunk_indices, batch in rec_batches(
+            crops,
+            batch_size=max(1, int(rec_batch)),
+            rec_image_shape=rec_image_shape,
+        ):
             batch_t = torch.from_numpy(batch).to(model.device)
             with torch.no_grad():
                 # fp32 by default: CTC confidences are sensitive to reduced

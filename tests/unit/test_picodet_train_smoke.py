@@ -133,3 +133,35 @@ def test_picodet_config_finetune_lr():
     cfg = PICODETConfig()
     assert cfg.lr0 == 0.01
     assert cfg.warmup_lr_start <= cfg.lr0 * 0.2
+
+
+def test_picodet_class_rebuild_preserves_shared_dfl_predictor():
+    from libreyolo.models.picodet.model import LibrePICODET
+
+    model = LibrePICODET(model_path=None, size="s", nb_classes=3, device="cpu")
+    old_predictors = []
+    with torch.no_grad():
+        for index, predictor in enumerate(model.model.head.gfl_cls):
+            predictor.weight.copy_(
+                torch.arange(predictor.weight.numel()).reshape_as(predictor.weight)
+                + index * predictor.weight.numel()
+            )
+            predictor.bias.copy_(
+                torch.arange(predictor.bias.numel(), dtype=predictor.bias.dtype)
+                + index * predictor.bias.numel()
+            )
+            old_predictors.append(
+                (predictor.weight.clone(), predictor.bias.clone())
+            )
+
+    model._rebuild_for_new_classes(2)
+
+    assert model.nb_classes == 2
+    assert model.model.head.num_classes == 2
+    for (old_weight, old_bias), predictor in zip(
+        old_predictors, model.model.head.gfl_cls
+    ):
+        torch.testing.assert_close(predictor.weight[:2], old_weight[:2])
+        torch.testing.assert_close(predictor.bias[:2], old_bias[:2])
+        torch.testing.assert_close(predictor.weight[2:], old_weight[3:])
+        torch.testing.assert_close(predictor.bias[2:], old_bias[3:])

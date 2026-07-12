@@ -193,6 +193,18 @@ def test_grouppose_reinitialize_keypoint_head_updates_schema():
     assert model.get_num_keypoints_per_class_from_checkpoint(state_dict) == [0, 15]
 
 
+def test_grouppose_reinitialize_keeps_decoder_mask_on_current_device():
+    model = _build_pose_model(num_keypoints_per_class=(0, 17), nb_classes=2)
+    decoder = model.transformer.decoder
+    decoder.keypoint_pos_embed = torch.nn.Parameter(decoder.keypoint_pos_embed.to("meta"))
+    decoder._buffers["keypoint_class_mask"] = decoder.keypoint_class_mask.to("meta")
+
+    model.reinitialize_keypoint_head([0, 15])
+
+    assert decoder.keypoint_class_mask.device.type == "meta"
+    assert tuple(decoder.keypoint_class_mask.shape) == (16, 16)
+
+
 # ---------------------------------------------------------------------------
 # 5. Checkpoint round-trip (strict)
 # ---------------------------------------------------------------------------
@@ -385,6 +397,67 @@ def test_grouppose_postprocess_remaps_keypoint_class_to_contiguous_zero():
     # Keypoint xy still scale to (x*width, y*height) = (30, 60); the remap only
     # touches the integer label, not the decoded keypoints.
     assert result["keypoints"][0, 0, :2].tolist() == pytest.approx([30.0, 60.0])
+
+
+def test_grouppose_filters_empty_internal_class_before_topk():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    logits = torch.tensor([[[10.0, 9.0]]])
+    boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.4]]])
+    keypoints = torch.zeros(1, 1, 34, 8)
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes, "pred_keypoints": keypoints},
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=[0, 17],
+        trace_alpha=0.0,
+    )[0]
+
+    assert result["labels"].tolist() == [0]
+    assert result["boxes"].shape == (1, 4)
+    assert result["keypoints"].shape == (1, 17, 3)
+
+
+def test_rfdetr_postprocess_filters_mapped_background_before_topk():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[9.0, 10.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        class_id_map=[0, -1],
+    )[0]
+
+    assert result["labels"].tolist() == [0]
+    assert result["scores"].shape == (1,)
+
+
+def test_grouppose_trace_fusion_scores_are_finite_probabilities():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    keypoints = torch.zeros(1, 1, 34, 8)
+    active = keypoints[0, 0, 17:]
+    active[:, 2] = 10.0
+    active[:, 4] = 10.0
+    active[:, 6] = 10.0
+    active[0, 4] = float("nan")
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[-10.0, 2.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": keypoints,
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=[0, 17],
+    )[0]
+
+    assert torch.isfinite(result["scores"]).all()
+    assert ((result["scores"] >= 0.0) & (result["scores"] <= 1.0)).all()
 
 
 # ---------------------------------------------------------------------------

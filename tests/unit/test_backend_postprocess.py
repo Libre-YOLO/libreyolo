@@ -220,6 +220,29 @@ def test_yolo9_e2e_backend_uses_native_topk_anchor_ranking():
     np.testing.assert_allclose(boxes[0], [20, 20, 25, 25])
 
 
+def test_yolo9_e2e_backend_masks_nan_before_anchor_topk():
+    backend = _DummyBackend("yolo9_e2e")
+    output = np.zeros((1, 5, 2), dtype=np.float32)
+    output[0, :4, :] = np.array(
+        [[10, 30], [10, 30], [20, 40], [20, 40]],
+        dtype=np.float32,
+    )
+    output[0, 4, :] = np.array([np.nan, 0.9], dtype=np.float32)
+
+    boxes, scores, classes = backend._parse_yolo9(
+        [output],
+        effective_imgsz=100,
+        orig_w=100,
+        orig_h=100,
+        conf=0.25,
+        max_det=1,
+    )
+
+    np.testing.assert_allclose(boxes, [[30, 30, 40, 40]])
+    np.testing.assert_allclose(scores, [0.9])
+    np.testing.assert_array_equal(classes, [0])
+
+
 def test_yolox_backend_recomputes_validation_letterbox_ratio():
     backend = _DummyBackend("yolox")
     # Canvas-space xywh for an original 200x100 image letterboxed to 100x100.
@@ -312,6 +335,8 @@ def test_rfdetr_backend_uses_topk_over_queries_and_classes():
 
 
 def test_rfdetr_obb_backend_parses_angle_output():
+    from libreyolo.postprocess.rfdetr import postprocess
+
     backend = _DummyBackend(
         "rfdetr",
         task="obb",
@@ -331,11 +356,20 @@ def test_rfdetr_obb_backend_parses_angle_output():
     assert masks is None
     assert classes.tolist() == [1]
     np.testing.assert_allclose(parsed_boxes[0], [80.0, 20.0, 120.0, 30.0])
+    native_obb = postprocess(
+        {
+            "pred_boxes": torch.from_numpy(boxes),
+            "pred_logits": torch.from_numpy(logits),
+            "pred_angles": torch.from_numpy(angles),
+        },
+        torch.tensor([[100, 200]]),
+        num_select=1,
+    )[0]["obb"]
     np.testing.assert_allclose(
-        obb[0],
-        [100.0, 25.0, 40.0, 10.0, 0.3, scores[0], 1.0],
-        rtol=1e-6,
-        atol=1e-6,
+        obb,
+        native_obb.numpy(),
+        rtol=1e-5,
+        atol=1e-5,
     )
 
 
@@ -414,7 +448,7 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     assert 0.7 < scores[0] < 1.0
 
 
-def test_rfdetr_grouppose_backend_honors_requested_max_det():
+def test_rfdetr_grouppose_backend_filters_internal_classes_before_max_det():
     backend = _DummyBackend(
         "rfdetr",
         task="pose",
@@ -441,10 +475,10 @@ def test_rfdetr_grouppose_backend_honors_requested_max_det():
 
     assert masks is None
     assert obb is None
-    assert parsed_boxes.shape == (0, 4)
-    assert scores.shape == (0,)
-    assert classes.shape == (0,)
-    assert parsed_keypoints.shape == (0, 17, 3)
+    assert parsed_boxes.shape == (1, 4)
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert parsed_keypoints.shape == (1, 17, 3)
 
 
 def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
@@ -1252,7 +1286,7 @@ def test_backend_sets_pose_metadata_attributes():
     assert backend.num_keypoints_per_class == [0, 17, 4]
 
 
-def test_rfdetr_classic_pose_slices_background_logits_before_topk():
+def test_rfdetr_classic_pose_filters_background_logits_before_topk():
     backend = _DummyBackend(
         "rfdetr",
         task="pose",

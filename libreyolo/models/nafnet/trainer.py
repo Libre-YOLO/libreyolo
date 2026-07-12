@@ -47,20 +47,56 @@ class NAFNetTrainer(BaseTrainer):
         # time, so forwarding training through the fixed-window local pool is a
         # train/inference mismatch. Switch the model to global pooling for
         # training (weight-preserving — pooling ops carry no parameters) and
-        # remember the removed TLC modules so inference-time local pooling is
-        # restored in :meth:`train`. The optimizer/EMA are built after this hook,
-        # so they operate on the plain-pooling model.
+        # remember that inference-time local pooling must be rebuilt in
+        # :meth:`train`. The optimizer/EMA are built after this hook, so they
+        # operate on the plain-pooling model.
         from .nn import use_global_pooling
 
-        self._tlc_restore = use_global_pooling(self.model)
+        use_global_pooling(self.model)
+        self._pooling_prepared = True
+
+    def _inference_pooling_geometry(self) -> tuple[int, int]:
+        """Return the training-crop geometry that defines TLC windows."""
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (tuple, list)):
+            return int(imgsz[0]), int(imgsz[1])
+        side = int(imgsz)
+        return side, side
+
+    def _enable_inference_pooling(self, model: torch.nn.Module) -> None:
+        """Rebuild and materialize TLC pooling for the configured crop size."""
+        from .nn import replace_adaptive_avg_pool2d, use_global_pooling
+
+        # Always start from the plain graph. This also makes repeated
+        # validation calls safe after a partially completed conversion.
+        use_global_pooling(model)
+        train_h, train_w = self._inference_pooling_geometry()
+        replace_adaptive_avg_pool2d(
+            model,
+            base_size=(int(train_h * 1.5), int(train_w * 1.5)),
+            train_size=(1, 3, train_h, train_w),
+        )
+        was_training = model.training
+        try:
+            model.eval()
+            parameter = next(model.parameters())
+            with torch.no_grad():
+                model(
+                    torch.zeros(
+                        (1, 3, train_h, train_w),
+                        device=parameter.device,
+                        dtype=parameter.dtype,
+                    )
+                )
+        finally:
+            model.train(was_training)
 
     def _restore_inference_pooling(self) -> None:
-        from .nn import restore_local_pooling
+        from ...training.distributed import unwrap_model
 
-        restore = getattr(self, "_tlc_restore", None)
-        if restore:
-            restore_local_pooling(restore)
-        self._tlc_restore = None
+        if getattr(self, "_pooling_prepared", False):
+            self._enable_inference_pooling(unwrap_model(self.model))
+        self._pooling_prepared = False
 
     def train(self) -> Dict[str, Any]:
         # Train through the plain global-pool model, then re-attach the TLC
@@ -69,6 +105,20 @@ class NAFNetTrainer(BaseTrainer):
             return super().train()
         finally:
             self._restore_inference_pooling()
+
+    def _run_restore_validation(self, epoch: int):
+        """Evaluate checkpoints with the TLC graph used by public inference."""
+        from ...training.distributed import unwrap_model
+        from .nn import use_global_pooling
+
+        eval_model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
+        was_training = eval_model.training
+        try:
+            self._enable_inference_pooling(eval_model)
+            return super()._run_restore_validation(epoch)
+        finally:
+            use_global_pooling(eval_model)
+            eval_model.train(was_training)
 
     def create_scheduler(self, iters_per_epoch: int):
         require_training_choice(

@@ -1,7 +1,16 @@
 """Tracking configuration for ByteTrack."""
 
+import math
 import warnings
 from dataclasses import dataclass, fields
+
+
+def _require_finite(config, *names: str) -> None:
+    """Reject NaN/Inf before one-sided range checks can accidentally accept them."""
+    for name in names:
+        value = getattr(config, name)
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite, got {value}")
 
 
 @dataclass(kw_only=True)
@@ -35,6 +44,18 @@ class TrackConfig:
     minimum_consecutive_frames: int = 1
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "track_high_thresh",
+            "track_low_thresh",
+            "new_track_thresh",
+            "match_thresh",
+            "match_thresh_low",
+            "match_thresh_unconfirmed",
+            "track_buffer",
+            "frame_rate",
+            "minimum_consecutive_frames",
+        )
         if self.frame_rate <= 0:
             raise ValueError(f"frame_rate must be > 0, got {self.frame_rate}")
         if not (0 <= self.track_high_thresh <= 1):
@@ -129,6 +150,18 @@ class DeepOCSortConfig:
     embedder: str = "osnet_ain_x0_25"
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "det_thresh",
+            "max_age",
+            "min_hits",
+            "iou_threshold",
+            "delta_t",
+            "inertia",
+            "w_association_emb",
+            "alpha_fixed_emb",
+            "aw_param",
+        )
         if not (0 <= self.det_thresh < 1):
             # < 1 because the appearance EMA trust term divides by
             # (1 - det_thresh).
@@ -204,6 +237,15 @@ class OCSortConfig:
     use_byte: bool = False
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "det_thresh",
+            "max_age",
+            "min_hits",
+            "iou_threshold",
+            "delta_t",
+            "inertia",
+        )
         if not (0 <= self.det_thresh <= 1):
             raise ValueError(f"det_thresh must be in [0, 1], got {self.det_thresh}")
         if not (0 <= self.iou_threshold <= 1):

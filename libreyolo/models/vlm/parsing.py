@@ -15,7 +15,10 @@ The coordinate contract follows the documented LFM2-VL schema: ``bbox`` is
 from __future__ import annotations
 
 import json
+import math
 import re
+from collections.abc import Iterable
+from numbers import Integral
 from typing import Dict, List, Optional, Tuple
 
 __all__ = [
@@ -23,6 +26,7 @@ __all__ = [
     "normalize_bbox",
     "to_xyxy",
     "resolve_label",
+    "finalize_detection_dict",
     "build_detection_dict",
 ]
 
@@ -211,6 +215,148 @@ def _iou_xyxy(a, b) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def _empty_detection_dict() -> dict:
+    return {
+        "boxes": [],
+        "scores": [],
+        "classes": [],
+        "num_detections": 0,
+    }
+
+
+def _as_rows(value) -> list:
+    """Return a concrete sequence for list/array/tensor-like output."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        return []
+    try:
+        return list(value)
+    except (TypeError, ValueError):
+        return []
+
+
+def finalize_detection_dict(
+    boxes,
+    scores,
+    class_ids,
+    original_size: Tuple[int, int],
+    *,
+    conf_thres: float = 0.0,
+    iou_thres: Optional[float] = None,
+    max_det: int = 300,
+    classes: Optional[List[int]] = None,
+    num_classes: Optional[int] = None,
+) -> dict:
+    """Validate pixel-space detections and apply class-aware NMS.
+
+    This is the common finalization contract for generative VLM adapters and
+    discriminative open-vocabulary adapters. Malformed, non-finite, fractional-
+    class, and zero-area rows are dropped; boxes are clipped to the image;
+    output is stably score-sorted and capped only after class-aware NMS.
+    """
+    if isinstance(max_det, bool) or not isinstance(max_det, Integral):
+        raise ValueError("max_det must be an integer.")
+    if max_det <= 0:
+        return _empty_detection_dict()
+    try:
+        width, height = (float(v) for v in original_size)
+        conf_value = float(conf_thres)
+    except (TypeError, ValueError):
+        return _empty_detection_dict()
+    if not all(math.isfinite(v) and v > 0 for v in (width, height)):
+        return _empty_detection_dict()
+    if not math.isfinite(conf_value):
+        raise ValueError("conf_thres must be finite.")
+
+    if iou_thres is not None:
+        try:
+            iou_value = float(iou_thres)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("iou_thres must be a finite number between 0 and 1.") from exc
+        if not math.isfinite(iou_value) or not 0.0 <= iou_value <= 1.0:
+            raise ValueError("iou_thres must be a finite number between 0 and 1.")
+    else:
+        iou_value = None
+
+    allowed_classes = None
+    if classes is not None:
+        try:
+            allowed_values = [float(value) for value in classes]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("classes must contain integer class ids.") from exc
+        if any(not math.isfinite(value) or not value.is_integer() for value in allowed_values):
+            raise ValueError("classes must contain integer class ids.")
+        allowed_classes = {int(value) for value in allowed_values}
+
+    candidates = []
+    for index, (box, score, class_id) in enumerate(
+        zip(_as_rows(boxes), _as_rows(scores), _as_rows(class_ids))
+    ):
+        if isinstance(box, (str, bytes)):
+            continue
+        try:
+            box_values = list(box)
+        except (TypeError, ValueError):
+            continue
+        if len(box_values) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(value) for value in box_values)
+            score_value = float(score)
+            class_value = float(class_id)
+        except (TypeError, ValueError):
+            continue
+        if not all(
+            math.isfinite(value)
+            for value in (x1, y1, x2, y2, score_value, class_value)
+        ):
+            continue
+        if not class_value.is_integer():
+            continue
+        class_int = int(class_value)
+        if num_classes is not None and not 0 <= class_int < num_classes:
+            continue
+        if allowed_classes is not None and class_int not in allowed_classes:
+            continue
+        if score_value < conf_value:
+            continue
+
+        x1, x2 = min(width, max(0.0, x1)), min(width, max(0.0, x2))
+        y1, y2 = min(height, max(0.0, y1)), min(height, max(0.0, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        normalized = (x1, y1, x2, y2)
+        candidates.append((index, normalized, score_value, class_int))
+
+    if not candidates:
+        return _empty_detection_dict()
+
+    # Stable ordering makes equal synthetic VLM scores deterministic.
+    candidates.sort(key=lambda row: (-row[2], row[0]))
+    kept = []
+    seen = set()
+    for candidate in candidates:
+        _, box, _, class_id = candidate
+        exact_key = (class_id, *box)
+        if exact_key in seen:
+            continue
+        if iou_value is not None and any(
+            class_id == kept_row[3] and _iou_xyxy(box, kept_row[1]) > iou_value
+            for kept_row in kept
+        ):
+            continue
+        seen.add(exact_key)
+        kept.append(candidate)
+        if len(kept) >= max_det:
+            break
+
+    return {
+        "boxes": [list(row[1]) for row in kept],
+        "scores": [row[2] for row in kept],
+        "classes": [row[3] for row in kept],
+        "num_detections": len(kept),
+    }
+
+
 def build_detection_dict(
     items: List[dict],
     name_to_id: Dict[str, int],
@@ -237,30 +383,14 @@ def build_detection_dict(
     confidence (the VLM emits none); rows below ``conf_thres`` are dropped so
     ``conf=`` still filters.
     """
-    if max_det <= 0:
-        return {
-            "boxes": [],
-            "scores": [],
-            "classes": [],
-            "num_detections": 0,
-        }
-
     width, height = original_size
     boxes: List[List[float]] = []
-    norm_boxes: List[Tuple[float, float, float, float]] = []
     scores: List[float] = []
     class_ids: List[int] = []
-    allowed_classes = set(classes) if classes is not None else None
-    # Generative decoding can loop and emit the same object many times. A real
-    # detector never reports an identical box twice, so drop duplicates (same
-    # class + box rounded to ~0.1% of the image).
-    seen = set()
 
     for item in items:
         class_id = resolve_label(item.get("label"), name_to_id)
         if class_id is None:
-            continue
-        if allowed_classes is not None and class_id not in allowed_classes:
             continue
         raw = item.get(bbox_key)
         box = None
@@ -272,28 +402,18 @@ def build_detection_dict(
             box = normalize_bbox(to_xyxy(scaled, box_format)) if scaled else None
         if box is None:
             continue
-        if default_score < conf_thres:
-            continue
-        key = (class_id, *(round(v, 3) for v in box))
-        if key in seen:
-            continue
-        if iou_thres is not None and any(
-            class_id == kept_class and _iou_xyxy(box, kept_box) > iou_thres
-            for kept_box, kept_class in zip(norm_boxes, class_ids)
-        ):
-            continue
-        seen.add(key)
         x1, y1, x2, y2 = box
-        norm_boxes.append(box)
         boxes.append([x1 * width, y1 * height, x2 * width, y2 * height])
         scores.append(default_score)
         class_ids.append(class_id)
-        if len(boxes) >= max_det:
-            break
 
-    return {
-        "boxes": boxes,
-        "scores": scores,
-        "classes": class_ids,
-        "num_detections": len(boxes),
-    }
+    return finalize_detection_dict(
+        boxes,
+        scores,
+        class_ids,
+        original_size,
+        conf_thres=conf_thres,
+        iou_thres=iou_thres,
+        max_det=max_det,
+        classes=classes,
+    )

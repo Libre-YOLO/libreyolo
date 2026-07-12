@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import warnings
 from collections.abc import MutableMapping
 from pathlib import Path
 from types import GeneratorType
@@ -23,6 +22,7 @@ import torch.nn as nn
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import Results
 from ..base.model import BaseModel
+from ..vlm.parsing import finalize_detection_dict
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,7 @@ _SNAPSHOT_COMPLETE_MARKER = ".libreyolo_snapshot_complete"
 _SPACE_RE = re.compile(r"\s+")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _ARTICLES = {"a", "an", "the"}
+_LEADING_ARTICLE_RE = re.compile(r"^(?:a|an|the)(?:\s+|$)", re.IGNORECASE)
 
 
 def _normalize_label(text: str) -> str:
@@ -54,6 +55,15 @@ def _contains_subsequence(haystack: list[str], needle: list[str]) -> bool:
         return False
     n = len(needle)
     return any(haystack[i : i + n] == needle for i in range(len(haystack) - n + 1))
+
+
+def _prompt_label(text: str) -> str:
+    """Preserve label punctuation while normalizing prompt whitespace/case."""
+    return _SPACE_RE.sub(" ", str(text).strip()).lower()
+
+
+def _has_leading_article(text: str) -> bool:
+    return _LEADING_ARTICLE_RE.match(text) is not None
 
 
 class LibreOpenVocabDetector(BaseModel):
@@ -146,12 +156,6 @@ class LibreOpenVocabDetector(BaseModel):
             raise ValueError(
                 f"{type(self).__name__} does not support augment=True; "
                 "test-time augmentation is out of scope for this tier."
-            )
-        if "iou" in kwargs:
-            warnings.warn(
-                f"{type(self).__name__} does not run LibreYOLO NMS; iou= is "
-                "accepted for API compatibility but ignored.",
-                stacklevel=2,
             )
         if text_threshold is None:
             return super().__call__(source, conf=conf, **kwargs)
@@ -364,46 +368,34 @@ class LibreOpenVocabDetector(BaseModel):
         original_size: Tuple[int, int],
         max_det: int,
         classes: Optional[List[int]] = None,
+        iou_thres: float | None = 0.45,
     ) -> Dict:
-        boxes_t = self._as_cpu_tensor(boxes, torch.float32).reshape(-1, 4)
-        scores_t = self._as_cpu_tensor(scores, torch.float32).reshape(-1)
-        class_t = self._as_cpu_tensor(class_ids, torch.int64).reshape(-1)
-        n = min(boxes_t.shape[0], scores_t.shape[0], class_t.shape[0])
-        boxes_t, scores_t, class_t = boxes_t[:n], scores_t[:n], class_t[:n]
-        if n == 0:
-            return self._empty_detections()
-
-        width, height = original_size
-        finite = torch.isfinite(boxes_t).all(dim=1) & torch.isfinite(scores_t)
-        keep = finite & (scores_t >= float(conf_thres))
-        if classes is not None:
-            allowed = torch.as_tensor(classes, dtype=torch.int64)
-            keep &= (class_t[:, None] == allowed[None, :]).any(dim=1)
-        boxes_t, scores_t, class_t = boxes_t[keep], scores_t[keep], class_t[keep]
-        if boxes_t.numel() == 0:
-            return self._empty_detections()
-
-        boxes_t[:, 0::2] = boxes_t[:, 0::2].clamp(0, float(width))
-        boxes_t[:, 1::2] = boxes_t[:, 1::2].clamp(0, float(height))
-        valid = (boxes_t[:, 2] > boxes_t[:, 0]) & (boxes_t[:, 3] > boxes_t[:, 1])
-        boxes_t, scores_t, class_t = boxes_t[valid], scores_t[valid], class_t[valid]
-        if boxes_t.numel() == 0:
-            return self._empty_detections()
-
-        order = scores_t.argsort(descending=True)[:max_det]
-        boxes_t, scores_t, class_t = boxes_t[order], scores_t[order], class_t[order]
+        boxes_value = boxes.detach().cpu() if isinstance(boxes, torch.Tensor) else boxes
+        scores_value = (
+            scores.detach().cpu() if isinstance(scores, torch.Tensor) else scores
+        )
+        class_value = (
+            class_ids.detach().cpu()
+            if isinstance(class_ids, torch.Tensor)
+            else class_ids
+        )
+        finalized = finalize_detection_dict(
+            boxes_value,
+            scores_value,
+            class_value,
+            original_size,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            max_det=max_det,
+            classes=classes,
+            num_classes=len(self.names),
+        )
         return {
-            "boxes": boxes_t,
-            "scores": scores_t,
-            "classes": class_t,
-            "num_detections": int(boxes_t.shape[0]),
+            "boxes": torch.tensor(finalized["boxes"], dtype=torch.float32).reshape(-1, 4),
+            "scores": torch.tensor(finalized["scores"], dtype=torch.float32),
+            "classes": torch.tensor(finalized["classes"], dtype=torch.int64),
+            "num_detections": finalized["num_detections"],
         }
-
-    @staticmethod
-    def _as_cpu_tensor(value: Any, dtype: torch.dtype) -> torch.Tensor:
-        if isinstance(value, torch.Tensor):
-            return value.detach().to(device="cpu", dtype=dtype)
-        return torch.as_tensor(value, dtype=dtype)
 
     @staticmethod
     def _empty_detections() -> Dict:
@@ -451,4 +443,6 @@ __all__ = [
     "_label_tokens",
     "_normalize_label",
     "_contains_subsequence",
+    "_prompt_label",
+    "_has_leading_article",
 ]

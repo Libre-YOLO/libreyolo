@@ -42,6 +42,9 @@ class LibreEfficientNetV2(BaseModel):
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreEfficientNetV2<size>-cls.pt
     TRAIN_CONFIG = EfficientNetV2Config
+    # At small accepted resolutions the final BatchNorm input can be 1x1, so
+    # every training batch must contain at least two samples.
+    MIN_TRAIN_BATCH_SIZE = 2
 
     # timm eval crop_pct per checkpoint — matches the upstream benchmark preprocessing.
     CROP_PCT = {"b0": 0.875, "b1": 0.882, "b2": 0.890, "b3": 0.904}

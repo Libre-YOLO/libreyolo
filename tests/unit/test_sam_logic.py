@@ -5,6 +5,8 @@ alias errors — paths that were bug-prone in review but are reachable without
 downloading a checkpoint.
 """
 
+import threading
+
 import pytest
 import torch
 from PIL import Image
@@ -142,6 +144,60 @@ class TestEmptyPromptDispatch:
         import numpy as np
 
         assert _is_empty_prompt(np.array([900, 370])) is False
+
+
+@pytest.mark.parametrize("max_det", [-1, 0, 1.5, True])
+def test_predict_rejects_invalid_max_det_before_inference(max_det):
+    model = _bare_model()
+
+    with pytest.raises(ValueError, match="integer >= 1"):
+        model.predict(Image.new("RGB", (8, 8)), points=[1, 1], max_det=max_det)
+
+
+def test_set_image_and_cache_read_are_one_locked_transaction():
+    model = _bare_model()
+    model._clear_image_state()
+    model._image = Image.new("RGB", (4, 4), color="red")
+    model._image_embeddings = "red-embedding"
+
+    encode_started = threading.Event()
+    allow_encode = threading.Event()
+    read_started = threading.Event()
+    observed = {}
+
+    def encode(image, **kwargs):
+        encode_started.set()
+        assert allow_encode.wait(timeout=2)
+        return {"embedding": f"{image.getpixel((0, 0))}-embedding"}
+
+    model._encode = encode
+    model._image_embeddings_from_encoding = lambda enc: enc["embedding"]
+    new_image = Image.new("RGB", (4, 4), color="blue")
+
+    setter = threading.Thread(target=model.set_image, args=(new_image,))
+    setter.start()
+    assert encode_started.wait(timeout=2)
+
+    def read_cache():
+        read_started.set()
+        observed["state"] = model._resolve_image(None, "auto")
+
+    reader = threading.Thread(target=read_cache)
+    reader.start()
+    assert read_started.wait(timeout=2)
+    reader.join(timeout=0.05)
+    assert reader.is_alive(), "cache read escaped while set_image held the session lock"
+
+    allow_encode.set()
+    setter.join(timeout=2)
+    reader.join(timeout=2)
+    assert not setter.is_alive()
+    assert not reader.is_alive()
+
+    image, path, embedding = observed["state"]
+    assert image.getpixel((0, 0)) == (0, 0, 255)
+    assert path is None
+    assert embedding == "(0, 0, 255)-embedding"
 
 
 class TestFactoryAliases:
