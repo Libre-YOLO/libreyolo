@@ -153,24 +153,50 @@ class LibreVLMModel(BaseModel):
     # Open-vocabulary API
     # =========================================================================
 
-    def __call__(self, source=None, **kwargs):
-        """Reject image-geometry modes owned by the VLM processor."""
-        if kwargs.get("imgsz") is not None:
+    def _validate_geometry_options(
+        self,
+        *,
+        imgsz=None,
+        augment: bool = False,
+        tiling: bool = False,
+    ) -> None:
+        """Reject geometry modes that the VLM processor cannot honor."""
+        if imgsz is not None:
             raise ValueError(
                 f"{type(self).__name__} does not support imgsz=: the model "
                 "processor owns image resizing for this VLM tier."
             )
-        if kwargs.get("augment", False):
+        if augment:
             raise ValueError(
                 f"{type(self).__name__} does not support augment=True; "
                 "test-time augmentation is out of scope for this VLM tier."
             )
-        if kwargs.get("tiling", False):
+        if tiling:
             raise ValueError(
                 f"{type(self).__name__} does not support tiling=True; "
                 "tile-level autoregressive generation has no defined merge contract."
             )
+
+    def __call__(self, source=None, **kwargs):
+        """Reject image-geometry modes owned by the VLM processor."""
+        self._validate_geometry_options(
+            imgsz=kwargs.get("imgsz"),
+            augment=kwargs.get("augment", False),
+            tiling=kwargs.get("tiling", False),
+        )
         return super().__call__(source, **kwargs)
+
+    def track(self, *args, **kwargs):
+        """Apply the same VLM geometry contract to per-frame tracking."""
+        self._validate_geometry_options(
+            imgsz=kwargs.get("imgsz"),
+            augment=kwargs.get("augment", False),
+            tiling=kwargs.get("tiling", False),
+        )
+        # BaseModel.track has no tiling path. A false compatibility value is a
+        # no-op and must not leak into tracker configuration.
+        kwargs.pop("tiling", None)
+        return super().track(*args, **kwargs)
 
     def set_classes(self, classes: list) -> "LibreVLMModel":
         """Set the open-vocabulary class list to detect.
