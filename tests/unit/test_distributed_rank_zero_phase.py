@@ -116,6 +116,99 @@ def _rank_zero_phase_worker(
         dist.destroy_process_group()
 
 
+def _rank_zero_validation_worker(
+    rank: int,
+    world_size: int,
+    port: int,
+    output_dir: str,
+) -> None:
+    """Prove rank-zero validation bypasses the live DDP forward wrapper."""
+    output = Path(output_dir)
+    dist.init_process_group(
+        backend="gloo",
+        init_method=f"tcp://127.0.0.1:{port}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        from libreyolo.training.trainer import BaseTrainer
+
+        class _BufferModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(2, 1, bias=False)
+                self.register_buffer("offset", torch.tensor([0.5]))
+
+            def forward(self, inputs):
+                return self.linear(inputs) + self.offset
+
+        torch.manual_seed(7)
+        ddp_model = torch.nn.parallel.DistributedDataParallel(_BufferModel())
+        ddp_model.train()
+
+        class _Wrapper:
+            def __init__(self, model):
+                self.model = model
+
+        class _ValidationProbe:
+            _validate_epoch = BaseTrainer._validate_epoch
+            _run_rank_zero_validation = BaseTrainer._run_rank_zero_validation
+
+            def _run_validation(self, epoch, *, save_plots=None):
+                del epoch, save_plots
+                if isinstance(
+                    self.model,
+                    torch.nn.parallel.DistributedDataParallel,
+                ):
+                    raise AssertionError("rank-zero validation entered DDP.forward")
+                if self.model is not ddp_model.module:
+                    raise AssertionError("validation did not receive the DDP module")
+                if self.wrapper_model.model is not self.model:
+                    raise AssertionError("wrapper still references the DDP model")
+                self.model.eval()
+                with torch.no_grad():
+                    prediction = self.model(torch.ones(1, 2))
+                (output / f"validation-called-rank-{rank}").write_text(
+                    "complete",
+                    encoding="utf-8",
+                )
+                return {
+                    "owner": rank,
+                    "prediction": float(prediction.item()),
+                }
+
+        trainer = _ValidationProbe()
+        trainer.model = ddp_model
+        trainer.wrapper_model = _Wrapper(ddp_model)
+        result = trainer._validate_epoch(0)
+
+        restored = (
+            trainer.model is ddp_model
+            and trainer.wrapper_model.model is ddp_model
+            and trainer.model.training
+            and trainer.model.module.training
+        )
+        with torch.no_grad():
+            post_validation = ddp_model(torch.ones(1, 2))
+        collective = torch.tensor(1, dtype=torch.int64)
+        dist.all_reduce(collective)
+        (output / f"validation-rank-{rank}.json").write_text(
+            json.dumps(
+                {
+                    "result": result,
+                    "restored": restored,
+                    "post_validation": float(post_validation.item()),
+                    "collective": int(collective.item()),
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    finally:
+        dist.destroy_process_group()
+
+
 def test_rank_zero_phase_preserves_non_distributed_behavior():
     from libreyolo.training.distributed import run_rank_zero_phase
 
@@ -181,3 +274,32 @@ def test_rank_zero_phase_broadcasts_success_and_failure_on_cpu_gloo(tmp_path):
     assert "local object" in serialization_failures[0]["root_message"].lower()
     assert all(record["reached_after_failure"] == world_size for record in records)
     assert all(record["recovered"] == "recovered" for record in records)
+
+
+def test_rank_zero_validation_unwraps_ddp_on_cpu_gloo(tmp_path):
+    world_size = 2
+    mp.spawn(
+        _rank_zero_validation_worker,
+        args=(world_size, _free_port(), str(tmp_path)),
+        nprocs=world_size,
+        join=True,
+    )
+
+    records = [
+        json.loads(
+            (tmp_path / f"validation-rank-{rank}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for rank in range(world_size)
+    ]
+    assert records[0]["result"] == records[1]["result"]
+    assert records[0]["result"]["owner"] == 0
+    assert all(record["restored"] for record in records)
+    assert all(record["collective"] == world_size for record in records)
+    assert records[0]["post_validation"] == pytest.approx(
+        records[1]["post_validation"]
+    )
+    assert sorted(
+        path.name for path in tmp_path.glob("validation-called-rank-*")
+    ) == ["validation-called-rank-0"]

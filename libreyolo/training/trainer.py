@@ -626,8 +626,10 @@ class BaseTrainer(ABC):
             if getattr(self, "_resume_distiller_state", None) is not None:
                 logger.warning(
                     "Resume checkpoint contains distiller state, but distillation "
-                    "is disabled"
+                    "is disabled; discarding distiller state and any distillation-"
+                    "specific optimizer slots"
                 )
+                self._discard_resume_distiller_optimizer_state = True
                 self._resume_distiller_state = None
             return
 
@@ -1555,7 +1557,10 @@ class BaseTrainer(ABC):
         # _initialize_scheduler_lr() sets the correct LR on top.
         if getattr(self, "_resume_optimizer_state", None) is not None:
             try:
-                self.optimizer.load_state_dict(self._resume_optimizer_state)
+                optimizer_state = self._optimizer_state_for_resume(
+                    self._resume_optimizer_state
+                )
+                self.optimizer.load_state_dict(optimizer_state)
                 logger.info("Optimizer state restored from resume checkpoint")
             except Exception as e:
                 raise RuntimeError(f"Cannot resume optimizer state: {e}") from e
@@ -2735,8 +2740,40 @@ class BaseTrainer(ABC):
     ) -> Optional[Dict[str, Any]]:
         return run_rank_zero_phase(
             f"validation epoch {epoch + 1}",
-            lambda: self._run_validation(epoch, save_plots=save_plots),
+            lambda: self._run_rank_zero_validation(
+                epoch,
+                save_plots=save_plots,
+            ),
         )
+
+    def _run_rank_zero_validation(
+        self, epoch: int, *, save_plots: bool | None = None
+    ) -> Optional[Dict[str, Any]]:
+        """Validate without entering DDP forward collectives on rank zero."""
+        original_model = self.model
+        if not isinstance(original_model, nn.parallel.DistributedDataParallel):
+            return self._run_validation(epoch, save_plots=save_plots)
+
+        validation_model = unwrap_model(original_model)
+        was_training = validation_model.training
+        wrapper = getattr(self, "wrapper_model", None)
+        original_wrapper_model = getattr(wrapper, "model", None)
+        replace_wrapper_model = (
+            wrapper is not None and original_wrapper_model is original_model
+        )
+
+        self.model = validation_model
+        if replace_wrapper_model:
+            wrapper.model = validation_model
+        try:
+            return self._run_validation(epoch, save_plots=save_plots)
+        finally:
+            try:
+                validation_model.train(was_training)
+            finally:
+                self.model = original_model
+                if replace_wrapper_model:
+                    wrapper.model = original_wrapper_model
 
     def _run_validation(
         self, epoch: int, *, save_plots: bool | None = None
@@ -3396,6 +3433,108 @@ class BaseTrainer(ABC):
                 f"Cannot resume: model architecture mismatch - {exc}"
             ) from exc
 
+    def _optimizer_state_for_resume(
+        self,
+        optimizer_state: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Remove only disabled-distillation slots from a saved optimizer state."""
+        if not getattr(self, "_discard_resume_distiller_optimizer_state", False):
+            return optimizer_state
+
+        saved_groups = optimizer_state.get("param_groups")
+        saved_slots = optimizer_state.get("state")
+        if not isinstance(saved_groups, (list, tuple)) or not isinstance(
+            saved_slots, Mapping
+        ):
+            raise RuntimeError(
+                "disabled distillation cannot be removed from a malformed "
+                "optimizer state"
+            )
+
+        current_groups = self.optimizer.param_groups
+        current_group_count = len(current_groups)
+        if len(saved_groups) < current_group_count:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: checkpoint has "
+                f"{len(saved_groups)} optimizer groups, but the current model has "
+                f"{current_group_count}"
+            )
+        if len(saved_groups) == current_group_count:
+            return optimizer_state
+
+        model_groups = saved_groups[:current_group_count]
+        for index, (saved_group, current_group) in enumerate(
+            zip(model_groups, current_groups)
+        ):
+            if not isinstance(saved_group, Mapping) or not isinstance(
+                current_group, Mapping
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+            saved_params = saved_group.get("params")
+            current_params = current_group.get("params")
+            if not isinstance(saved_params, (list, tuple)) or not isinstance(
+                current_params, (list, tuple)
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+            if len(saved_params) != len(current_params):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed safely: model "
+                    f"optimizer group {index} has {len(saved_params)} saved "
+                    f"parameters and {len(current_params)} current parameters"
+                )
+
+        retained_param_ids = {
+            param_id for group in model_groups for param_id in group["params"]
+        }
+        discarded_groups = saved_groups[current_group_count:]
+        for index, discarded_group in enumerate(
+            discarded_groups,
+            start=current_group_count,
+        ):
+            if not isinstance(discarded_group, Mapping) or not isinstance(
+                discarded_group.get("params"), (list, tuple)
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+        discarded_param_ids = {
+            param_id for group in discarded_groups for param_id in group["params"]
+        }
+        if retained_param_ids & discarded_param_ids:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: optimizer "
+                "parameter ids overlap model and distiller groups"
+            )
+        unexpected_slots = set(saved_slots) - (
+            retained_param_ids | discarded_param_ids
+        )
+        if unexpected_slots:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: optimizer state "
+                "contains slots outside its parameter groups"
+            )
+
+        filtered_state = dict(optimizer_state)
+        filtered_state["param_groups"] = [dict(group) for group in model_groups]
+        filtered_state["state"] = {
+            param_id: slot
+            for param_id, slot in saved_slots.items()
+            if param_id in retained_param_ids
+        }
+        logger.info(
+            "Discarded %d distillation optimizer group(s); retained %d model group(s)",
+            len(discarded_groups),
+            current_group_count,
+        )
+        return filtered_state
+
     def _restore_checkpoint_config(self, checkpoint: Mapping[str, Any]) -> None:
         """Restore saved run settings while preserving explicit runtime choices.
 
@@ -3565,6 +3704,11 @@ class BaseTrainer(ABC):
         self._validate_resume_identity(checkpoint)
         self._restore_checkpoint_config(checkpoint)
 
+        if "distiller" in checkpoint and not getattr(
+            self.config, "distill_model", None
+        ):
+            self._discard_resume_distiller_optimizer_state = True
+
         model_state = checkpoint.get("train_model", checkpoint["model"])
         self._prepare_resume_model_architecture(checkpoint, model_state)
         if getattr(self, "_is_setup", False):
@@ -3597,7 +3741,10 @@ class BaseTrainer(ABC):
         if "optimizer" in checkpoint:
             if self.optimizer is not None:
                 try:
-                    self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    optimizer_state = self._optimizer_state_for_resume(
+                        checkpoint["optimizer"]
+                    )
+                    self.optimizer.load_state_dict(optimizer_state)
                     logger.info("Optimizer state restored")
                 except Exception as e:
                     raise RuntimeError(f"Cannot resume optimizer state: {e}") from e
