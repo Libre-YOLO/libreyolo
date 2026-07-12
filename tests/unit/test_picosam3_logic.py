@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 from PIL import Image
@@ -107,6 +109,30 @@ def test_epoch1_picosam2_checkpoint_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="older PicoSAM2 architecture"):
         model._init_model()
+
+
+def test_missing_snapshot_honors_manifest_publication(monkeypatch, tmp_path):
+    from libreyolo.models.manifest import PublicationState, get_artifact_spec
+    from libreyolo.utils.download import WeightPublicationError
+
+    artifact = get_artifact_spec("picosam3", "pico", "segment")
+    assert artifact is not None
+    local_only = replace(
+        artifact,
+        publication=PublicationState.CONFIG_ONLY,
+        download_kind="none",
+        download_url=None,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "libreyolo.models.picosam3.model.get_artifact_spec",
+        lambda *args, **kwargs: local_only,
+    )
+    model = object.__new__(LibrePicoSAM3)
+    model.size = "pico"
+
+    with pytest.raises(WeightPublicationError, match="public snapshot route"):
+        model._ensure_weights()
 
 
 def test_conversion_round_trip_writes_provenance_metadata(tmp_path):

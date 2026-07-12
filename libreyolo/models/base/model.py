@@ -751,7 +751,7 @@ class BaseModel(ABC):
         # Exact public identities are owned by the static manifest.  In
         # particular, do not synthesize a plausible URL for a known
         # config-only or otherwise unpublished checkpoint.
-        from ..manifest import match_weight_filename
+        from ..manifest import get_artifact_spec, match_weight_filename
 
         artifact = match_weight_filename(filename)
         if artifact is not None:
@@ -764,10 +764,28 @@ class BaseModel(ABC):
         size = cls.detect_size_from_filename(filename)
         if size is None:
             return None
-        task = cls.detect_task_from_filename(filename)
+        task = cls.detect_task_from_filename(filename) or cls.DEFAULT_TASK
+        variant = cls.detect_variant_from_filename(filename)
+
+        # A permissive legacy filename regex must not bypass a fail-closed
+        # publication declaration.  For example, adding an arbitrary prefix to
+        # a config-only canonical filename makes ``match_weight_filename`` miss,
+        # while ``detect_size_from_filename`` still recognizes the embedded
+        # model name.  Resolve the parsed identity through the manifest before
+        # retaining the compatibility URL fallback.
+        declared = get_artifact_spec(
+            cls.FAMILY,
+            size,
+            task,
+            variant=variant,
+        )
+        if declared is not None:
+            if declared.download_kind != "hf":
+                return None
+            return declared.download_url
+
         task_suffix = task_to_suffix(task)
         suffix = f"-{task_suffix}" if task_suffix else ""
-        variant = cls.detect_variant_from_filename(filename)
         variant_suffix = f"-{variant}" if variant else ""
         name = f"{cls.FILENAME_PREFIX}{size}{suffix}{variant_suffix}"
         return f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"

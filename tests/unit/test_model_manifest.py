@@ -141,6 +141,29 @@ def test_unpublished_or_restricted_checkpoints_have_no_shared_download_route():
         )
 
 
+def test_legacy_filename_fallback_cannot_bypass_config_only_publication():
+    from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
+
+    # The legacy parser intentionally uses regex search for foreign filenames.
+    # Neither an embedded canonical name nor a suffixless historical spelling
+    # may turn a manifest-local-only size back into an auto-download.
+    assert (
+        BaseModel.get_download_url.__func__(
+            LibreDepthAnythingV2,
+            "foreign-LibreDepthAnythingV2b-depth.pt",
+        )
+        is None
+    )
+    assert (
+        BaseModel.get_download_url.__func__(
+            LibreDepthAnythingV2,
+            "LibreDepthAnythingV2b.pt",
+        )
+        is None
+    )
+
+
 def test_public_inventory_does_not_change_with_runtime_registry(monkeypatch):
     from libreyolo.models.base.model import BaseModel
     from libreyolo.models.inventory import collect_model_inventory
