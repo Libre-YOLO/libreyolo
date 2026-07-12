@@ -39,17 +39,18 @@ def label_cmd(
     """
     out = OutputHandler(json_mode=json_output, quiet=quiet)
 
-    from libreyolo.label.server import _lan_ip, serve
+    from libreyolo.label.server import _lan_ip, _lan_url_host, serve
 
     bind_host = "0.0.0.0" if share else host
     if not share and bind_host not in ("127.0.0.1", "::1", "localhost", "0.0.0.0", "::", ""):
-        # A concrete NIC bind makes the host itself indistinguishable from a LAN
-        # client, so EVERY client gets admin (switch/delete projects, run compute).
-        # --share (wildcard bind) is the safe way to let teammates join.
+        # A concrete interface exposes the current project like --share, but it is
+        # an advanced path and may not offer a separate loopback URL. Host-admin
+        # actions remain restricted by the accepted socket's peer address.
         out.progress(
-            "WARNING: binding to a specific interface (host=%s) gives every LAN "
-            "client full admin over projects and files. Prefer --share, which "
-            "keeps admin on this machine." % bind_host
+            "WARNING: binding to a specific interface (host=%s) exposes the open "
+            "project to clients on that interface. Prefer --share for the supported "
+            "LAN workflow; host-admin actions remain limited to this machine."
+            % bind_host
         )
     httpd = None
     url = ""
@@ -84,7 +85,8 @@ def label_cmd(
     # requested `candidate`, so the printed/JSON URLs are reachable.
     bound = httpd.server_address[1]
     shown_url = "http://127.0.0.1:%d" % bound if share else url
-    lan_url = "http://%s:%d" % (_lan_ip(), bound) if share else None
+    lan_host = _lan_url_host(bind_host, _lan_ip()) if share else None
+    lan_url = "http://%s:%d" % (lan_host, bound) if lan_host else None
     share_line = (
         "\n  Teammates on your network: %s" % lan_url if lan_url else ""
     )

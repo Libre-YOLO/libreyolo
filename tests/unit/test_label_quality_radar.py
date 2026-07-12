@@ -573,9 +573,9 @@ def test_sanitize_rejects_non_finite_before_clamp():
 
 
 def test_local_admin_gating_by_bind_and_client():
-    # Codex round 8+9: gate host-admin on a *wildcard* (--share -> 0.0.0.0) bind by
-    # requiring a loopback client; a loopback bind or an explicit NIC bind allow it
-    # (the host has to reach an advertised NIC by its own address).
+    # Wildcard sharing reserves host-level administration for loopback clients.
+    # A concrete NIC bind additionally permits a client whose source address is
+    # the accepted socket's local address.
     from types import SimpleNamespace
 
     from libreyolo.label.server import _Handler
@@ -592,15 +592,19 @@ def test_local_admin_gating_by_bind_and_client():
     h.client_address = ("127.0.0.1", 5000)
     assert h._local_admin() is True
 
-    # loopback bind: only reachable locally -> always admin
+    # A synthetic non-loopback peer on a loopback bind is denied defensively.
     h.state = SimpleNamespace(host="127.0.0.1")
     h.client_address = ("192.168.1.50", 5000)
-    assert h._local_admin() is True
+    h.connection = SimpleNamespace(getsockname=lambda: ("127.0.0.1", 8000))
+    assert h._local_admin() is False
 
-    # explicit NIC bind: the host must connect via that address -> admin allowed
+    # On an explicit NIC bind, only a peer using the local endpoint is admin.
     h.state = SimpleNamespace(host="192.168.1.5")
     h.client_address = ("192.168.1.5", 5000)
+    h.connection = SimpleNamespace(getsockname=lambda: ("192.168.1.5", 8000))
     assert h._local_admin() is True
+    h.client_address = ("192.168.1.50", 5000)
+    assert h._local_admin() is False
 
 
 def test_out_of_range_class_is_read_only(tmp_path):

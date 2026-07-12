@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -104,6 +105,16 @@ def _request_json(
             return exc.code, json.load(exc)
 
 
+def _raw_status(url: str, request: str) -> int:
+    """Send an exact HTTP request so duplicate authority headers stay intact."""
+    target = urlsplit(url)
+    with socket.create_connection((target.hostname, target.port), timeout=5) as peer:
+        peer.sendall(request.encode("ascii"))
+        response = peer.makefile("rb")
+        status_line = response.readline().decode("ascii", errors="replace")
+    return int(status_line.split()[1])
+
+
 def _box(cx: float = 0.5) -> dict:
     return {"type": "box", "cls": 0, "cx": cx, "cy": 0.5, "w": 0.2, "h": 0.2}
 
@@ -182,6 +193,138 @@ def test_post_origin_matrix_normalizes_authority_and_rejects_opaque_origins(tmp_
                 headers=headers,
             )
             assert status == expected, (host, origin)
+
+
+def test_duplicate_authorities_and_absolute_targets_are_unambiguous(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        port = urlsplit(url).port
+        valid = f"localhost:{port}"
+        attacker = f"attacker.example:{port}"
+
+        assert _raw_status(
+            url,
+            "GET /api/dataset HTTP/1.1\r\n"
+            f"Host: {valid}\r\nHost: {valid}\r\nConnection: close\r\n\r\n",
+        ) == 403
+        assert _raw_status(
+            url,
+            "POST /not-found HTTP/1.1\r\n"
+            f"Host: {valid}\r\nOrigin: http://{valid}\r\n"
+            f"Origin: http://{valid}\r\nContent-Length: 0\r\n"
+            "Connection: close\r\n\r\n",
+        ) == 403
+        assert _raw_status(
+            url,
+            f"GET http://{attacker}/api/dataset HTTP/1.1\r\n"
+            f"Host: {valid}\r\nConnection: close\r\n\r\n",
+        ) == 403
+        assert _raw_status(
+            url,
+            f"GET http://{valid}/api/dataset HTTP/1.1\r\n"
+            f"Host: {valid}\r\nConnection: close\r\n\r\n",
+        ) == 200
+
+
+def test_authority_parser_applies_http_effective_ports_and_ipv6_rules():
+    from libreyolo.label.server import _parse_authority
+
+    assert _parse_authority("LOCALHOST.", default_port=80) == ("localhost", 80)
+    assert _parse_authority("[0:0::1]:8000", default_port=80) == ("::1", 8000)
+    for authority in (
+        "::1",
+        "localhost:",
+        "localhost:65536",
+        "localhost:80,attacker.example",
+        "user@localhost:80",
+        "[::1]:80:90",
+    ):
+        with pytest.raises(ValueError):
+            _parse_authority(authority, default_port=80)
+
+
+def test_serve_formats_ipv6_and_empty_wildcard_urls():
+    from libreyolo.label.server import _lan_url_host, _local_access_host, serve
+
+    assert _local_access_host("0.0.0.0") == "127.0.0.1"
+    assert _local_access_host("::") == "::1"
+    assert _local_access_host("fd00::1234") == "fd00::1234"
+    assert _lan_url_host("0.0.0.0", "192.168.1.5") == "192.168.1.5"
+    assert _lan_url_host("::", "fd00::1234") == "fd00::1234"
+    assert _lan_url_host("::", "fe80::1234") is None
+    assert _lan_url_host("0.0.0.0", "127.0.0.1") is None
+    assert _lan_url_host("192.168.1.5", "127.0.0.1") == "192.168.1.5"
+    assert _lan_url_host("label-host", "127.0.0.1") == "label-host"
+    assert _lan_url_host("localhost", "192.168.1.5") is None
+
+    httpd, url, _session = serve(
+        None, host="", port=0, open_browser=False, assist=False
+    )
+    try:
+        assert url == f"http://0.0.0.0:{httpd.server_address[1]}"
+    finally:
+        httpd.server_close()
+
+    try:
+        httpd, url, _session = serve(
+            None, host="::1", port=0, open_browser=False, assist=False
+        )
+    except OSError as exc:
+        pytest.skip(f"IPv6 loopback unavailable: {exc}")
+    try:
+        assert url == f"http://[::1]:{httpd.server_address[1]}"
+        assert httpd.address_family == socket.AF_INET6
+    finally:
+        httpd.server_close()
+
+
+def test_server_info_advertises_only_a_usable_lan_url(monkeypatch, tmp_path):
+    from libreyolo.label import server
+
+    yaml_path = _make_dataset(tmp_path)
+    monkeypatch.setattr(server, "_lan_ip", lambda family: "192.168.1.5")
+    with _label_server(yaml_path, host="0.0.0.0") as url:
+        status, info = _get_json(url, "/api/server")
+        port = urlsplit(url).port
+
+    assert status == 200
+    assert info == {
+        "host": "0.0.0.0",
+        "port": port,
+        "local_url": f"http://127.0.0.1:{port}",
+        "lan_url": f"http://192.168.1.5:{port}",
+        "shareable": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "peer", "local", "expected"),
+    (
+        ("0.0.0.0", "127.0.0.1", "127.0.0.1", True),
+        ("0.0.0.0", "192.168.1.5", "192.168.1.5", False),
+        ("::", "::ffff:127.0.0.1", "::1", True),
+        ("192.168.1.5", "192.168.1.5", "192.168.1.5", True),
+        ("192.168.1.5", "192.168.1.44", "192.168.1.5", False),
+        ("label-host", "192.168.1.5", "192.168.1.5", True),
+        ("label-host", "192.168.1.44", "192.168.1.5", False),
+        ("fd00::5", "fd00::5", "fd00::5", True),
+        ("fd00::5", "fd00::44", "fd00::5", False),
+    ),
+)
+def test_local_admin_uses_the_tcp_peer_boundary(bind_host, peer, local, expected):
+    from libreyolo.label.server import _Handler
+
+    class _Connection:
+        @staticmethod
+        def getsockname():
+            return (local, 8000)
+
+    handler = object.__new__(_Handler)
+    handler.state = mock.Mock(host=bind_host)
+    handler.client_address = (peer, 50000)
+    handler.connection = _Connection()
+
+    assert handler._local_admin() is expected
 
 
 def test_label_post_requires_explicit_payload_epoch_and_revision(tmp_path):
@@ -437,6 +580,30 @@ def test_delete_rejects_project_subtree_and_keeps_live_session(monkeypatch, tmp_
     assert state.epoch == 0
 
 
+def test_delete_rejects_missing_yaml_alias_inside_current_project(
+    monkeypatch, tmp_path
+):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    session = DatasetSession(str(yaml_path))
+    state = _LabelState(session, assist=False)
+    state._data = str(yaml_path)
+    trashed = []
+    monkeypatch.setattr(
+        "libreyolo.label.server.trash_project",
+        lambda data: trashed.append(data) or "trash/project",
+    )
+
+    with pytest.raises(ValueError, match="exact registered project root"):
+        state.delete_project(str(tmp_path / "missing.yaml"), expected_epoch=0)
+
+    assert trashed == []
+    assert state.session is session
+    assert state.epoch == 0
+
+
 def test_delete_allows_exact_registered_project_root(monkeypatch, tmp_path):
     from libreyolo.label.server import _LabelState
 
@@ -459,6 +626,32 @@ def test_delete_allows_exact_registered_project_root(monkeypatch, tmp_path):
     assert result == {"trash": "trash/project", "closed": False, "epoch": 0}
     assert trashed == [str(tmp_path.resolve())]
     assert {Path(value) for value in forgotten} == {tmp_path, yaml_path}
+
+
+def test_delete_rejects_stale_registry_directory_without_dataset(
+    monkeypatch, tmp_path
+):
+    from libreyolo.label.server import _LabelState
+
+    root = tmp_path / "stale-project"
+    root.mkdir()
+    (root / "unrelated.txt").write_text("keep", encoding="utf-8")
+    state = _LabelState(None, assist=False)
+    trashed = []
+    monkeypatch.setattr(
+        "libreyolo.label.server.projects.list_projects",
+        lambda: [{"data": str(root)}],
+    )
+    monkeypatch.setattr(
+        "libreyolo.label.server.trash_project",
+        lambda data: trashed.append(data) or "trash/project",
+    )
+
+    with pytest.raises(ValueError, match="exact registered project root"):
+        state.delete_project(str(root))
+
+    assert trashed == []
+    assert (root / "unrelated.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_delete_detaches_live_session_even_if_registry_cleanup_fails(

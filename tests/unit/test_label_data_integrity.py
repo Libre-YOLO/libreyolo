@@ -64,6 +64,29 @@ def _process_label_write(yaml_path, cx, ready, start, attempting, outcomes):
         outcomes.put(("ok", cx, ""))
 
 
+def _process_sidecar_update(root, key, value, ready, start, loaded, release, outcomes):
+    """Force competing sidecar updates to overlap when no process lock exists."""
+    import libreyolo.label.dataset as dataset_module
+
+    original_load = dataset_module.load_sidecar
+
+    def synchronized_load(base):
+        result = original_load(base)
+        loaded.put(key)
+        release.wait(10)
+        return result
+
+    dataset_module.load_sidecar = synchronized_load
+    ready.put(True)
+    start.wait(10)
+    try:
+        dataset_module.update_sidecar(root, **{key: value})
+    except Exception as exc:  # noqa: BLE001 - serialized test outcome
+        outcomes.put(("error", key, type(exc).__name__, str(exc)))
+    else:
+        outcomes.put(("ok", key))
+
+
 def _dataset(root: Path, names=("cat", "dog"), task: str | None = "detect") -> DatasetSession:
     for subdir, filename, color in (
         ("a", "same.jpg", "red"),
@@ -980,6 +1003,127 @@ def test_cross_process_label_compare_and_swap_has_exactly_one_winner(tmp_path):
     assert "changed by someone else" in failure[2]
     saved = DatasetSession(str(yaml_path)).read_label(0)[0]
     assert saved[0]["cx"] in (0.25, 0.75)
+
+
+def test_cross_process_sidecar_updates_preserve_distinct_fields(tmp_path):
+    root = tmp_path / "dataset"
+    root.mkdir()
+    (root / "librelabel.json").write_text('{"base": true}', encoding="utf-8")
+    context = multiprocessing.get_context("spawn")
+    ready = context.Queue()
+    start = context.Event()
+    loaded = context.Queue()
+    release = context.Event()
+    outcomes = context.Queue()
+    processes = [
+        context.Process(
+            target=_process_sidecar_update,
+            args=(str(root), key, value, ready, start, loaded, release, outcomes),
+        )
+        for key, value in (("name", "Project"), ("description", "Details"))
+    ]
+
+    try:
+        for process in processes:
+            process.start()
+        assert ready.get(timeout=10) is True
+        assert ready.get(timeout=10) is True
+        start.set()
+        loaded.get(timeout=10)
+        try:
+            loaded.get(timeout=0.5)
+        except queue.Empty:
+            pass
+        release.set()
+        results = [outcomes.get(timeout=10), outcomes.get(timeout=10)]
+    finally:
+        release.set()
+        for process in processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+    assert all(process.exitcode == 0 for process in processes)
+    assert sorted(result[0] for result in results) == ["ok", "ok"]
+    assert json.loads((root / "librelabel.json").read_text(encoding="utf-8")) == {
+        "base": True,
+        "name": "Project",
+        "description": "Details",
+    }
+
+
+def test_trash_project_rejects_directory_links_without_moving_target(tmp_path):
+    from libreyolo.label.dataset import trash_project
+
+    target = tmp_path / "real-project"
+    target.mkdir()
+    (target / "data.yaml").write_text("names: []\n", encoding="utf-8")
+    alias = tmp_path / "project-alias"
+    try:
+        alias.symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory links unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="directory link"):
+        trash_project(str(alias))
+
+    assert target.is_dir()
+    assert (target / "data.yaml").is_file()
+
+
+def test_trash_project_rejects_missing_yaml_without_moving_its_parent(tmp_path):
+    from libreyolo.label.dataset import trash_project
+
+    project = tmp_path / "project"
+    project.mkdir()
+    marker = project / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="dataset YAML"):
+        trash_project(str(project / "missing.yaml"))
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_trash_project_never_moves_the_user_home(tmp_path, monkeypatch):
+    from libreyolo.label import dataset as dataset_module
+
+    home = tmp_path / "home"
+    home.mkdir()
+    marker = home / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    with pytest.raises(ValueError, match="filesystem, home"):
+        dataset_module.trash_project(str(home))
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_trash_project_allocates_distinct_paths_in_the_same_tick(
+    tmp_path, monkeypatch
+):
+    from libreyolo.label import dataset as dataset_module
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(dataset_module.time, "time_ns", lambda: 123456789)
+    roots = []
+    for parent, value in (("first", "one"), ("second", "two")):
+        root = tmp_path / parent / "project"
+        root.mkdir(parents=True)
+        (root / "marker.txt").write_text(value, encoding="utf-8")
+        roots.append(root)
+
+    destinations = [Path(dataset_module.trash_project(str(root))) for root in roots]
+
+    assert destinations[0] != destinations[1]
+    assert [
+        (destination / "marker.txt").read_text(encoding="utf-8")
+        for destination in destinations
+    ] == ["one", "two"]
 
 
 def test_upload_temp_cleanup_failure_does_not_hide_success(tmp_path, monkeypatch):

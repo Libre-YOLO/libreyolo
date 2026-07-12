@@ -15,9 +15,11 @@ import os
 import random
 import re
 import shutil
+import stat
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -41,6 +43,7 @@ from .labelio import (
 
 _UPLOAD_LOCK = threading.RLock()
 _LABEL_LOCK = threading.RLock()
+_SIDECAR_LOCK = threading.RLock()
 
 
 def _path_identity(path) -> str:
@@ -317,8 +320,26 @@ def load_sidecar(base: str) -> dict:
 
 def _project_root(data: str) -> Path:
     """The folder LibreLabel treats as a project: the dir holding ``data.yaml``."""
-    p = Path(data)
-    return p.parent if p.is_file() else p
+    p = Path(data).expanduser()
+    if p.is_dir():
+        return p
+    if p.suffix.lower() in (".yaml", ".yml"):
+        if not p.is_file():
+            raise FileNotFoundError(f"Not a dataset YAML: {p}")
+        return p.parent
+    return p
+
+
+def _is_link_or_reparse_point(path: Path) -> bool:
+    """Return whether moving ``path`` would follow an alias to another tree."""
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return path.is_symlink() or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
 
 
 def set_sidecar_name(data: str, name: str) -> str:
@@ -332,11 +353,13 @@ def update_sidecar(data: str, **fields) -> str:
     ``librelabel.json`` sidecar next to ``data.yaml``; ``None`` values are
     ignored. Returns the project root path."""
     root = _project_root(data)
-    sc = load_sidecar(str(root)) or {}
-    for k, v in fields.items():
-        if v is not None:
-            sc[k] = v
-    _write_json_atomic(root / "librelabel.json", sc)
+    sidecar = root / "librelabel.json"
+    with _SIDECAR_LOCK, _interprocess_path_lock(sidecar):
+        sc = load_sidecar(str(root)) or {}
+        for k, v in fields.items():
+            if v is not None:
+                sc[k] = v
+        _write_json_atomic(sidecar, sc)
     return str(root)
 
 
@@ -346,9 +369,34 @@ def trash_project(data: str) -> str:
     root = _project_root(data)
     if not root.is_dir():
         raise FileNotFoundError(f"Not a folder: {root}")
+    if _is_link_or_reparse_point(root):
+        raise ValueError(
+            "Refusing to trash a project opened through a directory link; "
+            "reopen its real path first."
+        )
+    try:
+        canonical = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        canonical = Path(os.path.abspath(str(root)))
+    anchor = Path(canonical.anchor)
+    home = Path.home().resolve(strict=False)
+    registry = (home / ".librelabel").resolve(strict=False)
+    if (
+        canonical == anchor
+        or canonical == home
+        or home.is_relative_to(canonical)
+        or registry == canonical
+        or registry.is_relative_to(canonical)
+    ):
+        raise ValueError("Refusing to trash a filesystem, home, or LibreLabel root.")
     trash = Path.home() / ".librelabel" / "trash"
     trash.mkdir(parents=True, exist_ok=True)
-    dest = trash / f"{int(time.time())}-{root.name or 'dataset'}"
+    trash = trash.resolve(strict=True)
+    if canonical == trash or canonical.is_relative_to(trash):
+        raise ValueError("This project is already inside LibreLabel's trash.")
+    dest = trash / (
+        f"{time.time_ns()}-{uuid.uuid4().hex[:12]}-{root.name or 'dataset'}"
+    )
     shutil.move(str(root), str(dest))
     return str(dest)
 

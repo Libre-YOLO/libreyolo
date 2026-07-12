@@ -27,6 +27,7 @@ import logging
 import mimetypes
 import os
 import re
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -80,13 +81,23 @@ def _nonnegative_int(value, name: str) -> int:
     return out
 
 
-def _project_root_path(data) -> Path:
-    """Return the canonical project root for either a dataset dir or YAML path."""
+def _project_root_entry_path(data, *, require_existing: bool = False) -> Path:
+    """Return an absolute project root without following its final directory link."""
     p = Path(str(data)).expanduser()
+    is_directory = p.is_dir()
+    is_yaml = p.is_file() and p.suffix.lower() in (".yaml", ".yml")
+    if require_existing and not (is_directory or is_yaml):
+        raise FileNotFoundError(f"Not an existing project root or dataset YAML: {p}")
     # A directory may legitimately end in .yaml/.yml.  Only strip the filename
     # suffix when the supplied path is not an existing directory.
-    if not p.is_dir() and p.suffix.lower() in (".yaml", ".yml"):
+    if not is_directory and p.suffix.lower() in (".yaml", ".yml"):
         p = p.parent
+    return Path(os.path.abspath(os.path.normpath(str(p))))
+
+
+def _project_root_path(data, *, require_existing: bool = False) -> Path:
+    """Return the canonical project root for either a dataset dir or YAML path."""
+    p = _project_root_entry_path(data, require_existing=require_existing)
     try:
         p = p.resolve(strict=False)
     except (OSError, RuntimeError):
@@ -94,9 +105,11 @@ def _project_root_path(data) -> Path:
     return p
 
 
-def _project_root_key(data) -> str:
+def _project_root_key(data, *, require_existing: bool = False) -> str:
     """Canonical project-root identity for either a dataset dir or YAML path."""
-    return os.path.normcase(str(_project_root_path(data))).casefold()
+    return os.path.normcase(
+        str(_project_root_path(data, require_existing=require_existing))
+    )
 
 
 def _unique_json_object(pairs):
@@ -165,19 +178,84 @@ def _ip_is_loopback(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
     return bool(mapped and mapped.is_loopback)
 
 
-def _lan_ip() -> str:
-    """Best-effort primary LAN IP (for the teammate share URL). Sends no packets."""
-    import socket
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def _url_host(host: str) -> str:
+    """Render one host literal for an HTTP URL."""
+    value = str(host).strip().strip("[]")
     try:
-        s.connect(("8.8.8.8", 80))   # just selects the routable interface
+        return f"[{value}]" if ipaddress.ip_address(value).version == 6 else value
+    except ValueError:
+        return value
+
+
+def _local_access_host(bind_host: str) -> str:
+    """Return the address a browser on the server host can actually reach."""
+    host = str(bind_host).strip()
+    if host in ("", "0.0.0.0"):
+        return "127.0.0.1"
+    if host == "::":
+        return "::1"
+    return host
+
+
+def _lan_url_host(bind_host: str, candidate: str) -> Optional[str]:
+    """Return a usable teammate host, or ``None`` when only local access exists."""
+    raw_bind = str(bind_host).strip().strip("[]")
+    try:
+        bind_name = _normalize_host_name(raw_bind) if raw_bind else ""
+    except ValueError:
+        return None
+    try:
+        bind_address = ipaddress.ip_address(bind_name) if bind_name else None
+    except ValueError:
+        bind_address = None
+    wildcard = not bind_name or bool(bind_address and bind_address.is_unspecified)
+    if not wildcard:
+        if bind_name == "localhost" or bool(
+            bind_address and (_ip_is_loopback(bind_address) or bind_address.is_link_local)
+        ):
+            return None
+        return bind_name
+    try:
+        address = ipaddress.ip_address(str(candidate).strip().strip("[]"))
+    except ValueError:
+        return None
+    if (
+        _ip_is_loopback(address)
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_link_local
+    ):
+        return None
+    return address.compressed.lower()
+
+
+def _lan_ip(family: int = socket.AF_INET) -> str:
+    """Best-effort primary LAN IP (for the teammate share URL). Sends no packets."""
+    probe = (
+        ("2001:4860:4860::8888", 80, 0, 0)
+        if family == socket.AF_INET6
+        else ("8.8.8.8", 80)
+    )
+    s = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        s.connect(probe)   # just selects the routable interface
         return s.getsockname()[0]
     except OSError:
         try:
-            return socket.gethostbyname(socket.gethostname())
+            candidates = socket.getaddrinfo(
+                socket.gethostname(), None, family, socket.SOCK_DGRAM
+            )
+            for candidate in candidates:
+                address = candidate[4][0]
+                try:
+                    parsed = ipaddress.ip_address(address)
+                except ValueError:
+                    continue
+                if not parsed.is_unspecified:
+                    return address
         except OSError:
-            return "127.0.0.1"
+            pass
+        return "::1" if family == socket.AF_INET6 else "127.0.0.1"
     finally:
         s.close()
 
@@ -494,31 +572,59 @@ class _LabelState:
     def delete_project(self, data, *, expected_epoch=None) -> dict:
         """Trash a project and atomically detach it if it is the live session."""
         with self._lock:
-            submitted_key = _project_root_key(data)
-            current_root = (
-                _project_root_path(self.session.yaml_file)
+            try:
+                submitted_key = _project_root_key(data, require_existing=True)
+            except FileNotFoundError:
+                raise ValueError(
+                    "only an open project or an exact registered project root can be deleted"
+                ) from None
+            current_target = (
+                _project_root_entry_path(
+                    self.session.yaml_file, require_existing=True
+                )
                 if self.session is not None
                 else None
             )
             current_key = (
-                _project_root_key(current_root) if current_root is not None else None
+                _project_root_key(current_target)
+                if current_target is not None
+                else None
             )
-            registered_roots = {}
-            registered_aliases = {}
+            registered_target = None
+            registered_aliases = set()
             for entry in projects.list_projects():
                 registered_data = entry.get("data") if isinstance(entry, dict) else None
                 if not registered_data:
                     continue
-                root = _project_root_path(registered_data)
-                key = _project_root_key(root)
-                registered_roots[key] = root
-                registered_aliases.setdefault(key, set()).add(str(registered_data))
+                try:
+                    registered_key = _project_root_key(
+                        registered_data, require_existing=True
+                    )
+                except FileNotFoundError:
+                    continue
+                if registered_key != submitted_key:
+                    continue
+                registered_aliases.add(str(registered_data))
+                if registered_target is not None:
+                    continue
+                # The registry is convenience data, not filesystem authorization.
+                # A stale/malformed entry must not authorize moving its containing
+                # directory after the YAML disappeared.
+                try:
+                    registered_session = DatasetSession(str(registered_data))
+                except Exception:  # noqa: BLE001 - stale/corrupt registry entry
+                    continue
+                candidate = _project_root_entry_path(
+                    registered_session.yaml_file, require_existing=True
+                )
+                if _project_root_key(candidate) == submitted_key:
+                    registered_target = candidate
 
             is_current = current_key is not None and submitted_key == current_key
             if is_current:
-                target = current_root
+                target = current_target
             else:
-                target = registered_roots.get(submitted_key)
+                target = registered_target
             if target is None:
                 raise ValueError(
                     "only an open project or an exact registered project root can be deleted"
@@ -528,7 +634,7 @@ class _LabelState:
                     raise ValueError("epoch is required when deleting the open project")
                 if expected_epoch != self.epoch:
                     raise _ProjectConflict("project changed - reload before deleting")
-            aliases = {str(data), *registered_aliases.get(submitted_key, set())}
+            aliases = {str(data), *registered_aliases}
             if is_current:
                 aliases.update(self._session_aliases_locked(self.session, data))
             trashed = trash_project(str(target))
@@ -649,13 +755,27 @@ class _Handler(BaseHTTPRequestHandler):
                 else:
                     self._send(200, {"projects": [], "open": None})
             elif path == "/api/server":
-                ip = _lan_ip()
                 host = self.state.host
-                shareable = host in ("0.0.0.0", "::", "") or host == ip
+                try:
+                    family = (
+                        socket.AF_INET6
+                        if ipaddress.ip_address(host.strip("[]")).version == 6
+                        else socket.AF_INET
+                    )
+                except ValueError:
+                    family = socket.AF_INET
+                ip = _lan_ip(family)
+                lan_host = _lan_url_host(host, ip)
+                shareable = lan_host is not None
+                local_host = _local_access_host(host)
                 self._send(200, {
                     "host": host, "port": self.state.port,
-                    "local_url": "http://127.0.0.1:%d" % self.state.port,
-                    "lan_url": ("http://%s:%d" % (ip, self.state.port)) if shareable else None,
+                    "local_url": "http://%s:%d" % (_url_host(local_host), self.state.port),
+                    "lan_url": (
+                        "http://%s:%d" % (_url_host(lan_host), self.state.port)
+                        if lan_host is not None
+                        else None
+                    ),
                     "shareable": shareable,
                 })
             elif path == "/api/dataset":
@@ -1129,26 +1249,45 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _is_loopback(addr: str) -> bool:
-        a = (addr or "").strip().lower()
-        return a in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1") or a.startswith("127.")
+        a = (addr or "").strip().lower().strip("[]")
+        if a.rstrip(".") == "localhost":
+            return True
+        try:
+            return _ip_is_loopback(ipaddress.ip_address(a))
+        except ValueError:
+            return False
 
     def _local_admin(self) -> bool:
         """Whether this client may perform host-level admin (switch project, prune
         duplicates, list the project registry) -- actions that rebind the global
         session, move/delete files, or expose host-local paths.
 
-        Only a *wildcard* bind (0.0.0.0/:: -- what ``--share`` uses) is both
-        LAN-reachable AND still serves loopback, so there the host connects via
-        127.0.0.1 while teammates use the LAN IP: require a loopback CLIENT to gate
-        teammates out. A loopback bind is local-only, and a concrete NIC bind
-        (``host=192.168.x.y``) forces the host itself to connect via that address --
-        indistinguishable from a teammate by IP -- so admin is allowed there (it's an
-        explicit, advanced exposure, not the default share path).
+        A wildcard bind (what ``--share`` uses) reserves admin for loopback peers.
+        On a concrete NIC bind, a host browser normally connects with the same
+        source address as the accepted socket's local endpoint; a LAN teammate has
+        a different peer address. This preserves local admin without granting every
+        client on that interface host filesystem authority.
         """
-        host = (self.state.host or "").strip().lower()
-        if host in ("0.0.0.0", "::", ""):
-            return self._is_loopback(self.client_address[0] if self.client_address else "")
-        return True
+        peer_text = self.client_address[0] if self.client_address else ""
+        if self._is_loopback(peer_text):
+            return True
+        host = (self.state.host or "").strip().lower().strip("[]")
+        try:
+            bind_address = ipaddress.ip_address(host)
+        except ValueError:
+            bind_address = None
+        if not host or bool(bind_address and bind_address.is_unspecified):
+            return False
+        try:
+            peer = ipaddress.ip_address(str(peer_text).strip().strip("[]"))
+            local = ipaddress.ip_address(
+                str(self.connection.getsockname()[0]).strip().strip("[]")
+            )
+        except (AttributeError, OSError, ValueError):
+            return False
+        peer_mapped = getattr(peer, "ipv4_mapped", None) or peer
+        local_mapped = getattr(local, "ipv4_mapped", None) or local
+        return peer_mapped == local_mapped
 
     def _same_origin(self) -> bool:
         """Compare a browser Origin to the normalized HTTP request authority."""
@@ -1187,7 +1326,21 @@ class _Handler(BaseHTTPRequestHandler):
             authority = _parse_authority(hosts[0], default_port=80)
         except (TypeError, ValueError):
             return None
-        return authority if authority[1] == self.state.port else None
+        if authority[1] != self.state.port:
+            return None
+        target = urlsplit(self.path)
+        if target.scheme or target.netloc:
+            if target.scheme.lower() != "http" or not target.netloc:
+                return None
+            try:
+                target_authority = _parse_authority(
+                    target.netloc, default_port=80
+                )
+            except (TypeError, ValueError):
+                return None
+            if target_authority != authority:
+                return None
+        return authority
 
     def _host_allowed(self) -> bool:
         """Allow only the configured host or explicit local numeric addresses."""
@@ -1465,21 +1618,40 @@ def serve(
     bound eagerly (an in-use port raises ``OSError`` to retry). Returns
     ``(httpd, url, session)`` (``session`` is ``None`` in home mode).
     """
+    bind_host = str(host).strip() or "0.0.0.0"
+    if bind_host.startswith("[") and bind_host.endswith("]"):
+        bind_host = bind_host[1:-1]
     session = DatasetSession(data) if data else None
     state = _LabelState(session, device=device, assist=assist)
-    state.host = host
+    state.host = bind_host
     handler = type("BoundLabelHandler", (_Handler,), {"state": state})
-    httpd = ThreadingHTTPServer((host, port), handler)
+    try:
+        ipv6_bind = ipaddress.ip_address(bind_host).version == 6
+    except ValueError:
+        ipv6_bind = False
+    server_type = ThreadingHTTPServer
+    if ipv6_bind:
+        server_type = type(
+            "IPv6ThreadingHTTPServer",
+            (ThreadingHTTPServer,),
+            {"address_family": socket.AF_INET6},
+        )
+    httpd = server_type((bind_host, port), handler)
     # Publish the *actual* bound port: with port=0 the OS assigns one, so the
     # requested value would yield unusable ":0" URLs and poison /api/server.
     bound_port = httpd.server_address[1]
     state.port = bound_port
     if session is not None:
         state.register_current(data)
-    url = "http://%s:%d" % (host, bound_port)
+    url = "http://%s:%d" % (_url_host(bind_host), bound_port)
     if open_browser:
         import webbrowser
 
-        browse = "http://127.0.0.1:%d" % bound_port if host in ("0.0.0.0", "::", "") else url
+        if bind_host in ("0.0.0.0", ""):
+            browse = "http://127.0.0.1:%d" % bound_port
+        elif bind_host == "::":
+            browse = "http://[::1]:%d" % bound_port
+        else:
+            browse = url
         threading.Timer(0.7, lambda: webbrowser.open(browse)).start()
     return httpd, url, session
