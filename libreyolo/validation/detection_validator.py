@@ -64,6 +64,7 @@ class DetectionValidator(BaseValidator):
         self._coco_label_to_category_id: Optional[Dict[int, int]] = None
         self._yolo_coco_img_files: Optional[List[Path]] = None
         self._yolo_coco_label_files: Optional[List[Path]] = None
+        self._ground_truth_target_format: str | None = None
 
     # =========================================================================
     # Setup
@@ -283,6 +284,7 @@ class DetectionValidator(BaseValidator):
             collate_fn=val_collate_fn,
             drop_last=False,
         )
+        self._ground_truth_target_format = "xyxy_cls"
 
         return dataloader
 
@@ -651,7 +653,14 @@ class DetectionValidator(BaseValidator):
             # Parsing is also the ground-truth schema/class-space gate. Run it
             # independently of optional plotting so invalid active labels can
             # never reach metric accumulation unnoticed.
-            self._parse_gt_boxes(target_tensor[index], int(orig_h), int(orig_w))
+            self._parse_gt_boxes(
+                target_tensor[index],
+                int(orig_h),
+                int(orig_w),
+                target_format=getattr(
+                    self, "_ground_truth_target_format", None
+                ),
+            )
         for i in range(len(preds)):
             self._validate_prediction(preds[i], i)
         for i in range(len(preds)):
@@ -703,11 +712,18 @@ class DetectionValidator(BaseValidator):
             require_finite(masks, f"{context} masks")
 
     def _parse_gt_boxes(
-        self, gt_row: torch.Tensor, orig_h: int, orig_w: int
+        self,
+        gt_row: torch.Tensor,
+        orig_h: int,
+        orig_w: int,
+        *,
+        target_format: str | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Parse a padded GT target row into xyxy pixel boxes and class indices.
 
-        Two formats are auto-detected from the value range:
+        Built-in dataloaders pass ``target_format="xyxy_cls"`` because their
+        internal schema is known. Direct callers may omit the format only when
+        exactly one supported schema is valid:
           YOLO  — [cls, cx_norm, cy_norm, w_norm, h_norm]  all coords in [0, 1]
           COCO  — [x1_scaled, y1_scaled, x2_scaled, y2_scaled, cls]  pixel coords
                   pre-scaled by the dataset letterbox ratio
@@ -721,11 +737,102 @@ class DetectionValidator(BaseValidator):
         require_finite(row_tensor, "Detection validation targets")
         arr = row_tensor.numpy().astype(np.float32)
 
+        non_padding = np.any(arr != 0.0, axis=1)
+        if not np.any(non_padding):
+            return np.zeros((0, 4), np.float32), np.zeros(0, int)
+
+        if target_format is None:
+            active = arr[non_padding]
+            xyxy_geometry = bool(
+                np.all(
+                    (active[:, 2] > active[:, 0])
+                    & (active[:, 3] > active[:, 1])
+                )
+            )
+            yolo_geometry = bool(
+                np.all(
+                    (active[:, 3] > 0.0)
+                    & (active[:, 4] > 0.0)
+                    & (active[:, 1:5] >= 0.0).all(axis=1)
+                    & (active[:, 1:5] <= 1.0).all(axis=1)
+                )
+            )
+
+            def _class_like(values: np.ndarray) -> bool:
+                return bool(
+                    np.all(
+                        (values >= 0.0)
+                        & (values < self.nc)
+                        & np.isclose(values, np.round(values))
+                    )
+                )
+
+            xyxy_candidate = xyxy_geometry and _class_like(active[:, 4])
+            yolo_candidate = yolo_geometry and _class_like(active[:, 0])
+            if xyxy_candidate == yolo_candidate:
+                if xyxy_candidate:
+                    raise ValueError(
+                        "Detection validation target rows are ambiguous between "
+                        "xyxy_cls and cls_xywh_norm; pass target_format explicitly."
+                    )
+                if xyxy_geometry and not yolo_geometry:
+                    target_format = "xyxy_cls"
+                elif yolo_geometry and not xyxy_geometry:
+                    target_format = "cls_xywh_norm"
+                else:
+                    raise ValueError(
+                        "Detection validation target rows do not match the "
+                        "xyxy_cls or cls_xywh_norm schema."
+                    )
+            else:
+                target_format = (
+                    "xyxy_cls" if xyxy_candidate else "cls_xywh_norm"
+                )
+
+        if target_format == "cls_xywh_norm":
+            valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
+            if np.any(non_padding & ~valid):
+                raise ValueError(
+                    "Normalized YOLO validation targets contain a non-positive "
+                    "width or height."
+                )
+            vgt = arr[valid]
+            if len(vgt) == 0:
+                return np.zeros((0, 4), np.float32), np.zeros(0, int)
+            if np.any(vgt[:, 1:5] < 0.0) or np.any(vgt[:, 1:5] > 1.0):
+                raise ValueError(
+                    "Normalized YOLO validation target coordinates must be in [0, 1]."
+                )
+            cx = vgt[:, 1] * orig_w
+            cy = vgt[:, 2] * orig_h
+            bw = vgt[:, 3] * orig_w
+            bh = vgt[:, 4] * orig_h
+            gt_boxes = np.stack(
+                [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2],
+                axis=1,
+            ).astype(np.float32)
+            gt_classes = require_class_ids(
+                vgt[:, 0], self.nc, "Detection validation targets"
+            ).cpu().numpy()
+            return gt_boxes, gt_classes
+
+        if target_format != "xyxy_cls":
+            raise ValueError(
+                "Detection validation target_format must be 'xyxy_cls' or "
+                f"'cls_xywh_norm', got {target_format!r}."
+            )
+
         # The validator dataloaders emit [x1, y1, x2, y2, cls] rows in scaled
         # pixel space. Prefer that schema whenever it forms a valid box so
         # tiny boxes near the origin are not mistaken for normalized YOLO rows.
         valid_xyxy = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
+        if np.any(non_padding & ~valid_xyxy):
+            raise ValueError(
+                "xyxy validation targets contain a degenerate or inverted box."
+            )
         vgt_xyxy = arr[valid_xyxy]
+        if len(vgt_xyxy) == 0:
+            return np.zeros((0, 4), np.float32), np.zeros(0, int)
         if len(vgt_xyxy):
             gt_classes = require_class_ids(
                 vgt_xyxy[:, 4], self.nc, "Detection validation targets"
@@ -748,54 +855,6 @@ class DetectionValidator(BaseValidator):
                 gt_boxes = gt.astype(np.float32)
             return gt_boxes, gt_classes
 
-        # If any value in columns 1-4 exceeds 1.5 the coords must be pixels
-        is_coco_xyxy = (len(arr) > 0) and (float(np.abs(arr[:, 1:5]).max()) > 1.5)
-
-        if is_coco_xyxy:
-            # COCO [x1, y1, x2, y2, cls] — zero-padded rows have all zeros
-            valid = (arr[:, 2] > arr[:, 0]) & (arr[:, 3] > arr[:, 1])
-            vgt = arr[valid]
-            if len(vgt) == 0:
-                return np.zeros((0, 4), np.float32), np.zeros(0, int)
-            # Undo the coordinate transform applied by the val preprocessor.
-            # Letterbox preprocessors (e.g. YOLO9) scale uniformly by
-            #   r = min(imgsz/orig_h, imgsz/orig_w).
-            # Non-letterbox preprocessors (e.g. RF-DETR, Standard) stretch
-            # each axis independently: x *= imgsz/orig_w, y *= imgsz/orig_h.
-            uses_lb = getattr(self.val_preproc, "uses_letterbox", False)
-            if uses_lb:
-                r, off_x, off_y = self.val_preproc.letterbox_scale(orig_h, orig_w, self._actual_imgsz)
-                coords = vgt[:, :4].copy()
-                coords[:, [0, 2]] -= off_x
-                coords[:, [1, 3]] -= off_y
-                gt_boxes = (coords / r).astype(np.float32)
-            else:
-                sx = self._actual_imgsz / orig_w
-                sy = self._actual_imgsz / orig_h
-                gt = vgt[:, :4].copy()
-                gt[:, [0, 2]] /= sx  # x1, x2
-                gt[:, [1, 3]] /= sy  # y1, y2
-                gt_boxes = gt.astype(np.float32)
-            gt_classes = require_class_ids(
-                vgt[:, 4], self.nc, "Detection validation targets"
-            ).cpu().numpy()
-        else:
-            # YOLO [cls, cx_norm, cy_norm, w_norm, h_norm]
-            valid = (arr[:, 3] > 0) & (arr[:, 4] > 0)
-            vgt = arr[valid]
-            if len(vgt) == 0:
-                return np.zeros((0, 4), np.float32), np.zeros(0, int)
-            cx = vgt[:, 1] * orig_w
-            cy = vgt[:, 2] * orig_h
-            bw = vgt[:, 3] * orig_w
-            bh = vgt[:, 4] * orig_h
-            gt_boxes = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1).astype(np.float32)
-            gt_classes = require_class_ids(
-                vgt[:, 0], self.nc, "Detection validation targets"
-            ).cpu().numpy()
-
-        return gt_boxes, gt_classes
-
     def _track_plots_data(
         self,
         preds: List[Dict[str, torch.Tensor]],
@@ -807,7 +866,14 @@ class DetectionValidator(BaseValidator):
         for i, pred in enumerate(preds):
             orig_h, orig_w = img_info[i]
 
-            gt_boxes, gt_classes = self._parse_gt_boxes(targets[i], orig_h, orig_w)
+            gt_boxes, gt_classes = self._parse_gt_boxes(
+                targets[i],
+                orig_h,
+                orig_w,
+                target_format=getattr(
+                    self, "_ground_truth_target_format", None
+                ),
+            )
 
             # --- prediction arrays ---
             pb = pred["boxes"].cpu().numpy() if len(pred["boxes"]) else np.zeros((0, 4), np.float32)

@@ -245,6 +245,54 @@ def test_load_parser_warns_and_pads_sparse_legacy_metadata():
     assert any("padding" in str(item.message) for item in caught)
 
 
+def test_load_parser_routes_version_only_checkpoint_through_legacy_compatibility():
+    checkpoint = {
+        "model": {"layer.weight": 1},
+        "model_family": "yolo9",
+        "size": "t",
+        "task": "detect",
+        "nc": 1,
+        "names": {0: "cat"},
+        "imgsz": 640,
+        "libreyolo_version": "0.1.0",
+    }
+
+    with pytest.warns(RuntimeWarning, match="legacy or incomplete metadata"):
+        parsed, is_native_v1 = serialization.parse_checkpoint_metadata_for_load(
+            checkpoint,
+            context="incomplete unit checkpoint",
+        )
+
+    assert is_native_v1 is False
+    assert parsed["names"] == {0: "cat"}
+
+
+def test_load_parser_rejects_schema_only_checkpoint_as_malformed_v1():
+    checkpoint = {
+        "model": {"layer.weight": 1},
+        "schema_version": serialization.SCHEMA_VERSION,
+    }
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="missing required"):
+        serialization.parse_checkpoint_metadata_for_load(checkpoint)
+
+
+def test_load_parser_rejects_explicit_unsupported_schema_version():
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": 1},
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=1,
+        names={0: "cat"},
+        imgsz=640,
+    )
+    checkpoint["schema_version"] = "2.0"
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="schema_version"):
+        serialization.parse_checkpoint_metadata_for_load(checkpoint)
+
+
 def test_validate_native_checkpoint_rejects_non_string_name_values():
     checkpoint = serialization.wrap_libreyolo_checkpoint(
         {"layer.weight": 1},

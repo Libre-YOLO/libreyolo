@@ -177,9 +177,32 @@ def _download_to_verified_temp(
             close()
 
 
+def _publish_verified_temp(partial: Path, destination: Path) -> bool:
+    """Atomically publish ``partial`` without replacing ``destination``.
+
+    Windows rename is create-if-absent. POSIX rename replaces an existing
+    file, so use a same-directory hard link there to get the same no-clobber
+    contract. The caller removes the temporary name after publication.
+    """
+    try:
+        if os.name == "nt":
+            os.rename(partial, destination)
+        else:
+            os.link(partial, destination)
+    except FileExistsError:
+        return False
+    return True
+
+
 def download_weights(model_path: str, size: str):
     """Download weights from Hugging Face if not found locally."""
     path = Path(model_path)
+
+    # An existing path is user-owned input, not a cache entry managed by this
+    # helper.  In particular, do not checksum, delete, or replace it merely
+    # because its filename also matches an official auto-download route.
+    if os.path.lexists(path):
+        return
 
     from libreyolo.models.base.model import BaseModel
 
@@ -202,8 +225,6 @@ def download_weights(model_path: str, size: str):
         except (ModuleNotFoundError, ImportError):
             pass
 
-    if url is None and path.exists():
-        return
     if url is None:
         raise ValueError(f"Could not determine download URL for '{path.name}'.")
 
@@ -223,26 +244,15 @@ def download_weights(model_path: str, size: str):
             "Tip: Run `huggingface-cli login` or set HF_TOKEN for faster downloads."
         )
 
-    # Stream to a temp file and rename at the end so a killed process can
+    # Stream to a temp file and publish it at the end so a killed process can
     # never leave a truncated weight at the final path (loading one fails
     # with an opaque zip error and requires a manual delete).
     with _download_lock(path):
-        if path.exists():
-            try:
-                cls.verify_downloaded_file(str(path), url)
-            except Exception as error:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-                logger.warning(
-                    "Cached weights at %s failed verification and will be "
-                    "downloaded again: %s",
-                    path,
-                    error,
-                )
-            else:
-                return
+        # Another caller, or the user, may have created the destination while
+        # this caller was waiting for the lock.  It is no longer ours to
+        # inspect or replace.
+        if os.path.lexists(path):
+            return
 
         if notice:
             logger.warning(notice)
@@ -266,8 +276,23 @@ def download_weights(model_path: str, size: str):
                     headers=headers,
                     verifier=cls.verify_downloaded_file,
                 )
-                os.replace(partial, path)
-                logger.info("Download complete.")
+                published = _publish_verified_temp(partial, path)
+                try:
+                    partial.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        "Could not remove temporary download %s: %s",
+                        partial,
+                        cleanup_error,
+                    )
+                if published:
+                    logger.info("Download complete.")
+                else:
+                    logger.info(
+                        "Weights appeared at %s during download; preserving "
+                        "the existing filesystem entry.",
+                        path,
+                    )
                 return
             except Exception as error:
                 last_error = error

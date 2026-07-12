@@ -149,6 +149,7 @@ def test_factory_warns_for_legacy_libreyolo_metadata_checkpoint(tmp_path, caplog
             "names": {i: f"class_{i}" for i in range(80)},
             "model_family": "yolo9",
             "size": "t",
+            "libreyolo_version": "0.1.0",
         },
         ckpt_path,
     )

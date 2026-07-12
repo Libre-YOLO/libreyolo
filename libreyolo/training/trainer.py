@@ -94,17 +94,37 @@ _TRAINING_CHECKPOINT_CORE_KEYS = set(REQUIRED_CHECKPOINT_METADATA_KEYS) | {
 
 
 def _atomic_save_checkpoint(checkpoint: Dict[str, Any], targets: List[Path]) -> None:
-    """Serialize and validate once, then atomically publish to every target."""
+    """Validate once and atomically replace each target with error rollback.
+
+    A filesystem cannot atomically replace multiple directory entries as one
+    operation. If a promotion raises while this process is running, previously
+    promoted targets are restored; a process or machine crash between replaces
+    can still expose different generations briefly.
+    """
     if not targets:
         return
 
     targets = [Path(target) for target in targets]
+    if len(set(targets)) != len(targets):
+        raise ValueError("Checkpoint targets must be unique.")
     directory = targets[0].parent
     if any(target.parent != directory for target in targets):
         raise ValueError("Atomic checkpoint targets must share one directory.")
     directory.mkdir(parents=True, exist_ok=True)
 
     serialized = directory / f".checkpoint.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    staged_targets: Dict[Path, Path] = {}
+    backups: Dict[Path, Path | None] = {}
+
+    def stage_file(source: Path, destination: Path) -> None:
+        try:
+            os.link(source, destination)
+        except OSError:
+            shutil.copyfile(source, destination)
+            with open(destination, "rb+") as file:
+                file.flush()
+                os.fsync(file.fileno())
+
     try:
         with open(serialized, "xb") as file:
             torch.save(checkpoint, file)
@@ -121,25 +141,56 @@ def _atomic_save_checkpoint(checkpoint: Dict[str, Any], targets: List[Path]) -> 
 
         for target in targets:
             staged = directory / f".{target.name}.{uuid.uuid4().hex}.tmp"
-            try:
-                try:
-                    os.link(serialized, staged)
-                except OSError:
-                    shutil.copyfile(serialized, staged)
-                    with open(staged, "rb+") as file:
-                        file.flush()
-                        os.fsync(file.fileno())
-                os.replace(staged, target)
-            finally:
-                try:
-                    staged.unlink()
-                except FileNotFoundError:
-                    pass
-    finally:
+            staged_targets[target] = staged
+            stage_file(serialized, staged)
+
+        for target in targets:
+            backup = None
+            if target.exists():
+                backup = directory / f".{target.name}.{uuid.uuid4().hex}.bak"
+                backups[target] = backup
+                stage_file(target, backup)
+            else:
+                backups[target] = None
+
+        promoted = []
         try:
-            serialized.unlink()
-        except FileNotFoundError:
-            pass
+            for target in targets:
+                os.replace(staged_targets[target], target)
+                promoted.append(target)
+        except Exception as promotion_error:
+            rollback_errors = []
+            for target in reversed(promoted):
+                backup = backups[target]
+                try:
+                    if backup is None:
+                        target.unlink()
+                    else:
+                        os.replace(backup, target)
+                        backups[target] = None
+                except OSError as rollback_error:
+                    if backup is not None:
+                        backups[target] = None
+                        rollback_errors.append(
+                            f"{target}: {rollback_error}; previous file retained "
+                            f"at {backup}"
+                        )
+                    else:
+                        rollback_errors.append(f"{target}: {rollback_error}")
+            if rollback_errors:
+                raise RuntimeError(
+                    "Checkpoint publication failed and rollback was incomplete: "
+                    + "; ".join(rollback_errors)
+                ) from promotion_error
+            raise
+    finally:
+        for temporary in [*staged_targets.values(), *backups.values(), serialized]:
+            if temporary is None:
+                continue
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
 
 class BaseTrainer(ABC):

@@ -1,5 +1,6 @@
 """Tests for crash-safe, verified model downloads."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -155,17 +156,71 @@ def test_exhausted_transfer_raises_typed_error(tmp_path, monkeypatch):
     assert not destination.exists()
 
 
-def test_invalid_cached_artifact_is_removed_and_downloaded_again(
+def test_existing_user_path_is_not_verified_deleted_or_downloaded(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "LibreYOLONASs.pt"
+    original = b"user supplied checkpoint"
+    destination.write_bytes(original)
+    calls = {"requests": 0, "verifier": 0}
+
+    def verifier(path, url):
+        del path, url
+        calls["verifier"] += 1
+        raise RuntimeError("verifier must not inspect an existing path")
+
+    _install_family(monkeypatch, verifier)
+
+    def fake_get(url, **kwargs):
+        del url, kwargs
+        calls["requests"] += 1
+        raise AssertionError("network must not be used for an existing path")
+
+    monkeypatch.setattr(download.requests, "get", fake_get)
+
+    download.download_weights(str(destination), "n")
+
+    assert destination.read_bytes() == original
+    assert calls == {"requests": 0, "verifier": 0}
+    assert list(tmp_path.glob("*.part")) == []
+    assert list(tmp_path.glob("*.lock")) == []
+
+
+@pytest.mark.parametrize(
+    ("source_url", "message"),
+    [
+        (
+            "https://sghub.deci.ai/models/yolo_nas_s_coco.pth",
+            "Checksum mismatch",
+        ),
+        ("https://sghub.deci.ai/models/unpinned.pth", "no pinned checksum"),
+    ],
+)
+def test_yolonas_verifier_failure_does_not_delete_input(
+    tmp_path, source_url, message
+):
+    from libreyolo.models.yolonas.model import LibreYOLONAS
+
+    candidate = tmp_path / "candidate.pth"
+    original = b"not official weights"
+    candidate.write_bytes(original)
+
+    with pytest.raises(RuntimeError, match=message):
+        LibreYOLONAS.verify_downloaded_file(str(candidate), source_url)
+
+    assert candidate.read_bytes() == original
+
+
+def test_file_created_during_verification_wins_without_replacement(
     tmp_path, monkeypatch
 ):
     destination = tmp_path / "model.pt"
-    destination.write_bytes(b"corrupt cache")
+    user_bytes = b"late user checkpoint"
     requests_made = 0
 
-    def verifier(path, url):
-        del url
-        if path.read_bytes() != b"valid replacement":
-            raise RuntimeError("checksum mismatch")
+    def verifier(partial, source_url):
+        del partial, source_url
+        destination.write_bytes(user_bytes)
 
     _install_family(monkeypatch, verifier)
 
@@ -173,14 +228,50 @@ def test_invalid_cached_artifact_is_removed_and_downloaded_again(
         nonlocal requests_made
         del url, kwargs
         requests_made += 1
-        return _Response(b"valid replacement")
+        return _Response(b"verified downloaded checkpoint")
 
     monkeypatch.setattr(download.requests, "get", fake_get)
 
     download.download_weights(str(destination), "n")
 
-    assert destination.read_bytes() == b"valid replacement"
+    assert destination.read_bytes() == user_bytes
     assert requests_made == 1
+    assert list(tmp_path.glob("*.part")) == []
+    assert list(tmp_path.glob("*.lock")) == []
+
+
+def test_dangling_symlink_created_during_verification_is_preserved(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "model.pt"
+    missing_target = tmp_path / "missing-user-checkpoint.pt"
+    probe = tmp_path / "symlink-probe"
+    try:
+        probe.symlink_to(missing_target)
+    except OSError as error:
+        pytest.skip(f"symlink creation is unavailable: {error}")
+    else:
+        probe.unlink()
+
+    def verifier(partial, source_url):
+        del partial, source_url
+        destination.symlink_to(missing_target)
+
+    _install_family(monkeypatch, verifier)
+    monkeypatch.setattr(
+        download.requests,
+        "get",
+        lambda url, **kwargs: _Response(b"verified downloaded checkpoint"),
+    )
+
+    download.download_weights(str(destination), "n")
+
+    assert destination.is_symlink()
+    assert destination.readlink() == missing_target
+    assert os.path.lexists(destination)
+    assert not destination.exists()
+    assert list(tmp_path.glob("*.part")) == []
+    assert list(tmp_path.glob("*.lock")) == []
 
 
 def test_concurrent_callers_share_one_completed_download(tmp_path, monkeypatch):

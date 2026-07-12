@@ -393,7 +393,6 @@ class LibreYOLONAS(BaseModel):
         name = Path(urlparse(source_url).path).name
         expected = cls._DECI_CHECKPOINT_SHA256.get(name)
         if expected is None:
-            Path(local_path).unlink(missing_ok=True)
             raise RuntimeError(
                 f"Refusing to auto-load YOLO-NAS checkpoint '{name}': no pinned "
                 "checksum is known for it, so this freshly downloaded third-party "
@@ -406,7 +405,6 @@ class LibreYOLONAS(BaseModel):
                 digest.update(chunk)
         actual = digest.hexdigest()
         if actual != expected:
-            Path(local_path).unlink(missing_ok=True)
             raise RuntimeError(
                 f"Checksum mismatch for downloaded YOLO-NAS checkpoint '{name}': "
                 f"expected {expected}, got {actual}. Refusing to load a possibly "
@@ -414,10 +412,10 @@ class LibreYOLONAS(BaseModel):
             )
 
     def _load_weights(self, model_path: str):
-        # YOLO-NAS cache entries are checksum-pinned because loading these
-        # third-party pickles requires full torch deserialization. Verify an
-        # existing cache, or atomically download and verify a replacement,
-        # before unpickling anything.
+        # Newly auto-downloaded YOLO-NAS weights are checksum-pinned because
+        # loading these third-party pickles requires full torch
+        # deserialization. Locally staged paths are the user's trust decision
+        # and download_weights deliberately leaves them untouched.
         from ...utils.download import download_weights
 
         download_weights(model_path, self.size)

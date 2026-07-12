@@ -156,6 +156,74 @@ def test_yolo9_e2e_rejects_legacy_head_normalization_collision():
         wrapper._prepare_state_dict(state)
 
 
+def test_yolo9_release_checkpoint_accepts_frozen_dfl_projection_only():
+    source = LibreYOLO9(
+        model_path=None,
+        size="t",
+        nb_classes=80,
+        device="cpu",
+    )
+    state = dict(source.model.state_dict())
+    state["head.dfl.conv.weight"] = torch.arange(
+        source.reg_max,
+        dtype=torch.float32,
+    ).view(1, source.reg_max, 1, 1)
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=80,
+        imgsz=640,
+    )
+
+    loaded = LibreYOLO9(
+        model_path=None,
+        size="t",
+        nb_classes=80,
+        device="cpu",
+    )
+    report = loaded._apply_loaded_checkpoint(
+        checkpoint,
+        context="canonical LibreYOLO9t release checkpoint",
+    )
+
+    assert report.allowed_unexpected_keys == ("head.dfl.conv.weight",)
+    assert not report.unexpected_keys
+
+
+def test_yolo9_release_compatibility_does_not_allow_other_unexpected_keys():
+    source = LibreYOLO9(
+        model_path=None,
+        size="t",
+        nb_classes=80,
+        device="cpu",
+    )
+    state = dict(source.model.state_dict())
+    state["head.dfl.conv.weight"] = torch.arange(16).view(1, 16, 1, 1)
+    state["head.dfl.foreign"] = torch.zeros(1)
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=80,
+        imgsz=640,
+    )
+    target = LibreYOLO9(
+        model_path=None,
+        size="t",
+        nb_classes=80,
+        device="cpu",
+    )
+
+    with pytest.raises(CheckpointLoadError, match="head.dfl.foreign"):
+        target._apply_loaded_checkpoint(
+            checkpoint,
+            context="tampered YOLO9 checkpoint",
+        )
+
+
 def test_explicit_transfer_allowlist_excludes_only_named_head():
     module = torch.nn.Sequential(
         torch.nn.Linear(4, 4),
@@ -225,8 +293,10 @@ def test_yolo9_training_transfer_allows_only_class_head_shape_drift(tmp_path):
         nb_classes=80,
         device="cpu",
     )
+    state = dict(source.model.state_dict())
+    state["head.dfl.conv.weight"] = torch.arange(16).view(1, 16, 1, 1)
     checkpoint = wrap_libreyolo_checkpoint(
-        source.model.state_dict(),
+        state,
         model_family="yolo9",
         size="t",
         task="detect",

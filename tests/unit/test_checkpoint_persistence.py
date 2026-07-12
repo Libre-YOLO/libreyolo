@@ -114,3 +114,54 @@ def test_unreadable_serialization_is_not_promoted(tmp_path, monkeypatch):
 
     assert target.read_bytes() == previous
     assert list(tmp_path.iterdir()) == [target]
+
+
+def test_multi_target_promotion_failure_restores_last_and_best(
+    tmp_path, monkeypatch
+):
+    last = tmp_path / "last.pt"
+    best = tmp_path / "best.pt"
+    trainer_module._atomic_save_checkpoint(_checkpoint(1.0), [last, best])
+    previous_last = last.read_bytes()
+    previous_best = best.read_bytes()
+    real_replace = trainer_module.os.replace
+    failed = False
+
+    def fail_best_promotion(source, destination):
+        nonlocal failed
+        if Path(destination) == best and Path(source).suffix == ".tmp" and not failed:
+            failed = True
+            raise OSError("best promotion failed")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(trainer_module.os, "replace", fail_best_promotion)
+
+    with pytest.raises(OSError, match="best promotion failed"):
+        trainer_module._atomic_save_checkpoint(_checkpoint(2.0), [last, best])
+
+    assert last.read_bytes() == previous_last
+    assert best.read_bytes() == previous_best
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["best.pt", "last.pt"]
+
+
+def test_multi_target_promotion_failure_removes_new_partial_generation(
+    tmp_path, monkeypatch
+):
+    last = tmp_path / "last.pt"
+    best = tmp_path / "best.pt"
+    real_replace = trainer_module.os.replace
+    failed = False
+
+    def fail_best_promotion(source, destination):
+        nonlocal failed
+        if Path(destination) == best and Path(source).suffix == ".tmp" and not failed:
+            failed = True
+            raise OSError("best promotion failed")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(trainer_module.os, "replace", fail_best_promotion)
+
+    with pytest.raises(OSError, match="best promotion failed"):
+        trainer_module._atomic_save_checkpoint(_checkpoint(2.0), [last, best])
+
+    assert list(tmp_path.iterdir()) == []

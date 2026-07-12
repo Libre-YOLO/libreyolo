@@ -18,6 +18,7 @@ from ...utils.image_loader import ImageInput
 from ...utils.serialization import (
     NATIVE_CHECKPOINT_LOAD_POLICY,
     REQUIRED_CHECKPOINT_METADATA_KEYS,
+    CheckpointLoadPolicy,
     enforce_checkpoint_load_report,
     inspect_state_dict_load,
     load_untrusted_torch_file,
@@ -203,6 +204,18 @@ class LibreYOLO9(BaseModel):
 
     def _strict_loading(self) -> bool:
         return False
+
+    def _checkpoint_load_policy(
+        self,
+        checkpoint: dict | None,
+        checkpoint_task: str | None = None,
+    ) -> CheckpointLoadPolicy:
+        """Accept the frozen DFL projection stored by released YOLO9 weights."""
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        return policy.allowing(
+            name=f"{policy.name}-yolo9-release-compatibility",
+            unexpected=("head.dfl.conv.weight",),
+        )
 
     def _validate_loaded_state_dict_for_task(
         self,
@@ -396,11 +409,13 @@ class LibreYOLO9(BaseModel):
                     "head.cv2.0.*",
                     "head.cv3.0.*",
                 ),
+                unexpected=("head.dfl.conv.weight",),
                 shape_mismatch=("head.cv3.*.2.*",),
             )
         else:
             policy = NATIVE_CHECKPOINT_LOAD_POLICY.allowing(
                 name="yolo9-class-head-transfer",
+                unexpected=("head.dfl.conv.weight",),
                 shape_mismatch=("head.cv3.*.2.*",),
             )
         report = inspect_state_dict_load(

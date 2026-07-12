@@ -674,11 +674,13 @@ def parse_checkpoint_metadata_for_load(
 ) -> tuple[dict[str, Any], bool]:
     """Parse checkpoint metadata without downgrading a malformed v1 wrapper.
 
-    A checkpoint that declares LibreYOLO schema v1 (or carries the
-    LibreYOLO-specific ``libreyolo_version`` marker) is held to the complete
-    v1 contract.  Metadata on older/raw checkpoints remains reader-compatible:
-    it is warned about and sparse class names are padded, but it never makes a
-    legacy checkpoint count as an exact native checkpoint.
+    A checkpoint with an explicit ``schema_version`` is held to the complete v1
+    contract, including rejection of unsupported schema versions.  A pre-schema
+    LibreYOLO checkpoint may carry ``libreyolo_version`` without declaring a
+    schema; that marker alone remains legacy metadata.  Metadata on older/raw
+    checkpoints remains reader-compatible: it is warned about and sparse class
+    names are padded, but it never makes a legacy checkpoint count as an exact
+    native checkpoint.
 
     Returns a normalized copy of the top-level checkpoint and whether it is a
     validated native v1 wrapper.  Tensor dictionaries nested below ``model`` or
@@ -688,10 +690,7 @@ def parse_checkpoint_metadata_for_load(
         raise CheckpointMetadataError(f"{context} must be a dictionary.")
 
     parsed = dict(checkpoint)
-    claims_native_v1 = (
-        checkpoint.get("schema_version") == SCHEMA_VERSION
-        or "libreyolo_version" in checkpoint
-    )
+    claims_native_v1 = "schema_version" in checkpoint
     if claims_native_v1:
         validate_checkpoint_metadata(checkpoint, strict=True)
         parsed["task"] = normalize_task(checkpoint["task"])

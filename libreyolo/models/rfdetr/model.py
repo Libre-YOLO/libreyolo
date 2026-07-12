@@ -1002,8 +1002,17 @@ class LibreRFDETR(BaseModel):
             uses_grouppose = bool(
                 getattr(inner, "use_grouppose_keypoints", False)
             )
-            if policy.allow_partial_missing and not uses_grouppose:
-                # Old detection checkpoints predate this zero-sized buffer.
+            active_mask = getattr(inner, "_kp_active_mask", None)
+            empty_non_pose_mask = bool(
+                not uses_grouppose
+                and isinstance(active_mask, torch.Tensor)
+                and active_mask.numel() == 0
+                and self.task in {"detect", "segment", "obb"}
+            )
+            if empty_non_pose_mask:
+                # Released detect/segment/OBB checkpoints predate this
+                # semantically empty compatibility buffer. Pose masks remain
+                # required because they encode the keypoint schema.
                 allowed_missing.append("_kp_active_mask")
             if detect_pose_transfer:
                 allowed_missing.extend(("*keypoint*", "_kp_active_mask"))

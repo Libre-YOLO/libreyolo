@@ -227,6 +227,76 @@ def test_detection_validator_uses_explicit_coco_json_paths(tmp_path):
 
 
 @pytest.mark.unit
+def test_native_coco_without_yaml_names_derives_dense_dataset_classes(tmp_path):
+    pytest.importorskip("pycocotools")
+    from libreyolo.data.dataset import COCODataset
+    from libreyolo.data.utils import load_data_config
+
+    image_dir = tmp_path / "images" / "train"
+    annotation_dir = tmp_path / "annotations"
+    image_dir.mkdir(parents=True)
+    annotation_dir.mkdir()
+    Image.new("RGB", (32, 32), color="white").save(image_dir / "sample.jpg")
+    annotation_path = annotation_dir / "train.json"
+    annotation_path.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "id": 1,
+                        "file_name": "sample.jpg",
+                        "width": 32,
+                        "height": 32,
+                    }
+                ],
+                "annotations": [
+                    {
+                        "id": 1,
+                        "image_id": 1,
+                        "category_id": 42,
+                        "bbox": [4, 5, 10, 12],
+                        "area": 120,
+                        "iscrowd": 0,
+                    }
+                ],
+                "categories": [
+                    {"id": 42, "name": "vehicle"},
+                    {"id": 7, "name": "pedestrian"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "train": "images/train",
+                "val": "images/train",
+                "annotations": {"train": "annotations/train.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_data_config(str(yaml_path), autodownload=False)
+    dataset = COCODataset(
+        data_dir=config["root"],
+        json_file=config["train_annotation_file"],
+        name=config["train"],
+        img_size=(32, 32),
+        num_classes=config["nc"],
+        names=config["names"],
+    )
+
+    assert config["names"] == {0: "pedestrian", 1: "vehicle"}
+    assert config["nc"] == 2
+    assert dataset.category_id_to_label == {7: 0, 42: 1}
+    assert dataset.annotations[0][0][0, 4] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
 def test_obb_validator_uses_explicit_coco_json_paths(tmp_path):
     pytest.importorskip("pycocotools")
     from libreyolo.data.dataset import COCODataset
@@ -567,6 +637,90 @@ def test_detection_validator_parses_tiny_pixel_xyxy_targets():
     assert boxes.shape == (1, 4)
     assert boxes[0].tolist() == pytest.approx([0.0, 0.0, 1.0, 1.0])
     assert classes.tolist() == [0]
+
+
+@pytest.mark.unit
+def test_detection_validator_parses_unambiguous_normalized_yolo_targets():
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.val_preproc = SimpleNamespace(uses_letterbox=False)
+    validator._actual_imgsz = 640
+    validator.nc = 2
+
+    targets = torch.tensor(
+        [
+            [0.0, 0.2, 0.5, 0.4, 0.4],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    boxes, classes = validator._parse_gt_boxes(
+        targets,
+        orig_h=100,
+        orig_w=200,
+    )
+
+    assert boxes.shape == (1, 4)
+    assert boxes[0].tolist() == pytest.approx([0.0, 30.0, 80.0, 70.0])
+    assert classes.tolist() == [0]
+
+
+@pytest.mark.unit
+def test_detection_validator_explicit_internal_schema_preserves_ambiguous_xyxy():
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.val_preproc = SimpleNamespace(uses_letterbox=False)
+    validator._actual_imgsz = 1
+    validator.nc = 2
+    targets = torch.tensor([[0.0, 0.2, 0.5, 0.4, 1.0]], dtype=torch.float32)
+
+    boxes, classes = validator._parse_gt_boxes(
+        targets,
+        orig_h=1,
+        orig_w=1,
+        target_format="xyxy_cls",
+    )
+
+    assert boxes[0].tolist() == pytest.approx([0.0, 0.2, 0.5, 0.4])
+    assert classes.tolist() == [1]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("target_format", "targets", "message"),
+    [
+        (
+            "xyxy_cls",
+            [[0.0, 0.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 2.0, 0.0]],
+            "degenerate or inverted",
+        ),
+        (
+            "cls_xywh_norm",
+            [[0.0, 0.5, 0.5, 0.2, 0.2], [0.0, 0.5, 0.5, 0.0, 0.2]],
+            "non-positive",
+        ),
+    ],
+)
+def test_detection_validator_rejects_mixed_invalid_active_target_rows(
+    target_format, targets, message
+):
+    from libreyolo.validation.detection_validator import DetectionValidator
+
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.val_preproc = SimpleNamespace(uses_letterbox=False)
+    validator._actual_imgsz = 10
+    validator.nc = 2
+
+    with pytest.raises(ValueError, match=message):
+        validator._parse_gt_boxes(
+            torch.tensor(targets, dtype=torch.float32),
+            orig_h=10,
+            orig_w=10,
+            target_format=target_format,
+        )
 
 
 @pytest.mark.unit

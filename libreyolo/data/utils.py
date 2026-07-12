@@ -11,6 +11,7 @@ Supports YAML configs with:
 - Python download scripts
 """
 
+import json
 import logging
 import os
 import shutil
@@ -231,6 +232,18 @@ def img2label_paths(img_paths: List[Path]) -> List[Path]:
     return label_paths
 
 
+def _can_derive_native_coco_class_space(config: Dict) -> bool:
+    """Return whether COCO category metadata may define the class space."""
+    annotations = config.get("annotations")
+    task = config.get("task")
+    return (
+        isinstance(annotations, dict)
+        and any(bool(value) for value in annotations.values())
+        and task in {None, "detect", "segment", "obb"}
+        and not config.get("panoptic_dir")
+    )
+
+
 def _canonicalize_class_space(config: Dict, yaml_path: Path) -> None:
     """Validate dataset class metadata and store one canonical representation."""
     if "nc" in config:
@@ -244,6 +257,8 @@ def _canonicalize_class_space(config: Dict, yaml_path: Path) -> None:
                 f"got {nc!r}."
             )
 
+    if "names" not in config and _can_derive_native_coco_class_space(config):
+        return
     if "names" not in config:
         raise ValueError(
             f"Dataset config {yaml_path} must define field 'names'. "
@@ -315,6 +330,95 @@ def _canonicalize_class_space(config: Dict, yaml_path: Path) -> None:
 
     config["names"] = {index: canonical_names[index] for index in expected_indices}
     config["nc"] = len(canonical_names)
+
+
+def _derive_native_coco_class_space(config: Dict, yaml_path: Path) -> None:
+    """Derive dense model labels from configured COCO category metadata."""
+    if "names" in config or not _can_derive_native_coco_class_space(config):
+        return
+
+    category_names: Dict[int, str] = {}
+    annotation_files = []
+    for split in ("train", "val", "test"):
+        value = config.get(f"{split}_annotation_file")
+        if value:
+            annotation_files.append(Path(value))
+
+    existing_files = [path for path in annotation_files if path.is_file()]
+    if not existing_files:
+        configured = ", ".join(str(path) for path in annotation_files) or "none"
+        raise FileNotFoundError(
+            f"Dataset config {yaml_path} omits 'names', so class names must be "
+            "derived from an existing native COCO annotation file; configured "
+            f"annotation files: {configured}."
+        )
+
+    for annotation_file in existing_files:
+        try:
+            with open(annotation_file, "r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"Could not read COCO categories from {annotation_file}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("categories"), list
+        ):
+            raise ValueError(
+                f"COCO annotation file {annotation_file} must contain a "
+                "'categories' list when dataset YAML omits 'names'."
+            )
+        for category in payload["categories"]:
+            if not isinstance(category, dict):
+                raise ValueError(
+                    f"COCO annotation file {annotation_file} contains a "
+                    "non-mapping category entry."
+                )
+            category_id = category.get("id")
+            category_name = category.get("name")
+            if (
+                isinstance(category_id, bool)
+                or not isinstance(category_id, int)
+                or not isinstance(category_name, str)
+                or not category_name.strip()
+            ):
+                raise ValueError(
+                    f"COCO annotation file {annotation_file} category entries "
+                    "must have an integer id and non-empty string name."
+                )
+            previous = category_names.get(category_id)
+            if previous is not None and previous != category_name:
+                raise ValueError(
+                    f"COCO category id {category_id} has conflicting names "
+                    f"{previous!r} and {category_name!r} across annotation files."
+                )
+            category_names[category_id] = category_name
+
+    if not category_names:
+        raise ValueError(
+            f"Configured COCO annotation files for {yaml_path} contain no categories."
+        )
+    duplicate_names = sorted(
+        name for name in set(category_names.values())
+        if list(category_names.values()).count(name) > 1
+    )
+    if duplicate_names:
+        raise ValueError(
+            "COCO category names must be unique to derive a dense class mapping; "
+            f"duplicates: {duplicate_names}."
+        )
+
+    ordered_categories = sorted(category_names.items())
+    configured_nc = config.get("nc")
+    if configured_nc is not None and configured_nc != len(ordered_categories):
+        raise ValueError(
+            f"Dataset config {yaml_path} has nc={configured_nc} but COCO "
+            f"annotations define {len(ordered_categories)} categories."
+        )
+    config["names"] = {
+        label: name for label, (_category_id, name) in enumerate(ordered_categories)
+    }
+    config["nc"] = len(ordered_categories)
 
 
 def load_data_config(
@@ -441,6 +545,9 @@ def _load_data_config_impl(
                 pass
 
     _resolve_coco_annotation_paths(config, dataset_path)
+    if validate_class_space:
+        _derive_native_coco_class_space(config, yaml_path)
+        _canonicalize_class_space(config, yaml_path)
 
     # Keep 'root' for backward compatibility
     config["root"] = str(dataset_path)
