@@ -1531,6 +1531,12 @@ class TensorRTExporter(BaseExporter):
                     "verbose": bool(config.verbose),
                 }
             )
+            trace_device = kwargs.get("device")
+            if trace_device is None or str(trace_device).lower() == "auto":
+                # One TensorRT config device governs both ONNX tracing and the
+                # engine build; otherwise a GPU-1 graph could silently be built
+                # under GPU 0's CUDA context.
+                kwargs["device"] = int(config.device)
         return super().__call__(*args, trt_config=trt_config, **kwargs)
 
     def _preflight(self, **kwargs):
@@ -1558,11 +1564,63 @@ class TensorRTExporter(BaseExporter):
         opt_batch=1,
         max_batch=8,
         hardware_compatibility="none",
-        gpu_device=0,
+        gpu_device=None,
         trt_config=None,
         **kwargs,
     ):
         from .tensorrt import export_tensorrt
+
+        dummy_device = torch.device(dummy.device)
+        traced_gpu = None
+        if dummy_device.type == "cuda":
+            traced_gpu = dummy_device.index
+            if traced_gpu is None:
+                traced_gpu = torch.cuda.current_device()
+
+        def normalize_gpu(value):
+            if isinstance(value, bool):
+                raise ValueError(
+                    "TensorRT gpu_device must be a non-negative integer, got "
+                    f"{value!r}."
+                )
+            try:
+                if isinstance(value, str):
+                    if not value.strip().isdigit():
+                        raise ValueError
+                    index = int(value.strip())
+                else:
+                    index = value.__index__()
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "TensorRT gpu_device must be a non-negative integer, got "
+                    f"{value!r}."
+                ) from exc
+            if index < 0:
+                raise ValueError(
+                    f"TensorRT gpu_device must be non-negative, got {index}."
+                )
+            return index
+
+        configured_gpu = None
+        if trt_config is not None:
+            from .config import load_export_config
+
+            configured_gpu = int(load_export_config(trt_config).device)
+            if gpu_device is not None and normalize_gpu(gpu_device) != configured_gpu:
+                raise ValueError(
+                    "TensorRT config and gpu_device must select the same build "
+                    f"device, got cuda:{configured_gpu} and cuda:{gpu_device}."
+                )
+        requested_gpu = configured_gpu if configured_gpu is not None else gpu_device
+        if requested_gpu is None:
+            requested_gpu = traced_gpu if traced_gpu is not None else 0
+        requested_gpu = normalize_gpu(requested_gpu)
+        if traced_gpu is not None and requested_gpu != traced_gpu:
+            raise ValueError(
+                "TensorRT trace and build devices must match: the ONNX graph was "
+                f"traced on cuda:{traced_gpu}, but the engine requested "
+                f"cuda:{requested_gpu}."
+            )
 
         trt_metadata = dict(metadata or {})
         if dynamic:
@@ -1588,7 +1646,7 @@ class TensorRTExporter(BaseExporter):
             opt_batch=opt_batch,
             max_batch=max_batch,
             hardware_compatibility=hardware_compatibility,
-            device=gpu_device,
+            device=requested_gpu,
             config=trt_config,
             metadata=trt_metadata,
             input_shape=tuple(int(dim) for dim in dummy.shape),

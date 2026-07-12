@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +14,7 @@ from libreyolo.backends.onnx import (
     OnnxBackend,
     _load_validated_onnx_metadata,
     _resolve_onnx_providers,
+    _stage_validated_onnx_artifact,
 )
 from libreyolo.backends.torchscript import TorchScriptBackend
 from libreyolo.validation.base import BaseValidator, validation_model_state
@@ -108,6 +111,28 @@ def _write_external_onnx(path, location, *, offset=None, length=None):
     onnx.save_model(onnx.helper.make_model(graph), path)
 
 
+def _write_shared_external_onnx(path, location, slices):
+    onnx = pytest.importorskip("onnx")
+    tensors = []
+    for index, (offset, length) in enumerate(slices):
+        tensor = onnx.TensorProto()
+        tensor.name = f"weight-{index}"
+        tensor.data_type = onnx.TensorProto.FLOAT
+        tensor.dims.append(1)
+        tensor.data_location = onnx.TensorProto.EXTERNAL
+        for key, value in (
+            ("location", location),
+            ("offset", offset),
+            ("length", length),
+        ):
+            entry = tensor.external_data.add()
+            entry.key = key
+            entry.value = str(value)
+        tensors.append(tensor)
+    graph = onnx.helper.make_graph([], "shared-external", [], [], initializer=tensors)
+    onnx.save_model(onnx.helper.make_model(graph), path)
+
+
 def test_onnx_external_data_is_confined_and_bounds_checked(tmp_path):
     model_path = tmp_path / "model.onnx"
     external_path = tmp_path / "weights.bin"
@@ -124,6 +149,16 @@ def test_onnx_external_data_rejects_parent_escape(tmp_path, location):
     (tmp_path / "outside.bin").write_bytes(b"outside")
     model_path = model_dir / "model.onnx"
     _write_external_onnx(model_path, location)
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_missing_parent_escape_before_open(tmp_path):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, "../missing-outside.bin")
 
     with pytest.raises(ValueError, match="escapes the model directory"):
         _load_validated_onnx_metadata(str(model_path))
@@ -170,6 +205,115 @@ def test_onnx_external_data_rejects_missing_or_out_of_bounds_file(tmp_path):
         _load_validated_onnx_metadata(str(bounds_model))
 
 
+def test_onnx_external_data_rejects_open_path_identity_race(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.onnx"
+    expected = tmp_path / "weights.bin"
+    outside = tmp_path / "outside.bin"
+    expected.write_bytes(b"safe")
+    outside.write_bytes(b"outside")
+    _write_external_onnx(model_path, "weights.bin", length=4)
+
+    original_open = os.open
+
+    def raced_open(path, *args, **kwargs):
+        if Path(path) == expected:
+            return original_open(outside, *args, **kwargs)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("libreyolo.backends.onnx.os.open", raced_open)
+    with pytest.raises(RuntimeError, match="changed while it was being validated"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_runtime_uses_private_validated_snapshot(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+
+    with _stage_validated_onnx_artifact(str(model_path)) as (staged, metadata):
+        assert staged != model_path
+        assert staged.is_file()
+        assert metadata == {}
+        loaded = onnx.load(str(staged), load_external_data=True)
+        assert loaded.graph.initializer[0].raw_data == b"2345"
+
+
+def test_onnx_shared_external_data_uses_one_captured_snapshot(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"AAAA")
+    _write_shared_external_onnx(
+        model_path,
+        "weights.bin",
+        [(0, 4), (4, 4)],
+    )
+    real_open = os.open
+    external_opens = 0
+
+    def counted_open(path, *args, **kwargs):
+        nonlocal external_opens
+        if Path(path) == external_path:
+            external_opens += 1
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("libreyolo.backends.onnx.os.open", counted_open)
+    with pytest.raises(ValueError, match="references bytes outside"):
+        with _stage_validated_onnx_artifact(str(model_path)):
+            pass
+
+    assert external_opens == 1
+
+
+def test_onnx_backend_opens_runtime_session_from_private_snapshot(
+    tmp_path, monkeypatch
+):
+    onnx = pytest.importorskip("onnx")
+    model_path = tmp_path / "model.onnx"
+    (tmp_path / "weights.bin").write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+    captured = {}
+
+    class _Session:
+        def __init__(self, path, providers):
+            staged = Path(path)
+            captured["path"] = staged
+            captured["providers"] = providers
+            captured["raw_data"] = (
+                onnx.load(str(staged), load_external_data=True)
+                .graph.initializer[0]
+                .raw_data
+            )
+
+        def get_inputs(self):
+            return [
+                SimpleNamespace(name="images", type="tensor(float)", shape=[1, 3, 8, 8])
+            ]
+
+        def get_outputs(self):
+            return [SimpleNamespace(name="scores")]
+
+        def get_modelmeta(self):
+            return SimpleNamespace(custom_metadata_map={})
+
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(
+            get_available_providers=lambda: ["CPUExecutionProvider"],
+            InferenceSession=_Session,
+        ),
+    )
+
+    OnnxBackend(str(model_path), device="cpu")
+
+    assert captured["path"] != model_path
+    assert captured["path"].parent.name.startswith("libreyolo-onnx-runtime-")
+    assert captured["providers"] == ["CPUExecutionProvider"]
+    assert captured["raw_data"] == b"2345"
+
+
 def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
     monkeypatch, tmp_path
 ):
@@ -208,14 +352,16 @@ def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
         get_available_providers=lambda: ["CPUExecutionProvider"],
         InferenceSession=lambda path, providers: _Session(),
     )
+    fake_model = SimpleNamespace(
+        ListFields=lambda: [],
+        metadata_props=[
+            SimpleNamespace(key=key, value=value) for key, value in metadata.items()
+        ],
+        SerializeToString=lambda: b"staged-placeholder",
+    )
     fake_onnx = SimpleNamespace(
         TensorProto=SimpleNamespace(EXTERNAL=1),
-        load=lambda path, load_external_data=False: SimpleNamespace(
-            ListFields=lambda: [],
-            metadata_props=[
-                SimpleNamespace(key=key, value=value) for key, value in metadata.items()
-            ],
-        ),
+        load_model_from_string=lambda payload: fake_model,
     )
     monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
     monkeypatch.setitem(sys.modules, "onnx", fake_onnx)

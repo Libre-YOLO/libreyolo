@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +14,8 @@ import torch
 
 from libreyolo.backends.base import BaseBackend
 from libreyolo.backends.tensorrt import TensorRTBackend, _resolve_tensorrt_device
+from libreyolo.export.config import TensorRTExportConfig
+from libreyolo.export.exporter import BaseExporter, TensorRTExporter
 from libreyolo.export.tensorrt import (
     _calibration_cache_path,
     _create_calibrator_class,
@@ -21,6 +25,7 @@ from libreyolo.export.tensorrt import (
     _select_tensorrt_device,
     _validate_batch_profile,
     _validate_dynamic_calibration_contract,
+    _validate_static_calibration_contract,
     export_tensorrt,
 )
 
@@ -88,6 +93,74 @@ def test_tensorrt_export_rejects_non_integer_devices(device):
         _select_tensorrt_device(device)
 
 
+def test_tensorrt_unified_export_builds_on_traced_cuda_device(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_export_tensorrt(**kwargs):
+        captured.update(kwargs)
+        return kwargs["output_path"]
+
+    monkeypatch.setattr(
+        "libreyolo.export.tensorrt.export_tensorrt", fake_export_tensorrt
+    )
+    dummy = SimpleNamespace(device=torch.device("cuda:1"), shape=(1, 3, 32, 32))
+    exporter = TensorRTExporter(SimpleNamespace())
+
+    exporter._export(
+        None,
+        dummy,
+        output_path=str(tmp_path / "model.engine"),
+        precision="fp16",
+        metadata={},
+        calibration_data=None,
+        onnx_path=str(tmp_path / "model.onnx"),
+        half=True,
+        int8=False,
+        dynamic=False,
+        verbose=False,
+    )
+
+    assert captured["device"] == 1
+
+
+def test_tensorrt_unified_export_rejects_trace_build_device_mismatch(tmp_path):
+    dummy = SimpleNamespace(device=torch.device("cuda:1"), shape=(1, 3, 32, 32))
+    exporter = TensorRTExporter(SimpleNamespace())
+
+    with pytest.raises(ValueError, match="trace and build devices must match"):
+        exporter._export(
+            None,
+            dummy,
+            output_path=str(tmp_path / "model.engine"),
+            precision="fp16",
+            metadata={},
+            calibration_data=None,
+            onnx_path=str(tmp_path / "model.onnx"),
+            half=True,
+            int8=False,
+            dynamic=False,
+            verbose=False,
+            gpu_device=0,
+        )
+
+
+def test_tensorrt_config_device_is_used_for_auto_trace(monkeypatch):
+    captured = {}
+
+    def fake_base_call(self, *args, **kwargs):
+        captured.update(kwargs)
+        return "model.engine"
+
+    monkeypatch.setattr(BaseExporter, "__call__", fake_base_call)
+    exporter = TensorRTExporter(SimpleNamespace())
+
+    assert (
+        exporter(trt_config=TensorRTExportConfig(device=2), device="auto")
+        == "model.engine"
+    )
+    assert captured["device"] == 2
+
+
 def test_tensorrt_artifact_publication_is_atomic_and_returns_requested_path(tmp_path):
     output = tmp_path / "model.engine"
 
@@ -115,6 +188,107 @@ def test_tensorrt_artifact_staging_failure_preserves_existing_files(tmp_path):
     assert output.read_bytes() == b"old-engine"
     assert sidecar.read_text() == '{"old": true}'
     assert not list(tmp_path.glob("libreyolo-tensorrt-publish-*"))
+
+
+def test_tensorrt_metadata_free_publication_removes_stale_sidecar(tmp_path):
+    output = tmp_path / "model.engine"
+    sidecar = Path(f"{output}.json")
+    output.write_bytes(b"old-engine")
+    sidecar.write_text('{"stale": true}')
+
+    _publish_tensorrt_artifacts(b"new-engine", output, None)
+
+    assert output.read_bytes() == b"new-engine"
+    assert not sidecar.exists()
+    assert not list(tmp_path.glob(".*.bak"))
+
+
+def test_tensorrt_stale_sidecar_removal_failure_rolls_back_engine(
+    monkeypatch, tmp_path
+):
+    output = tmp_path / "model.engine"
+    sidecar = Path(f"{output}.json")
+    output.write_bytes(b"old-engine")
+    sidecar.write_text('{"old": true}')
+    real_unlink = Path.unlink
+    failed = False
+
+    def fail_sidecar_once(path, *args, **kwargs):
+        nonlocal failed
+        if path == sidecar and not failed:
+            failed = True
+            raise OSError("synthetic sidecar removal failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_sidecar_once)
+
+    with pytest.raises(OSError, match="synthetic sidecar removal failure"):
+        _publish_tensorrt_artifacts(b"new-engine", output, None)
+
+    assert output.read_bytes() == b"old-engine"
+    assert sidecar.read_text() == '{"old": true}'
+    assert not list(tmp_path.glob(".*.bak"))
+
+
+def test_tensorrt_backup_failure_cleans_prior_and_partial_backups(
+    monkeypatch, tmp_path
+):
+    output = tmp_path / "model.engine"
+    sidecar = Path(f"{output}.json")
+    output.write_bytes(b"old-engine")
+    sidecar.write_text('{"old": true}')
+    real_link = os.link
+
+    def fail_sidecar_link(source, destination):
+        if Path(source) == sidecar:
+            raise OSError("links unavailable")
+        return real_link(source, destination)
+
+    def fail_sidecar_copy(source, destination):
+        Path(destination).write_bytes(b"partial-backup")
+        raise PermissionError("backup denied")
+
+    monkeypatch.setattr(os, "link", fail_sidecar_link)
+    monkeypatch.setattr("libreyolo.export.tensorrt.shutil.copy2", fail_sidecar_copy)
+
+    with pytest.raises(PermissionError, match="backup denied"):
+        _publish_tensorrt_artifacts(b"new-engine", output, {"new": True})
+
+    assert output.read_bytes() == b"old-engine"
+    assert sidecar.read_text() == '{"old": true}'
+    assert not list(tmp_path.glob(".*.bak"))
+    assert not list(tmp_path.glob("libreyolo-tensorrt-publish-*"))
+
+
+def test_tensorrt_backup_copy_preserves_restrictive_source_mode(monkeypatch, tmp_path):
+    output = tmp_path / "model.engine"
+    output.write_bytes(b"old-engine")
+    output.chmod(0o600)
+    original_mode = stat.S_IMODE(output.stat().st_mode)
+    real_copy2 = shutil.copy2
+    copied_modes = []
+
+    def no_hardlinks(source, destination):
+        raise OSError("hardlinks unavailable")
+
+    def checked_copy2(source, destination):
+        result = real_copy2(source, destination)
+        copied_modes.append(
+            (
+                stat.S_IMODE(Path(source).stat().st_mode),
+                stat.S_IMODE(Path(destination).stat().st_mode),
+            )
+        )
+        return result
+
+    monkeypatch.setattr(os, "link", no_hardlinks)
+    monkeypatch.setattr("libreyolo.export.tensorrt.shutil.copy2", checked_copy2)
+
+    _publish_tensorrt_artifacts(b"new-engine", output, None)
+
+    assert copied_modes
+    assert all(source_mode == backup_mode for source_mode, backup_mode in copied_modes)
+    assert stat.S_IMODE(output.stat().st_mode) == original_mode
 
 
 def test_tensorrt_artifact_promotion_failure_rolls_back(monkeypatch, tmp_path):
@@ -207,6 +381,95 @@ def test_tensorrt_calibrator_creates_nested_cache_parent(monkeypatch, tmp_path):
     assert cache_path.read_bytes() == b"cache"
 
 
+def test_tensorrt_calibrator_cuda_bindings_reselects_requested_device(monkeypatch):
+    fake_trt = SimpleNamespace(IInt8EntropyCalibrator2=object)
+    events = []
+    success = 0
+    cudart = SimpleNamespace(
+        cudaError_t=SimpleNamespace(cudaSuccess=success),
+        cudaMemcpyKind=SimpleNamespace(cudaMemcpyHostToDevice=1),
+        cudaSetDevice=lambda index: events.append(("device", index)) or (success,),
+        cudaMalloc=lambda size: events.append(("malloc", size)) or (success, 123),
+        cudaMemcpy=lambda pointer, source, size, kind: (
+            events.append(("copy", pointer, size, kind)) or (success,)
+        ),
+        cudaFree=lambda pointer: events.append(("free", pointer)) or (success,),
+    )
+    cuda_package = ModuleType("cuda")
+    cuda_package.__path__ = []
+    bindings_package = ModuleType("cuda.bindings")
+    bindings_package.__path__ = []
+    bindings_package.runtime = cudart
+    monkeypatch.setitem(sys.modules, "tensorrt", fake_trt)
+    monkeypatch.setitem(sys.modules, "cuda", cuda_package)
+    monkeypatch.setitem(sys.modules, "cuda.bindings", bindings_package)
+    monkeypatch.setitem(sys.modules, "cuda.bindings.runtime", cudart)
+    loader = SimpleNamespace(batch=1)
+    calibrator = _create_calibrator_class()(loader, device_index=2)
+
+    assert calibrator._ensure_cuda_memory(np.zeros((1, 3, 2, 2))) == 123
+    calibrator._release_cuda_memory()
+
+    assert events[0] == ("device", 2)
+    assert events[1][0] == "malloc"
+    assert events[2][0] == "copy"
+    assert events[-2:] == [("device", 2), ("free", 123)]
+
+
+def test_tensorrt_calibrator_pycuda_uses_requested_primary_context(monkeypatch):
+    fake_trt = SimpleNamespace(IInt8EntropyCalibrator2=object)
+    events = []
+
+    class _Allocation:
+        def __int__(self):
+            return 456
+
+        def free(self):
+            events.append("free")
+
+    class _Context:
+        def push(self):
+            events.append("push")
+
+        def pop(self):
+            events.append("pop")
+
+    context = _Context()
+
+    class _Device:
+        def __init__(self, index):
+            events.append(("device", index))
+
+        def retain_primary_context(self):
+            events.append("retain")
+            return context
+
+    driver = ModuleType("pycuda.driver")
+    driver.init = lambda: events.append("init")
+    driver.Device = _Device
+    driver.mem_alloc = lambda size: events.append(("alloc", size)) or _Allocation()
+    driver.memcpy_htod = lambda allocation, batch: events.append(("copy", batch.nbytes))
+    cuda_package = ModuleType("cuda")
+    cuda_package.__path__ = []
+    pycuda_package = ModuleType("pycuda")
+    pycuda_package.__path__ = []
+    pycuda_package.driver = driver
+    monkeypatch.setitem(sys.modules, "tensorrt", fake_trt)
+    monkeypatch.setitem(sys.modules, "cuda", cuda_package)
+    monkeypatch.setitem(sys.modules, "pycuda", pycuda_package)
+    monkeypatch.setitem(sys.modules, "pycuda.driver", driver)
+    monkeypatch.delitem(sys.modules, "pycuda.autoinit", raising=False)
+    loader = SimpleNamespace(batch=1)
+    calibrator = _create_calibrator_class()(loader, device_index=3)
+
+    assert calibrator._ensure_cuda_memory(np.zeros((1, 3, 2, 2))) == 456
+    calibrator._release_cuda_memory()
+
+    assert events[:4] == ["init", ("device", 3), "retain", "push"]
+    assert events[-3:] == ["push", "free", "pop"]
+    assert "pycuda.autoinit" not in sys.modules
+
+
 @pytest.mark.parametrize(
     "bounds",
     [
@@ -277,6 +540,54 @@ def test_dynamic_int8_calibration_rejects_profile_mismatch(loader, opt_batch, ma
             dynamic=True,
             opt_batch=opt_batch,
             traced_shape=(1, 3, 320, 640),
+        )
+
+
+def test_static_int8_calibration_accepts_matching_trace_and_network_shape():
+    loader = SimpleNamespace(batch=4, shape=(4, 3, 320, 640))
+
+    _validate_static_calibration_contract(
+        loader,
+        int8=True,
+        dynamic=False,
+        traced_shape=(4, 3, 320, 640),
+        network_shape=(-1, 3, 320, 640),
+    )
+
+
+@pytest.mark.parametrize(
+    ("loader", "traced_shape", "network_shape", "match"),
+    [
+        (
+            SimpleNamespace(batch=2, shape=(1, 3, 320, 640)),
+            None,
+            (1, 3, 320, 640),
+            "first axis equals",
+        ),
+        (
+            SimpleNamespace(batch=1, shape=(1, 3, 224, 224)),
+            (1, 3, 320, 640),
+            None,
+            "match the traced",
+        ),
+        (
+            SimpleNamespace(batch=1, shape=(1, 3, 320, 640)),
+            None,
+            (1, 3, 640, 640),
+            "parsed network input",
+        ),
+    ],
+)
+def test_static_int8_calibration_rejects_loader_contract_mismatch(
+    loader, traced_shape, network_shape, match
+):
+    with pytest.raises(ValueError, match=match):
+        _validate_static_calibration_contract(
+            loader,
+            int8=True,
+            dynamic=False,
+            traced_shape=traced_shape,
+            network_shape=network_shape,
         )
 
 

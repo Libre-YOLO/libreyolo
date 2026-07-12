@@ -1,7 +1,12 @@
 """ONNX runtime inference backend for LibreYOLO."""
 
+import os
+import shutil
+import stat
 import logging
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -82,8 +87,28 @@ def _parse_external_data_integer(
     return parsed
 
 
-def _load_validated_onnx_metadata(onnx_path: str) -> dict:
-    """Parse metadata and confine every external tensor to the model directory."""
+def _validate_external_data_bounds(
+    *,
+    tensor_name: str,
+    source_name: str,
+    file_size: int,
+    offset: int,
+    length: int,
+) -> None:
+    """Reject external tensor slices that exceed their captured source."""
+    if offset > file_size or (length and length > file_size - offset):
+        raise ValueError(
+            f"ONNX external tensor {tensor_name!r} references bytes outside "
+            f"{source_name!r} (offset={offset}, length={length}, size={file_size})."
+        )
+
+
+def _load_validated_onnx_artifact(
+    onnx_path: str,
+    *,
+    stage_dir: Path | None = None,
+) -> tuple[Path | None, dict]:
+    """Validate one ONNX snapshot and optionally stage it for atomic loading."""
     try:
         import onnx
     except ImportError as exc:
@@ -92,15 +117,44 @@ def _load_validated_onnx_metadata(onnx_path: str) -> dict:
             "onnxruntime. Install with: pip install 'libreyolo[onnx]'"
         ) from exc
 
-    artifact = Path(onnx_path)
-    if not artifact.is_file():
-        raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
+    artifact_path = Path(os.path.abspath(onnx_path))
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        model_proto = onnx.load(str(artifact), load_external_data=False)
+        model_fd = os.open(artifact_path, open_flags)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"ONNX model not found: {onnx_path}") from exc
+    except OSError as exc:
+        raise OSError(f"Failed to open ONNX model {onnx_path}: {exc}") from exc
+
+    try:
+        with os.fdopen(model_fd, "rb") as model_file:
+            opened_model_stat = os.fstat(model_file.fileno())
+            if not stat.S_ISREG(opened_model_stat.st_mode):
+                raise ValueError(f"ONNX model is not a regular file: {onnx_path}")
+            try:
+                artifact = artifact_path.resolve(strict=True)
+                resolved_model_stat = artifact.stat()
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"ONNX model {onnx_path} changed while it was being validated."
+                ) from exc
+            if not os.path.samestat(opened_model_stat, resolved_model_stat):
+                raise RuntimeError(
+                    f"ONNX model {onnx_path} changed while it was being validated."
+                )
+            model_bytes = model_file.read()
+    except (RuntimeError, ValueError):
+        raise
+    except Exception as exc:
+        raise ValueError(f"Failed to read ONNX model {onnx_path}: {exc}") from exc
+
+    try:
+        model_proto = onnx.load_model_from_string(model_bytes)
     except Exception as exc:
         raise ValueError(f"Failed to parse ONNX model {onnx_path}: {exc}") from exc
 
     base_dir = artifact.parent.resolve()
+    source_snapshots: dict[Path, tuple[PurePosixPath | None, int, str]] = {}
     for tensor in _iter_onnx_tensors(model_proto):
         if not tensor.HasField("data_location") or (
             tensor.data_location != onnx.TensorProto.EXTERNAL
@@ -109,6 +163,7 @@ def _load_validated_onnx_metadata(onnx_path: str) -> dict:
 
         tensor_name = tensor.name or "<unnamed>"
         entries = {}
+        entry_messages = {}
         for entry in tensor.external_data:
             if entry.key in entries:
                 raise ValueError(
@@ -116,6 +171,7 @@ def _load_validated_onnx_metadata(onnx_path: str) -> dict:
                     f"external_data key {entry.key!r}."
                 )
             entries[entry.key] = entry.value
+            entry_messages[entry.key] = entry
 
         location = entries.get("location")
         if not location or "\x00" in location:
@@ -130,32 +186,132 @@ def _load_validated_onnx_metadata(onnx_path: str) -> dict:
                 f"{location!r}."
             )
 
-        candidate = (base_dir / Path(*normalized_path.parts)).resolve()
+        candidate = Path(os.path.abspath(base_dir / Path(*normalized_path.parts)))
         if not candidate.is_relative_to(base_dir):
             raise ValueError(
                 f"ONNX external tensor {tensor_name!r} escapes the model directory: "
                 f"{location!r}."
             )
-        if not candidate.is_file():
-            raise FileNotFoundError(
-                f"ONNX external tensor data not found for {tensor_name!r}: {candidate}"
-            )
-
         offset = _parse_external_data_integer(
             entries.get("offset"), key="offset", tensor_name=tensor_name
         )
         length = _parse_external_data_integer(
             entries.get("length"), key="length", tensor_name=tensor_name
         )
-        file_size = candidate.stat().st_size
-        if offset > file_size or (length and length > file_size - offset):
-            raise ValueError(
-                f"ONNX external tensor {tensor_name!r} references bytes outside "
-                f"{candidate.name!r} (offset={offset}, length={length}, "
-                f"size={file_size})."
+        captured = source_snapshots.get(candidate)
+        if captured is not None:
+            staged_relative, file_size, source_name = captured
+            _validate_external_data_bounds(
+                tensor_name=tensor_name,
+                source_name=source_name,
+                file_size=file_size,
+                offset=offset,
+                length=length,
+            )
+            if stage_dir is not None:
+                assert staged_relative is not None
+                entry_messages["location"].value = staged_relative.as_posix()
+            continue
+
+        try:
+            source_fd = os.open(candidate, open_flags)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"ONNX external tensor data not found for {tensor_name!r}: {candidate}"
+            ) from exc
+        except OSError as exc:
+            raise OSError(
+                f"Failed to open ONNX external tensor data for {tensor_name!r}: "
+                f"{candidate}: {exc}"
+            ) from exc
+
+        with os.fdopen(source_fd, "rb") as source:
+            opened_stat = os.fstat(source.fileno())
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise ValueError(
+                    f"ONNX external tensor data for {tensor_name!r} is not a "
+                    f"regular file: {candidate}."
+                )
+            try:
+                resolved_candidate = candidate.resolve(strict=True)
+                resolved_stat = resolved_candidate.stat()
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"ONNX external tensor {tensor_name!r} changed while it was "
+                    "being validated."
+                ) from exc
+            if not resolved_candidate.is_relative_to(base_dir):
+                raise ValueError(
+                    f"ONNX external tensor {tensor_name!r} escapes the model "
+                    f"directory: {location!r}."
+                )
+            if not os.path.samestat(opened_stat, resolved_stat):
+                raise RuntimeError(
+                    f"ONNX external tensor {tensor_name!r} changed while it was "
+                    "being validated."
+                )
+
+            file_size = opened_stat.st_size
+            _validate_external_data_bounds(
+                tensor_name=tensor_name,
+                source_name=resolved_candidate.name,
+                file_size=file_size,
+                offset=offset,
+                length=length,
             )
 
-    return {entry.key: entry.value for entry in model_proto.metadata_props}
+            staged_relative = None
+            if stage_dir is not None:
+                staged_relative = PurePosixPath(
+                    "_libreyolo_external",
+                    f"tensor-data-{len(source_snapshots)}.bin",
+                )
+                staged_path = stage_dir / Path(*staged_relative.parts)
+                staged_path.parent.mkdir(parents=True, exist_ok=True)
+                source.seek(0)
+                with staged_path.open("xb") as staged_file:
+                    shutil.copyfileobj(source, staged_file)
+                if staged_path.stat().st_size != file_size:
+                    raise RuntimeError(
+                        f"ONNX external tensor {tensor_name!r} changed while its "
+                        "validated snapshot was being copied."
+                    )
+                entry_messages["location"].value = staged_relative.as_posix()
+            source_snapshots[candidate] = (
+                staged_relative,
+                file_size,
+                resolved_candidate.name,
+            )
+
+    metadata = {entry.key: entry.value for entry in model_proto.metadata_props}
+    if stage_dir is None:
+        return None, metadata
+
+    staged_model = stage_dir / artifact.name
+    try:
+        with staged_model.open("xb") as staged_file:
+            staged_file.write(model_proto.SerializeToString())
+    except Exception as exc:
+        raise ValueError(f"Failed to stage ONNX model {onnx_path}: {exc}") from exc
+    return staged_model, metadata
+
+
+def _load_validated_onnx_metadata(onnx_path: str) -> dict:
+    """Parse metadata and confine every external tensor to the model directory."""
+    _, metadata = _load_validated_onnx_artifact(onnx_path)
+    return metadata
+
+
+@contextmanager
+def _stage_validated_onnx_artifact(onnx_path: str):
+    """Yield an immutable private ONNX snapshot for runtime session creation."""
+    with TemporaryDirectory(prefix="libreyolo-onnx-runtime-") as workspace_name:
+        staged_path, metadata = _load_validated_onnx_artifact(
+            onnx_path,
+            stage_dir=Path(workspace_name),
+        )
+        assert staged_path is not None
+        yield staged_path, metadata
 
 
 def _resolve_onnx_providers(device, available_providers) -> tuple[list, str]:
@@ -233,14 +389,18 @@ class OnnxBackend(BaseBackend):
                 "Install with: pip install onnxruntime"
             ) from e
 
-        validated_metadata = _load_validated_onnx_metadata(onnx_path)
-
         providers, resolved_device = _resolve_onnx_providers(
             device,
             ort.get_available_providers(),
         )
 
-        self.session = ort.InferenceSession(onnx_path, providers=providers)
+        with _stage_validated_onnx_artifact(onnx_path) as (
+            staged_onnx_path,
+            validated_metadata,
+        ):
+            self.session = ort.InferenceSession(
+                str(staged_onnx_path), providers=providers
+            )
         input_info = self.session.get_inputs()[0]
         self.input_name = input_info.name
         self.input_dtype = self._numpy_dtype_for_onnx_type(input_info.type)

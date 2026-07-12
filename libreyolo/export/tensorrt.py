@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import uuid
 import warnings
 from pathlib import Path
@@ -52,12 +53,21 @@ def _create_calibrator_class():
         class _TensorRTCalibratorImpl(trt.IInt8EntropyCalibrator2):
             """INT8 entropy calibrator for TensorRT engine builds."""
 
-            def __init__(self, data_loader, cache_file="calibration.cache"):
+            def __init__(
+                self,
+                data_loader,
+                cache_file="calibration.cache",
+                *,
+                device_index=0,
+            ):
                 super().__init__()
                 self.data_loader = data_loader
                 self.cache_file = Path(cache_file) if cache_file else None
                 self.batch_iter = None
                 self._device_input = None
+                self._allocation_backend = None
+                self._pycuda_context = None
+                self._device_index = int(device_index)
                 self._batch_size = data_loader.batch
                 self._batch_idx = 0
 
@@ -85,10 +95,14 @@ def _create_calibrator_class():
                 try:
                     from cuda.bindings import runtime as cudart
 
+                    (err,) = cudart.cudaSetDevice(self._device_index)
+                    if err != cudart.cudaError_t.cudaSuccess:
+                        raise RuntimeError(f"cudaSetDevice failed: {err}")
                     if self._device_input is None:
                         err, self._device_input = cudart.cudaMalloc(batch.nbytes)
                         if err != cudart.cudaError_t.cudaSuccess:
                             raise RuntimeError(f"cudaMalloc failed: {err}")
+                        self._allocation_backend = "cuda-bindings"
                     (err,) = cudart.cudaMemcpy(
                         self._device_input,
                         batch.ctypes.data,
@@ -104,13 +118,22 @@ def _create_calibrator_class():
                 # Fall back to pycuda
                 try:
                     import pycuda.driver as cuda
-                    import pycuda.autoinit  # noqa: F401
 
-                    if self._device_input is None:
-                        self._device_input = cuda.mem_alloc(batch.nbytes)
+                    if self._pycuda_context is None:
+                        cuda.init()
+                        self._pycuda_context = cuda.Device(
+                            self._device_index
+                        ).retain_primary_context()
+                    self._pycuda_context.push()
+                    try:
+                        if self._device_input is None:
+                            self._device_input = cuda.mem_alloc(batch.nbytes)
+                            self._allocation_backend = "pycuda"
 
-                    cuda.memcpy_htod(self._device_input, batch)
-                    return int(self._device_input)
+                        cuda.memcpy_htod(self._device_input, batch)
+                        return int(self._device_input)
+                    finally:
+                        self._pycuda_context.pop()
                 except ImportError:
                     raise ImportError(
                         "INT8 calibration requires cuda-python or pycuda.\n"
@@ -118,14 +141,41 @@ def _create_calibrator_class():
                         "Or: pip install pycuda (requires python3-dev)"
                     )
 
-            def __del__(self):
-                if self._device_input is not None:
-                    try:
+            def _release_cuda_memory(self):
+                try:
+                    if (
+                        self._device_input is not None
+                        and self._allocation_backend == "cuda-bindings"
+                    ):
                         from cuda.bindings import runtime as cudart
 
-                        cudart.cudaFree(self._device_input)
-                    except (ImportError, Exception):
-                        pass  # pycuda frees via its own DeviceAllocation.__del__
+                        (err,) = cudart.cudaSetDevice(self._device_index)
+                        if err == cudart.cudaError_t.cudaSuccess:
+                            cudart.cudaFree(self._device_input)
+                    elif (
+                        self._device_input is not None
+                        and self._allocation_backend == "pycuda"
+                        and self._pycuda_context is not None
+                    ):
+                        self._pycuda_context.push()
+                        try:
+                            self._device_input.free()
+                        finally:
+                            self._pycuda_context.pop()
+                except Exception:
+                    pass
+                finally:
+                    self._device_input = None
+                    self._allocation_backend = None
+                    if self._pycuda_context is not None:
+                        try:
+                            self._pycuda_context.detach()
+                        except Exception:
+                            pass
+                        self._pycuda_context = None
+
+            def __del__(self):
+                self._release_cuda_memory()
 
             def read_calibration_cache(self):
                 if self.cache_file is not None and self.cache_file.exists():
@@ -222,7 +272,7 @@ def _publish_tensorrt_artifacts(
         prefix="libreyolo-tensorrt-publish-", dir=output.parent
     ) as workspace_name:
         workspace = Path(workspace_name)
-        staged = {output: workspace / output.name}
+        staged: dict[Path, Path | None] = {output: workspace / output.name}
         with open(staged[output], "xb") as file:
             file.write(serialized_engine)
             file.flush()
@@ -235,26 +285,51 @@ def _publish_tensorrt_artifacts(
                 file.write("\n")
                 file.flush()
                 os.fsync(file.fileno())
+        else:
+            # A metadata-free rebuild must not leave metadata from an older
+            # engine describing the newly-published artifact.
+            staged[sidecar] = None
 
         backups: dict[Path, Path | None] = {}
-        for target in staged:
-            if not target.exists():
-                backups[target] = None
-                continue
-            backup = output.parent / (
-                f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.bak"
-            )
-            try:
-                os.link(target, backup)
-            except OSError:
-                shutil.copyfile(target, backup)
-            backups[target] = backup
+        target_modes: dict[Path, int] = {}
+        pending_backup: Path | None = None
+        try:
+            for target in staged:
+                if not target.exists():
+                    backups[target] = None
+                    continue
+                target_modes[target] = stat.S_IMODE(target.stat().st_mode)
+                pending_backup = output.parent / (
+                    f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.bak"
+                )
+                try:
+                    os.link(target, pending_backup)
+                except OSError:
+                    # Keep restrictive source modes on a backup that may need
+                    # to survive an incomplete rollback.
+                    shutil.copy2(target, pending_backup)
+                backups[target] = pending_backup
+                pending_backup = None
+        except BaseException:
+            if pending_backup is not None:
+                pending_backup.unlink(missing_ok=True)
+            for backup in backups.values():
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
+            raise
 
         promoted = []
         retained_backups = set()
         try:
             for target, temporary in staged.items():
-                os.replace(temporary, target)
+                if temporary is None:
+                    if not target.exists():
+                        continue
+                    target.unlink()
+                else:
+                    if target in target_modes:
+                        temporary.chmod(target_modes[target])
+                    os.replace(temporary, target)
                 promoted.append(target)
         except BaseException as promotion_error:
             rollback_errors = []
@@ -368,6 +443,62 @@ def _validate_dynamic_calibration_contract(
             "Dynamic TensorRT INT8 calibration shape must match the traced input "
             f"CHW dimensions, got {calibration_shape} versus {traced_shape}."
         )
+
+
+def _validate_static_calibration_contract(
+    calibration_data,
+    *,
+    int8: bool,
+    dynamic: bool,
+    traced_shape: tuple[int, ...] | None,
+    network_shape: tuple[int, ...] | None = None,
+) -> None:
+    """Require a static INT8 loader to match its traced and parsed NCHW input."""
+    if not int8 or dynamic:
+        return
+    if calibration_data is None:
+        raise ValueError("INT8 quantization requires calibration data.")
+    try:
+        calibration_shape = tuple(int(dim) for dim in calibration_data.shape)
+        calibration_batch = int(calibration_data.batch)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires a loader with batch and "
+            "NCHW shape metadata."
+        ) from exc
+    if (
+        len(calibration_shape) != 4
+        or any(dim <= 0 for dim in calibration_shape)
+        or calibration_batch <= 0
+        or calibration_shape[0] != calibration_batch
+    ):
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires positive NCHW shape "
+            "metadata whose first axis equals loader.batch, got "
+            f"batch={calibration_batch}, shape={calibration_shape}."
+        )
+
+    if traced_shape is not None and calibration_shape != traced_shape:
+        raise ValueError(
+            "Static TensorRT INT8 calibration shape must match the traced input "
+            f"NCHW shape, got {calibration_shape} versus {traced_shape}."
+        )
+
+    if network_shape is None:
+        return
+    declared = tuple(int(dim) for dim in network_shape)
+    if len(declared) != 4:
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires a rank-4 network input, "
+            f"got shape {declared}."
+        )
+    for axis, (actual, fixed) in enumerate(zip(calibration_shape, declared)):
+        if fixed > 0 and actual != fixed:
+            raise ValueError(
+                "Static TensorRT INT8 calibration shape does not match the parsed "
+                f"network input at axis {axis}: got {calibration_shape}, network "
+                f"declares {declared}."
+            )
 
 
 def _profile_shape(
@@ -546,6 +677,12 @@ def export_tensorrt(
         opt_batch=opt_batch,
         traced_shape=traced_input_shape,
     )
+    _validate_static_calibration_contract(
+        calibration_data,
+        int8=int8,
+        dynamic=dynamic,
+        traced_shape=traced_input_shape,
+    )
 
     if metadata is not None:
         metadata = dict(metadata)
@@ -598,6 +735,19 @@ def export_tensorrt(
         network.num_outputs,
         network.num_layers,
     )
+    if int8:
+        if network.num_inputs != 1:
+            raise ValueError(
+                "TensorRT INT8 calibration currently supports exactly one network "
+                f"input, but the parsed ONNX graph has {network.num_inputs}."
+            )
+        _validate_static_calibration_contract(
+            calibration_data,
+            int8=int8,
+            dynamic=dynamic,
+            traced_shape=traced_input_shape,
+            network_shape=tuple(int(dim) for dim in network.get_input(0).shape),
+        )
 
     builder_config = builder.create_builder_config()
 
@@ -720,6 +870,7 @@ def export_tensorrt(
             calibrator = CalibratorClass(
                 calibration_data,
                 cache_file=str(cache_file) if cache_file is not None else None,
+                device_index=device,
             )
             builder_config.int8_calibrator = calibrator
             logger.info(

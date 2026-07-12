@@ -13,6 +13,7 @@ Family conventions, mapped by the wrapper:
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -299,6 +300,13 @@ def export_coreml(
             "(DETR set-prediction). Export with nms=False and run NMS in your "
             "application."
         )
+
+    # RT-DETR's fixed-shape preparation replaces registered anchor tensors and
+    # creates resolution-specific encoder attributes.  Prepare an isolated
+    # copy so a successful export -- or an exception partway through setup --
+    # cannot mutate the caller's live module tree.
+    if family == "rtdetr":
+        nn_model = copy.deepcopy(nn_model)
 
     yolo9_restore = None
     if family == "rtdetr":
