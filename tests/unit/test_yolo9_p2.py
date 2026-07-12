@@ -211,9 +211,7 @@ def test_yolo9_p2_prepare_state_dict_passes_p2_checkpoints_through():
 
 
 def test_yolo9_p2_visdrone_variant_filename_routing():
-    """The published VisDrone research-preview weight must route like any
-    other weight file: size detected, base family not claiming it, and the
-    download URL pointing at the variant's own HF repo."""
+    """The local VisDrone variant is recognized but never auto-downloaded."""
     from libreyolo import LibreYOLO9, LibreYOLO9P2
 
     name = "LibreYOLO9P2s-visdrone.pt"
@@ -222,12 +220,9 @@ def test_yolo9_p2_visdrone_variant_filename_routing():
     assert LibreYOLO9.detect_size_from_filename(name) is None
 
     url = LibreYOLO9P2.get_download_url(name)
-    assert url == (
-        "https://huggingface.co/LibreYOLO/LibreYOLO9P2s-visdrone/"
-        "resolve/main/LibreYOLO9P2s-visdrone.pt"
-    )
+    assert url is None
 
-    notice = LibreYOLO9P2.get_download_notice(name, url)
+    notice = LibreYOLO9P2.get_download_notice(name, "local-only")
     assert notice is not None
     assert "NON-COMMERCIAL" in notice
     assert "CC BY-NC-SA" in notice
@@ -240,11 +235,8 @@ def test_yolo9_p2_plain_filenames_have_no_variant_or_notice():
     assert LibreYOLO9P2.detect_size_from_filename(name) == "t"
     assert LibreYOLO9P2.detect_variant_from_filename(name) is None
     url = LibreYOLO9P2.get_download_url(name)
-    assert url == (
-        "https://huggingface.co/LibreYOLO/LibreYOLO9P2t/"
-        "resolve/main/LibreYOLO9P2t.pt"
-    )
-    assert LibreYOLO9P2.get_download_notice(name, url) is None
+    assert url is None
+    assert LibreYOLO9P2.get_download_notice(name, "local-only") is None
 
 
 def test_yolo9_p2_loads_transfer_trained_checkpoint(tmp_path):

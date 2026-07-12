@@ -35,6 +35,7 @@ class LibreFOMO(BaseModel):
     WEIGHT_EXT = ".pt"
 
     INPUT_SIZES: ClassVar[Dict[str, int]] = {k: int(v["imgsz"]) for k, v in CONFIGS.items()}
+    INPUT_SIZE_FIXED = True
 
     SUPPORTED_TASKS = ("point",)
     DEFAULT_TASK = "point"

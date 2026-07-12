@@ -51,6 +51,7 @@ class LibreRTMDet(BaseModel):
     FAMILY = "rtmdet"
     FILENAME_PREFIX = "LibreRTMDet"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "l": 640, "x": 640}
+    INPUT_SIZE_DIVISOR = 32
     SUPPORTED_TASKS = ("detect", "segment")
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {

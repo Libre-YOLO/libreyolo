@@ -194,9 +194,10 @@ class SemanticDataset(Dataset):
         hsv_prob: float = 0.5,
         crop_cat_max_ratio: float = 0.75,
     ):
-        if resize_mode not in ("letterbox", "stretch", "resize_crop"):
+        if resize_mode not in ("letterbox", "stretch", "resize_crop", "native"):
             raise ValueError(
-                f"resize_mode must be 'letterbox', 'stretch', or 'resize_crop', got {resize_mode!r}"
+                "resize_mode must be 'letterbox', 'stretch', 'resize_crop', "
+                f"or 'native', got {resize_mode!r}"
             )
         self.split = split
         self.imgsz = int(imgsz)
@@ -294,6 +295,8 @@ class SemanticDataset(Dataset):
     ) -> Tuple[np.ndarray, np.ndarray, float, Tuple[int, int]]:
         """Resize image (bilinear) and mask (nearest) and pad/crop to imgsz."""
         h0, w0 = img.shape[:2]
+        if self.resize_mode == "native":
+            return img, mask, 1.0, (0, 0)
         if self.resize_mode == "stretch":
             new_w = new_h = self.imgsz
             ratio = 1.0

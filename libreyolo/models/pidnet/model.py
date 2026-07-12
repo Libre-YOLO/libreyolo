@@ -112,7 +112,7 @@ class LibrePIDNet(BaseModel):
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 1024, "m": 1024, "l": 1024}
 
-    semantic_resize_mode: ClassVar[str] = "letterbox"
+    semantic_resize_mode: ClassVar[str] = "native"
     semantic_imgsz_divisor: ClassVar[int] = 8
 
     _SIZE_CONFIGS: ClassVar[dict] = SIZE_CONFIGS
@@ -352,6 +352,11 @@ class LibrePIDNet(BaseModel):
                 f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
                 "but LibrePIDNet is semantic-only."
             )
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         if isinstance(loaded.get("model"), dict):
             raw_state = loaded["model"]

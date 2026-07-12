@@ -17,8 +17,6 @@ See ``docs/librevlm_design.md`` and ``docs/adr/0002-librevlm-contract.md``.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Type
-
 from .base import LibreVLMModel
 from .florence2 import LibreFlorence2
 from .internvl3 import LibreInternVL3
@@ -27,36 +25,21 @@ from .lfm2 import LibreLFM2VL
 from .locateanything import LibreLocateAnything
 from .qwen3vl import LibreQwen3VL
 from .smolvlm import LibreSmolVLM2
+from ..manifest import (
+    FACTORY_DEFAULT_MODELS,
+    FACTORY_MODEL_ALIASES,
+    FactoryKind,
+    load_family_class,
+    resolve_factory_model,
+)
 
-# alias -> (family class, size)
-_ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
-    "qwen3-vl": (LibreQwen3VL, "4b"),
-    "qwen3-vl-2b": (LibreQwen3VL, "2b"),
-    "qwen3-vl-4b": (LibreQwen3VL, "4b"),
-    "qwen3-vl-8b": (LibreQwen3VL, "8b"),
-    "lfm2-vl": (LibreLFM2VL, "450m"),
-    "lfm2-vl-450m": (LibreLFM2VL, "450m"),
-    "lfm2-vl-1.6b": (LibreLFM2VL, "1.6b"),
-    "internvl3": (LibreInternVL3, "2b"),
-    "internvl3-1b": (LibreInternVL3, "1b"),
-    "internvl3-2b": (LibreInternVL3, "2b"),
-    "internvl3-8b": (LibreInternVL3, "8b"),
-    "smolvlm2": (LibreSmolVLM2, "2.2b"),
-    "smolvlm2-2.2b": (LibreSmolVLM2, "2.2b"),
-    "smolvlm2-500m": (LibreSmolVLM2, "500m"),
-    "florence-2": (LibreFlorence2, "base"),
-    "florence2": (LibreFlorence2, "base"),
-    "florence-2-base": (LibreFlorence2, "base"),
-    "florence-2-large": (LibreFlorence2, "large"),
-    "kosmos-2": (LibreKosmos2, "224"),
-    "kosmos2": (LibreKosmos2, "224"),
-    "locate-anything": (LibreLocateAnything, "3b"),
-    "locateanything": (LibreLocateAnything, "3b"),
-    "locate-anything-3b": (LibreLocateAnything, "3b"),
-    "locateanything-3b": (LibreLocateAnything, "3b"),
+_ALIASES = {
+    alias: (load_family_class(family), selection.size)
+    for (factory, alias), (family, selection) in FACTORY_MODEL_ALIASES.items()
+    if factory is FactoryKind.VLM
 }
 
-_DEFAULT_MODEL = "qwen3-vl-4b"
+_DEFAULT_MODEL = FACTORY_DEFAULT_MODELS[FactoryKind.VLM]
 
 
 def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
@@ -72,15 +55,19 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     Returns:
         A ``LibreVLMModel`` instance with the standard predict/track surface.
     """
-    key = str(model).strip().lower()
-    match = _ALIASES.get(key)
+    match = resolve_factory_model(FactoryKind.VLM, model)
     if match is None:
-        raise ValueError(
-            f"Unknown VLM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(_ALIASES))}."
+        aliases = sorted(
+            alias
+            for (factory, alias) in FACTORY_MODEL_ALIASES
+            if factory is FactoryKind.VLM
         )
-    family_cls, size = match
-    return family_cls(size=size, **kwargs)
+        raise ValueError(
+            f"Unknown VLM model {model!r}. Known aliases: {', '.join(aliases)}."
+        )
+    family, selection = match
+    family_cls = load_family_class(family)
+    return family_cls(size=selection.size, **kwargs)
 
 
 __all__ = [

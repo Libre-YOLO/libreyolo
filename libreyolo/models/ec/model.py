@@ -29,6 +29,7 @@ class LibreEC(BaseModel):
     FAMILY = "ec"
     FILENAME_PREFIX = "LibreEC"
     INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
+    INPUT_SIZE_FIXED = True
     POSE_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SEG_INPUT_SIZES = {"s": 640, "m": 640, "l": 640, "x": 640}
     SUPPORTED_TASKS = ("detect", "pose", "segment")
@@ -642,6 +643,10 @@ class LibreEC(BaseModel):
                         f"Checkpoint was trained with model_family='{ckpt_family}' "
                         f"but is being loaded into '{own_family}'."
                     )
+                self._apply_checkpoint_input_size(
+                    loaded,
+                    is_native_v1=is_native_v1,
+                )
                 ckpt_names = loaded.get("names")
                 ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
                 if ckpt_nc is None and ckpt_names is not None:

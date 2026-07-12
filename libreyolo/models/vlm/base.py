@@ -153,6 +153,25 @@ class LibreVLMModel(BaseModel):
     # Open-vocabulary API
     # =========================================================================
 
+    def __call__(self, source=None, **kwargs):
+        """Reject image-geometry modes owned by the VLM processor."""
+        if kwargs.get("imgsz") is not None:
+            raise ValueError(
+                f"{type(self).__name__} does not support imgsz=: the model "
+                "processor owns image resizing for this VLM tier."
+            )
+        if kwargs.get("augment", False):
+            raise ValueError(
+                f"{type(self).__name__} does not support augment=True; "
+                "test-time augmentation is out of scope for this VLM tier."
+            )
+        if kwargs.get("tiling", False):
+            raise ValueError(
+                f"{type(self).__name__} does not support tiling=True; "
+                "tile-level autoregressive generation has no defined merge contract."
+            )
+        return super().__call__(source, **kwargs)
+
     def set_classes(self, classes: list) -> "LibreVLMModel":
         """Set the open-vocabulary class list to detect.
 

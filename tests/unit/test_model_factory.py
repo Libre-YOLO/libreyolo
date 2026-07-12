@@ -160,9 +160,7 @@ def test_factory_warns_for_legacy_libreyolo_metadata_checkpoint(tmp_path, caplog
     assert "legacy compatibility path" in caplog.text
 
 
-def test_factory_autoconverts_partial_metadata_upstream_yolo9(
-    tmp_path, monkeypatch
-):
+def test_factory_autoconverts_partial_metadata_upstream_yolo9(tmp_path, monkeypatch):
     upstream_path = tmp_path / "v9-t-custom.pt"
     converted_path = tmp_path / "LibreYOLO9t.pt"
     torch.save(
@@ -316,3 +314,74 @@ def test_factory_routes_onnx_before_native_task_validation(monkeypatch, tmp_path
         "device": "cpu",
         "task": "segment",
     }
+
+
+def test_factory_accepts_pathlike_and_casefolds_backend_suffix(monkeypatch, tmp_path):
+    import libreyolo.backends.onnx as onnx_backend
+
+    captured = {}
+
+    class _FakeOnnxBackend:
+        def __init__(self, onnx_path, nb_classes=80, device="auto", task=None):
+            captured.update(
+                path=onnx_path,
+                nb_classes=nb_classes,
+                device=device,
+                task=task,
+            )
+
+    monkeypatch.setattr(onnx_backend, "OnnxBackend", _FakeOnnxBackend)
+    path = tmp_path / "MODEL.ONNX"
+    path.write_bytes(b"not a real onnx model")
+
+    loaded = LibreYOLO(path, device="cpu")
+
+    assert isinstance(loaded, _FakeOnnxBackend)
+    assert captured == {
+        "path": str(path),
+        "nb_classes": 80,
+        "device": "cpu",
+        "task": None,
+    }
+
+
+def test_factory_rejects_sibling_factory_checkpoint_metadata(tmp_path):
+    path = tmp_path / "vlm-wrapper.pt"
+    torch.save(
+        wrap_libreyolo_checkpoint(
+            {"layer.weight": torch.zeros(1)},
+            model_family="qwen3vl",
+            size="4b",
+            task="detect",
+            nc=1,
+            names={0: "object"},
+            imgsz=1024,
+        ),
+        path,
+    )
+
+    with pytest.raises(ValueError, match="separate LibreVLM model tier"):
+        LibreYOLO(path, device="cpu")
+
+
+def test_native_metadata_size_wins_over_existing_filename_hint(tmp_path):
+    model = LibreYOLO9Model(config="t", nb_classes=80)
+    misleading_path = tmp_path / "LibreYOLO9s.pt"
+    torch.save(
+        wrap_libreyolo_checkpoint(
+            model.state_dict(),
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=80,
+            names={index: f"class_{index}" for index in range(80)},
+            imgsz=640,
+        ),
+        misleading_path,
+    )
+
+    loaded = LibreYOLO(misleading_path, device="cpu")
+
+    assert loaded.size == "t"
+    with pytest.raises(ValueError, match="checkpoint metadata size 't'"):
+        LibreYOLO(misleading_path, size="s", device="cpu")

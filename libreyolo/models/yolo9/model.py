@@ -54,6 +54,8 @@ class LibreYOLO9(BaseModel):
     FAMILY = "yolo9"
     FILENAME_PREFIX = "LibreYOLO9"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "c": 640}
+    INPUT_SIZE_DIVISOR = 32
+    SUPPORTS_RECTANGULAR_INPUT = True
     SUPPORTED_TASKS = ("detect",)
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,

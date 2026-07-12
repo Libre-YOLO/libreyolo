@@ -91,6 +91,7 @@ class DepthValidator(BaseValidator):
                 f"divisible by {int(divisor)} for this model family."
             )
         resize_mode = getattr(self.model, "depth_resize_mode", "letterbox")
+        self._native_preprocess = resize_mode == "native"
         dataset = DepthDataset(
             data_config,
             split=split,
@@ -98,9 +99,18 @@ class DepthValidator(BaseValidator):
             augment=False,
             resize_mode=resize_mode,
         )
+        batch_size = self.config.batch_size
+        if self._native_preprocess:
+            if batch_size != 1:
+                logger.info(
+                    "Native-aspect depth validation runs one image at a time "
+                    "(batch_size=%d ignored).",
+                    batch_size,
+                )
+            batch_size = 1
         return DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=self.config.num_workers,
             pin_memory=self.device.type == "cuda",
@@ -122,10 +132,58 @@ class DepthValidator(BaseValidator):
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
+        if getattr(self, "_native_preprocess", False):
+            if len(img_info) != 1:
+                raise ValueError(
+                    "Native-aspect depth validation requires exactly one image "
+                    "per batch."
+                )
+            info = img_info[0]
+            tensor, _, original_size, _ = self.model._preprocess(
+                info["img_path"],
+                color_format="rgb",
+                input_size=self.config.imgsz,
+            )
+            expected_size = (int(info["orig_shape"][1]), int(info["orig_shape"][0]))
+            if tuple(original_size) != expected_size:
+                raise ValueError(
+                    "Depth native preprocessing changed the source canvas: "
+                    f"reported {tuple(original_size)}, expected {expected_size}."
+                )
+            self._native_original_size = tuple(original_size)
+            images = tensor
         return images, targets, img_info, img_ids
 
     def _postprocess_predictions(self, preds: Any, batch: Any) -> Any:
         """Decode raw model output into ``[B, H, W]`` inverse-depth maps."""
+        if getattr(self, "_native_preprocess", False):
+            decoded = self.model._postprocess(
+                preds,
+                conf_thres=self.config.conf_thres,
+                iou_thres=self.config.iou_thres,
+                original_size=self._native_original_size,
+                input_size=self.config.imgsz,
+            )
+            output = decoded.get("depth") if isinstance(decoded, dict) else decoded
+            output = torch.as_tensor(output)
+            if output.ndim == 2:
+                output = output.unsqueeze(0)
+            targets = torch.as_tensor(batch[1])
+            if output.ndim != 3:
+                raise ValueError(
+                    "Native depth postprocessing must return [H, W] or "
+                    f"[B, H, W], got {tuple(output.shape)}."
+                )
+            require_matching_batch_sizes(
+                "Depth validation", predictions=output, targets=targets
+            )
+            if output.shape != targets.shape:
+                raise ValueError(
+                    "Native depth prediction and target canvases must match, got "
+                    f"{tuple(output.shape)} and {tuple(targets.shape)}."
+                )
+            return output
+
         output = preds
         if isinstance(output, dict):
             output = output.get("depth", output.get("predictions"))

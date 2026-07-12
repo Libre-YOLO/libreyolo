@@ -541,16 +541,34 @@ class BaseExporter(ABC):
     def _resolve_params(self, output_path, imgsz, device, half, int8):
         native_imgsz = self.model._get_input_size()
         model_name = self.model._get_model_name()
+        validate_input_size = getattr(
+            type(self.model),
+            "_validate_input_size",
+            None,
+        )
+
+        def validate_dimension(value):
+            if callable(validate_input_size):
+                return validate_input_size(
+                    self.model,
+                    value,
+                    context="export",
+                )
+            return int(value)
+
         if imgsz is None:
+            native_imgsz = validate_dimension(native_imgsz)
             imgsz = (native_imgsz, native_imgsz)
         elif isinstance(imgsz, tuple):
             if len(imgsz) != 2:
                 raise ValueError(f"imgsz tuple must be (height, width), got {imgsz}")
-            imgsz = (int(imgsz[0]), int(imgsz[1]))
+            imgsz = (
+                validate_dimension(imgsz[0]),
+                validate_dimension(imgsz[1]),
+            )
         else:
-            imgsz = (int(imgsz), int(imgsz))
-        if imgsz[0] <= 0 or imgsz[1] <= 0:
-            raise ValueError(f"imgsz values must be positive, got {imgsz}.")
+            imgsz = validate_dimension(imgsz)
+            imgsz = (imgsz, imgsz)
         if model_name == "deimv2" and imgsz != (
             int(native_imgsz),
             int(native_imgsz),

@@ -202,9 +202,10 @@ class DepthDataset(Dataset):
         augment: bool = False,
         resize_mode: str = "letterbox",
     ):
-        if resize_mode not in ("letterbox", "stretch"):
+        if resize_mode not in ("letterbox", "stretch", "native"):
             raise ValueError(
-                f"resize_mode must be 'letterbox' or 'stretch', got {resize_mode!r}"
+                "resize_mode must be 'letterbox', 'stretch', or 'native', "
+                f"got {resize_mode!r}"
             )
         self.split = split
         self.imgsz = int(imgsz)
@@ -278,6 +279,8 @@ class DepthDataset(Dataset):
     ) -> Tuple[np.ndarray, np.ndarray, float, Tuple[int, int]]:
         """Resize image (bilinear) and depth (nearest) and pad to imgsz."""
         h0, w0 = img.shape[:2]
+        if self.resize_mode == "native":
+            return img, depth, 1.0, (0, 0)
         if self.resize_mode == "stretch":
             new_w = new_h = self.imgsz
             ratio = 1.0

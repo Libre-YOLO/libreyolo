@@ -600,7 +600,11 @@ class YOLOXHead(nn.Module):
         batch_size = output.shape[0]
         n_ch = 5 + self.num_classes
         hsize, wsize = output.shape[-2:]
-        if grid.shape[2:4] != output.shape[2:4]:
+        if (
+            grid.shape[2:4] != output.shape[2:4]
+            or grid.dtype != output.dtype
+            or grid.device != device
+        ):
             yv, xv = meshgrid([torch.arange(hsize), torch.arange(wsize)])
             grid = (
                 torch.stack((xv, yv), 2)

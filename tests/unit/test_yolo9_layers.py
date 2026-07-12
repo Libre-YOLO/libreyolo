@@ -737,6 +737,10 @@ def test_yolo9_trainer_checkpoint_uses_resolved_data_classes_for_obb(tmp_path):
     trainer.save_dir = tmp_path / "run"
     trainer.save_dir.mkdir()
     trainer.optimizer = torch.optim.SGD(trainer.model.parameters(), lr=0.01)
+    # This isolated trainer fixture exercises OBB dataset/class resolution with
+    # a synthetic Conv2d rather than a public YOLO9 architecture. Use the
+    # manifest-declared OBB family when serializing its metadata.
+    trainer.get_model_family = lambda: "rfdetr"
     trainer._save_checkpoint(epoch=0, loss=1.0, is_best=True)
 
     checkpoint = load_trusted_torch_file(

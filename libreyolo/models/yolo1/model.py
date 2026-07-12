@@ -26,6 +26,7 @@ import torch
 from PIL import Image
 
 from ...utils.image_loader import ImageInput
+from ...validation.preprocessors import YOLO1ValPreprocessor
 from ..darknet.family import DarknetFamily
 from ..darknet.preprocess import preprocess_image_stretch as _v1_preprocess_image
 from ..darknet.preprocess import preprocess_numpy_stretch as _v1_preprocess_numpy
@@ -63,6 +64,7 @@ class LibreYOLO1(DarknetFamily):
     # decoder rejects batch > 1. Force the inference runner to loop per image
     # for list inputs instead of attempting a real batch.
     SUPPORTS_BATCHED_PREDICT = False
+    INPUT_SIZE_FIXED = True
     FILENAME_PREFIX = "LibreYOLO1"
     INPUT_SIZES = {"t": 448, "b": 448}
 
@@ -77,6 +79,29 @@ class LibreYOLO1(DarknetFamily):
     SIDE = 7            # S: the S x S grid
     BOXES_PER_CELL = 2  # B: predicted boxes per cell
     COORDS = 4          # box coordinates per box
+
+    def __init__(
+        self,
+        model_path=None,
+        size: str | None = None,
+        nb_classes: int | None = None,
+        device: str = "auto",
+        **kwargs,
+    ) -> None:
+        if nb_classes is not None and nb_classes != self.DEFAULT_NB_CLASSES:
+            raise ValueError(
+                "LibreYOLO1 has a fixed Pascal VOC 20-class fully-connected "
+                f"head; nb_classes must be 20, got {nb_classes}."
+            )
+        super().__init__(
+            model_path=model_path,
+            size=size,
+            nb_classes=self.DEFAULT_NB_CLASSES,
+            device=device,
+            **kwargs,
+        )
+
+    val_preprocessor_class = YOLO1ValPreprocessor
 
     @classmethod
     def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
@@ -95,6 +120,19 @@ class LibreYOLO1(DarknetFamily):
                 nc = out // (cls.SIDE * cls.SIDE) - cls.BOXES_PER_CELL * (cls.COORDS + 1)
                 return nc if nc > 0 else None
         return None
+
+    def _adapt_checkpoint_num_classes(
+        self,
+        ckpt_nc: int | None,
+        checkpoint_task: str | None = None,
+    ) -> int | None:
+        del checkpoint_task
+        if ckpt_nc is not None and ckpt_nc != self.DEFAULT_NB_CLASSES:
+            raise RuntimeError(
+                "LibreYOLO1 checkpoints must use the fixed Pascal VOC "
+                f"20-class head; checkpoint declares nc={ckpt_nc}."
+            )
+        return ckpt_nc
 
     # --- YOLOv1-specific preprocessing ------------------------------------
     # The FC head needs a plain square stretch, not the letterbox the shared

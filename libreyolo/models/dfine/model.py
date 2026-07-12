@@ -41,6 +41,8 @@ class LibreDFINE(BaseModel):
     FAMILY = "dfine"
     FILENAME_PREFIX = "LibreDFINE"
     INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640, "x": 640}
+    INPUT_SIZE_DIVISOR = 32
+    INPUT_SIZE_MIN = 128
     SUPPORTED_TASKS = ("detect", "segment")
     DEFAULT_TASK = "detect"
     TASK_INPUT_SIZES = {
@@ -449,6 +451,10 @@ class LibreDFINE(BaseModel):
                             f"but this model was initialized for task='{self.task}'. "
                             "Pass the matching task."
                         )
+                self._apply_checkpoint_input_size(
+                    loaded,
+                    is_native_v1=is_native_v1,
+                )
                 ckpt_names = loaded.get("names")
                 ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
                 if ckpt_nc is None and ckpt_names is not None:

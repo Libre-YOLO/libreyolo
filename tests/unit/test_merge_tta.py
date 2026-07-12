@@ -10,6 +10,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import torch
+from PIL import Image
 
 from libreyolo.models.base.model import BaseModel
 
@@ -33,6 +35,45 @@ def test_pose_rejects_tta_before_keypoint_merge():
 
     with pytest.raises(ValueError, match="pose keypoints"):
         BaseModel._predict_augment(model, image=None)
+
+
+def test_tta_threads_rectangular_input_size_into_postprocessing():
+    seen = []
+
+    def preprocess(image, color_format, input_size):
+        del image, color_format
+        seen.append(("preprocess", input_size))
+        return torch.zeros(1, 3, *input_size), None, (80, 40), 1.0
+
+    def postprocess(*args, **kwargs):
+        del args
+        seen.append(("postprocess", kwargs["input_size"]))
+        return _det([], [], [])
+
+    model = SimpleNamespace(
+        task="detect",
+        TTA_FIXED_SIZE=True,
+        device=torch.device("cpu"),
+        _get_input_size=lambda: 640,
+        _preprocess=preprocess,
+        _forward=lambda tensor: tensor,
+        _postprocess=postprocess,
+        _merge_tta=lambda *args, **kwargs: "merged",
+    )
+
+    result = BaseModel._predict_augment(
+        model,
+        Image.new("RGB", (80, 40)),
+        imgsz=(640, 672),
+    )
+
+    assert result == "merged"
+    assert seen == [
+        ("preprocess", (640, 672)),
+        ("postprocess", (640, 672)),
+        ("preprocess", (640, 672)),
+        ("postprocess", (640, 672)),
+    ]
 
 
 def _det(boxes, scores, classes):

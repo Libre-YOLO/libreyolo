@@ -54,11 +54,9 @@ class LibreDepthAnythingV2(BaseModel):
 
     # DINOv2 patch grid; the depth dataset and validator enforce divisibility.
     depth_imgsz_divisor = 14
-    # Validation goes through the shared DepthDataset, which letterboxes to a
-    # fixed square (padded pixels are invalid depth, excluded from metrics).
-    # Note: predict uses DA's native keep-aspect lower-bound resize, so val
-    # metrics on non-square images are a documented approximation of predict.
-    depth_resize_mode = "letterbox"
+    # Validation delegates to the same keep-aspect lower-bound preprocess and
+    # original-canvas postprocess used by predict.
+    depth_resize_mode = "native"
 
     # Keep-aspect preprocessing yields per-image variable sizes, so the stacked
     # single-forward batched-predict path does not apply. TTA_ENABLED is left at

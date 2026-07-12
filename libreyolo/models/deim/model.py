@@ -32,6 +32,7 @@ class LibreDEIM(BaseModel):
     FAMILY = "deim"
     FILENAME_PREFIX = "LibreDEIM"
     INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640, "x": 640}
+    INPUT_SIZE_FIXED = True
     TRAIN_CONFIG = DEIMConfig
     val_preprocessor_class = DEIMValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
@@ -343,6 +344,10 @@ class LibreDEIM(BaseModel):
                         f"Checkpoint was trained for task={normalize_task(ckpt_task)!r} "
                         f"but this model was initialized for task={self.task!r}."
                     )
+                self._apply_checkpoint_input_size(
+                    loaded,
+                    is_native_v1=is_native_v1,
+                )
                 ckpt_names = loaded.get("names")
                 ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
                 if ckpt_nc is None and ckpt_names is not None:

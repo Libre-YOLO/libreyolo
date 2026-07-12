@@ -102,6 +102,7 @@ class LibreSigLIP2(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         size: cfg.image_size for size, cfg in SIGLIP2_CONFIGS.items()
     }
+    INPUT_SIZE_FIXED: ClassVar[bool] = True
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
     DEFAULT_TASK: ClassVar[str] = "classify"
     TRAIN_CONFIG = None
@@ -383,7 +384,7 @@ class LibreSigLIP2(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreSigLIP2 checkpoints must be dictionaries.")
-        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
             loaded,
             context="LibreSigLIP2 checkpoint",
         )
@@ -399,6 +400,11 @@ class LibreSigLIP2(BaseModel):
             raise RuntimeError(
                 f"Checkpoint task={normalize_task(ckpt_task)!r} is not 'classify'."
             )
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         state = self._extract_state(loaded)
         if "logit_bias" not in state or "vision_model.embeddings.patch_embedding.weight" not in state:
@@ -432,6 +438,11 @@ class LibreSigLIP2(BaseModel):
         """
         from ...data.classify_dataset import get_class_names, resolve_classify_data
 
+        requested_imgsz = kwargs.get("imgsz")
+        kwargs["imgsz"] = self._validate_input_size(
+            self._get_input_size() if requested_imgsz is None else requested_imgsz,
+            context="validation",
+        )
         if data is None:
             raise ValueError("LibreSigLIP2.val() requires data= (an ImageFolder root).")
         root = resolve_classify_data(data)
@@ -472,6 +483,11 @@ class LibreSigLIP2(BaseModel):
                 "(frozen-class) is supported. Open-vocabulary export (two towers "
                 "+ tokenizer) is out of scope for v1."
             )
+        requested_imgsz = kwargs.get("imgsz")
+        kwargs["imgsz"] = self._validate_input_size(
+            self._get_input_size() if requested_imgsz is None else requested_imgsz,
+            context="export",
+        )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
 

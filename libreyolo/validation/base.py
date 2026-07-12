@@ -4,7 +4,7 @@ import logging
 import sys
 import time
 from abc import ABC, abstractmethod
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
@@ -20,6 +20,47 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from libreyolo.models.base import BaseModel
+
+
+def _module_device(module: torch.nn.Module, fallback: Any) -> torch.device:
+    """Return a module's actual device, including parameterless modules."""
+    for tensor in module.parameters():
+        return tensor.device
+    for tensor in module.buffers():
+        return tensor.device
+    return torch.device(fallback)
+
+
+@contextmanager
+def validation_model_state(model: Any, device: Any):
+    """Temporarily move a native model to ``device`` and exact eval state."""
+    module = model.model
+    # Exported-runtime backends expose a lightweight ``.model.eval()``
+    # compatibility proxy rather than a movable ``torch.nn.Module``. Their
+    # runtime provider owns placement, so preserve the existing backend path.
+    if not isinstance(module, torch.nn.Module):
+        yield
+        return
+
+    had_wrapper_device = hasattr(model, "device")
+    wrapper_device = getattr(model, "device", device)
+    original_device = _module_device(module, wrapper_device)
+    training_states = [
+        (submodule, bool(submodule.training)) for submodule in module.modules()
+    ]
+
+    try:
+        module.to(device)
+        module.eval()
+        if had_wrapper_device:
+            model.device = torch.device(device)
+        yield
+    finally:
+        module.to(original_device)
+        if had_wrapper_device:
+            model.device = wrapper_device
+        for submodule, was_training in training_states:
+            submodule.training = was_training
 
 
 class BaseValidator(ABC):
@@ -59,9 +100,28 @@ class BaseValidator(ABC):
 
     def run(self, **kwargs) -> Dict[str, float]:
         """Main validation entry point (template method)."""
-        self._setup(**kwargs)
-        self._run_validation()
-        return self._finalize()
+        with self._validation_model_state():
+            self._setup(**kwargs)
+            self._run_validation()
+            return self._finalize()
+
+    @contextmanager
+    def _validation_model_state(self):
+        """Temporarily move the model to the validation device and eval mode.
+
+        ``val(device=...)`` is a per-call override.  It must not permanently
+        migrate the live wrapper or leave a training model in eval mode, even
+        when dataset setup, inference, metric computation, or finalization
+        raises.
+        """
+        if not hasattr(self, "model"):
+            # Some metric-only validator uses construct a bare instance and
+            # replace the execution hooks. There is no live model state to
+            # transact in that case.
+            yield
+            return
+        with validation_model_state(self.model, self.device):
+            yield
 
     def _setup_device(self) -> torch.device:
         if self.config.device == "auto":
@@ -200,7 +260,13 @@ class BaseValidator(ABC):
             logger.info("Warming up model (%d iterations)...", n_warmup)
 
         imgsz = self.config.imgsz
-        batch_size = min(self.config.batch_size, 4)
+        loader_batch_size = getattr(self.dataloader, "batch_size", None)
+        effective_batch_size = (
+            loader_batch_size
+            if isinstance(loader_batch_size, int) and loader_batch_size > 0
+            else self.config.batch_size
+        )
+        batch_size = min(effective_batch_size, 4)
 
         dummy_input = torch.zeros(
             (batch_size, 3, imgsz, imgsz),

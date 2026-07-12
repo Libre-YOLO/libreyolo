@@ -42,6 +42,7 @@ class LibreYOLOX(BaseModel):
     FAMILY = "yolox"
     FILENAME_PREFIX = "LibreYOLOX"
     INPUT_SIZES = {"n": 416, "t": 416, "s": 640, "m": 640, "l": 640, "x": 640}
+    INPUT_SIZE_DIVISOR = 32
     TRAIN_CONFIG = YOLOXConfig
     val_preprocessor_class = YOLOXValPreprocessor
 

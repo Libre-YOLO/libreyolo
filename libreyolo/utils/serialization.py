@@ -7,6 +7,7 @@ import warnings
 from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
 from importlib.metadata import PackageNotFoundError, version
+from numbers import Integral
 from pathlib import Path
 from typing import Any
 
@@ -207,15 +208,15 @@ def inspect_state_dict_load(
         loaded_keys=tuple(sorted(loaded)),
         missing_keys=tuple(sorted(set(missing) - set(allowed_missing))),
         unexpected_keys=tuple(sorted(set(unexpected) - set(allowed_unexpected))),
-        shape_mismatches=tuple(
-            sorted(set(shape_mismatches) - set(allowed_mismatches))
-        ),
+        shape_mismatches=tuple(sorted(set(shape_mismatches) - set(allowed_mismatches))),
         allowed_missing_keys=tuple(allowed_missing),
         allowed_unexpected_keys=tuple(allowed_unexpected),
         allowed_shape_mismatches=tuple(allowed_mismatches),
         total_target_tensors=len(target),
         loaded_elements=sum(_state_value_elements(target[key]) for key in loaded),
-        total_target_elements=sum(_state_value_elements(value) for value in target.values()),
+        total_target_elements=sum(
+            _state_value_elements(value) for value in target.values()
+        ),
         allowed_unloaded_elements=sum(
             _state_value_elements(target[key])
             for key in (*allowed_missing, *allowed_mismatches)
@@ -340,9 +341,7 @@ def load_state_dict_checked(
     report = inspect_state_dict_load(module, state_dict, policy=policy)
     enforce_checkpoint_load_report(report, policy=policy, context=context)
 
-    ignored = set(report.allowed_unexpected_keys) | set(
-        report.allowed_shape_mismatches
-    )
+    ignored = set(report.allowed_unexpected_keys) | set(report.allowed_shape_mismatches)
     filtered = {key: value for key, value in state_dict.items() if key not in ignored}
     module.load_state_dict(filtered, strict=False)
     return report
@@ -514,22 +513,69 @@ def _infer_checkpoint_imgsz(
     size: str,
     task: str,
 ) -> int | None:
-    """Infer square input size from registered family metadata when possible."""
+    """Infer square input size from the immutable public model manifest."""
+    from ..models.manifest import get_artifact_spec
+
+    artifact = get_artifact_spec(model_family, size, task)
+    return artifact.native_imgsz if artifact is not None else None
+
+
+def _checkpoint_imgsz_contract_error(
+    *,
+    model_family: str,
+    size: str,
+    task: str,
+    imgsz: int,
+) -> str | None:
+    """Return a public family input-contract error without building a model."""
+    from ..models.manifest import get_artifact_spec, load_family_class
+
+    artifact = get_artifact_spec(model_family, size, task)
+    if artifact is None:
+        return None
     try:
-        from ..models.base import BaseModel
-    except Exception:
+        model_class = load_family_class(model_family)
+    except (ImportError, ModuleNotFoundError):
+        # Metadata inspection must remain available without optional model
+        # extras. The installed reader performs its family-specific validation.
         return None
 
-    for cls in BaseModel._registry:
-        if cls.FAMILY != model_family:
-            continue
-        task_sizes = getattr(cls, "TASK_INPUT_SIZES", {}) or {}
-        input_sizes = (
-            task_sizes[task] if task in task_sizes else getattr(cls, "INPUT_SIZES", {})
+    model = object.__new__(model_class)
+    model.input_size = artifact.native_imgsz
+    model.size = artifact.size
+    model.task = artifact.task
+    if artifact.family == "rfdetr":
+        from types import SimpleNamespace
+
+        from ..models.rfdetr.nn import (
+            RFDETR_CONFIGS,
+            RFDETR_POSE_CONFIGS,
+            RFDETR_SEG_CONFIGS,
         )
-        value = input_sizes.get(size)
-        if value is not None:
-            return int(value)
+
+        configs = (
+            RFDETR_SEG_CONFIGS
+            if artifact.task == "segment"
+            else RFDETR_POSE_CONFIGS
+            if artifact.task == "pose"
+            else RFDETR_CONFIGS
+        )
+        config = configs[artifact.size]
+        model.model = SimpleNamespace(
+            patch_size=config.patch_size,
+            num_windows=config.num_windows,
+        )
+    try:
+        model_class._validate_input_size(
+            model,
+            imgsz,
+            context="checkpoint",
+            allow_fixed_override=bool(
+                getattr(model_class, "CHECKPOINT_INPUT_SIZE_OVERRIDE", False)
+            ),
+        )
+    except (RuntimeError, ValueError) as exc:
+        return str(exc)
     return None
 
 
@@ -557,6 +603,10 @@ def wrap_libreyolo_checkpoint(
     normalized_task = normalize_task(task)
     if normalized_task is None:
         raise CheckpointMetadataError("task is required.")
+    if isinstance(model_family, str):
+        model_family = model_family.strip().casefold()
+    if isinstance(size, str):
+        size = size.strip().casefold()
 
     if names is None:
         names = build_class_names(nc)
@@ -572,6 +622,19 @@ def wrap_libreyolo_checkpoint(
         raise CheckpointMetadataError(
             "imgsz is required and could not be inferred from model_family/size/task."
         )
+    if isinstance(imgsz, bool) or not isinstance(imgsz, Integral) or imgsz <= 0:
+        raise CheckpointMetadataError(
+            f"imgsz must be a positive int, got {imgsz!r}."
+        )
+    imgsz = int(imgsz)
+    imgsz_error = _checkpoint_imgsz_contract_error(
+        model_family=model_family,
+        size=size,
+        task=normalized_task,
+        imgsz=imgsz,
+    )
+    if imgsz_error is not None:
+        raise CheckpointMetadataError(imgsz_error)
 
     checkpoint: dict[str, Any] = {
         "model": state_dict,
@@ -582,7 +645,7 @@ def wrap_libreyolo_checkpoint(
         "task": normalized_task,
         "nc": nc,
         "names": normalized_names,
-        "imgsz": int(imgsz),
+        "imgsz": imgsz,
     }
     # Optional fields with None are intentionally omitted from checkpoint files.
     checkpoint.update({k: v for k, v in extra_metadata.items() if v is not None})
@@ -634,12 +697,53 @@ def validate_checkpoint_metadata(
         if "size" in checkpoint and not (isinstance(size, str) and size):
             errors.append("size must be a non-empty string.")
 
+        raw_task = checkpoint.get("task")
         try:
-            task = normalize_task(checkpoint.get("task"))
+            task = normalize_task(raw_task)
             if task is None:
                 errors.append("task is required.")
+            elif raw_task != task:
+                errors.append(
+                    f"task must use canonical identifier {task!r}, got "
+                    f"{raw_task!r}."
+                )
         except ValueError as exc:
+            task = None
             errors.append(str(exc))
+
+        artifact = None
+        if (
+            isinstance(model_family, str)
+            and model_family
+            and isinstance(size, str)
+            and size
+            and task is not None
+        ):
+            from ..models.manifest import get_artifact_spec, get_family_spec
+
+            family_spec = get_family_spec(model_family)
+            if family_spec is None:
+                errors.append(
+                    f"model_family {model_family!r} is not declared in the "
+                    "public model manifest."
+                )
+            else:
+                if model_family != family_spec.family:
+                    errors.append(
+                        "model_family must use canonical identifier "
+                        f"{family_spec.family!r}, got {model_family!r}."
+                    )
+                artifact = get_artifact_spec(model_family, size, task)
+                if artifact is not None and size != artifact.size:
+                    errors.append(
+                        f"size must use canonical identifier {artifact.size!r}, "
+                        f"got {size!r}."
+                    )
+            if family_spec is not None and artifact is None:
+                errors.append(
+                    "model_family/size/task must identify a declared model "
+                    f"artifact, got {model_family!r}/{size!r}/{task!r}."
+                )
 
         nc = checkpoint.get("nc")
         if not isinstance(nc, int) or isinstance(nc, bool) or nc <= 0:
@@ -661,6 +765,15 @@ def validate_checkpoint_metadata(
         imgsz = checkpoint.get("imgsz")
         if not isinstance(imgsz, int) or isinstance(imgsz, bool) or imgsz <= 0:
             errors.append("imgsz must be a positive int.")
+        elif artifact is not None:
+            imgsz_error = _checkpoint_imgsz_contract_error(
+                model_family=model_family,
+                size=size,
+                task=task,
+                imgsz=imgsz,
+            )
+            if imgsz_error is not None:
+                errors.append(imgsz_error)
 
     if strict and errors:
         raise CheckpointMetadataError("; ".join(errors))

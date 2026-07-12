@@ -298,6 +298,45 @@ class DarknetValPreprocessor(YOLO9ValPreprocessor):
         super().__init__(img_size, max_labels, pad_value=pad_value)
 
 
+class YOLO1ValPreprocessor(BaseValPreprocessor):
+    """YOLOv1 square-stretch preprocessing used by native prediction."""
+
+    @property
+    def normalize(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        from ..models.darknet.preprocess import preprocess_numpy_stretch
+
+        orig_h, orig_w = img.shape[:2]
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                "YOLOv1 validation requires a square input canvas, got "
+                f"{input_size}."
+            )
+
+        # Validation datasets decode with OpenCV (BGR); native prediction loads
+        # RGB before calling the same family helper.
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        resized, _ = preprocess_numpy_stretch(rgb, input_size=target_h)
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets) > 0:
+            targets = np.asarray(targets, dtype=np.float32).copy()
+            n = min(len(targets), self.max_labels)
+            targets[:n, [0, 2]] *= target_w / orig_w
+            targets[:n, [1, 3]] *= target_h / orig_h
+            padded_targets[:n] = targets[:n]
+        return resized, padded_targets
+
+
 class YOLONASValPreprocessor(YOLO9ValPreprocessor):
     """YOLO-NAS preprocessor: resize to 636 (longest side), center-pad to 640, RGB, 0-1.
 

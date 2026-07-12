@@ -9,7 +9,14 @@ from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any, Optional
 
-from libreyolo.tasks import task_to_suffix
+from libreyolo.models.manifest import (
+    CLI_MODEL_ALIASES,
+    FactoryKind,
+    get_family_spec,
+    load_family_class,
+    match_weight_filename,
+    resolve_cli_model,
+)
 
 
 def get_unsupported_train_params(family: str | None) -> set[str]:
@@ -27,71 +34,16 @@ def get_unsupported_train_params(family: str | None) -> set[str]:
 # Model name resolution
 # =========================================================================
 
-# Maps CLI model names (e.g. "yolox-s") to weight filenames (e.g. "LibreYOLOXs.pt").
-_CLI_NAME_TO_WEIGHTS: dict[str, str] = {}
-
-
-def _weight_filename_for_cli(cls, size_code: str) -> str:
-    formatter = getattr(cls, "format_weight_filename", None)
-    if callable(formatter):
-        return formatter(size_code)
-    return f"{cls.FILENAME_PREFIX}{size_code}{cls.WEIGHT_EXT}"
-
-
-def _task_sizes_for_cli(cls, task: str) -> dict[str, int]:
-    task_sizes = getattr(cls, "TASK_INPUT_SIZES", {}) or {}
-    return task_sizes.get(task) or cls.INPUT_SIZES
-
-
-def _register_cli_names_for_class(cls) -> None:
-    default_task = getattr(cls, "DEFAULT_TASK", "detect")
-    for size_code in _task_sizes_for_cli(cls, default_task):
-        cli_name = f"{cls.FAMILY}-{size_code}"
-        _CLI_NAME_TO_WEIGHTS[cli_name] = _weight_filename_for_cli(cls, size_code)
-
-    for task in getattr(cls, "SUPPORTED_TASKS", ("detect",)):
-        if task == default_task:
-            continue
-        suffix = task_to_suffix(task)
-        if suffix is None:
-            continue
-        for size_code in _task_sizes_for_cli(cls, task):
-            cli_name = f"{cls.FAMILY}-{size_code}-{suffix}"
-            weight_name = f"{cls.FILENAME_PREFIX}{size_code}-{suffix}{cls.WEIGHT_EXT}"
-            _CLI_NAME_TO_WEIGHTS[cli_name] = weight_name
-
-
-def _build_name_map() -> None:
-    """Populate CLI name → weight filename mapping from model registry."""
-    if _CLI_NAME_TO_WEIGHTS:
-        return
-    from libreyolo.models.base.model import BaseModel
-
-    for cls in BaseModel._registry:
-        _register_cli_names_for_class(cls)
-
-    # Also try RF-DETR (lazily registered)
-    from libreyolo.models import try_ensure_rfdetr
-
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None:
-        _register_cli_names_for_class(rfcls)
-
 
 def get_all_cli_names() -> list[str]:
     """Return all valid CLI model names (e.g. ['yolox-n', 'yolox-s', ...])."""
-    _build_name_map()
-    return list(_CLI_NAME_TO_WEIGHTS.keys())
+    return list(CLI_MODEL_ALIASES)
 
 
 def is_known_weight_filename(model: str) -> bool:
     """Return whether a path or filename matches a known packaged weight name."""
-    _build_name_map()
-    filename = Path(model).name.lower()
-    return any(
-        Path(weight).name.lower() == filename
-        for weight in _CLI_NAME_TO_WEIGHTS.values()
-    )
+    artifact = match_weight_filename(model)
+    return artifact is not None and artifact.factory is FactoryKind.CHECKPOINT
 
 
 def resolve_model_name(model: str) -> str:
@@ -100,18 +52,16 @@ def resolve_model_name(model: str) -> str:
     ``yolox-s`` → ``LibreYOLOXs.pt``
     ``best.pt`` → ``best.pt`` (unchanged)
     """
-    _build_name_map()
-    return _CLI_NAME_TO_WEIGHTS.get(model.lower(), model)
+    artifact = resolve_cli_model(model)
+    if artifact is None or artifact.canonical_filename is None:
+        return model
+    return artifact.canonical_filename
 
 
 def detect_family_from_name(model_name: str) -> Optional[str]:
     """Detect model family from a CLI model name like 'yolox-s' or 'yolo9-m'."""
-    _build_name_map()
-    lower = model_name.lower()
-    resolved = _CLI_NAME_TO_WEIGHTS.get(lower)
-    if resolved is not None:
-        return detect_family_from_weight_filename(resolved)
-    return None
+    artifact = resolve_cli_model(model_name)
+    return artifact.family if artifact is not None else None
 
 
 def _iter_model_classes():
@@ -132,7 +82,19 @@ def _iter_model_classes():
 
 def detect_family_from_weight_filename(model: str) -> Optional[str]:
     """Detect model family from a known LibreYOLO weight filename or path."""
+    artifact = match_weight_filename(model)
+    if artifact is not None and artifact.factory is FactoryKind.CHECKPOINT:
+        return artifact.family
+
+    # Preserve upstream/legacy filename recognition for complete checkpoint
+    # filenames only. Public aliases never enter the mutable registry fallback.
     filename = Path(model).name
+    if Path(filename).suffix.lower() not in {".pt", ".pth", ".safetensors"}:
+        return None
+    if filename.casefold().startswith("libre"):
+        # A Libre-prefixed public filename must be an exact manifest entry;
+        # do not let permissive legacy regexes accept impossible task/size pairs.
+        return None
     for cls in _iter_model_classes():
         if cls.detect_size_from_filename(filename) is not None:
             return cls.FAMILY
@@ -170,8 +132,10 @@ def detect_family_from_checkpoint(model_path: str) -> Optional[str]:
 
     if isinstance(checkpoint, dict):
         family = checkpoint.get("model_family")
-        if isinstance(family, str) and family:
-            return family
+        if isinstance(family, str):
+            family_spec = get_family_spec(family)
+            if family_spec is not None:
+                return family_spec.family
 
     state = _unwrap_checkpoint_state(checkpoint)
     if not isinstance(state, dict):
@@ -226,23 +190,27 @@ def detect_family_from_model_ref(
 
 
 def get_train_config_class(family: str) -> type:
-    """Look up the TrainConfig subclass for a model family from the registry.
+    """Look up the TrainConfig subclass for an exact model family.
 
     Returns the base TrainConfig if the family has no specific config.
     """
     from libreyolo.models.base.model import BaseModel
     from libreyolo.training.config import TrainConfig
 
+    family_spec = get_family_spec(family)
+    if family_spec is not None and family_spec.factory is FactoryKind.CHECKPOINT:
+        try:
+            model_class = load_family_class(family_spec)
+        except (ImportError, ModuleNotFoundError):
+            model_class = None
+        train_config = getattr(model_class, "TRAIN_CONFIG", None)
+        if train_config is not None:
+            return train_config
+
+    # Compatibility for third-party BaseModel subclasses outside the manifest.
     for cls in BaseModel._registry:
         if cls.FAMILY == family and cls.TRAIN_CONFIG is not None:
             return cls.TRAIN_CONFIG
-
-    # Check RF-DETR (lazily registered)
-    from libreyolo.models import try_ensure_rfdetr
-
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None and rfcls.FAMILY == family and rfcls.TRAIN_CONFIG is not None:
-        return rfcls.TRAIN_CONFIG
 
     return TrainConfig
 

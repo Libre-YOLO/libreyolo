@@ -24,6 +24,7 @@ class LibreYOLO2(DarknetFamily):
     FAMILY = "yolo2"
     FILENAME_PREFIX = "LibreYOLO2"
     INPUT_SIZES = {"t": 416, "b": 608}
+    INPUT_SIZE_DIVISOR = 32
 
     CFG_BY_SIZE = {"t": "yolov2-tiny", "b": "yolov2"}
     CONV_COUNT_TO_SIZE = {9: "t", 23: "b"}

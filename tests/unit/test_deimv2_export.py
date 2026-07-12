@@ -185,7 +185,7 @@ def test_deimv2_export_rejects_non_native_imgsz(tmp_path):
     from libreyolo import LibreDEIMv2
 
     model = LibreDEIMv2(None, size="atto", device="cpu")
-    with pytest.raises(ValueError, match="fixed decoder anchors"):
+    with pytest.raises(ValueError, match="requires imgsz=320"):
         model.export(
             "onnx",
             output_path=str(tmp_path / "bad.onnx"),

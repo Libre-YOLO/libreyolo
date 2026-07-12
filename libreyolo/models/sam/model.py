@@ -25,11 +25,16 @@ through the permissive ``transformers`` model API. See
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Type
-
 from .base import LibreSAMModel
 from .sam2 import LibreSAM2
 from .sam3 import LibreSAM3
+from ..manifest import (
+    FACTORY_DEFAULT_MODELS,
+    FACTORY_MODEL_ALIASES,
+    FactoryKind,
+    load_family_class,
+    resolve_factory_model,
+)
 
 
 class LibreSAM1(LibreSAMModel):
@@ -45,51 +50,26 @@ class LibreSAM1(LibreSAMModel):
     INPUT_SIZES = {"base": 1024, "large": 1024, "huge": 1024}
 
 
-# alias -> (family class, size)
 _MOBILE_SAM = "mobilesam"
 _PICO_SAM3 = "picosam3"
 
-_ALIASES: Dict[str, Tuple[Type[LibreSAMModel] | str, str]] = {
-    "base": (LibreSAM1, "base"),
-    "large": (LibreSAM1, "large"),
-    "huge": (LibreSAM1, "huge"),
-    "b": (LibreSAM1, "base"),
-    "l": (LibreSAM1, "large"),
-    "h": (LibreSAM1, "huge"),
-    "sam-base": (LibreSAM1, "base"),
-    "sam-large": (LibreSAM1, "large"),
-    "sam-huge": (LibreSAM1, "huge"),
-    "sam_b": (LibreSAM1, "base"),
-    "sam_l": (LibreSAM1, "large"),
-    "sam_h": (LibreSAM1, "huge"),
-    "sam2-tiny": (LibreSAM2, "tiny"),
-    "sam2-small": (LibreSAM2, "small"),
-    "sam2-base-plus": (LibreSAM2, "base-plus"),
-    "sam2-baseplus": (LibreSAM2, "base-plus"),
-    "sam2-large": (LibreSAM2, "large"),
-    "sam2-t": (LibreSAM2, "tiny"),
-    "sam2-s": (LibreSAM2, "small"),
-    "sam2-bp": (LibreSAM2, "base-plus"),
-    "sam2-l": (LibreSAM2, "large"),
-    "sam2_t": (LibreSAM2, "tiny"),
-    "sam2_s": (LibreSAM2, "small"),
-    "sam2_bp": (LibreSAM2, "base-plus"),
-    "sam2_l": (LibreSAM2, "large"),
-    "sam3": (LibreSAM3, "large"),
-    "sam-3": (LibreSAM3, "large"),
-    "sam3-large": (LibreSAM3, "large"),
-    "mobilesam": (_MOBILE_SAM, "tiny"),
-    "mobilesam-tiny": (_MOBILE_SAM, "tiny"),
-    "mobilesam_t": (_MOBILE_SAM, "tiny"),
-    "mobile-sam": (_MOBILE_SAM, "tiny"),
-    "mobile-sam-tiny": (_MOBILE_SAM, "tiny"),
-    "picosam3": (_PICO_SAM3, "pico"),
-    "picosam3-pico": (_PICO_SAM3, "pico"),
-    "picosam3_pico": (_PICO_SAM3, "pico"),
-    "pico-sam3": (_PICO_SAM3, "pico"),
+
+def _compat_alias_target(family, selection):
+    if family.family == "mobilesam":
+        return _MOBILE_SAM, selection.size
+    if family.family == "picosam3":
+        return _PICO_SAM3, selection.size
+    return load_family_class(family), selection.size
+
+
+# Backward-compatible private view, generated from the public manifest.
+_ALIASES = {
+    alias: _compat_alias_target(family, selection)
+    for (factory, alias), (family, selection) in FACTORY_MODEL_ALIASES.items()
+    if factory is FactoryKind.SAM
 }
 
-_DEFAULT_MODEL = "base"
+_DEFAULT_MODEL = FACTORY_DEFAULT_MODELS[FactoryKind.SAM]
 
 
 def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
@@ -110,23 +90,19 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
     Returns:
         A ``LibreSAMModel`` with the interactive ``set_image``/``predict`` surface.
     """
-    key = str(model).strip().lower()
-    match = _ALIASES.get(key)
+    match = resolve_factory_model(FactoryKind.SAM, model)
     if match is None:
-        raise ValueError(
-            f"Unknown SAM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(_ALIASES))}."
+        aliases = sorted(
+            alias
+            for (factory, alias) in FACTORY_MODEL_ALIASES
+            if factory is FactoryKind.SAM
         )
-    family_cls, size = match
-    if family_cls == _MOBILE_SAM:
-        from ..mobilesam import LibreMobileSAM
-
-        family_cls = LibreMobileSAM
-    elif family_cls == _PICO_SAM3:
-        from ..picosam3 import LibrePicoSAM3
-
-        family_cls = LibrePicoSAM3
-    return family_cls(size=size, **kwargs)
+        raise ValueError(
+            f"Unknown SAM model {model!r}. Known aliases: {', '.join(aliases)}."
+        )
+    family, selection = match
+    family_cls = load_family_class(family)
+    return family_cls(size=selection.size, **kwargs)
 
 
 __all__ = ["LibreSAM", "LibreSAM1", "LibreSAM2", "LibreSAM3"]

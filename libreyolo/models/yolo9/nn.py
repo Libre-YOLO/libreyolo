@@ -546,8 +546,8 @@ class DDetect(nn.Module):
         self.dynamic = False
         self.export = False
         self.shape = None
-        self.anchors = torch.empty(0)
-        self.strides = torch.empty(0)
+        self.register_buffer("anchors", torch.empty(0), persistent=False)
+        self.register_buffer("strides", torch.empty(0), persistent=False)
         # Register stride as a buffer so .to(device) moves it. Plain
         # attribute assignment leaves it on CPU even after model.to("cuda")
         # which silently breaks device-mismatch checks under DDP. dtype
@@ -642,19 +642,7 @@ class DDetect(nn.Module):
         # In export mode, always regenerate anchors to ensure trace
         # consistency (JIT trace runs the model twice and checks outputs).
         shape = preds[0].shape  # BCHW
-        if self.export:
-            anchors, strides = (
-                generated.transpose(0, 1)
-                for generated in self._make_anchors(preds, self.stride, 0.5)
-            )
-        else:
-            if self.dynamic or self.shape != shape:
-                self.anchors, self.strides = (
-                    generated.transpose(0, 1)
-                    for generated in self._make_anchors(preds, self.stride, 0.5)
-                )
-                self.shape = shape
-            anchors, strides = self.anchors, self.strides
+        anchors, strides = self._inference_anchors(preds)
 
         # Flatten every scale to (B, no, HW) and concatenate the scales, then
         # split the channel dim into the 4*reg_max distance distributions and
@@ -670,6 +658,30 @@ class DDetect(nn.Module):
         y = torch.cat((boxes, class_logits.sigmoid()), 1)
 
         return y, preds
+
+    @staticmethod
+    def _anchor_cache_signature(feats):
+        """Describe every feature map property that determines a safe cache."""
+        return tuple(
+            (tuple(feature.shape), feature.dtype, feature.device) for feature in feats
+        )
+
+    def _inference_anchors(self, feats):
+        """Return anchor tensors, rebuilding the inference cache when needed."""
+        if self.export:
+            return tuple(
+                generated.transpose(0, 1)
+                for generated in self._make_anchors(feats, self.stride, 0.5)
+            )
+
+        signature = self._anchor_cache_signature(feats)
+        if self.dynamic or self.shape != signature:
+            self.anchors, self.strides = (
+                generated.transpose(0, 1)
+                for generated in self._make_anchors(feats, self.stride, 0.5)
+            )
+            self.shape = signature
+        return self.anchors, self.strides
 
     def _make_anchors(self, feats, strides, grid_cell_offset=0.5):
         """Anchor centers plus per-anchor stride, one row per feature cell.

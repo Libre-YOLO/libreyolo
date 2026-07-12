@@ -240,3 +240,58 @@ def test_imgsz_divisor_mismatch_raises(tmp_path):
 
     with pytest.raises(ValueError, match="divisible by 14"):
         DepthValidator(model, config).run()
+
+
+def test_native_depth_validation_uses_family_geometry_and_postprocess(tmp_path):
+    width, height = 20, 10
+    _write_image(tmp_path / "images" / "val" / "a.jpg", width, height)
+    depth = np.full((height, width), FAR_DEPTH, dtype=np.float64)
+    _write_depth(tmp_path / "depths" / "val" / "a.png", depth)
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        f"path: {tmp_path.as_posix()}\nval: images/val\nnames: [depth]\n"
+    )
+
+    class _NativeModel(_StubDepthModel):
+        depth_resize_mode = "native"
+
+        def _preprocess(self, image, color_format, input_size):
+            del image, color_format, input_size
+            return torch.zeros(1, 3, 16, 32), None, (width, height), 1.0
+
+        def _postprocess(self, output, **kwargs):
+            assert kwargs["original_size"] == (width, height)
+            resized = torch.nn.functional.interpolate(
+                output,
+                size=(height, width),
+                mode="bilinear",
+                align_corners=True,
+            )
+            return {"depth": resized[0, 0]}
+
+    config = ValidationConfig(
+        data=str(yaml_path),
+        imgsz=32,
+        batch_size=4,
+        device="cpu",
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "runs"),
+    )
+    validator = DepthValidator(_NativeModel(), config)
+    validator.dataloader = validator._setup_dataloader()
+    batch = next(iter(validator.dataloader))
+
+    images, targets, infos, ids = validator._preprocess_batch(batch)
+    raw = torch.tensor([[[[0.0, 1.0], [2.0, 4.0]]]])
+    decoded = validator._postprocess_predictions(raw, batch)
+    align_false = torch.nn.functional.interpolate(
+        raw, size=(height, width), mode="bilinear", align_corners=False
+    )[:, 0]
+
+    assert images.shape == (1, 3, 16, 32)
+    assert targets.shape == (1, height, width)
+    assert infos[0]["orig_shape"] == (height, width)
+    assert ids == [0]
+    assert decoded.shape == (1, height, width)
+    assert not torch.allclose(decoded, align_false)

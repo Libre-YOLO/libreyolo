@@ -126,9 +126,18 @@ class RestoreValidator(BaseValidator):
             augment=False,
             scale=scale,
         )
+        batch_size = self.config.batch_size
+        if callable(getattr(self.model, "_preprocess_validation_batch", None)):
+            if batch_size != 1:
+                logger.info(
+                    "Native-geometry restore validation runs one image at a "
+                    "time (batch_size=%d ignored).",
+                    batch_size,
+                )
+            batch_size = 1
         return DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=batch_size,
             shuffle=False,
             num_workers=self.config.num_workers,
             pin_memory=self.device.type == "cuda",
@@ -141,6 +150,9 @@ class RestoreValidator(BaseValidator):
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
+        preprocess = getattr(self.model, "_preprocess_validation_batch", None)
+        if callable(preprocess):
+            images = preprocess(images)
         return images, targets, img_info, img_ids
 
     def _postprocess_predictions(self, preds: Any, batch: Any) -> torch.Tensor:

@@ -24,7 +24,12 @@ from ...postprocess.realesrgan import postprocess as _realesrgan_postprocess
 from ...utils.image_loader import ImageInput
 from ..base import BaseModel
 from .nn import RRDBNet, SRVGGNetCompact
-from .utils import forward_with_optional_tiling, preprocess_image, preprocess_numpy
+from .utils import (
+    _reflect_pad_to_multiple,
+    forward_with_optional_tiling,
+    preprocess_image,
+    preprocess_numpy,
+)
 
 
 # Per-size architecture. ``pad_multiple`` is the input divisibility required by
@@ -243,6 +248,10 @@ class LibreRealESRGAN(BaseModel):
             tile_size=self._tile,
             tile_pad=self._tile_pad,
         )
+
+    def _preprocess_validation_batch(self, images: torch.Tensor) -> torch.Tensor:
+        """Apply the same divisibility padding used by native prediction."""
+        return _reflect_pad_to_multiple(images, self._pad_multiple)
 
     def _postprocess(
         self,

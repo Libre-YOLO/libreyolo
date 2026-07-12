@@ -34,6 +34,7 @@ class LibreYOLO7(BaseModel):
     FAMILY = "yolo7"
     FILENAME_PREFIX = "LibreYOLO7"
     INPUT_SIZES = {"b": 640}
+    INPUT_SIZE_DIVISOR = 32
     SUPPORTED_TASKS = ("detect",)
     DEFAULT_TASK = "detect"
     # Letterbox + RGB + /255 + gray(114) pad — same contract as YOLO9.

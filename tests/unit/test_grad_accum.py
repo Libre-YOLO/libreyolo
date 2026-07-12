@@ -107,7 +107,7 @@ def _fake_image_loader(
 def _make_trainer(model: nn.Module, accum: int = 1, num_batches: int = 4):
     """Build a minimal concrete BaseTrainer with fake loader already wired in."""
     class _MinimalTrainer(_BaseTrainer):
-        def get_model_family(self): return "test"
+        def get_model_family(self): return "yolo9"
         def get_model_tag(self): return "test"
         def create_transforms(self): return None, None
         def create_scheduler(self, iters_per_epoch): return _ConstScheduler()

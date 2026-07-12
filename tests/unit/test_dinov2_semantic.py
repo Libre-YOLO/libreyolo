@@ -320,6 +320,46 @@ def test_dinov2_semantic_rejects_head_only_native_checkpoint(fake_backbone):
         )
 
 
+@pytest.mark.parametrize(
+    ("task", "checkpoint_imgsz"),
+    [("semantic", 532), ("classify", 238)],
+)
+def test_dinov2_custom_loader_adopts_native_checkpoint_imgsz(
+    fake_backbone,
+    task,
+    checkpoint_imgsz,
+):
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    source = LibreDINOv2(
+        model_path=None,
+        size="n",
+        task=task,
+        nb_classes=3,
+        device="cpu",
+    )
+    checkpoint = wrap_libreyolo_checkpoint(
+        source.model.state_dict(),
+        model_family="dinov2",
+        size="n",
+        task=task,
+        nc=3,
+        names=["a", "b", "c"],
+        imgsz=checkpoint_imgsz,
+    )
+
+    loaded = LibreDINOv2(
+        model_path=checkpoint,
+        size="n",
+        task=task,
+        nb_classes=3,
+        device="cpu",
+    )
+
+    assert loaded.input_size == checkpoint_imgsz
+
+
 @pytest.mark.external_data
 @pytest.mark.network
 @pytest.mark.slow

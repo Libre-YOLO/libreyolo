@@ -62,10 +62,9 @@ class LibreZipDepth(BaseModel):
 
     # Encoder stride; the depth dataset and validator enforce divisibility.
     depth_imgsz_divisor = IMGSZ_DIVISOR
-    # Validation letterboxes to a fixed square (padded pixels are invalid depth,
-    # excluded from metrics); predict uses the native keep-aspect resize, so val
-    # metrics on non-square images are a documented approximation of predict.
-    depth_resize_mode = "letterbox"
+    # Validation delegates to the same keep-aspect preprocessing and
+    # original-canvas postprocessing used by predict.
+    depth_resize_mode = "native"
 
     # Keep-aspect preprocessing yields per-image variable sizes, so the stacked
     # single-forward batched-predict path does not apply.

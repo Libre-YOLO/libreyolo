@@ -33,6 +33,9 @@ def test_yolonas_raw_parity(tmp_path, task, size, format):
         task=task,
         device="cpu",
     )
+    # This test isolates raw graph/backend parity on a tiny synthetic tensor.
+    # Production YOLO-NAS export keeps the public >=640 preprocessing contract.
+    model.INPUT_SIZE_MIN = 32
     model.model.eval()
     tensor = torch.rand(1, 3, 96, 96)
     traced = torch.jit.trace(model.model, tensor)

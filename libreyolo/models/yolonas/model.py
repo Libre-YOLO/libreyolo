@@ -34,6 +34,8 @@ class LibreYOLONAS(BaseModel):
     FAMILY = "yolonas"
     FILENAME_PREFIX = "LibreYOLONAS"
     INPUT_SIZES = {"s": 640, "m": 640, "l": 640}
+    INPUT_SIZE_DIVISOR = 32
+    INPUT_SIZE_MIN = 640
     POSE_INPUT_SIZES = {"n": 640, "s": 640, "m": 640, "l": 640}
     SUPPORTED_TASKS = ("detect", "pose")
     DEFAULT_TASK = "detect"
@@ -479,6 +481,11 @@ class LibreYOLONAS(BaseModel):
                         f"but is being loaded into '{own_family}'. "
                         f"Use the correct model class for this checkpoint."
                     )
+
+                self._apply_checkpoint_input_size(
+                    loaded,
+                    is_native_v1=is_native_v1,
+                )
 
                 ckpt_names = loaded.get("names")
                 ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))

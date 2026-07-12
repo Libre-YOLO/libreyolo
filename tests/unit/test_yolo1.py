@@ -296,6 +296,87 @@ def test_stretch_preprocess_fills_square_canvas():
     assert 0.0 <= float(chw.min()) and float(chw.max()) <= 1.0
 
 
+def test_validation_preprocessor_matches_native_stretch_on_nonsquare_image():
+    import numpy as np
+
+    from libreyolo.models.yolo1.model import LibreYOLO1
+
+    rgb = np.zeros((37, 101, 3), dtype=np.uint8)
+    rgb[..., 0] = np.arange(101, dtype=np.uint8)
+    rgb[..., 1] = 60
+    bgr = np.ascontiguousarray(rgb[..., ::-1])
+    expected, _ = preprocess_numpy_stretch(rgb, input_size=448)
+
+    preprocessor = LibreYOLO1.val_preprocessor_class((448, 448))
+    actual, _ = preprocessor(bgr, np.zeros((0, 5), dtype=np.float32), (448, 448))
+
+    assert np.array_equal(actual, expected)
+
+
+def test_yolo1_rejects_non_voc_class_count_before_model_construction(monkeypatch):
+    from libreyolo.models.yolo1.model import LibreYOLO1
+
+    constructed = False
+
+    def fail_if_constructed(self):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("model construction must not run")
+
+    monkeypatch.setattr(LibreYOLO1, "_init_model", fail_if_constructed)
+    with pytest.raises(ValueError, match="fixed Pascal VOC 20-class"):
+        LibreYOLO1(model_path=None, size="t", nb_classes=3, device="cpu")
+    assert not constructed
+
+
+def test_yolo1_rejects_non_voc_checkpoint_before_class_rebuild():
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    model = LibreYOLO1(model_path=None, size="t", device="cpu")
+    checkpoint = wrap_libreyolo_checkpoint(
+        _prefixed_state_dict("yolov1-tiny", "yolo1", nc=3),
+        model_family="yolo1",
+        size="t",
+        task="detect",
+        nc=3,
+        names={0: "a", 1: "b", 2: "c"},
+        imgsz=448,
+    )
+
+    with pytest.raises(RuntimeError, match="fixed Pascal VOC 20-class head"):
+        model._apply_loaded_checkpoint(checkpoint, context="YOLO1 test checkpoint")
+
+    assert model.nb_classes == 20
+
+
+def test_yolo1_validation_rejects_non_voc_dataset_class_space(tmp_path):
+    from libreyolo.validation import DetectionValidator, ValidationConfig
+
+    (tmp_path / "images" / "val").mkdir(parents=True)
+    data_path = tmp_path / "data.yaml"
+    data_path.write_text(
+        f"path: {tmp_path.as_posix()}\n"
+        "val: images/val\n"
+        "nc: 3\n"
+        "names: [a, b, c]\n",
+        encoding="utf-8",
+    )
+    model = LibreYOLO1(model_path=None, size="t", device="cpu")
+    validator = DetectionValidator(
+        model,
+        ValidationConfig(
+            data=str(data_path),
+            imgsz=448,
+            batch_size=1,
+            device="cpu",
+            verbose=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="dataset has 3 classes"):
+        validator._setup_dataloader()
+
+
 # ---------------------------------------------------------------------------
 # end-to-end: convert -> factory load -> predict (synthetic weights)
 # ---------------------------------------------------------------------------

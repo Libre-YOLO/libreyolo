@@ -306,6 +306,45 @@ def test_predict_without_charset_raises():
         model.predict(img)
 
 
+@pytest.mark.parametrize("imgsz", [True, 960.0, "960", 0, -32, 16])
+def test_ocr_runner_rejects_invalid_imgsz_before_source_or_device(imgsz):
+    from libreyolo.models.ppocr.inference import OCRInferenceRunner
+    from libreyolo.models.ppocr.model import LibrePPOCR
+
+    model = object.__new__(LibrePPOCR)
+    model.input_size = 736
+    model.task = "ocr"
+    model.device = torch.device("cpu")
+    runner = OCRInferenceRunner(model)
+
+    with pytest.raises(ValueError, match="imgsz"):
+        runner(Path("definitely-missing.jpg"), imgsz=imgsz, device="cuda:0")
+    assert model.device == torch.device("cpu")
+
+
+def test_ocr_runner_uses_checkpoint_runtime_imgsz_by_default(monkeypatch):
+    from libreyolo.models.ppocr.inference import OCRInferenceRunner
+    from libreyolo.models.ppocr.model import LibrePPOCR
+
+    model = object.__new__(LibrePPOCR)
+    model.input_size = 736
+    model.task = "ocr"
+    model.device = torch.device("cpu")
+    runner = OCRInferenceRunner(model)
+    captured = {}
+
+    def fake_predict_single(image, **kwargs):
+        captured["image"] = image
+        captured.update(kwargs)
+        return "result"
+
+    monkeypatch.setattr(runner, "_predict_single", fake_predict_single)
+    image = np.zeros((32, 64, 3), dtype=np.uint8)
+
+    assert runner(image) == "result"
+    assert captured["imgsz"] == 736
+
+
 # --------------------------------------------------------------------------
 # Dataset resolver on the committed fixture
 # --------------------------------------------------------------------------

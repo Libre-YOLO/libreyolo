@@ -38,7 +38,13 @@ Required field meanings:
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
   legacy sparse mappings, but out-of-range keys are invalid.
-- `imgsz`: positive integer square input resolution.
+- `imgsz`: positive integer square input resolution. Native v1 writers and
+  readers validate it against the selected family's fixed-canvas, minimum-size, stride, or patch
+  grid contract before loading weights. A valid value becomes the runtime
+  default for dynamic families. Fixed-canvas families reject a mismatch unless
+  the family explicitly opts into separately published native resolutions
+  (currently EoMT's 1280 COCO instance variant). Legacy/raw state dictionaries
+  do not override the constructed default.
 
 Pose checkpoints additionally include:
 

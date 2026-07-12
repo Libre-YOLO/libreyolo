@@ -200,17 +200,6 @@ class InferenceRunner:
             vid_stride=vid_stride,
             overlap_ratio=overlap_ratio,
         )
-        if device is not None:
-            self._set_device(device)
-
-        if output_file_format is not None:
-            output_file_format = output_file_format.lower().lstrip(".")
-            if output_file_format not in ("jpg", "jpeg", "png", "webp"):
-                raise ValueError(
-                    f"Invalid output_file_format: {output_file_format}. "
-                    "Must be one of: 'jpg', 'png', 'webp'"
-                )
-            
         if tiling and augment:
             raise ValueError(
                 "tiling and augment cannot be used together. "
@@ -223,6 +212,35 @@ class InferenceRunner:
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
             )
+        effective_imgsz = imgsz if imgsz is not None else self.model._get_input_size()
+        validate_input_size = getattr(
+            type(self.model),
+            "_validate_predict_input_size",
+            None,
+        )
+        imgsz = (
+            validate_input_size(
+                self.model,
+                effective_imgsz,
+            )
+            if callable(validate_input_size)
+            else effective_imgsz
+        )
+        if tiling and isinstance(imgsz, tuple):
+            raise ValueError(
+                "Tiled inference requires a square imgsz; got rectangular "
+                f"imgsz={imgsz}. Use a scalar canvas or disable tiling."
+            )
+        if device is not None:
+            self._set_device(device)
+
+        if output_file_format is not None:
+            output_file_format = output_file_format.lower().lstrip(".")
+            if output_file_format not in ("jpg", "jpeg", "png", "webp"):
+                raise ValueError(
+                    f"Invalid output_file_format: {output_file_format}. "
+                    "Must be one of: 'jpg', 'png', 'webp'"
+                )
 
         # A four-dimensional in-memory source is an image batch, not a single
         # image. Expand it in source order so no item is silently discarded by

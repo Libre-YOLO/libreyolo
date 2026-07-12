@@ -2,7 +2,6 @@
 
 import logging
 import os
-import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -34,6 +33,10 @@ class WeightDownloadLockTimeout(WeightDownloadError, TimeoutError):
     """Raised when another process holds a target download lock too long."""
 
 
+class WeightPublicationError(WeightDownloadError):
+    """Raised when architecture support exists but no public download is declared."""
+
+
 def _get_hf_token() -> Optional[str]:
     """Get HuggingFace token from env var or cached login."""
     token = os.environ.get("HF_TOKEN")
@@ -61,18 +64,6 @@ def _notify_yolonas_license_once() -> None:
         "  https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md\n"
         "─────────────────────────────────────────────────────────────────────\n"
     )
-
-
-def _detect_family_from_filename(filename: str) -> Optional[str]:
-    """Return model family hint from filename (for download routing only)."""
-    fl = filename.lower()
-    if re.search(r"librerfdetr", fl):
-        return "rfdetr"
-    if re.search(r"libreyolox", fl):
-        return "yolox"
-    if re.search(r"libreyolo9", fl):
-        return "yolo9"
-    return None
 
 
 @contextmanager
@@ -195,7 +186,7 @@ def _publish_verified_temp(partial: Path, destination: Path) -> bool:
 
 
 def download_weights(model_path: str, size: str):
-    """Download weights from Hugging Face if not found locally."""
+    """Download a declared public artifact, with a legacy registry fallback."""
     path = Path(model_path)
 
     # An existing path is user-owned input, not a cache entry managed by this
@@ -205,25 +196,61 @@ def download_weights(model_path: str, size: str):
         return
 
     from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.manifest import (
+        get_family_spec,
+        load_family_class,
+        match_weight_filename,
+    )
 
+    artifact = match_weight_filename(path)
+    cls = None
     url = None
-    for cls in BaseModel._registry:
-        url = cls.get_download_url(path.name)
-        if url:
-            break
+    if artifact is not None:
+        if str(size).casefold() != artifact.size:
+            raise ValueError(
+                f"Size {size!r} conflicts with canonical filename "
+                f"size {artifact.size!r}."
+            )
+        if not artifact.downloadable:
+            if path.exists():
+                return
+            raise WeightPublicationError(
+                f"{path.name!r} is a valid {artifact.family} architecture "
+                f"artifact, but its publication state is "
+                f"{artifact.publication.value!r} and LibreYOLO does not declare "
+                "a public auto-download route. Provide a local checkpoint."
+            )
 
-    # RF-DETR is lazily registered — try loading it if no match yet
-    if url is None:
-        try:
-            from libreyolo.models import _ensure_rfdetr
+        family = get_family_spec(artifact.family)
+        if family is None:  # pragma: no cover - guarded by manifest invariants
+            raise RuntimeError(f"Manifest family {artifact.family!r} is missing.")
+        cls = load_family_class(family)
+        if artifact.download_kind == "hf":
+            url = artifact.download_url
+        elif artifact.download_kind == "family":
+            url = cls.get_download_url(path.name)
+    else:
+        # Compatibility path for noncanonical, family-specific references and
+        # third-party callers that install a temporary BaseModel registry.
+        for candidate in BaseModel._registry:
+            url = candidate.get_download_url(path.name)
+            if url:
+                cls = candidate
+                break
 
-            _ensure_rfdetr()
-            for cls in BaseModel._registry:
-                url = cls.get_download_url(path.name)
-                if url:
-                    break
-        except (ModuleNotFoundError, ImportError):
-            pass
+        # Legacy RF-DETR references may require its optional lazy registration.
+        if url is None:
+            try:
+                from libreyolo.models import _ensure_rfdetr
+
+                _ensure_rfdetr()
+                for candidate in BaseModel._registry:
+                    url = candidate.get_download_url(path.name)
+                    if url:
+                        cls = candidate
+                        break
+            except (ModuleNotFoundError, ImportError):
+                pass
 
     if url is None:
         raise ValueError(f"Could not determine download URL for '{path.name}'.")
