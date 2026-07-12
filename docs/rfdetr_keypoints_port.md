@@ -15,6 +15,9 @@ which their benchmark reports as ahead of the leading AGPL-3.0 pose models at co
 A permissively licensed, strong, AGPL-free pose model is exactly the "match then leapfrog, permissive
 license is the wedge" play, so LibreYOLO adopts it.
 
+The port is pinned to upstream commit
+`779e55254ccfbffc8cc23b7ecee29a4201489e13` (tag `1.8.0`).
+
 The official model is a **GroupPose-style** architecture (not a simple per-query MLP), so its weights
 cannot load into the old clean-room head. Adopting the weights therefore means porting the official
 keypoint architecture and **removing the old clean-room RF-DETR pose head**.

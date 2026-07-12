@@ -1,0 +1,16 @@
+RF-DETR third-party notice
+==========================
+
+LibreYOLO's RF-DETR family and its GroupPose-style keypoint support are
+derived from Roboflow's RF-DETR project.
+
+Source: https://github.com/roboflow/rf-detr
+Commit: 779e55254ccfbffc8cc23b7ecee29a4201489e13 (tag 1.8.0)
+License: Apache License 2.0
+Copyright: 2024-2025 Roboflow, Inc.
+
+The derived implementation is under ``libreyolo/models/rfdetr/`` and
+``libreyolo/postprocess/rfdetr.py``. The same upstream revision supplies the
+GroupPose-style keypoint architecture used by the published RF-DETR keypoint
+preview checkpoint. The Apache-2.0 license text is available at
+``licenses/Apache-2.0.txt`` and in the pinned upstream repository.
