@@ -3,13 +3,14 @@
 import logging
 import math
 import operator
+import os
 import warnings
 from pathlib import Path
 from typing import Callable, Generator, Iterator, Tuple, Union
 
 import numpy as np
 
-from .general import resolve_save_path
+from .general import release_save_path_reservation, resolve_save_path
 
 logger = logging.getLogger(__name__)
 
@@ -285,11 +286,15 @@ class VideoWriter:
 
     def release(self):
         """Flush and close the writer. Safe to call multiple times."""
-        if self._writer is not None:
-            try:
-                self._writer.release()
-            finally:
-                self._writer = None
+        try:
+            if self._writer is not None:
+                try:
+                    self._writer.release()
+                finally:
+                    self._writer = None
+        finally:
+            if os.path.lexists(self._path):
+                release_save_path_reservation(self._path)
 
     def __repr__(self) -> str:
         return f"VideoWriter(path='{self._path}')"

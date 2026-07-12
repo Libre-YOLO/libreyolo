@@ -44,6 +44,7 @@ from ...utils.general import (
     get_safe_stem,
     get_slice_bboxes,
     log_saved_result,
+    reserve_save_directory,
     resolve_save_path,
 )
 from ...utils.image_loader import ImageInput, ImageLoader
@@ -1380,7 +1381,7 @@ class InferenceRunner:
                     Path("runs/tiled_detections") / f"{stem}_{model_tag}_{timestamp}"
                 )
 
-            save_dir.mkdir(parents=True, exist_ok=True)
+            save_dir = reserve_save_directory(save_dir)
 
             # Save tiles
             tiles_dir = save_dir / "tiles"

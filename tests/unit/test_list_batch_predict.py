@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from PIL import Image
 
 from libreyolo.backends.base import BaseBackend
 from libreyolo.backends.tensorrt import TensorRTBackend
+from libreyolo.models.base import inference as inference_module
 from libreyolo.models.base.inference import InferenceRunner
 from libreyolo.utils.image_loader import ImageLoader
 
@@ -226,6 +228,44 @@ def test_runner_large_tiled_save_keeps_existing_suffix_directory(tmp_path):
 
     assert Path(result.saved_path).is_relative_to(output_dir)
     assert Path(result.saved_path).is_dir()
+
+
+def test_concurrent_tiled_saves_with_same_timestamp_use_distinct_dirs(
+    tmp_path, monkeypatch
+):
+    class FixedDatetime:
+        @staticmethod
+        def now():
+            return FixedDatetime()
+
+        @staticmethod
+        def strftime(_format):
+            return "20260712_120000_000000"
+
+    monkeypatch.setattr(inference_module, "datetime", FixedDatetime)
+    output_dir = tmp_path / "out"
+
+    def save_tiled(fill):
+        runner = InferenceRunner(_StubModel())
+        image = np.full((64, 64, 3), fill, dtype=np.uint8)
+        return Path(
+            runner(
+                image,
+                tiling=True,
+                save=True,
+                output_path=str(output_dir),
+            ).saved_path
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        save_dirs = list(pool.map(save_tiled, (0, 255)))
+
+    assert len(set(save_dirs)) == 2
+    assert {path.name for path in save_dirs} == {
+        "inference_stub_n_20260712_120000_000000",
+        "inference_stub_n_20260712_120000_0000002",
+    }
+    assert all((path / "final_image.jpg").is_file() for path in save_dirs)
 
 
 # =============================================================================
