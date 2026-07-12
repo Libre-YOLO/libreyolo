@@ -13,6 +13,7 @@ from libreyolo.utils.general import (
     log_saved_result,
     release_save_path_reservation,
     resolve_save_path,
+    save_path_write_guard,
 )
 
 
@@ -194,6 +195,34 @@ def test_release_never_deletes_published_artifact(tmp_path):
     assert reserved.read_bytes() == b"published"
 
 
+def test_write_guard_releases_after_handled_failure_for_exact_retry(tmp_path):
+    explicit = tmp_path / "prediction.jpg"
+    reserved = resolve_save_path(explicit, "source.jpg")
+
+    with pytest.raises(OSError, match="synthetic write failure"):
+        with save_path_write_guard(reserved):
+            raise OSError("synthetic write failure")
+
+    retry = resolve_save_path(explicit, "source.jpg")
+    assert retry == explicit
+    assert release_save_path_reservation(retry) is True
+
+
+def test_write_guard_preserves_partial_artifact_and_retries_next_name(tmp_path):
+    explicit = tmp_path / "prediction.jpg"
+    reserved = resolve_save_path(explicit, "source.jpg")
+
+    with pytest.raises(OSError, match="synthetic write failure"):
+        with save_path_write_guard(reserved):
+            reserved.write_bytes(b"partial")
+            raise OSError("synthetic write failure")
+
+    retry = resolve_save_path(explicit, "source.jpg")
+    assert reserved.read_bytes() == b"partial"
+    assert retry == tmp_path / "prediction2.jpg"
+    assert release_save_path_reservation(retry) is True
+
+
 def test_logging_success_releases_process_reservation(tmp_path):
     explicit = tmp_path / "prediction.jpg"
     reserved = resolve_save_path(explicit, "source.jpg")
@@ -227,6 +256,152 @@ def test_save_path_allocation_has_no_9999_name_ceiling(tmp_path, monkeypatch):
 
     assert reserved.name == "prediction10000.jpg"
     assert release_save_path_reservation(reserved) is True
+
+
+def test_parent_alias_release_reclaims_the_physical_path(tmp_path):
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    alias_dir = tmp_path / "alias"
+    try:
+        alias_dir.symlink_to(real_dir, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    reserved = resolve_save_path(alias_dir, "photo.jpg")
+    assert release_save_path_reservation(reserved) is True
+
+    retry = resolve_save_path(real_dir, "photo.jpg")
+    assert retry == real_dir / "photo.jpg"
+    assert release_save_path_reservation(retry) is True
+
+
+def test_preexisting_marker_like_user_path_is_never_removed(tmp_path):
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    candidate = output_dir / "photo.jpg"
+    _, marker_path = general._save_path_reservation_location(candidate)
+    marker_path.mkdir()
+    sentinel = marker_path / "user-data"
+    sentinel.write_bytes(b"keep")
+
+    reserved = resolve_save_path(output_dir, "photo.jpg")
+
+    assert reserved == output_dir / "photo2.jpg"
+    assert release_save_path_reservation(reserved) is True
+    assert sentinel.read_bytes() == b"keep"
+
+
+def test_native_save_failure_releases_for_exact_retry(tmp_path):
+    import torch
+
+    from libreyolo.models.base.inference import InferenceRunner
+    from libreyolo.utils.results import Probs, Results
+
+    class FailingImage:
+        @staticmethod
+        def save(_path):
+            raise OSError("synthetic image failure")
+
+    explicit = tmp_path / "prediction.jpg"
+    reserved = resolve_save_path(explicit, "source.jpg")
+    result = Results(
+        boxes=None,
+        probs=Probs(torch.tensor([1.0])),
+        orig_shape=(8, 8),
+    )
+
+    with pytest.raises(OSError, match="synthetic image failure"):
+        InferenceRunner(object())._save_annotated_image(
+            result, FailingImage(), reserved
+        )
+
+    retry = resolve_save_path(explicit, "source.jpg")
+    assert retry == explicit
+    assert release_save_path_reservation(retry) is True
+
+
+def test_backend_save_failure_releases_for_exact_retry(tmp_path):
+    import torch
+
+    from libreyolo.backends.tensorrt import TensorRTBackend
+    from libreyolo.utils.results import Probs, Results
+
+    class FailingImage:
+        def copy(self):
+            return self
+
+        @staticmethod
+        def save(_path):
+            raise OSError("synthetic backend failure")
+
+    backend = TensorRTBackend.__new__(TensorRTBackend)
+    backend.model_path = "backend.pt"
+    backend.names = {0: "thing"}
+    result = Results(
+        boxes=None,
+        probs=Probs(torch.tensor([1.0])),
+        orig_shape=(8, 8),
+    )
+    explicit = tmp_path / "prediction.jpg"
+
+    with pytest.raises(OSError, match="synthetic backend failure"):
+        backend._save_annotated(result, FailingImage(), "source.jpg", explicit)
+
+    retry = resolve_save_path(explicit, "source.jpg")
+    assert retry == explicit
+    assert release_save_path_reservation(retry) is True
+
+
+@pytest.mark.parametrize("writer_name", ["ensemble", "ppocr", "l2cs"])
+def test_specialized_save_failure_releases_for_exact_retry(
+    tmp_path, writer_name, monkeypatch
+):
+    class FailingImage:
+        def copy(self):
+            return self
+
+        @staticmethod
+        def save(_path):
+            raise OSError("synthetic specialized failure")
+
+    class EmptyResult(SimpleNamespace):
+        def __len__(self):
+            return 0
+
+    explicit = tmp_path / "prediction.jpg"
+    result = EmptyResult(names={})
+
+    with pytest.raises(OSError, match="synthetic specialized failure"):
+        if writer_name == "ensemble":
+            from libreyolo.ensemble.model import LibreEnsemble
+
+            ensemble = LibreEnsemble.__new__(LibreEnsemble)
+            ensemble._save_annotated(
+                result,
+                FailingImage(),
+                "source.jpg",
+                explicit,
+            )
+        else:
+            reserved = resolve_save_path(explicit, "source.jpg")
+            if writer_name == "ppocr":
+                from libreyolo.models.ppocr.inference import OCRInferenceRunner
+
+                runner = OCRInferenceRunner.__new__(OCRInferenceRunner)
+            else:
+                from libreyolo.models.l2cs.inference import GazeInferenceRunner
+
+                runner = GazeInferenceRunner.__new__(GazeInferenceRunner)
+            monkeypatch.setattr(
+                runner,
+                "_annotate",
+                lambda _original, _result: FailingImage(),
+            )
+            runner._save_annotated_image(result, FailingImage(), reserved)
+
+    retry = resolve_save_path(explicit, "source.jpg")
+    assert retry == explicit
+    assert release_save_path_reservation(retry) is True
 
 
 def test_directory_aliases_reserve_distinct_physical_artifacts(tmp_path):

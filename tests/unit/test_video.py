@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from libreyolo.utils.general import release_save_path_reservation
 from libreyolo.utils.video import (
     VideoSource,
     VideoWriter,
@@ -269,6 +270,47 @@ class TestVideoWriter:
         assert Path(out_path).exists()
         assert writer._writer is None  # released
 
+    def test_open_failure_releases_reserved_path_for_retry(
+        self, tmp_path, monkeypatch
+    ):
+        class ClosedWriter:
+            @staticmethod
+            def isOpened():
+                return False
+
+            @staticmethod
+            def release():
+                pass
+
+        monkeypatch.setattr(cv2, "VideoWriter", lambda *_args: ClosedWriter())
+        explicit = tmp_path / "prediction.mp4"
+        reserved = Path(resolve_video_save_path("clip.mov", explicit))
+
+        with pytest.raises(ValueError, match="Cannot open video writer"):
+            VideoWriter(reserved, fps=10.0, width=32, height=32)
+
+        retry = Path(resolve_video_save_path("clip.mov", explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    def test_release_without_created_file_reclaims_reserved_path(self, tmp_path):
+        class UnmaterializedWriter:
+            @staticmethod
+            def release():
+                pass
+
+        explicit = tmp_path / "prediction.mp4"
+        reserved = Path(resolve_video_save_path("clip.mov", explicit))
+        writer = VideoWriter.__new__(VideoWriter)
+        writer._path = str(reserved)
+        writer._writer = UnmaterializedWriter()
+
+        writer.release()
+
+        retry = Path(resolve_video_save_path("clip.mov", explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
     @pytest.mark.parametrize("fps", [0.0, -1.0, float("nan"), float("inf")])
     def test_rejects_invalid_fps(self, tmp_path, fps):
         with pytest.raises(ValueError, match="FPS"):
@@ -357,6 +399,56 @@ class TestResultsFrameIdx:
 
 
 class TestRunVideoInference:
+    def test_progress_initialization_failure_releases_output(
+        self, sample_video, tmp_path, monkeypatch
+    ):
+        import tqdm as tqdm_module
+
+        explicit = tmp_path / "prediction.mp4"
+
+        def fail_progress(*_args, **_kwargs):
+            raise RuntimeError("synthetic progress failure")
+
+        monkeypatch.setattr(tqdm_module, "tqdm", fail_progress)
+
+        with pytest.raises(RuntimeError, match="synthetic progress failure"):
+            list(
+                run_video_inference(
+                    sample_video,
+                    lambda _image: None,
+                    save=True,
+                    output_path=str(explicit),
+                    progress=True,
+                )
+            )
+
+        retry = Path(resolve_video_save_path(sample_video, explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    def test_prediction_failure_releases_unmaterialized_output(
+        self, sample_video, tmp_path
+    ):
+        explicit = tmp_path / "prediction.mp4"
+
+        def fail_prediction(_image):
+            raise RuntimeError("synthetic prediction failure")
+
+        with pytest.raises(RuntimeError, match="synthetic prediction failure"):
+            list(
+                run_video_inference(
+                    sample_video,
+                    fail_prediction,
+                    save=True,
+                    output_path=str(explicit),
+                    progress=False,
+                )
+            )
+
+        retry = Path(resolve_video_save_path(sample_video, explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
     def test_save_video_renders_gaze_direction(self, sample_video, tmp_path, monkeypatch):
         import torch
 

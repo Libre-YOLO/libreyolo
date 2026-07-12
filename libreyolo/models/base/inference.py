@@ -46,6 +46,7 @@ from ...utils.general import (
     log_saved_result,
     reserve_save_directory,
     resolve_save_path,
+    save_path_write_guard,
 )
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.predict_args import normalize_predict_kwargs, validate_predict_inputs
@@ -632,6 +633,11 @@ class InferenceRunner:
         )
 
     def _save_annotated_image(self, result: Results, original_img, save_path: Path) -> None:
+        """Render and save while releasing the path claim on every exit."""
+        with save_path_write_guard(save_path):
+            self._write_annotated_image(result, original_img, save_path)
+
+    def _write_annotated_image(self, result: Results, original_img, save_path: Path) -> None:
         """Internal helper to draw boxes, masks, and keypoints and save to disk."""
         # Classification results carry probs and no boxes; there is nothing to
         # draw, so persist the source image as-is rather than dereferencing

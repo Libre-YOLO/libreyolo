@@ -7,12 +7,13 @@ import math
 import os
 import secrets
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import count
 from numbers import Integral, Real
 from pathlib import Path
 from threading import RLock
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Iterator, List, Tuple, Union
 from urllib.parse import urlparse
 
 import torch
@@ -217,7 +218,9 @@ def resolve_save_path(
     Within a single process, all images are saved to the same directory.
     Save names are atomically reserved across threads and processes so repeated
     inputs, duplicate basenames, and explicit-file batch outputs cannot
-    overwrite one another before the previous write becomes visible.
+    overwrite one another before the previous write becomes visible. Direct
+    callers should wrap the write in :func:`save_path_write_guard`; built-in
+    inference writers already do this.
 
     Args:
         output_path: User-provided output path (file or directory) or None
@@ -421,6 +424,17 @@ def release_save_path_reservation(path: Union[str, Path]) -> bool:
     except (OSError, RuntimeError):
         return False
     return _release_save_path_reservation_key(reservation_key)
+
+
+@contextmanager
+def save_path_write_guard(path: Union[str, Path]) -> Iterator[None]:
+    """Release an allocated save-path reservation after a write attempt."""
+    try:
+        yield
+    finally:
+        # Releasing removes only this process's owned marker. A completed or
+        # partially written artifact is never deleted.
+        release_save_path_reservation(path)
 
 
 def _cleanup_save_path_reservations() -> None:

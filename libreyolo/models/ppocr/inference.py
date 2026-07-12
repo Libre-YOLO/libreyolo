@@ -18,7 +18,11 @@ import torch
 from PIL import Image
 
 from ...postprocess.ppocr import ctc_decode, db_postprocess, sort_quads_reading_order
-from ...utils.general import log_saved_result, resolve_save_path
+from ...utils.general import (
+    log_saved_result,
+    resolve_save_path,
+    save_path_write_guard,
+)
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import OCRRegions, Results
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
@@ -328,9 +332,10 @@ class OCRInferenceRunner:
         return draw_ocr_regions(pil_img, ocr_np.data, ocr_np.texts, ocr_np.conf)
 
     def _save_annotated_image(self, result: Results, original_img: Image.Image, save_path: Path) -> None:
-        annotated = self._annotate(original_img, result)
-        annotated.save(save_path)
-        log_saved_result(result, save_path)
+        with save_path_write_guard(save_path):
+            annotated = self._annotate(original_img, result)
+            annotated.save(save_path)
+            log_saved_result(result, save_path)
 
     def _set_device(self, device: str) -> None:
         device_str = str(device).strip().lower()

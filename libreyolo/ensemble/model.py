@@ -29,7 +29,11 @@ import torch
 
 from ..ops.fusion import FUSIONS
 from ..tasks import normalize_task
-from ..utils.general import log_saved_result, resolve_save_path
+from ..utils.general import (
+    log_saved_result,
+    resolve_save_path,
+    save_path_write_guard,
+)
 from ..utils.image_loader import ImageInput, ImageLoader
 from ..utils.logging import ensure_default_logging
 from ..utils.predict_args import normalize_predict_kwargs
@@ -519,8 +523,9 @@ class LibreEnsemble:
         else:
             annotated = img.copy()
         save_path = resolve_save_path(output_path, image_path, ext="jpg")
-        annotated.save(save_path)
-        log_saved_result(result, save_path)
+        with save_path_write_guard(save_path):
+            annotated.save(save_path)
+            log_saved_result(result, save_path)
 
     # =========================================================================
     # Not yet implemented surfaces

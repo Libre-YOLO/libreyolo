@@ -44,6 +44,7 @@ from ..utils.general import (
     get_safe_stem,
     log_saved_result,
     resolve_save_path,
+    save_path_write_guard,
 )
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
@@ -2537,6 +2538,18 @@ class BaseBackend(ABC):
                 force_ext=is_matte,
             )
 
+        with save_path_write_guard(final_path):
+            self._write_annotated_result(
+                result,
+                original_img,
+                final_path,
+                is_matte=is_matte,
+            )
+
+    def _write_annotated_result(
+        self, result, original_img, final_path: Path, *, is_matte: bool
+    ) -> None:
+        """Render and write one already-reserved backend result path."""
         annotated_img = original_img.copy()
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass

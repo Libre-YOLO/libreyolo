@@ -3,7 +3,6 @@
 import logging
 import math
 import operator
-import os
 import warnings
 from pathlib import Path
 from typing import Callable, Generator, Iterator, Tuple, Union
@@ -227,6 +226,15 @@ class VideoWriter:
     """
 
     def __init__(self, path: Union[str, Path], fps: float, width: int, height: int):
+        self._path = str(path)
+        try:
+            self._open(fps, width, height)
+        except BaseException:
+            release_save_path_reservation(self._path)
+            raise
+
+    def _open(self, fps: float, width: int, height: int) -> None:
+        """Validate parameters and open the first available video codec."""
         try:
             import cv2
         except ImportError:
@@ -244,8 +252,7 @@ class VideoWriter:
         if not math.isfinite(fps) or fps <= 0:
             raise ValueError(f"Video writer FPS must be finite and > 0, got {fps!r}.")
 
-        self._path = str(path)
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
         self.codec = None
         self._writer = None
@@ -293,8 +300,7 @@ class VideoWriter:
                 finally:
                     self._writer = None
         finally:
-            if os.path.lexists(self._path):
-                release_save_path_reservation(self._path)
+            release_save_path_reservation(self._path)
 
     def __repr__(self) -> str:
         return f"VideoWriter(path='{self._path}')"
@@ -380,21 +386,27 @@ def run_video_inference(
         writer = None
         out_path = None
         effective_fps = None
-        if save:
-            out_path = resolve_video_save_path(source, output_path)
-            effective_fps = video_src.fps / stride
-            # The writer is created lazily from the first output frame instead
-            # of the source dimensions: restore/super-resolution results render
-            # on a canvas ``restore_scale`` times the source frame.
-
-        total = _processed_frame_count(video_src.total_frames, stride) or None
-        pbar = (
-            tqdm(total=total, desc=Path(source).name, unit="frame", dynamic_ncols=True)
-            if progress
-            else None
-        )
-
+        pbar = None
         try:
+            if save:
+                out_path = resolve_video_save_path(source, output_path)
+                effective_fps = video_src.fps / stride
+                # The writer is created lazily from the first output frame instead
+                # of the source dimensions: restore/super-resolution results render
+                # on a canvas ``restore_scale`` times the source frame.
+
+            total = _processed_frame_count(video_src.total_frames, stride) or None
+            pbar = (
+                tqdm(
+                    total=total,
+                    desc=Path(source).name,
+                    unit="frame",
+                    dynamic_ncols=True,
+                )
+                if progress
+                else None
+            )
+
             for frame_bgr, frame_idx in video_src:
                 # Convert BGR frame to PIL RGB for the model pipeline
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -562,10 +574,16 @@ def run_video_inference(
                 yield result
 
         finally:
-            if pbar is not None:
-                pbar.close()
-            if writer is not None:
-                writer.release()
-                logger.info("Video saved to %s", out_path)
-            if show:
-                cv2.destroyAllWindows()
+            try:
+                if pbar is not None:
+                    pbar.close()
+            finally:
+                try:
+                    if writer is not None:
+                        writer.release()
+                        logger.info("Video saved to %s", out_path)
+                finally:
+                    if out_path is not None:
+                        release_save_path_reservation(out_path)
+                    if show:
+                        cv2.destroyAllWindows()
