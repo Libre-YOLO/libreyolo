@@ -451,6 +451,37 @@ def test_train_exception_callback_fires_and_original_error_reraises(tmp_path):
     assert isinstance(event.exception, RuntimeError)
 
 
+def test_resumed_preloop_exception_reports_first_attempted_epoch(tmp_path):
+    received = []
+
+    class FailingStartCallback:
+        def on_train_start(self, event):
+            raise RuntimeError("start callback failed")
+
+        def on_train_exception(self, event):
+            received.append(event)
+
+    trainer = CallbackTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+        epochs=4,
+        callbacks=FailingStartCallback(),
+    )
+    trainer._test_save_dir = tmp_path
+    trainer.saved_checkpoints = []
+    # Zero-based resume state: epochs 1 and 2 are already complete, so epoch 3
+    # is the first epoch this invocation would attempt.
+    trainer.start_epoch = 2
+
+    with pytest.raises(RuntimeError, match="start callback failed"):
+        trainer.train()
+
+    assert len(received) == 1
+    assert received[0].epoch == 3
+
+
 def test_legacy_two_value_epoch_result_still_normalizes_lr():
     trainer = DummyTrainer(
         model=nn.Linear(1, 1),

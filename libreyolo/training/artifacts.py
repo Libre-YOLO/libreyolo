@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..utils.logging import LoggerLevelLease, ThreadLogFilter
 from .callbacks import (
     TrainEndEvent,
     TrainEpochEvent,
@@ -380,19 +381,26 @@ class TrainingStatusCallback:
         self._epoch_time_sum = 0.0
         self._epoch_time_count = 0
         self._base: dict[str, Any] = {}
+        self._status: dict[str, Any] = {}
+        self._start_completed_epochs = 0
+        self._completed_epochs = 0
         self._log_handler: logging.Handler | None = None
         self._log_path: Path | None = None
-        self._prev_log_level: int | None = None
+        self._log_level_lease: LoggerLevelLease | None = None
 
     # -- events ------------------------------------------------------------
 
     def on_train_start(self, event: TrainStartEvent) -> None:
+        self._close_log()
         save_dir = self._save_dir(event)
         self._start_time = time.time()
         self._epoch_time_sum = 0.0
         self._epoch_time_count = 0
+        self._status = {}
+        self._start_completed_epochs = max(int(event.start_epoch) - 1, 0)
+        self._completed_epochs = self._start_completed_epochs
         self._base = {
-            "schema_version": 1,
+            "schema_version": 2,
             "pid": os.getpid(),
             "model_family": event.model_family,
             "model_size": event.model_size,
@@ -410,11 +418,19 @@ class TrainingStatusCallback:
                     metrics_path.unlink()
                 except OSError:
                     logger.debug("Could not reset %s", self.metrics_name, exc_info=True)
+        else:
+            try:
+                self._trim_metrics_before_epoch(
+                    save_dir / self.metrics_name,
+                    start_epoch=event.start_epoch,
+                )
+            except OSError:
+                logger.debug("Could not trim %s", self.metrics_name, exc_info=True)
         self._open_log(save_dir, fresh=event.start_epoch <= 1)
         self._write(
             save_dir,
             state="running",
-            completed_epochs=max(event.start_epoch - 1, 0),
+            completed_epochs=self._completed_epochs,
             current_epoch=None,
         )
 
@@ -423,7 +439,11 @@ class TrainingStatusCallback:
         self._epoch_time_sum += event.epoch_seconds
         self._epoch_time_count += 1
         mean_epoch = self._epoch_time_sum / max(self._epoch_time_count, 1)
-        completed = event.epoch + 1
+        # Public callback events number completed epochs from 1. status.json
+        # keeps ``current_epoch`` zero-based for its UI/API consumers and stores
+        # an absolute completed count, including epochs from a resumed run.
+        completed = max(int(event.epoch), self._start_completed_epochs)
+        self._completed_epochs = max(self._completed_epochs, completed)
         remaining = max(event.total_epochs - completed, 0)
         metrics = {
             name.removeprefix("metrics/"): value
@@ -436,8 +456,8 @@ class TrainingStatusCallback:
         self._write(
             save_dir,
             state="running",
-            current_epoch=event.epoch,
-            completed_epochs=completed,
+            current_epoch=max(int(event.epoch) - 1, 0),
+            completed_epochs=self._completed_epochs,
             epoch_seconds=event.epoch_seconds,
             mean_epoch_seconds=mean_epoch,
             eta_seconds=mean_epoch * remaining,
@@ -448,19 +468,25 @@ class TrainingStatusCallback:
             current_metric_name=event.current_metric_name,
             best_metric=event.best_metric,
             best_metric_name=event.best_metric_name,
-            best_epoch=event.best_epoch,
+            best_epoch=(event.best_epoch - 1 if event.best_epoch is not None else None),
         )
 
     def on_train_end(self, event: TrainEndEvent) -> None:
         save_dir = self._save_dir(event)
+        absolute_completed = max(
+            self._completed_epochs,
+            self._start_completed_epochs + max(int(event.completed_epochs), 0),
+        )
+        absolute_completed = min(absolute_completed, max(int(event.total_epochs), 0))
+        self._completed_epochs = absolute_completed
         self._write(
             save_dir,
             state="completed",
-            completed_epochs=event.completed_epochs,
+            completed_epochs=absolute_completed,
             total_seconds=event.total_seconds,
             train_loss=event.final_loss,
             best_metric=event.best_metric,
-            best_epoch=event.best_epoch,
+            best_epoch=(event.best_epoch - 1 if event.best_epoch is not None else None),
             checkpoints={
                 "best": event.results.get("best_checkpoint"),
                 "last": event.results.get("last_checkpoint"),
@@ -473,7 +499,8 @@ class TrainingStatusCallback:
         self._write(
             save_dir,
             state="failed",
-            current_epoch=event.epoch,
+            current_epoch=(max(int(event.epoch) - 1, 0) if event.epoch is not None else None),
+            completed_epochs=self._completed_epochs,
             elapsed_seconds=event.elapsed_seconds,
             error={
                 "type": event.exception_type,
@@ -491,15 +518,16 @@ class TrainingStatusCallback:
         return save_dir
 
     def _write(self, save_dir: Path, **fields: Any) -> None:
+        self._status.update(fields)
         payload = dict(self._base)
-        payload.update(fields)
+        payload.update(self._status)
         if self._start_time is not None:
             payload.setdefault(
                 "elapsed_seconds", round(time.time() - self._start_time, 3)
             )
         total = payload.get("total_epochs") or 0
         completed = payload.get("completed_epochs") or 0
-        payload["progress"] = (completed / total) if total else 0.0
+        payload["progress"] = min(max(completed / total, 0.0), 1.0) if total else 0.0
         payload["updated_at"] = _utcnow_iso()
         try:
             _atomic_write_json(save_dir / self.status_name, payload)
@@ -514,6 +542,36 @@ class TrainingStatusCallback:
                 f.write(line + "\n")
         except Exception:
             logger.debug("Failed to append %s", self.metrics_name, exc_info=True)
+
+    @staticmethod
+    def _trim_metrics_before_epoch(path: Path, *, start_epoch: int) -> None:
+        """Atomically discard stale/duplicate JSONL rows at the resume boundary."""
+        if not path.exists() or path.stat().st_size == 0:
+            return
+        kept = []
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                    epoch = int(row.get("epoch")) if isinstance(row, Mapping) else None
+                except (TypeError, ValueError):
+                    continue
+                if epoch is not None and epoch < start_epoch:
+                    kept.append(json.dumps(_json_safe(row), allow_nan=False))
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                if kept:
+                    handle.write("\n".join(kept) + "\n")
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
 
     def _open_log(self, save_dir: Path, *, fresh: bool) -> None:
         if not self.write_log:
@@ -530,29 +588,35 @@ class TrainingStatusCallback:
                     datefmt="%Y-%m-%d %H:%M:%S",
                 )
             )
+            handler.addFilter(ThreadLogFilter())
             lib_logger = logging.getLogger("libreyolo")
-            # The handler only sees records the logger admits, so lift the
-            # logger to INFO if it is quieter (restored in _close_log).
-            if lib_logger.level == logging.NOTSET or lib_logger.level > logging.INFO:
-                self._prev_log_level = lib_logger.level
-                lib_logger.setLevel(logging.INFO)
+            self._log_level_lease = LoggerLevelLease(
+                lib_logger, logging.INFO
+            ).acquire()
             lib_logger.addHandler(handler)
             self._log_handler = handler
         except Exception:
+            if self._log_level_lease is not None:
+                self._log_level_lease.release()
+                self._log_level_lease = None
             logger.debug("Failed to open %s", self.log_name, exc_info=True)
             self._log_handler = None
 
     def _close_log(self) -> None:
         handler = self._log_handler
         if handler is None:
+            if self._log_level_lease is not None:
+                self._log_level_lease.release()
+                self._log_level_lease = None
             return
         self._log_handler = None
         try:
             lib_logger = logging.getLogger("libreyolo")
             lib_logger.removeHandler(handler)
             handler.close()
-            if self._prev_log_level is not None:
-                lib_logger.setLevel(self._prev_log_level)
-                self._prev_log_level = None
         except Exception:
             logger.debug("Failed to close %s", self.log_name, exc_info=True)
+        finally:
+            if self._log_level_lease is not None:
+                self._log_level_lease.release()
+                self._log_level_lease = None

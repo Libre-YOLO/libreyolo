@@ -338,8 +338,24 @@ cv.addEventListener("dblclick", e=>{
     if(d<bestD){ bestD=d; best=i; bx=px; by=py; } }
   if(best>=0 && Math.hypot(sx(bx)-mx, sy(by)-my)<14){ pushUndo(); p.pts.splice(2*(best+1),0, bx, by); markDirty(); draw(); }
 });
-function clipPoly(p){ if(!imgOk||!p) return; const iw=img.naturalWidth, ih=img.naturalHeight;
-  if(DS && DS.task==="obb" && p.pts.length===8){
+function clippedPolyPoints(raw, iw, ih){
+  let v=[]; for(let k=0;k<raw.length;k+=2) v.push([raw[k],raw[k+1]]);
+  const clip=(arr,inside,cross)=>{ if(!arr.length) return []; const out=[]; let s=arr[arr.length-1], sin=inside(s);
+    arr.forEach(e=>{ const ein=inside(e); if(ein){ if(!sin) out.push(cross(s,e)); out.push(e); }
+      else if(sin) out.push(cross(s,e)); s=e; sin=ein; }); return out; };
+  const atX=(a,b,x)=>{ const t=(x-a[0])/(b[0]-a[0]); return [x,a[1]+t*(b[1]-a[1])]; };
+  const atY=(a,b,y)=>{ const t=(y-a[1])/(b[1]-a[1]); return [a[0]+t*(b[0]-a[0]),y]; };
+  v=clip(v,q=>q[0]>=0,(a,b)=>atX(a,b,0)); v=clip(v,q=>q[0]<=iw,(a,b)=>atX(a,b,iw));
+  v=clip(v,q=>q[1]>=0,(a,b)=>atY(a,b,0)); v=clip(v,q=>q[1]<=ih,(a,b)=>atY(a,b,ih));
+  const clean=[]; v.forEach(q=>{ const z=clean[clean.length-1]; if(!z||Math.abs(q[0]-z[0])>1e-9||Math.abs(q[1]-z[1])>1e-9) clean.push(q); });
+  if(clean.length>1){ const a=clean[0],b=clean[clean.length-1]; if(Math.abs(a[0]-b[0])<=1e-9&&Math.abs(a[1]-b[1])<=1e-9) clean.pop(); }
+  return clean.flat();
+}
+function polyArea2Px(pts){ let a=0,n=pts.length/2; for(let i=0;i<n;i++){ const j=(i+1)%n; a+=pts[2*i]*pts[2*j+1]-pts[2*j]*pts[2*i+1]; } return Math.abs(a); }
+function clipPoly(p){ if(!imgOk||!p) return false; const iw=img.naturalWidth, ih=img.naturalHeight;
+  if(DS && DS.task==="obb"){
+    if(p.pts.length!==8) return false;
+    const overlap=clippedPolyPoints(p.pts,iw,ih); if(overlap.length<6||polyArea2Px(overlap)<=1e-8) return false;
     // Clamping corners individually would shear the rectangle; translate the whole
     // quad back inside instead (per-corner clamp only if it simply can't fit).
     let mnx=1e18,mxx=-1e18,mny=1e18,mxy=-1e18;
@@ -348,17 +364,22 @@ function clipPoly(p){ if(!imgOk||!p) return; const iw=img.naturalWidth, ih=img.n
     if(mxx-mnx<=iw && mxy-mny<=ih){
       const dx=Math.max(0,-mnx)-Math.max(0,mxx-iw), dy=Math.max(0,-mny)-Math.max(0,mxy-ih);
       if(dx||dy) for(let k=0;k<p.pts.length;k+=2){ p.pts[k]+=dx; p.pts[k+1]+=dy; }
-      return;
+      return true;
     }
+    return false;   // clipping an oversized OBB would destroy its rectangle contract
   }
-  for(let k=0;k<p.pts.length;k+=2){ p.pts[k]=Math.max(0,Math.min(p.pts[k],iw)); p.pts[k+1]=Math.max(0,Math.min(p.pts[k+1],ih)); } }
+  const clipped=clippedPolyPoints(p.pts,iw,ih);
+  if(clipped.length<6||polyArea2Px(clipped)<=1e-8) return false;
+  p.pts=clipped; return true; }
 function normalizeRect(b){ if(b.w<0){b.x+=b.w;b.w=-b.w;} if(b.h<0){b.y+=b.h;b.h=-b.h;} }
 function clipToImage(b){
-  if(!imgOk) return;
+  if(!imgOk||!b) return false;
   const iw=img.naturalWidth, ih=img.naturalHeight;
   const x1=Math.max(0,Math.min(b.x,iw)),     y1=Math.max(0,Math.min(b.y,ih));
   const x2=Math.max(0,Math.min(b.x+b.w,iw)), y2=Math.max(0,Math.min(b.y+b.h,ih));
+  if(![x1,y1,x2,y2].every(Number.isFinite)||x2<=x1||y2<=y1) return false;
   b.x=x1; b.y=y1; b.w=x2-x1; b.h=y2-y1;
+  return true;
 }
 function resizeBox(b, k, mx, my){
   if(k.includes("n")){ b.h += b.y-my; b.y=my; }

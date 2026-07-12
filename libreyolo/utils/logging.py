@@ -12,11 +12,83 @@ handlers, formatting, and log level.
 
 import logging
 import sys
+import threading
+from collections import Counter
 from typing import ClassVar
 
 # Custom HEADER level — bold green banner for phase separators
 HEADER_LEVEL = 25
 logging.addLevelName(HEADER_LEVEL, "HEADER")
+
+_LEVEL_LEASE_LOCK = threading.Lock()
+_LEVEL_LEASES: dict[logging.Logger, dict] = {}
+
+
+class ThreadLogFilter(logging.Filter):
+    """Admit records emitted by one thread only."""
+
+    def __init__(self, thread_id: int | None = None):
+        super().__init__()
+        self.thread_id = threading.get_ident() if thread_id is None else thread_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.thread == self.thread_id
+
+
+class LoggerLevelLease:
+    """Temporarily admit a log level without racing other in-process users.
+
+    The shared ``libreyolo`` logger can be captured by overlapping training and
+    inference UI runs. Its original level is restored only after the final
+    lease closes.
+    """
+
+    def __init__(self, logger: logging.Logger, level: int = logging.INFO):
+        self.logger = logger
+        self.level = int(level)
+        self._acquired = False
+
+    def acquire(self) -> "LoggerLevelLease":
+        if self._acquired:
+            return self
+        with _LEVEL_LEASE_LOCK:
+            state = _LEVEL_LEASES.get(self.logger)
+            if state is None:
+                state = {"original": self.logger.level, "levels": Counter()}
+                _LEVEL_LEASES[self.logger] = state
+            state["levels"][self.level] += 1
+            self._apply_active_level(state)
+            self._acquired = True
+        return self
+
+    def release(self) -> None:
+        if not self._acquired:
+            return
+        with _LEVEL_LEASE_LOCK:
+            state = _LEVEL_LEASES.get(self.logger)
+            if state is not None:
+                levels: Counter = state["levels"]
+                levels[self.level] -= 1
+                if levels[self.level] <= 0:
+                    del levels[self.level]
+                if levels:
+                    self._apply_active_level(state)
+                else:
+                    self.logger.setLevel(int(state["original"]))
+                    del _LEVEL_LEASES[self.logger]
+            self._acquired = False
+
+    def _apply_active_level(self, state: dict) -> None:
+        requested = min(state["levels"])
+        original = int(state["original"])
+        target = requested if original == logging.NOTSET else min(original, requested)
+        self.logger.setLevel(target)
+
+    def __enter__(self) -> "LoggerLevelLease":
+        return self.acquire()
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.release()
 
 
 class ConsoleFormatter(logging.Formatter):

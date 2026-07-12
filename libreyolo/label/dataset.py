@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import random
 import re
 import shutil
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -33,6 +37,66 @@ from .labelio import (
     parse_annotations,
     sanitize_annotations,
 )
+
+
+_UPLOAD_LOCK = threading.RLock()
+
+
+def _path_identity(path) -> str:
+    """Canonical, case-folded identity for cross-platform dataset paths."""
+    value = Path(path).expanduser()
+    try:
+        value = value.resolve(strict=False)
+    except (OSError, RuntimeError):
+        value = Path(os.path.abspath(os.path.normpath(str(value))))
+    return os.path.normcase(str(value)).casefold()
+
+
+@contextmanager
+def _interprocess_upload_lock(dst: Path):
+    """Serialize upload/finalize operations for one destination across processes."""
+    lock_root = Path(tempfile.gettempdir()) / "librelabel-upload-locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    identity = _path_identity(dst).encode("utf-8")
+    lock_path = lock_root / (hashlib.sha256(identity).hexdigest() + ".lock")
+    with open(lock_path, "a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _publish_no_clobber(temp_path: Path, target: Path) -> None:
+    """Atomically replace an exclusively-created placeholder with a staged file."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    fd = os.open(target, flags, 0o644)
+    os.close(fd)
+    try:
+        os.replace(temp_path, target)
+    except BaseException:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _names_to_list(names) -> List[str]:
@@ -60,9 +124,24 @@ def _resolve_data_arg(data: str) -> str:
 
 def _atomic_write_text(path: Path, text: str) -> None:
     """Write via a temp file + ``os.replace`` so a label is never half-written."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        mode = path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        mode = 0o644
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def folder_yaml(folder: str) -> Optional[str]:
@@ -119,9 +198,9 @@ def scaffold_data_yaml(folder: str, names: Optional[List[str]] = None,
         "names": classes,
         "nc": len(classes),
     }
-    t = str(task or "").strip().lower()
-    if t and t != "detect":               # detect is the default; only stamp non-default tasks
-        cfg["task"] = t
+    # LibreLabel knows the user's selected authoring task; stamp even detection so
+    # later transforming exports never have to guess an optional schema intent.
+    cfg["task"] = str(task or "detect").strip().lower()
     text = (
         "# LibreLabel project -- created from a folder of images.\n"
         "# Labels are written next to the images, where `libreyolo train` reads them.\n"
@@ -143,7 +222,9 @@ def update_class_names(yaml_file: str, names: List[str]) -> None:
     cfg["names"] = list(names)
     cfg["nc"] = len(names)
     # Keep the leading comment block (LibreLabel project hints) that safe_dump drops.
-    comment = "\n".join(l for l in original.splitlines() if l.lstrip().startswith("#"))
+    comment = "\n".join(
+        line for line in original.splitlines() if line.lstrip().startswith("#")
+    )
     body = yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
     _atomic_write_text(p, (comment + "\n\n" + body) if comment else body)
 
@@ -153,9 +234,61 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 
 def _write_json_atomic(path: Path, obj) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    _atomic_write_text(path, json.dumps(obj, indent=2, ensure_ascii=False))
+
+
+def _assert_unique_image_stems(paths, context: str) -> None:
+    """Reject image sets whose derived ``<stem>.txt`` label names collide."""
+    seen = {}
+    for value in paths:
+        path = Path(value)
+        key = path.stem.casefold()
+        if key in seen:
+            raise ValueError(
+                f"{context}: {seen[key].name} and {path.name} share the label basename "
+                f"{path.stem!r}; rename one image before continuing."
+            )
+        seen[key] = path
+
+
+def _move_validation_images(
+    paths: List[Path], val_dir: Path
+) -> Tuple[List[Tuple[Path, Path]], bool]:
+    """Move a planned validation subset, rolling back the whole subset on error."""
+    moved: List[Tuple[Path, Path]] = []
+    created_val_dir = not val_dir.exists()
+    try:
+        val_dir.mkdir(parents=True, exist_ok=True)
+        for src in paths:
+            dest = val_dir / src.name
+            if dest.exists():
+                raise FileExistsError(f"Validation destination already exists: {dest}")
+            os.replace(src, dest)
+            moved.append((src, dest))
+    except BaseException:
+        for src, dest in reversed(moved):
+            if dest.exists() and not src.exists():
+                os.replace(dest, src)
+        if created_val_dir:
+            try:
+                val_dir.rmdir()
+            except OSError:
+                pass
+        raise
+    return moved, created_val_dir
+
+
+def _rollback_validation_images(
+    moved: List[Tuple[Path, Path]], val_dir: Path, *, remove_val_dir: bool
+) -> None:
+    for src, dest in reversed(moved):
+        if dest.exists() and not src.exists():
+            os.replace(dest, src)
+    if remove_val_dir:
+        try:
+            val_dir.rmdir()
+        except OSError:
+            pass
 
 
 def load_sidecar(base: str) -> dict:
@@ -228,19 +361,51 @@ def save_uploaded_image(dst: str, name: str, data: bytes) -> str:
         raise ValueError(f"unsupported file type: {safe}")
     if not data:
         raise ValueError("empty file")
-    if folder_yaml(dst):
-        raise FileExistsError(
-            "That folder is already a dataset (it has a data.yaml) - open it instead, "
-            "or pick an empty folder for the new project.")
-    out_dir = Path(dst) / "images" / "train"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / safe
-    if out.exists():
-        raise FileExistsError(f"{safe} already exists in that folder - not overwriting it.")
-    tmp = out.with_suffix(out.suffix + ".uptmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, out)
-    return str(out)
+    with _UPLOAD_LOCK, _interprocess_upload_lock(Path(dst)):
+        if folder_yaml(dst):
+            raise FileExistsError(
+                "That folder is already a dataset (it has a data.yaml) - open it instead, "
+                "or pick an empty folder for the new project.")
+        out_dir = Path(dst) / "images" / "train"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / safe
+        # Image suffixes disappear when the trainer derives ``<stem>.txt``. Treat
+        # foo.jpg + foo.png as the same occupied label slot, including on
+        # case-sensitive filesystems where the eventual training/export target may
+        # still be case-insensitive.
+        stem_key = out.stem.casefold()
+        if any(
+            p.is_file() and p.suffix.lower() in IMG_EXTS and p.stem.casefold() == stem_key
+            for p in out_dir.iterdir()
+        ):
+            raise FileExistsError(
+                f"An image with label basename {out.stem!r} already exists in that folder - "
+                "not overwriting or sharing its label file."
+            )
+
+        # Publish a fully-written unique temp through an exclusive placeholder and
+        # atomic replacement. This preserves no-clobber semantics on filesystems
+        # that do not support hard links (removable/network/cloud-backed storage).
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".librelabel-upload-", suffix=".tmp", dir=str(out_dir)
+        )
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.chmod(tmp, 0o644)
+            try:
+                _publish_no_clobber(tmp, out)
+            except FileExistsError as exc:
+                raise FileExistsError(
+                    f"{safe} already exists in that folder - not overwriting it."
+                ) from exc
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return str(out)
 
 
 def create_uploaded_project(dst: str, *, name: Optional[str] = None,
@@ -249,6 +414,27 @@ def create_uploaded_project(dst: str, *, name: Optional[str] = None,
                             colors: Optional[List[str]] = None,
                             task: Optional[str] = None,
                             make_val: bool = False, val_frac: float = 0.2) -> str:
+    """Create an uploaded project while excluding concurrent upload requests."""
+    with _UPLOAD_LOCK, _interprocess_upload_lock(Path(dst)):
+        return _create_uploaded_project_locked(
+            dst,
+            name=name,
+            description=description,
+            color=color,
+            classes=classes,
+            colors=colors,
+            task=task,
+            make_val=make_val,
+            val_frac=val_frac,
+        )
+
+
+def _create_uploaded_project_locked(dst: str, *, name: Optional[str] = None,
+                                    description: str = "", color: str = "",
+                                    classes: Optional[List[str]] = None,
+                                    colors: Optional[List[str]] = None,
+                                    task: Optional[str] = None,
+                                    make_val: bool = False, val_frac: float = 0.2) -> str:
     """Turn just-uploaded images (``<dst>/images/train``) into a real LibreYOLO
     dataset: an optional held-out ``val`` split, a ``data.yaml`` the trainer reads
     directly, and a ``librelabel.json`` sidecar (name + per-class colors).
@@ -264,33 +450,49 @@ def create_uploaded_project(dst: str, *, name: Optional[str] = None,
         imgs = []
     if not imgs:
         raise FileNotFoundError("No uploaded images found - add some images first.")
+    _assert_unique_image_stems(imgs, "Uploaded project")
     cls = [str(c).strip() for c in (classes or []) if str(c).strip()]
     cols = list(colors or [])
 
     has_val = False
+    moved: List[Tuple[Path, Path]] = []
+    remove_val_dir = False
+    val_dir = base / "images" / "val"
     if make_val and len(imgs) >= 4:
-        k = max(1, min(len(imgs) - 1, int(round(len(imgs) * float(val_frac)))))
-        val_dir = base / "images" / "val"
-        val_dir.mkdir(parents=True, exist_ok=True)
-        for i in random.Random(1234).sample(range(len(imgs)), k):
-            src = Path(imgs[i])
-            os.replace(src, val_dir / src.name)
+        if val_dir.is_dir() and any(val_dir.iterdir()):
+            raise ValueError(
+                "Validation directory is not empty; use an empty upload folder so "
+                "the wizard cannot merge unrelated images or label stems."
+            )
+        try:
+            fraction = float(val_frac)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Validation fraction must be a finite number in [0, 1].") from exc
+        if not 0.0 <= fraction <= 1.0 or not math.isfinite(fraction):
+            raise ValueError("Validation fraction must be a finite number in [0, 1].")
+        k = max(1, min(len(imgs) - 1, int(round(len(imgs) * fraction))))
+        selected = [Path(imgs[i]) for i in random.Random(1234).sample(range(len(imgs)), k)]
+        moved, remove_val_dir = _move_validation_images(selected, val_dir)
         has_val = True
 
-    cfg = {"path": base.resolve().as_posix(), "train": "images/train"}
-    if has_val:
-        cfg["val"] = "images/val"
-    cfg["names"] = cls
-    cfg["nc"] = len(cls)
-    t = str(task or "").strip().lower()
-    if t and t != "detect":
-        cfg["task"] = t
-    text = (
-        "# LibreLabel project -- created with the New Project wizard.\n"
-        "# Labels are written next to the images, where `libreyolo train` reads them.\n\n"
-        + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
-    )
-    _atomic_write_text(base / "data.yaml", text)
+    try:
+        cfg = {"path": base.resolve().as_posix(), "train": "images/train"}
+        if has_val:
+            cfg["val"] = "images/val"
+        cfg["names"] = cls
+        cfg["nc"] = len(cls)
+        cfg["task"] = str(task or "detect").strip().lower()
+        text = (
+            "# LibreLabel project -- created with the New Project wizard.\n"
+            "# Labels are written next to the images, where `libreyolo train` reads them.\n\n"
+            + yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True)
+        )
+        _atomic_write_text(base / "data.yaml", text)
+    except BaseException:
+        _rollback_validation_images(
+            moved, val_dir, remove_val_dir=remove_val_dir
+        )
+        raise
 
     sidecar = {
         "name": name or base.name,
@@ -340,9 +542,7 @@ def create_linked_project(src: str, *, name: Optional[str] = None,
     cls = [str(c).strip() for c in (classes or []) if str(c).strip()]
     cfg = {"path": proj.resolve().as_posix(), "train": "images.txt",
            "names": cls, "nc": len(cls)}
-    t = str(task or "").strip().lower()
-    if t and t != "detect":
-        cfg["task"] = t
+    cfg["task"] = str(task or "detect").strip().lower()
     text = (
         "# LibreLabel LINKED project -- the images stay in place, untouched:\n"
         f"#   {srcp.resolve().as_posix()}\n"
@@ -396,14 +596,14 @@ class DatasetSession:
             for ip, lp in zip(imgs, labels, strict=True):
                 if self.linked:
                     h = hashlib.sha1(
-                        os.path.normcase(os.path.normpath(str(ip))).encode("utf-8")
+                        _path_identity(ip).encode("utf-8")
                     ).hexdigest()[:8]
                     lp = _linked_lab / split / f"{Path(ip).stem}-{h}.txt"
                 # A yaml may reuse a folder across splits; expose each label file
                 # once so a single image can't be saved twice under two ids -- but
                 # remember every split it was in, for exact-overlap leakage detection.
-                key = os.path.normcase(os.path.normpath(str(lp)))
-                ikey = os.path.normcase(os.path.normpath(str(ip)))
+                key = _path_identity(lp)
+                ikey = _path_identity(ip)
                 self._path_splits.setdefault(key, set()).add(split)
                 if key in seen:
                     # Same label file again. Same image -> split overlap (leakage,
@@ -422,6 +622,7 @@ class DatasetSession:
             s: cfg.get(s) for s in ("train", "val", "test") if cfg.get(s)
         }
         self.writable, self.reason = self._check_writable()
+        self._label_clash = label_clash is not None
         if self.writable and label_clash:
             self.writable = False
             self.reason = (
@@ -429,25 +630,115 @@ class DatasetSession:
                 f"({label_clash[0]} and {label_clash[1]} share a name): saving one "
                 "would overwrite the other's labels. Rename one and reopen."
             )
+        # Resolve an omitted task only when on-disk geometry makes it unambiguous.
+        # The common schema does not require ``task``; non-quad polygons can only be
+        # segmentation, while a four-corner row remains segment-vs-OBB ambiguous.
+        declared_task = str(cfg.get("task") or "").strip().lower()
+        has_polygon = False
+        has_nonquad_polygon = False
+        for _ip, label_path, _split in self._items:
+            try:
+                annotations = parse_annotations(label_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, UnicodeError):
+                continue
+            for annotation in annotations:
+                if annotation.get("type") != "poly":
+                    continue
+                has_polygon = True
+                if len(annotation.get("points") or []) != 8:
+                    has_nonquad_polygon = True
+        inferred_task = "segment" if not declared_task and has_nonquad_polygon else ""
+        task = declared_task or inferred_task
+        self._task_declared_or_inferred = bool(task)
+        self._task_ambiguous = bool(not task and has_polygon)
+        if self.writable and self._task_ambiguous:
+            self.writable = False
+            self.reason = (
+                "Four-corner labels are ambiguous without task: segment or task: "
+                "obb. Declare the task before editing so box and OBB geometry cannot "
+                "be mixed in one dataset."
+            )
+
         # Pose (kpt_shape), semantic-seg (masks_dir) and depth datasets store dense
         # labels LibreLabel can't edit; writing YOLO boxes would pollute them. The
         # `task:` key alone is enough to know -- a depth yaml may omit depths_dir
         # (the loader defaults it), a classify yaml uses no .txt labels at all, and
         # an OBB yaml's 9-field rows are oriented rectangles we'd corrupt if saved as
         # arbitrary polygons -- so treat those tasks as view-only on the task key too.
-        task = str(cfg.get("task") or "").strip().lower()
         self._task = task   # used to disambiguate 4-point (OBB-vs-polygon) rows on read/write
         # obb is editable: its 9-field rows are 4-corner quads that round-trip
         # byte-identically as 4-vertex polygons (see labelio), so LibreLabel can
         # author oriented boxes without corrupting them.
+        native_annotations = any(
+            cfg.get(f"{split}_annotation_file") for split in ("train", "val", "test")
+        )
+        self._native_annotations = bool(native_annotations)
+        unsupported_task = bool(task and task not in ("detect", "segment", "obb"))
+        task_specific_markers = any(
+            key in cfg
+            for key in (
+                "panoptic_dir",
+                "label_mapping",
+                "depth_scale",
+                "depth_mask_suffix",
+                "depth_stem_suffix",
+                "input_dir",
+                "target_dir",
+                "target_stem_suffix",
+                "target_stem_suffixes",
+                "val_mattes",
+                "train_mattes",
+                "mattes_dir",
+                "flip_idx",
+            )
+        ) or ("images" in cfg and "labels" in cfg)
+        root_path = Path(self.root) if self.root else Path(self.yaml_file).parent
+        obvious_paired_layout = (
+            ((root_path / "inputs").is_dir() and (root_path / "targets").is_dir())
+            or (
+                (root_path / "images").is_dir()
+                and any(
+                    (root_path / directory).is_dir()
+                    for directory in (
+                        "depths",
+                        "mattes",
+                        "matte",
+                        "gt",
+                        "masks",
+                        "mask",
+                        "alpha",
+                    )
+                )
+            )
+            or (
+                (root_path / "labels").is_dir()
+                and any((root_path / "labels").glob("*.jsonl"))
+            )
+        )
         dense = (cfg.get("kpt_shape") or cfg.get("masks_dir")
                  or cfg.get("depths_dir") or cfg.get("depth")
-                 or task in ("depth", "classify", "pose"))
-        if self.writable and dense:
+                 or unsupported_task or task_specific_markers
+                 or obvious_paired_layout)
+        # The generic exporter only knows image + YOLO box/polygon pairs. Keep a
+        # separate flag from ``writable``: an ambiguous but ordinary detection
+        # layout can still be copied safely, while dense/task-specific datasets
+        # must never be exported with their masks/keypoints/targets omitted.
+        self._lossy_export = bool(dense or native_annotations)
+        if self.writable and native_annotations:
             self.writable = False
-            self.reason = ("Keypoint / mask / depth / classify dataset: view-only in "
-                           "LibreLabel - it edits boxes and polygons, and saving would drop "
-                           "or corrupt the dense / task-specific labels.")
+            self.reason = (
+                "Native COCO-JSON annotations are view-only in LibreLabel; this "
+                "session does not load or rewrite the JSON and must not create "
+                "parallel empty YOLO labels."
+            )
+        elif self.writable and dense:
+            self.writable = False
+            self.reason = (
+                "Keypoint / mask / depth / restore / task-specific dataset: "
+                "view-only in LibreLabel - it edits detection boxes, segmentation "
+                "polygons, and OBB corners only; saving would create parallel or "
+                "incomplete labels."
+            )
         self._deleted: set = set()  # ids of duplicates removed this session (tombstones)
 
     # -- safety ------------------------------------------------------------
@@ -646,7 +937,7 @@ class DatasetSession:
         dup_groups.sort(key=lambda g: -len(g["ids"]))
         # Exact same label-path listed in >1 split (deduped out of _items, so the
         # dHash pass above can't see it) -- still real train/val leakage.
-        kidx = {os.path.normcase(os.path.normpath(str(self._items[i][1]))): i
+        kidx = {_path_identity(self._items[i][1]): i
                 for i in range(len(self._items)) if i not in self._deleted}
         for key, splits in self._path_splits.items():
             if len(splits) > 1 and key in kidx:
@@ -843,30 +1134,41 @@ class DatasetSession:
         if not lp.exists():
             return [], self.writable   # a read-only session stays inert even for unlabeled images
         text = lp.read_text(encoding="utf-8")
+        annotations = parse_annotations(text)
+        has_boxes = any(a.get("type") == "box" for a in annotations)
+        has_polygons = any(a.get("type") == "poly" for a in annotations)
         # A file is editable only if the whole dataset is writable (a dense/pose/OBB
         # dataset's box-shaped rows are a partial view we must never round-trip) AND
         # the file has no rows a save would silently alter: keypoint/malformed rows,
-        # an out-of-[0,nc) class, or out-of-[0,1] coordinates the sanitizers clamp.
+        # an out-of-[0,nc) class, or out-of-[0,1] coordinates the writer rejects.
         editable = self.writable and not (
             has_unsupported_rows(text)
             or has_out_of_range_rows(text, self.nc)
             or has_out_of_bounds_coords(text)
             or has_degenerate_polygon(text)
             or has_zero_area_box(text)
+            or (self._task == "detect" and has_polygons)
+            or (self._task == "obb" and has_boxes)
             # 4-point rows are OBB-or-polygon-ambiguous only when the dataset declares
             # no task; segment (free polygons) and obb (oriented boxes) both edit them
             or (self._task not in ("segment", "obb") and has_obb_shaped_rows(text)))
-        return parse_annotations(text), editable
+        return annotations, editable
 
     def label_rev(self, idx: int) -> int:
-        """A monotonic revision token for the label file (its mtime in ns, 0 if
-        absent), so a save can detect that another teammate rewrote it meanwhile."""
+        """A content revision token for optimistic label-write concurrency.
+
+        Filesystem timestamps are too coarse on some removable/network filesystems
+        for a compare-and-swap contract.  A fixed digest changes whenever the label
+        bytes change; zero remains the sentinel for an absent file.
+        """
         self._check_index(idx)
         lp = self._items[idx][1]
         try:
-            return lp.stat().st_mtime_ns if lp.exists() else 0
-        except OSError:
+            data = lp.read_bytes()
+        except FileNotFoundError:
             return 0
+        digest = hashlib.blake2b(data, digest_size=8, person=b"LibreLbl").digest()
+        return int.from_bytes(digest, "big") + 1
 
     # -- mutation ----------------------------------------------------------
     def write_label(self, idx: int, annotations: List[dict], expected_rev: Optional[int] = None) -> int:
@@ -899,10 +1201,27 @@ class DatasetSession:
                 raise RuntimeError("This label file has a zero-area (collinear/collapsed) polygon; it is read-only.")
             if has_zero_area_box(existing):
                 raise RuntimeError("This label file has a zero-width/height box; it is read-only.")
+            parsed_existing = parse_annotations(existing)
+            if self._task == "detect" and any(
+                annotation.get("type") == "poly"
+                for annotation in parsed_existing
+            ):
+                raise RuntimeError(
+                    "This detection label file contains polygon rows; it is read-only."
+                )
+            if self._task == "obb" and any(
+                annotation.get("type") == "box"
+                for annotation in parsed_existing
+            ):
+                raise RuntimeError(
+                    "This OBB label file contains axis-aligned box rows; it is read-only."
+                )
             if self._task not in ("segment", "obb") and has_obb_shaped_rows(existing):
                 raise RuntimeError("This label file has 4-point (OBB/quad) rows; without task: segment "
                                    "or task: obb they're ambiguous and kept read-only.")
-        clean = sanitize_annotations(annotations, self.nc)
+        clean = sanitize_annotations(
+            annotations, self.nc, task=self._task or "detect"
+        )
         lp.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(lp, format_annotations(clean))
         return len(clean)

@@ -794,16 +794,26 @@ class BaseTrainer(ABC):
 
         project = Path(self.config.project)
         name = self.config.name
+        project.mkdir(parents=True, exist_ok=True)
+        base = project / name
+        # ``name`` may include a grouping path such as ``sweep/exp``. Preserve
+        # that long-standing layout while atomically reserving only the leaf.
+        base.parent.mkdir(parents=True, exist_ok=True)
+        if self.config.exist_ok:
+            save_dir = base
+            save_dir.mkdir(exist_ok=True)
+            return save_dir
 
-        save_dir = project / name
-        if not self.config.exist_ok and save_dir.exists():
-            i = 2
-            while (project / f"{name}{i}").exists():
-                i += 1
-            save_dir = project / f"{name}{i}"
-
-        save_dir.mkdir(parents=True, exist_ok=True)
-        return save_dir
+        # Directory creation, unlike exists-check-then-mkdir, is an atomic
+        # reservation across concurrent trainers in this process or another.
+        for index in range(1, 10_000):
+            candidate = base if index == 1 else base.with_name(f"{base.name}{index}")
+            try:
+                candidate.mkdir()
+            except FileExistsError:
+                continue
+            return candidate
+        raise FileExistsError(f"No free training run directory under {project}")
 
     def _setup_data(self):
         wrapper_task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
@@ -1786,6 +1796,10 @@ class BaseTrainer(ABC):
         # May be stale from a previous profile_then_stop run on this instance;
         # a leftover True would silently truncate this run's first epoch.
         self._stop_training = False
+        # Establish the first attempted epoch before setup/callback work. If a
+        # resumed setup fails after partially marking itself ready, exception
+        # telemetry still reports the correct absolute epoch.
+        self.current_epoch = self.start_epoch
         try:
             self.setup()
 

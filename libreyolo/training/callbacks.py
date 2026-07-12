@@ -30,6 +30,9 @@ class TrainStartEvent:
 class TrainEpochEvent:
     """Data emitted after a training epoch has completed.
 
+    ``epoch`` is the one-based number of the completed epoch. ``best_epoch``
+    uses the same convention.
+
     ``current_metric`` is the selected validation metric for this epoch.
     ``best_metric`` is the trainer's best-so-far value after this epoch updates
     best-state tracking.
@@ -86,7 +89,11 @@ class TrainEndEvent:
 
 @dataclass(frozen=True)
 class TrainExceptionEvent:
-    """Data emitted when training raises before returning results."""
+    """Data emitted when training raises before returning results.
+
+    ``epoch`` is the one-based epoch being attempted, or ``None`` when setup
+    failed before an epoch could start.
+    """
 
     epoch: int | None
     total_epochs: int

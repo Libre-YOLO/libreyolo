@@ -253,11 +253,11 @@ async function doDelete(){
   if(!deleteTarget){ closeDelete(); return; }
   const btn=$("#delconfirm"), t=btn.textContent; btn.disabled=true; btn.textContent="Moving…";
   try{
-    const wasOpen = DS && (deleteTarget===DS.yaml || deleteTarget===DS.root);
-    const r=await fetch("/api/projects/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({data:deleteTarget})});
+    const body={data:deleteTarget}; if(DS) body.epoch=DS.epoch;
+    const r=await fetch("/api/projects/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const dd=await r.json().catch(()=>({})); if(!r.ok||!dd.ok){ $("#delerr").textContent=(dd&&dd.error)||"Delete failed."; return; }
     closeDelete();
-    if(wasOpen){   // deleted the live project (e.g. from Settings): the session is gone
+    if(dd.closed){   // deleted the live project (e.g. from Settings): the session is gone
       resetClientState(); DS=null;
       try{ sessionStorage.setItem("ll-home","1"); }catch(e){}
       showHome();
@@ -335,7 +335,11 @@ async function doExport(){
     const r=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json(); if(!r.ok||!d.ok){ $("#experr").textContent=(d&&d.error)||"Export failed."; return; }
     const c=d.counts||{}; const sp=`train ${c.train||0}, val ${c.val||0}${c.test?(", test "+c.test):""}`;
-    if(d.in_place){ banner("Re-split in place ("+sp+")."); closeExport(); const y=d.yaml||yamlp; if(y) openProject(y); }
+    if(d.in_place){
+      banner("Re-split in place ("+sp+")."); closeExport();
+      if(d.dataset){ resetClientState(); await enterLabeler(d.dataset); }
+      else { const y=d.yaml||yamlp; if(y) await openProject(y); }
+    }
     else { $("#expresult").innerHTML=`Exported (${sp}) to<br><b>${esc(d.out)}</b>`+(d.zip?`<br>zip: ${esc(d.zip)}`:""); }
   }catch(e){ $("#experr").textContent="Export failed."; }
   finally{ btn.disabled=false; btn.textContent=t; }

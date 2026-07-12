@@ -170,6 +170,44 @@ function fmtNum(v, d = 4) {
   if (v == null || v === "" || !isFinite(v)) return "-";
   return Number(v).toFixed(d).replace(/\.?0+$/, "");
 }
+function epochNumber(s) {
+  if (s.display_epoch != null && isFinite(Number(s.display_epoch))) {
+    return Math.max(0, Math.floor(Number(s.display_epoch)));
+  }
+  const modern = Number(s.schema_version) >= 2;
+  if (modern && s.completed_epochs != null && isFinite(Number(s.completed_epochs))) {
+    return Math.max(0, Math.floor(Number(s.completed_epochs)));
+  }
+  if (s.current_epoch != null && isFinite(Number(s.current_epoch))) {
+    // Schema v2 stores a zero-based index.  Older/missing schemas used a
+    // one-based value in real trainer events, so do not increment those.
+    const epoch = Math.floor(Number(s.current_epoch));
+    return Math.max(0, modern ? epoch + 1 : epoch);
+  }
+  if (s.completed_epochs != null && isFinite(Number(s.completed_epochs))) {
+    return Math.max(0, Math.floor(Number(s.completed_epochs)));
+  }
+  return 0;
+}
+function progressValue(s) {
+  if (s.display_progress != null && isFinite(Number(s.display_progress))) {
+    return Math.max(0, Math.min(1, Number(s.display_progress)));
+  }
+  let value = Number(s.progress);
+  if (s.progress == null || !isFinite(value)) {
+    const completed = Number(s.completed_epochs), total = Number(s.total_epochs);
+    value = isFinite(completed) && isFinite(total) && total > 0 ? completed / total : 0;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+function bestEpochNumber(s) {
+  if (s.display_best_epoch != null && isFinite(Number(s.display_best_epoch))) {
+    return Math.max(0, Math.floor(Number(s.display_best_epoch)));
+  }
+  if (s.best_epoch == null || !isFinite(Number(s.best_epoch))) return null;
+  const epoch = Math.floor(Number(s.best_epoch));
+  return Math.max(0, Number(s.schema_version) >= 2 ? epoch + 1 : epoch);
+}
 function card(label, value, sub) {
   return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
@@ -193,14 +231,15 @@ async function renderIndex() {
   $("runlist").innerHTML = runs.map(r => {
     const st = (r.state || "unknown").toLowerCase();
     const ep = r.total_epochs != null
-      ? `${r.current_epoch != null ? r.current_epoch + 1 : (r.state === 'completed' ? r.total_epochs : 0)}/${r.total_epochs}` : "-";
+      ? `${epochNumber(r)}/${r.total_epochs}` : "-";
+    const progress = progressValue(r);
     const best = r.best_metric != null ? `${r.best_metric_name || "best"} ${fmtNum(r.best_metric)}` : "";
     return `<a class="runcard" href="/?run=${encodeURIComponent(r.id)}">
       <div class="top"><span class="badge ${st}">${st}</span>
         ${st === "running" ? '<span class="dot live"></span>' : ""}</div>
       <div class="name">${r.name}</div>
       <div class="meta"><span>${r.model || ""} ${r.task || ""}</span><span>epoch ${ep}</span></div>
-      <div class="meta"><span>${best}</span><span>${((r.progress || 0) * 100).toFixed(0)}%</span></div>
+      <div class="meta"><span>${best}</span><span>${(progress * 100).toFixed(0)}%</span></div>
     </a>`;
   }).join("");
   setTimeout(renderIndex, 3000);
@@ -219,22 +258,24 @@ async function refreshStatus() {
   $("runpath").textContent = s.save_dir || RUN;
 
   const cards = [];
-  const cur = s.current_epoch != null ? s.current_epoch + 1 : (s.completed_epochs || 0);
+  const cur = epochNumber(s);
+  const progress = progressValue(s);
   cards.push(card("Epoch", `${cur} / ${s.total_epochs ?? "-"}`,
     s.mean_epoch_seconds ? `${fmtSecs(s.mean_epoch_seconds)}/epoch` : ""));
   cards.push(card("ETA", state === "running" ? fmtSecs(s.eta_seconds) : "-",
     `elapsed ${fmtSecs(s.elapsed_seconds)}`));
   const metricName = s.best_metric_name || s.current_metric_name || "metric";
+  const bestEpoch = bestEpochNumber(s);
   cards.push(card(`Best ${metricName}`, fmtNum(s.best_metric),
-    s.best_epoch != null ? `epoch ${s.best_epoch + 1}` : ""));
+    bestEpoch != null ? `epoch ${bestEpoch}` : ""));
   cards.push(card("Train loss", fmtNum(s.train_loss, 4),
     s.model_family ? `${s.model_family}${s.model_size || ""} ${s.task || ""}` : ""));
 
   let cardsHtml = cards.join("");
   cardsHtml += `<div class="card" style="grid-column:1/-1">
     <div class="label">Progress</div>
-    <div class="progress"><div style="width:${((s.progress || 0) * 100).toFixed(1)}%"></div></div>
-    <div class="sub">${((s.progress || 0) * 100).toFixed(1)}%</div></div>`;
+    <div class="progress"><div style="width:${(progress * 100).toFixed(1)}%"></div></div>
+    <div class="sub">${(progress * 100).toFixed(1)}%</div></div>`;
   $("cards").innerHTML = cardsHtml;
 
   if (state === "failed" && s.error) {
@@ -298,7 +339,8 @@ async function refreshMetrics() {
   const rows = m.rows || [];
   if (!rows.length) { $("metrics-empty").style.display = "block"; return; }
   $("metrics-empty").style.display = "none";
-  const xs = rows.map(r => r.epoch != null ? r.epoch + 1 : 0);
+  // Training artifact epochs are already 1-based.
+  const xs = rows.map(r => r.epoch != null ? r.epoch : 0);
   const lossCols = (m.columns || []).filter(c => c.startsWith("train/") && c.includes("loss"));
   const primaryLoss = lossCols.includes("train/loss") ? "train/loss" : lossCols[0];
   const lossSeries = primaryLoss ? [{ name: primaryLoss, data: rows.map(r => r[primaryLoss]) }] : [];

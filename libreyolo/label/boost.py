@@ -40,27 +40,33 @@ class BoostEngine:
         self.engine = engine          # AssistEngine: where the boosted model is registered
         self.boosted_model = None     # in-memory boosted model (usable after a run)
         self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._thread = None
+        self._generation = 0
         self.state: dict = {"state": "idle"}
 
     # -- public surface ----------------------------------------------------
     def status(self) -> dict:
-        return dict(self.state)
+        with self._state_lock:
+            return dict(self.state)
 
     def _running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def _set(self, **kw) -> None:
-        # Atomic reference swap (not in-place mutation) so a concurrent status()
-        # read never sees a half-updated dict.
-        self.state = {**self.state, **kw}
+    def _set_for_run(self, session, generation: int, **kw) -> bool:
+        """Publish worker status only while its project generation is current."""
+        with self._state_lock:
+            if self.session is not session or self._generation != generation:
+                return False
+            self.state = {**self.state, **kw}
+            return True
 
     def on_project_switch(self, session) -> None:
-        """Rebind to a new project. A still-running boost keeps its state and its
-        own (thread-local) temp dir -- we never stomp a live worker to 'idle'."""
-        self.session = session
-        self.boosted_model = None
-        if not self._running():
+        """Rebind to a new project and invalidate every old worker publication."""
+        with self._state_lock:
+            self.session = session
+            self._generation += 1
+            self.boosted_model = None
             self.state = {"state": "idle"}
 
     def start(self, *, epochs: int = 2, imgsz: int = 512, batch: int = 4) -> dict:
@@ -83,10 +89,13 @@ class BoostEngine:
                 return {"started": False, "reason": msg}
             names = list(session.names)   # frozen now: a mid-boost switch can't skew it
             started_session = session     # only publish the result if still on this project
-            self.state = {"state": "running", "phase": "starting", "n": len(images)}
+            with self._state_lock:
+                generation = self._generation
+                self.state = {"state": "running", "phase": "starting", "n": len(images)}
             self._thread = threading.Thread(
                 target=self._run, name="librelabel-boost", daemon=True,
-                args=(images, labels, accepted_cls, names, started_session, epochs, imgsz, batch))
+                args=(images, labels, accepted_cls, names, started_session,
+                      generation, epochs, imgsz, batch))
             self._thread.start()
             return {"started": True, "n": len(images)}
 
@@ -196,7 +205,8 @@ class BoostEngine:
         return hits / total if total else 0.0
 
     # -- background worker -------------------------------------------------
-    def _run(self, images, labels, accepted_cls, names, started_session, epochs, imgsz, batch):
+    def _run(self, images, labels, accepted_cls, names, started_session,
+             generation, epochs, imgsz, batch):
         import shutil
         import tempfile
 
@@ -226,16 +236,27 @@ class BoostEngine:
                     f"download weights automatically -- fetch it once (e.g. "
                     f"`libreyolo predict model={self.model_name} source=...`), then try Boost again.")
 
-            self._set(phase="measuring your model's current agreement")
+            self._set_for_run(
+                started_session, generation,
+                phase="measuring your model's current agreement",
+            )
             base = LibreYOLO(weight, device="cpu")
             base_agree = self._agreement(base, images, accepted_cls, names)
-            self._set(base_agreement=round(base_agree, 3))
+            self._set_for_run(
+                started_session, generation, base_agreement=round(base_agree, 3)
+            )
 
-            self._set(phase="snapshotting your accepted labels")
+            self._set_for_run(
+                started_session, generation,
+                phase="snapshotting your accepted labels",
+            )
             tmp = tempfile.mkdtemp(prefix="librelabel_boost_")
             data_yaml = self._snapshot(tmp, images, labels, names)
 
-            self._set(phase="training the head on your labels (a few minutes)")
+            self._set_for_run(
+                started_session, generation,
+                phase="training the head on your labels (a few minutes)",
+            )
             model = LibreYOLO(weight, device="cpu")
             results = model.train(
                 data=data_yaml, epochs=epochs, batch=batch, imgsz=imgsz,
@@ -246,7 +267,9 @@ class BoostEngine:
             if not ckpt:
                 raise RuntimeError("training produced no checkpoint")
 
-            self._set(phase="measuring the boosted model")
+            self._set_for_run(
+                started_session, generation, phase="measuring the boosted model"
+            )
             boosted = LibreYOLO(ckpt, device="cpu")
             boost_agree = self._agreement(boosted, images, accepted_cls, names)
 
@@ -255,24 +278,33 @@ class BoostEngine:
             # under "boosted" so prelabel/auto-label/Radar can use it (the flywheel
             # actually turning -- not just a number).
             usable = False
-            if self.engine is not None:
-                try:
-                    with self.engine._lock:
-                        if self.session is started_session:   # discard if switched away mid-train
-                            self.engine._models["boosted"] = boosted
-                            self.boosted_model = boosted
-                            usable = True
-                except Exception:  # noqa: BLE001
-                    logger.exception("could not register the boosted model")
-
-            self.state = {"state": "done", "n": len(images),
+            done_state = {"state": "done", "n": len(images),
                           "base_agreement": round(base_agree, 3),
                           "boosted_agreement": round(boost_agree, 3),
                           "delta": round(boost_agree - base_agree, 3),
-                          "epochs": epochs, "usable": usable}
+                          "epochs": epochs, "usable": False}
+            if self.engine is not None:
+                try:
+                    with self.engine._lock:
+                        with self._state_lock:
+                            if (self.session is started_session
+                                    and self._generation == generation):
+                                self.engine._models["boosted"] = boosted
+                                self.boosted_model = boosted
+                                usable = True
+                                self.state = {**done_state, "usable": True}
+                except Exception:  # noqa: BLE001
+                    logger.exception("could not register the boosted model")
+                if not usable:
+                    self._set_for_run(started_session, generation, **done_state)
+            else:
+                self._set_for_run(started_session, generation, **done_state)
         except Exception as exc:  # noqa: BLE001 - surface as a chip, never crash the server
             logger.exception("boost failed")
-            self.state = {"state": "error", "error": str(exc)}
+            with self._state_lock:
+                if (self.session is started_session
+                        and self._generation == generation):
+                    self.state = {"state": "error", "error": str(exc)}
         finally:
             # Restore the process-wide thread count: set_num_threads() is global,
             # so without this each boost run permanently shrinks the pool for later

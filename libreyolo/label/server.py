@@ -12,8 +12,8 @@ Endpoints
 ``GET  /api/dataset``          ``{root, names, nc, count, writable, reason}``
 ``GET  /api/images``           ``{images:[{id,name,split,status}]}`` (paged)
 ``GET  /api/image/<id>``       raw image bytes
-``GET  /api/label/<id>``       ``{boxes:[{cls,cx,cy,w,h}], editable}``
-``POST /api/label/<id>``       body ``{boxes:[...]}`` -> writes the ``.txt``
+``GET  /api/label/<id>``       ``{annotations:[...], editable, rev, epoch}``
+``POST /api/label/<id>``       query ``epoch``/``rev`` + body ``{annotations:[...]}``
 ``GET  /api/assist/status``    ``{available, models, default}``
 ``POST /api/assist/prelabel/<id>``  query ``model``/``conf`` -> ``{suggestions:[...]}``
 ``POST /api/assist/autolabel`` query ``model``/``conf`` -> NDJSON progress stream
@@ -60,6 +60,49 @@ logger = logging.getLogger(__name__)
 _ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
 
 
+class _ProjectConflict(RuntimeError):
+    """A request was bound to a project generation that is no longer current."""
+
+
+def _nonnegative_int(value, name: str) -> int:
+    """Parse an explicit integer token without silently truncating floats/bools."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative integer")
+    if isinstance(value, int):
+        out = value
+    elif isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+        out = int(value.strip())
+    else:
+        raise ValueError(f"{name} must be a non-negative integer")
+    if out < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return out
+
+
+def _project_root_key(data) -> str:
+    """Canonical project-root identity for either a dataset dir or YAML path."""
+    p = Path(str(data)).expanduser()
+    # A directory may legitimately end in .yaml/.yml.  Only strip the filename
+    # suffix when the supplied path is not an existing directory.
+    if not p.is_dir() and p.suffix.lower() in (".yaml", ".yml"):
+        p = p.parent
+    try:
+        p = p.resolve(strict=False)
+    except (OSError, RuntimeError):
+        p = Path(os.path.abspath(str(p)))
+    return os.path.normcase(str(p)).casefold()
+
+
+def _unique_json_object(pairs):
+    """Reject duplicate JSON keys instead of silently keeping the last value."""
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key: {key}")
+        out[key] = value
+    return out
+
+
 def _redact_paths(msg: str) -> str:
     return _ABS_PATH_RE.sub("<path>", str(msg))
 
@@ -90,7 +133,11 @@ class _LabelState:
         self.host = "127.0.0.1"               # bind address (for the teammate share URL)
         self.port = 0
         self.epoch = 0                        # bumps on every project switch (stale-save guard)
-        self._lock = threading.Lock()
+        # One project transaction lock covers session rebinding and every mutation
+        # whose target is derived from the live session.  It is re-entrant because an
+        # in-place export installs its freshly rebuilt DatasetSession before releasing
+        # the transaction.
+        self._lock = threading.RLock()
         self.engine = AssistEngine(device=device, enabled=assist)
         self.sam = SamEngine(enabled=assist, device=device)
         self.embed = EmbedEngine(device=device, enabled=assist)
@@ -102,20 +149,84 @@ class _LabelState:
         self._radar_lock = threading.Lock()
         self.embed_points = None              # cached 2-D embedding scatter
 
-    def register_current(self, data) -> None:
+    def _session_for_epoch_locked(self, expected_epoch, action: str):
+        if self.session is None:
+            raise RuntimeError("no project open")
+        if expected_epoch is not None and expected_epoch != self.epoch:
+            raise _ProjectConflict(f"project changed - reload before {action}")
+        return self.session
+
+    def capture_session(self, expected_epoch: int, action: str):
+        """Atomically bind a long-running request to its asserted project epoch."""
+        with self._lock:
+            return self._session_for_epoch_locked(expected_epoch, action)
+
+    def session_is_current(self, session) -> bool:
+        """Return whether ``session`` still owns the live project generation."""
+        with self._lock:
+            return self.session is session
+
+    def _clear_project_caches_locked(self, session) -> None:
+        self.engine.clear_pending()
+        with self._radar_lock:
+            self.radar_findings = {}
+        self.embed_points = None
+        self.embed._cache.clear()
+        self.sam._cur = None
+        with self.engine._lock:                       # mutually exclusive with boost publication
+            # Rebind before removing the model while still holding the publication
+            # lock.  A finishing worker must not observe its old session between
+            # these operations and republish that project's model after the switch.
+            self.boost.on_project_switch(session)
+            self.engine._models.pop("boosted", None)  # boosted model is per-project
+        with self._thumb_lock:
+            self._thumbs.clear()
+
+    def _install_session_locked(self, session, data) -> dict:
+        self.session = session
+        self._data = str(data)
+        self.epoch += 1
+        self._clear_project_caches_locked(session)
+        meta = session.meta()
+        meta["open"] = True
+        meta["epoch"] = self.epoch
+        return meta
+
+    def _drop_session_locked(self) -> None:
+        self.session = None
+        self._data = None
+        self.epoch += 1
+        self._clear_project_caches_locked(None)
+
+    def register_current(self, data, *, session=None, epoch=None) -> None:
         """Record the open dataset in the registry. The ``labeled`` count needs a
         full label scan, so it runs on a background thread -- never blocking the
         open/switch action (which would be seconds of dead UI on big datasets)."""
-        if self.session is None:
-            return
-        self._data = str(data)
-        session = self.session
+        with self._lock:
+            session = self.session if session is None else session
+            if session is None or self.session is not session:
+                return
+            epoch = self.epoch if epoch is None else epoch
+            if epoch != self.epoch:
+                return
+            self._data = str(data)
+        data = str(data)
 
         def _work():
             try:
-                projects.register(data, root=session.root or None,
-                                  count=session.meta().get("count"),
-                                  labeled=session.stats().get("labeled"))
+                count = session.meta().get("count")
+                labeled = session.stats().get("labeled")
+                # The scan above can be slow.  Re-check identity and register while
+                # holding the project lock so a later delete cannot forget the entry
+                # and then have this stale worker resurrect it.
+                with self._lock:
+                    if self.session is not session or self.epoch != epoch:
+                        return
+                    if self._data is None or _project_root_key(self._data) != _project_root_key(data):
+                        return
+                    name = session.meta().get("name") or None
+                    projects.register(data, name=name, root=session.root or None,
+                                      count=count, labeled=labeled)
             except Exception:  # noqa: BLE001 - registry is a convenience, never fatal
                 logger.exception("project registry update failed")
 
@@ -124,57 +235,127 @@ class _LabelState:
     def open_project(self, data) -> dict:
         """Switch the live session to ``data`` (a data.yaml/dir), resetting all
         per-project state the engines hold. Raises on a bad dataset path."""
-        session = DatasetSession(data)        # validate before mutating anything
         with self._lock:
-            self.session = session
-            self.epoch += 1                   # invalidate in-flight saves from the old project
-            self.engine.clear_pending()
-            self.radar_findings = {}
-            self.embed_points = None
-            self.embed._cache.clear()
-            self.sam._cur = None
-            with self.engine._lock:                     # mutually exclusive with the boost write
-                self.engine._models.pop("boosted", None)   # boosted model is per-project
-            self.boost.on_project_switch(session)       # keeps a running boost intact
-            with self._thumb_lock:
-                self._thumbs.clear()
-        self.register_current(data)
-        return session.meta()
+            # Construct under the same lock as export/delete.  Otherwise an open of
+            # the current path can validate a pre-export tree and install that stale
+            # view after an in-place export has reorganised it.
+            session = DatasetSession(data)
+            meta = self._install_session_locked(session, data)
+            epoch = self.epoch
+        self.register_current(data, session=session, epoch=epoch)
+        return meta
 
-    def set_class_names(self, names) -> dict:
+    def create_project(self, folder, *, classes, colors, task, link, name) -> dict:
+        """Create/open a folder project as one serialized project transaction."""
+        with self._lock:
+            existing = folder_yaml(str(folder))
+            if existing:
+                target = existing
+            elif link:
+                target = create_linked_project(
+                    str(folder), name=name or None, classes=classes or [],
+                    colors=colors or [], task=task)
+            else:
+                target = scaffold_data_yaml(str(folder), classes or [], task=task)
+            session = DatasetSession(target)
+            meta = self._install_session_locked(session, target)
+            meta["created"] = existing is None
+            epoch = self.epoch
+        self.register_current(target, session=session, epoch=epoch)
+        return meta
+
+    def save_upload(self, dst, name, data) -> str:
+        """Serialize upload reserve/write and New Project finalization."""
+        with self._lock:
+            return save_uploaded_image(str(dst), str(name), data)
+
+    def create_uploaded_project(self, dst, **kwargs) -> dict:
+        with self._lock:
+            target = create_uploaded_project(str(dst), **kwargs)
+            session = DatasetSession(target)
+            meta = self._install_session_locked(session, target)
+            meta["created"] = True
+            epoch = self.epoch
+        self.register_current(target, session=session, epoch=epoch)
+        return meta
+
+    def set_class_names(self, names, *, expected_epoch=None) -> dict:
         """Rename and/or append dataset classes -- never delete or reorder, so
         existing label class ids keep their meaning -- rewriting the YAML and
-        patching the live session in place. No epoch bump: ids are preserved, so
-        in-flight saves from this project stay valid."""
+        rebuilding the live session as a new project generation.  A rename changes
+        the semantic meaning of an id, so stale tabs and in-flight suggestions must
+        not remain writable merely because the integer positions are stable."""
+        reopened = None
+        data = None
+        epoch = None
         with self._lock:
-            if self.session is None:
-                raise RuntimeError("no project open")
+            session = self._session_for_epoch_locked(expected_epoch, "editing classes")
             cleaned = [str(n).strip() for n in names]
             if any(not n for n in cleaned):
                 raise ValueError("class names can't be empty")
             if len({n.lower() for n in cleaned}) != len(cleaned):
                 raise ValueError("class names must be unique")
-            if len(cleaned) < self.session.nc:
+            if len(cleaned) < session.nc:
                 raise ValueError("classes can be renamed or added here, not removed")
-            update_class_names(self.session.yaml_file, cleaned)
-            self.session.names = cleaned
-            self.session.nc = len(cleaned)
-            return self.session.meta()
+            if cleaned == list(session.names):
+                meta = session.meta()
+                meta["open"] = True
+                meta["epoch"] = self.epoch
+                return meta
+            # Validate/rebuild the session snapshot before touching the YAML. The
+            # class edit itself cannot then leave disk changed while state remains
+            # bound to an old generation if dataset reopening fails.
+            reopened = DatasetSession(session.yaml_file)
+            update_class_names(session.yaml_file, cleaned)
+            data = self._data or session.yaml_file
+            reopened.names = cleaned
+            reopened.nc = len(cleaned)
+            meta = self._install_session_locked(reopened, data)
+            epoch = self.epoch
+        self.register_current(data, session=reopened, epoch=epoch)
+        return meta
+
+    def _session_aliases_locked(self, session, submitted=None) -> set[str]:
+        values = {
+            str(value)
+            for value in (
+                submitted,
+                self._data,
+                session.yaml_file,
+                Path(session.yaml_file).parent,
+            )
+            if value
+        }
+        if session.root and _project_root_key(session.root) == _project_root_key(
+            session.yaml_file
+        ):
+            values.add(str(session.root))
+        return values
 
     def read_label_with_rev(self, idx: int) -> tuple:
         """Read annotations + revision under the save lock, so a save can't land
         between the two and hand a stale client old annotations with a NEW rev
         (which its next save would then use to pass the conflict check)."""
         with self._lock:
-            anns, editable = self.session.read_label(idx)
-            return anns, editable, self.session.label_rev(idx)
+            session = self._session_for_epoch_locked(None, "reading labels")
+            anns, editable = session.read_label(idx)
+            return anns, editable, session.label_rev(idx), self.epoch
+
+    def dataset_meta(self):
+        """Return metadata and its matching epoch from one session snapshot."""
+        with self._lock:
+            if self.session is None:
+                return None
+            meta = self.session.meta()
+            meta["open"] = True
+            meta["epoch"] = self.epoch
+            return meta
 
     def write_label(self, idx: int, boxes, epoch=None, expected_rev=None) -> tuple:
         with self._lock:  # serialize concurrent saves to the same tree (check+write atomic)
-            if epoch is not None and epoch != self.epoch:
-                raise RuntimeError("project changed; reload before saving")
-            count = self.session.write_label(idx, boxes, expected_rev=expected_rev)
-            return count, self.session.label_rev(idx)
+            session = self._session_for_epoch_locked(epoch, "saving")
+            count = session.write_label(idx, boxes, expected_rev=expected_rev)
+            return count, session.label_rev(idx)
 
     def store_pending(self, idx: int, sugg, sess) -> bool:
         """Store prelabel suggestions iff still on ``sess`` -- atomically with the
@@ -187,13 +368,128 @@ class _LabelState:
             self.engine.set_pending(idx, sugg)
             return True
 
+    def clear_pending(self, sess) -> bool:
+        """Clear suggestions only if the run still owns the live project."""
+        with self._lock:
+            if self.session is not sess:
+                return False
+            self.engine.clear_pending()
+            return True
+
+    def store_radar_findings(self, findings, sess) -> bool:
+        with self._lock:
+            if self.session is not sess:
+                return False
+            with self._radar_lock:
+                self.radar_findings = findings
+            return True
+
+    def store_embed_points(self, points, sess) -> bool:
+        with self._lock:
+            if self.session is not sess:
+                return False
+            self.embed_points = points
+            return True
+
     def resolve_duplicates(self, ids, purge: bool = False, epoch=None) -> dict:
         with self._lock:  # serialize against label writes on the same tree
             # Same stale-guard as write_label: a Fix request carrying a since-switched
             # project's epoch must not quarantine/purge same-id images in the new one.
-            if epoch is not None and epoch != self.epoch:
-                raise RuntimeError("project changed; reload before fixing duplicates")
-            return self.session.resolve_duplicates(ids, purge=purge)
+            session = self._session_for_epoch_locked(epoch, "fixing duplicates")
+            return session.resolve_duplicates(ids, purge=purge)
+
+    def update_project_meta(self, fields: dict, *, expected_epoch: int) -> dict:
+        """Update the open project's sidecar without a switch interleaving."""
+        with self._lock:
+            session = self._session_for_epoch_locked(expected_epoch, "editing settings")
+            target = self._data or session.yaml_file
+            update_sidecar(str(target), **fields)
+            if isinstance(session._sidecar, dict):
+                session._sidecar.update(fields)
+            else:
+                session._sidecar = dict(fields)
+            if "name" in fields:
+                for alias in self._session_aliases_locked(session, target):
+                    projects.rename(alias, fields["name"])
+            meta = session.meta()
+            meta["open"] = True
+            meta["epoch"] = self.epoch
+            return meta
+
+    def rename_project(self, data, name: str) -> None:
+        with self._lock:
+            set_sidecar_name(str(data), name)
+            aliases = {str(data)}
+            if self.session is not None and _project_root_key(data) == _project_root_key(self.session.yaml_file):
+                aliases.update(self._session_aliases_locked(self.session, data))
+                if not isinstance(self.session._sidecar, dict):
+                    self.session._sidecar = {}
+                self.session._sidecar["name"] = name
+            for alias in aliases:
+                projects.rename(alias, name)
+
+    def forget_project(self, data) -> None:
+        with self._lock:
+            projects.forget(str(data))
+
+    def delete_project(self, data, *, expected_epoch=None) -> dict:
+        """Trash a project and atomically detach it if it is the live session."""
+        with self._lock:
+            is_current = (
+                self.session is not None
+                and _project_root_key(data) == _project_root_key(self.session.yaml_file)
+            )
+            if is_current:
+                if expected_epoch is None:
+                    raise ValueError("epoch is required when deleting the open project")
+                if expected_epoch != self.epoch:
+                    raise _ProjectConflict("project changed - reload before deleting")
+            aliases = {str(data)}
+            if is_current:
+                aliases.update(self._session_aliases_locked(self.session, data))
+            trashed = trash_project(str(data))
+            for alias in aliases:
+                projects.forget(alias)
+            if is_current:
+                self._drop_session_locked()
+            return {"trash": trashed, "closed": is_current, "epoch": self.epoch}
+
+    def start_boost(self, *, expected_epoch: int, **kwargs) -> dict:
+        """Start Boost only for the project generation asserted by the client."""
+        with self._lock:
+            session = self._session_for_epoch_locked(expected_epoch, "starting Boost")
+            if self.boost.session is not session:
+                with self.engine._lock:
+                    self.boost.on_project_switch(session)
+            return self.boost.start(**kwargs)
+
+    def export_project(self, *, expected_epoch: int, **kwargs) -> dict:
+        """Export a stable session snapshot; rebind atomically after in-place work."""
+        from . import export as _export
+
+        reopened = None
+        reopen_data = None
+        reopen_epoch = None
+        with self._lock:
+            session = self._session_for_epoch_locked(expected_epoch, "exporting")
+            res = _export.export_dataset(
+                session, _in_place_validator=DatasetSession, **kwargs
+            )
+            if res.get("in_place"):
+                reopen_data = res.get("yaml") or self._data
+                if not reopen_data:
+                    raise RuntimeError("in-place export did not return a dataset path")
+                reopened = res.pop("_reopened_session", None)
+                if reopened is None:
+                    raise RuntimeError("in-place export did not validate its new session")
+                meta = self._install_session_locked(reopened, reopen_data)
+                reopen_epoch = self.epoch
+                res["epoch"] = reopen_epoch
+                res["reopened"] = True
+                res["dataset"] = meta
+        if reopened is not None:
+            self.register_current(reopen_data, session=reopened, epoch=reopen_epoch)
+        return res
 
     def thumb(self, idx: int, path: Path) -> bytes:
         # Key by the absolute image path, not the numeric id: after a project switch
@@ -271,12 +567,10 @@ class _Handler(BaseHTTPRequestHandler):
                     "shareable": shareable,
                 })
             elif path == "/api/dataset":
-                if self.state.session is None:
+                meta = self.state.dataset_meta()
+                if meta is None:
                     self._send(200, {"open": False})
                 else:
-                    meta = self.state.session.meta()
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
                     if not self._local_admin():
                         # root/yaml are host-local paths; `reason` can also embed an
                         # absolute path ("Could not derive a label path for <abs>").
@@ -304,10 +598,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._serve_thumb(int(path.rsplit("/", 1)[-1]))
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
-                annotations, editable, rev = self.state.read_label_with_rev(idx)
+                annotations, editable, rev, epoch = self.state.read_label_with_rev(idx)
                 # rev as a STRING: nanosecond mtimes (~1e18) exceed JS Number.MAX_SAFE_INTEGER,
                 # so a numeric token would be rounded by the browser and every save would 409.
-                self._send(200, {"annotations": annotations, "editable": editable, "rev": str(rev)})
+                self._send(200, {
+                    "annotations": annotations, "editable": editable,
+                    "rev": str(rev), "epoch": epoch,
+                })
             elif path == "/api/assist/status":
                 st = self.state.engine.status()
                 st["sam"] = self.state.sam.available()
@@ -440,8 +737,6 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 try:
                     meta = self.state.open_project(str(data))
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
                     self._send(200, meta)
                 except Exception as exc:  # noqa: BLE001 - bad dataset path/config
                     logger.exception("open project failed")
@@ -482,20 +777,9 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "folder path required"})
                     return
                 try:
-                    existing = folder_yaml(str(folder))   # don't clobber a real dataset
-                    if existing:
-                        target = existing
-                    elif link:
-                        target = create_linked_project(str(folder), name=name or None,
-                                                       classes=classes or [],
-                                                       colors=payload.get("colors") or [],
-                                                       task=task)
-                    else:
-                        target = scaffold_data_yaml(str(folder), classes or [], task=task)
-                    meta = self.state.open_project(target)
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
-                    meta["created"] = existing is None
+                    meta = self.state.create_project(
+                        str(folder), classes=classes or [], colors=payload.get("colors") or [],
+                        task=task, link=link, name=name)
                     self._send(200, meta)
                 except FileNotFoundError as exc:
                     self._send(400, {"error": str(exc).splitlines()[0][:140]
@@ -515,7 +799,7 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "dst and name are required"})
                     return
                 try:
-                    saved = save_uploaded_image(str(dst), str(name), data)
+                    saved = self.state.save_upload(str(dst), str(name), data)
                     self._send(200, {"ok": True, "saved": Path(saved).name})
                 except Exception as exc:  # noqa: BLE001 - bad name / unwritable dst
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "upload failed"})
@@ -534,7 +818,7 @@ class _Handler(BaseHTTPRequestHandler):
                 if task not in ("detect", "segment", "obb", "classify"):
                     task = None
                 try:
-                    target = create_uploaded_project(
+                    meta = self.state.create_uploaded_project(
                         str(dst),
                         name=payload.get("name") or None,
                         description=payload.get("description") or "",
@@ -543,17 +827,12 @@ class _Handler(BaseHTTPRequestHandler):
                         colors=payload.get("colors") or [],
                         task=task,
                         make_val=bool(payload.get("make_val")),
-                        val_frac=float(payload.get("val_frac") or 0.2),
+                        val_frac=(
+                            0.2
+                            if payload.get("val_frac") in (None, "")
+                            else payload.get("val_frac")
+                        ),
                     )
-                    meta = self.state.open_project(target)
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
-                    meta["created"] = True
-                    try:
-                        projects.register(target, name=payload.get("name") or None,
-                                          root=meta.get("root"), count=meta.get("count"))
-                    except Exception:  # noqa: BLE001 - registry is convenience only
-                        pass
                     self._send(200, meta)
                 except FileNotFoundError as exc:
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "No images uploaded yet."})
@@ -568,12 +847,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(names, list):
                     self._send(400, {"error": "names list required"})
                     return
-                if ep is not None and int(ep) != self.state.epoch:
-                    self._send(409, {"error": "project changed - reopen it before editing classes"})
-                    return
-                meta = self.state.set_class_names(names)
-                meta["open"] = True
-                meta["epoch"] = self.state.epoch
+                ep = _nonnegative_int(ep, "epoch")
+                meta = self.state.set_class_names(names, expected_epoch=ep)
                 self._send(200, meta)
             elif path == "/api/pick-folder":
                 # Pop a NATIVE OS "choose folder" dialog on the host and return the
@@ -592,7 +867,7 @@ class _Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 data = payload.get("data") if isinstance(payload, dict) else None
                 if data:
-                    projects.forget(str(data))
+                    self.state.forget_project(str(data))
                 self._send(200, {"ok": True})
             elif path == "/api/projects/meta":
                 # Project Settings for the OPEN project: display name, description,
@@ -601,34 +876,19 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(payload, dict):
                     self._send(400, {"error": "bad payload"})
                     return
-                ep = payload.get("epoch")
-                if ep is not None and int(ep) != self.state.epoch:
-                    self._send(409, {"error": "project changed - reopen it before editing settings"})
-                    return
+                ep = _nonnegative_int(payload.get("epoch"), "epoch")
                 name = payload.get("name")
                 if name is not None and not str(name).strip():
                     self._send(400, {"error": "the project name can't be empty"})
                     return
                 try:
-                    sess = self.state.session
-                    target = self.state._data or sess.yaml_file
                     fields = {k: (str(payload[k]).strip() if k == "name" else str(payload[k]))
                               for k in ("name", "description", "instructions")
                               if payload.get(k) is not None}
-                    update_sidecar(str(target), **fields)
-                    if isinstance(sess._sidecar, dict):
-                        sess._sidecar.update(fields)
-                    else:
-                        sess._sidecar = dict(fields)
-                    if "name" in fields:
-                        try:
-                            projects.rename(str(target), fields["name"])
-                        except Exception:  # noqa: BLE001 - registry is convenience only
-                            pass
-                    meta = sess.meta()
-                    meta["open"] = True
-                    meta["epoch"] = self.state.epoch
+                    meta = self.state.update_project_meta(fields, expected_epoch=ep)
                     self._send(200, meta)
+                except _ProjectConflict:
+                    raise
                 except Exception as exc:  # noqa: BLE001 - unwritable sidecar
                     logger.exception("settings update failed")
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "could not save settings"})
@@ -640,8 +900,7 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "data and name are required"})
                     return
                 try:
-                    set_sidecar_name(str(data), str(name).strip())
-                    projects.rename(str(data), str(name).strip())
+                    self.state.rename_project(str(data), str(name).strip())
                     self._send(200, {"ok": True})
                 except Exception as exc:  # noqa: BLE001 - bad path / unwritable
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "rename failed"})
@@ -654,17 +913,12 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"error": "data is required"})
                     return
                 try:
-                    cur = getattr(self.state, "_data", None)
-                    trashed = trash_project(str(data))
-                    projects.forget(str(data))
-                    # If we just deleted the live project, drop the session so the UI
-                    # stops reporting an open dataset whose files have moved.
-                    if cur and self.state.session is not None and \
-                            os.path.normcase(os.path.abspath(str(cur))) == os.path.normcase(os.path.abspath(str(data))):
-                        self.state.session = None
-                        self.state._data = None
-                        self.state.epoch += 1
-                    self._send(200, {"ok": True, "trash": trashed})
+                    raw_ep = payload.get("epoch") if isinstance(payload, dict) else None
+                    ep = _nonnegative_int(raw_ep, "epoch") if raw_ep is not None else None
+                    result = self.state.delete_project(str(data), expected_epoch=ep)
+                    self._send(200, {"ok": True, **result})
+                except _ProjectConflict:
+                    raise
                 except FileNotFoundError as exc:
                     self._send(400, {"error": str(exc).splitlines()[0][:140] or "project folder not found"})
                 except Exception as exc:  # noqa: BLE001 - move/permission failure
@@ -675,53 +929,57 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(payload, dict):
                     self._send(400, {"error": "bad payload"})
                     return
-                ep = payload.get("epoch")
-                if ep is not None and int(ep) != self.state.epoch:
-                    # A stale tab must not copy or (worse) re-split in place a project
-                    # that was switched from another tab.
-                    self._send(409, {"error": "project changed - reload before exporting"})
-                    return
+                ep = _nonnegative_int(payload.get("epoch"), "epoch")
                 try:
-                    from . import export as _export
-                    res = _export.export_dataset(
-                        self.state.session,
+                    res = self.state.export_project(
+                        expected_epoch=ep,
                         dst=payload.get("dst") or None,
                         formats=tuple(payload.get("formats") or ["yolo"]),
                         split=payload.get("split") or "trainval",
-                        val_frac=float(payload.get("val_frac") or 0.2),
-                        test_frac=float(payload.get("test_frac") or 0.0),
-                        seed=int(payload.get("seed") or 1234),
+                        val_frac=(
+                            0.2
+                            if payload.get("val_frac") in (None, "")
+                            else payload.get("val_frac")
+                        ),
+                        test_frac=(
+                            0.0
+                            if payload.get("test_frac") in (None, "")
+                            else payload.get("test_frac")
+                        ),
+                        seed=(
+                            1234
+                            if payload.get("seed") in (None, "")
+                            else int(payload.get("seed"))
+                        ),
                         in_place=bool(payload.get("in_place")),
                         make_zip=bool(payload.get("make_zip")),
                     )
-                    if res.get("in_place"):
-                        # the working folder was reorganised; reopen so the live
-                        # session points at the new split layout.
-                        try:
-                            self.state.open_project(res.get("yaml") or self.state._data)
-                            res["epoch"] = self.state.epoch
-                            res["reopened"] = True
-                        except Exception:  # noqa: BLE001
-                            pass
                     self._send(200, {"ok": True, **res})
+                except _ProjectConflict:
+                    raise
                 except Exception as exc:  # noqa: BLE001 - bad dst / unreadable images
                     logger.exception("export failed")
                     self._send(400, {"error": str(exc).splitlines()[0][:160] or "export failed"})
             elif path.startswith("/api/label/"):
                 idx = int(path.rsplit("/", 1)[-1])
                 payload = self._read_json()
-                anns = payload.get("annotations", []) if isinstance(payload, dict) else []
+                if not isinstance(payload, dict) or "annotations" not in payload:
+                    raise ValueError("JSON object with an explicit annotations list required")
+                anns = payload["annotations"]
+                if not isinstance(anns, list):
+                    raise ValueError("annotations must be a list")
                 qs = parse_qs(parsed.query)
-                ep = (qs.get("epoch") or [None])[0]
-                rev = (qs.get("rev") or [None])[0]
+                ep = self._required_query_int(qs, "epoch")
+                rev = self._required_query_int(qs, "rev")
                 count, new_rev = self.state.write_label(
-                    idx, anns, epoch=int(ep) if ep is not None else None,
-                    expected_rev=int(rev) if rev is not None else None)
+                    idx, anns, epoch=ep, expected_rev=rev)
                 self._send(200, {"ok": True, "count": count, "rev": str(new_rev)})
             elif path.startswith("/api/assist/prelabel/"):
                 self._handle_prelabel(int(path.rsplit("/", 1)[-1]), parse_qs(parsed.query))
             elif path.startswith("/api/assist/segment/"):
-                self._handle_segment(int(path.rsplit("/", 1)[-1]))
+                self._handle_segment(
+                    int(path.rsplit("/", 1)[-1]), parse_qs(parsed.query)
+                )
             elif path == "/api/assist/autolabel":
                 self._handle_autolabel_stream(parse_qs(parsed.query))
             elif path == "/api/assist/radar":
@@ -735,12 +993,14 @@ class _Handler(BaseHTTPRequestHandler):
                 ep = payload.get("epoch") if isinstance(payload, dict) else None
                 res = self.state.resolve_duplicates(
                     [int(i) for i in ids], purge=purge,
-                    epoch=int(ep) if ep is not None else None)
+                    epoch=_nonnegative_int(ep, "epoch"))
                 self._send(200, res)
             elif path == "/api/boost":
                 payload = self._read_json()
                 kw = payload if isinstance(payload, dict) else {}
-                self._send(200, self.state.boost.start(
+                epoch = _nonnegative_int(kw.get("epoch"), "epoch")
+                self._send(200, self.state.start_boost(
+                    expected_epoch=epoch,
                     epochs=int(kw.get("epochs", 2)), imgsz=int(kw.get("imgsz", 512)),
                     batch=int(kw.get("batch", 4))))
             else:
@@ -759,11 +1019,21 @@ class _Handler(BaseHTTPRequestHandler):
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         data = self.rfile.read(length) if length else b""
-        return json.loads(data.decode("utf-8")) if data else {}
+        return (
+            json.loads(data.decode("utf-8"), object_pairs_hook=_unique_json_object)
+            if data else {}
+        )
 
     def _read_body_bytes(self) -> bytes:
         length = int(self.headers.get("Content-Length", 0) or 0)
         return self.rfile.read(length) if length else b""
+
+    @staticmethod
+    def _required_query_int(qs: dict, name: str) -> int:
+        values = qs.get(name)
+        if not isinstance(values, list) or len(values) != 1:
+            raise ValueError(f"exactly one {name} query parameter is required")
+        return _nonnegative_int(values[0], name)
 
     @staticmethod
     def _is_loopback(addr: str) -> bool:
@@ -824,23 +1094,17 @@ class _Handler(BaseHTTPRequestHandler):
             conf = 0.25
         return model, conf
 
-    def _stale_epoch(self, qs: dict) -> bool:
-        """True when the client sent an ``epoch`` that no longer matches -- a stale
-        tab whose project was switched elsewhere must not run dataset-wide actions
-        (prelabel/radar/embeddings/export) against the newly current project."""
-        ep = (qs.get("epoch") or [None])[0]
-        return ep is not None and int(ep) != self.state.epoch
-
     def _handle_prelabel(self, idx: int, qs: dict) -> None:
         self._read_json()  # drain any body
-        if self._stale_epoch(qs):
-            self._send(409, {"error": "project changed - reload before auto-labeling"})
-            return
+        epoch = self._required_query_int(qs, "epoch")
+        # Epoch validation and session capture are one transaction.  A separate
+        # check followed by `self.state.session` can capture the *next* project if
+        # a switch lands between the two operations.
+        sess = self.state.capture_session(epoch, "auto-labeling")
         model, conf = self._model_conf(qs)
         # Snapshot the session up front: the predict below is slow, and if the user
         # switches projects mid-flight we must not store these suggestions into the
         # shared pending map (keyed by numeric id) for the now-current project.
-        sess = self.state.session
         # Don't suggest on polygon/OBB-locked images (box-only mode can't accept).
         _, editable = sess.read_label(idx)
         if not editable:
@@ -867,10 +1131,12 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"editable": True, "suggestions": sugg})
 
-    def _handle_segment(self, idx: int) -> None:
+    def _handle_segment(self, idx: int, qs: dict) -> None:
         payload = self._read_json() or {}
         if not isinstance(payload, dict):
             payload = {}
+        epoch = self._required_query_int(qs, "epoch")
+        sess = self.state.capture_session(epoch, "segmenting")
         box = payload.get("box")
         points = payload.get("points")
         try:
@@ -887,11 +1153,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "point {x,y}, points [[x,y],...], or box [x1,y1,x2,y2] required"})
             return
         try:
-            poly = self.state.sam.segment(self.state.session.image_path(idx), **kw)
+            poly = self.state.sam.segment(sess.image_path(idx), **kw)
         except Exception as exc:  # noqa: BLE001 - SAM load/inference problem
             logger.exception("segment failed")
             # PIL/torch errors embed absolute image paths; redact for LAN clients.
             self._send(503, {"error": str(exc) if self._local_admin() else _redact_paths(str(exc))})
+            return
+        if not self.state.session_is_current(sess):
+            self._send(409, {"error": "project changed; reopen and retry"})
             return
         self._send(200, {"polygon": poly})
 
@@ -905,12 +1174,8 @@ class _Handler(BaseHTTPRequestHandler):
         model, conf = self._model_conf(qs)
         engine = (qs.get("engine") or ["yolo"])[0]
         classes = [c for c in (qs.get("classes") or [""])[0].split(",") if c.strip()]
-        ep = (qs.get("epoch") or [None])[0]
-        if ep is not None and int(ep) != self.state.epoch:
-            # a stale tab (project switched in another tab) must not populate the
-            # current project's pending suggestions with the old dataset's run
-            self._send(409, {"error": "project changed - reload before auto-labeling"})
-            return
+        epoch = self._required_query_int(qs, "epoch")
+        sess = self.state.capture_session(epoch, "auto-labeling")
 
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -929,9 +1194,13 @@ class _Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
 
-        sess = self.state.session
         try:
-            self.state.engine.clear_pending()  # fresh run replaces stale suggestions
+            # Fresh run replaces old suggestions only while it still owns this
+            # project.  An old run resuming after a switch must not clear the new
+            # project's pending review deck.
+            if not self.state.clear_pending(sess):
+                emit({"type": "error", "error": "project changed; reopen and retry"})
+                return
             summary = self.state.engine.autolabel_dataset(
                 sess, model_name=model, conf=conf, progress=emit,
                 engine=engine, classes=classes,
@@ -971,22 +1240,20 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length:
             self.rfile.read(length)
-        if self._stale_epoch(qs):
-            self._send(409, {"error": "project changed - reload before running Radar"})
-            return
+        epoch = self._required_query_int(qs, "epoch")
+        sess = self.state.capture_session(epoch, "running Radar")
         model, conf = self._model_conf(qs)
         if not self.state.engine.status().get("available"):
             self._send(503, {"error": "No model available for Radar "
                                       "(assist disabled or no weights)."})
             return
-        sess = self.state.session
         emit = self._ndjson_begin()
         try:
             result = scan_dataset(self.state.engine.predict_image, sess,
                                   model_name=model, conf=conf, progress=emit)
-            with self.state._radar_lock:
-                if self.state.session is sess:   # drop results if the project changed mid-scan
-                    self.state.radar_findings = result.pop("findings", {})
+            # Publish under the same project lock as open_project(), otherwise a
+            # switch can interleave after an identity check and receive stale ids.
+            self.state.store_radar_findings(result.pop("findings", {}), sess)
             emit(result)
         except Exception as exc:  # noqa: BLE001
             logger.exception("radar scan failed")
@@ -997,18 +1264,15 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length:
             self.rfile.read(length)
-        if self._stale_epoch(qs):
-            self._send(409, {"error": "project changed - reload before mapping"})
-            return
+        epoch = self._required_query_int(qs, "epoch")
+        sess = self.state.capture_session(epoch, "mapping")
         if not self.state.embed.available():
             self._send(503, {"error": "Embeddings unavailable (assist disabled)."})
             return
-        sess = self.state.session
         emit = self._ndjson_begin()
         try:
             points = self.state.embed.scatter(sess, progress=emit)
-            if self.state.session is sess:       # drop if the project changed mid-embed
-                self.state.embed_points = points
+            self.state.store_embed_points(points, sess)
             emit({"type": "done", "points": points})
         except Exception as exc:  # noqa: BLE001
             logger.exception("embeddings failed")
