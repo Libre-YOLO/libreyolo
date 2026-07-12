@@ -573,6 +573,66 @@ def test_parse_device_arg_and_wants_distributed():
     assert not wants_distributed("auto")
 
 
+@pytest.mark.parametrize(
+    ("module_name", "class_name"),
+    [
+        ("libreyolo.models.rfdetr.model", "LibreRFDETR"),
+        ("libreyolo.models.dinov2.model", "LibreDINOv2"),
+    ],
+)
+def test_alias_batch_is_normalized_before_rfdetr_family_spawn(
+    monkeypatch, module_name, class_name
+):
+    """RF-DETR-family wrappers must resolve ``batch`` before AutoBatch runs."""
+    module = __import__(module_name, fromlist=[class_name])
+    wrapper_class = getattr(module, class_name)
+    model = object.__new__(wrapper_class)
+    spawned = []
+
+    def fake_spawn(model_instance, train_kw, nprocs, *, devices, batch_key):
+        spawned.append(
+            {
+                "model": model_instance,
+                "train_kw": train_kw,
+                "nprocs": nprocs,
+                "devices": devices,
+                "batch_key": batch_key,
+            }
+        )
+        return {"spawned": True}
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        "libreyolo.training.distributed.has_torchrun_env", lambda: False
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn.spawn_for_model", fake_spawn
+    )
+
+    result = wrapper_class.train(
+        model,
+        "data.yaml",
+        batch=-1,
+        device="0,1",
+    )
+
+    assert result == {"spawned": True}
+    assert len(spawned) == 1
+    assert spawned[0]["train_kw"]["batch_size"] == -1
+    assert "batch" not in spawned[0]["train_kw"]
+    assert spawned[0]["batch_key"] == "batch_size"
+
+    with pytest.raises(ValueError, match="Conflicting batch values"):
+        wrapper_class.train(
+            model,
+            "data.yaml",
+            batch_size=8,
+            batch=-1,
+            device="0,1",
+        )
+    assert len(spawned) == 1
+
+
 def test_syncbn_weights_land_in_no_weight_decay_group():
     """Regression: SyncBatchNorm is a sibling of BatchNorm2d (both subclass
     ``_BatchNorm``), not a subclass of it. An ``isinstance(v, nn.BatchNorm2d)``
@@ -1210,3 +1270,103 @@ def test_spawn_for_model_writes_flat_state_dict(tmp_path):
     assert all(isinstance(v, torch.Tensor) for v in obj.values()), (
         "all values in the bootstrap state dict must be tensors"
     )
+
+
+def test_spawn_for_model_restores_with_shared_wrapper_helper(monkeypatch, tmp_path):
+    """The parent wrapper should use the same best-then-last restore contract."""
+    import json
+
+    from libreyolo.training.ddp_spawn import spawn_for_model
+
+    checkpoint = tmp_path / "best.pt"
+    checkpoint.touch()
+
+    class _Wrapper:
+        def __init__(self):
+            self.model = nn.Linear(4, 2)
+            self.model_path = None
+            self.device = torch.device("cpu")
+            self.restore_calls = []
+
+        def _restore_after_training(self, result):
+            self.restore_calls.append((result, self.device))
+
+    model_instance = _Wrapper()
+
+    def fake_spawn(worker_fn, spawn_args, nprocs, result_path, **kwargs):
+        Path(result_path).write_text(
+            json.dumps({"best_checkpoint": str(checkpoint)})
+        )
+
+    monkeypatch.setattr(
+        "libreyolo.training.distributed.spawn_ddp_train", fake_spawn
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn._build_init_kw", lambda model: {}
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn._filter_picklable", lambda kwargs: kwargs
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    result = spawn_for_model(
+        model_instance,
+        train_kw={},
+        nprocs=2,
+        devices=[0, 1],
+    )
+
+    assert result == {"best_checkpoint": str(checkpoint)}
+    assert model_instance.restore_calls == [(result, torch.device("cpu"))]
+
+
+def test_spawn_for_model_fallback_uses_absolute_checkpoint(
+    monkeypatch, tmp_path
+):
+    """Legacy wrappers without the shared helper still receive an absolute path."""
+    import json
+
+    from libreyolo.training.ddp_spawn import spawn_for_model
+
+    checkpoint = tmp_path / "last.pt"
+    checkpoint.touch()
+    monkeypatch.chdir(tmp_path)
+
+    class _LegacyWrapper:
+        def __init__(self):
+            self.model = nn.Linear(4, 2)
+            self.model_path = None
+            self.device = torch.device("cpu")
+            self.loaded_paths = []
+
+        def _load_weights(self, path):
+            self.loaded_paths.append(path)
+
+    model_instance = _LegacyWrapper()
+
+    def fake_spawn(worker_fn, spawn_args, nprocs, result_path, **kwargs):
+        Path(result_path).write_text(json.dumps({"last_checkpoint": "last.pt"}))
+
+    monkeypatch.setattr(
+        "libreyolo.training.distributed.spawn_ddp_train", fake_spawn
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn._build_init_kw", lambda model: {}
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn._filter_picklable", lambda kwargs: kwargs
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    result = spawn_for_model(
+        model_instance,
+        train_kw={},
+        nprocs=2,
+        devices=[0, 1],
+    )
+
+    expected = str(checkpoint.resolve())
+    assert result == {"last_checkpoint": "last.pt"}
+    assert model_instance.model_path == expected
+    assert model_instance.loaded_paths == [expected]
+    assert model_instance.model.training is False

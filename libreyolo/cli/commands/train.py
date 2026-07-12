@@ -234,7 +234,10 @@ def train_cmd(
     ),
     # Training
     epochs: int = typer.Option(300, help="Training epochs"),
-    batch: int = typer.Option(16, help="Batch size per device"),
+    batch: int = typer.Option(
+        16,
+        help="Global batch size (must divide the distributed world size)",
+    ),
     imgsz: int = typer.Option(640, help="Training image size"),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     workers: int = typer.Option(4, help="Dataloader workers"),
@@ -612,6 +615,15 @@ def train_cmd(
             )
     elif not val:
         train_kwargs["eval_interval"] = 0
+
+    from ..aliases import TRAIN_ALIASES
+
+    explicit_train_keys = {
+        TRAIN_ALIASES.get(key, key) for key in user_provided
+    }
+    if "val" in user_provided:
+        explicit_train_keys.add("eval_interval")
+    train_kwargs["_libreyolo_explicit_train_keys"] = sorted(explicit_train_keys)
 
     # Run training
     out.progress(f"Training {model} on {data} for {params['epochs']} epochs...")

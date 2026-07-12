@@ -40,6 +40,8 @@ from torch.amp import autocast
 from tqdm import tqdm
 
 from ...data import (
+    dataloader_seed_kwargs,
+    distributed_sampler_seed,
     get_coco_annotation_file,
     get_coco_image_dir,
     get_img_files,
@@ -47,7 +49,8 @@ from ...data import (
     load_data_config,
 )
 from ...data.dataset import COCODataset, YOLODataset
-from ...training.config import DFINEConfig, TrainConfig
+from ...training.config import DFINEConfig, TrainConfig, require_training_choice
+from ...training.distributed import all_reduce_avg_scalar
 from ...training.scheduler import FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import DFINECriterion
@@ -98,6 +101,12 @@ class DFINETrainer(BaseTrainer):
         return preproc, DFINEPassThroughDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("flat_cosine",),
+            family=self.get_model_family(),
+        )
         return FlatCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,
@@ -107,6 +116,10 @@ class DFINETrainer(BaseTrainer):
             no_aug_epochs=self.config.no_aug_epochs,
             min_lr_ratio=self.config.min_lr_ratio,
         )
+
+    def _scale_lr(self, base_lr: float, param_group: dict) -> float:
+        """Apply D-FINE's per-group backbone learning-rate multiplier."""
+        return base_lr * param_group.get("lr_mult", 1.0)
 
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
         # FGL/DDF are emitted only by the aux/dn paths (no main-loss key);
@@ -210,6 +223,12 @@ class DFINETrainer(BaseTrainer):
         ``backbone_lr_mult=0.5`` matches D-FINE's published fine-tune recipe;
         head groups stay at 1.0×.
         """
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family=self.get_model_family(),
+        )
         backbone_wd, backbone_no_wd, head_wd, head_no_wd = [], [], [], []
         for name, p in self.model.named_parameters():
             if not p.requires_grad:
@@ -266,7 +285,9 @@ class DFINETrainer(BaseTrainer):
                 }
             )
 
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999))
+        return torch.optim.AdamW(
+            param_groups, betas=(float(self.config.momentum), 0.999)
+        )
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         """Forward + loss in one go.
@@ -474,14 +495,34 @@ class DFINETrainer(BaseTrainer):
                 )
             collate_fn = yolox_collate_fn
 
+        per_rank_batch = self._per_rank_batch_size()
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
+            )
+        visible_samples = len(sampler) if sampler is not None else len(train_dataset)
         self.train_loader = DataLoader(
             train_dataset,
-            batch_size=self.config.batch,
+            batch_size=per_rank_batch,
             num_workers=self.config.workers,
-            shuffle=True,
+            shuffle=sampler is None,
+            sampler=sampler,
             pin_memory=True,
             collate_fn=collate_fn,
-            drop_last=True,
+            drop_last=visible_samples >= per_rank_batch,
+            **dataloader_seed_kwargs(
+                getattr(self.config, "seed", None),
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         return train_dataset
@@ -510,11 +551,14 @@ class DFINETrainer(BaseTrainer):
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         cf = getattr(self.train_loader, "collate_fn", None)
         if cf is not None and hasattr(cf, "set_epoch"):
             cf.set_epoch(epoch)
 
-        clip_max_norm = float(getattr(self.config, "clip_max_norm", 0.0))
+        should_clip = self._should_clip_gradients()
 
         self.model.train()
         self._enforce_frozen_bn_eval()
@@ -549,13 +593,10 @@ class DFINETrainer(BaseTrainer):
                 )
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
-                if clip_max_norm > 0:
+                if should_clip:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), clip_max_norm
-                    )
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                    self._clip_gradients()
+                step_succeeded = self._run_optimizer_step()
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
                 loss = self._require_finite_training_loss(
@@ -564,14 +605,9 @@ class DFINETrainer(BaseTrainer):
                 )
                 self.optimizer.zero_grad()
                 loss.backward()
-                if clip_max_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), clip_max_norm
-                    )
-                self.optimizer.step()
-
-            if self.ema_model is not None:
-                self.ema_model.update(self.model)
+                if should_clip:
+                    self._clip_gradients()
+                step_succeeded = self._run_optimizer_step()
 
             loss_val = loss.item()
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
@@ -580,11 +616,9 @@ class DFINETrainer(BaseTrainer):
                 loss_component_sums[name] = loss_component_sums.get(name, 0.0) + value
             del outputs, loss
 
-            # 3. Per-group LR (scheduler returns one base LR; each group
-            # multiplies by its ``lr_mult``).
-            base_lr = self.lr_scheduler.update_lr(self.current_iter + 1)
-            for pg in self.optimizer.param_groups:
-                pg["lr"] = base_lr * pg.get("lr_mult", 1.0)
+            # 3. EMA, optimizer-step counter, and per-group LR advance only
+            # when GradScaler actually applied the optimizer update.
+            base_lr = self._advance_optimizer_dependent_state(step_succeeded)
             num_batches += 1
 
             postfix = {"loss": f"{loss_val:.4f}", "lr": f"{base_lr:.6f}"}
@@ -598,10 +632,7 @@ class DFINETrainer(BaseTrainer):
         }
 
         val_metrics = None
-        if (
-            self.config.eval_interval > 0
-            and (epoch + 1) % self.config.eval_interval == 0
-        ):
+        if self._should_validate_epoch(epoch):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -619,11 +650,14 @@ class DFINETrainer(BaseTrainer):
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         cf = getattr(self.train_loader, "collate_fn", None)
         if cf is not None and hasattr(cf, "set_epoch"):
             cf.set_epoch(epoch)
 
-        clip_max_norm = float(getattr(self.config, "clip_max_norm", 0.0))
+        should_clip = self._should_clip_gradients()
 
         self.model.train()
         self._enforce_frozen_bn_eval()
@@ -639,7 +673,7 @@ class DFINETrainer(BaseTrainer):
         total_loss = 0.0
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
-        actual_window = accum
+        window_local_samples = 0
         base_lr = self.optimizer.param_groups[0]["lr"]
 
         for batch_idx, batch in enumerate(pbar):
@@ -658,7 +692,11 @@ class DFINETrainer(BaseTrainer):
 
             if batch_idx % accum == 0:
                 self.optimizer.zero_grad(set_to_none=True)
-                actual_window = min(accum, len(self.train_loader) - batch_idx)
+                window_local_samples = 0
+            batch_samples = int(imgs.shape[0])
+            if batch_samples <= 0:
+                raise ValueError("gradient accumulation received an empty micro-batch")
+            window_local_samples += batch_samples
 
             if self.scaler is not None:
                 with autocast("cuda"):
@@ -667,39 +705,42 @@ class DFINETrainer(BaseTrainer):
                         outputs["total_loss"],
                         context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
                     )
-                    loss = total_loss_raw / actual_window
+                    loss = total_loss_raw * batch_samples
                 self.scaler.scale(loss).backward()
                 if is_opt_step:
-                    if clip_max_norm > 0:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), clip_max_norm
-                        )
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    self.scaler.unscale_(self.optimizer)
+                    sample_divisor = all_reduce_avg_scalar(
+                        window_local_samples,
+                        device=self.device,
+                        min_value=1.0,
+                    )
+                    self._normalize_accumulated_gradients(sample_divisor)
+                    if should_clip:
+                        self._clip_gradients()
+                    step_succeeded = self._run_optimizer_step()
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
                 total_loss_raw = self._require_finite_training_loss(
                     outputs["total_loss"],
                     context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
                 )
-                loss = total_loss_raw / actual_window
+                loss = total_loss_raw * batch_samples
                 loss.backward()
                 if is_opt_step:
-                    if clip_max_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), clip_max_norm
-                        )
-                    self.optimizer.step()
+                    sample_divisor = all_reduce_avg_scalar(
+                        window_local_samples,
+                        device=self.device,
+                        min_value=1.0,
+                    )
+                    self._normalize_accumulated_gradients(sample_divisor)
+                    if should_clip:
+                        self._clip_gradients()
+                    step_succeeded = self._run_optimizer_step()
 
             if is_opt_step:
-                if self.ema_model is not None:
-                    self.ema_model.update(self.model)
-                # 3. Per-group LR (scheduler returns one base LR; each group
-                # multiplies by its ``lr_mult``).
-                base_lr = self.lr_scheduler.update_lr(opt_step + 1)
-                for pg in self.optimizer.param_groups:
-                    pg["lr"] = base_lr * pg.get("lr_mult", 1.0)
+                # 3. EMA, optimizer-step counter, and per-group LR advance
+                # only after an applied optimizer update.
+                base_lr = self._advance_optimizer_dependent_state(step_succeeded)
 
             loss_val = total_loss_raw.item()
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
@@ -720,10 +761,7 @@ class DFINETrainer(BaseTrainer):
         }
 
         val_metrics = None
-        if (
-            self.config.eval_interval > 0
-            and (epoch + 1) % self.config.eval_interval == 0
-        ):
+        if self._should_validate_epoch(epoch):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()

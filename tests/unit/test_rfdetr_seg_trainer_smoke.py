@@ -75,7 +75,6 @@ def test_setup_syncs_wrapper_device_to_trainer_device():
         with (
             patch.object(trainer, "_setup_data", side_effect=lambda: setattr(trainer, "train_loader", fake_loader)),
             patch.object(trainer, "_setup_optimizer", return_value=torch.optim.SGD(trainer.model.parameters(), lr=1e-4)),
-            patch("libreyolo.training.trainer.barrier"),
             patch.object(trainer, "_get_save_dir", return_value=Path(tmp)),
         ):
             trainer.setup()

@@ -9,7 +9,11 @@ import torch
 from typing import Dict, Type
 
 from libreyolo.training.trainer import BaseTrainer
-from libreyolo.training.config import TrainConfig, YOLOXConfig
+from libreyolo.training.config import (
+    TrainConfig,
+    YOLOXConfig,
+    require_training_choice,
+)
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.augment import TrainTransform, MosaicMixupDataset
 
@@ -37,6 +41,12 @@ class YOLOXTrainer(BaseTrainer):
         return preproc, MosaicMixupDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("yoloxwarmcos",),
+            family=self.get_model_family(),
+        )
         return WarmupCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

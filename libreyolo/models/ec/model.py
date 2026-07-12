@@ -301,7 +301,7 @@ class LibreEC(BaseModel):
         project: str = "runs/train",
         name: str = "ec_exp",
         exist_ok: bool = False,
-        resume: bool = False,
+        resume: str | Path | bool = False,
         amp: bool = True,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
@@ -403,6 +403,15 @@ class LibreEC(BaseModel):
             if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
+        resume_path = None
+        if resume:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError("resume=True requires a checkpoint. Load one first.")
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
         trainer = trainer_cls(
             model=self.model,
             wrapper_model=self,
@@ -419,7 +428,7 @@ class LibreEC(BaseModel):
             project=project,
             name=name,
             exist_ok=exist_ok,
-            resume=resume,
+            resume=bool(resume),
             amp=amp,
             patience=patience,
             callbacks=callbacks,
@@ -427,21 +436,11 @@ class LibreEC(BaseModel):
             **kwargs,
         )
 
-        if resume:
-            if not self.model_path:
-                raise ValueError("resume=True requires a checkpoint. Load one first.")
-            trainer.setup()
-            trainer.resume(str(self.model_path))
-            return trainer.train()
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self.model_path = best_ckpt
-            self._load_weights(best_ckpt)
-
-        self.model.to(self.device)
+        self._restore_after_training(results)
         return results
 
     def _train_pose(
@@ -459,7 +458,7 @@ class LibreEC(BaseModel):
         project: str = "runs/train",
         name: str = "ec_pose_exp",
         exist_ok: bool = False,
-        resume: bool = False,
+        resume: str | Path | bool = False,
         amp: bool = True,
         patience: int = 50,
         callbacks=None,
@@ -560,6 +559,15 @@ class LibreEC(BaseModel):
             if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
+        resume_path = None
+        if resume:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError("resume=True requires a checkpoint. Load one first.")
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
         trainer = ECPoseTrainer(
             model=self.model,
             wrapper_model=self,
@@ -579,7 +587,7 @@ class LibreEC(BaseModel):
             project=project,
             name=name,
             exist_ok=exist_ok,
-            resume=resume,
+            resume=bool(resume),
             amp=amp,
             patience=patience,
             callbacks=callbacks,
@@ -587,21 +595,11 @@ class LibreEC(BaseModel):
             **kwargs,
         )
 
-        if resume:
-            if not self.model_path:
-                raise ValueError("resume=True requires a checkpoint. Load one first.")
-            trainer.setup()
-            trainer.resume(str(self.model_path))
-            return trainer.train()
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self.model_path = best_ckpt
-            self._load_weights(best_ckpt)
-
-        self.model.to(self.device)
+        self._restore_after_training(results)
         return results
 
     def _load_weights(self, model_path: str):

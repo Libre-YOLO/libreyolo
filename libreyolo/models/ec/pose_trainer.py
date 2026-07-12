@@ -18,22 +18,23 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 from typing import Dict, Type
 
 import cv2
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from ...data import (
     YOLOPoseDataset,
+    dataloader_seed_kwargs,
+    distributed_sampler_seed,
     get_img_files,
     img2label_paths,
     load_data_config,
     pose_collate_fn,
+    seed_data_worker,
 )
-from ...training.config import ECPoseConfig, TrainConfig
+from ...training.config import ECPoseConfig, TrainConfig, require_training_choice
 from ...training.scheduler import FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .pose_loss import ECPoseCriterion, PoseHungarianMatcher, default_oks_sigmas
@@ -45,9 +46,7 @@ logger = logging.getLogger(__name__)
 def _pose_worker_init_fn(worker_id: int) -> None:
     cv2.setNumThreads(0)
     torch.set_num_threads(1)
-    seed = (torch.initial_seed() + worker_id) % 2**32
-    random.seed(seed)
-    np.random.seed(seed)
+    seed_data_worker(worker_id)
 
 
 def _set_bn_eval(module: torch.nn.Module) -> None:
@@ -111,6 +110,12 @@ class ECPoseTrainer(BaseTrainer):
         return None, None
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("flat_cosine",),
+            family="ec-pose",
+        )
         return FlatCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,
@@ -152,6 +157,12 @@ class ECPoseTrainer(BaseTrainer):
         self.val_loader = None
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family="ec-pose",
+        )
         backbone_wd, backbone_no_wd, head_wd, head_no_wd = [], [], [], []
         for name, p in self.model.named_parameters():
             if not p.requires_grad:
@@ -181,7 +192,9 @@ class ECPoseTrainer(BaseTrainer):
             groups.append({"params": backbone_wd, "lr": lr * bb_mult, "weight_decay": wd, "lr_mult": bb_mult})
         if backbone_no_wd:
             groups.append({"params": backbone_no_wd, "lr": lr * bb_mult, "weight_decay": 0.0, "lr_mult": bb_mult})
-        return torch.optim.AdamW(groups, betas=(0.9, 0.999))
+        return torch.optim.AdamW(
+            groups, betas=(float(self.config.momentum), 0.999)
+        )
 
     def _scale_lr(self, base_lr: float, param_group: dict) -> float:
         return base_lr * float(param_group.get("lr_mult", 1.0))
@@ -239,7 +252,7 @@ class ECPoseTrainer(BaseTrainer):
             to_rgb=True,
         )
         train_ds = self._build_dataset(train_imgs, train_lbls, train_tf)
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         train_sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -250,17 +263,31 @@ class ECPoseTrainer(BaseTrainer):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_ds) >= self.world_size,
+                seed=distributed_sampler_seed(getattr(self.config, "seed", None)),
             )
 
         visible_samples = len(train_sampler) if train_sampler is not None else len(train_ds)
         drop_last = visible_samples >= per_rank_batch
-        loader_kwargs = {}
+        worker_kwargs = {}
         if self.config.workers > 0:
-            loader_kwargs.update(
+            deterministic_workers = (
+                getattr(self.config, "seed", None) is not None
+                and int(self.config.seed) >= 0
+            )
+            worker_kwargs.update(
                 worker_init_fn=_pose_worker_init_fn,
-                persistent_workers=self.config.persistent_workers,
+                persistent_workers=(
+                    self.config.persistent_workers and not deterministic_workers
+                ),
                 prefetch_factor=self.config.prefetch_factor,
             )
+        seed_kwargs = dict(
+            seed=getattr(self.config, "seed", None),
+            rank=self.rank,
+            distributed=self.is_distributed,
+        )
+        train_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+        train_loader_kwargs.update(worker_kwargs)
         self.train_loader = DataLoader(
             train_ds,
             batch_size=per_rank_batch,
@@ -270,7 +297,7 @@ class ECPoseTrainer(BaseTrainer):
             pin_memory=self.config.pin_memory,
             drop_last=drop_last,
             collate_fn=pose_collate_fn,
-            **loader_kwargs,
+            **train_loader_kwargs,
         )
 
         val_imgs = cfg.get("val_img_files")
@@ -286,6 +313,8 @@ class ECPoseTrainer(BaseTrainer):
                 self.num_keypoints, imagenet_norm=True, to_rgb=True
             )
             val_ds = self._build_dataset(val_imgs, val_lbls, val_tf)
+            val_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+            val_loader_kwargs.update(worker_kwargs)
             self.val_loader = DataLoader(
                 val_ds,
                 batch_size=per_rank_batch,
@@ -294,7 +323,7 @@ class ECPoseTrainer(BaseTrainer):
                 pin_memory=self.config.pin_memory,
                 drop_last=False,
                 collate_fn=pose_collate_fn,
-                **loader_kwargs,
+                **val_loader_kwargs,
             )
             logger.info("Validation dataset: %d images", len(val_ds))
         else:
@@ -396,16 +425,10 @@ class ECPoseTrainer(BaseTrainer):
             "oks_sigmas": self._resolve_oks_sigmas(),
         }
 
-    def _validate_epoch(self, epoch: int, *, save_plots: bool | None = None):
-        from ...training.distributed import barrier, is_main_process, unwrap_model
-
-        if self.is_distributed and not is_main_process():
-            barrier()
-            return None
+    def _run_validation(self, epoch: int, *, save_plots: bool | None = None):
+        from ...training.distributed import unwrap_model
 
         if getattr(self, "val_loader", None) is None:
-            if self.is_distributed:
-                barrier()
             return None
 
         model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
@@ -415,43 +438,53 @@ class ECPoseTrainer(BaseTrainer):
         total_loss, num_batches = 0.0, 0
         pose_metrics = None
         try:
-            with torch.no_grad():
-                for batch in self.val_loader:
-                    imgs = batch[0].to(self.device, non_blocking=True)
-                    targets = batch[1].to(self.device, non_blocking=True)
-                    target_list = self._build_pose_targets(targets, imgs)
-                    # The pose decoder only emits aux/enc/dn outputs in train
-                    # mode, but BatchNorm must NOT update running stats from val
-                    # data (no_grad does not stop buffer writes). Run train mode
-                    # for the decoder structure while freezing BN to eval.
-                    model.train()
-                    _set_bn_eval(model)
-                    losses = self.criterion(
-                        model(imgs, targets=target_list), target_list
-                    )
-                    model.eval()
-                    total_loss += float(sum(losses.values()).item())
-                    num_batches += 1
-            pose_metrics = self._run_pose_metric_validation(model, epoch)
+            if not self.is_distributed:
+                with torch.no_grad():
+                    for batch in self.val_loader:
+                        imgs = batch[0].to(self.device, non_blocking=True)
+                        targets = batch[1].to(self.device, non_blocking=True)
+                        target_list = self._build_pose_targets(targets, imgs)
+                        # The pose decoder only emits aux/enc/dn outputs in train
+                        # mode, but BatchNorm must NOT update running stats from val
+                        # data (no_grad does not stop buffer writes). Run train mode
+                        # for the decoder structure while freezing BN to eval.
+                        model.train()
+                        _set_bn_eval(model)
+                        losses = self.criterion(
+                            model(imgs, targets=target_list), target_list
+                        )
+                        model.eval()
+                        total_loss += float(sum(losses.values()).item())
+                        num_batches += 1
+            pose_metrics = self._run_pose_metric_validation(
+                model,
+                epoch,
+                save_plots=save_plots,
+            )
         finally:
             if was_training:
                 model.train()
-            if self.is_distributed:
-                barrier()
 
         avg_loss = total_loss / max(num_batches, 1)
-        metrics = {"loss/val": avg_loss}
+        metrics = {} if self.is_distributed else {"loss/val": avg_loss}
         if pose_metrics:
             metrics.update(self._scalar_mapping(pose_metrics))
             mAP50 = metrics.get("metrics/keypoints_mAP50")
             mAP50_95 = metrics.get("metrics/keypoints_mAP50-95")
-            logger.info(
-                "Validation - loss/val: %.4f, keypoints_mAP50: %.4f, "
-                "keypoints_mAP50-95: %.4f",
-                avg_loss,
-                mAP50 if mAP50 is not None else 0.0,
-                mAP50_95 if mAP50_95 is not None else 0.0,
-            )
+            if self.is_distributed:
+                logger.info(
+                    "Validation - keypoints_mAP50: %.4f, keypoints_mAP50-95: %.4f",
+                    mAP50 if mAP50 is not None else 0.0,
+                    mAP50_95 if mAP50_95 is not None else 0.0,
+                )
+            else:
+                logger.info(
+                    "Validation - loss/val: %.4f, keypoints_mAP50: %.4f, "
+                    "keypoints_mAP50-95: %.4f",
+                    avg_loss,
+                    mAP50 if mAP50 is not None else 0.0,
+                    mAP50_95 if mAP50_95 is not None else 0.0,
+                )
             return {
                 "best_metric": mAP50_95 if mAP50_95 is not None else 0.0,
                 "best_metric_key": self.best_metric_key,
@@ -459,6 +492,13 @@ class ECPoseTrainer(BaseTrainer):
                 "mAP50_95": mAP50_95,
                 "metrics": metrics,
             }
+
+        if self.is_distributed:
+            logger.warning(
+                "Skipping EC pose validation loss under DDP because the criterion "
+                "uses training collectives; pose metrics were unavailable"
+            )
+            return None
 
         logger.info("Validation - loss/val: %.4f", avg_loss)
         return {
@@ -469,17 +509,29 @@ class ECPoseTrainer(BaseTrainer):
             "metrics": metrics,
         }
 
-    def _run_pose_metric_validation(self, eval_model, epoch: int):
+    def _run_pose_metric_validation(
+        self,
+        eval_model,
+        epoch: int,
+        *,
+        save_plots: bool | None = None,
+    ):
         if self.wrapper_model is None:
             logger.warning("Skipping pose mAP validation: wrapper_model is missing")
             return None
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
 
+            should_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False))
+                and self._is_final_epoch(epoch)
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                batch_size=self.config.batch,
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -489,7 +541,8 @@ class ECPoseTrainer(BaseTrainer):
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,
                 oks_sigmas=self._resolve_oks_sigmas(),
-                save_dir=str(self.save_dir / "val"),
+                save_plots=should_save_plots,
+                save_dir=str(self.save_dir / "val") if should_save_plots else None,
             )
             original_model = self.wrapper_model.model
             self.wrapper_model.model = eval_model

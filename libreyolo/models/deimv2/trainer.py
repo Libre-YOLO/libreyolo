@@ -17,6 +17,7 @@ from ...training.config import (
     DEIMV2_SIZE_DEFAULTS,
     DEIMv2Config,
     TrainConfig,
+    require_training_choice,
 )
 from ..deim.trainer import DEIMTrainer
 from .loss import DEIMv2Criterion
@@ -117,6 +118,12 @@ class DEIMv2Trainer(DEIMTrainer):
         return preproc, DEIMPassThroughDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("flat_cosine",),
+            family=self.get_model_family(),
+        )
         return DEIMv2FlatCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,
@@ -173,6 +180,12 @@ class DEIMv2Trainer(DEIMTrainer):
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         """AdamW groups matching DEIMv2's HGNetv2/DINOv3 recipes."""
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family=self.get_model_family(),
+        )
         backbone_wd, backbone_no_wd, head_wd, head_no_wd = [], [], [], []
         dino_backbone = self.config.size in DINO_SIZES
 
@@ -235,7 +248,9 @@ class DEIMv2Trainer(DEIMTrainer):
                 }
             )
 
-        return torch.optim.AdamW(param_groups, betas=(0.9, 0.999))
+        return torch.optim.AdamW(
+            param_groups, betas=(float(self.config.momentum), 0.999)
+        )
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         target_list = self._targets_to_detr(imgs, targets)

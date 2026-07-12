@@ -30,6 +30,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
+from ...training.distributed import all_reduce_avg_scalar
+
 COCO17_OKS_SIGMAS = (
     0.026, 0.025, 0.025, 0.035, 0.035, 0.079, 0.079, 0.072, 0.072,
     0.062, 0.062, 0.107, 0.107, 0.087, 0.087, 0.089, 0.089,
@@ -171,17 +173,13 @@ class PoseHungarianMatcher(nn.Module):
         ]
 
 
-def _is_dist():
-    return torch.distributed.is_available() and torch.distributed.is_initialized()
-
-
-def _world_size():
-    return torch.distributed.get_world_size() if _is_dist() else 1
-
-
 class ECPoseCriterion(nn.Module):
     """DETRPose criterion: VFL classification (OKS-keyed) + keypoint L1 + OKS,
     with GO-LSD union matching, deep supervision, and contrastive denoising."""
+
+    @staticmethod
+    def _global_count_normalizer(count: int, device: torch.device) -> float:
+        return all_reduce_avg_scalar(count, device=device, min_value=1.0)
 
     def __init__(
         self,
@@ -308,17 +306,11 @@ class ECPoseCriterion(nn.Module):
 
     def _num_boxes(self, targets, device):
         n = sum(len(t["labels"]) for t in targets)
-        n = torch.as_tensor([n], dtype=torch.float, device=device)
-        if _is_dist():
-            torch.distributed.all_reduce(n)
-        return torch.clamp(n / _world_size(), min=1).item()
+        return self._global_count_normalizer(n, device)
 
     def _num_index_pairs(self, indices, device):
         n = sum(len(x[0]) for x in indices)
-        n = torch.as_tensor([n], dtype=torch.float, device=device)
-        if _is_dist():
-            torch.distributed.all_reduce(n)
-        return torch.clamp(n / _world_size(), min=1).item()
+        return self._global_count_normalizer(n, device)
 
     def forward(self, outputs, targets):
         device = outputs["pred_logits"].device
@@ -349,9 +341,13 @@ class ECPoseCriterion(nn.Module):
             for loss in self.losses:
                 idx_in = indices_go if loss == "keypoints" else idx_per_layer
                 nb_in = num_boxes_go if loss == "keypoints" else num_boxes
-                l = self.get_loss(loss, out, tgts, idx_in, nb_in)
-                l = {k: v * self.weight_dict[k] for k, v in l.items() if k in self.weight_dict}
-                d.update({k + suffix: v for k, v in l.items()})
+                loss_dict = self.get_loss(loss, out, tgts, idx_in, nb_in)
+                loss_dict = {
+                    k: v * self.weight_dict[k]
+                    for k, v in loss_dict.items()
+                    if k in self.weight_dict
+                }
+                d.update({k + suffix: v for k, v in loss_dict.items()})
             return d
 
         losses = {}
@@ -393,7 +389,11 @@ class ECPoseCriterion(nn.Module):
     def _dn_apply(self, out, targets, dn_pos_idx, dn_nb, suffix):
         d = {}
         for loss in self.losses:
-            l = self.get_loss(loss, out, targets, dn_pos_idx, dn_nb)
-            l = {k: v * self.weight_dict[k] for k, v in l.items() if k in self.weight_dict}
-            d.update({k + suffix: v for k, v in l.items()})
+            loss_dict = self.get_loss(loss, out, targets, dn_pos_idx, dn_nb)
+            loss_dict = {
+                k: v * self.weight_dict[k]
+                for k, v in loss_dict.items()
+                if k in self.weight_dict
+            }
+            d.update({k + suffix: v for k, v in loss_dict.items()})
         return d

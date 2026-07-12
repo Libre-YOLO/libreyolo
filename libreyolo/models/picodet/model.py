@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -289,11 +288,8 @@ class LibrePICODET(BaseModel):
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibrePICODET('path/to/last.pt'); model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self._load_weights(best_ckpt)
+        self._restore_after_training(results)
         return results

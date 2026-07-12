@@ -8,6 +8,7 @@ import inspect
 import logging
 import math
 import os
+import random
 import shutil
 import sys
 import time
@@ -17,6 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
@@ -34,7 +36,7 @@ from .callbacks import (
 from .config import TrainConfig
 from .loggers import resolve_loggers
 from .distributed import (
-    barrier,
+    all_reduce_avg_scalar,
     get_local_rank,
     get_rank,
     get_world_size,
@@ -43,6 +45,7 @@ from .distributed import (
     is_distributed,
     is_main_process,
     parse_device_arg,
+    run_rank_zero_phase,
     scale_loss_for_ddp,
     seed_for_rank,
     unwrap_model,
@@ -52,6 +55,8 @@ from .ema import ModelEMA
 from .freezing import FreezeGroup, apply_freeze, default_freeze_groups
 from ..data.dataset import YOLODataset, COCODataset, create_dataloader
 from ..data import (
+    dataloader_seed_kwargs,
+    distributed_sampler_seed,
     get_coco_annotation_file,
     get_coco_image_dir,
     get_img_files,
@@ -59,6 +64,7 @@ from ..data import (
     load_data_config,
     resolve_default_coco_image_dir,
 )
+from ..tasks import normalize_task
 from ..utils.serialization import (
     REQUIRED_CHECKPOINT_METADATA_KEYS,
     SCHEMA_VERSION,
@@ -217,6 +223,16 @@ class BaseTrainer(ABC):
         self.config = self._config_class().from_kwargs(**kwargs)
         self.model = model
         self.wrapper_model = wrapper_model
+        wrapper_explicit_keys = (
+            getattr(wrapper_model, "_active_train_explicit_keys", None)
+            if wrapper_model is not None
+            else None
+        )
+        self._explicit_train_config_keys = frozenset(
+            kwargs.keys()
+            if wrapper_explicit_keys is None
+            else wrapper_explicit_keys
+        )
         self.callbacks = TrainCallbackList(callbacks)
         for logger_callback in resolve_loggers(loggers):
             self.callbacks.append(logger_callback)
@@ -243,9 +259,17 @@ class BaseTrainer(ABC):
         self.world_size = get_world_size()
         self.is_distributed = is_distributed()
 
-        # Per-rank seed so dataloader/aug RNG differs across ranks.
-        if self.is_distributed and getattr(self.config, "seed", None) is not None:
-            seed = seed_for_rank(int(self.config.seed))
+        # Seed every trainer, with a rank offset under DDP so Python, NumPy,
+        # Torch, CUDA, samplers, and workers can derive one coherent stream.
+        configured_seed = getattr(self.config, "seed", None)
+        if configured_seed is not None and int(configured_seed) >= 0:
+            seed = (
+                seed_for_rank(int(configured_seed))
+                if self.is_distributed
+                else int(configured_seed)
+            )
+            random.seed(seed)
+            np.random.seed(seed % 2**32)
             torch.manual_seed(seed)
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
@@ -257,6 +281,8 @@ class BaseTrainer(ABC):
         self.start_epoch = 0
         self.current_epoch = 0
         self.current_iter = 0
+        self.optimizer_step_count = 0
+        self._optimizer_step_count_restored = False
 
         # Metric tracking
         self.best_mAP50_95 = 0.0
@@ -326,6 +352,24 @@ class BaseTrainer(ABC):
         if self._accum_steps > 1:
             steps = max(1, math.ceil(steps / self._accum_steps))
         return steps
+
+    def _per_rank_batch_size(self) -> int:
+        """Resolve the exact local batch represented by the global config."""
+        batch = int(self.config.batch)
+        world_size = max(int(getattr(self, "world_size", 1)), 1)
+        if batch <= 0:
+            raise ValueError(f"batch must be positive after setup, got {batch}")
+        if world_size > 1 and batch % world_size != 0:
+            raise ValueError(
+                f"Global batch={batch} must be divisible by world_size={world_size}; "
+                "choose a divisible batch so DDP does not silently change it"
+            )
+        per_rank_batch = batch // world_size
+        if per_rank_batch <= 0:
+            raise ValueError(
+                f"Global batch={batch} is smaller than world_size={world_size}"
+            )
+        return per_rank_batch
 
     @property
     def input_size(self) -> Tuple[int, int]:
@@ -532,9 +576,17 @@ class BaseTrainer(ABC):
                 nesterov=self.config.nesterov,
             )
         elif opt_name == "adam":
-            optimizer = torch.optim.Adam(param_groups, lr=lr)
+            optimizer = torch.optim.Adam(
+                param_groups,
+                lr=lr,
+                betas=(self.config.momentum, 0.999),
+            )
         elif opt_name == "adamw":
-            optimizer = torch.optim.AdamW(param_groups, lr=lr)
+            optimizer = torch.optim.AdamW(
+                param_groups,
+                lr=lr,
+                betas=(self.config.momentum, 0.999),
+            )
         else:
             raise ValueError(f"Unknown optimizer: {opt_name}")
 
@@ -571,6 +623,14 @@ class BaseTrainer(ABC):
     def _setup_distillation(self):
         """Set up knowledge distillation when ``config.distill_model`` is set."""
         if not getattr(self.config, "distill_model", None):
+            if getattr(self, "_resume_distiller_state", None) is not None:
+                logger.warning(
+                    "Resume checkpoint contains distiller state, but distillation "
+                    "is disabled; discarding distiller state and any distillation-"
+                    "specific optimizer slots"
+                )
+                self._discard_resume_distiller_optimizer_state = True
+                self._resume_distiller_state = None
             return
 
         from ..distillation import Distiller
@@ -642,18 +702,43 @@ class BaseTrainer(ABC):
                 self.distiller.loss_modules.load_state_dict(deferred_state)
                 logger.info("Distiller adapter state restored from resume checkpoint")
             except Exception as e:
-                logger.warning(f"Could not load deferred distiller state: {e}")
+                raise RuntimeError(f"Cannot resume distiller state: {e}") from e
             finally:
                 self._resume_distiller_state = None
 
         # Add distiller's learnable params (align/generation convs) to optimizer
-        distill_params = list(self.distiller.loss_modules.parameters())
-        if distill_params:
+        distill_decay = []
+        distill_no_decay = []
+        for name, param in self.distiller.loss_modules.named_parameters():
+            if not param.requires_grad:
+                continue
+            if param.ndim <= 1 or name.endswith(".bias"):
+                distill_no_decay.append(param)
+            else:
+                distill_decay.append(param)
+        if distill_decay:
             self.optimizer.add_param_group(
-                {"params": distill_params, "lr": self.effective_lr}
+                {
+                    "params": distill_decay,
+                    "lr": self.effective_lr,
+                    "weight_decay": self.config.weight_decay,
+                }
             )
+        if distill_no_decay:
+            self.optimizer.add_param_group(
+                {
+                    "params": distill_no_decay,
+                    "lr": self.effective_lr,
+                    "weight_decay": 0.0,
+                }
+            )
+        distill_param_count = len(distill_decay) + len(distill_no_decay)
+        if distill_param_count:
             logger.info(
-                f"Added {len(distill_params)} distillation params to optimizer"
+                "Added %d distillation params to optimizer (%d decay, %d no-decay)",
+                distill_param_count,
+                len(distill_decay),
+                len(distill_no_decay),
             )
 
     def _sync_distiller_grads(self):
@@ -675,6 +760,12 @@ class BaseTrainer(ABC):
                 param.grad /= world_size
 
     def _get_save_dir(self) -> Path:
+        resume_save_dir = getattr(self, "_resume_save_dir", None)
+        if resume_save_dir is not None:
+            save_dir = Path(resume_save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            return save_dir
+
         project = Path(self.config.project)
         name = self.config.name
 
@@ -865,7 +956,7 @@ class BaseTrainer(ABC):
 
         # ``batch`` is the global batch under DDP. Each rank's loader is built
         # with ``batch // world_size``.
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -876,6 +967,7 @@ class BaseTrainer(ABC):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
             )
 
         self.train_loader = create_dataloader(
@@ -885,6 +977,9 @@ class BaseTrainer(ABC):
             shuffle=True,
             pin_memory=self.device.type == "cuda",
             sampler=sampler,
+            seed=self.config.seed,
+            rank=self.rank,
+            distributed=self.is_distributed,
         )
 
         if is_main_process():
@@ -961,7 +1056,7 @@ class BaseTrainer(ABC):
             cutmix=getattr(self.config, "cutmix", 0.0),
         )
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         if per_rank_batch < 2:
             raise ValueError(
                 "Classification training needs an effective per-rank batch size >= 2 "
@@ -980,6 +1075,7 @@ class BaseTrainer(ABC):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
             )
 
         # Under DDP each rank only sees ``len(sampler)`` samples, so base the
@@ -999,6 +1095,11 @@ class BaseTrainer(ABC):
             pin_memory=self.device.type == "cuda",
             collate_fn=collate_fn,
             drop_last=visible_samples >= per_rank_batch,
+            **dataloader_seed_kwargs(
+                self.config.seed,
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         if is_main_process():
@@ -1085,7 +1186,7 @@ class BaseTrainer(ABC):
             wrapper.nb_classes = num_classes
             wrapper.names = dict(train_dataset.names)
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -1096,6 +1197,7 @@ class BaseTrainer(ABC):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
             )
 
         try:
@@ -1111,6 +1213,11 @@ class BaseTrainer(ABC):
             pin_memory=self.device.type == "cuda",
             collate_fn=semantic_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
+            **dataloader_seed_kwargs(
+                self.config.seed,
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         if is_main_process():
@@ -1164,7 +1271,7 @@ class BaseTrainer(ABC):
             self.wrapper_model.nb_classes = 1
             self.wrapper_model.names = {0: "depth"}
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -1175,6 +1282,7 @@ class BaseTrainer(ABC):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
             )
 
         try:
@@ -1190,6 +1298,11 @@ class BaseTrainer(ABC):
             pin_memory=self.device.type == "cuda",
             collate_fn=depth_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
+            **dataloader_seed_kwargs(
+                self.config.seed,
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         if is_main_process():
@@ -1231,7 +1344,7 @@ class BaseTrainer(ABC):
             self.wrapper_model.nb_classes = 1
             self.wrapper_model.names = {0: "image"}
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -1242,6 +1355,7 @@ class BaseTrainer(ABC):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
             )
 
         try:
@@ -1257,6 +1371,11 @@ class BaseTrainer(ABC):
             pin_memory=self.device.type == "cuda",
             collate_fn=restore_collate_fn,
             drop_last=visible_samples >= per_rank_batch,
+            **dataloader_seed_kwargs(
+                self.config.seed,
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         if is_main_process():
@@ -1383,7 +1502,7 @@ class BaseTrainer(ABC):
         # converged model (issue #484). Warn (do not silently change behavior)
         # so users of BatchNorm families can enable sync_bn.
         if self.is_distributed and not getattr(self.config, "sync_bn", False):
-            per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+            per_rank_batch = self._per_rank_batch_size()
             has_batchnorm = any(
                 isinstance(m, nn.modules.batchnorm._BatchNorm)
                 for m in self.model.modules()
@@ -1400,20 +1519,51 @@ class BaseTrainer(ABC):
                 )
 
         self._setup_data()
+        if self.train_loader is None or len(self.train_loader) == 0:
+            raise ValueError(
+                "Training dataloader has zero batches; reduce batch size, add "
+                "training samples, or reduce world_size"
+            )
+        deferred_model_state = getattr(self, "_resume_model_state", None)
+        if deferred_model_state is not None:
+            self._load_resume_model_state(deferred_model_state)
+            self._resume_model_state = None
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
         self._setup_distillation()
         self.lr_scheduler = self.create_scheduler(self._scheduler_steps_per_epoch())
+
+        deferred_scheduler_state = getattr(self, "_resume_scheduler_state", None)
+        if deferred_scheduler_state is not None:
+            load_scheduler_state = getattr(self.lr_scheduler, "load_state_dict", None)
+            if callable(load_scheduler_state):
+                try:
+                    load_scheduler_state(deferred_scheduler_state)
+                    logger.info("Scheduler state restored from resume checkpoint")
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Cannot resume scheduler state: {exc}"
+                    ) from exc
+            else:
+                raise RuntimeError(
+                    "Cannot resume scheduler state: "
+                    f"{type(self.lr_scheduler).__name__} does not support "
+                    "load_state_dict()"
+                )
+            self._resume_scheduler_state = None
 
         # resume() may be called before setup() when the optimizer doesn't exist
         # yet. Apply the deferred state now so momentum buffers are restored before
         # _initialize_scheduler_lr() sets the correct LR on top.
         if getattr(self, "_resume_optimizer_state", None) is not None:
             try:
-                self.optimizer.load_state_dict(self._resume_optimizer_state)
+                optimizer_state = self._optimizer_state_for_resume(
+                    self._resume_optimizer_state
+                )
+                self.optimizer.load_state_dict(optimizer_state)
                 logger.info("Optimizer state restored from resume checkpoint")
             except Exception as e:
-                logger.warning(f"Could not load deferred optimizer state: {e}")
+                raise RuntimeError(f"Cannot resume optimizer state: {e}") from e
             finally:
                 self._resume_optimizer_state = None
 
@@ -1454,31 +1604,56 @@ class BaseTrainer(ABC):
                     ema_tau,
                 )
 
-        # Save-dir creation, config dump, and TB writer all live on rank 0.
-        # The resolved name (which may include an auto-increment suffix when
-        # exist_ok=False and a previous run exists) is broadcast to other
-        # ranks so every rank's ``self.save_dir`` agrees and event-level
-        # paths emitted by callbacks are consistent.
-        if is_main_process():
-            self.save_dir = self._get_save_dir()
-            self.config.to_yaml(self.save_dir / "train_config.yaml")
-            logger.info(f"Saving to: {self.save_dir}")
+        deferred_ema_state = getattr(self, "_resume_ema_state", None)
+        if deferred_ema_state is not None:
+            if self.ema_model is None:
+                logger.warning(
+                    "Resume checkpoint contains EMA state, but EMA is disabled"
+                )
+            else:
+                try:
+                    self.ema_model.ema.load_state_dict(deferred_ema_state)
+                    self.ema_model.updates = int(
+                        getattr(self, "_resume_ema_updates", 0)
+                    )
+                    logger.info("EMA state restored from resume checkpoint")
+                except Exception as exc:
+                    raise RuntimeError(f"Cannot resume EMA state: {exc}") from exc
+            self._resume_ema_state = None
+            self._resume_ema_updates = None
+
+        deferred_scaler_state = getattr(self, "_resume_scaler_state", None)
+        if deferred_scaler_state is not None:
+            if self.scaler is None:
+                logger.warning(
+                    "Resume checkpoint contains GradScaler state, but AMP is disabled"
+                )
+            else:
+                try:
+                    self.scaler.load_state_dict(deferred_scaler_state)
+                    logger.info("GradScaler state restored from resume checkpoint")
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Cannot resume GradScaler state: {exc}"
+                    ) from exc
+            self._resume_scaler_state = None
+
+        # Create and persist the output location once. All ranks receive either
+        # the resolved path or the rank-zero failure, avoiding a peer hang when
+        # filesystem setup fails.
+        def setup_output_dir() -> str:
+            save_dir = self._get_save_dir()
+            self.config.to_yaml(save_dir / "train_config.yaml")
+            logger.info(f"Saving to: {save_dir}")
             logger.info(
                 f"Tip: watch this run live in your browser with "
-                f"`libreyolo monitor {self.save_dir}`"
+                f"`libreyolo monitor {save_dir}`"
             )
-        else:
-            self.save_dir = Path(self.config.project) / self.config.name
+            return str(save_dir)
 
-        if self.is_distributed:
-            import torch.distributed as _dist
-
-            container = [str(self.save_dir)] if is_main_process() else [None]
-            _dist.broadcast_object_list(container, src=0)
-            self.save_dir = Path(container[0])
-
-        # Wait for rank 0 to finish dir creation before any rank proceeds.
-        barrier()
+        self.save_dir = Path(
+            run_rank_zero_phase("training output setup", setup_output_dir)
+        )
 
         # Optional training-step profiler (opt-in via config.profile). Built on
         # the main process; emits the breakdown + Chrome trace into save_dir.
@@ -1521,6 +1696,15 @@ class BaseTrainer(ABC):
                         "workers": self.config.workers,
                     },
                 )
+
+        deferred_rng_state = getattr(self, "_resume_rng_state", None)
+        if deferred_rng_state is not None:
+            try:
+                self._restore_rng_state(deferred_rng_state)
+                logger.info("RNG state restored from resume checkpoint")
+            except Exception as exc:
+                raise RuntimeError(f"Cannot resume RNG state: {exc}") from exc
+            self._resume_rng_state = None
 
         self._is_setup = True
 
@@ -1577,12 +1761,13 @@ class BaseTrainer(ABC):
                 logger.info(f"Learning rate: {self.effective_lr}")
 
             start_event = self._build_train_start_event()
-            # Artifact + user callbacks fire on rank 0 only — they write
-            # files (results.json, TensorBoard, etc.) that would race on
-            # shared paths otherwise.
-            if is_main_process():
+            # Callbacks execute on rank 0 because they may write shared files.
+            # Every rank joins the phase so user callback failures propagate.
+            def on_train_start() -> None:
                 self._dispatch_artifact_callbacks("on_train_start", start_event)
                 self.callbacks.on_train_start(start_event)
+
+            run_rank_zero_phase("on_train_start callback", on_train_start)
 
             no_aug_start = self.config.epochs - self.config.no_aug_epochs
             if self.config.no_aug_epochs > 0 and self.start_epoch > no_aug_start:
@@ -1641,26 +1826,17 @@ class BaseTrainer(ABC):
                     epoch_seconds=epoch_seconds,
                 )
                 self.epoch_events.append(event)
-                if is_main_process():
+                def on_train_epoch_end() -> None:
                     self._dispatch_artifact_callbacks("on_train_epoch_end", event)
                     self.callbacks.on_train_epoch_end(event)
 
-                # Early-stop decision lives on rank 0 only (patience_counter
-                # is updated from val_metrics, which only rank 0 receives).
-                # We broadcast the stop flag so every rank exits the loop in
-                # lockstep — otherwise non-rank-0 ranks proceed into the
-                # next epoch's collective backward() and deadlock.
-                # Patience is measured in EPOCHS since the last metric
-                # improvement. ``best_epoch`` is the 1-based epoch of the best
-                # result, so this stays meaningful even when validation only
-                # runs on an interval (unlike counting discrete val events).
-                epochs_since_best = (
-                    (epoch + 1) - self.best_epoch if self.best_epoch else 0
-                )
+                run_rank_zero_phase("on_train_epoch_end callback", on_train_epoch_end)
+
+                # Patience counts completed validation opportunities. With an
+                # eval interval, unevaluated epochs must not consume patience.
                 should_stop = (
                     self.config.patience > 0
-                    and self.best_epoch > 0
-                    and epochs_since_best >= self.config.patience
+                    and self.patience_counter >= self.config.patience
                 )
                 if self.is_distributed:
                     import torch.distributed as _dist
@@ -1677,15 +1853,13 @@ class BaseTrainer(ABC):
                     if is_main_process():
                         logger.info(
                             f"Early stopping triggered after {epoch + 1} epochs "
-                            f"(patience={self.config.patience}, no improvement for {epochs_since_best} epochs)"
+                            f"(patience={self.config.patience}, no improvement for "
+                            f"{self.patience_counter} validation opportunities)"
                         )
                     break
 
                 if getattr(self, "_stop_training", False):
                     break
-
-            if getattr(self, "distiller", None) is not None:
-                self.distiller.cleanup()
 
             total_time = time.time() - start_time
             if is_main_process():
@@ -1702,21 +1876,32 @@ class BaseTrainer(ABC):
 
             results = self._build_train_results()
             end_event = self._build_train_end_event(total_time, results)
-            if is_main_process():
+            def on_train_end() -> None:
                 self._dispatch_artifact_callbacks("on_train_end", end_event)
                 self.callbacks.on_train_end(end_event)
+
+            run_rank_zero_phase("on_train_end callback", on_train_end)
             return results
 
         except BaseException as exc:
             elapsed_seconds = time.time() - start_time
             exception_event = self._build_train_exception_event(exc, elapsed_seconds)
-            if is_main_process():
+            def on_train_exception() -> None:
                 self._dispatch_artifact_callbacks("on_train_exception", exception_event)
                 try:
                     self.callbacks.on_train_exception(exception_event)
                 except Exception:
                     logger.exception("Training exception callback failed")
+
+            run_rank_zero_phase("on_train_exception callback", on_train_exception)
             raise
+        finally:
+            distiller = getattr(self, "distiller", None)
+            if distiller is not None:
+                try:
+                    distiller.cleanup()
+                except Exception:
+                    logger.exception("Distillation cleanup failed")
 
     def _dispatch_artifact_callbacks(self, method_name: str, event) -> None:
         try:
@@ -2071,8 +2256,61 @@ class BaseTrainer(ABC):
     def _initialize_scheduler_lr(self) -> None:
         if self.optimizer is None or self.lr_scheduler is None:
             return
-        init_iter = getattr(self, "start_epoch", 0) * self._scheduler_steps_per_epoch()
+        init_iter = int(getattr(self, "optimizer_step_count", 0))
+        if not getattr(self, "_optimizer_step_count_restored", False):
+            init_iter = (
+                getattr(self, "start_epoch", 0)
+                * self._scheduler_steps_per_epoch()
+            )
+            self.optimizer_step_count = init_iter
         self._set_optimizer_lr(self.lr_scheduler.update_lr(init_iter))
+
+    def _run_optimizer_step(self) -> bool:
+        """Step the optimizer and report whether AMP actually applied it."""
+        if self.scaler is None:
+            self.optimizer.step()
+            return True
+
+        get_scale = getattr(self.scaler, "get_scale", None)
+        scale_before = float(get_scale()) if callable(get_scale) else None
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        if scale_before is None:
+            # Lightweight test/custom scalers may not expose scale state. Their
+            # step contract has no observable skip signal, so preserve legacy
+            # behavior and treat the call as successful.
+            return True
+        scale_after = float(get_scale())
+        return scale_after >= scale_before
+
+    def _advance_optimizer_dependent_state(self, step_succeeded: bool) -> float:
+        """Advance counters, EMA, and LR only after a real optimizer update."""
+        if not step_succeeded:
+            return float(self.optimizer.param_groups[0].get("lr", 0.0))
+        self.optimizer_step_count = int(
+            getattr(self, "optimizer_step_count", 0)
+        ) + 1
+        if getattr(self, "ema_model", None) is not None:
+            self.ema_model.update(self.model)
+        if getattr(self, "lr_scheduler", None) is not None:
+            lr = self.lr_scheduler.update_lr(self.optimizer_step_count)
+            self._set_optimizer_lr(lr)
+            return float(lr)
+        return float(self.optimizer.param_groups[0].get("lr", 0.0))
+
+    def _normalize_accumulated_gradients(self, divisor: float) -> None:
+        """Normalize a sample-summed accumulation window exactly once."""
+        if not math.isfinite(divisor) or divisor <= 0:
+            raise ValueError(
+                f"gradient accumulation divisor must be finite and positive, got {divisor!r}"
+            )
+        seen: set[int] = set()
+        for group in self.optimizer.param_groups:
+            for param in group.get("params", ()):
+                if param.grad is None or id(param) in seen:
+                    continue
+                seen.add(id(param))
+                param.grad.div_(divisor)
 
     def _gradient_clip_parameters(self) -> List[torch.nn.Parameter]:
         if self.optimizer is None:
@@ -2134,6 +2372,7 @@ class BaseTrainer(ABC):
         total_loss = 0.0
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
+        lr = float(self.optimizer.param_groups[0].get("lr", 0.0))
 
         # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
         distiller = getattr(self, "distiller", None)
@@ -2195,8 +2434,7 @@ class BaseTrainer(ABC):
                         self.scaler.unscale_(self.optimizer)
                         self._clip_gradients()
                 with self._prof_phase("optimizer"):
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    step_succeeded = self._run_optimizer_step()
             else:
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
@@ -2216,14 +2454,12 @@ class BaseTrainer(ABC):
                     self._sync_distiller_grads()
                     self._clip_gradients()
                 with self._prof_phase("optimizer"):
-                    self.optimizer.step()
+                    step_succeeded = self._run_optimizer_step()
 
             if distiller is not None:
                 distiller.step()
 
-            # EMA
-            if self.ema_model is not None:
-                self.ema_model.update(self.model)
+            lr = self._advance_optimizer_dependent_state(step_succeeded)
 
             # Logging captures the pre-scale value so single-GPU and DDP
             # report identical magnitudes (single-GPU semantics). ``.item()``
@@ -2238,9 +2474,6 @@ class BaseTrainer(ABC):
 
             del outputs, loss
 
-            # LR update
-            lr = self.lr_scheduler.update_lr(self.current_iter + 1)
-            self._set_optimizer_lr(lr)
             num_batches += 1
 
             # Progress bar
@@ -2287,11 +2520,14 @@ class BaseTrainer(ABC):
     ) -> Tuple[float, Optional[Dict[str, Any]], Dict[str, float], Dict[str, float]]:
         """``_train_epoch`` variant with gradient accumulation enabled.
 
-        Accumulates gradients over ``accum`` micro-batches before each optimizer
-        step. The micro-batch loss is divided by the accumulation window so the
-        summed gradient equals the mean over the effective batch; the optimizer
-        step, gradient clipping, EMA update and LR scheduler each advance once
-        per optimizer step. Reached only when ``_accum_steps > 1``.
+        Weights each already-reduced micro-batch loss by its image count, then
+        divides once by the local/global window sample count. This makes short
+        or variable-size windows exact for per-image-mean losses and prevents a
+        one-image tail batch from weighing as much as a full batch. Losses that
+        normalize separate terms by positives, boxes, or pixels cannot in
+        general be recomposed exactly without unreduced numerator metadata;
+        equal-size production windows retain their established semantics.
+        Optimizer, clipping, EMA, and LR advance once per successful update.
         """
         self.model.train()
         self._enforce_frozen_bn_eval()
@@ -2314,7 +2550,7 @@ class BaseTrainer(ABC):
         total_loss = 0.0
         num_batches = 0
         loss_component_sums: Dict[str, float] = {}
-        actual_window = accum
+        window_local_samples = 0
         lr = self.optimizer.param_groups[0]["lr"]
 
         # getattr: test doubles may bypass BaseTrainer.__init__, same as _profiler.
@@ -2346,7 +2582,11 @@ class BaseTrainer(ABC):
 
             if batch_idx % accum == 0:
                 self.optimizer.zero_grad(set_to_none=True)
-                actual_window = min(accum, len(self.train_loader) - batch_idx)
+                window_local_samples = 0
+            batch_samples = int(imgs.shape[0])
+            if batch_samples <= 0:
+                raise ValueError("gradient accumulation received an empty micro-batch")
+            window_local_samples += batch_samples
 
             # Teacher forward (no-grad). Under AMP it runs in autocast too, so
             # the frozen teacher doesn't pay full-precision compute each step.
@@ -2359,10 +2599,9 @@ class BaseTrainer(ABC):
 
             # Forward + backward. Gradients accumulate across the window; the
             # optimizer step, clipping, EMA and LR update fire only on the
-            # window boundary (``is_opt_step``). The division by the window
-            # keeps mean semantics across micro-batches; under DDP no further
-            # rescaling is needed (losses are mean-normalized, so DDP's
-            # gradient averaging is already correct — see scale_loss_for_ddp).
+            # window boundary (``is_opt_step``). Image-count weighting corrects
+            # per-image-mean losses and partial batches; DDP's gradient average
+            # is paired with the global average sample count below.
             if self.scaler is not None:
                 with self._prof_phase("forward"):
                     with autocast("cuda"):
@@ -2376,18 +2615,23 @@ class BaseTrainer(ABC):
                             total_loss_raw,
                             context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
                         )
-                        loss = total_loss_raw / actual_window
+                        loss = total_loss_raw * batch_samples
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     self.scaler.scale(loss).backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
                         self._sync_distiller_grads()
+                        self.scaler.unscale_(self.optimizer)
+                        sample_divisor = all_reduce_avg_scalar(
+                            window_local_samples,
+                            device=self.device,
+                            min_value=1.0,
+                        )
+                        self._normalize_accumulated_gradients(sample_divisor)
                         if self._should_clip_gradients():
-                            self.scaler.unscale_(self.optimizer)
                             self._clip_gradients()
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
+                        step_succeeded = self._run_optimizer_step()
             else:
                 with self._prof_phase("forward"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
@@ -2400,26 +2644,27 @@ class BaseTrainer(ABC):
                         total_loss_raw,
                         context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
                     )
-                    loss = total_loss_raw / actual_window
+                    loss = total_loss_raw * batch_samples
                 loss = scale_loss_for_ddp(loss)
                 with self._prof_phase("backward"):
                     loss.backward()
                 if is_opt_step:
                     with self._prof_phase("optimizer"):
                         self._sync_distiller_grads()
+                        sample_divisor = all_reduce_avg_scalar(
+                            window_local_samples,
+                            device=self.device,
+                            min_value=1.0,
+                        )
+                        self._normalize_accumulated_gradients(sample_divisor)
                         self._clip_gradients()
-                        self.optimizer.step()
+                        step_succeeded = self._run_optimizer_step()
 
             if distiller is not None:
                 distiller.step()
 
             if is_opt_step:
-                # EMA
-                if self.ema_model is not None:
-                    self.ema_model.update(self.model)
-                # LR update
-                lr = self.lr_scheduler.update_lr(opt_step + 1)
-                self._set_optimizer_lr(lr)
+                lr = self._advance_optimizer_dependent_state(step_succeeded)
 
             # Logging uses the raw pre-scale value (single-GPU semantics).
             loss_val = float(total_loss_raw.detach().item())
@@ -2493,17 +2738,42 @@ class BaseTrainer(ABC):
     def _validate_epoch(
         self, epoch: int, *, save_plots: bool | None = None
     ) -> Optional[Dict[str, Any]]:
-        # First-cut policy: validation runs on rank 0 only. Non-zero ranks
-        # barrier-wait so the next epoch's set_epoch fires in lockstep.
-        # Rank 0 barriers once at the bottom regardless of outcome.
-        if self.is_distributed and not is_main_process():
-            barrier()
-            return None
+        return run_rank_zero_phase(
+            f"validation epoch {epoch + 1}",
+            lambda: self._run_rank_zero_validation(
+                epoch,
+                save_plots=save_plots,
+            ),
+        )
+
+    def _run_rank_zero_validation(
+        self, epoch: int, *, save_plots: bool | None = None
+    ) -> Optional[Dict[str, Any]]:
+        """Validate without entering DDP forward collectives on rank zero."""
+        original_model = self.model
+        if not isinstance(original_model, nn.parallel.DistributedDataParallel):
+            return self._run_validation(epoch, save_plots=save_plots)
+
+        validation_model = unwrap_model(original_model)
+        was_training = validation_model.training
+        wrapper = getattr(self, "wrapper_model", None)
+        original_wrapper_model = getattr(wrapper, "model", None)
+        replace_wrapper_model = (
+            wrapper is not None and original_wrapper_model is original_model
+        )
+
+        self.model = validation_model
+        if replace_wrapper_model:
+            wrapper.model = validation_model
         try:
             return self._run_validation(epoch, save_plots=save_plots)
         finally:
-            if self.is_distributed:
-                barrier()
+            try:
+                validation_model.train(was_training)
+            finally:
+                self.model = original_model
+                if replace_wrapper_model:
+                    wrapper.model = original_wrapper_model
 
     def _run_validation(
         self, epoch: int, *, save_plots: bool | None = None
@@ -2543,7 +2813,7 @@ class BaseTrainer(ABC):
 
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -2637,7 +2907,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running classification validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2694,7 +2964,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running semantic validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2751,7 +3021,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running depth validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2809,7 +3079,7 @@ class BaseTrainer(ABC):
             logger.info(f"Running restore validation for epoch {epoch + 1}")
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=max(1, self.config.batch // max(getattr(self, "world_size", 1), 1)),
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
@@ -2856,6 +3126,97 @@ class BaseTrainer(ABC):
     # Checkpointing
     # =========================================================================
 
+    def _capture_rng_state(self) -> Dict[str, Any]:
+        """Capture weights-only-safe RNG state for the current rank."""
+        python_version, python_keys, python_gauss = random.getstate()
+        numpy_state = np.random.get_state()
+        state: Dict[str, Any] = {
+            "python": {
+                "version": int(python_version),
+                "keys": torch.tensor(python_keys, dtype=torch.int64),
+                "gauss": python_gauss,
+            },
+            "numpy": {
+                "keys": torch.from_numpy(
+                    numpy_state[1].astype("int64", copy=True)
+                ),
+                "pos": int(numpy_state[2]),
+                "has_gauss": int(numpy_state[3]),
+                "cached_gaussian": float(numpy_state[4]),
+            },
+            "torch": torch.get_rng_state(),
+        }
+        loader_generator = getattr(
+            getattr(self, "train_loader", None), "generator", None
+        )
+        if loader_generator is not None:
+            state["train_loader_generator"] = loader_generator.get_state()
+        if torch.cuda.is_available() and self.device.type == "cuda":
+            state["cuda"] = torch.cuda.get_rng_state(self.device)
+        return state
+
+    def _gather_rng_states(self) -> List[Dict[str, Any]]:
+        """Gather each rank's independent RNG stream before a checkpoint."""
+        local_state = self._capture_rng_state()
+        if not is_distributed():
+            return [local_state]
+
+        import torch.distributed as _dist
+
+        gathered: List[Optional[Dict[str, Any]]] = [None] * get_world_size()
+        _dist.all_gather_object(gathered, local_state)
+        if any(state is None for state in gathered):
+            raise RuntimeError("distributed RNG-state gather returned an empty rank")
+        return [state for state in gathered if state is not None]
+
+    def _restore_rng_state(self, rng_state: Dict[str, Any]) -> None:
+        """Restore one rank's Python, NumPy, Torch, and CUDA RNG streams."""
+        python_state = rng_state.get("python")
+        if python_state is not None:
+            random.setstate(
+                (
+                    int(python_state["version"]),
+                    tuple(int(value) for value in python_state["keys"].tolist()),
+                    python_state.get("gauss"),
+                )
+            )
+
+        numpy_state = rng_state.get("numpy")
+        if numpy_state is not None:
+            np.random.set_state(
+                (
+                    "MT19937",
+                    numpy_state["keys"].cpu().numpy().astype("uint32"),
+                    int(numpy_state["pos"]),
+                    int(numpy_state["has_gauss"]),
+                    float(numpy_state["cached_gaussian"]),
+                )
+            )
+
+        torch_state = rng_state.get("torch")
+        if torch_state is not None:
+            torch.set_rng_state(torch_state.cpu())
+
+        loader_state = rng_state.get("train_loader_generator")
+        loader_generator = getattr(
+            getattr(self, "train_loader", None), "generator", None
+        )
+        if loader_state is not None and loader_generator is not None:
+            loader_generator.set_state(loader_state.cpu())
+
+        cuda_state = rng_state.get("cuda")
+        if (
+            cuda_state is not None
+            and torch.cuda.is_available()
+            and self.device.type == "cuda"
+        ):
+            if isinstance(cuda_state, (list, tuple)):
+                # Backward compatibility with checkpoints that captured every
+                # visible CUDA device from a single process.
+                torch.cuda.set_rng_state_all([state.cpu() for state in cuda_state])
+            else:
+                torch.cuda.set_rng_state(cuda_state.cpu(), self.device)
+
     def _save_checkpoint(
         self,
         epoch: int,
@@ -2868,12 +3229,28 @@ class BaseTrainer(ABC):
             raise ValueError(f"Checkpoint loss must be finite, got {loss!r}.")
         loss = loss_value
 
+        rng_states_by_rank = self._gather_rng_states()
+        return run_rank_zero_phase(
+            f"checkpoint epoch {epoch + 1}",
+            lambda: self._write_checkpoint(
+                epoch,
+                loss,
+                val_metrics=val_metrics,
+                is_best=is_best,
+                rng_states_by_rank=rng_states_by_rank,
+            ),
+        )
+
+    def _write_checkpoint(
+        self,
+        epoch: int,
+        loss: float,
+        val_metrics: Optional[Dict[str, Any]] = None,
+        is_best: Optional[bool] = None,
+        rng_states_by_rank: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         if is_best is None:
             is_best = self._update_best_state(epoch, val_metrics)
-
-        # Only rank 0 writes checkpoint files. Other ranks skip silently.
-        if not is_main_process():
-            return
 
         # Always unwrap DDP/compile wrappers before reading state_dict so the
         # checkpoint is interchangeable with single-GPU runs.
@@ -2941,6 +3318,15 @@ class BaseTrainer(ABC):
         )
         checkpoint["best_metric"] = self.best_mAP50_95
         checkpoint["best_metric_name"] = checkpoint["best_metric_key"]
+        checkpoint["optimizer_step_count"] = int(
+            getattr(self, "optimizer_step_count", 0)
+        )
+        checkpoint["patience_counter"] = int(getattr(self, "patience_counter", 0))
+        scheduler_state_dict = getattr(
+            getattr(self, "lr_scheduler", None), "state_dict", None
+        )
+        if callable(scheduler_state_dict):
+            checkpoint["scheduler"] = scheduler_state_dict()
         if self.ema_model is not None:
             checkpoint["train_model"] = raw_model.state_dict()
             checkpoint["ema"] = self.ema_model.ema.state_dict()
@@ -2958,25 +3344,10 @@ class BaseTrainer(ABC):
                 checkpoint["scaler"] = self.scaler.state_dict()
             except Exception:
                 logger.warning("Could not capture GradScaler state for checkpoint")
-        rng_state: Dict[str, Any] = {"torch": torch.get_rng_state()}
-        if torch.cuda.is_available():
-            rng_state["cuda"] = torch.cuda.get_rng_state_all()
-        try:
-            import numpy as _np
-
-            # Store numpy's MT19937 state in a ``weights_only=True``-safe form
-            # (a torch tensor + primitives). The raw ``get_state()`` tuple holds
-            # a numpy ndarray, which the repo's safe checkpoint loader rejects.
-            _keys, _pos, _has_gauss, _cached = _np.random.get_state()[1:]
-            rng_state["numpy"] = {
-                "keys": torch.from_numpy(_keys.astype("int64", copy=True)),
-                "pos": int(_pos),
-                "has_gauss": int(_has_gauss),
-                "cached_gaussian": float(_cached),
-            }
-        except Exception:
-            pass
-        checkpoint["rng_state"] = rng_state
+        if rng_states_by_rank is None:
+            rng_states_by_rank = [self._capture_rng_state()]
+        checkpoint["rng_states_by_rank"] = rng_states_by_rank
+        checkpoint["rng_state"] = rng_states_by_rank[0]
 
         validate_checkpoint_metadata(checkpoint, strict=True)
 
@@ -3009,9 +3380,301 @@ class BaseTrainer(ABC):
     def _checkpoint_extra_metadata(self) -> Dict[str, Any]:
         return {}
 
+    def _prepare_resume_model_architecture(
+        self,
+        checkpoint: Mapping[str, Any],
+        model_state: Mapping[str, Any],
+    ) -> None:
+        """Rebuild checkpoint-dependent wrapper structure before setup/load."""
+        wrapper = self.wrapper_model
+        if wrapper is None:
+            return
+        checkpoint_nc = checkpoint.get("nc")
+        checkpoint_names = checkpoint.get("names")
+        if checkpoint_nc is None and checkpoint_names is not None:
+            checkpoint_nc = len(checkpoint_names)
+        if checkpoint_nc is None:
+            return
+        checkpoint_nc = int(checkpoint_nc)
+        current_nc = getattr(wrapper, "nb_classes", None)
+        if current_nc is None or int(current_nc) != checkpoint_nc:
+            if getattr(self, "_is_setup", False):
+                raise RuntimeError(
+                    "Cannot resume checkpoint with nc="
+                    f"{checkpoint_nc} after setup() built a {current_nc}-class "
+                    "training graph; create a new trainer and resume before setup()"
+                )
+            rebuild = getattr(wrapper, "_rebuild_for_checkpoint_classes", None)
+            if not callable(rebuild):
+                raise RuntimeError(
+                    "Cannot resume checkpoint with nc="
+                    f"{checkpoint_nc}: wrapper cannot rebuild its class head"
+                )
+            rebuild(checkpoint_nc, model_state)
+            self.model = wrapper.model.to(self.device)
+            wrapper.device = self.device
+        wrapper.nb_classes = checkpoint_nc
+        self.config.num_classes = checkpoint_nc
+        self.num_classes = checkpoint_nc
+        if checkpoint_names is not None:
+            sanitize_names = getattr(wrapper, "_sanitize_names", None)
+            wrapper.names = (
+                sanitize_names(checkpoint_names, checkpoint_nc)
+                if callable(sanitize_names)
+                else build_class_names(checkpoint_nc)
+            )
+
+    def _load_resume_model_state(self, model_state: Mapping[str, Any]) -> None:
+        """Strictly restore training weights after architecture preparation."""
+        try:
+            unwrap_model(self.model).load_state_dict(model_state)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot resume: model architecture mismatch - {exc}"
+            ) from exc
+
+    def _optimizer_state_for_resume(
+        self,
+        optimizer_state: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Remove only disabled-distillation slots from a saved optimizer state."""
+        if not getattr(self, "_discard_resume_distiller_optimizer_state", False):
+            return optimizer_state
+
+        saved_groups = optimizer_state.get("param_groups")
+        saved_slots = optimizer_state.get("state")
+        if not isinstance(saved_groups, (list, tuple)) or not isinstance(
+            saved_slots, Mapping
+        ):
+            raise RuntimeError(
+                "disabled distillation cannot be removed from a malformed "
+                "optimizer state"
+            )
+
+        current_groups = self.optimizer.param_groups
+        current_group_count = len(current_groups)
+        if len(saved_groups) < current_group_count:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: checkpoint has "
+                f"{len(saved_groups)} optimizer groups, but the current model has "
+                f"{current_group_count}"
+            )
+        if len(saved_groups) == current_group_count:
+            return optimizer_state
+
+        model_groups = saved_groups[:current_group_count]
+        for index, (saved_group, current_group) in enumerate(
+            zip(model_groups, current_groups)
+        ):
+            if not isinstance(saved_group, Mapping) or not isinstance(
+                current_group, Mapping
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+            saved_params = saved_group.get("params")
+            current_params = current_group.get("params")
+            if not isinstance(saved_params, (list, tuple)) or not isinstance(
+                current_params, (list, tuple)
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+            if len(saved_params) != len(current_params):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed safely: model "
+                    f"optimizer group {index} has {len(saved_params)} saved "
+                    f"parameters and {len(current_params)} current parameters"
+                )
+
+        retained_param_ids = {
+            param_id for group in model_groups for param_id in group["params"]
+        }
+        discarded_groups = saved_groups[current_group_count:]
+        for index, discarded_group in enumerate(
+            discarded_groups,
+            start=current_group_count,
+        ):
+            if not isinstance(discarded_group, Mapping) or not isinstance(
+                discarded_group.get("params"), (list, tuple)
+            ):
+                raise RuntimeError(
+                    "disabled distillation cannot be removed from malformed "
+                    f"optimizer group {index}"
+                )
+        discarded_param_ids = {
+            param_id for group in discarded_groups for param_id in group["params"]
+        }
+        if retained_param_ids & discarded_param_ids:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: optimizer "
+                "parameter ids overlap model and distiller groups"
+            )
+        unexpected_slots = set(saved_slots) - (
+            retained_param_ids | discarded_param_ids
+        )
+        if unexpected_slots:
+            raise RuntimeError(
+                "disabled distillation cannot be removed safely: optimizer state "
+                "contains slots outside its parameter groups"
+            )
+
+        filtered_state = dict(optimizer_state)
+        filtered_state["param_groups"] = [dict(group) for group in model_groups]
+        filtered_state["state"] = {
+            param_id: slot
+            for param_id, slot in saved_slots.items()
+            if param_id in retained_param_ids
+        }
+        logger.info(
+            "Discarded %d distillation optimizer group(s); retained %d model group(s)",
+            len(discarded_groups),
+            current_group_count,
+        )
+        return filtered_state
+
+    def _restore_checkpoint_config(self, checkpoint: Mapping[str, Any]) -> None:
+        """Restore saved run settings while preserving explicit runtime choices.
+
+        Arguments explicitly supplied by the current invocation override saved
+        values, including when the supplied value equals the family default.
+        Omitted values inherit the saved value. Dataset/model identity, device,
+        and security/runtime-only controls stay authoritative from the current
+        invocation. The checkpoint path defines the resumed run directory.
+        """
+        saved_config = checkpoint.get("config")
+        if not isinstance(saved_config, Mapping) or getattr(
+            self, "_is_setup", False
+        ):
+            return
+
+        config_class = self._config_class()
+        current = self.config.to_dict()
+        explicit_keys = getattr(self, "_explicit_train_config_keys", ())
+        optimizer_state_keys = {"momentum", "nesterov", "optimizer", "weight_decay"}
+        if "optimizer" in checkpoint:
+            for key in optimizer_state_keys & set(explicit_keys):
+                if key in saved_config and current.get(key) != saved_config[key]:
+                    raise RuntimeError(
+                        f"Cannot resume with {key}={current.get(key)!r}: checkpoint "
+                        f"optimizer state requires {key}={saved_config[key]!r}"
+                    )
+        protected = {
+            "allow_download_scripts",
+            "data",
+            "data_dir",
+            "device",
+            "exist_ok",
+            "name",
+            "num_classes",
+            "profile",
+            "profile_open",
+            "profile_then_stop",
+            "project",
+            "resume",
+            "size",
+        }
+        restored = []
+        for key, saved_value in saved_config.items():
+            if key in protected or key not in current:
+                continue
+            if key in explicit_keys:
+                continue
+            if current[key] != saved_value:
+                current[key] = saved_value
+                restored.append(key)
+
+        if restored:
+            self.config = config_class.from_kwargs(**current)
+            logger.info(
+                "Restored checkpoint training config values: %s",
+                ", ".join(sorted(restored)),
+            )
+
+    def _validate_resume_identity(self, checkpoint: Mapping[str, Any]) -> None:
+        """Reject a resume checkpoint for a different model identity."""
+        expected = {
+            "model_family": str(self.get_model_family()).lower(),
+            "task": normalize_task(
+                getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            ),
+        }
+        current_size = getattr(self.config, "size", None)
+        if current_size is not None:
+            expected["size"] = str(current_size).lower()
+        for key, expected_value in expected.items():
+            actual = checkpoint.get(key)
+            if actual is None:
+                continue
+            actual_value = (
+                normalize_task(actual)
+                if key == "task"
+                else str(actual).strip().lower()
+            )
+            if actual_value != expected_value:
+                raise RuntimeError(
+                    f"Cannot resume: checkpoint {key}={actual!r} does not match "
+                    f"current {key}={expected_value!r}"
+                )
+
+    @staticmethod
+    def _validate_resume_runtime_states(checkpoint: Mapping[str, Any]) -> None:
+        """Reject malformed component states before they can look absent."""
+        for key in ("optimizer", "scheduler", "distiller", "ema", "scaler"):
+            if key in checkpoint and not isinstance(checkpoint[key], Mapping):
+                raise RuntimeError(
+                    f"Cannot resume {key} state: expected a mapping, got "
+                    f"{type(checkpoint[key]).__name__}"
+                )
+
+        if "rng_state" in checkpoint and not isinstance(
+            checkpoint["rng_state"], Mapping
+        ):
+            raise RuntimeError(
+                "Cannot resume RNG state: expected a mapping, got "
+                f"{type(checkpoint['rng_state']).__name__}"
+            )
+
+        if "rng_states_by_rank" in checkpoint:
+            rank_states = checkpoint["rng_states_by_rank"]
+            if (
+                not isinstance(rank_states, (list, tuple))
+                or not rank_states
+                or not all(isinstance(state, Mapping) for state in rank_states)
+            ):
+                raise RuntimeError(
+                    "Cannot resume per-rank RNG state: expected a non-empty "
+                    "sequence of mappings"
+                )
+
     def resume(self, checkpoint_path: str):
-        if not Path(checkpoint_path).exists():
+        checkpoint_path = Path(checkpoint_path).expanduser().resolve()
+        if not checkpoint_path.exists():
             raise FileNotFoundError(f"Resume checkpoint not found: {checkpoint_path}")
+        if getattr(self, "_is_setup", False):
+            raise RuntimeError(
+                "resume() must be called before setup(); create a new trainer "
+                "for this checkpoint so model, optimizer, scheduler, EMA, AMP, "
+                "and distillation state are rebuilt coherently"
+            )
+
+        # Continue writing into the interrupted run instead of auto-incrementing
+        # a sibling directory (for example exp -> exp2). Standard checkpoints
+        # live under <run>/weights; custom checkpoint locations resume beside
+        # the checkpoint itself.
+        self._resume_save_dir = (
+            checkpoint_path.parent.parent
+            if checkpoint_path.parent.name == "weights"
+            else checkpoint_path.parent
+        )
+        self.config.project = str(self._resume_save_dir.parent)
+        self.config.name = self._resume_save_dir.name
+        self.config.exist_ok = True
+        if getattr(self, "_is_setup", False):
+            self._resume_save_dir.mkdir(parents=True, exist_ok=True)
+            self.save_dir = self._resume_save_dir
 
         logger.info(f"Resuming from {checkpoint_path}")
         checkpoint = load_trusted_torch_file(
@@ -3031,27 +3694,79 @@ class BaseTrainer(ABC):
                 SCHEMA_VERSION,
             )
 
-        try:
-            model_state = checkpoint.get("train_model", checkpoint["model"])
-            # Checkpoint state dict is always unwrapped — feed it to the
-            # unwrapped module so the DDP "module." prefix doesn't trip us.
-            unwrap_model(self.model).load_state_dict(model_state)
-        except Exception as e:
-            raise RuntimeError(f"Cannot resume: model architecture mismatch - {e}")
+        if "epoch" not in checkpoint:
+            raise RuntimeError(
+                "Cannot resume: checkpoint has no training epoch/resume state. "
+                "Load it as pretrained weights and use resume=False instead."
+            )
+
+        self._validate_resume_runtime_states(checkpoint)
+        self._validate_resume_identity(checkpoint)
+        self._restore_checkpoint_config(checkpoint)
+
+        if "distiller" in checkpoint and not getattr(
+            self.config, "distill_model", None
+        ):
+            self._discard_resume_distiller_optimizer_state = True
+
+        model_state = checkpoint.get("train_model", checkpoint["model"])
+        self._prepare_resume_model_architecture(checkpoint, model_state)
+        if getattr(self, "_is_setup", False):
+            self._load_resume_model_state(model_state)
+        else:
+            # setup() may still rebuild dataset-dependent heads or inject LoRA.
+            # Load only after those structural phases and before optimizer setup.
+            self._resume_model_state = model_state
 
         self.start_epoch = checkpoint["epoch"] + 1
+        default_step_count = 0
+        if self.train_loader is not None:
+            default_step_count = self.start_epoch * self._scheduler_steps_per_epoch()
+        has_step_count = "optimizer_step_count" in checkpoint
+        raw_step_count = checkpoint.get("optimizer_step_count", default_step_count)
+        try:
+            self.optimizer_step_count = int(raw_step_count)
+            if self.optimizer_step_count < 0:
+                raise ValueError
+            self._optimizer_step_count_restored = has_step_count
+        except (TypeError, ValueError):
+            if has_step_count:
+                raise RuntimeError(
+                    "Cannot resume: invalid optimizer_step_count="
+                    f"{raw_step_count!r}"
+                )
+            self.optimizer_step_count = default_step_count
+            self._optimizer_step_count_restored = False
 
         if "optimizer" in checkpoint:
             if self.optimizer is not None:
                 try:
-                    self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    optimizer_state = self._optimizer_state_for_resume(
+                        checkpoint["optimizer"]
+                    )
+                    self.optimizer.load_state_dict(optimizer_state)
                     logger.info("Optimizer state restored")
                 except Exception as e:
-                    logger.warning(f"Could not load optimizer state: {e}")
+                    raise RuntimeError(f"Cannot resume optimizer state: {e}") from e
             else:
                 # setup() hasn't run yet — defer until the optimizer exists.
                 self._resume_optimizer_state = checkpoint["optimizer"]
                 logger.info("Optimizer state deferred until after setup()")
+
+        if "scheduler" in checkpoint:
+            load_scheduler_state = getattr(
+                getattr(self, "lr_scheduler", None), "load_state_dict", None
+            )
+            if callable(load_scheduler_state):
+                try:
+                    load_scheduler_state(checkpoint["scheduler"])
+                    logger.info("Scheduler state restored")
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Cannot resume scheduler state: {exc}"
+                    ) from exc
+            else:
+                self._resume_scheduler_state = checkpoint["scheduler"]
 
         if "distiller" in checkpoint:
             if self.distiller is not None:
@@ -3059,16 +3774,18 @@ class BaseTrainer(ABC):
                     self.distiller.loss_modules.load_state_dict(checkpoint["distiller"])
                     logger.info("Distiller adapter state restored")
                 except Exception as e:
-                    logger.warning(f"Could not load distiller state: {e}")
+                    raise RuntimeError(f"Cannot resume distiller state: {e}") from e
             else:
                 # setup() hasn't run yet — defer until the distiller exists.
                 self._resume_distiller_state = checkpoint["distiller"]
                 logger.info("Distiller state deferred until after setup()")
 
+        metric_tracking_compatible = True
         if "best_metric_value" in checkpoint or "best_mAP50_95" in checkpoint:
             checkpoint_metric_key = checkpoint.get("best_metric_key", "metrics/mAP50-95")
             current_metric_key = getattr(self, "best_metric_key", "metrics/mAP50-95")
             if checkpoint_metric_key != current_metric_key:
+                metric_tracking_compatible = False
                 logger.warning(
                     "Checkpoint best metric key %s differs from current key %s. "
                     "Resetting best metric tracking for this run.",
@@ -3111,61 +3828,80 @@ class BaseTrainer(ABC):
             self.best_mAP50 = 0.0
             self.best_epoch = 0
 
-        if self.ema_model and "ema_updates" in checkpoint:
-            if "ema" in checkpoint:
+        if "ema" in checkpoint:
+            if self.ema_model is not None:
                 try:
                     self.ema_model.ema.load_state_dict(checkpoint["ema"])
+                    self.ema_model.updates = int(checkpoint.get("ema_updates", 0))
                     logger.info("EMA weights restored")
                 except Exception as e:
-                    logger.warning(f"Could not load EMA weights: {e}")
-            self.ema_model.updates = checkpoint["ema_updates"]
-            logger.info(f"EMA updates restored: {self.ema_model.updates}")
+                    raise RuntimeError(f"Cannot resume EMA state: {e}") from e
+            else:
+                self._resume_ema_state = checkpoint["ema"]
+                self._resume_ema_updates = int(checkpoint.get("ema_updates", 0))
+                logger.info("EMA state deferred until after setup()")
 
-        # Restore AMP + RNG state when present (backward-compatible: pre-v1.3
-        # checkpoints lack these keys and simply skip this block).
-        if "scaler" in checkpoint and self.scaler is not None:
-            try:
-                self.scaler.load_state_dict(checkpoint["scaler"])
-                logger.info("GradScaler state restored")
-            except Exception as e:
-                logger.warning(f"Could not load GradScaler state: {e}")
+        if "scaler" in checkpoint:
+            if self.scaler is not None:
+                try:
+                    self.scaler.load_state_dict(checkpoint["scaler"])
+                    logger.info("GradScaler state restored")
+                except Exception as e:
+                    raise RuntimeError(f"Cannot resume GradScaler state: {e}") from e
+            else:
+                self._resume_scaler_state = checkpoint["scaler"]
+                logger.info("GradScaler state deferred until after setup()")
 
-        rng_state = checkpoint.get("rng_state")
+        rank_rng_states = checkpoint.get("rng_states_by_rank")
+        if rank_rng_states:
+            current_world_size = get_world_size()
+            if len(rank_rng_states) != current_world_size:
+                logger.warning(
+                    "Checkpoint has RNG state for %d ranks, but current world_size "
+                    "is %d; keeping newly seeded per-rank RNG streams",
+                    len(rank_rng_states),
+                    current_world_size,
+                )
+                rng_state = None
+            else:
+                rng_state = rank_rng_states[get_rank()]
+        else:
+            rng_state = checkpoint.get("rng_state")
+            if rng_state and is_distributed():
+                logger.warning(
+                    "Legacy checkpoint has only rank-zero RNG state; exact "
+                    "per-rank RNG replay is unavailable"
+                )
+                if get_rank() != 0:
+                    rng_state = None
         if rng_state:
-            try:
-                torch_state = rng_state.get("torch")
-                if torch_state is not None:
-                    # map_location may have moved the byte tensor to GPU; the
-                    # RNG setters require CPU ByteTensors.
-                    torch.set_rng_state(torch_state.cpu())
-                cuda_state = rng_state.get("cuda")
-                if cuda_state is not None and torch.cuda.is_available():
-                    torch.cuda.set_rng_state_all([s.cpu() for s in cuda_state])
-                np_state = rng_state.get("numpy")
-                if np_state is not None:
-                    import numpy as _np
+            if getattr(self, "_is_setup", False):
+                try:
+                    self._restore_rng_state(rng_state)
+                    logger.info("RNG state restored")
+                except Exception as e:
+                    raise RuntimeError(f"Cannot resume RNG state: {e}") from e
+            else:
+                # setup() constructs loaders, schedulers, EMA, and AMP objects;
+                # restore afterward so setup-time random draws do not perturb
+                # the resumed stream.
+                self._resume_rng_state = rng_state
+                logger.info("RNG state deferred until after setup()")
 
-                    _np.random.set_state(
-                        (
-                            "MT19937",
-                            np_state["keys"].cpu().numpy().astype("uint32"),
-                            int(np_state["pos"]),
-                            int(np_state["has_gauss"]),
-                            float(np_state["cached_gaussian"]),
-                        )
-                    )
-                logger.info("RNG state restored")
-            except Exception as e:
-                logger.warning(f"Could not restore RNG state: {e}")
-
-        self.patience_counter = 0
+        raw_patience = checkpoint.get("patience_counter", 0)
+        try:
+            self.patience_counter = int(raw_patience)
+            if self.patience_counter < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            if "patience_counter" in checkpoint:
+                raise RuntimeError(
+                    f"Cannot resume: invalid patience_counter={raw_patience!r}"
+                )
+            self.patience_counter = 0
+        if not metric_tracking_compatible:
+            self.patience_counter = 0
         logger.info(
             f"Resumed from epoch {self.start_epoch} "
             f"(will train to epoch {self.config.epochs})"
         )
-
-        # setup() may have already run (immediate path: setup → resume). Re-sync
-        # the LR now that start_epoch is known — _initialize_scheduler_lr() is
-        # idempotent and fast-forwards to the correct schedule position.
-        if self.lr_scheduler is not None and self.train_loader is not None:
-            self._initialize_scheduler_lr()

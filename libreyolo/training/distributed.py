@@ -13,15 +13,49 @@ no-op.
 from __future__ import annotations
 
 import os
+import pickle
 import socket
+import traceback
 from datetime import timedelta
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 
 DeviceArg = Union[str, int, List[int], None]
+PhaseResult = TypeVar("PhaseResult")
+
+
+class RankZeroPhaseError(RuntimeError):
+    """A rank-zero-only phase failed and the failure was shared with all ranks.
+
+    ``root_exception_type``, ``root_exception_message``, and
+    ``rank_zero_traceback`` describe the original exception on rank 0. On rank
+    0, the original exception is also retained as ``__cause__`` by
+    :func:`run_rank_zero_phase`.
+    """
+
+    def __init__(
+        self,
+        phase: str,
+        root_exception_type: str,
+        root_exception_message: str,
+        rank_zero_traceback: str,
+        failure_stage: str = "execution",
+    ) -> None:
+        self.phase = phase
+        self.root_exception_type = root_exception_type
+        self.root_exception_message = root_exception_message
+        self.rank_zero_traceback = rank_zero_traceback
+        self.failure_stage = failure_stage
+        cause = root_exception_type
+        if root_exception_message:
+            cause = f"{cause}: {root_exception_message}"
+        super().__init__(
+            f"Rank-zero phase {phase!r} failed during {failure_stage} "
+            f"on rank 0 with {cause}"
+        )
 
 
 # =============================================================================
@@ -65,6 +99,149 @@ def barrier() -> None:
         dist.barrier()
 
 
+def _phase_name(phase: str) -> str:
+    """Validate and normalize a rank-zero phase label."""
+    if not isinstance(phase, str):
+        raise TypeError(f"phase must be a string, got {type(phase).__name__}")
+    name = phase.strip()
+    if not name:
+        raise ValueError("phase must be a non-empty string")
+    return name
+
+
+def _exception_type_name(exc: BaseException) -> str:
+    """Return a stable, readable type name for a serialized exception."""
+    cls = type(exc)
+    if cls.__module__ == "builtins":
+        return cls.__qualname__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _failure_payload(phase: str, stage: str, exc: BaseException) -> bytes:
+    """Serialize exception metadata without requiring the exception to pickle."""
+    try:
+        message = str(exc)
+    except BaseException:
+        message = "<exception message could not be rendered>"
+    try:
+        formatted_traceback = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+    except BaseException:
+        formatted_traceback = "<rank-zero traceback could not be rendered>"
+    outcome = {
+        "ok": False,
+        "phase": phase,
+        "failure_stage": stage,
+        "root_exception_type": _exception_type_name(exc),
+        "root_exception_message": message,
+        "rank_zero_traceback": formatted_traceback,
+    }
+    return pickle.dumps(outcome, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _collective_device() -> torch.device:
+    """Choose storage accepted by the active collective backend."""
+    backend = str(dist.get_backend()).lower()
+    if "nccl" in backend:
+        return torch.device("cuda", torch.cuda.current_device())
+    return torch.device("cpu")
+
+
+def _broadcast_bytes_from_rank_zero(payload: Optional[bytes]) -> bytes:
+    """Broadcast a variable-length byte payload from rank 0."""
+    device = _collective_device()
+    size = torch.tensor(
+        [len(payload) if payload is not None else 0],
+        dtype=torch.int64,
+        device=device,
+    )
+    dist.broadcast(size, src=0)
+    payload_size = int(size.item())
+    if payload_size <= 0:
+        raise RuntimeError("rank-zero phase produced an empty collective payload")
+
+    if get_rank() == 0:
+        data = torch.tensor(bytearray(payload or b""), dtype=torch.uint8, device=device)
+    else:
+        data = torch.empty(payload_size, dtype=torch.uint8, device=device)
+    dist.broadcast(data, src=0)
+    return bytes(data.cpu().tolist())
+
+
+def run_rank_zero_phase(
+    phase: str,
+    function: Callable[[], PhaseResult],
+) -> PhaseResult:
+    """Run one callable on rank 0 and share its result or failure with all ranks.
+
+    Every rank must call this collective in the same order. Rank 0 executes
+    ``function``; the other ranks never call it. A successful, pickleable
+    return value is broadcast and returned on every rank. If the callable
+    raises, or its result cannot be serialized, every rank raises the same
+    :class:`RankZeroPhaseError` after receiving the rank-zero exception type,
+    message, and traceback. Rank 0 chains the original exception as the error's
+    cause.
+
+    Outside distributed mode, this calls ``function`` directly and preserves
+    its normal return value and exception behavior.
+
+    Args:
+        phase: Short name used to identify the setup, validation, checkpoint,
+            callback, or other rank-zero-only phase in failures.
+        function: Zero-argument callable to execute on rank 0.
+
+    Returns:
+        The callable's return value on every rank.
+
+    Raises:
+        RankZeroPhaseError: The rank-zero callable failed or returned a value
+            that could not be serialized while distributed is initialized.
+    """
+    if not is_distributed():
+        _phase_name(phase)
+        return function()
+
+    wire_payload: Optional[bytes] = None
+    root_exception: Optional[BaseException] = None
+    if get_rank() == 0:
+        try:
+            name = _phase_name(phase)
+        except BaseException as exc:
+            root_exception = exc
+            wire_payload = _failure_payload("<invalid phase>", "phase validation", exc)
+        else:
+            try:
+                value = function()
+            except BaseException as exc:
+                root_exception = exc
+                wire_payload = _failure_payload(name, "execution", exc)
+            else:
+                try:
+                    outcome = {"ok": True, "phase": name, "value": value}
+                    wire_payload = pickle.dumps(
+                        outcome, protocol=pickle.HIGHEST_PROTOCOL
+                    )
+                except BaseException as exc:
+                    root_exception = exc
+                    wire_payload = _failure_payload(name, "result serialization", exc)
+
+    outcome = pickle.loads(_broadcast_bytes_from_rank_zero(wire_payload))
+    if outcome["ok"]:
+        return outcome["value"]
+
+    error = RankZeroPhaseError(
+        phase=outcome["phase"],
+        root_exception_type=outcome["root_exception_type"],
+        root_exception_message=outcome["root_exception_message"],
+        rank_zero_traceback=outcome["rank_zero_traceback"],
+        failure_stage=outcome["failure_stage"],
+    )
+    if root_exception is not None:
+        raise error from root_exception
+    raise error
+
+
 # =============================================================================
 # Device argument parsing
 # =============================================================================
@@ -91,7 +268,11 @@ def parse_device_arg(device: DeviceArg) -> List[int]:
     if s in ("", "auto", "cpu", "mps"):
         return []
     if "," in s:
-        return [int(x.strip()) for x in s.split(",") if x.strip().lstrip("-").isdigit() and int(x.strip()) >= 0]
+        return [
+            int(x.strip())
+            for x in s.split(",")
+            if x.strip().lstrip("-").isdigit() and int(x.strip()) >= 0
+        ]
     if s.startswith("cuda:"):
         s = s.split(":", 1)[1]
     if s.lstrip("-").isdigit():
@@ -160,7 +341,11 @@ def init_distributed(timeout_seconds: int = 10800) -> None:
     # so wrap defensively and omit the kwarg on failure.
     try:
         pg_sig = inspect.signature(dist.init_process_group)
-        if "device_id" in pg_sig.parameters and backend == "nccl" and torch.cuda.is_available():
+        if (
+            "device_id" in pg_sig.parameters
+            and backend == "nccl"
+            and torch.cuda.is_available()
+        ):
             init_kwargs["device_id"] = torch.device("cuda", local_rank)
     except (TypeError, ValueError):
         pass
@@ -401,6 +586,7 @@ def spawn_ddp_train(
 
 __all__ = [
     "DeviceArg",
+    "RankZeroPhaseError",
     "all_reduce_avg_scalar",
     "barrier",
     "get_local_rank",
@@ -411,6 +597,7 @@ __all__ = [
     "is_distributed",
     "is_main_process",
     "parse_device_arg",
+    "run_rank_zero_phase",
     "scale_loss_for_ddp",
     "seed_for_rank",
     "shutdown_distributed",

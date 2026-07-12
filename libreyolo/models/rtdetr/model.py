@@ -2,7 +2,6 @@
 
 import os
 import re
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -591,18 +590,8 @@ class LibreRTDETR(BaseModel):
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibreRTDETR('path/to/last.pt'); model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self._load_weights(best_ckpt)
-
-        # Restore wrapper-side device after possible MPS->CPU trainer fallback
-        # (no-op if the trainer didn't change device). Matches the D-FINE
-        # pattern; safe for v1 since trainer there doesn't fall back.
-        self.model.to(self.device)
-
+        self._restore_after_training(results)
         return results

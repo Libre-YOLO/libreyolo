@@ -22,6 +22,7 @@ class ConvNeXtConfig(TrainConfig):
     epochs: int = 100
     batch: int = 64
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 1e-3
     weight_decay: float = 1e-4
     warmup_epochs: int = 1

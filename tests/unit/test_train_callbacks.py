@@ -247,6 +247,46 @@ class CallbackTrainer(DummyTrainer):
         )
 
 
+class IntervalValidationTrainer(CallbackTrainer):
+    """Expose validation metrics every second epoch for patience testing."""
+
+    def _train_epoch(self, epoch: int):
+        val_metrics = None
+        if (epoch + 1) % 2 == 0:
+            metric = 0.7 if epoch == 1 else 0.5
+            val_metrics = {
+                "mAP50": metric,
+                "mAP50_95": metric,
+                "best_metric": metric,
+                "best_metric_key": "metrics/mAP50-95",
+                "metrics": {"metrics/mAP50-95": metric},
+            }
+        return 1.0, val_metrics, {}, {"group0": 0.01}
+
+
+def test_early_stopping_patience_counts_validation_opportunities(tmp_path):
+    trainer = IntervalValidationTrainer(
+        model=nn.Linear(1, 1),
+        data=None,
+        device="cpu",
+        ema=False,
+        epochs=8,
+        patience=2,
+        eval_interval=2,
+        save_period=10,
+    )
+    trainer._test_save_dir = tmp_path
+    trainer.saved_checkpoints = []
+
+    trainer.train()
+
+    # Best at epoch 2, then two non-improving validations at epochs 4 and 6.
+    # Unevaluated epochs 3 and 5 do not consume patience.
+    assert len(trainer.saved_checkpoints) == 6
+    assert trainer.best_epoch == 2
+    assert trainer.patience_counter == 2
+
+
 def test_train_emits_epoch_callback_after_best_update_and_checkpoint(tmp_path):
     received = []
     lifecycle = []

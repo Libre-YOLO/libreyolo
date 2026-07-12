@@ -147,6 +147,21 @@ def test_foundation_distiller_step_clears_teacher_feats():
     assert distiller._teacher_feats is None
 
 
+def test_foundation_distiller_cleanup_clears_features_and_is_idempotent():
+    student, distiller = _make_foundation_distiller()
+    imgs = torch.rand(1, 3, 112, 112)
+    distiller.teacher_forward(imgs)
+    student(imgs)
+
+    assert distiller._teacher_feats is not None
+    assert distiller.s_hooks.get_feature_list()[0].grad_fn is not None
+    distiller.cleanup()
+    distiller.cleanup()
+
+    assert distiller._teacher_feats is None
+    assert distiller.s_hooks.get_feature_list() == []
+
+
 def test_compute_loss_without_teacher_forward_raises():
     student, distiller = _make_foundation_distiller()
     student(torch.rand(1, 3, 112, 112))

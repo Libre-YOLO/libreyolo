@@ -1,6 +1,10 @@
 """Tests for ``model.train(cfg=...)`` yaml loading."""
 
+import random
+
+import numpy as np
 import pytest
+import torch
 
 from libreyolo.models.base.model import _wrap_train_with_cfg
 from libreyolo.training.config import load_train_cfg
@@ -85,6 +89,116 @@ def test_wrapper_no_cfg_passes_through(tmp_path):
     assert captured["data"] == "data.yaml"
     assert captured["epochs"] == 42
     assert captured["batch"] == 8  # default
+
+
+def test_wrapper_applies_seed_before_family_train_body():
+    def train(self, data, *, seed=31):
+        del self, data
+        return random.random(), np.random.random(), torch.rand(2)
+
+    wrapped = _wrap_train_with_cfg(train)
+    random.seed(1)
+    np.random.seed(2)
+    torch.manual_seed(3)
+    first = wrapped(_FakeWrapper(), "data.yaml", seed=41)
+    random.seed(101)
+    np.random.seed(102)
+    torch.manual_seed(103)
+    second = wrapped(_FakeWrapper(), "data.yaml", seed=41)
+
+    assert first[0] == second[0]
+    assert first[1] == second[1]
+    torch.testing.assert_close(first[2], second[2])
+
+
+def test_wrapper_uses_family_seed_when_train_signature_omits_it():
+    class _Defaults:
+        seed = 47
+
+    class _Wrapper:
+        TRAIN_CONFIG = _Defaults
+
+    def train(self, data, **kwargs):
+        del self, data, kwargs
+        return random.random(), np.random.random(), torch.rand(2)
+
+    wrapped = _wrap_train_with_cfg(train)
+    random.seed(1)
+    np.random.seed(2)
+    torch.manual_seed(3)
+    first = wrapped(_Wrapper(), "data.yaml")
+    random.seed(101)
+    np.random.seed(102)
+    torch.manual_seed(103)
+    second = wrapped(_Wrapper(), "data.yaml")
+
+    assert first[0] == second[0]
+    assert first[1] == second[1]
+    torch.testing.assert_close(first[2], second[2])
+
+
+def test_hidden_explicit_keys_survive_ddp_default_materialization(monkeypatch):
+    """The worker payload is metadata, not a family ``train`` kwarg.
+
+    DDP materializes signature defaults before spawning. The hidden payload
+    must remain authoritative so explicit values that happen to equal those
+    defaults are still recognized after the worker re-enters the base wrapper.
+    """
+    from libreyolo.training.ddp_spawn import ddp_aware
+
+    captured = {}
+
+    def train(
+        self,
+        data,
+        *,
+        batch_size=4,
+        use_ema=True,
+        device="auto",
+        **kwargs,
+    ):
+        raise AssertionError("multi-device training should spawn before the body")
+
+    def fake_spawn(model_instance, train_kw, nprocs, *, devices, batch_key):
+        captured.update(
+            model=model_instance,
+            train_kw=train_kw,
+            nprocs=nprocs,
+            devices=devices,
+            batch_key=batch_key,
+        )
+        return {"spawned": True}
+
+    wrapped = _wrap_train_with_cfg(ddp_aware(batch_key="batch_size")(train))
+    model = _FakeWrapper()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        "libreyolo.training.distributed.has_torchrun_env", lambda: False
+    )
+    monkeypatch.setattr(
+        "libreyolo.training.ddp_spawn.spawn_for_model", fake_spawn
+    )
+
+    result = wrapped(
+        model,
+        "data.yaml",
+        batch_size=4,
+        use_ema=True,
+        device="0,1",
+        _libreyolo_explicit_train_keys=["batch_size", "use_ema"],
+    )
+
+    assert result == {"spawned": True}
+    assert captured["train_kw"]["batch_size"] == 4
+    assert captured["train_kw"]["use_ema"] is True
+    assert captured["train_kw"]["_libreyolo_explicit_train_keys"] == [
+        "batch",
+        "ema",
+    ]
+    assert captured["nprocs"] == 2
+    assert captured["devices"] == [0, 1]
+    assert captured["batch_key"] == "batch_size"
+    assert not hasattr(model, "_active_train_explicit_keys")
 
 
 def test_wrapper_loads_cfg_yaml(tmp_path):

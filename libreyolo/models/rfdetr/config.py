@@ -32,6 +32,7 @@ class RFDETRConfig(TrainConfig):
 
     patience: int = 0
     optimizer: str = "adamw"
+    momentum: float = 0.9
     scheduler: str = "step"
     mosaic_prob: float = 0.0
     mixup_prob: float = 0.0

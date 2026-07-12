@@ -9,20 +9,22 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional, Type
 
 import cv2
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from ...data import (
     YOLOPoseDataset,
+    dataloader_seed_kwargs,
     default_oks_sigmas,
+    distributed_sampler_seed,
     get_img_files,
     img2label_paths,
     load_data_config,
     pose_collate_fn,
+    seed_data_worker,
 )
-from ...training.config import TrainConfig
+from ...training.config import TrainConfig, require_training_choice
 from ...training.distributed import is_main_process, unwrap_model
 from ...training.freezing import FreezeGroup
 from ...training.scheduler import BaseScheduler, CosineAnnealingScheduler, FlatCosineScheduler
@@ -44,9 +46,7 @@ logger = logging.getLogger(__name__)
 def _pose_worker_init_fn(worker_id: int) -> None:
     cv2.setNumThreads(0)
     torch.set_num_threads(1)
-    seed = (torch.initial_seed() + worker_id) % 2**32
-    random.seed(seed)
-    np.random.seed(seed)
+    seed_data_worker(worker_id)
 
 
 class RFDETRStepScheduler(BaseScheduler):
@@ -302,7 +302,12 @@ class RFDETRTrainer(BaseTrainer):
         return preproc, DFINEPassThroughDataset
 
     def create_scheduler(self, iters_per_epoch: int):
-        scheduler = str(getattr(self.config, "scheduler", "step")).lower()
+        scheduler = require_training_choice(
+            getattr(self.config, "scheduler", "step"),
+            field="scheduler",
+            supported=("step", "cosine", "flat_cosine"),
+            family=self.get_model_family(),
+        )
         if scheduler == "step":
             return RFDETRStepScheduler(
                 lr=self.effective_lr,
@@ -475,7 +480,7 @@ class RFDETRTrainer(BaseTrainer):
         )
         train_ds = self._build_pose_dataset(train_imgs, train_lbls, train_tf)
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -486,15 +491,30 @@ class RFDETRTrainer(BaseTrainer):
                 rank=self.rank,
                 shuffle=True,
                 drop_last=len(train_ds) >= self.world_size,
+                seed=distributed_sampler_seed(getattr(self.config, "seed", None)),
             )
 
-        loader_kwargs = {}
+        worker_kwargs = {}
         if self.config.workers > 0:
-            loader_kwargs.update(
+            deterministic_workers = (
+                getattr(self.config, "seed", None) is not None
+                and int(self.config.seed) >= 0
+            )
+            worker_kwargs.update(
                 worker_init_fn=_pose_worker_init_fn,
-                persistent_workers=self.config.persistent_workers,
+                persistent_workers=(
+                    self.config.persistent_workers and not deterministic_workers
+                ),
                 prefetch_factor=self.config.prefetch_factor,
             )
+        seed_kwargs = dict(
+            seed=getattr(self.config, "seed", None),
+            rank=self.rank,
+            distributed=self.is_distributed,
+        )
+        train_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+        train_loader_kwargs.update(worker_kwargs)
+        visible_samples = len(sampler) if sampler is not None else len(train_ds)
 
         self.train_loader = DataLoader(
             train_ds,
@@ -503,9 +523,9 @@ class RFDETRTrainer(BaseTrainer):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.config.pin_memory,
-            drop_last=len(train_ds) >= per_rank_batch,
+            drop_last=visible_samples >= per_rank_batch,
             collate_fn=pose_collate_fn,
-            **loader_kwargs,
+            **train_loader_kwargs,
         )
 
         val_imgs = cfg.get("val_img_files")
@@ -528,6 +548,8 @@ class RFDETRTrainer(BaseTrainer):
                 crop_resize_prob=0.0,
             )
             val_ds = self._build_pose_dataset(val_imgs, val_lbls, val_tf)
+            val_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+            val_loader_kwargs.update(worker_kwargs)
             self.val_loader = DataLoader(
                 val_ds,
                 batch_size=per_rank_batch,
@@ -536,7 +558,7 @@ class RFDETRTrainer(BaseTrainer):
                 pin_memory=self.config.pin_memory,
                 drop_last=False,
                 collate_fn=pose_collate_fn,
-                **loader_kwargs,
+                **val_loader_kwargs,
             )
             if is_main_process():
                 logger.info("Validation dataset: %d images", len(val_ds))
@@ -653,6 +675,13 @@ class RFDETRTrainer(BaseTrainer):
                 self.wrapper_model.keypoint_dim = self.config.keypoint_dim
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family=self.get_model_family(),
+        )
+        betas = (float(self.config.momentum), 0.999)
         if getattr(getattr(self, "wrapper_model", None), "task", "detect") in (
             "classify",
             "semantic",
@@ -674,14 +703,14 @@ class RFDETRTrainer(BaseTrainer):
                 groups.append({"params": decay, "weight_decay": self.config.weight_decay})
             if no_decay:
                 groups.append({"params": no_decay, "weight_decay": 0.0})
-            return torch.optim.AdamW(groups, lr=self.effective_lr, betas=(0.9, 0.999))
+            return torch.optim.AdamW(groups, lr=self.effective_lr, betas=betas)
         upstream_groups = self._setup_upstream_optimizer_groups()
         if upstream_groups:
             return torch.optim.AdamW(
                 upstream_groups,
                 lr=self.effective_lr,
                 weight_decay=self.config.weight_decay,
-                betas=(0.9, 0.999),
+                betas=betas,
             )
 
         backbone_wd, backbone_no_wd, head_wd, head_no_wd = [], [], [], []
@@ -716,7 +745,7 @@ class RFDETRTrainer(BaseTrainer):
                 "No trainable parameters remain after layer freezing; "
                 "reduce the freeze value or choose a narrower selector."
             )
-        return torch.optim.AdamW(groups, betas=(0.9, 0.999))
+        return torch.optim.AdamW(groups, betas=betas)
 
     def _setup_upstream_optimizer_groups(self) -> list[dict]:
         core_model = getattr(self.model, "model", self.model)
@@ -1032,7 +1061,7 @@ class RFDETRTrainer(BaseTrainer):
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                batch_size=self.config.batch,
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,

@@ -21,6 +21,7 @@ class NAFNetConfig(TrainConfig):
     epochs: int = 100
     batch: int = 16
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 1e-3
     weight_decay: float = 0.0
     warmup_epochs: int = 0

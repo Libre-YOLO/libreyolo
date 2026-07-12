@@ -195,11 +195,49 @@ flat training/resume fields:
     "train_model": raw_state_dict,
     "ema": ema_state_dict,
     "ema_updates": 12345,
+    "scaler": grad_scaler_state_dict,
+    "scheduler": scheduler_state_dict,  # only when supported
+    "distiller": distillation_adapter_state_dict,
+    "optimizer_step_count": 12000,
+    "patience_counter": 2,
+    "rng_state": rank_zero_rng_state,  # legacy/single-rank compatibility
+    "rng_states_by_rank": [
+        {
+            "python": {...},
+            "numpy": {...},
+            "torch": torch_rng_state,
+            "cuda": local_cuda_rng_state,
+            "train_loader_generator": loader_generator_state,
+        },
+    ],
 }
 ```
 
 `is_ema_weights` declares whether the top-level `model` is EMA-smoothed. When
 EMA is enabled, `train_model`, `ema`, and `ema_updates` preserve resume state.
+`optimizer_step_count` is authoritative even when it is zero; it advances only
+when the optimizer actually applies an update. `patience_counter` counts
+completed validation opportunities without improvement.
+
+New distributed checkpoints store one `rng_states_by_rank` entry per rank.
+Exact RNG replay requires the same world size. If the world size changes, the
+trainer keeps newly seeded per-rank streams. Legacy `rng_state` contains only
+rank-zero state; under DDP it is restored on rank zero only so peer ranks do not
+receive identical dropout and augmentation streams. Seeded loaders run without
+persistent workers so their generator state is resumable at epoch checkpoints.
+
+Resume validates model family, task, and size before applying state. A state
+field that is absent is treated as a legacy omission. State for an enabled
+resume component must load successfully; incompatible state is an error rather
+than a best-effort partial resume. An explicitly disabled EMA, AMP, or
+distillation component warns and discards its saved component state. Current
+explicit training arguments override saved config values. Omitted arguments
+inherit their saved values, except current dataset/model identity, device, and
+security/runtime-only controls. The checkpoint location always defines the
+resumed run directory so logs and checkpoints are not split into a new run.
+`resume()` must run before trainer `setup()` so the model graph and every
+optimizer-dependent component are constructed from one coherent state.
+
 Published inference weights should be lean checkpoints and should not include
 optimizer, epoch, config, loss, or EMA resume state unless intentionally
 distributed as training checkpoints.

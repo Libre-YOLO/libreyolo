@@ -425,7 +425,7 @@ class LibreSegformer(BaseModel):
         project: str = "runs/train",
         name: str = "segformer_exp",
         exist_ok: bool = False,
-        resume: bool = False,
+        resume: str | Path | bool = False,
         amp: bool = True,
         callbacks: TrainCallbacks = None,
         loggers=None,
@@ -438,6 +438,19 @@ class LibreSegformer(BaseModel):
         carry none of the upstream non-commercial restriction.
         """
         from .trainer import SegformerTrainer
+
+        resume_path = None
+        if resume:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreSegformer('path/to/last.pt'); "
+                    "model.train(data=..., resume=True)"
+                )
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
 
         train_kwargs = dict(
             data=data,
@@ -452,7 +465,7 @@ class LibreSegformer(BaseModel):
             project=project,
             name=name,
             exist_ok=exist_ok,
-            resume=resume,
+            resume=bool(resume),
             amp=amp,
             **kwargs,
         )
@@ -466,22 +479,11 @@ class LibreSegformer(BaseModel):
             loggers=loggers,
             **train_kwargs,
         )
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
         result = trainer.train()
         self._restore_after_training(result)
         return result
-
-    def _restore_after_training(self, result: dict) -> None:
-        checkpoint = None
-        for key in ("best_checkpoint", "last_checkpoint"):
-            path = result.get(key)
-            if path and Path(path).exists():
-                checkpoint = str(path)
-                break
-        if checkpoint is not None:
-            self.model_path = checkpoint
-            self._load_weights(checkpoint)
-        self.model.to(self.device)
-        self.model.eval()
 
     def export(self, format: str = "onnx", **kwargs) -> str:
         raise NotImplementedError("Export is not implemented for LibreSegformer yet.")

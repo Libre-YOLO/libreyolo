@@ -25,7 +25,7 @@ import numpy as np
 import torch
 
 from ...training.augment import MosaicMixupDataset, TrainTransform
-from ...training.config import RTMDetConfig, TrainConfig
+from ...training.config import RTMDetConfig, TrainConfig, require_training_choice
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import RTMDetLoss
@@ -80,6 +80,12 @@ class RTMDetTrainer(BaseTrainer):
         return preproc, MosaicMixupDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("cos",),
+            family=self.get_model_family(),
+        )
         return WarmupCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

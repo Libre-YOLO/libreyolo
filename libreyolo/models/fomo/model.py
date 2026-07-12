@@ -245,19 +245,8 @@ class LibreFOMO(BaseModel):
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibreFOMO('path/to/last.pt'); model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()
-
-        reload_path = None
-        for key in ("best_checkpoint", "last_checkpoint"):
-            path = results.get(key)
-            if path and Path(path).exists():
-                reload_path = str(path)
-                break
-
-        if reload_path:
-            self._load_weights(reload_path)
-
+        self._restore_after_training(results)
         return results

@@ -10,6 +10,24 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def require_training_choice(
+    value: str,
+    *,
+    field: str,
+    supported: Tuple[str, ...],
+    family: str,
+) -> str:
+    """Normalize a family-local training choice or reject it explicitly."""
+    normalized = str(value).strip().lower()
+    if normalized not in supported:
+        choices = ", ".join(repr(choice) for choice in supported)
+        raise ValueError(
+            f"{family} does not support {field}={value!r}; supported values: "
+            f"{choices}."
+        )
+    return normalized
+
+
 def load_train_cfg(path) -> dict:
     """Load a training-config yaml as a dict suitable for ``model.train(**out)``.
 
@@ -337,6 +355,7 @@ class DFINEConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 2e-4
     weight_decay: float = 1e-4
 
@@ -389,6 +408,7 @@ class DEIMConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 4e-4
     weight_decay: float = 1e-4
 
@@ -613,6 +633,7 @@ class DEIMv2Config(TrainConfig):
     """
 
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 5e-4
     weight_decay: float = 1e-4
 
@@ -678,6 +699,7 @@ class ECConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 5e-4
     weight_decay: float = 1e-4
 
@@ -956,7 +978,7 @@ class RTMDetConfig(TrainConfig):
     sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 0.004
-    momentum: float = 0.9  # unused for adamw; kept for TrainConfig compatibility
+    momentum: float = 0.9  # AdamW beta1 (and SGD momentum when selected)
     weight_decay: float = 0.05
 
     scheduler: str = "cos"
@@ -994,6 +1016,7 @@ class SegformerConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
+    momentum: float = 0.9
     lr0: float = 6e-5
     weight_decay: float = 0.01
     # Decode-head LR multiplier over the backbone base LR (mmseg SegFormer uses
@@ -1037,6 +1060,7 @@ class FOMOConfig(TrainConfig):
     # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
     sync_bn: bool = True
     optimizer: str = "adam"
+    momentum: float = 0.9
     lr0: float = 3e-4
     weight_decay: float = 0.0
 

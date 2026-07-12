@@ -12,23 +12,29 @@ with validation loss as the fallback signal.
 from __future__ import annotations
 
 import logging
-import random
 from typing import Dict, Type
 
 import cv2
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from ...data import (
     YOLOPoseDataset,
+    dataloader_seed_kwargs,
     default_oks_sigmas,
+    distributed_sampler_seed,
     get_img_files,
     img2label_paths,
     load_data_config,
     pose_collate_fn,
+    seed_data_worker,
 )
-from ...training.config import TrainConfig, YOLONASPoseConfig
+from ...training.config import (
+    TrainConfig,
+    YOLONASPoseConfig,
+    require_training_choice,
+)
+from ...training.distributed import unwrap_model
 from ...training.scheduler import CosineAnnealingScheduler
 from ...training.trainer import BaseTrainer
 from .loss import YoloNASPoseLoss
@@ -39,9 +45,7 @@ logger = logging.getLogger(__name__)
 def _pose_worker_init_fn(worker_id: int) -> None:
     cv2.setNumThreads(0)
     torch.set_num_threads(1)
-    seed = (torch.initial_seed() + worker_id) % 2**32
-    random.seed(seed)
-    np.random.seed(seed)
+    seed_data_worker(worker_id)
 
 
 class YOLONASPoseTrainer(BaseTrainer):
@@ -74,6 +78,12 @@ class YOLONASPoseTrainer(BaseTrainer):
         return None, None
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("cos",),
+            family="yolonas-pose",
+        )
         return CosineAnnealingScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,
@@ -161,23 +171,51 @@ class YOLONASPoseTrainer(BaseTrainer):
             affine_interpolation=self.config.affine_interpolation,
         )
         train_ds = self._build_dataset(train_imgs, train_lbls, train_tf)
-        drop_last = len(train_ds) >= self.config.batch
-        loader_kwargs = {}
+        per_rank_batch = self._per_rank_batch_size()
+        sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            sampler = DistributedSampler(
+                train_ds,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_ds) >= self.world_size,
+                seed=distributed_sampler_seed(self.config.seed),
+            )
+        visible_samples = len(sampler) if sampler is not None else len(train_ds)
+        drop_last = visible_samples >= per_rank_batch
+        worker_kwargs = {}
         if self.config.workers > 0:
-            loader_kwargs.update(
+            deterministic_workers = (
+                getattr(self.config, "seed", None) is not None
+                and int(self.config.seed) >= 0
+            )
+            worker_kwargs.update(
                 worker_init_fn=_pose_worker_init_fn,
-                persistent_workers=self.config.persistent_workers,
+                persistent_workers=(
+                    self.config.persistent_workers and not deterministic_workers
+                ),
                 prefetch_factor=self.config.prefetch_factor,
             )
+        seed_kwargs = dict(
+            seed=getattr(self.config, "seed", None),
+            rank=self.rank,
+            distributed=self.is_distributed,
+        )
+        train_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+        train_loader_kwargs.update(worker_kwargs)
         self.train_loader = DataLoader(
             train_ds,
-            batch_size=self.config.batch,
-            shuffle=True,
+            batch_size=per_rank_batch,
+            shuffle=sampler is None,
+            sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.config.pin_memory,
             drop_last=drop_last,
             collate_fn=pose_collate_fn,
-            **loader_kwargs,
+            **train_loader_kwargs,
         )
 
         val_imgs = cfg.get("val_img_files")
@@ -192,15 +230,17 @@ class YOLONASPoseTrainer(BaseTrainer):
             val_ds = self._build_dataset(
                 val_imgs, val_lbls, YOLONASPoseValTransform(self.num_keypoints)
             )
+            val_loader_kwargs = dataloader_seed_kwargs(**seed_kwargs)
+            val_loader_kwargs.update(worker_kwargs)
             self.val_loader = DataLoader(
                 val_ds,
-                batch_size=self.config.batch,
+                batch_size=per_rank_batch,
                 shuffle=False,
                 num_workers=self.config.workers,
                 pin_memory=self.config.pin_memory,
                 drop_last=False,
                 collate_fn=pose_collate_fn,
-                **loader_kwargs,
+                **val_loader_kwargs,
             )
             logger.info("Validation dataset: %d images", len(val_ds))
         else:
@@ -238,43 +278,55 @@ class YOLONASPoseTrainer(BaseTrainer):
             "pose_reg": log_losses[4],
         }
 
-    def _validate_epoch(self, epoch: int):
+    def _run_validation(self, epoch: int, *, save_plots: bool | None = None):
         if getattr(self, "val_loader", None) is None:
             return None
 
-        model = self.ema_model.ema if self.ema_model else self.model
+        model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
         was_training = model.training
         model.eval()
 
         total_loss, num_batches = 0.0, 0
         pose_metrics = None
         try:
-            with torch.no_grad():
-                for batch in self.val_loader:
-                    imgs = batch[0].to(self.device, non_blocking=True)
-                    targets = batch[1].to(self.device, non_blocking=True)
-                    loss, _ = self.loss_fn(model(imgs), targets)
-                    total_loss += float(loss.item())
-                    num_batches += 1
+            if not self.is_distributed:
+                with torch.no_grad():
+                    for batch in self.val_loader:
+                        imgs = batch[0].to(self.device, non_blocking=True)
+                        targets = batch[1].to(self.device, non_blocking=True)
+                        loss, _ = self.loss_fn(model(imgs), targets)
+                        total_loss += float(loss.item())
+                        num_batches += 1
 
-            pose_metrics = self._run_pose_metric_validation(model, epoch)
+            pose_metrics = self._run_pose_metric_validation(
+                model,
+                epoch,
+                save_plots=save_plots,
+            )
         finally:
             if was_training:
                 model.train()
 
         avg_loss = total_loss / max(num_batches, 1)
-        metrics = {"loss/val": avg_loss}
+        metrics = {} if self.is_distributed else {"loss/val": avg_loss}
         if pose_metrics:
             metrics.update(self._scalar_mapping(pose_metrics))
             mAP50 = metrics.get("metrics/keypoints_mAP50")
             mAP50_95 = metrics.get("metrics/keypoints_mAP50-95")
-            logger.info(
-                "Validation - loss/val: %.4f, keypoints_mAP50: %.4f, "
-                "keypoints_mAP50-95: %.4f",
-                avg_loss,
-                mAP50 if mAP50 is not None else 0.0,
-                mAP50_95 if mAP50_95 is not None else 0.0,
-            )
+            if self.is_distributed:
+                logger.info(
+                    "Validation - keypoints_mAP50: %.4f, keypoints_mAP50-95: %.4f",
+                    mAP50 if mAP50 is not None else 0.0,
+                    mAP50_95 if mAP50_95 is not None else 0.0,
+                )
+            else:
+                logger.info(
+                    "Validation - loss/val: %.4f, keypoints_mAP50: %.4f, "
+                    "keypoints_mAP50-95: %.4f",
+                    avg_loss,
+                    mAP50 if mAP50 is not None else 0.0,
+                    mAP50_95 if mAP50_95 is not None else 0.0,
+                )
             return {
                 "best_metric": mAP50_95 if mAP50_95 is not None else 0.0,
                 "best_metric_key": self.best_metric_key,
@@ -282,6 +334,13 @@ class YOLONASPoseTrainer(BaseTrainer):
                 "mAP50_95": mAP50_95,
                 "metrics": metrics,
             }
+
+        if self.is_distributed:
+            logger.warning(
+                "Skipping YOLO-NAS pose validation loss under DDP because the "
+                "criterion uses training collectives; pose metrics were unavailable"
+            )
+            return None
 
         logger.info("Validation - loss/val: %.4f", avg_loss)
         return {
@@ -293,7 +352,11 @@ class YOLONASPoseTrainer(BaseTrainer):
         }
 
     def _run_pose_metric_validation(
-        self, eval_model: torch.nn.Module, epoch: int
+        self,
+        eval_model: torch.nn.Module,
+        epoch: int,
+        *,
+        save_plots: bool | None = None,
     ) -> Dict[str, float] | None:
         if self.wrapper_model is None:
             logger.warning("Skipping pose mAP validation: wrapper_model is missing")
@@ -302,10 +365,16 @@ class YOLONASPoseTrainer(BaseTrainer):
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
 
+            should_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False))
+                and self._is_final_epoch(epoch)
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                batch_size=self.config.batch,
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -315,7 +384,8 @@ class YOLONASPoseTrainer(BaseTrainer):
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,
                 oks_sigmas=self._resolve_oks_sigmas(),
-                save_dir=str(self.save_dir / "val"),
+                save_plots=should_save_plots,
+                save_dir=str(self.save_dir / "val") if should_save_plots else None,
             )
 
             original_model = self.wrapper_model.model
