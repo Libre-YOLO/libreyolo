@@ -453,6 +453,86 @@ class TestExporterFormats:
             "export_dynamic": False,
         }
 
+    def test_intermediate_onnx_does_not_replace_preexisting_user_file(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = TensorRTExporter(wrapper)
+        output_path = tmp_path / "model.engine"
+        victim = tmp_path / "model.export_intermediate.onnx"
+        victim.write_bytes(b"user-owned")
+        captured = {}
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+
+        def fake_intermediate(
+            nn_model, dummy, output_path, opset, simplify, dynamic
+        ):
+            out = Path(output_path)
+            generated = out.with_name(f"{out.stem}.export_intermediate.onnx")
+            generated.write_bytes(b"generated")
+            captured["generated"] = generated
+            return str(generated)
+
+        def fake_export(nn_model, dummy, *, output_path, onnx_path, **kwargs):
+            assert Path(onnx_path).read_bytes() == b"generated"
+            return output_path
+
+        monkeypatch.setattr(exporter, "_export_intermediate_onnx", fake_intermediate)
+        monkeypatch.setattr(exporter, "_export", fake_export)
+
+        result = exporter(
+            output_path=str(output_path),
+            device="cpu",
+            simplify=False,
+            dynamic=False,
+        )
+
+        generated = captured["generated"]
+        assert result == str(output_path)
+        assert victim.read_bytes() == b"user-owned"
+        assert generated != victim
+        assert not generated.exists()
+        assert not generated.parent.exists()
+
+    def test_intermediate_onnx_workspace_is_removed_after_export_failure(
+        self, monkeypatch, tmp_path
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = TensorRTExporter(wrapper)
+        captured = {}
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+
+        def fake_intermediate(
+            nn_model, dummy, output_path, opset, simplify, dynamic
+        ):
+            out = Path(output_path)
+            generated = out.with_name(f"{out.stem}.export_intermediate.onnx")
+            generated.write_bytes(b"generated")
+            captured["generated"] = generated
+            return str(generated)
+
+        def fail_export(*args, **kwargs):
+            raise RuntimeError("engine build failed")
+
+        monkeypatch.setattr(exporter, "_export_intermediate_onnx", fake_intermediate)
+        monkeypatch.setattr(exporter, "_export", fail_export)
+
+        with pytest.raises(RuntimeError, match="engine build failed"):
+            exporter(
+                output_path=str(tmp_path / "model.engine"),
+                device="cpu",
+                simplify=False,
+                dynamic=False,
+            )
+
+        generated = captured["generated"]
+        assert not generated.exists()
+        assert not generated.parent.exists()
+
     def test_rfdetr_export_defaults_to_cpu(self):
         wrapper = _make_wrapper(model_name="rfdetr")
         wrapper.device = torch.device("cuda")

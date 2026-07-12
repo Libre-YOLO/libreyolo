@@ -13,6 +13,7 @@ import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional, Tuple, Union
 
 import torch
@@ -404,7 +405,7 @@ class BaseExporter(ABC):
         precision = _resolve_precision(half, int8)
         onnx_path = None
 
-        try:
+        with self._intermediate_onnx_workspace(output_path) as intermediate_output:
             with self._model_context(device, half, int8, batch, imgsz) as (
                 nn_model,
                 dummy,
@@ -426,7 +427,7 @@ class BaseExporter(ABC):
                     self._export_intermediate_onnx(
                         nn_model,
                         dummy,
-                        output_path,
+                        intermediate_output,
                         opset,
                         simplify,
                         dynamic,
@@ -458,9 +459,6 @@ class BaseExporter(ABC):
                     verbose=verbose,
                     **kwargs,
                 )
-        finally:
-            if onnx_path and Path(onnx_path).exists():
-                Path(onnx_path).unlink()
 
         self._print_summary(result, precision, imgsz)
         return result
@@ -1107,9 +1105,8 @@ class BaseExporter(ABC):
     def _export_intermediate_onnx(
         self, nn_model, dummy, output_path, opset, simplify, dynamic
     ):
-        # Use a distinct intermediate name so it never collides with (and the
-        # finally-block cleanup never deletes) a real ONNX export the user may
-        # have written to the default ``<stem>.onnx`` path.
+        # Keep a recognizable name inside the invocation-owned workspace.
+        # Workspace isolation prevents collisions with user-owned ONNX files.
         out = Path(output_path)
         onnx_output = str(out.with_name(f"{out.stem}.export_intermediate.onnx"))
         logger.info("Step 1/2: Exporting to ONNX (%s)", onnx_output)
@@ -1127,6 +1124,19 @@ class BaseExporter(ABC):
                 imgsz=(dummy.shape[-2], dummy.shape[-1]),
             ),
         )
+
+    @contextmanager
+    def _intermediate_onnx_workspace(self, output_path):
+        """Yield an invocation-owned output path for intermediate ONNX files."""
+        if not self.requires_onnx:
+            yield output_path
+            return
+
+        output = Path(output_path)
+        with TemporaryDirectory(
+            prefix="libreyolo-export-", dir=output.parent
+        ) as workspace:
+            yield str(Path(workspace) / output.name)
 
     def _build_metadata(
         self,
