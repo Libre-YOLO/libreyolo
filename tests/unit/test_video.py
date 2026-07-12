@@ -5,12 +5,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from libreyolo.utils.general import release_save_path_reservation
 from libreyolo.utils.video import (
     VideoSource,
     VideoWriter,
     _codec_candidates,
+    _normalize_capture_fps,
+    _processed_frame_count,
+    _validate_vid_stride,
     collect_video_results,
     is_video_file,
+    resolve_video_save_path,
     run_video_inference,
 )
 
@@ -141,6 +146,28 @@ class TestVideoSource:
         assert "64x64" in r
         vs.release()
 
+    @pytest.mark.parametrize("stride", [0, -1, 1.5, "2", float("nan"), True])
+    def test_invalid_vid_stride_is_rejected(self, sample_video, stride):
+        with pytest.raises((TypeError, ValueError), match="vid_stride"):
+            VideoSource(sample_video, vid_stride=stride)
+
+
+def test_processed_frame_count_uses_ceil_semantics():
+    assert _processed_frame_count(10, 3) == 4
+    assert _processed_frame_count(10, 2) == 5
+    assert _processed_frame_count(0, 3) == 0
+
+
+def test_capture_fps_falls_back_for_nonfinite_and_nonpositive_metadata():
+    assert _normalize_capture_fps(float("nan")) == 30.0
+    assert _normalize_capture_fps(float("inf")) == 30.0
+    assert _normalize_capture_fps(-1.0) == 30.0
+    assert _normalize_capture_fps(24.0) == 24.0
+
+
+def test_validate_vid_stride_accepts_numpy_integer():
+    assert _validate_vid_stride(np.int64(3)) == 3
+
 
 # ---------------------------------------------------------------------------
 # VideoWriter
@@ -243,6 +270,80 @@ class TestVideoWriter:
         assert Path(out_path).exists()
         assert writer._writer is None  # released
 
+    def test_open_failure_releases_reserved_path_for_retry(
+        self, tmp_path, monkeypatch
+    ):
+        class ClosedWriter:
+            @staticmethod
+            def isOpened():
+                return False
+
+            @staticmethod
+            def release():
+                pass
+
+        monkeypatch.setattr(cv2, "VideoWriter", lambda *_args: ClosedWriter())
+        explicit = tmp_path / "prediction.mp4"
+        reserved = Path(resolve_video_save_path("clip.mov", explicit))
+
+        with pytest.raises(ValueError, match="Cannot open video writer"):
+            VideoWriter(reserved, fps=10.0, width=32, height=32)
+
+        retry = Path(resolve_video_save_path("clip.mov", explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    def test_release_without_created_file_reclaims_reserved_path(self, tmp_path):
+        class UnmaterializedWriter:
+            @staticmethod
+            def release():
+                pass
+
+        explicit = tmp_path / "prediction.mp4"
+        reserved = Path(resolve_video_save_path("clip.mov", explicit))
+        writer = VideoWriter.__new__(VideoWriter)
+        writer._path = str(reserved)
+        writer._writer = UnmaterializedWriter()
+
+        writer.release()
+
+        retry = Path(resolve_video_save_path("clip.mov", explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    @pytest.mark.parametrize("fps", [0.0, -1.0, float("nan"), float("inf")])
+    def test_rejects_invalid_fps(self, tmp_path, fps):
+        with pytest.raises(ValueError, match="FPS"):
+            VideoWriter(tmp_path / "invalid.mp4", fps=fps, width=32, height=32)
+
+
+class TestResolveVideoSavePath:
+    def test_directory_output_gets_real_video_filename(self, tmp_path):
+        output_dir = tmp_path / "predict"
+        output_dir.mkdir()
+
+        resolved = Path(resolve_video_save_path("clip.mov", output_dir))
+
+        assert resolved == output_dir / "clip.mp4"
+
+    def test_suffix_bearing_directory_gets_real_video_filename(self, tmp_path):
+        output_dir = tmp_path / "predict.v1"
+        output_dir.mkdir()
+
+        resolved = Path(resolve_video_save_path("clip.mov", output_dir))
+
+        assert resolved.parent == output_dir
+        assert resolved.name == "clip.mp4"
+
+    def test_duplicate_explicit_file_is_collision_safe(self, tmp_path):
+        output_file = tmp_path / "prediction.mp4"
+
+        first = Path(resolve_video_save_path("clip.mov", output_file))
+        second = Path(resolve_video_save_path("clip.mov", output_file))
+
+        assert first == output_file
+        assert second == tmp_path / "prediction2.mp4"
+
 
 # ---------------------------------------------------------------------------
 # Results.frame_idx
@@ -298,6 +399,98 @@ class TestResultsFrameIdx:
 
 
 class TestRunVideoInference:
+    def test_progress_initialization_failure_releases_output(
+        self, sample_video, tmp_path, monkeypatch
+    ):
+        import tqdm as tqdm_module
+
+        explicit = tmp_path / "prediction.mp4"
+
+        def fail_progress(*_args, **_kwargs):
+            raise RuntimeError("synthetic progress failure")
+
+        monkeypatch.setattr(tqdm_module, "tqdm", fail_progress)
+
+        with pytest.raises(RuntimeError, match="synthetic progress failure"):
+            list(
+                run_video_inference(
+                    sample_video,
+                    lambda _image: None,
+                    save=True,
+                    output_path=str(explicit),
+                    progress=True,
+                )
+            )
+
+        retry = Path(resolve_video_save_path(sample_video, explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    def test_prediction_failure_releases_unmaterialized_output(
+        self, sample_video, tmp_path
+    ):
+        explicit = tmp_path / "prediction.mp4"
+
+        def fail_prediction(_image):
+            raise RuntimeError("synthetic prediction failure")
+
+        with pytest.raises(RuntimeError, match="synthetic prediction failure"):
+            list(
+                run_video_inference(
+                    sample_video,
+                    fail_prediction,
+                    save=True,
+                    output_path=str(explicit),
+                    progress=False,
+                )
+            )
+
+        retry = Path(resolve_video_save_path(sample_video, explicit))
+        assert retry == explicit
+        assert release_save_path_reservation(retry) is True
+
+    def test_save_video_renders_gaze_direction(self, sample_video, tmp_path, monkeypatch):
+        import torch
+
+        from libreyolo.utils import drawing
+        from libreyolo.utils.results import Boxes, Gaze, Results
+
+        calls = []
+        original = drawing.draw_gaze_arrows
+
+        def record_gaze(*args, **kwargs):
+            calls.append((args[2], args[3]))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(drawing, "draw_gaze_arrows", record_gaze)
+
+        def predict_frame(pil_img):
+            width, height = pil_img.size
+            boxes = Boxes(
+                torch.tensor([[2.0, 2.0, width - 2.0, height - 2.0]]),
+                torch.tensor([0.9]),
+                torch.tensor([0.0]),
+            )
+            return Results(
+                boxes,
+                (height, width),
+                names={0: "face"},
+                gaze=Gaze(torch.tensor([[0.1, -0.2]])),
+                task="gaze",
+            )
+
+        results = list(
+            run_video_inference(
+                sample_video,
+                predict_frame,
+                save=True,
+                output_path=str(tmp_path / "gaze.mp4"),
+                progress=False,
+            )
+        )
+
+        assert len(calls) == len(results) == 10
+
     def test_save_classification_results_without_boxes(self, sample_video, tmp_path):
         import torch
 
@@ -325,6 +518,7 @@ class TestRunVideoInference:
 
         assert len(results) == 10
         assert output_path.exists()
+        assert {r.saved_path for r in results} == {str(output_path)}
 
     def test_save_point_results_without_boxes(self, sample_video, tmp_path):
         import torch
@@ -353,6 +547,66 @@ class TestRunVideoInference:
 
         assert len(results) == 10
         assert output_path.exists()
+        assert {r.saved_path for r in results} == {str(output_path)}
+
+    @pytest.mark.parametrize("task", ["semantic", "panoptic", "ocr"])
+    def test_save_boxless_dense_and_ocr_video_results(
+        self, sample_video, tmp_path, task
+    ):
+        import torch
+
+        from libreyolo.utils.results import (
+            OCRRegions,
+            PanopticSegmentation,
+            Results,
+            SemanticMask,
+        )
+
+        def predict_frame(pil_img):
+            width, height = pil_img.size
+            kwargs = {}
+            if task == "semantic":
+                mask = torch.zeros((height, width), dtype=torch.int64)
+                mask[:, width // 2 :] = 1
+                kwargs["semantic_mask"] = SemanticMask(mask)
+            elif task == "panoptic":
+                segment_map = torch.ones((height, width), dtype=torch.int64)
+                kwargs["panoptic"] = PanopticSegmentation(
+                    segment_map,
+                    [{"id": 1, "category_id": 0, "isthing": True}],
+                )
+            else:
+                polygon = torch.tensor(
+                    [[[2.0, 2.0], [20.0, 2.0], [20.0, 12.0], [2.0, 12.0]]]
+                )
+                kwargs["ocr"] = OCRRegions(
+                    polygon,
+                    ["text"],
+                    torch.tensor([0.9]),
+                    torch.tensor([0.8]),
+                )
+            return Results(
+                boxes=None,
+                orig_shape=(height, width),
+                names={0: "thing", 1: "other"},
+                **kwargs,
+            )
+
+        output_path = tmp_path / f"{task}.mp4"
+        results = list(
+            run_video_inference(
+                sample_video,
+                predict_frame,
+                save=True,
+                output_path=str(output_path),
+                progress=False,
+            )
+        )
+
+        assert len(results) == 10
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+        assert {r.saved_path for r in results} == {str(output_path)}
 
 
 class TestCollectVideoResults:

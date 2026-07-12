@@ -97,6 +97,26 @@ class TestImageLoader:
         with pytest.raises(FileNotFoundError):
             ImageLoader.load("/nonexistent/path/to/image.jpg")
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "http://example.com/image.jpg",
+            "https://example.com/image.jpg",
+            "s3://bucket/image.jpg",
+            "gs://bucket/image.jpg",
+        ],
+    )
+    def test_validate_source_accepts_supported_remote_schemes(self, source):
+        assert ImageLoader.validate_source(source) == source
+
+    @pytest.mark.parametrize(
+        "source",
+        ["ftp://example.com/image.jpg", "s3://bucket", "gs://bucket"],
+    )
+    def test_validate_source_rejects_unsupported_or_incomplete_uris(self, source):
+        with pytest.raises(ValueError):
+            ImageLoader.validate_source(source)
+
     # ========================
     # NumPy Array Tests
     # ========================
@@ -172,19 +192,10 @@ class TestImageLoader:
         assert result.mode == "RGB"
 
     def test_load_numpy_batch_nchw(self):
-        """Test loading a batch of images (NCHW format), takes first one."""
+        """A single-image loader must not silently discard batch members."""
         arr = np.zeros((2, 3, 100, 100), dtype=np.uint8)
-        arr[0, 0, :, :] = 255  # First image: red
-        arr[1, 1, :, :] = 255  # Second image: green
-
-        result = ImageLoader.load(arr)
-
-        assert isinstance(result, Image.Image)
-        assert result.size == (100, 100)
-
-        # Should get first image (red)
-        result_arr = np.array(result)
-        assert result_arr[0, 0, 0] == 255  # Red
+        with pytest.raises(ValueError, match="4-D NumPy.*batch"):
+            ImageLoader.load(arr)
 
     # ========================
     # Torch Tensor Tests
@@ -202,14 +213,10 @@ class TestImageLoader:
         assert result.size == (100, 100)
 
     def test_load_torch_tensor_nchw(self):
-        """Test loading a PyTorch tensor in NCHW format (batch)."""
+        """A single-image loader must reject batched tensors explicitly."""
         tensor = torch.zeros(1, 3, 100, 100, dtype=torch.float32)
-        tensor[0, 0, :, :] = 1.0  # Red channel
-
-        result = ImageLoader.load(tensor)
-
-        assert isinstance(result, Image.Image)
-        assert result.mode == "RGB"
+        with pytest.raises(ValueError, match="4-D torch.*batch"):
+            ImageLoader.load(tensor)
 
     def test_load_torch_tensor_uint8(self):
         """Test loading a PyTorch tensor with uint8 values."""
@@ -263,6 +270,13 @@ class TestImageLoader:
         """Test that loading an unsupported type raises TypeError."""
         with pytest.raises(TypeError, match="Unsupported image type"):
             ImageLoader.load(12345)  # int is not supported
+
+    def test_windows_drive_path_with_double_slash_is_not_treated_as_uri(self):
+        """Windows drive spellings such as C://... remain local paths."""
+        missing = "C://__libreyolo_missing__/image.jpg"
+
+        with pytest.raises(FileNotFoundError, match="Image source not found"):
+            ImageLoader.validate_source(missing)
 
     def test_load_invalid_color_format_raises_error(self, sample_numpy_rgb):
         """Test that invalid color_format raises ValueError."""

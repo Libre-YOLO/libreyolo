@@ -39,6 +39,44 @@ class _DummyBackend(BaseBackend):
         raise NotImplementedError
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "error", "match"),
+    [
+        ({"conf": float("nan")}, ValueError, "conf must be finite"),
+        ({"iou": 2.0}, ValueError, "iou must be finite"),
+        ({"batch": 0}, ValueError, "batch must be positive"),
+        ({"vid_stride": 0}, ValueError, "vid_stride must be positive"),
+        ({"max_det": -1}, ValueError, "max_det must be non-negative"),
+        ({"classes": ["0"]}, TypeError, "integer class IDs"),
+        ({"classes": [3]}, ValueError, "unknown class IDs"),
+    ],
+)
+def test_backend_rejects_invalid_public_predict_inputs(kwargs, error, match):
+    backend = _DummyBackend("yolo9")
+
+    with pytest.raises(error, match=match):
+        backend([], **kwargs)
+
+
+@pytest.mark.parametrize("container", ["numpy", "torch"])
+def test_backend_expands_every_4d_image_in_order(container):
+    backend = _DummyBackend("yolo9")
+    source = np.stack(
+        [
+            np.full((8, 9, 3), 10, dtype=np.uint8),
+            np.full((8, 9, 3), 200, dtype=np.uint8),
+        ]
+    )
+    if container == "torch":
+        source = torch.from_numpy(source).permute(0, 3, 1, 2)
+
+    backend._predict_single = lambda image, **kwargs: float(
+        image.float().mean() if isinstance(image, torch.Tensor) else image.mean()
+    )
+
+    assert backend(source, batch=2) == [10.0, 200.0]
+
+
 def test_matte_backend_decodes_logits_and_resizes():
     backend = _DummyBackend(
         "birefnet", task="matte", supported_tasks=("matte",), imgsz=16
@@ -1723,6 +1761,127 @@ def test_backend_save_annotated_accepts_directory_output_path(tmp_path):
     expected = output_dir / "source.jpg"
     assert expected.exists()
     assert result.saved_path == str(expected)
+
+
+@pytest.mark.parametrize(
+    ("task", "payload_name", "payload"),
+    [
+        ("segment", "masks", np.zeros((0, 8, 8), dtype=bool)),
+        ("pose", "keypoints", np.zeros((0, 5, 3), dtype=np.float32)),
+    ],
+)
+def test_backend_build_preserves_empty_task_payload_schema(
+    task, payload_name, payload
+):
+    backend = _DummyBackend("contract", task=task, supported_tasks=(task,))
+
+    result = backend._build_result(
+        np.zeros((0, 4), dtype=np.float32),
+        np.zeros(0, dtype=np.float32),
+        np.zeros(0, dtype=np.int64),
+        orig_shape=(8, 8),
+        image_path=None,
+        iou=0.5,
+        classes=None,
+        max_det=300,
+        **{payload_name: payload},
+    )
+
+    assert result.task == task
+    assert len(result) == 0
+    assert getattr(result, payload_name) is not None
+
+
+@pytest.mark.parametrize("task", ["semantic", "point", "empty"])
+def test_backend_save_handles_boxless_results(tmp_path, task):
+    from libreyolo.utils.results import Points, Results, SemanticMask
+
+    backend = _DummyBackend("yolo9")
+    kwargs = {}
+    if task == "semantic":
+        kwargs["semantic_mask"] = SemanticMask(
+            torch.zeros((8, 8), dtype=torch.int64)
+        )
+    elif task == "point":
+        kwargs["points"] = Points(torch.tensor([[4.0, 4.0, 0.0, 0.9]]))
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "thing"},
+        **kwargs,
+    )
+    output_path = tmp_path / f"{task}.jpg"
+
+    backend._save_annotated(
+        result,
+        Image.new("RGB", (8, 8)),
+        "source.jpg",
+        str(output_path),
+    )
+
+    assert output_path.exists()
+    assert result.saved_path == str(output_path)
+
+
+def test_backend_matte_save_forces_png_and_reports_actual_path(tmp_path):
+    from libreyolo.utils.results import Matte, Results
+
+    backend = _DummyBackend(
+        "birefnet", task="matte", supported_tasks=("matte",), imgsz=8
+    )
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "matte"},
+        matte=Matte(torch.ones((8, 8), dtype=torch.float32)),
+    )
+    requested = tmp_path / "cutout.jpg"
+
+    backend._save_annotated(
+        result,
+        Image.new("RGB", (8, 8), color="red"),
+        "source.jpg",
+        str(requested),
+    )
+
+    actual = tmp_path / "cutout.png"
+    assert not requested.exists()
+    assert actual.exists()
+    assert Image.open(actual).mode == "RGBA"
+    assert result.saved_path == str(actual)
+
+
+def test_backend_save_renders_gaze_direction(tmp_path):
+    from libreyolo.utils.results import Boxes, Gaze, Results
+
+    backend = _DummyBackend("yolo9")
+
+    def save_with_yaw(yaw: float, name: str) -> np.ndarray:
+        boxes = Boxes(
+            torch.tensor([[8.0, 8.0, 56.0, 56.0]]),
+            torch.tensor([0.9]),
+            torch.tensor([0.0]),
+        )
+        result = Results(
+            boxes,
+            (64, 64),
+            names={0: "face"},
+            gaze=Gaze(torch.tensor([[0.0, yaw]])),
+            task="gaze",
+        )
+        output_path = tmp_path / name
+        backend._save_annotated(
+            result,
+            Image.new("RGB", (64, 64), color="white"),
+            "source.jpg",
+            str(output_path),
+        )
+        return np.asarray(Image.open(output_path).convert("RGB"))
+
+    left = save_with_yaw(-0.5, "gaze-left.png")
+    right = save_with_yaw(0.5, "gaze-right.png")
+
+    assert not np.array_equal(left, right)
 
 
 def test_tensorrt_backend_detects_obb_task_from_filename():

@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 from typing import List, Union
+from urllib.parse import urlsplit
 
 import numpy as np
 import torch
@@ -25,6 +26,8 @@ SUPPORTED_EXTENSIONS = {
     ".tiff",
     ".tif",
 }
+
+REMOTE_SOURCE_SCHEMES = frozenset({"http", "https", "s3", "gs"})
 
 
 class ImageLoader:
@@ -97,14 +100,11 @@ class ImageLoader:
                 "Install it with: pip install boto3"
             )
 
-        if not uri.startswith("s3://"):
+        parsed = urlsplit(uri)
+        if parsed.scheme.lower() != "s3":
             raise ValueError(f"Invalid S3 URI: {uri}")
-
-        path_parts = uri[5:].split("/", 1)
-        if len(path_parts) != 2:
-            raise ValueError(f"Invalid S3 URI format: {uri}. Expected s3://bucket/key")
-
-        bucket, key = path_parts
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
 
         try:
             s3 = boto3.client("s3")
@@ -126,7 +126,8 @@ class ImageLoader:
 
         try:
             fs = gcsfs.GCSFileSystem()
-            gcs_path = uri[5:] if uri.startswith("gs://") else uri
+            parsed = urlsplit(uri)
+            gcs_path = f"{parsed.netloc}/{parsed.path.lstrip('/')}"
             with fs.open(gcs_path, "rb") as f:
                 return Image.open(io.BytesIO(f.read())).convert("RGB")
         except Exception as e:
@@ -134,17 +135,16 @@ class ImageLoader:
 
     @classmethod
     def _from_path_or_url(cls, path: Union[str, Path]) -> Image.Image:
-        path_str = str(path)
+        path_str = cls.validate_source(path)
 
-        if path_str.startswith(("http://", "https://")):
+        scheme = urlsplit(path_str).scheme.lower()
+        if scheme in {"http", "https"}:
             return cls._from_url(path_str)
-        elif path_str.startswith("s3://"):
+        elif scheme == "s3":
             return cls._from_s3(path_str)
-        elif path_str.startswith("gs://"):
+        elif scheme == "gs":
             return cls._from_gcs(path_str)
         else:
-            if not Path(path_str).exists():
-                raise FileNotFoundError(f"Image file not found: {path_str}")
             return Image.open(path_str).convert("RGB")
 
     @classmethod
@@ -175,21 +175,28 @@ class ImageLoader:
             return Image.fromarray(arr, mode="RGB")
 
         elif arr.ndim == 4:
-            # Batch — take first image (NCHW or NHWC)
-            return cls._from_numpy(arr[0], color_format)
+            raise ValueError(
+                "ImageLoader.load() accepts one image at a time; a 4-D NumPy "
+                "array is a batch. Pass the batch to model.predict() so every "
+                "image is processed."
+            )
 
         else:
             raise ValueError(
-                f"Unsupported array dimensions: {arr.ndim}. Expected 2, 3, or 4."
+                f"Unsupported array dimensions: {arr.ndim}. Expected 2 or 3."
             )
 
     @classmethod
     def _from_tensor(cls, tensor: torch.Tensor) -> Image.Image:
-        """Convert PyTorch tensor (CHW or NCHW) to PIL Image."""
+        """Convert a single PyTorch tensor (HW or CHW) to a PIL image."""
         tensor = tensor.detach().cpu()
 
         if tensor.dim() == 4:
-            tensor = tensor[0]  # take first image if batched
+            raise ValueError(
+                "ImageLoader.load() accepts one image at a time; a 4-D torch "
+                "tensor is a batch. Pass the batch to model.predict() so every "
+                "image is processed."
+            )
 
         if tensor.dim() == 3:
             if tensor.shape[0] in (1, 3, 4) and tensor.shape[0] < tensor.shape[2]:
@@ -204,6 +211,54 @@ class ImageLoader:
     # =========================================================================
 
     @classmethod
+    def is_remote_source(cls, source: Union[str, Path]) -> bool:
+        """Return whether *source* uses a supported remote image scheme."""
+        if not isinstance(source, str):
+            return False
+        return urlsplit(source).scheme.lower() in REMOTE_SOURCE_SCHEMES
+
+    @classmethod
+    def validate_source(cls, source: Union[str, Path]) -> str:
+        """Validate a local path or supported remote URI without loading it.
+
+        This is the shared source boundary used by both the Python loader and
+        the CLI. Remote resources are validated syntactically here and fetched
+        only when :meth:`load` is called.
+        """
+        if not isinstance(source, (str, Path)):
+            raise TypeError(
+                f"Source validation requires str or Path, got {type(source).__name__}."
+            )
+
+        source_str = str(source)
+        is_windows_drive_path = (
+            len(source_str) >= 3
+            and source_str[0].isalpha()
+            and source_str[1] == ":"
+            and source_str[2] in {"/", "\\"}
+        )
+        if isinstance(source, str) and "://" in source_str and not is_windows_drive_path:
+            parsed = urlsplit(source_str)
+            scheme = parsed.scheme.lower()
+            if scheme not in REMOTE_SOURCE_SCHEMES:
+                supported = ", ".join(f"{item}://" for item in sorted(REMOTE_SOURCE_SCHEMES))
+                raise ValueError(
+                    f"Unsupported source URI scheme '{parsed.scheme}://'. "
+                    f"Supported remote schemes: {supported}"
+                )
+            if not parsed.netloc:
+                raise ValueError(f"Invalid {scheme} source URI: missing host or bucket.")
+            if scheme in {"s3", "gs"} and not parsed.path.lstrip("/"):
+                raise ValueError(
+                    f"Invalid {scheme} source URI: expected {scheme}://bucket/key."
+                )
+            return source_str
+
+        if not Path(source_str).exists():
+            raise FileNotFoundError(f"Image source not found: {source_str}")
+        return source_str
+
+    @classmethod
     def load(cls, source: ImageInput, color_format: str = "auto") -> Image.Image:
         """
         Load image from any source and return PIL Image in RGB format.
@@ -214,7 +269,7 @@ class ImageLoader:
                 - pathlib.Path: Local file path
                 - PIL.Image: PIL Image object
                 - np.ndarray: NumPy array (HWC or CHW, RGB or BGR)
-                - torch.Tensor: PyTorch tensor (CHW or NCHW)
+                - torch.Tensor: PyTorch tensor (HW or CHW)
                 - bytes: Raw image bytes
                 - io.BytesIO: BytesIO object containing image data
             color_format: Color format hint for NumPy arrays.

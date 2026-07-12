@@ -1,8 +1,19 @@
 """Shared general utility functions."""
 
+import atexit
+import hashlib
 import logging
+import math
+import os
+import secrets
+import stat
+from contextlib import contextmanager
+from dataclasses import dataclass
+from itertools import count
+from numbers import Integral, Real
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from threading import RLock
+from typing import Dict, Iterator, List, Tuple, Union
 from urllib.parse import urlparse
 
 import torch
@@ -164,6 +175,23 @@ def cxcywh_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
 _save_dir_cache: Dict[str, Path] = {}
 
 
+@dataclass(frozen=True)
+class _SavePathReservation:
+    """Ownership record for one filesystem-backed save-path claim."""
+
+    lock_path: Path
+    token: str
+    owner_pid: int
+    identity: tuple[int, int]
+
+
+_save_path_reservations: dict[str, _SavePathReservation] = {}
+_save_path_lock = RLock()
+_SAVE_PATH_OWNER_FILE = "owner"
+_SAVE_PATH_LOCK_PREFIX = ".libreyolo-save-"
+_SAVE_PATH_LOCK_SUFFIX = ".reserve"
+
+
 def get_safe_stem(path: Union[str, Path]) -> str:
     path_str = str(path)
     if path_str.startswith(("http://", "https://", "s3://", "gs://")):
@@ -180,6 +208,7 @@ def resolve_save_path(
     ext: str = "jpg",
     default_dir: str = "runs/detect",
     exist_ok: bool = False,
+    force_ext: bool = False,
 ) -> Path:
     """
     Generate a save path handling both directory and file output paths.
@@ -187,7 +216,11 @@ def resolve_save_path(
     Uses an auto-incrementing directory scheme: runs/detect/predict,
     runs/detect/predict2, etc. The original filename is preserved.
     Within a single process, all images are saved to the same directory.
-    Duplicate filenames from different input folders will overwrite.
+    Save names are atomically reserved across threads and processes so repeated
+    inputs, duplicate basenames, and explicit-file batch outputs cannot
+    overwrite one another before the previous write becomes visible. Direct
+    callers should wrap the write in :func:`save_path_write_guard`; built-in
+    inference writers already do this.
 
     Args:
         output_path: User-provided output path (file or directory) or None
@@ -196,10 +229,16 @@ def resolve_save_path(
         ext: File extension without dot (default: "jpg")
         default_dir: Default directory if output_path is None
         exist_ok: If True, reuse existing predict/ directory without incrementing
+        force_ext: If True, replace an explicit file suffix with ``ext``. This is
+            used by formats such as matte cutouts that require PNG output.
 
     Returns:
         Resolved Path object ready for saving
     """
+    ext = str(ext).lower().lstrip(".")
+    if not ext:
+        raise ValueError("Save extension must not be empty.")
+
     # Get filename from image path or use default
     if image_path is not None:
         stem = get_safe_stem(image_path)
@@ -213,21 +252,215 @@ def resolve_save_path(
             _save_dir_cache[default_dir] = increment_path(
                 Path(default_dir) / "predict", exist_ok=exist_ok, mkdir=True
             )
-        return _save_dir_cache[default_dir] / filename
+        candidate = _save_dir_cache[default_dir] / filename
+        return _reserve_available_save_path(candidate)
 
+    raw_output_path = str(output_path)
     save_path = Path(output_path)
+    directory_hint = (
+        save_path.is_dir()
+        or raw_output_path.endswith(("/", "\\"))
+        or save_path.suffix == ""
+    )
 
-    if save_path.suffix == "":
+    if directory_hint:
         save_path.mkdir(parents=True, exist_ok=True)
-        return save_path / filename
+        candidate = save_path / filename
     else:
+        if force_ext:
+            save_path = save_path.with_suffix(f".{ext}")
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        return save_path
+        candidate = save_path
+
+    return _reserve_available_save_path(candidate)
+
+
+def reserve_save_directory(path: Union[str, Path]) -> Path:
+    """Create and return a collision-free directory across processes."""
+    path = Path(path)
+    for index in count(1):
+        candidate = path if index == 1 else Path(f"{path}{index}")
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            if os.path.lexists(candidate):
+                continue
+            raise
+        return candidate
+
+
+def _reserve_available_save_path(path: Union[str, Path]) -> Path:
+    """Reserve a collision-free file path across threads and processes.
+
+    A same-directory reservation marker is claimed with atomic ``mkdir``.
+    Unlike a process-local set, that operation arbitrates independent Python
+    processes without creating or truncating the user's final artifact. The
+    first collision uses the established ``name2.ext`` convention from
+    :func:`increment_path`.
+    """
+    path = Path(path)
+    stem_path = path.with_suffix("")
+    suffix = path.suffix
+
+    with _save_path_lock:
+        for index in count(1):
+            candidate = path if index == 1 else Path(f"{stem_path}{index}{suffix}")
+            reservation_key, lock_path = _save_path_reservation_location(candidate)
+            if os.path.lexists(candidate):
+                continue
+
+            try:
+                lock_path.mkdir(mode=0o700)
+            except FileExistsError:
+                continue
+
+            token = secrets.token_hex(16)
+            owner_file = lock_path / _SAVE_PATH_OWNER_FILE
+            try:
+                owner_file.write_text(token, encoding="ascii")
+                lock_stat = os.stat(lock_path, follow_symlinks=False)
+            except BaseException:
+                _remove_new_reservation_marker(lock_path, owner_file)
+                raise
+
+            reservation = _SavePathReservation(
+                lock_path=lock_path,
+                token=token,
+                owner_pid=os.getpid(),
+                identity=(lock_stat.st_dev, lock_stat.st_ino),
+            )
+            _save_path_reservations[reservation_key] = reservation
+
+            # A writer that does not use this allocator may have published the
+            # candidate between our existence check and marker acquisition.
+            # Release only our marker and keep searching rather than overwrite.
+            if os.path.lexists(candidate):
+                _release_save_path_reservation_key(reservation_key)
+                continue
+            return candidate
+
+
+def _save_path_reservation_location(path: Path) -> tuple[str, Path]:
+    """Return the physical-path key and bounded marker path for ``path``."""
+    resolved = path.resolve(strict=False)
+    reservation_key = os.path.normcase(str(resolved))
+    # Conservatively case-fold the marker identity on every platform. This
+    # prevents duplicate claims on case-insensitive macOS volumes without
+    # making platform-specific filesystem guesses. Case-sensitive filesystems
+    # may increment simultaneous case-only variants, which is always safe.
+    marker_key = reservation_key.casefold()
+    digest = hashlib.sha256(os.fsencode(marker_key)).hexdigest()
+    lock_name = f"{_SAVE_PATH_LOCK_PREFIX}{digest}{_SAVE_PATH_LOCK_SUFFIX}"
+    return reservation_key, resolved.parent / lock_name
+
+
+def _remove_new_reservation_marker(lock_path: Path, owner_file: Path) -> None:
+    """Best-effort cleanup for a marker this call has just created."""
+    try:
+        owner_file.unlink(missing_ok=True)
+        lock_path.rmdir()
+    except OSError:
+        # Leaving a reservation marker is safer than deleting an unknown path.
+        pass
+
+
+def _reservation_is_owned(reservation: _SavePathReservation) -> bool:
+    """Return whether the current process still owns this exact marker."""
+    if reservation.owner_pid != os.getpid():
+        return False
+
+    try:
+        marker_stat = os.stat(reservation.lock_path, follow_symlinks=False)
+        if not stat.S_ISDIR(marker_stat.st_mode):
+            return False
+        if (marker_stat.st_dev, marker_stat.st_ino) != reservation.identity:
+            return False
+        owner = reservation.lock_path / _SAVE_PATH_OWNER_FILE
+        return secrets.compare_digest(
+            owner.read_text(encoding="ascii"), reservation.token
+        )
+    except (OSError, UnicodeError):
+        return False
+
+
+def _release_save_path_reservation_key(reservation_key: str) -> bool:
+    """Release one owned marker without ever unlinking the output artifact."""
+    with _save_path_lock:
+        reservation = _save_path_reservations.get(reservation_key)
+        if reservation is None or not _reservation_is_owned(reservation):
+            return False
+
+        # Move the deterministic marker aside first. A new allocator can then
+        # claim the deterministic name, while cleanup operates only on our
+        # token-specific tombstone and cannot remove the new reservation.
+        tombstone = reservation.lock_path.with_name(
+            f"{reservation.lock_path.name}.{reservation.token}.cleanup"
+        )
+        try:
+            reservation.lock_path.rename(tombstone)
+        except OSError:
+            return False
+
+        _save_path_reservations.pop(reservation_key, None)
+        try:
+            (tombstone / _SAVE_PATH_OWNER_FILE).unlink(missing_ok=True)
+            tombstone.rmdir()
+        except OSError:
+            # A token-specific tombstone no longer blocks allocations. Avoid
+            # recursive deletion because unexpected contents are not ours.
+            pass
+        return True
+
+
+def release_save_path_reservation(path: Union[str, Path]) -> bool:
+    """Release this process's reservation marker for ``path``.
+
+    The final artifact is never deleted. Ownership is checked using the
+    creating PID, marker identity, and random token before the marker is moved,
+    so a forked child or another process cannot release the owner's claim.
+    """
+    try:
+        reservation_key, _ = _save_path_reservation_location(Path(path))
+    except (OSError, RuntimeError):
+        return False
+    return _release_save_path_reservation_key(reservation_key)
+
+
+@contextmanager
+def save_path_write_guard(path: Union[str, Path]) -> Iterator[None]:
+    """Release an allocated save-path reservation after a write attempt."""
+    try:
+        yield
+    finally:
+        # Releasing removes only this process's owned marker. A completed or
+        # partially written artifact is never deleted.
+        release_save_path_reservation(path)
+
+
+def _cleanup_save_path_reservations() -> None:
+    """Release markers still owned by this process during orderly shutdown."""
+    with _save_path_lock:
+        reservation_keys = tuple(_save_path_reservations)
+    for reservation_key in reservation_keys:
+        _release_save_path_reservation_key(reservation_key)
+
+
+def _reset_save_path_state_after_fork() -> None:
+    """Prevent a child process from inheriting its parent's local ownership."""
+    global _save_path_lock
+    _save_path_reservations.clear()
+    _save_path_lock = RLock()
+
+
+atexit.register(_cleanup_save_path_reservations)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_save_path_state_after_fork)
 
 
 def log_saved_result(result, save_path: Union[str, Path]) -> str:
     """Attach and log the path where an inference result was saved."""
     saved_path = str(save_path)
+    release_save_path_reservation(save_path)
     result.saved_path = saved_path
     logger.info("Results saved to %s", saved_path)
     return saved_path
@@ -256,9 +489,34 @@ def get_slice_bboxes(
     Returns:
         List of (x1, y1, x2, y2) tuples representing tile coordinates.
     """
+    for name, value in (
+        ("image_width", image_width),
+        ("image_height", image_height),
+        ("slice_size", slice_size),
+    ):
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise TypeError(f"{name} must be an integer, got {type(value).__name__}.")
+        if int(value) <= 0:
+            raise ValueError(f"{name} must be positive, got {value!r}.")
+    if isinstance(overlap_ratio, bool) or not isinstance(overlap_ratio, Real):
+        raise TypeError(
+            "overlap_ratio must be a real number, "
+            f"got {type(overlap_ratio).__name__}."
+        )
+    overlap_ratio = float(overlap_ratio)
+    if not math.isfinite(overlap_ratio) or not 0.0 <= overlap_ratio < 1.0:
+        raise ValueError(
+            "overlap_ratio must be finite and in [0, 1), "
+            f"got {overlap_ratio!r}."
+        )
+
     slices = []
     overlap = int(slice_size * overlap_ratio)
     step = slice_size - overlap
+    if step <= 0:
+        raise ValueError(
+            "Tile step must be positive; reduce overlap_ratio or increase slice_size."
+        )
 
     y = 0
     while y < image_height:

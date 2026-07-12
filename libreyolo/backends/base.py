@@ -27,16 +27,28 @@ from ..models.yolonas.utils import (
 )
 from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
-from ..utils.drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb
+from ..utils.drawing import (
+    draw_boxes,
+    draw_depth_map,
+    draw_gaze_arrows,
+    draw_keypoints,
+    draw_masks,
+    draw_obb,
+    draw_ocr_regions,
+    draw_panoptic,
+    draw_points,
+    draw_semantic_mask,
+)
 from ..utils.general import (
     COCO_CLASSES,
     get_safe_stem,
     log_saved_result,
     resolve_save_path,
+    save_path_write_guard,
 )
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
-from ..utils.predict_args import normalize_predict_kwargs
+from ..utils.predict_args import normalize_predict_kwargs, validate_predict_inputs
 from ..utils.results import (
     Boxes,
     DepthMap,
@@ -2083,6 +2095,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     @staticmethod
@@ -2123,6 +2136,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     def _parse_semantic_output(
@@ -2182,6 +2196,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     @staticmethod
@@ -2224,6 +2239,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     def _build_gaze_result(
@@ -2266,6 +2282,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     def _build_point_result(
@@ -2304,6 +2321,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     def _build_restore_result(
@@ -2324,6 +2342,7 @@ class BaseBackend(ABC):
             restore_scale=scale,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     def _build_result(
@@ -2343,10 +2362,32 @@ class BaseBackend(ABC):
     ) -> Results:
         """Apply family-appropriate suppression/max_det/filtering and wrap."""
         if len(boxes) == 0:
+            masks_obj = None
+            if masks is not None:
+                masks_array = np.asarray(masks)
+                if masks_array.size == 0 and masks_array.ndim != 3:
+                    masks_array = np.zeros((0, *orig_shape), dtype=bool)
+                masks_obj = Masks(
+                    torch.as_tensor(masks_array).bool(),
+                    orig_shape,
+                )
+            elif self.task == "segment":
+                masks_obj = Masks(
+                    torch.zeros((0, *orig_shape), dtype=torch.bool),
+                    orig_shape,
+                )
+
             keypoints_obj = None
             if keypoints is not None:
+                keypoints_array = np.asarray(keypoints)
+                if keypoints_array.size == 0 and keypoints_array.ndim != 3:
+                    num_keypoints = int(getattr(self, "num_keypoints", 0) or 0)
+                    keypoint_dim = int(getattr(self, "keypoint_dim", 3) or 3)
+                    keypoints_array = np.zeros(
+                        (0, num_keypoints, keypoint_dim), dtype=np.float32
+                    )
                 keypoints_obj = Keypoints(
-                    torch.as_tensor(keypoints, dtype=torch.float32),
+                    torch.as_tensor(keypoints_array, dtype=torch.float32),
                     orig_shape,
                 )
             return Results(
@@ -2358,10 +2399,12 @@ class BaseBackend(ABC):
                 obb=OBB(torch.zeros((0, 7), dtype=torch.float32), orig_shape)
                 if self.task == "obb"
                 else None,
+                masks=masks_obj,
                 keypoints=keypoints_obj,
                 orig_shape=orig_shape,
                 path=str(image_path) if image_path else None,
                 names=self.names,
+                task=self.task,
             )
 
         if obb is None and not _is_nms_free_family(self.model_family):
@@ -2424,13 +2467,25 @@ class BaseBackend(ABC):
                 keypoints = keypoints[cls_mask.numpy()]
 
         masks_obj = None
-        if masks is not None and len(masks) > 0:
-            masks_obj = Masks(torch.from_numpy(masks).bool(), orig_shape=orig_shape)
+        if masks is not None:
+            masks_array = np.asarray(masks)
+            if masks_array.size == 0 and masks_array.ndim != 3:
+                masks_array = np.zeros((0, *orig_shape), dtype=bool)
+            masks_obj = Masks(
+                torch.as_tensor(masks_array).bool(), orig_shape=orig_shape
+            )
 
         keypoints_obj = None
         if keypoints is not None:
+            keypoints_array = np.asarray(keypoints)
+            if keypoints_array.size == 0 and keypoints_array.ndim != 3:
+                num_keypoints = int(getattr(self, "num_keypoints", 0) or 0)
+                keypoint_dim = int(getattr(self, "keypoint_dim", 3) or 3)
+                keypoints_array = np.zeros(
+                    (0, num_keypoints, keypoint_dim), dtype=np.float32
+                )
             keypoints_obj = Keypoints(
-                torch.as_tensor(keypoints, dtype=torch.float32),
+                torch.as_tensor(keypoints_array, dtype=torch.float32),
                 orig_shape,
             )
 
@@ -2446,6 +2501,7 @@ class BaseBackend(ABC):
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
+            task=self.task,
         )
 
     # =========================================================================
@@ -2454,23 +2510,101 @@ class BaseBackend(ABC):
 
     def _save_annotated(self, result, original_img, image_path, output_path):
         """Save annotated image to disk."""
-        annotated_img = original_img
+        is_matte = result.boxes is None and getattr(result, "matte", None) is not None
+        ext = Path(str(image_path).split("?", 1)[0]).suffix.lstrip(".")
+        if not ext:
+            ext = "jpg"
+        if is_matte:
+            ext = "png"
+
+        if output_path:
+            final_path = resolve_save_path(
+                output_path,
+                image_path,
+                ext=ext,
+                force_ext=is_matte,
+            )
+        else:
+            stem = get_safe_stem(image_path) if image_path else "inference"
+            model_tag = Path(self.model_path).stem
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            candidate = (
+                Path("runs/detections") / f"{stem}_{model_tag}_{timestamp}.{ext}"
+            )
+            final_path = resolve_save_path(
+                candidate,
+                image_path,
+                ext=ext,
+                force_ext=is_matte,
+            )
+
+        with save_path_write_guard(final_path):
+            self._write_annotated_result(
+                result,
+                original_img,
+                final_path,
+                is_matte=is_matte,
+            )
+
+    def _write_annotated_result(
+        self, result, original_img, final_path: Path, *, is_matte: bool
+    ) -> None:
+        """Render and write one already-reserved backend result path."""
+        annotated_img = original_img.copy()
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
             annotated_img = Image.fromarray(result.restored.array, mode="RGB")
         elif result.boxes is None and getattr(result, "depth_map", None) is not None:
-            from ..utils.drawing import draw_depth_map
-
             depth_data = result.depth_map.data
             if isinstance(depth_data, torch.Tensor):
                 depth_data = depth_data.cpu().numpy()
             annotated_img = draw_depth_map(original_img, depth_data)
-        elif len(result) > 0:
+        elif result.boxes is None and getattr(result, "semantic_mask", None) is not None:
+            semantic_data = result.semantic_mask.data
+            if isinstance(semantic_data, torch.Tensor):
+                semantic_data = semantic_data.cpu().numpy()
+            annotated_img = draw_semantic_mask(original_img, semantic_data)
+        elif result.boxes is None and getattr(result, "panoptic", None) is not None:
+            panoptic_data = result.panoptic.data
+            if isinstance(panoptic_data, torch.Tensor):
+                panoptic_data = panoptic_data.cpu().numpy()
+            annotated_img = draw_panoptic(
+                original_img,
+                panoptic_data,
+                result.panoptic.segments_info,
+                class_names=result.names,
+            )
+        elif is_matte:
+            result.save(final_path, image=original_img)
+            log_saved_result(result, final_path)
+            return
+        elif result.boxes is None and getattr(result, "ocr", None) is not None:
+            if len(result.ocr) > 0:
+                ocr_data = result.ocr.numpy()
+                annotated_img = draw_ocr_regions(
+                    original_img,
+                    ocr_data.data,
+                    ocr_data.texts,
+                    ocr_data.conf,
+                )
+        elif result.boxes is None and getattr(result, "points", None) is not None:
+            if len(result.points) > 0:
+                annotated_img = draw_points(
+                    original_img,
+                    result.points.xy.tolist(),
+                    result.points.conf.tolist(),
+                    result.points.cls.tolist(),
+                    class_names=result.names,
+                )
+        elif result.boxes is not None and len(result.boxes) > 0:
             if result.masks is not None:
+                masks_data = result.masks.data
+                if isinstance(masks_data, torch.Tensor):
+                    masks_data = masks_data.cpu().numpy()
                 annotated_img = draw_masks(
                     annotated_img,
-                    result.masks.data.numpy(),
+                    masks_data,
                     result.boxes.cls.tolist(),
                 )
             if result.obb is not None:
@@ -2494,19 +2628,15 @@ class BaseBackend(ABC):
                 if isinstance(kpts_np, torch.Tensor):
                     kpts_np = kpts_np.cpu().numpy()
                 annotated_img = draw_keypoints(annotated_img, kpts_np)
-
-        ext = Path(image_path).suffix.lstrip(".") if image_path else "jpg"
-        if not ext:
-            ext = "jpg"
-        if output_path:
-            final_path = resolve_save_path(output_path, image_path, ext=ext)
-        else:
-            stem = get_safe_stem(image_path) if image_path else "inference"
-            model_tag = Path(self.model_path).stem
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            save_dir = Path("runs/detections")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            final_path = save_dir / f"{stem}_{model_tag}_{timestamp}.{ext}"
+            if result.gaze is not None:
+                boxes_np = result.boxes.numpy()
+                gaze_np = result.gaze.numpy()
+                annotated_img = draw_gaze_arrows(
+                    annotated_img,
+                    boxes_np.xyxy.tolist(),
+                    gaze_np.pitch.tolist(),
+                    gaze_np.yaw.tolist(),
+                )
 
         annotated_img.save(final_path)
         log_saved_result(result, final_path)
@@ -3264,7 +3394,9 @@ class BaseBackend(ABC):
 
     def __call__(
         self,
-        source: Union[str, Path, Image.Image, np.ndarray, list, tuple, None] = None,
+        source: Union[
+            str, Path, Image.Image, np.ndarray, torch.Tensor, list, tuple, None
+        ] = None,
         *,
         conf: float = 0.25,
         iou: float = 0.45,
@@ -3284,6 +3416,15 @@ class BaseBackend(ABC):
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """Run inference on an image, list of images, directory, or video."""
         normalize_predict_kwargs(kwargs)
+        classes = validate_predict_inputs(
+            names=getattr(self, "names", None),
+            conf=conf,
+            iou=iou,
+            classes=classes,
+            max_det=max_det,
+            batch=batch,
+            vid_stride=vid_stride,
+        )
         if device not in (None, "", "auto", self.device):
             logger.warning(
                 "Backend was loaded on device=%s; predict(device=%s) is ignored. "
@@ -3291,6 +3432,20 @@ class BaseBackend(ABC):
                 self.device,
                 device,
                 device,
+            )
+
+        if isinstance(source, (np.ndarray, torch.Tensor)) and source.ndim == 4:
+            return self._process_in_batches(
+                [source[index] for index in range(source.shape[0])],
+                batch=batch,
+                save=save,
+                output_path=output_path,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                color_format=color_format,
             )
 
         # Handle video input

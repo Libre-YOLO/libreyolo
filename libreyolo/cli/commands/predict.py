@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 
 from ..command_utils import (
+    exit_stage_error,
     exit_with_error,
     get_loaded_model_family,
     get_loaded_model_input_size,
@@ -20,6 +21,38 @@ from ..output import OutputHandler
 
 
 _NATIVE_ONLY_PREDICT_KWARGS = {"tiling", "overlap_ratio", "output_file_format"}
+
+
+def _collect_saved_paths(results: list) -> list[str]:
+    """Collect unique resolved artifact paths in result order."""
+    saved_paths: list[str] = []
+    seen: set[str] = set()
+    for result in results:
+        saved_path = getattr(result, "saved_path", None)
+        if saved_path is None:
+            continue
+        path_str = str(saved_path)
+        if path_str and path_str not in seen:
+            saved_paths.append(path_str)
+            seen.add(path_str)
+    return saved_paths
+
+
+def _attach_result_metadata(payload: dict, result) -> None:
+    """Attach task-independent provenance and artifact metadata."""
+    payload["task"] = str(getattr(result, "task", "detect"))
+    for key in ("saved_path", "tiles_path", "grid_path"):
+        value = getattr(result, key, None)
+        if value is not None:
+            payload[key] = str(value)
+    frame_idx = getattr(result, "frame_idx", None)
+    if frame_idx is not None:
+        payload["frame_idx"] = int(frame_idx)
+    if getattr(result, "tiled", False):
+        payload["tiled"] = True
+        num_tiles = getattr(result, "num_tiles", None)
+        if num_tiles is not None:
+            payload["num_tiles"] = int(num_tiles)
 
 
 def _call_accepts_kwarg(callable_obj, name: str) -> bool:
@@ -152,10 +185,20 @@ def predict_cmd(
     out = OutputHandler(json_mode=json_output, quiet=quiet)
     user_provided = get_user_provided_params()
 
-    # Validate source exists
-    source_path = Path(source)
-    if not source_path.exists() and not source.startswith(("http://", "https://")):
-        exit_with_error(out, "source_not_found", f"Source not found: {source}")
+    # Validate local and remote sources through the same boundary as Python API
+    # image loading. Validation is syntax/existence-only; remote bytes are read
+    # later by the model pipeline.
+    from libreyolo.utils.image_loader import ImageLoader
+
+    try:
+        ImageLoader.validate_source(source)
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        exit_with_error(
+            out,
+            "source_not_found",
+            str(exc),
+            context={"stage": "source_validation", "source": source},
+        )
 
     # Resolve CLI model name (yolox-s → LibreYOLOXs.pt)
     model_path = resolve_model_or_exit(out, model)
@@ -246,13 +289,24 @@ def predict_cmd(
     )
     if half and is_exported_backend:
         predict_kwargs["half"] = half
-    results = loaded_model(source, **predict_kwargs)
+    try:
+        with out.library_output():
+            results = loaded_model(source, **predict_kwargs)
+    except Exception as exc:
+        exit_stage_error(
+            out,
+            stage="inference/save" if save else "inference",
+            detail=exc,
+            code="inference_failed",
+            context={"model": model, "source": source},
+        )
     elapsed = time.time() - t0
 
     # Normalize to list
     if not isinstance(results, list):
         results = [results]
     total_images = len(results)
+    saved_paths = _collect_saved_paths(results) if save else []
 
     # Format output
     result_list = []
@@ -344,9 +398,35 @@ def predict_cmd(
                     f"depth min={depth_map.min:.4g} "
                     f"max={depth_map.max:.4g} mean={depth_map.mean:.4g}"
                 )
+            elif getattr(r, "semantic_mask", None) is not None:
+                semantic_rows = r.summary()
+                result_data["semantic"] = {
+                    "shape": list(r.semantic_mask.data.shape),
+                    "classes": semantic_rows,
+                }
+                n = len(semantic_rows)
+                summary = f"semantic map, {n} class{'es' if n != 1 else ''}"
+            elif getattr(r, "panoptic", None) is not None:
+                panoptic_rows = r.summary()
+                result_data["panoptic"] = {
+                    "shape": list(r.panoptic.data.shape),
+                    "segments": panoptic_rows,
+                }
+                n = len(panoptic_rows)
+                summary = f"panoptic map, {n} segment{'s' if n != 1 else ''}"
+            elif getattr(r, "matte", None) is not None:
+                matte_rows = r.summary()
+                result_data["matte"] = matte_rows[0] if matte_rows else None
+                coverage = (
+                    float(matte_rows[0]["coverage"])
+                    if matte_rows and "coverage" in matte_rows[0]
+                    else 0.0
+                )
+                summary = f"matte coverage={coverage:.4f}"
             else:
                 summary = "(no detections)"
 
+            _attach_result_metadata(result_data, r)
             result_list.append(result_data)
             human_lines.append(
                 f"image {idx}/{total_images} {img_name}: "
@@ -426,6 +506,7 @@ def predict_cmd(
                 "count": len(r.masks),
                 "shape": list(r.masks.data.shape),
             }
+        _attach_result_metadata(result_data, r)
         result_list.append(result_data)
         # Human summary line:
         # image 1/3 parkour.jpg: 640x480 3 persons, 2 skateboards, 45.2ms
@@ -452,12 +533,24 @@ def predict_cmd(
         "device": str(loaded_model.device),
         "results": result_list,
     }
-    if save and output_path:
-        data["output_path"] = output_path
+    if save:
+        data["saved_paths"] = saved_paths
+        if len(saved_paths) == 1:
+            data["output_path"] = saved_paths[0]
+        elif output_path:
+            # Preserve the legacy aggregate field for multi-image callers;
+            # ``saved_paths`` is the authoritative per-artifact contract.
+            data["output_path"] = output_path
+        if output_path and (len(saved_paths) != 1 or saved_paths[0] != output_path):
+            data["requested_output_path"] = output_path
 
     if not json_output:
-        if save and output_path:
-            human_lines.append(f"Results saved to {output_path}")
+        if saved_paths:
+            if len(saved_paths) == 1:
+                human_lines.append(f"Result saved to {saved_paths[0]}")
+            else:
+                human_lines.append("Results saved to:")
+                human_lines.extend(f"  {path}" for path in saved_paths)
         data["_human_text"] = "\n".join(human_lines)
 
     out.result(data)

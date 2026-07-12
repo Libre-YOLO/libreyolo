@@ -1,7 +1,7 @@
 """Structured error handling for the LibreYOLO CLI."""
 
 import difflib
-from typing import Optional
+from typing import Any, Optional
 
 
 # Exit code mapping: error category → exit code
@@ -12,6 +12,7 @@ EXIT_CODES: dict[str, int] = {
     "training_diverged": 1,
     "download_failed": 1,
     "io_error": 1,
+    "inference_failed": 1,
     # Usage errors
     "config_unknown_key": 2,
     "config_type_error": 2,
@@ -42,12 +43,17 @@ class CLIError(Exception):
     """Structured CLI error with code, message, and optional suggestion."""
 
     def __init__(
-        self, code: str, message: str, suggestion: Optional[str] = None
+        self,
+        code: str,
+        message: str,
+        suggestion: Optional[str] = None,
+        context: Optional[dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.suggestion = suggestion
+        self.context = dict(context or {})
         self.exit_code = EXIT_CODES.get(code, 1)
 
 

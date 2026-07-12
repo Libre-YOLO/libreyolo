@@ -1,51 +1,70 @@
 """Libre YOLO — open source YOLO library with MIT license."""
 
+import logging as _logging
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path as _Path
 
+
+class _OptionalXFormersImportFilter(_logging.Filter):
+    """Suppress the duplicated optional-xFormers import warning only."""
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        return record.getMessage() != "xFormers not available"
+
+
+# Two bundled DINOv2 modules emit the same warning during eager import even
+# though both have a supported non-xFormers fallback. Install an exact-message
+# filter before importing the model registry; other DINOv2 diagnostics remain.
+_dinov2_logger = _logging.getLogger("dinov2")
+_optional_xformers_filter = _OptionalXFormersImportFilter()
+_dinov2_logger.addFilter(_optional_xformers_filter)
+
 # Core API — always available
-from .models import (
-    LibreYOLO,
-    LibreYOLOX,
-    LibreYOLO9,
-    LibreYOLO9E2E,
-    LibreYOLO9P2,
-    LibreYOLONAS,
-    LibreDFINE,
-    LibreDEIM,
-    LibreDEIMv2,
-    LibreEC,
-    LibrePICODET,
-    LibreRTDETR,
-    LibreRTDETRv2,
-    LibreRTDETRv4,
-    LibreRTMDet,
-    LibreYOLO3,
-    LibreYOLO4,
-    LibreYOLO2,
-    LibreYOLO1,
-    LibreYOLO7,
-    LibreL2CS,
-    LibreFOMO,
-    LibreDepthAnythingV2,
-    LibreZipDepth,
-    LibreDepthAnything3,
-    LibreNAFNet,
-    LibreBiRefNet,
-    LibreRealESRGAN,
-    LibreSwinIR,
-    LibreEoMT,
-    LibrePIDNet,
-    LibreSegformer,
-    LibreMobileNetV4,
-    LibreConvNeXt,
-    LibreEfficientNetV2,
-    LibreResNet,
-    LibreCLIP,
-    LibreSigLIP2,
-    LibrePPOCR,
-)
-from .utils.results import (
+try:
+    from .models import (  # noqa: E402  (filter precedes eager imports)
+        LibreYOLO,
+        LibreYOLOX,
+        LibreYOLO9,
+        LibreYOLO9E2E,
+        LibreYOLO9P2,
+        LibreYOLONAS,
+        LibreDFINE,
+        LibreDEIM,
+        LibreDEIMv2,
+        LibreEC,
+        LibrePICODET,
+        LibreRTDETR,
+        LibreRTDETRv2,
+        LibreRTDETRv4,
+        LibreRTMDet,
+        LibreYOLO3,
+        LibreYOLO4,
+        LibreYOLO2,
+        LibreYOLO1,
+        LibreYOLO7,
+        LibreL2CS,
+        LibreFOMO,
+        LibreDepthAnythingV2,
+        LibreZipDepth,
+        LibreDepthAnything3,
+        LibreNAFNet,
+        LibreBiRefNet,
+        LibreRealESRGAN,
+        LibreSwinIR,
+        LibreEoMT,
+        LibrePIDNet,
+        LibreSegformer,
+        LibreMobileNetV4,
+        LibreConvNeXt,
+        LibreEfficientNetV2,
+        LibreResNet,
+        LibreCLIP,
+        LibreSigLIP2,
+        LibrePPOCR,
+    )
+finally:
+    _dinov2_logger.removeFilter(_optional_xformers_filter)
+from .utils.results import (  # noqa: E402  (models imported above)
     Results,
     Boxes,
     Masks,

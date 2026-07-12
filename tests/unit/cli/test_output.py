@@ -1,6 +1,10 @@
 """Tests for CLI output routing."""
 
 import json
+import logging
+import sys
+import warnings
+
 import pytest
 
 from libreyolo.cli.errors import CLIError
@@ -76,3 +80,38 @@ class TestErrorOutput:
         captured = capsys.readouterr()
         # Nothing should go to stdout in human error mode
         assert captured.out == ""
+
+
+def test_quiet_output_handler_suppresses_progress_warning_and_library_stdout(
+    capsys,
+):
+    out = OutputHandler(json_mode=True, quiet=True)
+
+    out.progress("progress")
+    out.warning("warning")
+    with out.library_output():
+        print("direct library print")
+        print("direct library stderr", file=sys.stderr)
+        warnings.warn("library warning", UserWarning)
+        logging.getLogger("test.quiet.library").error("library log")
+    out.result({"ok": True})
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"ok": True, "schema_version": 1}
+    assert captured.err == ""
+
+
+def test_json_error_includes_structured_context(capsys):
+    out = OutputHandler(json_mode=True, quiet=True)
+    err = CLIError(
+        "inference_failed",
+        "failed",
+        context={"stage": "inference", "model": "m.pt", "source": "x.jpg"},
+    )
+
+    out.error(err)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stage"] == "inference"
+    assert payload["model"] == "m.pt"
+    assert payload["source"] == "x.jpg"

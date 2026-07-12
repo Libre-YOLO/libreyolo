@@ -133,6 +133,44 @@ def test_results_matte_cutout_and_save(tmp_path):
     assert saved.mode == "RGBA" and saved.size == (w, h)
 
 
+def test_native_save_reports_forced_png_path(tmp_path):
+    from libreyolo.models.base.inference import InferenceRunner
+    from libreyolo.utils.results import Matte, Results
+
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "matte"},
+        matte=Matte(torch.ones((8, 8))),
+    )
+    requested = tmp_path / "cutout.jpg"
+    runner = InferenceRunner(object())
+    resolved = runner._resolve_result_save_path(
+        result,
+        requested,
+        None,
+        "jpg",
+    )
+
+    runner._save_annotated_image(
+        result,
+        Image.new("RGB", (8, 8), color="red"),
+        resolved,
+    )
+
+    actual = tmp_path / "cutout.png"
+    assert not requested.exists()
+    assert actual.exists()
+    assert Image.open(actual).mode == "RGBA"
+    assert result.saved_path == str(actual)
+
+    # The unused requested JPG was never reserved; a later ordinary output can
+    # still claim the exact name instead of being bumped to cutout2.jpg.
+    from libreyolo.utils.general import resolve_save_path
+
+    assert resolve_save_path(requested, "ordinary.jpg") == requested
+
+
 def test_results_matte_summary_and_len():
     from libreyolo.utils.results import Matte, Results
 

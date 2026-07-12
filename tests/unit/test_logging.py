@@ -66,3 +66,12 @@ def test_ensure_default_logging_respects_existing_root_handlers():
         logger.propagate = old_propagate
         root_logger.handlers.clear()
         root_logger.handlers.extend(old_root_handlers)
+
+
+def test_dinov2_import_warning_filter_is_not_globally_attached(caplog):
+    logger = logging.getLogger("dinov2")
+
+    with caplog.at_level(logging.WARNING, logger="dinov2"):
+        logger.warning("xFormers not available")
+
+    assert "xFormers not available" in caplog.messages
