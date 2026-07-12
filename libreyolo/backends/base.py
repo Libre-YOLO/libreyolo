@@ -377,7 +377,7 @@ def _logsumexp_np(values: np.ndarray, axis: int) -> np.ndarray:
 
 
 def _rfdetr_keypoint_log_mean_trace_np(active_keypoints: np.ndarray) -> np.ndarray:
-    finite = np.isfinite(active_keypoints[..., [2, 4, 5, 6]]).all(axis=-1)
+    finite = np.isfinite(active_keypoints[..., [0, 1, 2, 4, 5, 6]]).all(axis=-1)
     safe_keypoints = np.where(finite[..., None], active_keypoints, 0.0)
     log_l11 = safe_keypoints[..., 4]
     l21 = safe_keypoints[..., 5]
@@ -1328,7 +1328,8 @@ class BaseBackend(ABC):
             keypoints_all = np.asarray(all_outputs[1][0], dtype=np.float32)
 
         if self.model_family == "yolo9_e2e" and self.task == "detect":
-            scores = np.where(np.isfinite(scores), scores, -np.inf)
+            valid_geometry = np.isfinite(boxes_input_all).all(axis=1, keepdims=True)
+            scores = np.where(np.isfinite(scores) & valid_geometry, scores, -np.inf)
             topk_anchors = min(max_det, scores.shape[0])
             if topk_anchors == 0 or scores.shape[-1] == 0:
                 return (
@@ -1849,7 +1850,18 @@ class BaseBackend(ABC):
             else:
                 raw_masks = all_outputs[2][0]
 
+        finite_logits = np.isfinite(logits)
         scores = 1.0 / (1.0 + np.exp(-logits.astype(np.float64))).astype(np.float32)
+        finite_geometry = np.isfinite(boxes_all).all(axis=-1)
+        if raw_angles is not None:
+            finite_geometry &= np.isfinite(raw_angles).reshape(len(boxes_all), -1).all(
+                axis=1
+            )
+        scores = np.where(
+            finite_logits & finite_geometry[:, None],
+            scores,
+            -np.inf,
+        )
         num_queries, num_classes = scores.shape
         if raw_keypoint_output is not None:
             raw_keypoints = self._normalize_rfdetr_keypoint_output(
@@ -2091,13 +2103,27 @@ class BaseBackend(ABC):
         keypoints_out = None
         if keypoints_raw is not None:
             keypoints_out = np.asarray(keypoints_raw, dtype=np.float32).copy()
+            public_width = min(keypoints_out.shape[-1], 3)
+            finite_keypoints = np.isfinite(
+                keypoints_out[..., :public_width]
+            ).all(axis=-1)
+            keypoints_out = np.where(
+                finite_keypoints[..., None],
+                keypoints_out,
+                np.zeros_like(keypoints_out),
+            )
             keypoints_out[..., 0] *= float(orig_w)
             keypoints_out[..., 1] *= float(orig_h)
             if keypoints_out.shape[-1] == 2:
-                visibility = np.ones((*keypoints_out.shape[:-1], 1), dtype=np.float32)
+                visibility = finite_keypoints[..., None].astype(np.float32)
                 keypoints_out = np.concatenate([keypoints_out, visibility], axis=-1)
             else:
                 keypoints_out[..., 2] = 1.0 / (1.0 + np.exp(-keypoints_out[..., 2]))
+                keypoints_out[..., 2] = np.where(
+                    finite_keypoints,
+                    keypoints_out[..., 2],
+                    0.0,
+                )
                 keypoints_out = keypoints_out[..., :3]
             if grouppose_active_keypoints is not None:
                 keypoints_out[~grouppose_active_keypoints] = 0.0

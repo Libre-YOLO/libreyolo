@@ -32,7 +32,7 @@ def _keypoint_log_mean_trace(active_keypoints: torch.Tensor) -> torch.Tensor:
     log space for numerical stability. Supports a leading batch dimension so it
     can be called once per keypoint class group.
     """
-    finite = torch.isfinite(active_keypoints[..., [2, 4, 5, 6]]).all(dim=-1)
+    finite = torch.isfinite(active_keypoints[..., [0, 1, 2, 4, 5, 6]]).all(dim=-1)
     safe_keypoints = torch.where(
         finite.unsqueeze(-1), active_keypoints, torch.zeros_like(active_keypoints)
     )
@@ -101,8 +101,8 @@ def _postprocess_grouppose_keypoints(
     )
 
     output_keypoints = keypoints_i.new_zeros((keypoints_i.shape[0], max_num_keypoints, 3))
-    output_keypoint_precision = keypoints_i.new_full(
-        (keypoints_i.shape[0], max_num_keypoints, 3), float("nan")
+    output_keypoint_precision = keypoints_i.new_zeros(
+        (keypoints_i.shape[0], max_num_keypoints, 3)
     )
 
     if num_keypoint_classes == 0 or max_num_keypoints == 0:
@@ -155,11 +155,30 @@ def _postprocess_grouppose_keypoints(
             continue
         out_idx = valid_indices[class_mask]
         active_keypoints = selected_keypoints[class_mask, :num_active]
-        output_keypoints[out_idx, :num_active, 0] = active_keypoints[..., 0] * img_w
-        output_keypoints[out_idx, :num_active, 1] = active_keypoints[..., 1] * img_h
-        output_keypoints[out_idx, :num_active, 2] = active_keypoints[..., 2].sigmoid()
+        valid_public = torch.isfinite(active_keypoints[..., :3]).all(dim=-1)
+        output_keypoints[out_idx, :num_active, 0] = torch.where(
+            valid_public,
+            active_keypoints[..., 0] * img_w,
+            torch.zeros_like(active_keypoints[..., 0]),
+        )
+        output_keypoints[out_idx, :num_active, 1] = torch.where(
+            valid_public,
+            active_keypoints[..., 1] * img_h,
+            torch.zeros_like(active_keypoints[..., 1]),
+        )
+        output_keypoints[out_idx, :num_active, 2] = torch.where(
+            valid_public,
+            active_keypoints[..., 2].sigmoid(),
+            torch.zeros_like(active_keypoints[..., 2]),
+        )
         if has_precision:
-            output_keypoint_precision[out_idx, :num_active] = active_keypoints[..., 4:7]
+            precision = active_keypoints[..., 4:7]
+            valid_precision = valid_public & torch.isfinite(precision).all(dim=-1)
+            output_keypoint_precision[out_idx, :num_active] = torch.where(
+                valid_precision.unsqueeze(-1),
+                precision,
+                torch.zeros_like(precision),
+            )
 
     return scores_i, output_keypoints, output_keypoint_precision
 
@@ -178,9 +197,22 @@ def _postprocess_classic_keypoints(
         ),
     ).clone()
     img_h, img_w = target_size
-    keypoints_i[..., 0] = keypoints_i[..., 0] * img_w
-    keypoints_i[..., 1] = keypoints_i[..., 1] * img_h
-    keypoints_i[..., 2] = keypoints_i[..., 2].sigmoid()
+    valid_public = torch.isfinite(keypoints_i[..., :3]).all(dim=-1)
+    keypoints_i[..., 0] = torch.where(
+        valid_public,
+        keypoints_i[..., 0] * img_w,
+        torch.zeros_like(keypoints_i[..., 0]),
+    )
+    keypoints_i[..., 1] = torch.where(
+        valid_public,
+        keypoints_i[..., 1] * img_h,
+        torch.zeros_like(keypoints_i[..., 1]),
+    )
+    keypoints_i[..., 2] = torch.where(
+        valid_public,
+        keypoints_i[..., 2].sigmoid(),
+        torch.zeros_like(keypoints_i[..., 2]),
+    )
     return keypoints_i
 
 
@@ -268,7 +300,17 @@ def postprocess(
         raise ValueError("RF-DETR class_id_map entries must be public IDs or -1.")
     valid_internal_classes = (class_map >= 0).nonzero(as_tuple=True)[0]
     num_selectable_classes = int(valid_internal_classes.numel())
+    candidate_logits = out_logits.index_select(2, valid_internal_classes)
     candidate_prob = prob.index_select(2, valid_internal_classes)
+    valid_query_geometry = torch.isfinite(out_bbox).all(dim=-1)
+    if out_angles is not None:
+        valid_query_geometry &= torch.isfinite(out_angles).flatten(2).all(dim=-1)
+    valid_candidates = torch.isfinite(candidate_logits) & valid_query_geometry.unsqueeze(-1)
+    candidate_prob = torch.where(
+        valid_candidates,
+        candidate_prob,
+        torch.full_like(candidate_prob, -torch.inf),
+    )
 
     k = min(max(int(num_select), 0), out_logits.shape[1] * num_selectable_classes)
     flat_candidate_prob = candidate_prob.reshape(

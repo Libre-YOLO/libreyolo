@@ -460,6 +460,9 @@ class TestKosmosMatchLabel:
         # Kosmos grounds noun phrases ("the boats"); lenient substring still maps.
         assert self._kosmos(["boat"])._match_label("the boats") == 0
 
+    def test_partial_word_does_not_map_to_shorter_class(self):
+        assert self._kosmos(["car"])._match_label("carpet") is None
+
     def test_longest_match_wins_independently_of_vocabulary_order(self):
         assert self._kosmos(["car", "red car"])._match_label("the red car") == 1
         assert self._kosmos(["red car", "car"])._match_label("the red car") == 0

@@ -175,65 +175,63 @@ def compute_l1_keypoint_loss(
     valid_area = torch.isfinite(area) & (area > area_eps)
     pred_xy = selected_pred_keypoints[:, :, :2]
     target_xy = target_keypoints[:, :, :2]
-    finite_pred_xy = torch.isfinite(pred_xy).all(dim=-1)
     finite_target_xy = torch.isfinite(target_xy).all(dim=-1)
-    valid_xy = finite_pred_xy & finite_target_xy
     finite_visibility = torch.isfinite(target_keypoints[:, :, 2])
     safe_visibility = torch.where(
         finite_visibility, target_keypoints[:, :, 2], torch.zeros_like(target_keypoints[:, :, 2])
     )
     valid_visibility = finite_visibility & (safe_visibility > 0)
-    location_loss_mask = keypoints_loss_mask & valid_visibility & valid_xy & valid_area.unsqueeze(1)
+    location_loss_mask = (
+        keypoints_loss_mask
+        & valid_visibility
+        & finite_target_xy
+        & valid_area.unsqueeze(1)
+    )
     location_count = location_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
     valid_count = location_count.clamp(min=1)
     visibility_loss_mask = keypoints_loss_mask & finite_visibility
     visibility_count = visibility_loss_mask.sum(-1).clamp(min=1).to(selected_pred_keypoints.dtype)
     safe_area = torch.where(valid_area, area, torch.ones_like(area))
     safe_area_sqrt = safe_area.sqrt()
-    safe_pred_xy = torch.where(finite_pred_xy.unsqueeze(-1), pred_xy, torch.zeros_like(pred_xy))
     safe_target_xy = torch.where(
         finite_target_xy.unsqueeze(-1), target_xy, torch.zeros_like(target_xy)
     )
 
+    per_keypoint_l1 = F.l1_loss(
+        pred_xy, safe_target_xy, reduction="none"
+    ).sum(-1)
     scaled_masked_l1 = (
-        F.l1_loss(safe_pred_xy, safe_target_xy, reduction="none").sum(-1)
-        * location_loss_mask.to(selected_pred_keypoints.dtype)
+        per_keypoint_l1.masked_fill(~location_loss_mask, 0.0)
         / safe_area_sqrt.unsqueeze(1)
     )
     location_loss = scaled_masked_l1.sum(-1) / valid_count
 
-    findable_loss = (
-        F.binary_cross_entropy_with_logits(
-            selected_pred_keypoints[:, :, 2],
-            (safe_visibility > 0).to(selected_pred_keypoints.dtype),
-            reduction="none",
-        )
-        * visibility_loss_mask.to(selected_pred_keypoints.dtype)
-    ).sum(-1) / visibility_count
+    findable_raw = F.binary_cross_entropy_with_logits(
+        selected_pred_keypoints[:, :, 2],
+        (safe_visibility > 0).to(selected_pred_keypoints.dtype),
+        reduction="none",
+    )
+    findable_loss = findable_raw.masked_fill(~visibility_loss_mask, 0.0).sum(
+        -1
+    ) / visibility_count
 
-    visible_loss = (
-        F.binary_cross_entropy_with_logits(
-            selected_pred_keypoints[:, :, 3],
-            (safe_visibility > 1).to(selected_pred_keypoints.dtype),
-            reduction="none",
-        )
-        * visibility_loss_mask.to(selected_pred_keypoints.dtype)
-    ).sum(-1) / visibility_count
+    visible_raw = F.binary_cross_entropy_with_logits(
+        selected_pred_keypoints[:, :, 3],
+        (safe_visibility > 1).to(selected_pred_keypoints.dtype),
+        reduction="none",
+    )
+    visible_loss = visible_raw.masked_fill(~visibility_loss_mask, 0.0).sum(
+        -1
+    ) / visibility_count
 
-    dxdy = (safe_pred_xy - safe_target_xy).to(torch.float32)
+    dxdy = (pred_xy - safe_target_xy).to(torch.float32)
     dx = dxdy[:, :, 0]
     dy = dxdy[:, :, 1]
 
     raw_log_l11 = selected_pred_keypoints[:, :, 4].to(torch.float32)
     raw_l21 = selected_pred_keypoints[:, :, 5].to(torch.float32)
     raw_log_l22 = selected_pred_keypoints[:, :, 6].to(torch.float32)
-    finite_uncertainty = torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
-    if not finite_uncertainty.all():
-        logger.debug(
-            "NLL loss: %d keypoint(s) with non-finite uncertainty dropped from loss.",
-            (~finite_uncertainty).sum().item(),
-        )
-    gaussian_loss_mask = location_loss_mask & finite_uncertainty
+    gaussian_loss_mask = location_loss_mask
 
     # Intentionally unclamped: the model is expected to learn bounded log-scale values;
     # clamping would mask divergence instead of exposing it during development.
@@ -246,11 +244,9 @@ def compute_l1_keypoint_loss(
     u0 = l11 * dx + l21 * dy
     u1 = l22 * dy
     maha2 = u0 * u0 + u1 * u1
-    gaussian_loss_mask = gaussian_loss_mask & torch.isfinite(u0) & torch.isfinite(u1) & torch.isfinite(maha2)
     gaussian_count = gaussian_loss_mask.sum(-1).to(dtype=selected_pred_keypoints.dtype)
     gaussian_valid_count = gaussian_count.clamp(min=1)
     nll_raw = 0.5 * (maha2 / safe_area.unsqueeze(1)) - (log_l11 + log_l22)
-    nll_raw = torch.nan_to_num(nll_raw, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_raw.dtype).min)
     nll_keypoints = nll_raw.masked_fill(~gaussian_loss_mask, 0.0)
     nll_loss = nll_keypoints.sum(-1) / gaussian_valid_count
     no_valid = gaussian_count <= 0
@@ -269,7 +265,7 @@ def _cdist_bce_with_logits(
         dot = torch.matmul(x, y_float.t())
         return softplus - dot
     elementwise = F.softplus(x).unsqueeze(1) - x.unsqueeze(1) * y_float.unsqueeze(0)
-    return (elementwise * valid.to(dtype=x.dtype).unsqueeze(0)).sum(dim=-1)
+    return elementwise.masked_fill(~valid.unsqueeze(0), 0.0).sum(dim=-1)
 
 
 def compute_keypoint_matching_cost(
@@ -367,7 +363,6 @@ def compute_keypoint_matching_cost(
         scaled_loc = per_kpt_l1.sum(-1)  # (flat_bq, n_targets)
 
         loc_cost = (scaled_loc / nll_denom.unsqueeze(0)).div(area_sqrt.unsqueeze(0))
-        loc_cost = torch.nan_to_num(loc_cost, nan=0.0, posinf=0.0, neginf=0.0)
         cost_l1[:, :, target_indices] = loc_cost.reshape(b, num_queries, n_targets_by_class).to(
             all_pred_keypoints.dtype
         )
@@ -381,22 +376,16 @@ def compute_keypoint_matching_cost(
         l11 = log_l11.exp()  # (flat_bq, num_kpts)
         l22 = log_l22.exp()
 
-        finite_xy = torch.isfinite(pred_xy_flat).all(dim=-1)  # (flat_bq, num_kpts)
-        finite_pred = finite_xy & torch.isfinite(raw_log_l11) & torch.isfinite(raw_l21) & torch.isfinite(raw_log_l22)
-
         dx = diff[..., 0]  # (flat_bq, n_targets, num_kpts)
         dy = diff[..., 1]
         u0 = l11.unsqueeze(1) * dx + l21.unsqueeze(1) * dy
         u1 = l22.unsqueeze(1) * dy
         maha2 = u0 * u0 + u1 * u1
 
-        keypoint_mask = (
-            visible_btk & finite_pred.unsqueeze(1) & torch.isfinite(u0) & torch.isfinite(u1) & torch.isfinite(maha2)
-        )
+        keypoint_mask = visible_btk
         nll_k = 0.5 * (maha2 / safe_areas.view(1, n_targets_by_class, 1)) - (
             log_l11 + log_l22
         ).unsqueeze(1)
-        nll_k = torch.nan_to_num(nll_k, nan=0.0, posinf=0.0, neginf=torch.finfo(nll_k.dtype).min)
         nll_k = nll_k.masked_fill(~keypoint_mask, 0.0)
         nll_sum = nll_k.sum(-1)  # (flat_bq, n_targets)
 

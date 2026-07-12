@@ -92,6 +92,8 @@ def test_config_defaults():
         {"max_age": -1},
         {"min_hits": -1},
         {"delta_t": 0},
+        {"delta_t": 1.5},
+        {"delta_t": True},
         {"inertia": -0.5},
         {"w_association_emb": -0.1},
         {"alpha_fixed_emb": 1.5},

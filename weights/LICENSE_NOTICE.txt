@@ -40,11 +40,20 @@ project the weights were derived from. Per-family summary:
              The authors' MIT re-release, not WongKinYiu/yolov7 (GPL-3.0).
              Convert v7.pt with weights/convert_yolo7_weights.py.
 
-    RF-DETR  (LibreRFDETR{n,s,m,l}, LibreRFDETRx-pose) Apache-2.0
+    RF-DETR  (LibreRFDETR{n,s,m,l},                    Apache-2.0
+              LibreRFDETR{n,s,m,l,x,xx}-seg,
+              LibreRFDETRx-pose)
              upstream: roboflow/rf-detr
              code/pose revision: 779e55254ccfbffc8cc23b7ecee29a4201489e13
              (tag 1.8.0)
              (backbone: facebookresearch/dinov2, Apache-2.0)
+
+    RF-DETR OBB (LibreRFDETR{n,s,m,l}-obb)              CC-BY-4.0
+             initialized from the Apache-2.0 RF-DETR detection weights;
+             fine-tuned by LibreYOLO on Roboflow Universe dataset
+             bobo-48pem/my-first-project-ewwrm ("My First Project - v8"),
+             whose published license is CC BY 4.0. The hosted fine-tuned
+             weights preserve that attribution requirement.
 
     RT-DETR  (LibreRTDETR{r18,r34,r50,r50m,r101})      Apache-2.0
              upstream: lyuwenyu/RT-DETR

@@ -62,8 +62,9 @@ def postprocess(
     # ``topk`` ranks NaNs ahead of finite values on supported Torch backends.
     # Mask them before the first anchor reduction so one invalid score cannot
     # consume a small max_det budget and hide a valid detection.
+    valid_geometry = torch.isfinite(boxes).all(dim=-1, keepdim=True)
     scores = torch.where(
-        torch.isfinite(scores),
+        torch.isfinite(scores) & valid_geometry,
         scores,
         torch.full_like(scores, -torch.inf),
     )

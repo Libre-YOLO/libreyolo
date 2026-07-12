@@ -266,6 +266,34 @@ def test_grouppose_postprocess_emits_keypoints_with_normalized_visibility():
     assert person_xy.tolist() == pytest.approx([100.0, 50.0])
 
 
+def test_grouppose_postprocess_zero_fills_inactive_precision_slots():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    keypoints = torch.zeros(1, 1, 3 * 17, 8)
+    keypoints[..., 0] = 0.5
+    keypoints[..., 1] = 0.5
+    keypoints[..., 2] = 4.0
+    keypoints[..., 4:7] = 0.25
+
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[-10.0, -10.0, 4.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": keypoints,
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=[0, 17, 4],
+        trace_alpha=0.0,
+    )[0]
+
+    precision = result["keypoint_precision_cholesky"]
+    assert precision.shape == (1, 17, 3)
+    assert torch.isfinite(precision).all()
+    torch.testing.assert_close(precision[0, :4], torch.full((4, 3), 0.25))
+    torch.testing.assert_close(precision[0, 4:], torch.zeros(13, 3))
+
+
 # ---------------------------------------------------------------------------
 # 7. Detection path unaffected
 # ---------------------------------------------------------------------------
@@ -436,6 +464,32 @@ def test_rfdetr_postprocess_filters_mapped_background_before_topk():
     assert result["scores"].shape == (1,)
 
 
+@pytest.mark.parametrize("invalid_field", ["logit", "box"])
+def test_rfdetr_postprocess_filters_nonfinite_candidates_before_topk(invalid_field):
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    logits = torch.tensor([[[8.0], [4.0]]])
+    boxes = torch.tensor(
+        [[[0.2, 0.2, 0.1, 0.1], [0.7, 0.7, 0.1, 0.1]]]
+    )
+    if invalid_field == "logit":
+        logits[0, 0, 0] = float("nan")
+    else:
+        boxes[0, 0, 0] = float("nan")
+
+    result = postprocess(
+        {"pred_logits": logits, "pred_boxes": boxes},
+        torch.tensor([[100.0, 100.0]]),
+        num_select=1,
+    )[0]
+
+    torch.testing.assert_close(result["scores"], torch.tensor([4.0]).sigmoid())
+    torch.testing.assert_close(
+        result["boxes"],
+        torch.tensor([[65.0, 65.0, 75.0, 75.0]]),
+    )
+
+
 def test_grouppose_trace_fusion_scores_are_finite_probabilities():
     from libreyolo.postprocess.rfdetr import postprocess
 
@@ -458,6 +512,56 @@ def test_grouppose_trace_fusion_scores_are_finite_probabilities():
 
     assert torch.isfinite(result["scores"]).all()
     assert ((result["scores"] >= 0.0) & (result["scores"] <= 1.0)).all()
+
+
+@pytest.mark.parametrize("invalid_channel", [0, 2, 4])
+def test_grouppose_sanitizes_nonfinite_active_keypoint_outputs(invalid_channel):
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    keypoints = torch.zeros(1, 1, 34, 8)
+    active = keypoints[0, 0, 17:]
+    active[:, 0] = 0.25
+    active[:, 1] = 0.5
+    active[:, 2] = 4.0
+    active[0, invalid_channel] = float("nan")
+
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[-10.0, 4.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": keypoints,
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=[0, 17],
+    )[0]
+
+    assert torch.isfinite(result["scores"]).all()
+    assert torch.isfinite(result["keypoints"]).all()
+    assert torch.isfinite(result["keypoint_precision_cholesky"]).all()
+    if invalid_channel in {0, 2}:
+        torch.testing.assert_close(result["keypoints"][0, 0], torch.zeros(3))
+    else:
+        torch.testing.assert_close(
+            result["keypoint_precision_cholesky"][0, 0], torch.zeros(3)
+        )
+
+
+def test_classic_pose_sanitizes_nonfinite_keypoint_outputs():
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[4.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": torch.tensor([[[[float("nan"), 0.5, 4.0]]]]),
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+    )[0]
+
+    assert torch.isfinite(result["keypoints"]).all()
+    torch.testing.assert_close(result["keypoints"][0, 0], torch.zeros(3))
 
 
 # ---------------------------------------------------------------------------

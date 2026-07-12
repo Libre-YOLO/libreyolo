@@ -243,6 +243,14 @@ Used for: RF-DETR model family (libreyolo/models/rfdetr/), LoRA
           RF-DETR keypoint preview weights (Apache-2.0, COCO person
           pretrained) are redistributed with attribution.
 
+The separately hosted LibreRFDETR{n,s,m,l}-obb checkpoints are LibreYOLO
+fine-tunes on the Roboflow Universe dataset "My First Project - v8" supplied
+by user bobo:
+https://universe.roboflow.com/bobo-48pem/my-first-project-ewwrm
+The dataset and resulting fine-tuned weights are published under Creative
+Commons Attribution 4.0 International (CC BY 4.0), not Apache-2.0. The base
+RF-DETR code and initialization weights remain Apache-2.0.
+
 --------------------------------------------------------------------
 DINOv2 (Meta AI / facebookresearch)
 --------------------------------------------------------------------

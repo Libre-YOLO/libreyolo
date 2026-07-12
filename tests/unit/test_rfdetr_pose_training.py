@@ -247,6 +247,58 @@ def test_grouppose_nonfinite_invisible_targets_keep_losses_and_costs_finite():
     assert all(torch.isfinite(cost).all() for cost in costs)
 
 
+def test_grouppose_nonfinite_prediction_is_quarantined_from_matching():
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    schema = [0, 1]
+    pred_keypoints = torch.zeros(1, 2, 2, 8)
+    pred_keypoints[0, 0, 1, :2] = float("nan")
+    pred_keypoints[0, 1, 1, :2] = 0.6
+    outputs = {
+        "pred_logits": torch.zeros(1, 2, 2),
+        "pred_boxes": torch.tensor(
+            [[[0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]]]
+        ),
+        "pred_keypoints": pred_keypoints,
+    }
+    targets = [
+        {
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]]),
+            "keypoints": torch.tensor([[[0.5, 0.5, 2.0]]]),
+        }
+    ]
+    matcher = HungarianMatcher(
+        num_keypoints_per_class=schema,
+        keypoint_l1_loss_coef=1.0,
+        keypoint_nll_loss_coef=1.0,
+    )
+
+    [(pred_indices, target_indices)] = matcher(outputs, targets)
+
+    assert pred_indices.tolist() == [1]
+    assert target_indices.tolist() == [0]
+
+
+def test_grouppose_matched_nonfinite_prediction_reaches_finite_loss_guard():
+    schema = [0, 1]
+    pred = torch.zeros(1, 2, 8, requires_grad=True)
+    with torch.no_grad():
+        pred[0, 1, :2] = float("nan")
+    target = torch.tensor([[[0.5, 0.5, 2.0]]])
+
+    losses = compute_l1_keypoint_loss(
+        pred,
+        target,
+        torch.tensor([1]),
+        torch.tensor([0.25]),
+        schema,
+    )
+
+    assert not torch.isfinite(losses[0]).all()
+    assert not torch.isfinite(losses[3]).all()
+
+
 def test_classic_pose_nonfinite_invisible_targets_keep_loss_and_grad_finite():
     pred = torch.zeros(1, 3, 3, requires_grad=True)
     target = torch.tensor(

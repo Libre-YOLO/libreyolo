@@ -153,6 +153,28 @@ def test_rfdetr_postprocess_tolerates_degenerate_obb_prediction():
     assert results[0]["obb"][0, 3] > 0.0
 
 
+def test_rfdetr_postprocess_filters_nonfinite_angles_before_topk():
+    from libreyolo.models.rfdetr.utils import postprocess
+
+    outputs = {
+        "pred_logits": torch.tensor([[[8.0], [4.0]]]),
+        "pred_boxes": torch.tensor(
+            [[[0.2, 0.2, 0.1, 0.1], [0.7, 0.7, 0.1, 0.1]]]
+        ),
+        "pred_angles": torch.tensor([[[float("nan")], [0.2]]]),
+    }
+
+    result = postprocess(
+        outputs,
+        torch.tensor([[100.0, 100.0]]),
+        num_select=1,
+    )[0]
+
+    assert torch.isfinite(result["obb"]).all()
+    torch.testing.assert_close(result["scores"], torch.tensor([4.0]).sigmoid())
+    torch.testing.assert_close(result["boxes"][0, :2], torch.tensor([65.0, 65.0]))
+
+
 def test_rfdetr_obb_load_rejects_detect_checkpoint_without_transfer_flag():
     from libreyolo.models.rfdetr.model import LibreRFDETR
 

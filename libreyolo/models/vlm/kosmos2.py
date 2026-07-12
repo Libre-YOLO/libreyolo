@@ -13,11 +13,54 @@ mechanism, but its boxes are coarse compared with newer grounders.
 
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
 from ...utils.image_loader import ImageInput, ImageLoader
 from .base import LibreVLMModel
 from .parsing import finalize_detection_dict
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_LEADING_ARTICLES = {"a", "an", "the"}
+
+
+def _phrase_tokens(value: str) -> list[str]:
+    tokens = _TOKEN_RE.findall(str(value).lower())
+    while tokens and tokens[0] in _LEADING_ARTICLES:
+        tokens.pop(0)
+    return tokens
+
+
+def _plural_forms(token: str) -> set[str]:
+    """Return conservative English plural forms for one label token."""
+    forms = {token, f"{token}s"}
+    if token.endswith(("s", "x", "z", "ch", "sh")):
+        forms.add(f"{token}es")
+    if (
+        len(token) > 1
+        and token.endswith("y")
+        and token[-2] not in "aeiou"
+    ):
+        forms.add(f"{token[:-1]}ies")
+    return forms
+
+
+def _same_label_token(left: str, right: str) -> bool:
+    return right in _plural_forms(left) or left in _plural_forms(right)
+
+
+def _contains_label_phrase(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    width = len(needle)
+    return any(
+        all(
+            _same_label_token(haystack[start + offset], needle[offset])
+            for offset in range(width)
+        )
+        for start in range(len(haystack) - width + 1)
+    )
 
 
 class LibreKosmos2(LibreVLMModel):
@@ -43,10 +86,14 @@ class LibreKosmos2(LibreVLMModel):
         key = str(name).strip().lower()
         if key in self._name_to_id:
             return self._name_to_id[key]
+        phrase_tokens = _phrase_tokens(key)
         matches = []
         for cname, cid in self._name_to_id.items():
-            if cname in key or key in cname:
-                matches.append((len(cname.split()), len(cname), cname, cid))
+            class_tokens = _phrase_tokens(cname)
+            if _contains_label_phrase(
+                phrase_tokens, class_tokens
+            ) or _contains_label_phrase(class_tokens, phrase_tokens):
+                matches.append((len(class_tokens), len(cname), cname, cid))
         if not matches:
             return None
         matches.sort(reverse=True)

@@ -105,6 +105,14 @@ class TestTrackConfig:
         with pytest.raises(ValueError, match=rf"{field} must be finite"):
             TrackConfig(**{field: float("nan")})
 
+    @pytest.mark.parametrize(
+        "field", ["frame_rate", "track_buffer", "minimum_consecutive_frames"]
+    )
+    @pytest.mark.parametrize("value", [1.5, True])
+    def test_rejects_noninteger_frame_and_count_fields(self, field, value):
+        with pytest.raises(ValueError, match=rf"{field} must be an integer"):
+            TrackConfig(**{field: value})
+
 
 # --------------------------------------------------------------------------
 # KalmanFilter
