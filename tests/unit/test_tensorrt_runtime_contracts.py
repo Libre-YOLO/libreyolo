@@ -229,6 +229,17 @@ def test_binding_dtype_uses_tensorrt_declared_numpy_type():
     assert torch_dtype == torch.float16
 
 
+@pytest.mark.parametrize(
+    "device",
+    [0, "0", "cuda:0", torch.device("cuda:0")],
+)
+def test_tensorrt_runtime_resolves_explicit_device_zero(monkeypatch, device):
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 2)
+
+    assert _resolve_tensorrt_device(device) == torch.device("cuda:0")
+
+
 def test_tensorrt_runtime_resolves_indexed_cuda_device(monkeypatch):
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
 

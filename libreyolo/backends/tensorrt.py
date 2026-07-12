@@ -24,19 +24,25 @@ logger = logging.getLogger(__name__)
 
 def _resolve_tensorrt_device(device) -> torch.device:
     """Resolve and validate the CUDA device used by a TensorRT runtime."""
-    key = str(device or "auto").lower()
-    if key in {"auto", "cuda", "gpu"}:
-        index = int(torch.cuda.current_device())
-    elif key.startswith("cuda:"):
-        try:
-            index = int(key.split(":", 1)[1])
-        except ValueError as exc:
-            raise ValueError(f"Invalid TensorRT CUDA device {device!r}.") from exc
+    if isinstance(device, int):
+        index = device
     else:
-        raise ValueError(
-            "TensorRT inference requires device='cuda', 'cuda:N', 'gpu', or 'auto'; "
-            f"got {device!r}."
-        )
+        key = "auto" if device is None else str(device).strip().lower()
+        if key in {"auto", "cuda", "gpu"}:
+            index = int(torch.cuda.current_device())
+        elif key.isdigit():
+            index = int(key)
+        elif key.startswith("cuda:"):
+            try:
+                index = int(key.split(":", 1)[1])
+            except ValueError as exc:
+                raise ValueError(f"Invalid TensorRT CUDA device {device!r}.") from exc
+        else:
+            raise ValueError(
+                "TensorRT inference requires device=0, device='0', 'cuda', "
+                "'cuda:N', 'gpu', or 'auto'; "
+                f"got {device!r}."
+            )
     if index < 0 or index >= torch.cuda.device_count():
         raise ValueError(
             f"TensorRT CUDA device index {index} is unavailable; "
@@ -55,7 +61,9 @@ class TensorRTBackend(BaseBackend):
             from it automatically.
         nb_classes: Number of classes. When ``None`` (default), uses the value
             from the sidecar file if available, otherwise defaults to 80.
-        device: Device for inference. Must be "cuda" or "auto" (TensorRT requires GPU).
+        device: CUDA device for inference. Accepts an integer index, numeric
+            string, ``"cuda"``, ``"cuda:N"``, ``"gpu"``, ``"auto"``, or a
+            CUDA ``torch.device``.
 
     Example:
         >>> model = TensorRTBackend("model.engine")
@@ -67,7 +75,7 @@ class TensorRTBackend(BaseBackend):
         self,
         engine_path: str,
         nb_classes: int | None = None,
-        device: str = "auto",
+        device: str | int | torch.device = "auto",
         task: str | None = None,
     ):
         try:
