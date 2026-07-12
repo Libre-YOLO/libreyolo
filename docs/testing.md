@@ -132,7 +132,7 @@ V2.1 contract:
   detector family that has a public auto-download route (LibreYOLO HF, or Deci's
   CDN for YOLO-NAS); currently 15 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
-  CLI, and one RF1 training/reload size per flagship family; currently 48 tests
+  CLI, and one RF1 training/reload size per flagship family; currently 53 tests
   with `not export_backend`. The full RF1 size matrix remains available under
   `-m rf1` for manual or future full-matrix runs.
 - Detector families cover detection. L2CS gaze is non-redistributable (no public

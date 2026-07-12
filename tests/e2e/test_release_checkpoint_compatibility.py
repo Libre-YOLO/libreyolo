@@ -47,7 +47,7 @@ def test_current_flagship_release_checkpoint_loads(
     family,
     task,
 ):
-    """Published flagship artifacts must remain loadable without conversion."""
+    """Published flagship artifacts must load without manual conversion."""
     checkpoint = _resolve_release_checkpoint(filename)
 
     model = LibreYOLO(str(checkpoint), device="cpu")
