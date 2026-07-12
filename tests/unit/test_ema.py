@@ -96,7 +96,9 @@ def test_model_ema_updates_shared_parameter_once(device, dtype):
     assert torch.equal(restored.first.weight, ema.ema.first.weight)
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda", "mps"])
+# PyTorch deep-copies distinct MPS tensor views with clone(), so the EMA
+# destination tensors no longer overlap and are safe to update.
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_model_ema_rejects_distinct_overlapping_views(device):
     _require_device(device)
     model = _OverlappingBuffers(device)

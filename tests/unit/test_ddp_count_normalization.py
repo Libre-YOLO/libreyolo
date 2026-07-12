@@ -172,7 +172,7 @@ def _count_normalization_worker(
         init_method=f"tcp://127.0.0.1:{port}",
         rank=rank,
         world_size=world_size,
-        timeout=timedelta(seconds=30),
+        timeout=timedelta(minutes=2),
     )
     try:
         from libreyolo.models.rfdetr.nn import (

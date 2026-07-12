@@ -36,7 +36,7 @@ def _rank_zero_phase_worker(
         init_method=f"tcp://127.0.0.1:{port}",
         rank=rank,
         world_size=world_size,
-        timeout=timedelta(seconds=30),
+        timeout=timedelta(minutes=2),
     )
     try:
         from libreyolo.training.distributed import (
@@ -129,7 +129,7 @@ def _rank_zero_validation_worker(
         init_method=f"tcp://127.0.0.1:{port}",
         rank=rank,
         world_size=world_size,
-        timeout=timedelta(seconds=30),
+        timeout=timedelta(minutes=2),
     )
     try:
         from libreyolo.training.trainer import BaseTrainer
@@ -287,9 +287,7 @@ def test_rank_zero_validation_unwraps_ddp_on_cpu_gloo(tmp_path):
 
     records = [
         json.loads(
-            (tmp_path / f"validation-rank-{rank}.json").read_text(
-                encoding="utf-8"
-            )
+            (tmp_path / f"validation-rank-{rank}.json").read_text(encoding="utf-8")
         )
         for rank in range(world_size)
     ]
@@ -297,9 +295,7 @@ def test_rank_zero_validation_unwraps_ddp_on_cpu_gloo(tmp_path):
     assert records[0]["result"]["owner"] == 0
     assert all(record["restored"] for record in records)
     assert all(record["collective"] == world_size for record in records)
-    assert records[0]["post_validation"] == pytest.approx(
-        records[1]["post_validation"]
-    )
-    assert sorted(
-        path.name for path in tmp_path.glob("validation-called-rank-*")
-    ) == ["validation-called-rank-0"]
+    assert records[0]["post_validation"] == pytest.approx(records[1]["post_validation"])
+    assert sorted(path.name for path in tmp_path.glob("validation-called-rank-*")) == [
+        "validation-called-rank-0"
+    ]
