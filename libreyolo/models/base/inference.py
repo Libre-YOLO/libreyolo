@@ -29,6 +29,7 @@ from torchvision.ops import batched_nms
 from ...postprocess.slicing import slice_batch_outputs
 from ...utils.drawing import (
     draw_boxes,
+    draw_gaze_arrows,
     draw_keypoints,
     draw_masks,
     draw_obb,
@@ -46,7 +47,7 @@ from ...utils.general import (
     resolve_save_path,
 )
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.predict_args import normalize_predict_kwargs
+from ...utils.predict_args import normalize_predict_kwargs, validate_predict_inputs
 from ...utils.results import (
     Boxes,
     DepthMap,
@@ -75,6 +76,60 @@ class InferenceRunner:
 
     def __init__(self, model: BaseModel):
         self.model = model
+
+    def _validate_public_inputs(
+        self,
+        *,
+        conf: float,
+        iou: float,
+        classes: Optional[List[int]],
+        max_det: int,
+        batch: int,
+        vid_stride: int,
+        overlap_ratio: float,
+    ) -> Optional[List[int]]:
+        """Validate shared predict arguments before dispatching any source."""
+        return validate_predict_inputs(
+            names=getattr(self.model, "names", None),
+            conf=conf,
+            iou=iou,
+            classes=classes,
+            max_det=max_det,
+            batch=batch,
+            vid_stride=vid_stride,
+            overlap_ratio=overlap_ratio,
+        )
+
+    def _validate_tiling_task(self) -> None:
+        """Reject result payloads the axis-aligned tiled merger cannot preserve."""
+        task = getattr(self.model, "task", "detect")
+        is_segmentation = bool(getattr(self.model, "_is_segmentation", False))
+        if task == "detect" and not is_segmentation:
+            return
+
+        payload_names = {
+            "classify": "classification probabilities",
+            "depth": "depth maps",
+            "gaze": "gaze predictions",
+            "matte": "alpha mattes",
+            "obb": "oriented boxes",
+            "ocr": "OCR regions",
+            "panoptic": "panoptic maps",
+            "point": "point results",
+            "pose": "pose keypoints",
+            "restore": "restored images",
+            "segment": "segmentation masks",
+            "semantic": "semantic segmentation maps",
+        }
+        payload = (
+            "segmentation masks"
+            if is_segmentation
+            else payload_names.get(str(task), f"task {task!r} results")
+        )
+        raise ValueError(
+            f"Tiled inference cannot merge {payload}. "
+            "Use non-tiled inference for this task."
+        )
 
     def __call__(
         self,
@@ -134,6 +189,15 @@ class InferenceRunner:
             Results, list of Results, or generator of Results (video + stream).
         """
         kwargs = normalize_predict_kwargs(kwargs, passthrough={"num_select"})
+        classes = self._validate_public_inputs(
+            conf=conf,
+            iou=iou,
+            classes=classes,
+            max_det=max_det,
+            batch=batch,
+            vid_stride=vid_stride,
+            overlap_ratio=overlap_ratio,
+        )
         if device is not None:
             self._set_device(device)
 
@@ -150,10 +214,35 @@ class InferenceRunner:
                 "tiling and augment cannot be used together. "
                 "Disable one of them."
             )
+        if tiling:
+            self._validate_tiling_task()
         if augment and getattr(self.model, "task", None) == "point":
             raise ValueError(
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
+            )
+
+        # A four-dimensional in-memory source is an image batch, not a single
+        # image. Expand it in source order so no item is silently discarded by
+        # a single-image loader. The normal list path retains batch/TTA/tiling
+        # behavior and indexed save names.
+        if isinstance(source, (np.ndarray, torch.Tensor)) and source.ndim == 4:
+            return self._process_in_batches(
+                [source[index] for index in range(source.shape[0])],
+                batch=batch,
+                save=save,
+                output_path=output_path,
+                conf=conf,
+                iou=iou,
+                imgsz=imgsz,
+                classes=classes,
+                max_det=max_det,
+                color_format=color_format,
+                tiling=tiling,
+                overlap_ratio=overlap_ratio,
+                output_file_format=output_file_format,
+                augment=augment,
+                **kwargs,
             )
 
         # Handle video input
@@ -251,7 +340,12 @@ class InferenceRunner:
                 image_path = source if isinstance(source, (str, Path)) else None
                 img_pil = ImageLoader.load(source, color_format=color_format)
                 ext = output_file_format or "jpg"
-                save_path = resolve_save_path(output_path, image_path, ext=ext)
+                save_path = self._resolve_result_save_path(
+                    result,
+                    output_path,
+                    image_path,
+                    ext,
+                )
                 self._save_annotated_image(result, img_pil, save_path)
             return result
 
@@ -387,10 +481,11 @@ class InferenceRunner:
                 )
                 if save:
                     ext = output_file_format or "jpg"
-                    save_path = resolve_save_path(
+                    save_path = self._resolve_result_save_path(
+                        result,
                         output_path,
                         image if save_stem is None else save_stem,
-                        ext=ext,
+                        ext,
                     )
                     img_pil = ImageLoader.load(image, color_format=color_format)
                     self._save_annotated_image(result, img_pil, save_path)
@@ -506,16 +601,34 @@ class InferenceRunner:
             result = self._wrap_results(detections, original_size, image_path, classes)
             if save:
                 ext = output_file_format or "jpg"
-                save_path = resolve_save_path(
+                save_path = self._resolve_result_save_path(
+                    result,
                     output_path,
                     image_path
                     if image_path is not None
                     else f"image{start_idx + offset}",
-                    ext=ext,
+                    ext,
                 )
                 self._save_annotated_image(result, original_img, save_path)
             results.append(result)
         return results
+
+    @staticmethod
+    def _resolve_result_save_path(
+        result: Results,
+        output_path: str | Path | None,
+        image_path: str | Path | None,
+        ext: str,
+    ) -> Path:
+        """Allocate the final artifact path after the result task is known."""
+        is_matte = result.boxes is None and getattr(result, "matte", None) is not None
+        required_ext = "png" if is_matte else ext
+        return resolve_save_path(
+            output_path,
+            image_path,
+            ext=required_ext,
+            force_ext=is_matte,
+        )
 
     def _save_annotated_image(self, result: Results, original_img, save_path: Path) -> None:
         """Internal helper to draw boxes, masks, and keypoints and save to disk."""
@@ -563,7 +676,11 @@ class InferenceRunner:
             # A matte result saves as a transparent-background RGBA PNG cutout
             # (source RGB + soft matte alpha), the canonical background-removal
             # deliverable. Force a .png suffix so the alpha channel survives.
-            png_path = Path(save_path).with_suffix(".png")
+            png_path = Path(save_path)
+            if png_path.suffix.lower() != ".png":
+                raise ValueError(
+                    "Internal matte save path must use .png so alpha is preserved."
+                )
             result.save(png_path, image=original_img)
             log_saved_result(result, png_path)
             return
@@ -631,6 +748,15 @@ class InferenceRunner:
                 if isinstance(kpts_np, torch.Tensor):
                     kpts_np = kpts_np.cpu().numpy()
                 annotated_img = draw_keypoints(annotated_img, kpts_np)
+            if result.gaze is not None:
+                boxes_np = result.boxes.numpy()
+                gaze_np = result.gaze.numpy()
+                annotated_img = draw_gaze_arrows(
+                    annotated_img,
+                    boxes_np.xyxy.tolist(),
+                    gaze_np.pitch.tolist(),
+                    gaze_np.yaw.tolist(),
+                )
         else:
             annotated_img = original_img.copy()
 
@@ -673,6 +799,7 @@ class InferenceRunner:
             image_path: Source path or None.
             classes: Optional class filter list.
         """
+        declared_task = getattr(self.model, "task", None)
         # Classification: a probs vector, no boxes. Wrap into Results.probs so
         # result.probs.top1 / .top5 work like the rest of the ecosystem.
         probs_data = detections.get("probs")
@@ -689,6 +816,7 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 probs=Probs(probs_t),
+                task=declared_task,
             )
 
         # Semantic segmentation: a dense class map, no boxes.
@@ -705,7 +833,8 @@ class InferenceRunner:
                 orig_shape=(orig_h, orig_w),
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
-                semantic_mask=SemanticMask(semantic_t.long(), (orig_h, orig_w)),
+                semantic_mask=SemanticMask(semantic_t, (orig_h, orig_w)),
+                task=declared_task,
             )
 
         # Panoptic: a dense non-overlapping segment-id map plus segments_info.
@@ -723,10 +852,11 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 panoptic=PanopticSegmentation(
-                    panoptic_t.long(),
+                    panoptic_t,
                     detections.get("segments_info") or [],
                     (orig_h, orig_w),
                 ),
+                task=declared_task,
             )
 
         # Depth: a dense relative inverse-depth map, no boxes.
@@ -744,6 +874,7 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
+                task=declared_task,
             )
 
         # Restore: a dense RGB image, no boxes. For super-resolution the restored
@@ -766,6 +897,7 @@ class InferenceRunner:
                 names=self.model.names,
                 restored=RestoredImage(restored_t.to(torch.uint8), restored_hw),
                 restore_scale=restore_scale,
+                task=declared_task,
             )
 
         # Matte: a dense soft alpha matte in [0, 1], no boxes.
@@ -783,6 +915,7 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 matte=Matte(matte_t.float(), (orig_h, orig_w)),
+                task=declared_task,
             )
 
         # OCR: polygons + transcripts, no axis-aligned boxes.
@@ -809,6 +942,7 @@ class InferenceRunner:
                     ocr_data.get("det_confidences"),
                     (orig_h, orig_w),
                 ),
+                task=declared_task,
             )
 
         points_data = detections.get("points")
@@ -839,8 +973,10 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 points=points_obj,
+                task=declared_task,
             )
 
+        orig_w, orig_h = original_size
         masks_t = None
         keypoints_t = None
         obb_t = None
@@ -849,7 +985,34 @@ class InferenceRunner:
             boxes_t = torch.zeros((0, 4), dtype=torch.float32)
             conf_t = torch.zeros((0,), dtype=torch.float32)
             cls_t = torch.zeros((0,), dtype=torch.float32)
-            if "obb" in detections:
+            raw_masks = detections.get("masks")
+            if raw_masks is not None:
+                masks_t = (
+                    raw_masks
+                    if isinstance(raw_masks, torch.Tensor)
+                    else torch.as_tensor(raw_masks)
+                )
+                if masks_t.numel() == 0 and masks_t.ndim != 3:
+                    masks_t = masks_t.new_zeros((0, orig_h, orig_w))
+            elif getattr(self.model, "task", None) == "segment" or getattr(
+                self.model, "_is_segmentation", False
+            ):
+                masks_t = torch.zeros((0, orig_h, orig_w), dtype=torch.bool)
+
+            raw_kpts = detections.get("keypoints")
+            if raw_kpts is not None:
+                keypoints_t = (
+                    raw_kpts.float()
+                    if isinstance(raw_kpts, torch.Tensor)
+                    else torch.as_tensor(raw_kpts, dtype=torch.float32)
+                )
+                if keypoints_t.numel() == 0 and keypoints_t.ndim != 3:
+                    num_keypoints = int(
+                        getattr(self.model, "num_keypoints", 0) or 0
+                    )
+                    keypoints_t = keypoints_t.new_zeros((0, num_keypoints, 3))
+
+            if "obb" in detections or getattr(self.model, "task", None) == "obb":
                 obb_t = torch.zeros((0, 7), dtype=torch.float32)
         else:
             raw_boxes = detections["boxes"]
@@ -903,7 +1066,6 @@ class InferenceRunner:
                 obb_t = obb_t[cls_mask]
 
         # original_size from preprocess is (W, H); orig_shape is (H, W)
-        orig_w, orig_h = original_size
         orig_shape = (orig_h, orig_w)
 
         masks_obj = None
@@ -926,6 +1088,7 @@ class InferenceRunner:
             masks=masks_obj,
             keypoints=keypoints_obj,
             obb=obb_obj,
+            task=declared_task,
         )
 
     def _predict_single(
@@ -983,10 +1146,11 @@ class InferenceRunner:
         # Save annotated image
         if save:
             ext = output_file_format or "jpg"
-            save_path = resolve_save_path(
+            save_path = self._resolve_result_save_path(
+                result,
                 output_path,
                 image_path if image_path is not None else save_stem,
-                ext=ext,
+                ext,
             )
             self._save_annotated_image(result, original_img, save_path)
 
@@ -1099,45 +1263,8 @@ class InferenceRunner:
         single-image fallbacks below and into the tiled save directory name.
         """
 
-        # Tiling is a detection-time technique; for whole-image classification
-        # and dense semantic maps it is meaningless, so fall back to a single
-        # forward pass.
-        if getattr(self.model, "task", None) in ("classify", "semantic"):
-            return self._predict_single(
-                image,
-                save=save,
-                output_path=output_path,
-                conf=conf,
-                iou=iou,
-                imgsz=imgsz,
-                classes=classes,
-                max_det=max_det,
-                color_format=color_format,
-                output_file_format=output_file_format,
-                save_stem=save_stem,
-                **kwargs,
-            )
-        if getattr(self.model, "task", "detect") == "depth":
-            raise ValueError(
-                "Tiled inference does not support depth maps yet. "
-                "Use non-tiled inference for depth models."
-            )
-
-        if getattr(self.model, "_is_segmentation", False):
-            raise ValueError(
-                "Tiled inference does not support segmentation masks. "
-                "Use non-tiled inference for instance segmentation."
-            )
-        if getattr(self.model, "task", "detect") == "obb":
-            raise ValueError(
-                "Tiled inference does not support oriented boxes yet. "
-                "Use non-tiled inference for OBB models."
-            )
-        if getattr(self.model, "task", "detect") == "point":
-            raise ValueError(
-                "Tiled inference does not support point results yet. "
-                "Use non-tiled inference for point models."
-            )
+        # Keep the internal entry point defensive for direct/private callers.
+        self._validate_tiling_task()
 
         input_size = imgsz if imgsz is not None else self.model._get_input_size()
         img_pil = ImageLoader.load(image, color_format=color_format)
@@ -1189,8 +1316,14 @@ class InferenceRunner:
                 **kwargs,
             )
 
+            if tile_result.boxes is None:
+                raise RuntimeError(
+                    "Detect-task tiled inference requires axis-aligned boxes; "
+                    "the model returned a non-box result payload."
+                )
+
             # Shift boxes to original coordinates
-            if len(tile_result) > 0:
+            if len(tile_result.boxes) > 0:
                 tile_boxes = tile_result.boxes.xyxy.tolist()
                 for box in tile_boxes:
                     shifted_box = [box[0] + x1, box[1] + y1, box[2] + x1, box[3] + y1]
@@ -1202,10 +1335,9 @@ class InferenceRunner:
         final_boxes, final_scores, final_classes = self._merge_tile_detections(
             all_boxes, all_scores, all_classes, iou
         )
-        if max_det >= 0:
-            final_boxes = final_boxes[:max_det]
-            final_scores = final_scores[:max_det]
-            final_classes = final_classes[:max_det]
+        final_boxes = final_boxes[:max_det]
+        final_scores = final_scores[:max_det]
+        final_classes = final_classes[:max_det]
 
         # Build Results
         original_size = (orig_width, orig_height)
@@ -1234,7 +1366,12 @@ class InferenceRunner:
 
             if output_path:
                 base_path = Path(output_path)
-                if base_path.suffix == "":
+                directory_hint = (
+                    base_path.is_dir()
+                    or str(output_path).endswith(("/", "\\"))
+                    or base_path.suffix == ""
+                )
+                if directory_hint:
                     save_dir = base_path / f"{stem}_{model_tag}_{timestamp}"
                 else:
                     save_dir = base_path.parent / f"{stem}_{model_tag}_{timestamp}"

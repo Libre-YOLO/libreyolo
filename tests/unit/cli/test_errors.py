@@ -84,6 +84,7 @@ class TestExitCodes:
             "training_diverged",
             "download_failed",
             "io_error",
+            "inference_failed",
         ):
             assert EXIT_CODES[code] == 1, f"{code} should exit 1"
 

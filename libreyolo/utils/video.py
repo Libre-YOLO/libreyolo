@@ -1,13 +1,15 @@
 """Video source utilities for LibreYOLO."""
 
 import logging
+import math
+import operator
 import warnings
 from pathlib import Path
 from typing import Callable, Generator, Iterator, Tuple, Union
 
 import numpy as np
 
-from .general import increment_path
+from .general import resolve_save_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +50,53 @@ def resolve_video_save_path(
 ) -> str:
     """Determine the output path for a saved video.
 
-    If *output_path* is provided, uses it directly. Otherwise creates an
-    auto-incrementing directory under ``runs/detect/predict*/``.
+    Directory outputs receive a collision-safe ``<source>.mp4`` filename;
+    explicit file outputs are also allocated without overwriting an existing
+    artifact. When omitted, the standard ``runs/detect/predict*/`` directory
+    is used.
     """
-    if output_path is not None:
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        return str(out)
+    return str(
+        resolve_save_path(
+            output_path,
+            source,
+            ext="mp4",
+            default_dir="runs/detect",
+        )
+    )
 
-    save_dir = Path("runs/detect") / "predict"
-    save_dir = increment_path(save_dir, exist_ok=False, mkdir=True)
-    stem = Path(source).stem
-    return str(save_dir / f"{stem}.mp4")
+
+def _validate_vid_stride(value: int) -> int:
+    """Return a positive integer video stride without lossy coercion."""
+    if isinstance(value, bool):
+        raise TypeError("vid_stride must be a positive integer, not bool.")
+    try:
+        stride = operator.index(value)
+    except TypeError as exc:
+        raise TypeError(
+            f"vid_stride must be a positive integer, got {value!r}."
+        ) from exc
+    if stride <= 0:
+        raise ValueError(f"vid_stride must be >= 1, got {stride}.")
+    return stride
+
+
+def _processed_frame_count(total_frames: int, vid_stride: int) -> int:
+    """Return the number of frame indices selected from ``range(total)``."""
+    if total_frames <= 0:
+        return 0
+    return (total_frames + vid_stride - 1) // vid_stride
+
+
+def _normalize_capture_fps(value: object, *, fallback: float = 30.0) -> float:
+    """Return a finite positive capture FPS, falling back for bad metadata."""
+    try:
+        fps = float(value)
+    except (TypeError, ValueError):
+        fps = math.nan
+    if math.isfinite(fps) and fps > 0:
+        return fps
+    logger.warning("Invalid video FPS metadata %r; defaulting to %.1f", value, fallback)
+    return fallback
 
 
 class VideoSource:
@@ -82,6 +119,7 @@ class VideoSource:
     """
 
     def __init__(self, path: Union[str, Path], vid_stride: int = 1):
+        self._vid_stride = _validate_vid_stride(vid_stride)
         try:
             import cv2
         except ImportError:
@@ -91,7 +129,6 @@ class VideoSource:
             )
 
         self._path = str(path)
-        self._vid_stride = max(1, int(vid_stride))
 
         self._cap = cv2.VideoCapture(self._path)
         if not self._cap.isOpened():
@@ -101,11 +138,15 @@ class VideoSource:
         self._iterated = False
 
         detected_fps = self._cap.get(cv2.CAP_PROP_FPS)
-        if not detected_fps:
-            detected_fps = 30.0
-            logger.warning(f"Could not detect video FPS, defaulting to {detected_fps}")
-        self.fps: float = detected_fps
-        self.total_frames: int = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.fps = _normalize_capture_fps(detected_fps)
+        raw_total_frames = self._cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        try:
+            valid_total = float(raw_total_frames)
+        except (TypeError, ValueError):
+            valid_total = math.nan
+        self.total_frames = (
+            int(valid_total) if math.isfinite(valid_total) and valid_total >= 0 else 0
+        )
         self.width: int = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height: int = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -193,6 +234,15 @@ class VideoWriter:
                 "Install it with: pip install opencv-python"
             )
 
+        if isinstance(fps, bool):
+            raise TypeError("Video writer FPS must be a finite positive number.")
+        try:
+            fps = float(fps)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("Video writer FPS must be a finite positive number.") from exc
+        if not math.isfinite(fps) or fps <= 0:
+            raise ValueError(f"Video writer FPS must be finite and > 0, got {fps!r}.")
+
         self._path = str(path)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -258,8 +308,9 @@ def collect_video_results(
     vid_stride: int = 1,
 ) -> list:
     """Collect all video results into a list, warning for large videos."""
-    vs = VideoSource(source, vid_stride=vid_stride)
-    est_frames = vs.total_frames // max(1, vid_stride)
+    stride = _validate_vid_stride(vid_stride)
+    vs = VideoSource(source, vid_stride=stride)
+    est_frames = _processed_frame_count(vs.total_frames, stride)
     vs.release()
 
     if est_frames > _LARGE_VIDEO_THRESHOLD:
@@ -308,25 +359,30 @@ def run_video_inference(
     from .drawing import (
         draw_boxes,
         draw_depth_map,
+        draw_gaze_arrows,
         draw_keypoints,
         draw_masks,
         draw_matte,
         draw_obb,
+        draw_ocr_regions,
+        draw_panoptic,
         draw_points,
+        draw_semantic_mask,
     )
 
-    with VideoSource(source, vid_stride=vid_stride) as video_src:
+    stride = _validate_vid_stride(vid_stride)
+    with VideoSource(source, vid_stride=stride) as video_src:
         writer = None
         out_path = None
         effective_fps = None
         if save:
             out_path = resolve_video_save_path(source, output_path)
-            effective_fps = video_src.fps / max(1, vid_stride)
+            effective_fps = video_src.fps / stride
             # The writer is created lazily from the first output frame instead
             # of the source dimensions: restore/super-resolution results render
             # on a canvas ``restore_scale`` times the source frame.
 
-        total = video_src.total_frames // max(1, vid_stride) or None
+        total = _processed_frame_count(video_src.total_frames, stride) or None
         pbar = (
             tqdm(total=total, desc=Path(source).name, unit="frame", dynamic_ncols=True)
             if progress
@@ -389,7 +445,42 @@ def run_video_inference(
                         if isinstance(depth_np, torch.Tensor):
                             depth_np = depth_np.cpu().numpy()
                         annotated_pil = draw_depth_map(pil_img, depth_np)
-                    elif len(result) > 0:
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "semantic_mask", None) is not None
+                    ):
+                        semantic_np = result.semantic_mask.data
+                        if isinstance(semantic_np, torch.Tensor):
+                            semantic_np = semantic_np.cpu().numpy()
+                        annotated_pil = draw_semantic_mask(pil_img, semantic_np)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "panoptic", None) is not None
+                    ):
+                        panoptic_np = result.panoptic.data
+                        if isinstance(panoptic_np, torch.Tensor):
+                            panoptic_np = panoptic_np.cpu().numpy()
+                        annotated_pil = draw_panoptic(
+                            pil_img,
+                            panoptic_np,
+                            result.panoptic.segments_info,
+                            class_names=result.names,
+                        )
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "ocr", None) is not None
+                    ):
+                        if len(result.ocr) > 0:
+                            ocr_np = result.ocr.numpy()
+                            annotated_pil = draw_ocr_regions(
+                                pil_img,
+                                ocr_np.data,
+                                ocr_np.texts,
+                                ocr_np.conf,
+                            )
+                        else:
+                            annotated_pil = pil_img
+                    elif result.boxes is not None and len(result.boxes) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:
                             masks_np = result.masks.data
@@ -426,6 +517,15 @@ def run_video_inference(
                             if isinstance(kpts_np, torch.Tensor):
                                 kpts_np = kpts_np.cpu().numpy()
                             annotated_pil = draw_keypoints(annotated_pil, kpts_np)
+                        if result.gaze is not None:
+                            boxes_np = result.boxes.numpy()
+                            gaze_np = result.gaze.numpy()
+                            annotated_pil = draw_gaze_arrows(
+                                annotated_pil,
+                                boxes_np.xyxy.tolist(),
+                                gaze_np.pitch.tolist(),
+                                gaze_np.yaw.tolist(),
+                            )
                     else:
                         annotated_pil = pil_img
 
@@ -445,6 +545,9 @@ def run_video_inference(
                         cv2.imshow("LibreYOLO", annotated_bgr)
                         if cv2.waitKey(1) & 0xFF == ord("q"):
                             break
+
+                if save:
+                    result.saved_path = str(out_path)
 
                 if pbar is not None:
                     n_dets = len(result) if result is not None else 0

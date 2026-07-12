@@ -1,7 +1,11 @@
 """Shared general utility functions."""
 
 import logging
+import math
+import os
+from numbers import Integral, Real
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Tuple, Union
 from urllib.parse import urlparse
 
@@ -162,6 +166,8 @@ def cxcywh_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
 # =============================================================================
 
 _save_dir_cache: Dict[str, Path] = {}
+_save_path_reservations: set[str] = set()
+_save_path_lock = Lock()
 
 
 def get_safe_stem(path: Union[str, Path]) -> str:
@@ -180,6 +186,7 @@ def resolve_save_path(
     ext: str = "jpg",
     default_dir: str = "runs/detect",
     exist_ok: bool = False,
+    force_ext: bool = False,
 ) -> Path:
     """
     Generate a save path handling both directory and file output paths.
@@ -187,7 +194,9 @@ def resolve_save_path(
     Uses an auto-incrementing directory scheme: runs/detect/predict,
     runs/detect/predict2, etc. The original filename is preserved.
     Within a single process, all images are saved to the same directory.
-    Duplicate filenames from different input folders will overwrite.
+    Save names are reserved for the lifetime of the process so repeated inputs,
+    duplicate basenames, and explicit-file batch outputs cannot overwrite one
+    another before the previous write becomes visible.
 
     Args:
         output_path: User-provided output path (file or directory) or None
@@ -196,10 +205,16 @@ def resolve_save_path(
         ext: File extension without dot (default: "jpg")
         default_dir: Default directory if output_path is None
         exist_ok: If True, reuse existing predict/ directory without incrementing
+        force_ext: If True, replace an explicit file suffix with ``ext``. This is
+            used by formats such as matte cutouts that require PNG output.
 
     Returns:
         Resolved Path object ready for saving
     """
+    ext = str(ext).lower().lstrip(".")
+    if not ext:
+        raise ValueError("Save extension must not be empty.")
+
     # Get filename from image path or use default
     if image_path is not None:
         stem = get_safe_stem(image_path)
@@ -213,16 +228,53 @@ def resolve_save_path(
             _save_dir_cache[default_dir] = increment_path(
                 Path(default_dir) / "predict", exist_ok=exist_ok, mkdir=True
             )
-        return _save_dir_cache[default_dir] / filename
+        candidate = _save_dir_cache[default_dir] / filename
+        return _reserve_available_save_path(candidate)
 
+    raw_output_path = str(output_path)
     save_path = Path(output_path)
+    directory_hint = (
+        save_path.is_dir()
+        or raw_output_path.endswith(("/", "\\"))
+        or save_path.suffix == ""
+    )
 
-    if save_path.suffix == "":
+    if directory_hint:
         save_path.mkdir(parents=True, exist_ok=True)
-        return save_path / filename
+        candidate = save_path / filename
     else:
+        if force_ext:
+            save_path = save_path.with_suffix(f".{ext}")
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        return save_path
+        candidate = save_path
+
+    return _reserve_available_save_path(candidate)
+
+
+def _reserve_available_save_path(path: Union[str, Path]) -> Path:
+    """Reserve a collision-free file path for this process.
+
+    The lock makes simultaneous inference calls in one process choose distinct
+    names. Existing files are never silently reused. The first collision uses
+    the established ``name2.ext`` convention from :func:`increment_path`.
+    """
+    path = Path(path)
+    stem_path = path.with_suffix("")
+    suffix = path.suffix
+
+    with _save_path_lock:
+        for index in range(1, 10000):
+            candidate = path if index == 1 else Path(f"{stem_path}{index}{suffix}")
+            # Resolve existing parent aliases (symlinks/junctions) even though
+            # the final artifact does not exist yet. Otherwise two equivalent
+            # directory spellings can reserve the same physical filename.
+            reservation_key = os.path.normcase(str(candidate.resolve(strict=False)))
+            if candidate.exists() or reservation_key in _save_path_reservations:
+                continue
+            _save_path_reservations.add(reservation_key)
+            return candidate
+
+    raise FileExistsError(f"Could not allocate a unique save path for {path}")
 
 
 def log_saved_result(result, save_path: Union[str, Path]) -> str:
@@ -256,9 +308,34 @@ def get_slice_bboxes(
     Returns:
         List of (x1, y1, x2, y2) tuples representing tile coordinates.
     """
+    for name, value in (
+        ("image_width", image_width),
+        ("image_height", image_height),
+        ("slice_size", slice_size),
+    ):
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise TypeError(f"{name} must be an integer, got {type(value).__name__}.")
+        if int(value) <= 0:
+            raise ValueError(f"{name} must be positive, got {value!r}.")
+    if isinstance(overlap_ratio, bool) or not isinstance(overlap_ratio, Real):
+        raise TypeError(
+            "overlap_ratio must be a real number, "
+            f"got {type(overlap_ratio).__name__}."
+        )
+    overlap_ratio = float(overlap_ratio)
+    if not math.isfinite(overlap_ratio) or not 0.0 <= overlap_ratio < 1.0:
+        raise ValueError(
+            "overlap_ratio must be finite and in [0, 1), "
+            f"got {overlap_ratio!r}."
+        )
+
     slices = []
     overlap = int(slice_size * overlap_ratio)
     step = slice_size - overlap
+    if step <= 0:
+        raise ValueError(
+            "Tile step must be positive; reduce overlap_ratio or increase slice_size."
+        )
 
     y = 0
     while y < image_height:

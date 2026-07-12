@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -111,6 +113,72 @@ def test_runner_list_save_uses_indexed_filenames(tmp_path):
     assert sorted(p.name for p in out_dir.iterdir()) == ["image0.jpg", "image1.jpg"]
 
 
+def test_runner_repeated_path_save_never_reuses_artifact(tmp_path):
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (16, 16), color="red").save(source)
+    output_dir = tmp_path / "out"
+    runner = InferenceRunner(_StubModel())
+
+    results = runner([source, source], save=True, output_path=str(output_dir))
+
+    saved = [r.saved_path for r in results]
+    assert len(saved) == len(set(saved)) == 2
+    assert all(Path(path).exists() for path in saved)
+
+
+def test_runner_duplicate_basenames_preserve_source_association(tmp_path):
+    first_source = tmp_path / "a" / "photo.jpg"
+    second_source = tmp_path / "b" / "photo.jpg"
+    first_source.parent.mkdir()
+    second_source.parent.mkdir()
+    Image.new("RGB", (16, 16), color="red").save(first_source)
+    Image.new("RGB", (16, 16), color="blue").save(second_source)
+    output_dir = tmp_path / "out"
+    runner = InferenceRunner(_StubModel())
+
+    results = runner(
+        [first_source, second_source], save=True, output_path=str(output_dir)
+    )
+
+    first_saved, second_saved = (Path(r.saved_path) for r in results)
+    assert first_saved != second_saved
+    first_pixel = np.asarray(Image.open(first_saved))[0, 15]
+    second_pixel = np.asarray(Image.open(second_saved))[0, 15]
+    assert first_pixel[0] > first_pixel[2]
+    assert second_pixel[2] > second_pixel[0]
+
+
+def test_runner_explicit_file_batch_allocates_one_file_per_image(tmp_path):
+    runner = InferenceRunner(_StubModel())
+    explicit = tmp_path / "prediction.jpg"
+    images = [
+        np.zeros((16, 16, 3), dtype=np.uint8),
+        np.full((16, 16, 3), 255, dtype=np.uint8),
+    ]
+
+    results = runner(images, save=True, output_path=str(explicit))
+
+    assert [Path(r.saved_path).name for r in results] == [
+        "prediction.jpg",
+        "prediction2.jpg",
+    ]
+    assert all(Path(r.saved_path).exists() for r in results)
+
+
+def test_runner_existing_suffix_directory_remains_directory(tmp_path):
+    runner = InferenceRunner(_StubModel())
+    output_dir = tmp_path / "results.v1"
+    output_dir.mkdir()
+
+    (result,) = runner(
+        [np.zeros((16, 16, 3), dtype=np.uint8)],
+        save=True,
+        output_path=str(output_dir),
+    )
+
+    assert Path(result.saved_path).parent == output_dir
+
+
 def test_runner_tiling_list_save_uses_indexed_filenames(tmp_path):
     """The tiling branch must thread save_stem through its fallbacks too."""
     runner = InferenceRunner(_StubModel())
@@ -142,6 +210,22 @@ def test_runner_tiling_list_save_indexes_large_image_dirs(tmp_path):
 
     stems = sorted(p.name.split("_stub_")[0] for p in out_dir.iterdir())
     assert stems == ["image0", "image1"]
+
+
+def test_runner_large_tiled_save_keeps_existing_suffix_directory(tmp_path):
+    runner = InferenceRunner(_StubModel())
+    output_dir = tmp_path / "results.v1"
+    output_dir.mkdir()
+
+    result = runner(
+        np.zeros((64, 64, 3), dtype=np.uint8),
+        tiling=True,
+        save=True,
+        output_path=str(output_dir),
+    )
+
+    assert Path(result.saved_path).is_relative_to(output_dir)
+    assert Path(result.saved_path).is_dir()
 
 
 # =============================================================================

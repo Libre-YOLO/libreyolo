@@ -1,10 +1,24 @@
 """Libre YOLO — open source YOLO library with MIT license."""
 
+import logging as _logging
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path as _Path
 
+
+class _OptionalXFormersImportFilter(_logging.Filter):
+    """Suppress the duplicated optional-xFormers import warning only."""
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        return record.getMessage() != "xFormers not available"
+
+
+# Two bundled DINOv2 modules emit the same warning during eager import even
+# though both have a supported non-xFormers fallback. Install an exact-message
+# filter before importing the model registry; other DINOv2 diagnostics remain.
+_logging.getLogger("dinov2").addFilter(_OptionalXFormersImportFilter())
+
 # Core API — always available
-from .models import (
+from .models import (  # noqa: E402  (filter must be installed before eager imports)
     LibreYOLO,
     LibreYOLOX,
     LibreYOLO9,
@@ -45,7 +59,7 @@ from .models import (
     LibreSigLIP2,
     LibrePPOCR,
 )
-from .utils.results import (
+from .utils.results import (  # noqa: E402  (see import filter above)
     Results,
     Boxes,
     Masks,

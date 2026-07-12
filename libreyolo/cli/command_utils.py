@@ -17,9 +17,10 @@ def exit_with_error(
     message: str,
     *,
     suggestion: Optional[str] = None,
+    context: Optional[dict[str, Any]] = None,
 ) -> NoReturn:
     """Emit a structured CLI error and terminate the command."""
-    err = CLIError(code, message, suggestion=suggestion)
+    err = CLIError(code, message, suggestion=suggestion, context=context)
     out.error(err)
     raise typer.Exit(code=err.exit_code)
 
@@ -37,12 +38,14 @@ def load_model_or_exit(
 
     out.progress(f"Loading {model}...")
     try:
-        return LibreYOLO(model_path, device=device, task=task)
+        with out.library_output():
+            return LibreYOLO(model_path, device=device, task=task)
     except Exception as exc:
         exit_with_error(
             out,
             "model_load_failed",
             f"Failed to load model '{model}': {exc}",
+            context={"stage": "model_load", "model": model},
         )
 
 
@@ -140,13 +143,17 @@ def exit_stage_error(
     detail: Exception | str,
     code: str = "io_error",
     suggestion: Optional[str] = None,
+    context: Optional[dict[str, Any]] = None,
 ) -> NoReturn:
     """Emit a stage-specific runtime error and terminate the command."""
+    error_context = dict(context or {})
+    error_context.setdefault("stage", stage)
     exit_with_error(
         out,
         code,
         f"{stage} failed: {detail}",
         suggestion=suggestion,
+        context=error_context,
     )
 
 
