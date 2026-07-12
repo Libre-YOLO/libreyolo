@@ -18,6 +18,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from ...training.distributed import all_reduce_avg_scalar
 from .keypoints import compute_l1_keypoint_loss, map_labels_to_keypoint_schema
 from .segmentation import (
     calculate_uncertainty,
@@ -90,16 +91,6 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
-
-
-def is_dist_avail_and_initialized() -> bool:
-    return torch.distributed.is_available() and torch.distributed.is_initialized()
-
-
-def get_world_size() -> int:
-    if not is_dist_avail_and_initialized():
-        return 1
-    return torch.distributed.get_world_size()
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
@@ -207,6 +198,10 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
+
+    @staticmethod
+    def _global_count_normalizer(count: int, device: torch.device) -> float:
+        return all_reduce_avg_scalar(count, device=device, min_value=1.0)
 
     def __init__(
         self,
@@ -655,10 +650,10 @@ class SetCriterion(nn.Module):
         num_boxes = sum(len(t["labels"]) for t in targets)
         if not self.sum_group_losses:
             num_boxes = num_boxes * group_detr
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-        if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+        num_boxes = self._global_count_normalizer(
+            num_boxes,
+            next(iter(outputs.values())).device,
+        )
 
         # Compute all the requested losses
         losses = {}

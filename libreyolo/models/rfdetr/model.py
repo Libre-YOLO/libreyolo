@@ -1127,26 +1127,6 @@ class LibreRFDETR(BaseModel):
         """
         return super().val(*args, workers=workers, **kwargs)
 
-    def _restore_after_training(self, result: dict) -> None:
-        """Reload the saved checkpoint and leave real torch models in eval mode."""
-        checkpoint = None
-        for key in ("best_checkpoint", "last_checkpoint"):
-            path = result.get(key)
-            if path and Path(path).exists():
-                checkpoint = str(path)
-                break
-
-        if checkpoint is not None:
-            self.model_path = checkpoint
-            self._load_weights(checkpoint)
-
-        model = getattr(self, "model", None)
-        device = getattr(self, "device", None)
-        if model is not None and device is not None and hasattr(model, "to"):
-            model.to(device)
-        if model is not None and hasattr(model, "eval"):
-            model.eval()
-
     def _resume_checkpoint_uses_lora(self, resume_path: str | Path) -> bool:
         """Return True when a resume checkpoint needs a LoRA-wrapped graph."""
         path = Path(resume_path)
@@ -1285,6 +1265,7 @@ class LibreRFDETR(BaseModel):
                 "project": str(project),
                 "name": str(name),
                 "exist_ok": exist_ok,
+                "resume": bool(resume),
                 "size": self.size,
                 "num_classes": self.nb_classes,
             }
@@ -1311,7 +1292,16 @@ class LibreRFDETR(BaseModel):
 
         resume_path = None
         if resume:
-            resume_path = run_dir / "weights" / "last.pt" if resume is True else resume
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreRFDETR('path/to/last.pt'); "
+                    "model.train(data=..., resume=True)"
+                )
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
             if not train_kwargs.get(
                 "lora", False
             ) and self._resume_checkpoint_uses_lora(resume_path):
@@ -1324,8 +1314,7 @@ class LibreRFDETR(BaseModel):
             loggers=loggers,
             **train_kwargs,
         )
-        if resume:
-            trainer.setup()
+        if resume_path is not None:
             trainer.resume(str(resume_path))
         result = trainer.train()
         result["output_dir"] = result.get("save_dir", str(run_dir))

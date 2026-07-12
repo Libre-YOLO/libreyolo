@@ -594,14 +594,15 @@ class LibreDINOv2(BaseModel):
         batch_size: int | None = None,
         lr: float | None = None,
         output_dir: str = "runs/train",
-        resume=None,
+        resume: str | Path | bool | None = None,
         callbacks: TrainCallbacks = None,
         **kwargs,
     ) -> Dict:
         """Fine-tune LibreDINOv2 for semantic segmentation or classification.
 
         Task is taken from ``self.task``; ``DINOv2Trainer`` (via ``RFDETRTrainer``)
-        routes the classify vs semantic data/loss branches accordingly.
+        routes the classify vs semantic data/loss branches accordingly. Pass a
+        checkpoint path, or ``resume=True`` to continue the loaded checkpoint.
         """
         from pathlib import Path as _Path
 
@@ -612,6 +613,7 @@ class LibreDINOv2(BaseModel):
         project = train_kwargs.pop("project", None)
         name = train_kwargs.pop("name", None)
         exist_ok = train_kwargs.pop("exist_ok", True)
+        train_device = train_kwargs.pop("device", self.device)
         batch = train_kwargs.pop("batch", None)
         lr0 = train_kwargs.pop("lr0", None)
         if project is None:
@@ -633,12 +635,25 @@ class LibreDINOv2(BaseModel):
         if resolved_lr0 is None:
             resolved_lr0 = 1e-4
 
+        resume_path = None
+        if resume:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreDINOv2('path/to/last.pt'); "
+                    "model.train(data=..., resume=True)"
+                )
+            resume_path = _Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
         trainer = DINOv2Trainer(
             model=self.model,
             wrapper_model=self,
             data=data,
             epochs=epochs,
-            batch_size=resolved_batch,
+            batch=resolved_batch,
             lr0=resolved_lr0,
             imgsz=train_kwargs.pop("imgsz", self.input_size),
             size=self.size,
@@ -646,33 +661,17 @@ class LibreDINOv2(BaseModel):
             project=str(project),
             name=str(name),
             exist_ok=exist_ok,
-            resume=resume,
-            device=str(self.device),
+            resume=bool(resume),
+            device=str(train_device),
             callbacks=callbacks,
             **train_kwargs,
         )
 
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
         result = trainer.train()
         self._restore_after_training(result)
         return result
-
-    def _restore_after_training(self, result: dict) -> None:
-        """Reload the best checkpoint after training completes."""
-        checkpoint = None
-        for key in ("best_checkpoint", "last_checkpoint"):
-            path = result.get(key)
-            if path and Path(path).exists():
-                checkpoint = str(path)
-                break
-        if checkpoint is not None:
-            self.model_path = checkpoint
-            self._load_weights(checkpoint)
-        model = getattr(self, "model", None)
-        device = getattr(self, "device", None)
-        if model is not None and device is not None and hasattr(model, "to"):
-            model.to(device)
-        if model is not None and hasattr(model, "eval"):
-            model.eval()
 
     # =========================================================================
     # Export

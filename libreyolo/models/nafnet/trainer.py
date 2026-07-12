@@ -6,7 +6,7 @@ from typing import Any, Dict, Type
 
 import torch
 
-from ...training.config import TrainConfig
+from ...training.config import TrainConfig, require_training_choice
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import NAFNetConfig
@@ -71,6 +71,12 @@ class NAFNetTrainer(BaseTrainer):
             self._restore_inference_pooling()
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("yoloxwarmcos",),
+            family=self.get_model_family(),
+        )
         return WarmupCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

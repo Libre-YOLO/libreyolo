@@ -257,18 +257,22 @@ def spawn_for_model(
     last = result.get("last_checkpoint")
     ckpt = next((p for p in (best, last) if p and Path(p).exists()), None)
     if ckpt:
-        if hasattr(model_instance, "model_path"):
-            model_instance.model_path = ckpt
-        model_instance._load_weights(ckpt)
-        if hasattr(model_instance, "model"):
-            first_device = devices[0] if devices else 0
-            target = (
-                torch.device("cuda", first_device)
-                if torch.cuda.is_available()
-                else torch.device("cpu")
-            )
+        first_device = devices[0] if devices else 0
+        target = (
+            torch.device("cuda", first_device)
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        model_instance.device = target
+        restore = getattr(model_instance, "_restore_after_training", None)
+        if callable(restore):
+            restore(result)
+        else:
+            resolved_checkpoint = str(Path(ckpt).expanduser().resolve())
+            if hasattr(model_instance, "model_path"):
+                model_instance.model_path = resolved_checkpoint
+            model_instance._load_weights(resolved_checkpoint)
             model_instance.model.to(target).eval()
-            model_instance.device = target
     elif _model_moved:
         model_instance.model.to(_original_device)
         torch.cuda.empty_cache()
@@ -329,6 +333,18 @@ def ddp_aware(batch_key: str = "batch", experimental_key: str | None = None):
                     # Guard not satisfied — fall through so the function body
                     # raises its validation error cleanly on the main process.
                     return train_fn(self, *args, **kwargs)
+                if batch_key != "batch" and train_kw.get("batch") is not None:
+                    alias_batch = train_kw.pop("batch")
+                    named_batch = train_kw.get(batch_key)
+                    if named_batch is not None and named_batch != alias_batch:
+                        raise ValueError(
+                            f"Conflicting batch values: {batch_key}={named_batch} "
+                            f"and batch={alias_batch}"
+                        )
+                    train_kw[batch_key] = alias_batch
+                train_kw["_libreyolo_explicit_train_keys"] = sorted(
+                    getattr(self, "_active_train_explicit_keys", ())
+                )
                 return spawn_for_model(self, train_kw, len(devices), devices=devices, batch_key=batch_key)
 
             return train_fn(self, *args, **kwargs)

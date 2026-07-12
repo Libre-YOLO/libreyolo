@@ -30,7 +30,7 @@ from ...data.augment.boxes import xyxy2cxcywh
 from ...data.augment.color import augment_hsv
 from ...data.augment.geometry import mirror
 from ...training.augment import MosaicMixupDataset
-from ...training.config import PICODETConfig, TrainConfig
+from ...training.config import PICODETConfig, TrainConfig, require_training_choice
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from .loss import PICODETLoss
@@ -134,6 +134,12 @@ class PICODETTrainer(BaseTrainer):
         return preproc, MosaicMixupDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("cos",),
+            family=self.get_model_family(),
+        )
         return WarmupCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

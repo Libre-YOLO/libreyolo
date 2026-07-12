@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import torch.nn as nn
 
 pytestmark = pytest.mark.unit
 
@@ -10,7 +11,8 @@ rfdetr_trainer = pytest.importorskip("libreyolo.models.rfdetr.trainer")
 
 def _make_wrapper():
     wrapper = rfdetr_model.LibreRFDETR.__new__(rfdetr_model.LibreRFDETR)
-    wrapper.model = object()
+    wrapper.model = nn.Identity()
+    wrapper.device = "cpu"
     wrapper.size = "n"
     wrapper.nb_classes = 2
     wrapper.input_size = 560
@@ -106,14 +108,13 @@ def test_rfdetr_train_honors_explicit_run_kwargs(monkeypatch, tmp_path):
 def test_rfdetr_train_resolves_resume_paths(monkeypatch, tmp_path, resume_arg):
     captured = _install_dummy_trainer(monkeypatch, {"save_dir": str(tmp_path / "exp")})
     checkpoint_path = tmp_path / "resume.pt"
+    checkpoint_path.touch()
     resume = checkpoint_path if resume_arg == "explicit" else True
-    expected = (
-        tmp_path / "project" / "custom" / "weights" / "last.pt"
-        if resume is True
-        else checkpoint_path
-    )
+    wrapper = _make_wrapper()
+    wrapper.model_path = checkpoint_path
+    wrapper._resume_checkpoint_uses_lora = lambda _path: False
 
-    _make_wrapper().train(
+    wrapper.train(
         data="data.yaml",
         output_dir=str(tmp_path / "ignored"),
         project=str(tmp_path / "project"),
@@ -121,8 +122,9 @@ def test_rfdetr_train_resolves_resume_paths(monkeypatch, tmp_path, resume_arg):
         resume=resume,
     )
 
-    assert captured["setup"] is True
-    assert captured["resume"] == str(expected)
+    assert "setup" not in captured
+    assert captured["resume"] == str(checkpoint_path)
+    assert captured["kwargs"]["resume"] is True
 
 
 def test_rfdetr_train_rejects_conflicting_lr_aliases(tmp_path):

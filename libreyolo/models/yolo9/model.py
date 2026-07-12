@@ -286,21 +286,6 @@ class LibreYOLO9(BaseModel):
 
         self._rebuild_for_new_classes(new_nc)
 
-    def _restore_after_training(self, results: dict) -> None:
-        """Reload the saved checkpoint and leave the model ready for inference."""
-        checkpoint = None
-        for key in ("best_checkpoint", "last_checkpoint"):
-            path = results.get(key)
-            if path and Path(path).exists():
-                checkpoint = str(path)
-                break
-
-        if checkpoint is not None:
-            self.model_path = checkpoint
-            self._load_weights(checkpoint)
-
-        self.model.to(self.device).eval()
-
     def _align_class_towers_for_transfer(self, state_dict: dict) -> None:
         """Match COCO-width class towers before partial transfer loading."""
         hidden_key = "head.cv3.0.0.conv.weight"
@@ -681,7 +666,6 @@ class LibreYOLO9(BaseModel):
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibreYOLO9('path/to/last.pt', size='t'); model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()

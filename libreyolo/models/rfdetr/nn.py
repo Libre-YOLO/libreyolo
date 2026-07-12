@@ -11,9 +11,33 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 
+from ...training.distributed import all_reduce_avg_scalar
 from .backbone import build_backbone
 from .lwdetr import LWDETR, MLP, PostProcess, build_criterion_and_postprocessors, build_model
 from .tensors import NestedTensor
+
+
+def _semantic_cross_entropy(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    ignore_index: int,
+) -> torch.Tensor:
+    """Semantic CE normalized by the global valid-pixel count under DDP."""
+    targets = targets.long()
+    valid_pixels = (targets != ignore_index).sum()
+    valid_pixels_per_rank = all_reduce_avg_scalar(
+        valid_pixels,
+        device=logits.device,
+        min_value=1.0,
+    )
+    local_loss_sum = F.cross_entropy(
+        logits,
+        targets,
+        ignore_index=ignore_index,
+        reduction="sum",
+    )
+    return local_loss_sum / valid_pixels_per_rank
 
 
 @dataclass(frozen=True)
@@ -626,15 +650,11 @@ class RFDETRSemanticSegmenter(nn.Module):
             logits = F.interpolate(
                 logits, size=targets.shape[-2:], mode="bilinear", align_corners=False
             )
-            targets = targets.long()
-            if bool((targets != self.IGNORE_INDEX).any()):
-                loss = F.cross_entropy(
-                    logits, targets, ignore_index=self.IGNORE_INDEX
-                )
-            else:
-                # cross_entropy returns NaN when every pixel is ignored; emit
-                # a graph-connected zero so the optimizer step stays sane.
-                loss = logits.sum() * 0.0
+            loss = _semantic_cross_entropy(
+                logits,
+                targets,
+                ignore_index=self.IGNORE_INDEX,
+            )
             return {"total_loss": loss, "sem": loss}
 
         return F.interpolate(

@@ -280,6 +280,49 @@ def test_train_rfdetr_actual_call_uses_reported_defaults(monkeypatch, tmp_path):
     assert data["epochs_completed"] == 100
 
 
+def test_train_passes_explicit_keys_and_maps_val_to_eval_interval(
+    monkeypatch, tmp_path
+):
+    app = _make_app()
+    captured = {}
+
+    class _YOLO9Like:
+        FAMILY = "yolo9"
+        device = "cpu"
+
+        def train(self, data, **kwargs):
+            captured["data"] = data
+            captured["kwargs"] = kwargs
+            return {"output_dir": str(tmp_path / "exp")}
+
+    monkeypatch.setattr(
+        "libreyolo.cli.commands.train.load_model_or_exit",
+        lambda out, model, model_path, device: _YOLO9Like(),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "data=dummy.yaml",
+            "model=LibreYOLO9t.pt",
+            "mosaic=1.0",
+            "val=false",
+            f"project={tmp_path}",
+            "exist_ok=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["data"] == "dummy.yaml"
+    kwargs = captured["kwargs"]
+    assert kwargs["mosaic_prob"] == 1.0
+    assert kwargs["eval_interval"] == 0
+    explicit_keys = set(kwargs["_libreyolo_explicit_train_keys"])
+    assert "mosaic_prob" in explicit_keys
+    assert "eval_interval" in explicit_keys
+
+
 def test_train_rfdetr_scheduler_override_reaches_trainer(monkeypatch, tmp_path):
     app = _make_app()
     captured = {}

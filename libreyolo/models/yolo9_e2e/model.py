@@ -12,7 +12,6 @@ Sizes: t / s / m / c (same backbone configs as yolo9).
 """
 
 import re
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -279,15 +278,10 @@ class LibreYOLO9E2E(LibreYOLO9):
                     "model = LibreYOLO9E2E('path/to/last.pt', size='t'); "
                     "model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self._load_weights(best_ckpt)
-
+        self._restore_after_training(results)
         return results
 
 

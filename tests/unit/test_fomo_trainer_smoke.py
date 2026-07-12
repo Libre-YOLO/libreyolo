@@ -11,7 +11,7 @@ import torch
 pytestmark = [pytest.mark.unit, pytest.mark.fomo]
 
 
-def _make_random_fomo(size: str = "s", nc: int = 1) -> "LibreFOMO":
+def _make_random_fomo(size: str = "s", nc: int = 1) -> Any:
     from libreyolo.models.fomo.model import LibreFOMO
 
     return LibreFOMO(model_path=None, size=size, nb_classes=nc, device="cpu")
@@ -54,7 +54,7 @@ class TestLibreFOMOTrainerSmoke:
             
         monkeypatch.setattr(model, "_load_weights", mock_load_weights)
         
-        results = model.train("dummy.yaml", allow_experimental=True)
+        model.train("dummy.yaml", allow_experimental=True)
         assert loaded_path == str(dummy_ckpt)
 
     def test_train_resume_raises_when_no_checkpoint(self) -> None:
@@ -84,8 +84,10 @@ class TestLibreFOMOTrainerSmoke:
 
         monkeypatch.setattr("libreyolo.models.fomo.trainer.FOMOTrainer", DummyTrainer)
 
-        results = model.train("dummy.yaml", allow_experimental=True, resume=True)
-        assert setup_called is True
+        model.train("dummy.yaml", allow_experimental=True, resume=True)
+        # Resume must happen before setup so the original run directory and
+        # deferred optimizer/EMA/scaler/RNG state are restored coherently.
+        assert setup_called is False
         assert resume_called_with == str(dummy_ckpt)
 
     def test_train_seeds_rngs(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,8 +8,8 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 Differences from upstream:
 - ``@register()`` / ``__share__`` / ``__inject__`` stripped — ctor takes
   matcher + weight_dict + losses as plain kwargs.
-- ``misc.dist_utils.{is_dist_available_and_initialized, get_world_size}``
-  inlined as small helpers (LibreYOLO is single-GPU from this module's POV).
+- Upstream distributed count helpers are replaced by LibreYOLO's shared
+  clamp-before-average scalar reduction.
 """
 
 from __future__ import annotations
@@ -17,25 +17,13 @@ from __future__ import annotations
 import copy
 
 import torch
-import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
+from ...training.distributed import all_reduce_avg_scalar
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from .fdr import bbox2distance
-
-
-def _is_dist_available_and_initialized() -> bool:
-    return torch.distributed.is_available() and torch.distributed.is_initialized()
-
-
-def _get_world_size() -> int:
-    return (
-        torch.distributed.get_world_size()
-        if _is_dist_available_and_initialized()
-        else 1
-    )
 
 
 class DEIMCriterion(nn.Module):
@@ -51,6 +39,10 @@ class DEIMCriterion(nn.Module):
     ``{k: v * weight_dict[k] for k, v in losses.items()}`` for the optimization
     target — this class already applies weights internally.
     """
+
+    @staticmethod
+    def _global_count_normalizer(count: int, device: torch.device) -> float:
+        return all_reduce_avg_scalar(count, device=device, min_value=1.0)
 
     def __init__(
         self,
@@ -388,24 +380,17 @@ class DEIMCriterion(nn.Module):
         indices_go = self._get_go_indices(indices, indices_aux_list)
 
         num_boxes_go = sum(len(x[0]) for x in indices_go)
-        num_boxes_go = torch.as_tensor(
-            [num_boxes_go],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
+        loss_device = next(iter(outputs.values())).device
+        num_boxes_go = self._global_count_normalizer(
+            num_boxes_go,
+            loss_device,
         )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes_go)
-        num_boxes_go = torch.clamp(num_boxes_go / _get_world_size(), min=1).item()
 
         num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor(
-            [num_boxes],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
+        num_boxes = self._global_count_normalizer(
+            num_boxes,
+            loss_device,
         )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / _get_world_size(), min=1).item()
 
         losses = {}
         for loss in self.losses:

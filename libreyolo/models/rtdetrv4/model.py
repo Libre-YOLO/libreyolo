@@ -86,7 +86,7 @@ class LibreRTDETRv4(LibreDFINE):
         project: str = "runs/train",
         name: str = _TRAIN_DEFAULTS.name,
         exist_ok: bool = False,
-        resume: bool = False,
+        resume: str | Path | bool = False,
         amp: bool = False,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
@@ -107,7 +107,7 @@ class LibreRTDETRv4(LibreDFINE):
             project: Root directory for training runs.
             name: Experiment name.
             exist_ok: If True, overwrite existing experiment directory.
-            resume: If True, resume training from the loaded checkpoint.
+            resume: Checkpoint path, or True to resume the loaded checkpoint.
             amp: Enable automatic mixed precision training.
             patience: Early stopping patience.
             callbacks: Optional training callback or iterable of callbacks.
@@ -145,6 +145,19 @@ class LibreRTDETRv4(LibreDFINE):
             if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
 
+        resume_path = None
+        if resume:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
+                raise ValueError(
+                    "resume=True requires a checkpoint. Load one first: "
+                    "model = LibreRTDETRv4('path/to/last.pt'); "
+                    "model.train(data=..., resume=True)"
+                )
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
         trainer = RTDETRv4Trainer(
             model=self.model,
             wrapper_model=self,
@@ -161,7 +174,7 @@ class LibreRTDETRv4(LibreDFINE):
             project=project,
             name=name,
             exist_ok=exist_ok,
-            resume=resume,
+            resume=bool(resume),
             amp=amp,
             patience=patience,
             callbacks=callbacks,
@@ -169,23 +182,10 @@ class LibreRTDETRv4(LibreDFINE):
             **kwargs,
         )
 
-        if resume:
-            if not self.model_path:
-                raise ValueError(
-                    "resume=True requires a checkpoint. Load one first: "
-                    "model = LibreRTDETRv4('path/to/last.pt'); model.train(data=..., resume=True)"
-                )
-            trainer.setup()
-            trainer.resume(str(self.model_path))
-            return trainer.train()
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self.model_path = best_ckpt
-            self._load_weights(best_ckpt)
-
-        self.model.to(self.device)
+        self._restore_after_training(results)
 
         return results

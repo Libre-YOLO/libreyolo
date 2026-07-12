@@ -221,7 +221,7 @@ class LibreDEIMv2(BaseModel):
         project: str = "runs/train",
         name: Optional[str] = None,
         exist_ok: bool = False,
-        resume: bool = False,
+        resume: str | Path | bool = False,
         amp: Optional[bool] = None,
         patience: int = 50,
         callbacks: TrainCallbacks = None,
@@ -242,7 +242,7 @@ class LibreDEIMv2(BaseModel):
             project: Root directory for training runs.
             name: Experiment name (None uses the family default).
             exist_ok: If True, overwrite existing experiment directory.
-            resume: If True, resume training from the loaded checkpoint.
+            resume: Checkpoint path, or True to resume the loaded checkpoint.
             amp: Enable automatic mixed precision training (None uses the
                 family default).
             patience: Early stopping patience.
@@ -310,27 +310,27 @@ class LibreDEIMv2(BaseModel):
         }
         trainer_kwargs.update({k: v for k, v in optional.items() if v is not None})
 
-        trainer = DEIMv2Trainer(**trainer_kwargs)
-
+        resume_path = None
         if resume:
-            if not self.model_path:
+            checkpoint = self.model_path if resume is True else resume
+            if checkpoint is None:
                 raise ValueError(
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibreDEIMv2('path/to/last.pt'); "
                     "model.train(data=..., resume=True)"
                 )
-            trainer.setup()
-            trainer.resume(str(self.model_path))
-            return trainer.train()
+            resume_path = Path(checkpoint).expanduser()
+            if not resume_path.is_file():
+                raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+
+        trainer_kwargs["resume"] = bool(resume)
+        trainer = DEIMv2Trainer(**trainer_kwargs)
+
+        if resume_path is not None:
+            trainer.resume(str(resume_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self.model_path = best_ckpt
-            self._load_weights(best_ckpt)
-
-        self.model.to(self.device)
+        self._restore_after_training(results)
 
         return results
 

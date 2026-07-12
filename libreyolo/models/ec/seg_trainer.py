@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Type
 
 import torch
 
-from ...training.config import ECSegConfig, TrainConfig
+from ...training.config import ECSegConfig, TrainConfig, require_training_choice
 from ...training.scheduler import FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from ..rfdetr.seg_transforms import RFDETRSegPassThroughDataset, RFDETRSegTransform
@@ -75,6 +75,12 @@ class ECSegTrainer(BaseTrainer):
         return preproc, RFDETRSegPassThroughDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("flat_cosine",),
+            family="ec-segment",
+        )
         return FlatCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,
@@ -126,6 +132,12 @@ class ECSegTrainer(BaseTrainer):
 
     def _setup_optimizer(self) -> torch.optim.Optimizer:
         """AdamW with {backbone, head} x {wd, no-wd} groups (EC recipe)."""
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family="ec-segment",
+        )
         backbone_wd, backbone_no_wd, head_wd, head_no_wd = [], [], [], []
         for name, p in self.model.named_parameters():
             if not p.requires_grad:
@@ -159,7 +171,9 @@ class ECSegTrainer(BaseTrainer):
             groups.append({"params": backbone_wd, "lr": lr * bb_mult, "weight_decay": wd, "lr_mult": bb_mult})
         if backbone_no_wd:
             groups.append({"params": backbone_no_wd, "lr": lr * bb_mult, "weight_decay": 0.0, "lr_mult": bb_mult})
-        return torch.optim.AdamW(groups, betas=(0.9, 0.999))
+        return torch.optim.AdamW(
+            groups, betas=(float(self.config.momentum), 0.999)
+        )
 
     def _scale_lr(self, base_lr: float, param_group: dict) -> float:
         return base_lr * float(param_group.get("lr_mult", 1.0))

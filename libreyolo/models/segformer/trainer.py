@@ -15,7 +15,7 @@ from typing import Dict, List, Tuple, Type
 
 import torch
 
-from ...training.config import SegformerConfig, TrainConfig
+from ...training.config import SegformerConfig, TrainConfig, require_training_choice
 from ...training.distributed import is_main_process, unwrap_model
 from ...training.scheduler import FlatCosineScheduler, LinearLRScheduler
 from ...training.trainer import BaseTrainer
@@ -52,6 +52,12 @@ class SegformerTrainer(BaseTrainer):
         Frozen params (``requires_grad=False``) are skipped, so layer-freeze
         config still works.
         """
+        require_training_choice(
+            self.config.optimizer,
+            field="optimizer",
+            supported=("adamw",),
+            family=self.get_model_family(),
+        )
         base_lr = self.effective_lr
         wd = self.config.weight_decay
         head_lr_mult = float(getattr(self.config, "head_lr_mult", 10.0))
@@ -85,7 +91,11 @@ class SegformerTrainer(BaseTrainer):
             for (lr_mult, group_wd), params in buckets.items()
         ]
 
-        optimizer = torch.optim.AdamW(param_groups, lr=base_lr)
+        optimizer = torch.optim.AdamW(
+            param_groups,
+            lr=base_lr,
+            betas=(float(self.config.momentum), 0.999),
+        )
         if is_main_process():
             logger.info("SegFormer optimizer: AdamW, backbone base lr=%s", base_lr)
             for (lr_mult, group_wd), params in buckets.items():
@@ -114,7 +124,12 @@ class SegformerTrainer(BaseTrainer):
         )
 
     def create_scheduler(self, iters_per_epoch: int):
-        scheduler_name = str(self.config.scheduler).lower()
+        scheduler_name = require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("linear", "cosine", "flat_cosine", "cos"),
+            family=self.get_model_family(),
+        )
         if scheduler_name == "linear":
             return LinearLRScheduler(
                 lr=self.effective_lr,

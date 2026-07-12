@@ -6,6 +6,8 @@ hooks, losses, channel adaptation, and the full distiller pipeline work
 correctly without requiring real YOLO weights.
 """
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn as nn
@@ -14,8 +16,21 @@ from libreyolo.distillation.hooks import FeatureHookManager, _resolve_module
 from libreyolo.distillation.losses import MGDLoss, CWDLoss
 from libreyolo.distillation.distiller import Distiller
 from libreyolo.distillation.configs import get_distill_config, list_supported
+from libreyolo.training.trainer import BaseTrainer
 
 pytestmark = pytest.mark.unit
+
+
+def test_disabled_distillation_discards_deferred_resume_state(caplog):
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(distill_model=None),
+        _resume_distiller_state={"adapter.weight": torch.ones(1)},
+    )
+
+    BaseTrainer._setup_distillation(trainer)
+
+    assert trainer._resume_distiller_state is None
+    assert "distillation is disabled" in caplog.text
 
 
 # =============================================================================
@@ -304,6 +319,26 @@ class TestDistiller:
         )
         return distiller, teacher, student
 
+    @staticmethod
+    def _single_scale_components():
+        teacher = DummyModel(channels=(8, 8, 8))
+        student = DummyModel(channels=(8, 8, 8))
+        teacher_config = {
+            "tap_points": ["neck.p3"],
+            "channels": [8],
+            "strides": [8],
+        }
+        student_config = {
+            "tap_points": ["neck.p3"],
+            "channels": [8],
+            "strides": [8],
+        }
+        return teacher, student, teacher_config, student_config
+
+    @staticmethod
+    def _forward_hook_count(model):
+        return sum(len(module._forward_hooks) for module in model.modules())
+
     def test_mgd_pipeline(self):
         distiller, teacher, student = self._make_distiller("mgd")
         x = torch.randn(2, 3, 16, 16)
@@ -345,6 +380,145 @@ class TestDistiller:
                 student_config={"tap_points": ["neck.p3"], "channels": [64], "strides": [16]},
             )
 
+    @pytest.mark.parametrize(
+        "tau",
+        [0.0, -1.0, float("nan"), float("inf"), float("-inf")],
+    )
+    def test_invalid_cwd_tau_is_rejected_before_side_effects(self, tau):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+        teacher.train()
+
+        with pytest.raises(ValueError, match="tau"):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                teacher_config=teacher_config,
+                student_config=student_config,
+                loss_type="cwd",
+                tau=tau,
+            )
+
+        assert teacher.training
+        assert all(parameter.requires_grad for parameter in teacher.parameters())
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+    @pytest.mark.parametrize(
+        "mask_ratio",
+        [-0.1, 1.0, 1.1, float("nan"), float("inf"), float("-inf")],
+    )
+    def test_invalid_mgd_mask_ratio_is_rejected_before_side_effects(self, mask_ratio):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+        teacher.train()
+
+        with pytest.raises(ValueError, match="mask_ratio"):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                teacher_config=teacher_config,
+                student_config=student_config,
+                loss_type="mgd",
+                mask_ratio=mask_ratio,
+            )
+
+        assert teacher.training
+        assert all(parameter.requires_grad for parameter in teacher.parameters())
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+    @pytest.mark.parametrize(
+        ("argument", "value"),
+        [
+            ("loss_weight", -0.1),
+            ("loss_weight", float("nan")),
+            ("loss_weight", float("inf")),
+            ("per_scale_weight", [-0.1]),
+            ("per_scale_weight", [float("nan")]),
+            ("per_scale_weight", [float("inf")]),
+        ],
+    )
+    def test_invalid_weights_are_rejected_before_hooks(self, argument, value):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+
+        with pytest.raises(ValueError, match=argument):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                teacher_config=teacher_config,
+                student_config=student_config,
+                **{argument: value},
+            )
+
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+    @pytest.mark.parametrize(
+        ("config_name", "field", "value"),
+        [
+            ("teacher_config", "channels", []),
+            ("student_config", "tap_points", []),
+        ],
+    )
+    def test_misaligned_config_lengths_are_rejected_before_hooks(
+        self, config_name, field, value
+    ):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+        configs = {
+            "teacher_config": teacher_config,
+            "student_config": student_config,
+        }
+        configs[config_name][field] = value
+
+        with pytest.raises(ValueError, match=config_name):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                **configs,
+            )
+
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+    def test_all_tap_points_are_resolved_before_hooks_are_installed(self):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+        teacher_config = {
+            "tap_points": ["neck.p3", "neck.p4"],
+            "channels": [8, 8],
+            "strides": [8, 16],
+        }
+        student_config = {
+            "tap_points": ["neck.p3", "neck.missing"],
+            "channels": [8, 8],
+            "strides": [8, 16],
+        }
+
+        with pytest.raises(AttributeError, match="neck.missing"):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                teacher_config=teacher_config,
+                student_config=student_config,
+            )
+
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+    def test_unknown_loss_is_rejected_before_hooks_are_installed(self):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+
+        with pytest.raises(ValueError, match="Unknown loss type"):
+            Distiller(
+                teacher_model=teacher,
+                student_model=student,
+                teacher_config=teacher_config,
+                student_config=student_config,
+                loss_type="unknown",
+                loss_weight=1.0,
+            )
+
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
     def test_compute_loss_without_forward_raises(self):
         distiller, _, _ = self._make_distiller()
         with pytest.raises(RuntimeError, match="Expected"):
@@ -356,11 +530,38 @@ class TestDistiller:
 
         distiller.teacher_forward(x)
         student(x)
+        assert distiller.s_hooks.get_feature_list()[0].grad_fn is not None
         distiller.cleanup()
 
-        # After cleanup, hooks should be removed
+        assert distiller._teacher_feats is None
+        assert len(distiller.t_hooks.get_feature_list()) == 0
+        assert len(distiller.s_hooks.get_feature_list()) == 0
+        assert self._forward_hook_count(teacher) == 0
+        assert self._forward_hook_count(student) == 0
+
+        # Later forwards must not repopulate released feature references.
         student(x)
         assert len(distiller.s_hooks.get_feature_list()) == 0
+
+    def test_step_clears_microbatch_features_without_invalidating_loss(self):
+        teacher, student, teacher_config, student_config = self._single_scale_components()
+        distiller = Distiller(
+            teacher_model=teacher,
+            student_model=student,
+            teacher_config=teacher_config,
+            student_config=student_config,
+        )
+        x = torch.randn(1, 3, 8, 8)
+
+        distiller.teacher_forward(x)
+        student(x)
+        loss = distiller.compute_loss()
+        distiller.step()
+
+        assert len(distiller.t_hooks.get_feature_list()) == 0
+        assert len(distiller.s_hooks.get_feature_list()) == 0
+        loss.backward()
+        assert student.neck.p3.weight.grad is not None
 
     def test_multiple_steps(self):
         distiller, teacher, student = self._make_distiller()

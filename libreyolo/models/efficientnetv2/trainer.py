@@ -13,7 +13,7 @@ from typing import Dict, Type
 import torch
 import torch.nn.functional as F
 
-from ...training.config import TrainConfig
+from ...training.config import TrainConfig, require_training_choice
 from ...training.scheduler import WarmupCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import EfficientNetV2Config
@@ -41,6 +41,12 @@ class EfficientNetV2Trainer(BaseTrainer):
         return None, None
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("yoloxwarmcos",),
+            family=self.get_model_family(),
+        )
         return WarmupCosineScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

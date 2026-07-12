@@ -26,21 +26,107 @@ Usage::
     student_out = model(images, targets)              # normal forward, hooks capture features
     distill_loss = distiller.compute_loss()
     total_loss = task_loss + distill_loss
-    distiller.step()  # clear features for next iteration
+    distiller.step()  # clear features for the next microbatch
 """
 
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Mapping, Sequence
+from numbers import Integral, Real
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import torch.nn as nn
 
-from .hooks import FeatureHookManager
+from .hooks import FeatureHookManager, _resolve_module
 from .losses import MGDLoss, CWDLoss, FeatureMSELoss, DISTILL_LOSSES
 
 logger = logging.getLogger(__name__)
+
+
+def _as_sequence(value: Any, name: str) -> list[Any]:
+    """Return a public config sequence as a list, rejecting scalar strings."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TypeError(f"{name} must be a sequence")
+    return list(value)
+
+
+def _positive_ints(values: list[Any], name: str) -> list[int]:
+    """Validate positive integer channel or stride declarations."""
+    result: list[int] = []
+    for index, value in enumerate(values):
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise TypeError(f"{name}[{index}] must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"{name}[{index}] must be a positive integer")
+        result.append(int(value))
+    return result
+
+
+def _finite_nonnegative(value: Any, name: str) -> float:
+    """Validate a scalar loss weight and return its floating-point value."""
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    if result < 0.0:
+        raise ValueError(f"{name} must be nonnegative")
+    return result
+
+
+def _validate_config(
+    config: Dict,
+    name: str,
+    *,
+    allow_empty_tap_points: bool,
+) -> dict[str, list[Any]]:
+    """Validate and normalize one model's feature-distillation config."""
+    if not isinstance(config, Mapping):
+        raise TypeError(f"{name} must be a mapping")
+
+    required = ("tap_points", "channels", "strides")
+    missing = [key for key in required if key not in config]
+    if missing:
+        raise ValueError(f"{name} is missing required keys: {missing}")
+
+    tap_points = _as_sequence(config["tap_points"], f"{name}['tap_points']")
+    channels = _positive_ints(
+        _as_sequence(config["channels"], f"{name}['channels']"),
+        f"{name}['channels']",
+    )
+    strides = _positive_ints(
+        _as_sequence(config["strides"], f"{name}['strides']"),
+        f"{name}['strides']",
+    )
+
+    if not strides:
+        raise ValueError(f"{name} must declare at least one feature scale")
+    if len(channels) != len(strides):
+        raise ValueError(
+            f"{name} channels and strides must have matching lengths; "
+            f"got {len(channels)} and {len(strides)}"
+        )
+    valid_tap_counts = {len(strides)}
+    if allow_empty_tap_points:
+        valid_tap_counts.add(0)
+    if len(tap_points) not in valid_tap_counts:
+        qualifier = "zero or " if allow_empty_tap_points else ""
+        raise ValueError(
+            f"{name} tap_points must contain {qualifier}{len(strides)} entries; "
+            f"got {len(tap_points)}"
+        )
+    for index, path in enumerate(tap_points):
+        if not isinstance(path, str) or not path:
+            raise TypeError(f"{name}['tap_points'][{index}] must be a non-empty string")
+
+    return {
+        "tap_points": tap_points,
+        "channels": channels,
+        "strides": strides,
+    }
 
 
 class Distiller(nn.Module):
@@ -58,11 +144,18 @@ class Distiller(nn.Module):
             - channels: list of int channel dimensions
             - strides: list of int spatial strides
         student_config: Dict from ``student.get_distill_config()`` (same format).
-        loss_type: ``"mgd"`` or ``"cwd"`` (default: ``"mgd"``).
-        loss_weight: Global distillation loss weight (alpha). Default: 2e-5 for MGD, 1.0 for CWD.
-        mask_ratio: MGD mask ratio (default: 0.65). Ignored for CWD.
-        tau: CWD temperature (default: 1.0). Ignored for MGD.
-        per_scale_weight: Optional list of per-scale weights. If None, uniform.
+        loss_type: ``"mgd"``, ``"cwd"``, or ``"feat_mse"`` (default: ``"mgd"``).
+        loss_weight: Finite nonnegative global loss weight. Defaults are 2e-5
+            for MGD and 1.0 for CWD/feature MSE.
+        mask_ratio: Finite MGD mask ratio in ``[0, 1)`` (default: 0.65).
+            Ignored for other loss types.
+        tau: Finite positive CWD temperature (default: 1.0). Ignored for other
+            loss types.
+        per_scale_weight: Optional finite nonnegative weight per feature scale.
+            If None, every scale has weight 1.0.
+        teacher_feature_fn: Optional direct teacher feature extractor. This
+            skips teacher hooks and permits teacher/student stride mismatch.
+        normalize: L2-normalize feature-MSE inputs when true.
 
     Example::
 
@@ -91,9 +184,97 @@ class Distiller(nn.Module):
     ):
         super().__init__()
 
+        if not isinstance(teacher_model, nn.Module):
+            raise TypeError("teacher_model must be an nn.Module")
+        if not isinstance(student_model, nn.Module):
+            raise TypeError("student_model must be an nn.Module")
+        if not isinstance(loss_type, str):
+            raise TypeError("loss_type must be a string")
+        if teacher_feature_fn is not None and not callable(teacher_feature_fn):
+            raise TypeError("teacher_feature_fn must be callable or None")
+        if not isinstance(normalize, bool):
+            raise TypeError("normalize must be a bool")
+
         self.loss_type = loss_type.lower()
-        self.loss_weight = loss_weight if loss_weight is not None else self._default_weight()
+        if self.loss_type not in DISTILL_LOSSES:
+            raise ValueError(
+                f"Unknown loss type: '{self.loss_type}'. "
+                f"Available: {list(DISTILL_LOSSES.keys())}"
+            )
+
+        t_config = _validate_config(
+            teacher_config,
+            "teacher_config",
+            allow_empty_tap_points=teacher_feature_fn is not None,
+        )
+        s_config = _validate_config(
+            student_config,
+            "student_config",
+            allow_empty_tap_points=False,
+        )
+        t_strides = t_config["strides"]
+        s_strides = s_config["strides"]
+        if len(t_strides) != len(s_strides):
+            raise ValueError(
+                "Teacher and student must declare the same number of feature scales. "
+                f"Teacher: {len(t_strides)}, Student: {len(s_strides)}"
+            )
+        if teacher_feature_fn is None and t_strides != s_strides:
+            raise ValueError(
+                "Teacher and student must have matching strides. "
+                f"Teacher: {t_strides}, Student: {s_strides}"
+            )
+
+        if self.loss_type == "mgd":
+            if isinstance(mask_ratio, bool) or not isinstance(mask_ratio, Real):
+                raise TypeError("mask_ratio must be a real number")
+            mask_ratio = float(mask_ratio)
+            if not math.isfinite(mask_ratio) or not 0.0 <= mask_ratio < 1.0:
+                raise ValueError(
+                    "mask_ratio must be finite and satisfy 0 <= mask_ratio < 1"
+                )
+        elif self.loss_type == "cwd":
+            if isinstance(tau, bool) or not isinstance(tau, Real):
+                raise TypeError("tau must be a real number")
+            tau = float(tau)
+            if not math.isfinite(tau) or tau <= 0.0:
+                raise ValueError("tau must be finite and greater than zero")
+
+        default_weight = self._default_weight() if loss_weight is None else loss_weight
+        self.loss_weight = _finite_nonnegative(default_weight, "loss_weight")
         self.normalize = normalize
+
+        self.num_scales = len(t_strides)
+        if per_scale_weight is None:
+            self._scale_weights = [1.0] * self.num_scales
+        else:
+            scale_weights = _as_sequence(per_scale_weight, "per_scale_weight")
+            if len(scale_weights) != self.num_scales:
+                raise ValueError(
+                    f"per_scale_weight has {len(scale_weights)} entries, "
+                    f"expected {self.num_scales} (one per feature scale)"
+                )
+            self._scale_weights = [
+                _finite_nonnegative(weight, f"per_scale_weight[{index}]")
+                for index, weight in enumerate(scale_weights)
+            ]
+
+        # Resolve every configured module before freezing the teacher or
+        # registering any hook. A malformed later tap point must not leave
+        # earlier hooks installed on either model.
+        if teacher_feature_fn is None:
+            for path in t_config["tap_points"]:
+                module = _resolve_module(teacher_model, path)
+                if not isinstance(module, nn.Module):
+                    raise TypeError(
+                        f"teacher_config tap point '{path}' does not resolve to an nn.Module"
+                    )
+        for path in s_config["tap_points"]:
+            module = _resolve_module(student_model, path)
+            if not isinstance(module, nn.Module):
+                raise TypeError(
+                    f"student_config tap point '{path}' does not resolve to an nn.Module"
+                )
 
         # A foundation-model teacher (e.g. DINOv2) emits token features that are
         # not a hookable BCHW module output and lives on a different spatial
@@ -104,18 +285,21 @@ class Distiller(nn.Module):
         self.teacher_feature_fn = teacher_feature_fn
         self._teacher_feats: Optional[List[torch.Tensor]] = None
 
-        # Validate configs
-        t_strides = teacher_config["strides"]
-        s_strides = student_config["strides"]
-        if teacher_feature_fn is None and t_strides != s_strides:
-            raise ValueError(
-                f"Teacher and student must have matching strides. "
-                f"Teacher: {t_strides}, Student: {s_strides}"
-            )
+        t_channels = t_config["channels"]
+        s_channels = s_config["channels"]
 
-        self.num_scales = len(t_strides)
-        t_channels = teacher_config["channels"]
-        s_channels = student_config["channels"]
+        # Build every loss module before hooks are installed. Channel and
+        # weight errors therefore cannot leave live forward hooks behind.
+        self.loss_modules = nn.ModuleList()
+        for i in range(self.num_scales):
+            loss_fn = self._build_loss(
+                s_channels[i],
+                t_channels[i],
+                mask_ratio=mask_ratio,
+                tau=tau,
+                scale_weight=self._scale_weights[i],
+            )
+            self.loss_modules.append(loss_fn)
 
         # Freeze teacher
         self.teacher = teacher_model
@@ -127,32 +311,11 @@ class Distiller(nn.Module):
         # only when it exposes hookable BCHW features (detector teachers);
         # foundation teachers deliver features via ``teacher_feature_fn``.
         self.t_hooks = (
-            FeatureHookManager(self.teacher, teacher_config["tap_points"])
+            FeatureHookManager(self.teacher, t_config["tap_points"])
             if teacher_feature_fn is None
             else None
         )
-        self.s_hooks = FeatureHookManager(student_model, student_config["tap_points"])
-
-        # Per-scale weights
-        if per_scale_weight is not None:
-            if len(per_scale_weight) != self.num_scales:
-                raise ValueError(
-                    f"per_scale_weight has {len(per_scale_weight)} entries, "
-                    f"expected {self.num_scales} (one per feature scale)"
-                )
-            self._scale_weights = per_scale_weight
-        else:
-            self._scale_weights = [1.0] * self.num_scales
-
-        # Build loss modules (one per feature scale)
-        self.loss_modules = nn.ModuleList()
-        for i in range(self.num_scales):
-            loss_fn = self._build_loss(
-                s_channels[i], t_channels[i],
-                mask_ratio=mask_ratio, tau=tau,
-                scale_weight=self._scale_weights[i],
-            )
-            self.loss_modules.append(loss_fn)
+        self.s_hooks = FeatureHookManager(student_model, s_config["tap_points"])
 
         # Log configuration
         logger.info("Distiller initialized:")
@@ -300,15 +463,21 @@ class Distiller(nn.Module):
     # Lifecycle
     # =========================================================================
 
-    def step(self):
-        """Clear captured features. Call at the end of each training step."""
+    def step(self) -> None:
+        """Clear features after each microbatch.
+
+        This is feature-lifecycle cleanup, not an optimizer-step transition.
+        Call it for every attempted microbatch, including accumulation
+        microbatches and iterations where AMP skips the optimizer update.
+        """
         if self.t_hooks is not None:
             self.t_hooks.clear()
         self._teacher_feats = None
         self.s_hooks.clear()
 
-    def cleanup(self):
-        """Remove all hooks and free resources. Call when training ends."""
+    def cleanup(self) -> None:
+        """Idempotently clear captured graphs and remove every feature hook."""
+        self.step()
         if self.t_hooks is not None:
             self.t_hooks.remove()
         self.s_hooks.remove()

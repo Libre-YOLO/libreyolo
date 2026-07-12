@@ -8,8 +8,8 @@ Copyright (c) 2023 lyuwenyu. All Rights Reserved.
 Differences from upstream:
 - ``@register()`` / ``__share__`` / ``__inject__`` stripped — ctor takes
   matcher + weight_dict + losses as plain kwargs.
-- ``misc.dist_utils.{is_dist_available_and_initialized, get_world_size}``
-  inlined as small helpers (LibreYOLO is single-GPU from this module's POV).
+- Upstream distributed count helpers are replaced by LibreYOLO's shared
+  clamp-before-average scalar reduction.
 """
 
 from __future__ import annotations
@@ -17,25 +17,13 @@ from __future__ import annotations
 import copy
 
 import torch
-import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
+from ...training.distributed import all_reduce_avg_scalar
 from .box_ops import box_cxcywh_to_xyxy, box_iou, generalized_box_iou
 from .fdr import bbox2distance
-
-
-def _is_dist_available_and_initialized() -> bool:
-    return torch.distributed.is_available() and torch.distributed.is_initialized()
-
-
-def _get_world_size() -> int:
-    return (
-        torch.distributed.get_world_size()
-        if _is_dist_available_and_initialized()
-        else 1
-    )
 
 
 class DFINECriterion(nn.Module):
@@ -264,8 +252,13 @@ class DFINECriterion(nn.Module):
         return losses
 
     @staticmethod
-    def _cropped_bce_loss(pred_logits, target_masks, boxes, eps=1e-6):
-        del eps
+    def _cropped_bce_loss(
+        pred_logits,
+        target_masks,
+        boxes,
+        normalizer,
+        eps=1e-6,
+    ):
         if pred_logits.shape[0] == 0:
             return pred_logits.sum() * 0.0
 
@@ -287,10 +280,17 @@ class DFINECriterion(nn.Module):
             reduction="none",
         )
         box_area = ((x2 - x1) * (y2 - y1)).flatten().clamp(min=1.0)
-        return (bce * inside).sum(dim=(1, 2)).div(box_area).mean()
+        per_instance = (bce * inside).sum(dim=(1, 2)).div(box_area)
+        return per_instance.sum() / max(float(normalizer), eps)
 
     @staticmethod
-    def _cropped_dice_loss(pred_logits, target_masks, boxes, eps=1e-6):
+    def _cropped_dice_loss(
+        pred_logits,
+        target_masks,
+        boxes,
+        normalizer,
+        eps=1e-6,
+    ):
         if pred_logits.shape[0] == 0:
             return pred_logits.sum() * 0.0
 
@@ -312,10 +312,13 @@ class DFINECriterion(nn.Module):
         target = target.flatten(1)
         inter = (pred * target).sum(dim=1)
         denom = pred.sum(dim=1) + target.sum(dim=1) + eps
-        return (1.0 - (2.0 * inter + eps) / denom).mean()
+        per_instance = 1.0 - (2.0 * inter + eps) / denom
+        return per_instance.sum() / max(float(normalizer), eps)
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
-        del num_boxes
+        # ``num_boxes`` is the globally summed instance count divided by world
+        # size. Dividing each rank's local sum by it composes with DDP's
+        # gradient averaging into the true global per-instance mean.
         if "pred_masks" not in outputs:
             return {}
 
@@ -366,11 +369,17 @@ class DFINECriterion(nn.Module):
         target_sel = torch.cat(target_parts, dim=0)
         target_boxes = torch.cat(box_parts, dim=0)
         return {
-            "loss_mask_bce": self._cropped_bce_loss(pred_sel, target_sel, target_boxes),
+            "loss_mask_bce": self._cropped_bce_loss(
+                pred_sel,
+                target_sel,
+                target_boxes,
+                num_boxes,
+            ),
             "loss_mask_dice": self._cropped_dice_loss(
                 pred_sel,
                 target_sel,
                 target_boxes,
+                num_boxes,
             ),
         }
 
@@ -458,24 +467,19 @@ class DFINECriterion(nn.Module):
         indices_go = self._get_go_indices(indices, indices_aux_list)
 
         num_boxes_go = sum(len(x[0]) for x in indices_go)
-        num_boxes_go = torch.as_tensor(
-            [num_boxes_go],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
+        loss_device = next(iter(outputs.values())).device
+        num_boxes_go = all_reduce_avg_scalar(
+            num_boxes_go,
+            device=loss_device,
+            min_value=1.0,
         )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes_go)
-        num_boxes_go = torch.clamp(num_boxes_go / _get_world_size(), min=1).item()
 
         num_boxes = sum(len(t["labels"]) for t in targets)
-        num_boxes = torch.as_tensor(
-            [num_boxes],
-            dtype=torch.float,
-            device=next(iter(outputs.values())).device,
+        num_boxes = all_reduce_avg_scalar(
+            num_boxes,
+            device=loss_device,
+            min_value=1.0,
         )
-        if _is_dist_available_and_initialized():
-            torch.distributed.all_reduce(num_boxes)
-        num_boxes = torch.clamp(num_boxes / _get_world_size(), min=1).item()
 
         losses = {}
         for loss in self.losses:

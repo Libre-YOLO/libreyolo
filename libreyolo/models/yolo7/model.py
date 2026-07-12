@@ -17,8 +17,6 @@ from typing import Any, Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 from libreyolo.training.ddp_spawn import ddp_aware
-from PIL import Image
-
 from ...training.callbacks import TrainCallbacks
 from ...training.config import YOLOv7Config
 from ...utils.image_loader import ImageInput
@@ -287,13 +285,8 @@ class LibreYOLO7(BaseModel):
                     "resume=True requires a checkpoint. Load one first: "
                     "model = LibreYOLO('last.pt'); model.train(data=..., resume=True)"
                 )
-            trainer.setup()
             trainer.resume(str(self.model_path))
 
         results = trainer.train()
-
-        best_ckpt = results.get("best_checkpoint")
-        if best_ckpt and Path(best_ckpt).exists():
-            self._load_weights(best_ckpt)
-
+        self._restore_after_training(results)
         return results

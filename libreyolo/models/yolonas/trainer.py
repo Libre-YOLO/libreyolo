@@ -6,7 +6,7 @@ from typing import Dict, Type
 
 import torch
 
-from ...training.config import TrainConfig, YOLONASConfig
+from ...training.config import TrainConfig, YOLONASConfig, require_training_choice
 from ...training.scheduler import CosineAnnealingScheduler
 from ...training.trainer import BaseTrainer
 from .loss import PPYoloELoss
@@ -36,6 +36,12 @@ class YOLONASTrainer(BaseTrainer):
         return preproc, YOLONASAffineMixupDataset
 
     def create_scheduler(self, iters_per_epoch: int):
+        require_training_choice(
+            self.config.scheduler,
+            field="scheduler",
+            supported=("cos",),
+            family=self.get_model_family(),
+        )
         return CosineAnnealingScheduler(
             lr=self.effective_lr,
             iters_per_epoch=iters_per_epoch,

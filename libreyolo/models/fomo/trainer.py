@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional, Type
 import torch
 from torch.utils.data import DataLoader
 
-from ...training.config import FOMOConfig, TrainConfig
+from ...data import dataloader_seed_kwargs, distributed_sampler_seed
+from ...training.config import FOMOConfig, TrainConfig, require_training_choice
 from ...training.trainer import BaseTrainer
 from ...training.distributed import (
     is_main_process,
@@ -61,7 +62,7 @@ class FOMOTrainer(BaseTrainer):
 
         self._val_dataset = val_dataset
 
-        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        per_rank_batch = self._per_rank_batch_size()
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
@@ -70,7 +71,8 @@ class FOMOTrainer(BaseTrainer):
                 num_replicas=self.world_size,
                 rank=self.rank,
                 shuffle=True,
-                drop_last=True,
+                drop_last=len(train_dataset) >= self.world_size,
+                seed=distributed_sampler_seed(getattr(self.config, "seed", None)),
             )
 
         self.train_loader = DataLoader(
@@ -81,6 +83,11 @@ class FOMOTrainer(BaseTrainer):
             pin_memory=self.device.type == "cuda",
             sampler=sampler,
             drop_last=False,
+            **dataloader_seed_kwargs(
+                getattr(self.config, "seed", None),
+                rank=self.rank,
+                distributed=self.is_distributed,
+            ),
         )
 
         if is_main_process():
@@ -96,7 +103,12 @@ class FOMOTrainer(BaseTrainer):
         return train_dataset
 
     def create_scheduler(self, iters_per_epoch: int):
-        sched_type = getattr(self.config, "scheduler", "cosine")
+        sched_type = require_training_choice(
+            getattr(self.config, "scheduler", "cosine"),
+            field="scheduler",
+            supported=("cos", "cosine", "flat_cosine", "linear", "constant"),
+            family=self.get_model_family(),
+        )
 
         if sched_type in ("cosine", "cos"):
             from ...training.scheduler import CosineAnnealingScheduler
@@ -129,7 +141,7 @@ class FOMOTrainer(BaseTrainer):
                 warmup_lr_start=getattr(self.config, "warmup_lr_start", 0.0001),
                 min_lr_ratio=getattr(self.config, "min_lr_ratio", 0.01),
             )
-        
+
         from ...training.scheduler import ConstantLRScheduler
         return ConstantLRScheduler(
             lr=self.effective_lr,
@@ -180,7 +192,7 @@ class FOMOTrainer(BaseTrainer):
 
             val_config = ValidationConfig(
                 data=self.config.data,
-                batch_size=self.config.batch,
+                batch_size=self._per_rank_batch_size(),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,

@@ -2,11 +2,12 @@
 
 Two families of tests:
 
-1. Gradient equivalence — the core mathematical claim: accumulating N
-   mini-batches of size B (``nbs`` set so ``round(nbs / batch) == N``) must
-   produce the same parameter gradients as a single forward pass over a full
-   batch of size N*B (given mean loss reduction and the ``loss / accum``
-   scaling in the loop).
+1. Gradient equivalence for per-image-mean losses: accumulating N mini-batches
+   must produce the same parameter gradients as a single forward pass over
+   their combined samples, including unequal or partial batches. Detection
+   terms normalized by positives or boxes retain their established equal-size
+   window semantics; exact unequal-window recomposition would require each
+   criterion to expose its unreduced numerator and denominator.
 
 2. Trainer wiring — that ``optimizer.step()`` and ``zero_grad()`` fire at the
    right frequency when ``_train_epoch_accum`` runs with accum > 1.
@@ -144,6 +145,34 @@ def _hash_state_dict(model: nn.Module) -> str:
 
 
 @_requires_libreyolo
+def test_variable_microbatch_sizes_match_one_combined_batch():
+    """A [4, 1] accumulation window weights samples, not micro-batches."""
+    torch.manual_seed(2027)
+    first = torch.randn(4, 8)
+    second = torch.randn(1, 8)
+    combined = torch.cat((first, second))
+
+    accumulated_model = _TinyModel()
+    combined_model = copy.deepcopy(accumulated_model)
+    combined_optimizer = torch.optim.SGD(combined_model.parameters(), lr=0.01)
+    combined_optimizer.zero_grad(set_to_none=True)
+    combined_model(combined).mean().backward()
+    combined_optimizer.step()
+
+    trainer = _make_trainer(accumulated_model, accum=2, num_batches=2)
+    trainer.train_loader = [
+        (first, torch.zeros(4, 5), [{}] * 4, list(range(4))),
+        (second, torch.zeros(1, 5), [{}], [4]),
+    ]
+    trainer._train_epoch(0)
+
+    for actual, expected in zip(
+        accumulated_model.parameters(), combined_model.parameters()
+    ):
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
+
+
+@_requires_libreyolo
 def test_base_effective_lr_is_absolute_under_accumulation():
     trainer = _make_trainer(_TinyModel(), accum=4)
     trainer.config.lr0 = 0.123
@@ -151,6 +180,19 @@ def test_base_effective_lr_is_absolute_under_accumulation():
 
     assert trainer._accum_steps == 4
     assert trainer.effective_lr == pytest.approx(0.123)
+
+
+@_requires_libreyolo
+def test_global_batch_must_divide_world_size_exactly():
+    trainer = _make_trainer(_TinyModel())
+    trainer.config.batch = 10
+    trainer.world_size = 4
+
+    with pytest.raises(ValueError, match="divisible"):
+        trainer._per_rank_batch_size()
+
+    trainer.config.batch = 12
+    assert trainer._per_rank_batch_size() == 3
 
 
 # =========================================================================
@@ -711,6 +753,60 @@ class _FakeEMA:
         self.updates += 1
 
 
+class _OverflowThenStepScaler(_FakeScaler):
+    """Skip the first optimizer step, then apply the second one."""
+
+    def __init__(self):
+        super().__init__()
+        self._scale = 8.0
+        self._outcomes = iter((False, True))
+        self._last_step_succeeded = False
+
+    def get_scale(self):
+        return self._scale
+
+    def step(self, optimizer):
+        self.step_calls += 1
+        self._last_step_succeeded = next(self._outcomes)
+        if self._last_step_succeeded:
+            optimizer.step()
+
+    def update(self):
+        super().update()
+        if not self._last_step_succeeded:
+            self._scale /= 2.0
+
+
+class _RecordingScheduler:
+    def __init__(self):
+        self.calls = []
+
+    def update_lr(self, step):
+        self.calls.append(step)
+        return 0.01
+
+
+@_requires_libreyolo
+@pytest.mark.parametrize("accum", [1, 2])
+def test_amp_overflow_does_not_advance_base_optimizer_state(accum):
+    trainer = _make_trainer(
+        _TinyModel(),
+        accum=accum,
+        num_batches=2 if accum == 1 else 4,
+    )
+    trainer.scaler = _OverflowThenStepScaler()
+    trainer.ema_model = _FakeEMA()
+    trainer.lr_scheduler = _RecordingScheduler()
+
+    trainer._train_epoch(0)
+
+    assert trainer.scaler.step_calls == 2
+    assert trainer.scaler.update_calls == 2
+    assert trainer.optimizer_step_count == 1
+    assert trainer.ema_model.updates == 1
+    assert trainer.lr_scheduler.calls == [1]
+
+
 @_requires_libreyolo
 def test_amp_accum_steps_once_per_window():
     """AMP path: scaler.step/update fire once per window; scale fires every batch."""
@@ -1070,9 +1166,118 @@ def test_resume_checkpoint_preserves_nbs_and_optimizer_step_iter(tmp_path):
     resumed.resume(str(checkpoint_path))
     assert resumed.start_epoch == 1
     assert resumed.config.nbs == 4
+    assert resumed._get_save_dir() == trainer.save_dir
 
     resumed._train_epoch(resumed.start_epoch)
     assert resumed.current_iter == 3
+
+
+@_requires_libreyolo
+def test_rng_capture_restore_covers_python_numpy_and_torch():
+    import random
+
+    import numpy as np
+
+    trainer = _make_trainer(_TinyModel())
+    loader_generator = torch.Generator().manual_seed(31)
+    trainer.train_loader = type(
+        "_LoaderState", (), {"generator": loader_generator}
+    )()
+    random.seed(19)
+    np.random.seed(23)
+    torch.manual_seed(29)
+    captured = trainer._capture_rng_state()
+    expected = (
+        random.random(),
+        np.random.random(),
+        torch.rand(3),
+        torch.rand(3, generator=loader_generator),
+    )
+
+    random.seed(101)
+    np.random.seed(103)
+    torch.manual_seed(107)
+    trainer._restore_rng_state(captured)
+    actual = (
+        random.random(),
+        np.random.random(),
+        torch.rand(3),
+        torch.rand(3, generator=loader_generator),
+    )
+
+    assert actual[0] == expected[0]
+    assert actual[1] == expected[1]
+    torch.testing.assert_close(actual[2], expected[2])
+    torch.testing.assert_close(actual[3], expected[3])
+
+
+@_requires_libreyolo
+def test_resume_defers_runtime_state_until_setup(tmp_path):
+    from libreyolo.training.ema import ModelEMA
+
+    class _StatefulScaler:
+        def state_dict(self):
+            return {"scale": 32.0, "growth_tracker": 7}
+
+    trainer = _make_trainer(_TinyModel(), accum=2, num_batches=3)
+    trainer.save_dir = tmp_path / "first"
+    trainer.save_dir.mkdir()
+    trainer.ema_model = ModelEMA(trainer.model, decay=0.9)
+    trainer.ema_model.updates = 11
+    trainer.scaler = _StatefulScaler()
+    trainer.optimizer_step_count = 17
+    trainer.patience_counter = 2
+    trainer.config.momentum = 0.81
+    trainer._save_checkpoint(epoch=3, loss=1.0, is_best=True)
+    checkpoint_path = trainer.save_dir / "weights" / "last.pt"
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    assert checkpoint["optimizer_step_count"] == 17
+    assert checkpoint["patience_counter"] == 2
+    assert len(checkpoint["rng_states_by_rank"]) == 1
+    assert "python" in checkpoint["rng_states_by_rank"][0]
+
+    resumed = _make_trainer(_TinyModel(), accum=2, num_batches=3)
+    resumed.config.epochs = 99
+    resumed.resume(str(checkpoint_path))
+
+    assert resumed.start_epoch == 4
+    assert resumed.optimizer_step_count == 17
+    assert resumed.patience_counter == 2
+    assert resumed.config.momentum == pytest.approx(0.81)
+    assert resumed.config.epochs == 99
+    assert resumed._resume_ema_updates == 11
+    assert resumed._resume_scaler_state == {
+        "scale": 32.0,
+        "growth_tracker": 7,
+    }
+    assert resumed._resume_rng_state is not None
+
+
+@_requires_libreyolo
+def test_resume_preserves_explicit_default_valued_config():
+    trainer = _make_trainer(_TinyModel())
+    trainer.config.epochs = 300
+    trainer._explicit_train_config_keys = frozenset({"epochs"})
+
+    trainer._restore_checkpoint_config({"config": {"epochs": 100}})
+
+    assert trainer.config.epochs == 300
+
+
+@_requires_libreyolo
+def test_restored_zero_optimizer_steps_does_not_fast_forward_scheduler():
+    trainer = _make_trainer(_TinyModel(), accum=1, num_batches=4)
+    scheduler = _RecordingScheduler()
+    trainer.lr_scheduler = scheduler
+    trainer.start_epoch = 3
+    trainer.optimizer_step_count = 0
+    trainer._optimizer_step_count_restored = True
+
+    trainer._initialize_scheduler_lr()
+
+    assert scheduler.calls == [0]
+    assert trainer.optimizer_step_count == 0
 
 
 @_requires_libreyolo

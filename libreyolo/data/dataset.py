@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from .cache import ImageCacheMixin
 from .labels import label_row_error, parse_yolo_box_or_segment_label_line
+from .seeding import dataloader_seed_kwargs
 from .obb import (
     canonicalize_xywhr,
     corners_to_xywhr,
@@ -1022,6 +1023,9 @@ def create_dataloader(
     shuffle: bool = True,
     pin_memory: bool = True,
     sampler=None,
+    seed: int | None = None,
+    rank: int = 0,
+    distributed: bool = False,
 ):
     """
     Create a DataLoader for YOLOX training.
@@ -1036,6 +1040,9 @@ def create_dataloader(
         sampler: Optional sampler (e.g. ``DistributedSampler`` for DDP). When
             provided, the sampler's own shuffling takes over and ``shuffle``
             is forced to False to satisfy PyTorch's mutual-exclusion check.
+        seed: Configured training seed. ``None`` keeps ambient-RNG behavior.
+        rank: Global distributed rank used to offset loader/worker streams.
+        distributed: Whether to apply the distributed rank offset.
     """
     try:
         visible_samples = len(sampler) if sampler is not None else len(dataset)
@@ -1051,4 +1058,5 @@ def create_dataloader(
         pin_memory=pin_memory,
         collate_fn=yolox_collate_fn,
         drop_last=drop_last,
+        **dataloader_seed_kwargs(seed, rank=rank, distributed=distributed),
     )

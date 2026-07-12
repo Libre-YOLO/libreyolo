@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import random
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -25,6 +26,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -86,13 +88,71 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
 
     @functools.wraps(train_fn)
     def wrapper(self, *args, cfg=None, **user_kwargs):
+        explicit_override = user_kwargs.pop(
+            "_libreyolo_explicit_train_keys",
+            None,
+        )
+
+        def call_train(
+            call_kwargs: Dict[str, Any],
+            explicit_keys: set[str],
+        ):
+            bound = sig.bind_partial(self, *args, **call_kwargs)
+            bound.apply_defaults()
+            seed = bound.arguments.get("seed")
+            variadic_kwargs = bound.arguments.get("kwargs")
+            if seed is None and isinstance(variadic_kwargs, dict):
+                seed = variadic_kwargs.get("seed")
+            if seed is None:
+                config_class = getattr(self, "TRAIN_CONFIG", None)
+                if callable(config_class):
+                    seed = getattr(config_class(), "seed", None)
+            if seed is not None:
+                seed = int(seed)
+                if seed >= 0:
+                    random.seed(seed)
+                    np.random.seed(seed % 2**32)
+                    torch.manual_seed(seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed_all(seed)
+
+            aliases = {
+                "batch_size": "batch",
+                "checkpoint_interval": "save_period",
+                "early_stopping_patience": "patience",
+                "img_size": "imgsz",
+                "lr": "lr0",
+                "num_workers": "workers",
+                "use_ema": "ema",
+            }
+            normalized_explicit = {aliases.get(key, key) for key in explicit_keys}
+            missing = object()
+            previous = getattr(self, "_active_train_explicit_keys", missing)
+            self._active_train_explicit_keys = normalized_explicit
+            try:
+                return train_fn(self, *args, **call_kwargs)
+            finally:
+                if previous is missing:
+                    delattr(self, "_active_train_explicit_keys")
+                else:
+                    self._active_train_explicit_keys = previous
+
+        positional_explicit = set(pos_names[: len(args)])
         if cfg is None:
-            return train_fn(self, *args, **user_kwargs)
+            explicit_keys = (
+                set(explicit_override)
+                if explicit_override is not None
+                else positional_explicit | set(user_kwargs)
+            )
+            return call_train(user_kwargs, explicit_keys)
         cfg_kwargs = load_train_cfg(cfg)
         consumed = set(pos_names[: len(args)]) | _WRAPPER_OWNED_CFG_KEYS
         merged = {k: v for k, v in cfg_kwargs.items() if k not in consumed}
         merged.update(user_kwargs)
-        return train_fn(self, *args, **merged)
+        return call_train(
+            merged,
+            positional_explicit | set(cfg_kwargs) | set(user_kwargs),
+        )
 
     wrapper._libreyolo_cfg_wrapped = True  # type: ignore[attr-defined]
     return wrapper
@@ -777,6 +837,47 @@ class BaseModel(ABC):
             raise RuntimeError(
                 f"Failed to load model weights from {model_path}: {e}"
             ) from e
+
+    def _restore_after_training(self, results: Dict[str, Any]) -> Optional[str]:
+        """Load the best available training checkpoint into the live wrapper.
+
+        Validation may not run in a short job, in which case ``best.pt`` does
+        not exist but ``last.pt`` still contains the current EMA weights. This
+        helper makes every wrapper converge on the same best-then-last policy,
+        restores inference mode/device, and records the checkpoint used for a
+        subsequent ``resume=True`` call.
+        """
+        candidates = (
+            results.get("best_checkpoint"),
+            results.get("last_checkpoint"),
+        )
+        checkpoint_path = next(
+            (
+                Path(candidate).expanduser().resolve()
+                for candidate in candidates
+                if candidate and Path(candidate).expanduser().is_file()
+            ),
+            None,
+        )
+        if checkpoint_path is None:
+            move = getattr(self.model, "to", None)
+            if callable(move):
+                move(self.device)
+            evaluate = getattr(self.model, "eval", None)
+            if callable(evaluate):
+                evaluate()
+            self.model_path = None
+            return None
+
+        self._load_weights(str(checkpoint_path))
+        move = getattr(self.model, "to", None)
+        if callable(move):
+            move(self.device)
+        evaluate = getattr(self.model, "eval", None)
+        if callable(evaluate):
+            evaluate()
+        self.model_path = str(checkpoint_path)
+        return self.model_path
 
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
