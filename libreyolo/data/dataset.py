@@ -22,7 +22,7 @@ from PIL import Image, UnidentifiedImageError
 from tqdm import tqdm
 
 from .cache import ImageCacheMixin
-from .utils import polygon_to_cxcywh
+from .labels import label_row_error, parse_yolo_box_or_segment_label_line
 from .obb import (
     canonicalize_xywhr,
     corners_to_xywhr,
@@ -160,6 +160,31 @@ def _clip_points_to_image(points: np.ndarray, width: int, height: int) -> np.nda
     return points
 
 
+def _clip_coco_bbox(
+    bbox, width: int, height: int
+) -> tuple[float, float, float, float] | None:
+    """Clip a COCO ``xywh`` box without moving its far edge."""
+    try:
+        values = np.asarray(bbox, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+    if values.size != 4 or not np.isfinite(values).all():
+        return None
+    raw_x1, raw_y1, box_w, box_h = map(float, values)
+    if box_w <= 0.0 or box_h <= 0.0:
+        return None
+
+    raw_x2 = raw_x1 + box_w
+    raw_y2 = raw_y1 + box_h
+    x1 = min(float(width), max(0.0, raw_x1))
+    y1 = min(float(height), max(0.0, raw_y1))
+    x2 = min(float(width), max(0.0, raw_x2))
+    y2 = min(float(height), max(0.0, raw_y2))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
 def _coco_obb_to_xywhr(obj: dict, width: int, height: int) -> np.ndarray | None:
     """Return pixel-space ``xywhr`` for a COCO-style OBB annotation.
 
@@ -211,18 +236,10 @@ def _coco_obb_to_xywhr(obj: dict, width: int, height: int) -> np.ndarray | None:
             except ValueError:
                 return None
 
-    bbox = obj.get("bbox")
-    if bbox is None:
+    clipped_bbox = _clip_coco_bbox(obj.get("bbox"), width, height)
+    if clipped_bbox is None:
         return None
-    values = np.asarray(bbox, dtype=np.float32).reshape(-1)
-    if values.size != 4 or not np.isfinite(values).all():
-        return None
-    x1 = max(0.0, float(values[0]))
-    y1 = max(0.0, float(values[1]))
-    x2 = min(float(width), x1 + max(0.0, float(values[2])))
-    y2 = min(float(height), y1 + max(0.0, float(values[3])))
-    if x2 <= x1 or y2 <= y1:
-        return None
+    x1, y1, x2, y2 = clipped_bbox
     return canonicalize_xywhr(((x1 + x2) * 0.5, (y1 + y2) * 0.5, x2 - x1, y2 - y1, 0.0))
 
 
@@ -369,27 +386,6 @@ class YOLODataset(ImageCacheMixin, Dataset):
                 source,
                 time.perf_counter() - start,
             )
-        if self.load_obb:
-            invalid_obb_rows = 0
-            invalid_obb_files = 0
-            first_invalid_obb = None
-            normalized_annotations = []
-            for annotation, skipped_count, first_error in annotations:
-                normalized_annotations.append(annotation)
-                if skipped_count:
-                    invalid_obb_rows += skipped_count
-                    invalid_obb_files += 1
-                    first_invalid_obb = first_invalid_obb or first_error
-            annotations = normalized_annotations
-            if invalid_obb_rows and main:
-                logger.warning(
-                    "Skipped %d invalid YOLO OBB label rows across %d files from %s. "
-                    "First invalid row: %s",
-                    invalid_obb_rows,
-                    invalid_obb_files,
-                    source,
-                    first_invalid_obb,
-                )
         if self.load_segments:
             self.segments = [item[1] for item in annotations]
             annotations = [item[0] for item in annotations]
@@ -429,11 +425,9 @@ class YOLODataset(ImageCacheMixin, Dataset):
         # Load labels
         labels = []
         segments = []
-        skipped_obb_rows = 0
-        first_obb_error = None
         if label_file.exists():
-            with open(label_file, "r") as f:
-                for line in f:
+            with open(label_file, "r", encoding="utf-8") as f:
+                for line_number, line in enumerate(f, start=1):
                     parts = line.strip().split()
                     if not parts:
                         continue
@@ -442,7 +436,6 @@ class YOLODataset(ImageCacheMixin, Dataset):
                             cls_id, corners = parse_yolo_obb_label_line(
                                 parts,
                                 num_classes=self.num_classes,
-                                clip=True,
                             )
                             pixel_corners = corners.copy()
                             pixel_corners[:, 0] *= width
@@ -450,23 +443,29 @@ class YOLODataset(ImageCacheMixin, Dataset):
                             xywhr = corners_to_xywhr(pixel_corners)
                             proxy = xywhr_to_proxy_xyxy(xywhr)
                         except ValueError as exc:
-                            skipped_obb_rows += 1
-                            first_obb_error = first_obb_error or f"{label_file.name}: {exc}"
-                            continue
+                            raise label_row_error(
+                                str(exc),
+                                label_path=label_file,
+                                line_number=line_number,
+                            ) from exc
                         labels.append([*proxy.tolist(), cls_id, float(xywhr[4])])
-                    elif len(parts) >= 5:
-                        cls_id = int(parts[0])
-
-                        if len(parts) > 5:
-                            # Segmentation format: derive bbox from polygon vertices
-                            coords = [float(p) for p in parts[1:]]
-                            cx, cy, w, h = polygon_to_cxcywh(coords)
-                            if self.load_segments:
-                                segments.append(_yolo_coords_to_rings(coords, width, height))
-                        else:
-                            cx, cy, w, h = map(float, parts[1:5])
-                            if self.load_segments:
-                                segments.append(_yolo_box_to_ring(cx, cy, w, h, width, height))
+                    else:
+                        cls_id, bbox, coords = parse_yolo_box_or_segment_label_line(
+                            parts,
+                            num_classes=self.num_classes,
+                            label_path=label_file,
+                            line_number=line_number,
+                        )
+                        cx, cy, w, h = bbox
+                        if self.load_segments:
+                            if coords is not None:
+                                segments.append(
+                                    _yolo_coords_to_rings(coords, width, height)
+                                )
+                            else:
+                                segments.append(
+                                    _yolo_box_to_ring(cx, cy, w, h, width, height)
+                                )
 
                         # Convert normalized xywh to pixel xyxy
                         x1 = (cx - w / 2) * width
@@ -496,7 +495,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         if self.load_segments:
             return annotation, segments
         if self.load_obb:
-            return annotation, skipped_obb_rows, first_obb_error
+            return annotation
         return annotation
 
     def __len__(self):
@@ -804,7 +803,7 @@ class COCODataset(ImageCacheMixin, Dataset):
                 area = float(obj.get("area", 1.0))
             except (TypeError, ValueError):
                 area = 0.0
-            if area <= 0.0:
+            if not math.isfinite(area) or area <= 0.0:
                 continue
             if self.load_obb:
                 xywhr = _coco_obb_to_xywhr(obj, width, height)
@@ -813,21 +812,27 @@ class COCODataset(ImageCacheMixin, Dataset):
                 proxy = xywhr_to_proxy_xyxy(xywhr)
                 objs.append((obj, proxy, float(xywhr[4])))
                 continue
-            x1 = max(0, obj["bbox"][0])
-            y1 = max(0, obj["bbox"][1])
-            x2 = min(width, x1 + max(0, obj["bbox"][2]))
-            y2 = min(height, y1 + max(0, obj["bbox"][3]))
-            if x2 > x1 and y2 > y1:
+            clipped_bbox = _clip_coco_bbox(obj.get("bbox"), width, height)
+            if clipped_bbox is not None:
+                x1, y1, x2, y2 = clipped_bbox
                 obj["clean_bbox"] = [x1, y1, x2, y2]
-                objs.append(obj)
                 if self.load_segments:
-                    segments.append(
-                        _coco_segmentation_to_rings(
-                            obj.get("segmentation", []),
-                            height=height,
-                            width=width,
-                        )
+                    rings = _coco_segmentation_to_rings(
+                        obj.get("segmentation", []),
+                        height=height,
+                        width=width,
                     )
+                    has_foreground = any(
+                        ring is not None
+                        and len(ring) >= 3
+                        and abs(float(cv2.contourArea(np.asarray(ring, dtype=np.float32))))
+                        > 0.0
+                        for ring in rings
+                    )
+                    if not has_foreground:
+                        continue
+                    segments.append(rings)
+                objs.append(obj)
 
         num_objs = len(objs)
         width_out = 6 if self.load_obb else 5

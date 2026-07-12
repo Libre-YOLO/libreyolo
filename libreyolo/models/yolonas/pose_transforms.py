@@ -34,9 +34,11 @@ from ...data.augment.pose import (
     AFFINE_INTERPOLATIONS as _AFFINE_INTERPOLATIONS,
     brightness_contrast as _brightness_contrast,
     build_target as _build_target,
+    clip_keypoints_to_image,
     finalize_image as _finalize_image,
     random_affine_pose,
 )
+from ...data.pose_metadata import validate_flip_idx
 from ...training.augment import augment_hsv
 from .utils import YOLO_NAS_POSE_PAD_VALUE, YOLO_NAS_POSE_RESIZE_SIZE
 
@@ -137,9 +139,10 @@ class YOLONASPoseTrainTransform:
             affine_interpolation, cv2.INTER_LINEAR
         )
         # A horizontal flip needs the left/right keypoint permutation; without
-        # a valid flip_idx, flipping would corrupt keypoint identities.
-        if flip_idx is not None and len(flip_idx) == num_keypoints:
-            self.flip_idx = np.asarray(flip_idx, dtype=np.int64)
+        # one, flipping would corrupt keypoint identities.
+        validated_flip_idx = validate_flip_idx(flip_idx, num_keypoints)
+        if validated_flip_idx is not None:
+            self.flip_idx = np.asarray(validated_flip_idx, dtype=np.int64)
             self.flip_prob = flip_prob
         else:
             self.flip_idx = None
@@ -187,6 +190,7 @@ class YOLONASPoseTrainTransform:
             np.ascontiguousarray(img), input_dim, padding_mode="center"
         )
         _apply_letterbox_to_targets(bboxes, kpts, r, pad_x, pad_y)
+        clip_keypoints_to_image(kpts, width=input_dim[1], height=input_dim[0])
 
         target = _build_target(
             cls, bboxes, kpts, self.num_keypoints, self.max_labels
@@ -224,6 +228,7 @@ class YOLONASPoseValTransform:
             np.ascontiguousarray(img), input_dim, padding_mode="bottom_right"
         )
         _apply_letterbox_to_targets(bboxes, kpts, r, pad_x, pad_y)
+        clip_keypoints_to_image(kpts, width=input_dim[1], height=input_dim[0])
 
         target = _build_target(
             cls, bboxes, kpts, self.num_keypoints, self.max_labels

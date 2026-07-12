@@ -336,6 +336,10 @@ class LibreCLIP(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreCLIP checkpoints must be dictionaries.")
+        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context="LibreCLIP checkpoint",
+        )
 
         ckpt_family = loaded.get("model_family", "")
         if ckpt_family and ckpt_family != self.FAMILY:
@@ -355,7 +359,12 @@ class LibreCLIP(BaseModel):
                 "Checkpoint does not look like a LibreCLIP model (missing "
                 "'logit_scale'/'text_projection')."
             )
-        self.model.load_state_dict(state, strict=self._strict_loading())
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="classify",
+            context="LibreCLIP checkpoint",
+        )
         self.model.to(self.device).eval()
 
     # =========================================================================

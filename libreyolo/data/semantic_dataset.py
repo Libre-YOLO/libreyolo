@@ -38,6 +38,7 @@ from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 
 from .augment.color import augment_hsv
+from .labels import parse_yolo_box_or_segment_label_line
 from .utils import get_img_files, img2label_paths, load_data_config
 
 logger = logging.getLogger(__name__)
@@ -120,33 +121,32 @@ def _rasterize_polygon_labels(
     canvas = Image.new("I", (width, height), background_id)
     draw = ImageDraw.Draw(canvas)
     if label_file.exists():
-        for line in label_file.read_text().splitlines():
-            parts = line.split()
-            if not parts:
-                continue
-            class_id = int(float(parts[0]))
-            if not 0 <= class_id < background_id:
-                raise ValueError(
-                    f"Polygon label class {class_id} in {label_file} falls "
-                    f"outside 0..{background_id - 1}."
+        with open(label_file, "r", encoding="utf-8") as fh:
+            for line_number, line in enumerate(fh, start=1):
+                if not line.strip():
+                    continue
+                class_id, bbox, coordinates = (
+                    parse_yolo_box_or_segment_label_line(
+                        line,
+                        num_classes=background_id,
+                        label_path=label_file,
+                        line_number=line_number,
+                    )
                 )
-            coords = [float(value) for value in parts[1:]]
-            if len(coords) == 4:
-                cx, cy, w, h = coords
-                points = [
-                    ((cx - w / 2) * width, (cy - h / 2) * height),
-                    ((cx + w / 2) * width, (cy - h / 2) * height),
-                    ((cx + w / 2) * width, (cy + h / 2) * height),
-                    ((cx - w / 2) * width, (cy + h / 2) * height),
-                ]
-            elif len(coords) >= 6 and len(coords) % 2 == 0:
-                points = [
-                    (coords[i] * width, coords[i + 1] * height)
-                    for i in range(0, len(coords), 2)
-                ]
-            else:
-                raise ValueError(f"Invalid segment label row in {label_file}: {line!r}")
-            draw.polygon(points, fill=class_id)
+                if coordinates is None:
+                    cx, cy, box_w, box_h = bbox
+                    points = [
+                        ((cx - box_w / 2) * width, (cy - box_h / 2) * height),
+                        ((cx + box_w / 2) * width, (cy - box_h / 2) * height),
+                        ((cx + box_w / 2) * width, (cy + box_h / 2) * height),
+                        ((cx - box_w / 2) * width, (cy + box_h / 2) * height),
+                    ]
+                else:
+                    points = [
+                        (coordinates[i] * width, coordinates[i + 1] * height)
+                        for i in range(0, len(coordinates), 2)
+                    ]
+                draw.polygon(points, fill=class_id)
     return np.asarray(canvas).astype(np.int64)
 
 

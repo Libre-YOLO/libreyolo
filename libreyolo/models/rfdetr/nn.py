@@ -294,20 +294,39 @@ def _make_args(
     )
 
 
-def _unwrap_state_dict(state_dict: dict[str, Any]) -> dict[str, torch.Tensor]:
+def _unwrap_state_dict(
+    state_dict: dict[str, Any], *, canonical_v1: bool = False
+) -> dict[str, torch.Tensor]:
     if "model" in state_dict and isinstance(state_dict["model"], dict):
         state_dict = state_dict["model"]
     elif "state_dict" in state_dict and isinstance(state_dict["state_dict"], dict):
         state_dict = state_dict["state_dict"]
 
+    if canonical_v1:
+        invalid = [key for key, value in state_dict.items() if not isinstance(value, torch.Tensor)]
+        if invalid:
+            raise TypeError(
+                "Canonical RF-DETR model state contains non-tensor entries: "
+                + ", ".join(sorted(invalid)[:8])
+            )
+        return dict(state_dict)
+
     normalized = {}
-    for key, value in state_dict.items():
+    source_keys = {}
+    for raw_key, value in state_dict.items():
         if not isinstance(value, torch.Tensor):
             continue
+        key = raw_key
         key = key.removeprefix("module.")
         key = key.removeprefix("model.")
         key = key.removeprefix("_orig_mod.")
+        if key in normalized:
+            raise ValueError(
+                "RF-DETR checkpoint key normalization collision: "
+                f"{source_keys[key]!r} and {raw_key!r} both map to {key!r}."
+            )
         normalized[key] = value
+        source_keys[key] = raw_key
     return normalized
 
 
@@ -742,17 +761,24 @@ class LibreRFDETRModel(nn.Module):
     def build_criterion_and_postprocess(self):
         return build_criterion_and_postprocessors(self.args)
 
-    def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True):
+    def load_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        strict: bool = True,
+        *,
+        canonical_v1: bool = False,
+    ):
         if self.classification:
             return self.classifier.load_state_dict(
-                _unwrap_state_dict(state_dict), strict=strict
+                _unwrap_state_dict(state_dict, canonical_v1=canonical_v1),
+                strict=strict,
             )
 
         checkpoint_args = state_dict.get("args") if isinstance(state_dict, dict) else None
         checkpoint_num_keypoints = (
             state_dict.get("num_keypoints") if isinstance(state_dict, dict) else None
         )
-        state_dict = _unwrap_state_dict(state_dict)
+        state_dict = _unwrap_state_dict(state_dict, canonical_v1=canonical_v1)
 
         class_bias = state_dict.get("class_embed.bias")
         if class_bias is not None and class_bias.shape[0] != self.model.class_embed.bias.shape[0]:
@@ -789,16 +815,19 @@ class LibreRFDETRModel(nn.Module):
                 self.num_keypoints = num_keypoints
                 self.args.num_keypoints = num_keypoints
 
-        for key in ("refpoint_embed.weight", "query_feat.weight"):
-            if key in state_dict:
-                state_dict[key] = _resize_query_param_from_checkpoint(
-                    state_dict[key],
-                    checkpoint_args=checkpoint_args,
-                    target_num_queries=self.args.num_queries,
-                    target_group_detr=self.args.group_detr,
-                )
+        if not canonical_v1:
+            for key in ("refpoint_embed.weight", "query_feat.weight"):
+                if key in state_dict:
+                    state_dict[key] = _resize_query_param_from_checkpoint(
+                        state_dict[key],
+                        checkpoint_args=checkpoint_args,
+                        target_num_queries=self.args.num_queries,
+                        target_group_detr=self.args.group_detr,
+                    )
 
-        interpolate_position_embeddings(state_dict, self.args.positional_encoding_size)
+            interpolate_position_embeddings(
+                state_dict, self.args.positional_encoding_size
+            )
         return self.model.load_state_dict(state_dict, strict=strict)
 
     def state_dict(self, *args, **kwargs):

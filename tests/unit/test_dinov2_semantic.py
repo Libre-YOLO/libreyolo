@@ -281,6 +281,45 @@ def test_dinov2_checkpoint_family_is_dinov2(fake_backbone, tmp_path):
     assert ckpt.get("model_family") == "dinov2"
 
 
+def test_dinov2_semantic_rejects_head_only_native_checkpoint(fake_backbone):
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.utils.serialization import (
+        CheckpointLoadError,
+        wrap_libreyolo_checkpoint,
+    )
+
+    source = LibreDINOv2(
+        model_path=None,
+        size="n",
+        task="semantic",
+        nb_classes=3,
+        device="cpu",
+    )
+    head_only = {
+        key: value.detach().clone()
+        for key, value in source.model.state_dict().items()
+        if key.startswith("predict.")
+    }
+    checkpoint = wrap_libreyolo_checkpoint(
+        head_only,
+        model_family="dinov2",
+        size="n",
+        task="semantic",
+        nc=3,
+        names=["a", "b", "c"],
+        imgsz=518,
+    )
+
+    with pytest.raises(CheckpointLoadError, match="required model tensors"):
+        LibreDINOv2(
+            model_path=checkpoint,
+            size="n",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+        )
+
+
 @pytest.mark.external_data
 @pytest.mark.network
 @pytest.mark.slow

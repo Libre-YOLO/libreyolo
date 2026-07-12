@@ -308,10 +308,18 @@ class LibreL2CS(BaseModel):
         )
 
     def _strict_loading(self) -> bool:
-        # Upstream L2CS checkpoints carry a vestigial ``fc_finetune`` layer that
-        # this port omits. Non-strict loading lets those unused keys be ignored
-        # on load instead of raising.
+        # Raw upstream checkpoints need one explicitly named compatibility
+        # exception; native LibreYOLO checkpoints remain exact.
         return False
+
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        if not policy.allow_partial_missing:
+            return policy
+        return policy.allowing(
+            name="l2cs-legacy-fc-finetune",
+            unexpected=("fc_finetune.*",),
+        )
 
     def _load_weights(self, model_path: str) -> None:
         # No plain-HTTP download URL (see get_download_url). When the checkpoint

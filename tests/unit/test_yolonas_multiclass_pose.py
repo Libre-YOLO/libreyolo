@@ -303,7 +303,7 @@ class TestClassIdSafety:
         # id == nc and negatives are rejected when num_classes is given
         with pytest.raises(ValueError, match="out of range"):
             parse_yolo_pose_label_line(line, 1, 3, num_classes=2)
-        with pytest.raises(ValueError, match="out of range"):
+        with pytest.raises(ValueError, match="non-negative"):
             parse_yolo_pose_label_line(
                 "-1 0.5 0.5 0.2 0.2 0.5 0.5 2".split(), 1, 3, num_classes=2
             )
@@ -313,7 +313,7 @@ class TestClassIdSafety:
         cls_id, _, _ = parse_yolo_pose_label_line(line, 1, 3)
         assert cls_id == 2
 
-    def test_dataset_skips_out_of_range_class_lines(self, tmp_path):
+    def test_dataset_rejects_out_of_range_class_lines_with_context(self, tmp_path):
         from libreyolo.data.pose_dataset import YOLOPoseDataset
 
         img = tmp_path / "im.jpg"
@@ -324,10 +324,12 @@ class TestClassIdSafety:
             "5 0.3 0.3 0.1 0.1 0.3 0.3 2\n"  # out of range for nc=2
             "1 0.7 0.7 0.1 0.1 0.7 0.7 2\n"
         )
-        ds = YOLOPoseDataset(
-            [img], num_keypoints=1, label_files=[lbl], num_classes=2
-        )
-        assert ds.labels[0][1].tolist() == [0.0, 1.0]
+        with pytest.raises(ValueError) as exc_info:
+            YOLOPoseDataset(
+                [img], num_keypoints=1, label_files=[lbl], num_classes=2
+            )
+        assert f"{lbl}:2:" in str(exc_info.value)
+        assert "out of range" in str(exc_info.value)
         # without num_classes the historical leniency is preserved
         ds = YOLOPoseDataset([img], num_keypoints=1, label_files=[lbl])
         assert ds.labels[0][1].tolist() == [0.0, 5.0, 1.0]

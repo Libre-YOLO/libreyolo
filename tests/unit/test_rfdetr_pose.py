@@ -27,6 +27,7 @@ import torch
 from libreyolo.models.rfdetr.lwdetr import build_model
 from libreyolo.models.rfdetr.nn import RFDETRSizeConfig, _make_args
 from libreyolo.models.rfdetr.tensors import NestedTensor
+from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = [pytest.mark.unit, pytest.mark.rfdetr]
 
@@ -265,29 +266,51 @@ def test_detection_model_has_no_keypoint_modules():
     assert not any("keypoint" in name for name in module_names)
 
 
-def test_detection_checkpoint_without_kp_active_mask_loads(monkeypatch):
+@pytest.mark.parametrize("task", ["detect", "segment", "obb"])
+def test_release_checkpoint_without_empty_kp_active_mask_loads(monkeypatch, task):
     import libreyolo.models.rfdetr.model as rfdetr_model
     from libreyolo.models.rfdetr.model import LibreRFDETR
 
     cfg = _small_pose_config()
-    monkeypatch.setitem(rfdetr_model.RFDETR_CONFIGS, "tiny", cfg)
+    config_table = (
+        rfdetr_model.RFDETR_SEG_CONFIGS
+        if task == "segment"
+        else rfdetr_model.RFDETR_CONFIGS
+    )
+    monkeypatch.setitem(config_table, "tiny", cfg)
     monkeypatch.setitem(LibreRFDETR.INPUT_SIZES, "tiny", cfg.resolution)
-    monkeypatch.setitem(LibreRFDETR.TASK_INPUT_SIZES["detect"], "tiny", cfg.resolution)
+    monkeypatch.setitem(LibreRFDETR.TASK_INPUT_SIZES[task], "tiny", cfg.resolution)
 
-    source = _build_detect_model(nb_classes=3)
-    state = dict(source.state_dict())
+    source = LibreRFDETR(
+        model_path={},
+        size="tiny",
+        task=task,
+        nb_classes=3,
+        device="cpu",
+    )
+    state = dict(source.model.state_dict())
     assert "_kp_active_mask" in state
+    assert state["_kp_active_mask"].numel() == 0
     state.pop("_kp_active_mask")
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="rfdetr",
+        size="tiny",
+        task=task,
+        nc=3,
+        names={0: "cat", 1: "dog", 2: "bird"},
+        imgsz=cfg.resolution,
+    )
 
     model = LibreRFDETR(
-        model_path={"model": state, "task": "detect", "size": "tiny", "nc": 3},
+        model_path=checkpoint,
         size="tiny",
-        task="detect",
+        task=task,
         nb_classes=3,
         device="cpu",
     )
 
-    assert model.task == "detect"
+    assert model.task == task
     assert model.model.model._kp_active_mask.numel() == 0
 
 

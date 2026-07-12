@@ -336,6 +336,7 @@ class DEIMTrainer(BaseTrainer):
                     label_files=label_files,
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
@@ -361,6 +362,7 @@ class DEIMTrainer(BaseTrainer):
                     label_files=label_files,
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
@@ -380,6 +382,7 @@ class DEIMTrainer(BaseTrainer):
                     split="train",
                     img_size=img_size,
                     preproc=preproc,
+                    num_classes=int(self.num_classes),
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")
@@ -491,6 +494,10 @@ class DEIMTrainer(BaseTrainer):
                 with autocast("cuda"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
                     loss = outputs["total_loss"]
+                loss = self._require_finite_training_loss(
+                    loss,
+                    context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                )
                 self.optimizer.zero_grad()
                 self.scaler.scale(loss).backward()
                 if clip_max_norm > 0:
@@ -502,7 +509,10 @@ class DEIMTrainer(BaseTrainer):
                 self.scaler.update()
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
-                loss = outputs["total_loss"]
+                loss = self._require_finite_training_loss(
+                    outputs["total_loss"],
+                    context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                )
                 self.optimizer.zero_grad()
                 loss.backward()
                 if clip_max_norm > 0:
@@ -604,7 +614,11 @@ class DEIMTrainer(BaseTrainer):
             if self.scaler is not None:
                 with autocast("cuda"):
                     outputs = self.on_forward(imgs, targets, polygons=polygons)
-                    loss = outputs["total_loss"] / actual_window
+                    total_loss_raw = self._require_finite_training_loss(
+                        outputs["total_loss"],
+                        context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                    )
+                    loss = total_loss_raw / actual_window
                 self.scaler.scale(loss).backward()
                 if is_opt_step:
                     if clip_max_norm > 0:
@@ -616,7 +630,11 @@ class DEIMTrainer(BaseTrainer):
                     self.scaler.update()
             else:
                 outputs = self.on_forward(imgs, targets, polygons=polygons)
-                loss = outputs["total_loss"] / actual_window
+                total_loss_raw = self._require_finite_training_loss(
+                    outputs["total_loss"],
+                    context=f"Epoch {epoch + 1} batch {batch_idx + 1}",
+                )
+                loss = total_loss_raw / actual_window
                 loss.backward()
                 if is_opt_step:
                     if clip_max_norm > 0:
@@ -634,7 +652,7 @@ class DEIMTrainer(BaseTrainer):
                 for pg in self.optimizer.param_groups:
                     pg["lr"] = base_lr * pg.get("lr_mult", 1.0)
 
-            loss_val = loss.item() * actual_window
+            loss_val = total_loss_raw.item()
             loss_components = self._scalar_mapping(self.get_loss_components(outputs))
             total_loss += loss_val
             for name, value in loss_components.items():

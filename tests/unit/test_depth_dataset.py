@@ -50,6 +50,7 @@ def _make_dataset_root(tmp_path, n_images=3, depth_format="png", extra_yaml=None
         "path": str(tmp_path),
         "train": "images/train",
         "val": "images/val",
+        "names": ["depth"],
     }
     if extra_yaml:
         config.update(extra_yaml)
@@ -206,6 +207,7 @@ class TestDepthDataset:
                     "path": str(root),
                     "train": "val/indoors",
                     "val": "val/indoors",
+                    "names": ["depth"],
                     "depth_stem_suffix": "_depth",
                     "depth_mask_suffix": "_mask",
                 }

@@ -25,6 +25,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from .labels import label_row_error, parse_yolo_class_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +35,8 @@ def parse_yolo_pose_label_line(
     num_keypoints: int,
     keypoint_dim: int = 3,
     num_classes: Optional[int] = None,
+    label_path: str | Path | None = None,
+    line_number: int | None = None,
 ):
     """Parse one YOLO pose label line into ``(cls, bbox, keypoints)``.
 
@@ -43,9 +47,8 @@ def parse_yolo_pose_label_line(
             YAML uses ``kpt_shape: [K, 2]`` for xy-only labels and
             ``kpt_shape: [K, 3]`` for xyv labels.
         num_classes: If given, reject class ids outside ``[0, num_classes)``.
-            Single-class pose is class-agnostic (the loss trains class 0
-            regardless of the label column), so callers pass this for
-            multi-class datasets only.
+        label_path: Source label file used in validation errors.
+        line_number: One-based source row used in validation errors.
 
     Returns:
         Tuple of ``(cls_id: int, bbox: (4,) cxcywh float32,
@@ -61,23 +64,72 @@ def parse_yolo_pose_label_line(
         raise ValueError(f"Unsupported keypoint_dim {keypoint_dim}; expected 2 or 3")
     expected = 5 + keypoint_dim * num_keypoints
     if len(parts) != expected:
-        raise ValueError(
+        raise label_row_error(
             f"Expected {expected} fields for a {num_keypoints}-keypoint pose "
-            f"label, got {len(parts)}"
+            f"label, got {len(parts)}",
+            label_path=label_path,
+            line_number=line_number,
         )
-    cls_id = int(float(parts[0]))
-    if num_classes is not None and not 0 <= cls_id < num_classes:
-        raise ValueError(
-            f"Pose class id {cls_id} out of range [0, {num_classes - 1}]"
-        )
-    bbox = np.array(parts[1:5], dtype=np.float32)
-    keypoints = np.array(parts[5:], dtype=np.float32).reshape(
-        num_keypoints, keypoint_dim
+    cls_id = parse_yolo_class_id(
+        parts[0],
+        num_classes=num_classes,
+        label_path=label_path,
+        line_number=line_number,
+        task="Pose",
     )
+    try:
+        bbox = np.array(parts[1:5], dtype=np.float64)
+        keypoints = np.array(parts[5:], dtype=np.float64).reshape(
+            num_keypoints, keypoint_dim
+        )
+    except ValueError as exc:
+        raise label_row_error(
+            "Pose coordinates and visibility values must be numeric",
+            label_path=label_path,
+            line_number=line_number,
+        ) from exc
+    if not np.isfinite(bbox).all():
+        raise label_row_error(
+            "Pose box coordinates must be finite",
+            label_path=label_path,
+            line_number=line_number,
+        )
+    if bool(((bbox < 0.0) | (bbox > 1.0)).any()):
+        raise label_row_error(
+            "Pose box coordinates must be normalized to [0, 1]",
+            label_path=label_path,
+            line_number=line_number,
+        )
+    if bbox[2] <= 0.0 or bbox[3] <= 0.0:
+        raise label_row_error(
+            "Pose box width and height must be positive",
+            label_path=label_path,
+            line_number=line_number,
+        )
+    if not np.isfinite(keypoints).all():
+        raise label_row_error(
+            "Pose keypoint values must be finite",
+            label_path=label_path,
+            line_number=line_number,
+        )
+    if bool(((keypoints[:, :2] < 0.0) | (keypoints[:, :2] > 1.0)).any()):
+        raise label_row_error(
+            "Pose keypoint coordinates must be normalized to [0, 1]",
+            label_path=label_path,
+            line_number=line_number,
+        )
+    if keypoint_dim == 3:
+        visibility = keypoints[:, 2]
+        if not np.isin(visibility, (0.0, 1.0, 2.0)).all():
+            raise label_row_error(
+                "Pose keypoint visibility must be one of 0, 1, or 2",
+                label_path=label_path,
+                line_number=line_number,
+            )
     if keypoint_dim == 2:
-        visibility = np.full((num_keypoints, 1), 2.0, dtype=np.float32)
+        visibility = np.full((num_keypoints, 1), 2.0, dtype=np.float64)
         keypoints = np.concatenate([keypoints, visibility], axis=1)
-    return cls_id, bbox, keypoints
+    return cls_id, bbox.astype(np.float32), keypoints.astype(np.float32)
 
 
 class YOLOPoseDataset(Dataset):
@@ -144,28 +196,22 @@ class YOLOPoseDataset(Dataset):
 
     def _load_all_labels(self) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         labels = []
-        bad_lines = 0
-        bad_class_lines = 0
         for label_file in self.label_files:
             cls_list, box_list, kpt_list = [], [], []
             if label_file.exists():
-                with open(label_file, "r") as fh:
-                    for line in fh:
+                with open(label_file, "r", encoding="utf-8") as fh:
+                    for line_number, line in enumerate(fh, start=1):
                         parts = line.split()
                         if not parts:
                             continue
-                        try:
-                            cls_id, bbox, kpts = parse_yolo_pose_label_line(
-                                parts, self.num_keypoints, self.keypoint_dim
-                            )
-                        except ValueError:
-                            bad_lines += 1
-                            continue
-                        if self.num_classes is not None and not (
-                            0 <= cls_id < self.num_classes
-                        ):
-                            bad_class_lines += 1
-                            continue
+                        cls_id, bbox, kpts = parse_yolo_pose_label_line(
+                            parts,
+                            self.num_keypoints,
+                            self.keypoint_dim,
+                            num_classes=self.num_classes,
+                            label_path=label_file,
+                            line_number=line_number,
+                        )
                         cls_list.append(cls_id)
                         box_list.append(bbox)
                         kpt_list.append(kpts)
@@ -185,21 +231,6 @@ class YOLOPoseDataset(Dataset):
                         np.zeros((0, self.num_keypoints, 3), dtype=np.float32),
                     )
                 )
-        if bad_lines:
-            logger.warning(
-                "YOLOPoseDataset: skipped %d label line(s) with a field count "
-                "that does not match %d keypoints",
-                bad_lines,
-                self.num_keypoints,
-            )
-        if bad_class_lines:
-            logger.warning(
-                "YOLOPoseDataset: skipped %d label line(s) with a class id "
-                "outside [0, %d]; check for 1-indexed class ids or a wrong "
-                "nc in the dataset yaml",
-                bad_class_lines,
-                self.num_classes - 1,
-            )
         return labels
 
     def __len__(self) -> int:

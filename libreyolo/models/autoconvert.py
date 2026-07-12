@@ -43,6 +43,7 @@ from ..tasks import task_to_suffix
 from ..utils.serialization import (
     CheckpointMetadataError,
     load_untrusted_torch_file,
+    normalize_checkpoint_names,
     validate_checkpoint_metadata,
     wrap_libreyolo_checkpoint,
 )
@@ -478,6 +479,8 @@ def _wrap_claim(
         )
     nc = detected_nc or 80
     names = _checkpoint_names(loaded, nc)
+    if names is not None:
+        names = normalize_checkpoint_names(names, nc, allow_sparse=True)
     extra_metadata: dict[str, Any] = {}
     if task == "restore":
         # Restore checkpoints use a single schema placeholder, not a semantic
@@ -645,6 +648,8 @@ def _try_rfdetr(loaded: Any) -> Optional[Tuple[dict, str, str, str, str]]:
 
     raw_nc = rfdetr_cls.detect_nb_classes(state)
     nc, names = _rfdetr_class_metadata(loaded, raw_nc)
+    if names is not None:
+        names = normalize_checkpoint_names(names, nc, allow_sparse=True)
     extra_metadata: dict[str, Any] = {}
     args = _checkpoint_args(loaded)
     if args is not None:

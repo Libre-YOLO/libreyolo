@@ -276,5 +276,7 @@ def test_pose_validator_maps_contiguous_labels_to_coco_category_ids(tmp_path):
 
     assert validator._prediction_category_id(0) == 1
     assert validator._prediction_category_id(1) == 3
-    assert validator._prediction_category_id(3) == 3
-    assert validator._prediction_category_id(7) == 1
+    with pytest.raises(ValueError, match="outside the configured class space"):
+        validator._prediction_category_id(3)
+    with pytest.raises(ValueError, match="outside the configured class space"):
+        validator._prediction_category_id(7)

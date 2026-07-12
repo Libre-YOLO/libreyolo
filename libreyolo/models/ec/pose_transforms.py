@@ -27,9 +27,11 @@ from ...data.augment.pose import (
     AFFINE_INTERPOLATIONS as _AFFINE_INTERPOLATIONS,
     brightness_contrast as _brightness_contrast,
     build_target as _build_target,
+    clip_keypoints_to_image,
     finalize_image as _finalize_image,
     random_affine_pose,
 )
+from ...data.pose_metadata import validate_flip_idx
 from ...training.augment import augment_hsv
 
 _AFFINE_BORDER_VALUE = 114
@@ -117,8 +119,9 @@ class ECPoseTrainTransform:
         self.affine_interpolation = _AFFINE_INTERPOLATIONS.get(
             affine_interpolation, cv2.INTER_LINEAR
         )
-        if flip_idx is not None and len(flip_idx) == num_keypoints:
-            self.flip_idx = np.asarray(flip_idx, dtype=np.int64)
+        validated_flip_idx = validate_flip_idx(flip_idx, num_keypoints)
+        if validated_flip_idx is not None:
+            self.flip_idx = np.asarray(validated_flip_idx, dtype=np.int64)
             self.flip_prob = flip_prob
         else:
             self.flip_idx = None
@@ -168,6 +171,7 @@ class ECPoseTrainTransform:
             interpolation=cv2.INTER_LINEAR,
         )
         _scale_targets_direct(bboxes, kpts, src_hw=(h, w), dst_hw=dst_hw)
+        clip_keypoints_to_image(kpts, width=dst_hw[1], height=dst_hw[0])
 
         target = _build_target(cls, bboxes, kpts, self.num_keypoints, self.max_labels)
         img = _finalize_image(np.ascontiguousarray(img), self.to_rgb, self.imagenet_norm)
@@ -207,6 +211,7 @@ class ECPoseValTransform:
             interpolation=cv2.INTER_LINEAR,
         )
         _scale_targets_direct(bboxes, kpts, src_hw=(h, w), dst_hw=dst_hw)
+        clip_keypoints_to_image(kpts, width=dst_hw[1], height=dst_hw[0])
 
         target = _build_target(cls, bboxes, kpts, self.num_keypoints, self.max_labels)
         img = _finalize_image(np.ascontiguousarray(img), self.to_rgb, self.imagenet_norm)

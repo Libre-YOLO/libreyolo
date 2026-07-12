@@ -23,6 +23,12 @@ import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
 from transformers import AutoBackbone
 
+from ...utils.serialization import (
+    CheckpointLoadPolicy,
+    enforce_checkpoint_load_report,
+    inspect_state_dict_load,
+)
+
 from .dinov2 import (
     WindowedDinov2WithRegistersBackbone,
     WindowedDinov2WithRegistersConfig,
@@ -555,15 +561,27 @@ class DinoV2(nn.Module):
 
         ref_sd = AutoModel.from_pretrained(name).state_dict()
         tgt_sd = self.encoder.state_dict()
-        new_sd, matched, skipped = {}, 0, 0
-        for k, v in tgt_sd.items():
-            if k in ref_sd and ref_sd[k].shape == v.shape:
-                new_sd[k] = ref_sd[k]
-                matched += 1
-            else:
-                new_sd[k] = v
-                skipped += 1
-        self.encoder.load_state_dict(new_sd, strict=False)
+        candidate = {key: ref_sd[key] for key in tgt_sd if key in ref_sd}
+        policy = CheckpointLoadPolicy(
+            name="rfdetr-dinov2-backbone-transfer",
+            allow_partial_missing=True,
+            min_key_coverage=0.95,
+            min_element_coverage=0.95,
+        )
+        report = inspect_state_dict_load(
+            self.encoder,
+            candidate,
+            policy=policy,
+        )
+        enforce_checkpoint_load_report(
+            report,
+            policy=policy,
+            context=f"DINOv2 pretrained backbone '{name}'",
+        )
+        matched = len(report.loaded_keys)
+        skipped = report.total_target_tensors - matched
+        matched_state = {key: candidate[key] for key in report.loaded_keys}
+        self.encoder.load_state_dict(matched_state, strict=False)
 
         pe_std = self.encoder.embeddings.patch_embeddings.projection.weight.std().item()
         if matched == 0 or pe_std > 0.015:

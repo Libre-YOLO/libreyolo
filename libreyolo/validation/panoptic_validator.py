@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
 from ..data.panoptic_dataset import (
@@ -28,6 +30,7 @@ from ..data.panoptic_dataset import (
     resolve_panoptic_data,
 )
 from .base import BaseValidator
+from .contracts import require_matching_batch_sizes
 from .panoptic_quality import PQ_IOU_THRESHOLD, PanopticQuality
 
 logger = logging.getLogger(__name__)
@@ -92,7 +95,16 @@ class PanopticValidator(BaseValidator):
         )
 
     def _init_metrics(self) -> None:
-        self._pq = PanopticQuality(thing_class_ids=set(self._thing_class_ids))
+        class_names = getattr(self, "_class_names", None)
+        num_classes = (
+            len(class_names)
+            if class_names is not None
+            else getattr(self.model, "nb_classes", None)
+        )
+        self._pq = PanopticQuality(
+            thing_class_ids=set(self._thing_class_ids),
+            num_classes=int(num_classes) if num_classes is not None else None,
+        )
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         img_paths, seg_maps, segments_infos, infos = batch
@@ -121,10 +133,28 @@ class PanopticValidator(BaseValidator):
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
-        gt_map = targets[0].numpy()
+        require_matching_batch_sizes(
+            "Panoptic validation",
+            targets=targets,
+            image_info=img_info,
+            segments_info=img_ids,
+        )
+        if len(targets) != 1:
+            raise ValueError(
+                "Panoptic validation expects exactly one image per metric update."
+            )
+        gt_map = torch.as_tensor(targets[0]).detach().cpu().numpy()
         gt_segments = img_ids[0]
-        pred_map = preds["panoptic"].cpu().numpy()
-        pred_segments = preds.get("segments_info") or []
+        if not isinstance(preds, dict) or "panoptic" not in preds:
+            raise ValueError(
+                "Panoptic validation predictions require a 'panoptic' segment map."
+            )
+        pred_map = np.asarray(
+            torch.as_tensor(preds["panoptic"]).detach().cpu().numpy()
+        )
+        pred_segments = preds.get("segments_info")
+        if pred_segments is None:
+            pred_segments = []
         self._pq.update(gt_map, gt_segments, pred_map, pred_segments)
 
     def _compute_metrics(self) -> Dict[str, float]:

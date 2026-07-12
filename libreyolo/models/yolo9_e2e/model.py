@@ -110,15 +110,7 @@ class LibreYOLO9E2E(LibreYOLO9):
 
     def _prepare_state_dict(self, state_dict: dict) -> dict:
         """Remap legacy ``detect.*`` head keys to ``head.*``."""
-        remapped = {}
-        for key, value in state_dict.items():
-            new_key = (
-                key.replace("detect.", "head.", 1)
-                if key.startswith("detect.")
-                else key
-            )
-            remapped[new_key] = value
-        return remapped
+        return super()._prepare_state_dict(state_dict)
 
     def _rebuild_for_new_classes(self, new_nc: int):
         """Replace both class-output branches for a new class count."""

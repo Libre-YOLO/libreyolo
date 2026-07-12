@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import logging
 import unicodedata
+from collections.abc import Mapping
 from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
 from ..data.ocr_dataset import DONT_CARE, resolve_ocr_samples
+from .contracts import require_finite
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,13 @@ def polygon_iou(a: np.ndarray, b: np.ndarray) -> float:
     """IoU of two convex polygons."""
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
+    for name, polygon in (("first", a), ("second", b)):
+        if polygon.ndim != 2 or polygon.shape[1] != 2 or len(polygon) < 3:
+            raise ValueError(
+                f"OCR {name} polygon must have shape [N>=3, 2], got "
+                f"{polygon.shape}."
+            )
+        require_finite(polygon, f"OCR {name} polygon")
     area_a = _polygon_area(a)
     area_b = _polygon_area(b)
     if area_a <= 0 or area_b <= 0:
@@ -155,6 +164,44 @@ def match_image(
 
     Returns the raw counts the corpus metrics aggregate over.
     """
+    if len(pred_polys) != len(pred_texts):
+        raise ValueError(
+            "OCR prediction payload mismatch: "
+            f"{len(pred_polys)} polygons but {len(pred_texts)} transcripts."
+        )
+    for index, text in enumerate(pred_texts):
+        if not isinstance(text, str):
+            raise ValueError(
+                f"OCR prediction transcript {index} must be a string, got "
+                f"{type(text).__name__}."
+            )
+    for index, region in enumerate(gt_regions):
+        if not isinstance(region, Mapping):
+            raise ValueError(f"OCR target region {index} must be a mapping.")
+        missing = {"polygon", "text"} - set(region)
+        if missing:
+            raise ValueError(
+                f"OCR target region {index} is missing keys: {sorted(missing)}."
+            )
+        if not isinstance(region["text"], str):
+            raise ValueError(f"OCR target transcript {index} must be a string.")
+        polygon = np.asarray(region["polygon"], dtype=np.float64)
+        if polygon.ndim != 2 or polygon.shape[1] != 2 or len(polygon) < 3:
+            raise ValueError(
+                f"OCR target polygon {index} must have shape [N>=3, 2], got "
+                f"{polygon.shape}."
+            )
+        require_finite(polygon, f"OCR target polygon {index}")
+
+    for index, polygon in enumerate(pred_polys):
+        array = np.asarray(polygon, dtype=np.float64)
+        if array.ndim != 2 or array.shape[1] != 2 or len(array) < 3:
+            raise ValueError(
+                f"OCR prediction polygon {index} must have shape [N>=3, 2], got "
+                f"{array.shape}."
+            )
+        require_finite(array, f"OCR prediction polygon {index}")
+
     care_gt = [g for g in gt_regions if g["text"] != DONT_CARE]
     dont_care_gt = [g for g in gt_regions if g["text"] == DONT_CARE]
 
@@ -262,6 +309,7 @@ class OCRValidator:
             "metrics/e2e_f1": e2e_f,
             "metrics/rec_1-NED": float(np.mean(ned_scores)) if ned_scores else 0.0,
         }
+        require_finite(list(metrics.values()), "OCR validation metrics")
         metrics["fitness"] = metrics["metrics/e2e_f1"]
         if getattr(self.config, "verbose", True):
             self._print_results(metrics, len(samples))

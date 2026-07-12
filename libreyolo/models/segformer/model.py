@@ -334,6 +334,10 @@ class LibreSegformer(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreSegformer checkpoints must be dictionaries")
+        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context="SegFormer semantic checkpoint",
+        )
 
         ckpt_family = loaded.get("model_family")
         if isinstance(ckpt_family, str) and ckpt_family and ckpt_family != self.FAMILY:
@@ -368,7 +372,12 @@ class LibreSegformer(BaseModel):
 
         if not self.can_load(state):
             raise RuntimeError("Checkpoint does not look like a SegFormer semantic segmentation model.")
-        self.model.load_state_dict(state, strict=True)
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="semantic",
+            context="SegFormer semantic checkpoint",
+        )
 
         ckpt_names = loaded.get("names")
         if ckpt_names is not None:

@@ -44,8 +44,14 @@ from ...utils.logging import ensure_default_logging
 from ...utils.model_info import build_model_info, format_model_info
 from ...utils.results import Results
 from ...utils.serialization import (
-    REQUIRED_CHECKPOINT_METADATA_KEYS,
+    LEGACY_CHECKPOINT_LOAD_POLICY,
+    NATIVE_CHECKPOINT_LOAD_POLICY,
+    CheckpointLoadPolicy,
+    CheckpointLoadReport,
+    load_state_dict_checked,
     load_untrusted_torch_file,
+    normalize_checkpoint_names,
+    parse_checkpoint_metadata_for_load,
     validate_checkpoint_metadata,
 )
 from ...validation.preprocessors import StandardValPreprocessor
@@ -227,9 +233,10 @@ class BaseModel(ABC):
             self.model_path = None
         elif isinstance(model_path, dict):
             self.model_path = None
-            state_dict = self._prepare_state_dict(self._strip_ddp_prefix(model_path))
-            self._validate_loaded_state_dict_for_task(state_dict, model_path)
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
+            self._apply_loaded_checkpoint(
+                model_path,
+                context=f"{self.FAMILY or type(self).__name__} in-memory checkpoint",
+            )
         else:
             self.model_path = model_path
 
@@ -351,8 +358,49 @@ class BaseModel(ABC):
         return self.input_size
 
     def _strict_loading(self) -> bool:
-        """Return whether to use strict mode when loading weights."""
+        """Return whether legacy raw checkpoints require exact loading."""
         return True
+
+    def _checkpoint_load_policy(
+        self,
+        checkpoint: dict | None,
+        checkpoint_task: str | None = None,
+    ) -> CheckpointLoadPolicy:
+        """Return the explicit tensor-coverage policy for one checkpoint.
+
+        Complete native v1 checkpoints are exact by default. Families that
+        historically accepted raw upstream/legacy weights can retain bounded
+        missing-key compatibility through ``_strict_loading() == False``.
+        Deliberate transfer modes override this method to name their head keys.
+        """
+        is_native = bool(
+            isinstance(checkpoint, dict)
+            and not validate_checkpoint_metadata(checkpoint, strict=False)
+        )
+        if is_native or self._strict_loading():
+            return NATIVE_CHECKPOINT_LOAD_POLICY
+        return LEGACY_CHECKPOINT_LOAD_POLICY
+
+    def _load_state_dict_checked(
+        self,
+        state_dict: dict,
+        *,
+        checkpoint: dict | None = None,
+        checkpoint_task: str | None = None,
+        context: str | None = None,
+        policy: CheckpointLoadPolicy | None = None,
+    ) -> CheckpointLoadReport:
+        """Load model state only after enforcing its declared coverage policy."""
+        effective_policy = policy or self._checkpoint_load_policy(
+            checkpoint,
+            checkpoint_task,
+        )
+        return load_state_dict_checked(
+            self.model,
+            state_dict,
+            policy=effective_policy,
+            context=context or f"{self.FAMILY or type(self).__name__} checkpoint",
+        )
 
     def _prepare_state_dict(self, state_dict: dict) -> dict:
         """Transform state dict keys before loading.
@@ -526,8 +574,9 @@ class BaseModel(ABC):
     def verify_downloaded_file(cls, local_path: str, source_url: str) -> None:
         """Verify a freshly auto-downloaded weight file before it is loaded.
 
-        Hook called by ``download_weights`` after a successful download. The
-        default trusts LibreYOLO's own Hugging Face mirror and does nothing;
+        Hook called by ``download_weights`` after transfer and before the file
+        is promoted to its public cache path. The default trusts LibreYOLO's
+        own Hugging Face mirror and does nothing;
         families that fetch third-party objects (e.g. YOLO-NAS from Deci's CDN)
         override this to checksum-pin the download and fail closed on mismatch.
         """
@@ -547,23 +596,149 @@ class BaseModel(ABC):
     def _strip_ddp_prefix(state_dict: dict) -> dict:
         """Strip 'module.' prefix from DDP-wrapped state_dict keys."""
         if any(k.startswith("module.") for k in state_dict):
-            return {k.removeprefix("module."): v for k, v in state_dict.items()}
+            normalized = {}
+            source_keys = {}
+            for raw_key, value in state_dict.items():
+                key = raw_key.removeprefix("module.")
+                if key in normalized:
+                    raise ValueError(
+                        "Checkpoint key normalization collision: "
+                        f"{source_keys[key]!r} and {raw_key!r} both map to {key!r}."
+                    )
+                normalized[key] = value
+                source_keys[key] = raw_key
+            return normalized
         return state_dict
 
     @staticmethod
-    def _sanitize_names(names: dict, nc: int) -> Dict[int, str]:
-        """Sanitize a class names dict: ensure int keys, fill gaps, trim to nc."""
-        sanitized = {}
-        for k, v in names.items():
-            try:
-                sanitized[int(k)] = str(v)
-            except (ValueError, TypeError):
-                continue
+    def _sanitize_names(names: dict | list, nc: int) -> Dict[int, str]:
+        """Normalize reader-compatible dict/list names without dropping bad keys."""
+        return normalize_checkpoint_names(names, nc)
 
-        result = {}
-        for i in range(nc):
-            result[i] = sanitized.get(i, f"class_{i}")
-        return result
+    @staticmethod
+    def _parse_checkpoint_metadata(
+        checkpoint: dict,
+        *,
+        context: str,
+    ) -> tuple[dict, bool]:
+        """Apply the shared strict-v1/legacy metadata boundary."""
+        return parse_checkpoint_metadata_for_load(checkpoint, context=context)
+
+    @staticmethod
+    def _normalize_checkpoint_nc(value: Any) -> int | None:
+        """Normalize a legacy checkpoint class count and reject unsafe values."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("checkpoint nc must be a positive integer, not bool")
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"checkpoint nc must be a positive integer, got {value!r}"
+            ) from exc
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(
+                f"checkpoint nc must be a positive integer, got {value!r}"
+            )
+        if normalized <= 0:
+            raise ValueError(
+                f"checkpoint nc must be a positive integer, got {normalized}"
+            )
+        return normalized
+
+    def _apply_loaded_checkpoint(
+        self,
+        loaded: dict,
+        *,
+        context: str,
+    ) -> CheckpointLoadReport:
+        """Normalize metadata/raw wrappers and apply one checked state load."""
+        if not isinstance(loaded, dict):
+            raise TypeError(f"{context} must be a dictionary")
+        loaded, is_native_v1 = parse_checkpoint_metadata_for_load(
+            loaded,
+            context=context,
+        )
+
+        if isinstance(loaded.get("model"), dict):
+            state_dict = loaded["model"]
+        elif isinstance(loaded.get("state_dict"), dict):
+            state_dict = loaded["state_dict"]
+        else:
+            state_dict = loaded
+        state_dict = dict(state_dict)
+        if not is_native_v1:
+            state_dict = self._prepare_state_dict(
+                self._strip_ddp_prefix(state_dict)
+            )
+
+        own_family = self._get_model_name()
+        ckpt_family = loaded.get("model_family", "")
+        if ckpt_family and ckpt_family != own_family:
+            raise RuntimeError(
+                f"Checkpoint was trained with model_family='{ckpt_family}' "
+                f"but is being loaded into '{own_family}'. "
+                "Use the correct model class for this checkpoint."
+            )
+
+        normalized_ckpt_task = None
+        ckpt_task = loaded.get("task")
+        if ckpt_task is not None:
+            normalized_ckpt_task = normalize_task(ckpt_task)
+            if (
+                normalized_ckpt_task != self.task
+                and not self._allow_checkpoint_task_mismatch(normalized_ckpt_task)
+            ):
+                raise RuntimeError(
+                    f"Checkpoint was trained for task='{normalized_ckpt_task}' "
+                    f"but this model was initialized for task='{self.task}'. "
+                    "Pass the matching task or use the correct checkpoint."
+                )
+
+        ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+        ckpt_names = loaded.get("names")
+        if ckpt_nc is None and ckpt_names is not None:
+            if not isinstance(ckpt_names, (dict, list)):
+                raise ValueError(
+                    "checkpoint names must be a dict[int, str] or list[str]"
+                )
+            ckpt_nc = len(ckpt_names)
+        if ckpt_nc is None and hasattr(self, "detect_nb_classes"):
+            ckpt_nc = self._normalize_checkpoint_nc(
+                self.detect_nb_classes(state_dict)
+            )
+
+        ckpt_nc = self._adapt_checkpoint_num_classes(
+            ckpt_nc,
+            normalized_ckpt_task,
+        )
+        normalized_names = (
+            self._sanitize_names(ckpt_names, ckpt_nc)
+            if ckpt_names is not None and ckpt_nc is not None
+            else None
+        )
+        state_dict = self._filter_incoming_state_dict(
+            state_dict,
+            loaded=loaded,
+            checkpoint_task=normalized_ckpt_task,
+        )
+
+        if ckpt_nc is not None and ckpt_nc != self.nb_classes:
+            self._rebuild_for_checkpoint_classes(ckpt_nc, state_dict)
+
+        if normalized_names is not None:
+            self.names = normalized_names
+        self._validate_loaded_state_dict_for_task(state_dict, loaded)
+
+        report = self._load_state_dict_checked(
+            state_dict,
+            checkpoint=loaded,
+            checkpoint_task=normalized_ckpt_task,
+            context=context,
+        )
+        self.model.to(self.device).eval()
+        return report
 
     def _load_weights(self, model_path: str):
         """Load model weights from file.
@@ -594,87 +769,10 @@ class BaseModel(ABC):
                 context="model weights",
             )
 
-            if isinstance(loaded, dict):
-                metadata_keys = set(REQUIRED_CHECKPOINT_METADATA_KEYS) - {"model"}
-                if metadata_keys & set(loaded):
-                    metadata_errors = validate_checkpoint_metadata(
-                        loaded,
-                        strict=False,
-                    )
-                    if metadata_errors:
-                        logger.warning(
-                            "LibreYOLO checkpoint metadata is missing or incomplete "
-                            "for %s: %s. Loading through the legacy compatibility path.",
-                            model_path,
-                            "; ".join(metadata_errors),
-                        )
-                if "model" in loaded:
-                    state_dict = loaded["model"]
-                elif "state_dict" in loaded:
-                    state_dict = loaded["state_dict"]
-                else:
-                    state_dict = loaded
-
-                state_dict = self._prepare_state_dict(
-                    self._strip_ddp_prefix(state_dict)
-                )
-
-                # Reject cross-family loading
-                own_family = self._get_model_name()
-                ckpt_family = loaded.get("model_family", "")
-                if ckpt_family and ckpt_family != own_family:
-                    raise RuntimeError(
-                        f"Checkpoint was trained with model_family='{ckpt_family}' "
-                        f"but is being loaded into '{own_family}'. "
-                        f"Use the correct model class for this checkpoint."
-                    )
-
-                normalized_ckpt_task = None
-                ckpt_task = loaded.get("task")
-                if ckpt_task is not None:
-                    normalized_ckpt_task = normalize_task(ckpt_task)
-                    if normalized_ckpt_task != self.task and not self._allow_checkpoint_task_mismatch(
-                        normalized_ckpt_task
-                    ):
-                        raise RuntimeError(
-                            f"Checkpoint was trained for task='{normalized_ckpt_task}' "
-                            f"but this model was initialized for task='{self.task}'. "
-                            "Pass the matching task or use the correct checkpoint."
-                        )
-
-                ckpt_nc = loaded.get("nc")
-                ckpt_names = loaded.get("names")
-
-                # Infer nc from names if missing from checkpoint
-                if ckpt_nc is None and ckpt_names is not None:
-                    ckpt_nc = len(ckpt_names)
-
-                # Infer nc from existing tensor detect_nb_classes
-                if ckpt_nc is None and hasattr(self, "detect_nb_classes"):
-                    ckpt_nc = self.detect_nb_classes(state_dict)
-
-                ckpt_nc = self._adapt_checkpoint_num_classes(
-                    ckpt_nc,
-                    normalized_ckpt_task,
-                )
-                state_dict = self._filter_incoming_state_dict(
-                    state_dict,
-                    loaded=loaded,
-                    checkpoint_task=normalized_ckpt_task,
-                )
-
-                if ckpt_nc is not None and ckpt_nc != self.nb_classes:
-                    self._rebuild_for_checkpoint_classes(ckpt_nc, state_dict)
-
-                effective_nc = ckpt_nc if ckpt_nc is not None else self.nb_classes
-                if ckpt_names is not None:
-                    self.names = self._sanitize_names(ckpt_names, effective_nc)
-                self._validate_loaded_state_dict_for_task(state_dict, loaded)
-            else:
-                state_dict = self._prepare_state_dict(loaded)
-
-            self.model.load_state_dict(state_dict, strict=self._strict_loading())
-            self.model.to(self.device).eval()
+            self._apply_loaded_checkpoint(
+                loaded,
+                context=f"model weights from {model_path}",
+            )
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load model weights from {model_path}: {e}"

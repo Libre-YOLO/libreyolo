@@ -247,6 +247,35 @@ def test_checkpoint_round_trip_through_factory(tmp_path):
     assert loaded.names == {0: "left", 1: "middle", 2: "right"}
 
 
+def test_in_memory_checkpoint_preserves_custom_cityscapes_width_names():
+    from libreyolo.models.pidnet.model import LibrePIDNet
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    source = LibrePIDNet(
+        model_path=None, size="s", task="semantic", nb_classes=19, device="cpu"
+    )
+    names = {index: f"custom_{index}" for index in range(19)}
+    checkpoint = wrap_libreyolo_checkpoint(
+        source.model.state_dict(),
+        model_family="pidnet",
+        size="s",
+        task="semantic",
+        nc=19,
+        names=names,
+        imgsz=1024,
+    )
+
+    loaded = LibrePIDNet(
+        model_path=checkpoint,
+        size="s",
+        task="semantic",
+        nb_classes=19,
+        device="cpu",
+    )
+
+    assert loaded.names == names
+
+
 def test_raw_pidnet_checkpoint_requires_converter(tmp_path):
     from libreyolo import LibreYOLO
 
@@ -255,3 +284,38 @@ def test_raw_pidnet_checkpoint_requires_converter(tmp_path):
 
     with pytest.raises(ValueError, match="convert_pidnet_weights"):
         LibreYOLO(str(ckpt_path), device="cpu")
+
+
+def test_pidnet_native_checkpoint_reports_foreign_tensor(tmp_path):
+    from libreyolo.models.pidnet.model import LibrePIDNet
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    source = LibrePIDNet(
+        model_path=None,
+        size="s",
+        task="semantic",
+        nb_classes=3,
+        device="cpu",
+    )
+    state = dict(source.model.state_dict())
+    state["foreign.weight"] = torch.zeros(1)
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="pidnet",
+        size="s",
+        task="semantic",
+        nc=3,
+        names={0: "left", 1: "middle", 2: "right"},
+        imgsz=1024,
+    )
+    path = tmp_path / "pidnet-foreign.pt"
+    torch.save(checkpoint, path)
+
+    with pytest.raises(RuntimeError, match="unexpected checkpoint keys"):
+        LibrePIDNet(
+            model_path=str(path),
+            size="s",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+        )

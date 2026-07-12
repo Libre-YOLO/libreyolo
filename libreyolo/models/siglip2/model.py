@@ -383,6 +383,10 @@ class LibreSigLIP2(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreSigLIP2 checkpoints must be dictionaries.")
+        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context="LibreSigLIP2 checkpoint",
+        )
 
         ckpt_family = loaded.get("model_family", "")
         if ckpt_family and ckpt_family != self.FAMILY:
@@ -402,7 +406,12 @@ class LibreSigLIP2(BaseModel):
                 "Checkpoint does not look like a LibreSigLIP2 model (missing "
                 "'logit_bias'/'vision_model.embeddings.patch_embedding.weight')."
             )
-        self.model.load_state_dict(state, strict=self._strict_loading())
+        self._load_state_dict_checked(
+            state,
+            checkpoint=loaded,
+            checkpoint_task="classify",
+            context="LibreSigLIP2 checkpoint",
+        )
         self.model.to(self.device).eval()
 
     # =========================================================================

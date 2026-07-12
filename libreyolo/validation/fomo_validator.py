@@ -9,6 +9,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
+from .contracts import require_finite, require_matching_batch_sizes
 from .point_validator import PointValidator
 
 __all__ = ["FOMOValidator"]
@@ -135,11 +136,33 @@ class FOMOValidator(PointValidator):
             stats["fn"] += len(trues_xy) - len(matched_trues)
 
     def _update_metrics(self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None) -> None:
-        super()._update_metrics(preds, targets, img_info, img_ids)
-
         logits = getattr(self, "last_logits", None)
         if logits is None:
             raise RuntimeError("FOMOValidator._update_metrics called before _inference")
+        logits = torch.as_tensor(logits)
+        if logits.ndim != 4:
+            raise ValueError(
+                "FOMO validation logits must have shape [B, C, H, W], got "
+                f"{tuple(logits.shape)}."
+            )
+        if logits.shape[1] != self.nc + 1:
+            raise ValueError(
+                f"FOMO validation expected {self.nc + 1} logit channels "
+                f"(background + {self.nc} classes), got {logits.shape[1]}."
+            )
+        batches = {
+            "logits": logits,
+            "predictions": preds,
+            "targets": targets,
+            "image_info": img_info,
+        }
+        if img_ids is not None:
+            batches["image_ids"] = img_ids
+        require_matching_batch_sizes("FOMO validation", **batches)
+        require_finite(logits, "FOMO validation logits")
+
+        super()._update_metrics(preds, targets, img_info, img_ids)
+
         batch_size, _, grid_h, grid_w = logits.shape
         if grid_h != self.grid_size or grid_w != self.grid_size:
             raise ValueError(
@@ -168,7 +191,13 @@ class FOMOValidator(PointValidator):
 
         with torch.no_grad():
             loss_out = self.val_loss_fn(logits, grid_targets)
-            self.val_loss_total += float(loss_out["total_loss"].item())
+            if not isinstance(loss_out, dict) or "total_loss" not in loss_out:
+                raise ValueError("FOMO validation loss must return 'total_loss'.")
+            total_loss = torch.as_tensor(loss_out["total_loss"])
+            if total_loss.numel() != 1:
+                raise ValueError("FOMO validation total_loss must be a scalar.")
+            require_finite(total_loss, "FOMO validation total_loss")
+            self.val_loss_total += float(total_loss.item())
             self.batch_count += 1
 
         from ..models.fomo.utils import decode_points_from_logits

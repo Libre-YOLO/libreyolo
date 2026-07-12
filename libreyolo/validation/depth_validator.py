@@ -26,6 +26,7 @@ from ..data.depth_dataset import (
     resolve_depth_data,
 )
 from .base import BaseValidator
+from .contracts import require_finite, require_matching_batch_sizes
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,12 @@ class DepthValidator(BaseValidator):
             output = output[0]
         output = torch.as_tensor(output)
 
-        targets = batch[1]
+        targets = torch.as_tensor(batch[1])
+        if targets.ndim != 3:
+            raise ValueError(
+                "Depth validation expects [B, H, W] targets, got shape "
+                f"{tuple(targets.shape)}."
+            )
         target_hw = tuple(targets.shape[-2:])
         if output.ndim == 3:
             output = output.unsqueeze(1)
@@ -141,6 +147,9 @@ class DepthValidator(BaseValidator):
                 f"Depth validation expects [B, 1, H, W] output, got shape "
                 f"{tuple(output.shape)}."
             )
+        require_matching_batch_sizes(
+            "Depth validation", predictions=output, targets=targets
+        )
         if tuple(output.shape[-2:]) != target_hw:
             output = F.interpolate(
                 output.float(), size=target_hw, mode="bilinear", align_corners=False
@@ -150,11 +159,29 @@ class DepthValidator(BaseValidator):
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None
     ) -> None:
-        preds = preds.detach().cpu().float()
-        targets = targets.detach().cpu().float()
+        preds = torch.as_tensor(preds).detach().cpu().float()
+        targets = torch.as_tensor(targets).detach().cpu().float()
+        if preds.ndim != 3 or targets.ndim != 3:
+            raise ValueError(
+                "Depth validation metrics expect [B, H, W] predictions and "
+                f"targets, got {tuple(preds.shape)} and {tuple(targets.shape)}."
+            )
+        require_matching_batch_sizes(
+            "Depth validation", predictions=preds, targets=targets
+        )
+        if preds.shape != targets.shape:
+            raise ValueError(
+                "Depth validation prediction and target shapes must match, got "
+                f"{tuple(preds.shape)} and {tuple(targets.shape)}."
+            )
+        valid_pixels = torch.isfinite(targets) & (targets > 0)
+        require_finite(
+            preds,
+            "Depth validation predictions",
+            where=valid_pixels,
+        )
         for pred, gt_depth in zip(preds, targets):
-            finite = torch.isfinite(pred) & torch.isfinite(gt_depth)
-            valid = (gt_depth > 0) & finite
+            valid = torch.isfinite(gt_depth) & (gt_depth > 0)
             valid_count = int(valid.sum())
             if valid_count < 2:
                 continue

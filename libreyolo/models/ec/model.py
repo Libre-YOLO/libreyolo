@@ -154,7 +154,13 @@ class LibreEC(BaseModel):
         task: str | None = None,
         **kwargs,
     ):
-        if isinstance(model_path, dict):
+        has_checkpoint_names = bool(
+            isinstance(model_path, dict) and model_path.get("names") is not None
+        )
+        if isinstance(model_path, dict) and not (
+            {"schema_version", "model_family", "task", "nc", "names"}
+            & set(model_path)
+        ):
             model_path = unwrap_ec_checkpoint(model_path)
         resolved_task = normalize_task(task) if task is not None else None
         if resolved_task == "pose":
@@ -171,7 +177,7 @@ class LibreEC(BaseModel):
             task=resolved_task,
             **kwargs,
         )
-        if self.task == "pose":
+        if self.task == "pose" and not has_checkpoint_names:
             self.names = {0: "person"}
         if isinstance(model_path, str):
             self._load_weights(model_path)
@@ -269,6 +275,15 @@ class LibreEC(BaseModel):
         # EC checkpoints carry anchors/valid_mask buffers regenerated at
         # forward time. Mirror the D-FINE policy.
         return False
+
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        return policy.allowing(
+            name=f"ec-{policy.name}",
+            missing=("decoder.anchors", "decoder.valid_mask"),
+            unexpected=("decoder.anchors", "decoder.valid_mask"),
+            shape_mismatch=("decoder.anchors", "decoder.valid_mask"),
+        )
 
     @ddp_aware(experimental_key="allow_experimental")
     def train(
@@ -595,10 +610,25 @@ class LibreEC(BaseModel):
 
         try:
             loaded = torch.load(model_path, map_location="cpu", weights_only=False)
-            state_dict = unwrap_ec_checkpoint(loaded)
-            state_dict = self._strip_ddp_prefix(dict(state_dict))
+            if not isinstance(loaded, dict):
+                raise TypeError("EC checkpoints must be dictionaries")
+            loaded, is_native_v1 = self._parse_checkpoint_metadata(
+                loaded,
+                context=f"EC weights from {model_path}",
+            )
+            state_dict = dict(unwrap_ec_checkpoint(loaded))
+            if not is_native_v1:
+                state_dict = self._strip_ddp_prefix(state_dict)
 
             ckpt_task = self.detect_task_from_state_dict(state_dict) or "detect"
+            declared_task = loaded.get("task")
+            if declared_task is not None:
+                declared_task = normalize_task(declared_task)
+                if declared_task != ckpt_task:
+                    raise RuntimeError(
+                        f"Checkpoint metadata declares task={declared_task!r}, but "
+                        f"its tensors identify an EC-{ckpt_task} model."
+                    )
             if ckpt_task != self.task:
                 raise RuntimeError(
                     f"Checkpoint is an EC-{ckpt_task} model but this instance "
@@ -614,8 +644,18 @@ class LibreEC(BaseModel):
                         f"Checkpoint was trained with model_family='{ckpt_family}' "
                         f"but is being loaded into '{own_family}'."
                     )
-                ckpt_nc = loaded.get("nc")
                 ckpt_names = loaded.get("names")
+                ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+                if ckpt_nc is None and ckpt_names is not None:
+                    if not isinstance(ckpt_names, (dict, list)):
+                        raise ValueError(
+                            "checkpoint names must be a dict[int, str] or list[str]"
+                        )
+                    ckpt_nc = len(ckpt_names)
+                if ckpt_nc is None:
+                    ckpt_nc = self._normalize_checkpoint_nc(
+                        self.detect_nb_classes(state_dict)
+                    )
                 if self.task == "pose":
                     effective_nc = int(ckpt_nc) if ckpt_nc is not None else 1
                     if effective_nc != 1:
@@ -637,18 +677,13 @@ class LibreEC(BaseModel):
                     if ckpt_names is not None:
                         self.names = self._sanitize_names(ckpt_names, effective_nc)
 
-            missing, unexpected = self.model.load_state_dict(
-                state_dict, strict=self._strict_loading()
+            self._load_state_dict_checked(
+                state_dict,
+                checkpoint=loaded if isinstance(loaded, dict) else None,
+                checkpoint_task=ckpt_task,
+                context=f"EC weights from {model_path}",
             )
-            if unexpected:
-                raise RuntimeError(
-                    f"Unexpected keys when loading EC weights: {sorted(unexpected)[:10]}"
-                    + (
-                        f" (+{len(unexpected) - 10} more)"
-                        if len(unexpected) > 10
-                        else ""
-                    )
-                )
+            self.model.to(self.device).eval()
         except RuntimeError:
             raise
         except Exception as e:

@@ -230,7 +230,12 @@ def _make_depth_yaml(root, n_images=4, size=70):
     yaml_path = root / "data.yaml"
     yaml_path.write_text(
         _yaml.safe_dump(
-            {"path": str(root), "train": "images/train", "val": "images/val"}
+            {
+                "path": str(root),
+                "train": "images/train",
+                "val": "images/val",
+                "names": ["depth"],
+            }
         )
     )
     return yaml_path

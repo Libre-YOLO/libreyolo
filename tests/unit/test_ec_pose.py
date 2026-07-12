@@ -19,6 +19,7 @@ from libreyolo.models.ec.model import LibreEC
 from libreyolo.models.ec.nn import LibreECPoseModel
 from libreyolo.models.ec.postprocess import postprocess_pose
 from libreyolo.tasks import resolve_task
+from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = [pytest.mark.unit, pytest.mark.ec]
 
@@ -87,6 +88,26 @@ class TestPoseFamilyClassWiring:
 
         loaded = LibreEC(
             model_path=str(checkpoint), size="s", task="pose", device="cpu"
+        )
+
+        assert loaded.names == {0: "athlete"}
+
+    def test_pose_in_memory_checkpoint_preserves_custom_class_name(self):
+        src = LibreEC(model_path=None, size="s", task="pose", device="cpu")
+        checkpoint = wrap_libreyolo_checkpoint(
+            src.model.state_dict(),
+            model_family="ec",
+            size="s",
+            task="pose",
+            nc=1,
+            names={0: "athlete"},
+            imgsz=640,
+            num_keypoints=17,
+            keypoint_dim=2,
+        )
+
+        loaded = LibreEC(
+            model_path=checkpoint, size="s", task="pose", device="cpu"
         )
 
         assert loaded.names == {0: "athlete"}

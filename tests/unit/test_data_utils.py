@@ -27,6 +27,7 @@ def _write_dataset_yaml(tmp_path: Path) -> Path:
                 f"path: {tmp_path / 'dataset'}",
                 "train: images/train",
                 "val: images/val",
+                "names: [object]",
                 "download: |",
                 f'  Path(r"{marker_path}").write_text("ran")',
             ]
@@ -64,6 +65,7 @@ def test_embedded_scripts_map_common_yolo_helper_imports(tmp_path, monkeypatch):
                 f"path: {tmp_path / 'dataset'}",
                 "train: images/train",
                 "val: images/val",
+                "names: [object]",
                 "download: |",
                 "  from ultralytics.utils.downloads import download",
                 "  from ultralytics.utils import ASSETS_URL",
@@ -150,6 +152,114 @@ def test_load_data_config_resolves_directory_test_split(tmp_path):
     assert config["test"] == str(images_dir)
     assert config["test_img_files"] == [image_path]
     assert config["test_label_files"] == [label_path]
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        (["cat", "dog"], {0: "cat", 1: "dog"}),
+        ({"1": "dog", "0": "cat"}, {0: "cat", 1: "dog"}),
+    ],
+)
+def test_load_data_config_canonicalizes_names_and_infers_nc(tmp_path, names, expected):
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path / "dataset"),
+                "train": "images/train",
+                "val": "images/val",
+                "names": names,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_data_config(str(yaml_path), autodownload=False)
+
+    assert config["names"] == expected
+    assert config["nc"] == 2
+
+
+def test_load_data_config_requires_names_with_yaml_context(tmp_path):
+    yaml_path = tmp_path / "missing-names.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path / "dataset"),
+                "train": "images/train",
+                "val": "images/val",
+                "nc": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_data_config(str(yaml_path), autodownload=False)
+
+    assert str(yaml_path) in str(exc_info.value)
+    assert "must define field 'names'" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("class_space", "message"),
+    [
+        ({"names": {0: "cat", 2: "dog"}}, "contiguous"),
+        ({"names": ["cat", "dog"], "nc": 3}, "nc=3"),
+        ({"names": ["cat"], "nc": 1.5}, "positive integer"),
+        ({"names": []}, "at least one class"),
+        ({"names": ["cat", ""]}, "non-empty string"),
+        ({"names": "cat"}, "list or an integer-keyed mapping"),
+    ],
+)
+def test_load_data_config_rejects_invalid_class_space_with_yaml_context(
+    tmp_path, class_space, message
+):
+    yaml_path = tmp_path / "bad.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path / "dataset"),
+                "train": "images/train",
+                "val": "images/val",
+                **class_space,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_data_config(str(yaml_path), autodownload=False)
+
+    assert str(yaml_path) in str(exc_info.value)
+    assert message in str(exc_info.value)
+
+
+def test_load_data_config_accepts_quoted_integer_nc(tmp_path):
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path / "dataset"),
+                "train": "images/train",
+                "val": "images/val",
+                "names": ["cat"],
+                "nc": "1",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_data_config(str(yaml_path), autodownload=False)
+
+    assert config["nc"] == 1
+
+
+def test_diagnostic_config_loader_is_not_part_of_public_data_api():
+    import libreyolo.data as data_api
+
+    assert not hasattr(data_api, "_load_data_config_for_diagnostics")
 
 
 def test_load_data_config_resolves_coco_annotation_paths(tmp_path):

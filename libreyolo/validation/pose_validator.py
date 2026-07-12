@@ -34,6 +34,11 @@ from libreyolo.data.pose_dataset import parse_yolo_pose_label_line
 
 from .base import BaseValidator
 from .config import ValidationConfig
+from .contracts import (
+    require_class_ids,
+    require_finite,
+    require_matching_batch_sizes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +140,8 @@ class PoseValidator(BaseValidator):
             metrics["speed/total_ms"] = self.speed["total"] / self.seen * 1000
             metrics["speed/total_s"] = self.speed["total"]
             metrics["speed/images_seen"] = self.seen
+
+        require_finite(list(metrics.values()), "Pose validation metrics")
 
         if self.config.verbose:
             self._log_metrics(metrics)
@@ -371,9 +378,12 @@ class PoseValidator(BaseValidator):
         category_ids = getattr(self, "_category_ids", [])
         if 0 <= cls_id < len(category_ids):
             return int(category_ids[cls_id])
-        if cls_id in category_ids:
-            return int(cls_id)
-        return int(self._category_id)
+        if not category_ids and cls_id == 0:
+            return int(self._category_id)
+        raise ValueError(
+            f"Pose prediction class {cls_id} is outside the configured class "
+            f"space [0, {max(len(category_ids), 1)})."
+        )
 
     # =========================================================================
     # Inference loop
@@ -443,23 +453,66 @@ class PoseValidator(BaseValidator):
             except Exception as exc:
                 logger.warning("Failed to collect pose plot sample data: %s", exc)
 
-        if result.keypoints is None or len(result) == 0:
+        if len(result) == 0:
             return
+        if result.keypoints is None:
+            raise ValueError(
+                "Pose validation received detections without keypoint predictions."
+            )
 
         kpts = result.keypoints.data
         scores = result.boxes.conf
         classes = getattr(result.boxes, "cls", None)
         # Convert to numpy / list for JSON friendliness.
-        kpts_np = kpts.detach().cpu().numpy() if hasattr(kpts, "detach") else kpts
-        scores_np = scores.detach().cpu().numpy() if hasattr(scores, "detach") else scores
+        kpts_np = np.asarray(
+            kpts.detach().cpu().numpy() if hasattr(kpts, "detach") else kpts
+        )
+        scores_np = np.asarray(
+            scores.detach().cpu().numpy() if hasattr(scores, "detach") else scores
+        )
+        category_ids = getattr(self, "_category_ids", [])
         if classes is None:
-            classes_np = np.full(len(scores_np), self._category_id)
+            if len(category_ids) > 1:
+                raise ValueError(
+                    "Multi-class pose validation requires a class id for every "
+                    "prediction."
+                )
+            classes_np = np.zeros(len(scores_np), dtype=np.int64)
         else:
-            classes_np = (
+            classes_np = np.asarray(
                 classes.detach().cpu().numpy()
                 if hasattr(classes, "detach")
                 else classes
             )
+
+        if kpts_np.ndim != 3 or kpts_np.shape[2] != 3:
+            raise ValueError(
+                "Pose validation keypoints must have shape [N, K, 3], got "
+                f"{kpts_np.shape}."
+            )
+        if self._num_keypoints is not None and kpts_np.shape[1] != self._num_keypoints:
+            raise ValueError(
+                f"Pose validation expected {self._num_keypoints} keypoints per "
+                f"instance, got {kpts_np.shape[1]}."
+            )
+        if scores_np.ndim != 1 or classes_np.ndim != 1:
+            raise ValueError(
+                "Pose validation scores and classes must have shape [N], got "
+                f"{scores_np.shape} and {classes_np.shape}."
+            )
+        require_matching_batch_sizes(
+            "Pose validation predictions",
+            keypoints=kpts_np,
+            scores=scores_np,
+            classes=classes_np,
+        )
+        require_finite(kpts_np, "Pose validation keypoints")
+        require_finite(scores_np, "Pose validation scores")
+        classes_np = require_class_ids(
+            classes_np,
+            max(len(category_ids), 1),
+            "Pose validation predictions",
+        ).cpu().numpy()
 
         for instance_kpts, score, cls_id in zip(kpts_np, scores_np, classes_np):
             flat = []

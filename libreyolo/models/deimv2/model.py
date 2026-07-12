@@ -13,6 +13,7 @@ from libreyolo.training.ddp_spawn import ddp_aware
 
 from ...training.callbacks import TrainCallbacks
 from ...training.config import DEIMv2Config
+from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput
 from ...utils.serialization import load_untrusted_torch_file
 from ...validation.preprocessors import (
@@ -109,11 +110,9 @@ class LibreDEIMv2(BaseModel):
         **kwargs,
     ):
         size = normalize_size(size)
-        pending_state_dict = None
+        pending_checkpoint = None
         if isinstance(model_path, dict):
-            pending_state_dict = self._prepare_state_dict(
-                unwrap_deim_checkpoint(model_path), size
-            )
+            pending_checkpoint = model_path
             model_path = None
         super().__init__(
             model_path=model_path,
@@ -122,9 +121,11 @@ class LibreDEIMv2(BaseModel):
             device=device,
             **kwargs,
         )
-        if pending_state_dict is not None:
-            self._load_state_dict_checked(pending_state_dict)
-            self.model.eval()
+        if pending_checkpoint is not None:
+            self._apply_deimv2_checkpoint(
+                pending_checkpoint,
+                context="DEIMv2 in-memory checkpoint",
+            )
         if isinstance(model_path, str):
             self._load_weights(model_path)
 
@@ -197,6 +198,13 @@ class LibreDEIMv2(BaseModel):
 
     def _strict_loading(self) -> bool:
         return False
+
+    def _checkpoint_load_policy(self, checkpoint, checkpoint_task=None):
+        policy = super()._checkpoint_load_policy(checkpoint, checkpoint_task)
+        return policy.allowing(
+            name=f"deimv2-{policy.name}",
+            missing=("decoder.up", "decoder.reg_scale"),
+        )
 
     @ddp_aware()
     def train(
@@ -362,33 +370,65 @@ class LibreDEIMv2(BaseModel):
         return state_dict
 
     @classmethod
+    def convert_upstream_state_dict(cls, state_dict: dict) -> dict | None:
+        """Canonicalize metadata-less DEIMv2 tensors before v1 wrapping."""
+        if not cls.can_load(state_dict):
+            return None
+        size = cls.detect_size(state_dict)
+        if size is None:
+            return None
+        return cls._prepare_state_dict(state_dict, size)
+
+    @classmethod
     def _prepare_state_dict(cls, state_dict: dict, size: str) -> dict:
         return cls._expand_shared_head_aliases(
             cls._strip_ddp_prefix(dict(state_dict)), size
         )
 
-    def _load_state_dict_checked(self, state_dict: dict) -> None:
-        missing, unexpected = self.model.load_state_dict(
-            state_dict, strict=self._strict_loading()
+    def _apply_deimv2_checkpoint(self, loaded: dict, *, context: str) -> None:
+        if not isinstance(loaded, dict):
+            raise TypeError("DEIMv2 checkpoints must be dictionaries")
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
+            loaded,
+            context=context,
         )
-        if unexpected:
-            preview = sorted(unexpected)[:10]
+        state_dict = dict(unwrap_deim_checkpoint(loaded))
+        if not is_native_v1:
+            state_dict = self._prepare_state_dict(state_dict, self.size)
+
+        ckpt_family = loaded.get("model_family", "")
+        if ckpt_family and ckpt_family != self.FAMILY:
             raise RuntimeError(
-                f"Unexpected keys when loading DEIMv2 weights: {preview}"
-                + (f" (+{len(unexpected) - 10} more)" if len(unexpected) > 10 else "")
+                f"Checkpoint was trained with model_family='{ckpt_family}' "
+                f"but is being loaded into '{self.FAMILY}'."
+            )
+        ckpt_task = loaded.get("task")
+        if ckpt_task is not None and normalize_task(ckpt_task) != "detect":
+            raise RuntimeError(
+                f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
+                "but DEIMv2 is detection-only."
+            )
+        ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
+        if ckpt_nc is None:
+            ckpt_nc = self._normalize_checkpoint_nc(
+                self.detect_nb_classes(state_dict)
+            )
+        if ckpt_nc is not None and ckpt_nc != self.nb_classes:
+            self._rebuild_for_new_classes(ckpt_nc)
+        ckpt_names = loaded.get("names")
+        if ckpt_names is not None:
+            self.names = self._sanitize_names(
+                ckpt_names,
+                ckpt_nc if ckpt_nc is not None else self.nb_classes,
             )
 
-        ignored_missing = {"decoder.up", "decoder.reg_scale"}
-        unresolved_missing = sorted(set(missing) - ignored_missing)
-        if unresolved_missing:
-            raise RuntimeError(
-                f"Missing keys when loading DEIMv2 weights: {unresolved_missing[:10]}"
-                + (
-                    f" (+{len(unresolved_missing) - 10} more)"
-                    if len(unresolved_missing) > 10
-                    else ""
-                )
-            )
+        self._load_state_dict_checked(
+            state_dict,
+            checkpoint=loaded,
+            checkpoint_task="detect",
+            context=context,
+        )
+        self.model.to(self.device).eval()
 
     def _load_safetensors_weights(self, model_path: str) -> None:
         try:
@@ -418,6 +458,7 @@ class LibreDEIMv2(BaseModel):
         try:
             if Path(model_path).suffix == ".safetensors":
                 self._load_safetensors_weights(model_path)
+                self.model.to(self.device).eval()
                 return
 
             loaded = load_untrusted_torch_file(
@@ -425,25 +466,10 @@ class LibreDEIMv2(BaseModel):
                 map_location="cpu",
                 context="DEIMv2 model weights",
             )
-            state_dict = unwrap_deim_checkpoint(loaded)
-            state_dict = self._prepare_state_dict(state_dict, self.size)
-
-            if isinstance(loaded, dict):
-                ckpt_family = loaded.get("model_family", "")
-                if ckpt_family and ckpt_family != self.FAMILY:
-                    raise RuntimeError(
-                        f"Checkpoint was trained with model_family='{ckpt_family}' "
-                        f"but is being loaded into '{self.FAMILY}'."
-                    )
-                ckpt_nc = loaded.get("nc")
-                if ckpt_nc is not None and ckpt_nc != self.nb_classes:
-                    self._rebuild_for_new_classes(int(ckpt_nc))
-                ckpt_names = loaded.get("names")
-                effective_nc = int(ckpt_nc) if ckpt_nc is not None else self.nb_classes
-                if ckpt_names is not None:
-                    self.names = self._sanitize_names(ckpt_names, effective_nc)
-
-            self._load_state_dict_checked(state_dict)
+            self._apply_deimv2_checkpoint(
+                loaded,
+                context=f"DEIMv2 weights from {model_path}",
+            )
         except RuntimeError:
             raise
         except Exception as e:

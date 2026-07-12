@@ -12,8 +12,8 @@ from torch.utils.data import Dataset
 from PIL import Image
 
 from .utils import MEAN, STD
+from ...data.labels import parse_yolo_box_or_segment_label_line
 from ...training.augment import augment_hsv, mirror, xyxy2cxcywh
-from ...data.utils import polygon_to_cxcywh
 
 
 def _transform_image(pil_image: Image.Image, input_size: int) -> torch.Tensor:
@@ -52,11 +52,13 @@ class FOMOYOLODataset(Dataset):
         label_files: list,
         input_size: int,
         grid_size: int,
+        num_classes: int | None = None,
     ) -> None:
         self.img_files = img_files
         self.label_files = label_files
         self.input_size = input_size
         self.grid_size = grid_size
+        self.num_classes = num_classes
 
     def __len__(self) -> int:
         return len(self.img_files)
@@ -64,22 +66,21 @@ class FOMOYOLODataset(Dataset):
     def _load_labels(self, label_path: str) -> Tuple[np.ndarray, np.ndarray]:
         """Return (boxes_xyxy_pixel, classes_int) or empty arrays."""
         try:
-            with open(label_path) as f:
-                lines = f.read().strip().split("\n")
-        except (FileNotFoundError, OSError):
+            with open(label_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
             return np.zeros((0, 4), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
         boxes, classes = [], []
-        for line in lines:
-            parts = line.strip().split()
-            if len(parts) < 5:
+        for line_number, line in enumerate(lines, start=1):
+            if not line.strip():
                 continue
-            cls = int(parts[0])
-            if len(parts) > 5:
-                coords = [float(p) for p in parts[1:]]
-                cx, cy, w, h = polygon_to_cxcywh(coords)
-            else:
-                cx, cy, w, h = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+            cls, (cx, cy, w, h), _ = parse_yolo_box_or_segment_label_line(
+                line,
+                num_classes=self.num_classes,
+                label_path=label_path,
+                line_number=line_number,
+            )
             x1 = (cx - w / 2) * self.input_size
             y1 = (cy - h / 2) * self.input_size
             x2 = (cx + w / 2) * self.input_size
@@ -146,7 +147,7 @@ class FOMOAugmentedDataset(Dataset):
         img_normalized = (img_rgb / 255.0 - MEAN[:, None, None]) / STD[:, None, None]
         img_tensor = torch.from_numpy(np.ascontiguousarray(img_normalized, dtype=np.float32))
 
-        valid_mask = targets[:, 3] > 0
+        valid_mask = (targets[:, 3] > 0) & (targets[:, 4] > 0)
         valid_targets = targets[valid_mask]
 
         if len(valid_targets) > 0:
@@ -180,6 +181,14 @@ class FOMOTrainTransform:
     ) -> Tuple[np.ndarray, np.ndarray]:
         boxes = targets[:, :4].copy()
         labels = targets[:, 4].copy()
+        valid = (
+            np.isfinite(boxes).all(axis=1)
+            & ((boxes[:, 2] - boxes[:, 0]) > 0.0)
+            & ((boxes[:, 3] - boxes[:, 1]) > 0.0)
+        )
+        boxes = boxes[valid]
+        labels = labels[valid]
+        targets = targets[valid]
 
         if len(boxes) == 0:
             targets_t = np.zeros((self.max_labels, 5), dtype=np.float32)
@@ -236,8 +245,9 @@ class FOMOTrainTransform:
             boxes_o = xyxy2cxcywh(boxes_o)
             boxes_o[:, 0::2] *= scale_x_o
             boxes_o[:, 1::2] *= scale_y_o
-            boxes_t = boxes_o
-            labels_t = labels_o
+            valid_o = np.minimum(boxes_o[:, 2], boxes_o[:, 3]) > 1
+            boxes_t = boxes_o[valid_o]
+            labels_t = labels_o[valid_o]
 
         labels_t = np.expand_dims(labels_t, 1)
 
@@ -358,6 +368,7 @@ def build_fomo_datasets(
             label_files=train_label_files,
             img_size=(input_size, input_size),
             preproc=None,
+            num_classes=dataset_nc,
         )
 
         preproc = FOMOTrainTransform(
@@ -387,8 +398,20 @@ def build_fomo_datasets(
             grid_size=grid_size,
         )
     else:
-        train_ds = FOMOYOLODataset(train_img_files, train_label_files, input_size, grid_size)
+        train_ds = FOMOYOLODataset(
+            train_img_files,
+            train_label_files,
+            input_size,
+            grid_size,
+            num_classes=dataset_nc,
+        )
 
-    val_ds = FOMOYOLODataset(val_img_files or [], val_label_files or [], input_size, grid_size)
+    val_ds = FOMOYOLODataset(
+        val_img_files or [],
+        val_label_files or [],
+        input_size,
+        grid_size,
+        num_classes=dataset_nc,
+    )
     return train_ds, val_ds, model, loss_fn
 

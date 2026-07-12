@@ -24,8 +24,8 @@ from PIL import Image
 from tqdm import tqdm
 
 from ..data.utils import (
+    _load_data_config_for_diagnostics,
     img2label_paths,
-    load_data_config,
     polygon_to_cxcywh,
     resolve_dataset_yaml,
 )
@@ -123,7 +123,7 @@ class DatasetSnapshot:
     yaml_path: Path
     root: Path
     raw_config: dict[str, Any]  # the YAML exactly as written
-    config: dict[str, Any]  # resolved by load_data_config
+    config: dict[str, Any]  # path-resolved diagnostic view
     nc: Optional[int]
     names: dict[int, str]
     splits: list[SplitSnapshot]
@@ -253,10 +253,10 @@ def build_snapshot(data: str, autodownload: bool = False) -> DatasetSnapshot:
         raise DoctorError(f"Dataset YAML {yaml_path} is not a mapping.")
 
     try:
-        config = load_data_config(
-            str(yaml_path), autodownload=autodownload, allow_scripts=False
+        config = _load_data_config_for_diagnostics(
+            str(yaml_path), autodownload=autodownload
         )
-    except Exception as exc:  # load_data_config raises a mixed bag
+    except Exception as exc:  # path resolution raises a mixed bag
         raise DoctorError(f"Cannot load dataset config {yaml_path}: {exc}") from exc
 
     field_counts: Counter = Counter()

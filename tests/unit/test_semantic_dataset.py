@@ -323,5 +323,7 @@ def test_polygon_out_of_range_class_raises(tmp_path):
     }
     dataset = SemanticDataset(config, split="train", imgsz=16)
 
-    with pytest.raises(ValueError, match="outside 0..0"):
+    with pytest.raises(ValueError) as exc_info:
         dataset[0]
+    assert f"{labels}:1:" in str(exc_info.value)
+    assert "out of range" in str(exc_info.value)

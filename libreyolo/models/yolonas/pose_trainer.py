@@ -116,9 +116,6 @@ class YOLONASPoseTrainer(BaseTrainer):
         self.val_loader = None
 
     def _build_dataset(self, img_files, label_files, preproc) -> YOLOPoseDataset:
-        # Validate label class ids only for multi-class pose. Single-class pose
-        # is class-agnostic by contract (the loss trains class 0 regardless of
-        # the label column), so any historical labels keep loading.
         nc = self.config.num_classes
         return YOLOPoseDataset(
             img_files=img_files,
@@ -128,7 +125,7 @@ class YOLONASPoseTrainer(BaseTrainer):
             preproc=preproc,
             keypoint_dim=self.config.keypoint_dim,
             decode_scale=self.config.decode_scale,
-            num_classes=nc if nc and nc > 1 else None,
+            num_classes=int(nc),
         )
 
     def _setup_data(self):

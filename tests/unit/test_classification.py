@@ -209,12 +209,14 @@ def test_dinov2_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
                 raise RuntimeError(f"expected {expected} classifier rows, got {actual}")
             return _LoadResult()
 
+        def state_dict(self, *args, **kwargs):
+            return self.classifier.state_dict(*args, **kwargs)
+
     monkeypatch.setattr(LibreDINOv2, "_init_model", lambda self: _FakeWrapper())
     path = tmp_path / "best.pt"
     torch.save(
         {
             "model": {
-                "backbone.stem.weight": torch.ones(1),
                 "linear.weight": torch.ones(4, 2),
                 "linear.bias": torch.ones(4),
             },
@@ -229,6 +231,101 @@ def test_dinov2_classify_load_infers_nc_from_linear_weight(monkeypatch, tmp_path
 
     assert model.nb_classes == 4
     assert model.model.classifier.linear.out_features == 4
+
+
+def test_dinov2_classify_rejects_head_only_native_checkpoint(monkeypatch):
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.utils.serialization import (
+        CheckpointLoadError,
+        wrap_libreyolo_checkpoint,
+    )
+
+    class _FakeClassifier(torch.nn.Module):
+        def __init__(self, nb_classes):
+            super().__init__()
+            self.backbone = torch.nn.Linear(2, 2)
+            self.linear = torch.nn.Linear(2, nb_classes)
+            self.nb_classes = nb_classes
+
+    class _FakeWrapper(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = None
+            self.classifier = _FakeClassifier(3)
+            self.nb_classes = 3
+
+        def state_dict(self, *args, **kwargs):
+            return self.classifier.state_dict(*args, **kwargs)
+
+        def load_state_dict(self, state, strict=False):
+            return self.classifier.load_state_dict(state, strict=strict)
+
+    monkeypatch.setattr(LibreDINOv2, "_init_model", lambda self: _FakeWrapper())
+    checkpoint = wrap_libreyolo_checkpoint(
+        {
+            "linear.weight": torch.ones(3, 2),
+            "linear.bias": torch.ones(3),
+        },
+        model_family="dinov2",
+        size="n",
+        task="classify",
+        nc=3,
+        names=["a", "b", "c"],
+        imgsz=224,
+    )
+
+    with pytest.raises(CheckpointLoadError, match="required model tensors"):
+        LibreDINOv2(
+            model_path=checkpoint,
+            size="n",
+            task="classify",
+            nb_classes=3,
+            device="cpu",
+        )
+
+
+def test_dinov2_classify_rejects_metadata_head_class_mismatch(monkeypatch):
+    from libreyolo.models.dinov2.model import LibreDINOv2
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    class _FakeClassifier(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(2, 3)
+
+    class _FakeWrapper(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = None
+            self.classifier = _FakeClassifier()
+            self.nb_classes = 3
+
+        def state_dict(self, *args, **kwargs):
+            return self.classifier.state_dict(*args, **kwargs)
+
+        def load_state_dict(self, state, strict=False):
+            return self.classifier.load_state_dict(state, strict=strict)
+
+    monkeypatch.setattr(LibreDINOv2, "_init_model", lambda self: _FakeWrapper())
+    source = _FakeClassifier().state_dict()
+    checkpoint = wrap_libreyolo_checkpoint(
+        source,
+        model_family="dinov2",
+        size="n",
+        task="classify",
+        nc=2,
+        names={0: "a", 1: "b"},
+        imgsz=224,
+    )
+
+    with pytest.raises(RuntimeError, match="linear.weight encodes nc=3"):
+        LibreDINOv2(
+            model_path=checkpoint,
+            size="n",
+            task="classify",
+            nb_classes=3,
+            device="cpu",
+        )
 
 
 def test_classify_family_train_end_to_end(tmp_path):

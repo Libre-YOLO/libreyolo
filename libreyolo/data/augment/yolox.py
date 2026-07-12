@@ -31,6 +31,14 @@ class TrainTransform:
     def __call__(self, image, targets, input_dim):
         boxes = targets[:, :4].copy()
         labels = targets[:, 4].copy()
+        valid = (
+            np.isfinite(boxes).all(axis=1)
+            & ((boxes[:, 2] - boxes[:, 0]) > 0.0)
+            & ((boxes[:, 3] - boxes[:, 1]) > 0.0)
+        )
+        boxes = boxes[valid]
+        labels = labels[valid]
+        targets = targets[valid]
         if len(boxes) == 0:
             targets = np.zeros((self.max_labels, 5), dtype=np.float32)
             image, r_o = preproc(image, input_dim)
@@ -60,8 +68,9 @@ class TrainTransform:
         if len(boxes_t) == 0:
             image_t, r_o = preproc(image_o, input_dim)
             boxes_o *= r_o
-            boxes_t = boxes_o
-            labels_t = labels_o
+            valid_o = np.minimum(boxes_o[:, 2], boxes_o[:, 3]) > 1
+            boxes_t = boxes_o[valid_o]
+            labels_t = labels_o[valid_o]
 
         labels_t = np.expand_dims(labels_t, 1)
 

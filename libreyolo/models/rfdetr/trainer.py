@@ -422,6 +422,7 @@ class RFDETRTrainer(BaseTrainer):
             preproc=preproc,
             keypoint_dim=self.config.keypoint_dim,
             decode_scale=self.config.decode_scale,
+            num_classes=int(self.config.num_classes),
         )
 
     def _setup_data(self):
@@ -974,10 +975,18 @@ class RFDETRTrainer(BaseTrainer):
 
         avg_loss = total_loss / max(num_batches, 1)
         metrics = {"loss/val": avg_loss}
-        if pose_metrics:
+        if pose_metrics is not None:
             metrics.update(self._scalar_mapping(pose_metrics))
-            mAP50 = metrics.get("metrics/keypoints_mAP50")
-            mAP50_95 = metrics.get("metrics/keypoints_mAP50-95")
+            mAP50 = self._require_validation_metric(
+                metrics,
+                ("metrics/keypoints_mAP50",),
+                context="RF-DETR pose validation",
+            )
+            mAP50_95 = self._require_validation_metric(
+                metrics,
+                ("metrics/keypoints_mAP50-95",),
+                context="RF-DETR pose validation",
+            )
             logger.info(
                 "Validation - loss/val: %.4f, keypoints_mAP50: %.4f, keypoints_mAP50-95: %.4f",
                 avg_loss,
@@ -985,7 +994,7 @@ class RFDETRTrainer(BaseTrainer):
                 mAP50_95 if mAP50_95 is not None else 0.0,
             )
             return {
-                "best_metric": mAP50_95 if mAP50_95 is not None else 0.0,
+                "best_metric": mAP50_95,
                 "best_metric_key": "metrics/keypoints_mAP50-95",
                 "mAP50": mAP50,
                 "mAP50_95": mAP50_95,
@@ -1009,8 +1018,7 @@ class RFDETRTrainer(BaseTrainer):
         save_plots: bool | None = None,
     ) -> Dict[str, float] | None:
         if self.wrapper_model is None:
-            logger.warning("Skipping pose mAP validation: wrapper_model is missing")
-            return None
+            raise RuntimeError("Pose mAP validation requires wrapper_model.")
 
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
@@ -1047,7 +1055,7 @@ class RFDETRTrainer(BaseTrainer):
                 self.wrapper_model.model = original_model
         except Exception as exc:
             logger.error("Pose mAP validation failed at epoch %d: %s", epoch + 1, exc)
-            return None
+            raise RuntimeError("RF-DETR pose metric validation failed.") from exc
 
 
 def train_rfdetr(

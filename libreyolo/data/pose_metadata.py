@@ -7,6 +7,9 @@ new families do not duplicate COCO-17 constants.
 
 from __future__ import annotations
 
+from numbers import Integral
+from typing import Sequence
+
 COCO17_KEYPOINT_NAMES = [
     "nose",
     "left_eye",
@@ -80,3 +83,40 @@ def default_oks_sigmas(num_keypoints: int) -> list[float]:
     if num_keypoints < 1:
         raise ValueError(f"num_keypoints must be >= 1, got {num_keypoints}")
     return [1.0 / num_keypoints] * num_keypoints
+
+
+def validate_flip_idx(
+    flip_idx: Sequence[int] | None,
+    num_keypoints: int,
+) -> tuple[int, ...] | None:
+    """Return a validated horizontal-flip keypoint permutation.
+
+    A supplied mapping must contain every keypoint index exactly once. Silently
+    accepting duplicate or out-of-range indices corrupts keypoint identities
+    whenever horizontal flip augmentation runs.
+    """
+    num_keypoints = int(num_keypoints)
+    if num_keypoints < 1:
+        raise ValueError(f"num_keypoints must be >= 1, got {num_keypoints}")
+    if flip_idx is None:
+        return None
+    if isinstance(flip_idx, (str, bytes)):
+        raise ValueError("flip_idx must be an integer permutation, not a string")
+
+    values = list(flip_idx)
+    if len(values) != num_keypoints:
+        raise ValueError(
+            f"flip_idx must contain {num_keypoints} entries, got {len(values)}"
+        )
+    if any(isinstance(value, bool) or not isinstance(value, Integral) for value in values):
+        raise ValueError("flip_idx entries must be integers")
+
+    permutation = tuple(int(value) for value in values)
+    expected = set(range(num_keypoints))
+    actual = set(permutation)
+    if actual != expected or len(actual) != len(permutation):
+        raise ValueError(
+            f"flip_idx must be a permutation of 0..{num_keypoints - 1}, "
+            f"got {list(permutation)}"
+        )
+    return permutation

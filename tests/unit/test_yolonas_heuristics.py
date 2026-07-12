@@ -113,6 +113,29 @@ class TestYOLONASHeuristics:
     def test_get_download_url_returns_none_for_detection_only_n_size(self, filename):
         assert LibreYOLONAS.get_download_url(filename) is None
 
+    def test_existing_checkpoint_is_verified_before_unpickling(
+        self, monkeypatch, tmp_path
+    ):
+        from libreyolo.utils import download
+
+        checkpoint = tmp_path / "LibreYOLONASs.pt"
+        checkpoint.write_bytes(b"cached pickle")
+
+        class VerificationStopped(RuntimeError):
+            pass
+
+        def stop_after_verification(model_path, size):
+            assert Path(model_path) == checkpoint
+            assert size == "s"
+            raise VerificationStopped("verified before load")
+
+        monkeypatch.setattr(download, "download_weights", stop_after_verification)
+        wrapper = object.__new__(LibreYOLONAS)
+        wrapper.size = "s"
+
+        with pytest.raises(VerificationStopped, match="verified before load"):
+            wrapper._load_weights(str(checkpoint))
+
     @pytest.mark.parametrize(
         ("filename", "expected_url"),
         [

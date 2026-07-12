@@ -31,24 +31,24 @@ class TestParseYOLOLabelLine:
         assert result is None
 
     def test_invalid_format(self):
-        """Test that invalid format returns None."""
-        result = parse_yolo_label_line("0 0.5", img_w=100, img_h=100, num_classes=80)
-        assert result is None
+        """Test that a populated malformed row is rejected."""
+        with pytest.raises(ValueError, match="5 box fields"):
+            parse_yolo_label_line("0 0.5", img_w=100, img_h=100, num_classes=80)
 
     def test_class_id_out_of_range(self):
-        """Test that out-of-range class IDs are skipped."""
+        """Test that out-of-range class IDs are rejected."""
         # Class 100 when max is 80
-        result = parse_yolo_label_line(
-            "100 0.5 0.5 0.2 0.1", img_w=100, img_h=100, num_classes=80
-        )
-        assert result is None
+        with pytest.raises(ValueError, match="out of range"):
+            parse_yolo_label_line(
+                "100 0.5 0.5 0.2 0.1", img_w=100, img_h=100, num_classes=80
+            )
 
     def test_negative_class_id(self):
-        """Test that negative class IDs are skipped."""
-        result = parse_yolo_label_line(
-            "-1 0.5 0.5 0.2 0.1", img_w=100, img_h=100, num_classes=80
-        )
-        assert result is None
+        """Test that negative class IDs are rejected."""
+        with pytest.raises(ValueError, match="non-negative"):
+            parse_yolo_label_line(
+                "-1 0.5 0.5 0.2 0.1", img_w=100, img_h=100, num_classes=80
+            )
 
     def test_box_clamping(self):
         """Test that boxes are clamped to image boundaries."""
@@ -68,8 +68,8 @@ class TestParseYOLOLabelLine:
         """Test that zero-area boxes are rejected."""
         # Box with zero width
         line = "0 0.5 0.5 0.0 0.1"
-        result = parse_yolo_label_line(line, img_w=100, img_h=100, num_classes=80)
-        assert result is None
+        with pytest.raises(ValueError, match="positive"):
+            parse_yolo_label_line(line, img_w=100, img_h=100, num_classes=80)
 
     def test_polygon_segment_return_is_opt_in(self):
         line = "0 0.1 0.1 0.3 0.1 0.3 0.3"
@@ -408,6 +408,15 @@ class TestCOCOEvaluatorIntegration:
     def test_coco_evaluator_remaps_labels(self, simple_coco_api):
         """Test contiguous model labels can be mapped to COCO category IDs."""
         from libreyolo.validation import COCOEvaluator
+
+        # Model labels are contiguous, while a real COCO-style dataset may use
+        # sparse category IDs. Keep the fixture internally consistent so the
+        # remapped prediction points at an actual ground-truth category.
+        simple_coco_api.cats = {
+            3: {"id": 3, "name": "cat", "supercategory": "object"}
+        }
+        for annotation in simple_coco_api.anns.values():
+            annotation["category_id"] = 3
 
         evaluator = COCOEvaluator(simple_coco_api, label_to_category_id={0: 3})
         predictions = {

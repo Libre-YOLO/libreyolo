@@ -150,6 +150,56 @@ def test_yolo9_p2_transfer_remap_from_base_yolo9():
     assert any(key.startswith("head.cv3.0.") for key in leftover)
 
 
+def test_yolo9_p2_transfer_loader_accepts_only_documented_fresh_modules(tmp_path):
+    from libreyolo import LibreYOLO9, LibreYOLO9P2
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    base = LibreYOLO9(None, size="t", nb_classes=80, device="cpu")
+    checkpoint = wrap_libreyolo_checkpoint(
+        base.model.state_dict(),
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=80,
+        imgsz=640,
+    )
+    path = tmp_path / "LibreYOLO9t.pt"
+    torch.save(checkpoint, path)
+    p2 = LibreYOLO9P2(None, size="t", nb_classes=3, device="cpu")
+
+    stats = p2._load_transfer_weights(path)
+
+    assert stats["loaded"] > 1300
+    assert 0 < stats["skipped"] < 20
+
+
+def test_yolo9_p2_transfer_rejects_non_head_shape_mismatch(tmp_path):
+    from libreyolo import LibreYOLO9, LibreYOLO9P2
+    from libreyolo.utils.serialization import (
+        CheckpointLoadError,
+        wrap_libreyolo_checkpoint,
+    )
+
+    base = LibreYOLO9(None, size="t", nb_classes=80, device="cpu")
+    state = dict(base.model.state_dict())
+    key = "head.cv2.0.0.conv.weight"
+    state[key] = state[key][:1]
+    checkpoint = wrap_libreyolo_checkpoint(
+        state,
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=80,
+        imgsz=640,
+    )
+    path = tmp_path / "LibreYOLO9t-corrupt.pt"
+    torch.save(checkpoint, path)
+    p2 = LibreYOLO9P2(None, size="t", nb_classes=3, device="cpu")
+
+    with pytest.raises(CheckpointLoadError, match="shape mismatches"):
+        p2._load_transfer_weights(path)
+
+
 def test_yolo9_p2_prepare_state_dict_passes_p2_checkpoints_through():
     """P2 checkpoints (containing the new neck keys) must not be re-shifted."""
     from libreyolo import LibreYOLO9P2

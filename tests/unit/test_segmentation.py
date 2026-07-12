@@ -1265,16 +1265,18 @@ class TestRFDETRQueryLoading:
         checkpoint = {"model": {}, "args": {"num_queries": 3, "group_detr": 2}}
         seen = {}
 
-        def fake_load_state_dict(state_dict, strict=False):
+        def fake_load_state_dict(state_dict, strict=False, canonical_v1=False):
             seen["state_dict"] = state_dict
             seen["strict"] = strict
+            seen["canonical_v1"] = canonical_v1
             return [], []
 
         wrapper.model.load_state_dict = fake_load_state_dict
 
         wrapper._load_weights(checkpoint)
 
-        assert seen["state_dict"] is checkpoint
+        assert seen["state_dict"] == checkpoint
+        assert seen["canonical_v1"] is False
         assert seen["strict"] is False
 
 

@@ -3,6 +3,9 @@
 import logging
 import os
 import re
+import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -11,6 +14,24 @@ import requests
 
 _YOLONAS_LICENSE_NOTICE_SHOWN = False
 logger = logging.getLogger(__name__)
+
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_LOCK_POLL_SECONDS = 0.1
+_DOWNLOAD_LOCK_TIMEOUT_SECONDS = 60 * 60
+_DOWNLOAD_LOCK_STALE_SECONDS = 6 * 60 * 60
+_DOWNLOAD_TIMEOUT = (10, 120)
+
+
+class WeightDownloadError(RuntimeError):
+    """Raised when model weights cannot be downloaded into a verified cache."""
+
+
+class WeightVerificationError(WeightDownloadError):
+    """Raised when downloaded bytes fail a family integrity check."""
+
+
+class WeightDownloadLockTimeout(WeightDownloadError, TimeoutError):
+    """Raised when another process holds a target download lock too long."""
 
 
 def _get_hf_token() -> Optional[str]:
@@ -54,10 +75,133 @@ def _detect_family_from_filename(filename: str) -> Optional[str]:
     return None
 
 
+@contextmanager
+def _download_lock(path: Path):
+    """Serialize downloads targeting ``path`` across processes."""
+    lock_path = path.with_name(path.name + ".lock")
+    deadline = time.monotonic() + _DOWNLOAD_LOCK_TIMEOUT_SECONDS
+    fd = None
+
+    while fd is None:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                stale = (
+                    time.time() - lock_path.stat().st_mtime
+                    > _DOWNLOAD_LOCK_STALE_SECONDS
+                )
+            except FileNotFoundError:
+                continue
+            if stale:
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
+            if time.monotonic() >= deadline:
+                raise WeightDownloadLockTimeout(
+                    f"Timed out waiting for download lock '{lock_path}'."
+                )
+            time.sleep(_DOWNLOAD_LOCK_POLL_SECONDS)
+
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        fd = None
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _download_to_verified_temp(
+    *,
+    url: str,
+    partial: Path,
+    headers: dict[str, str],
+    verifier,
+) -> None:
+    """Download to ``partial`` and verify it without exposing a final file."""
+    response = requests.get(
+        url,
+        stream=True,
+        headers=headers,
+        timeout=_DOWNLOAD_TIMEOUT,
+    )
+    try:
+        response.raise_for_status()
+        total_size = int(response.headers.get("content-length", 0))
+        downloaded = 0
+        next_progress = 25
+
+        with open(partial, "xb") as file:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                file.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0:
+                    percent = min(100, int(100 * downloaded / total_size))
+                    while percent >= next_progress:
+                        logger.info(
+                            "Downloading: %d%% (%.1f/%.1f MiB)",
+                            next_progress,
+                            downloaded / 1024 / 1024,
+                            total_size / 1024 / 1024,
+                        )
+                        next_progress += 25
+            file.flush()
+            os.fsync(file.fileno())
+
+        if downloaded == 0:
+            raise IOError("Downloaded response was empty.")
+        if total_size > 0 and downloaded != total_size:
+            raise IOError(
+                f"Incomplete download: got {downloaded} of {total_size} bytes"
+            )
+
+        try:
+            verifier(str(partial), url)
+        except Exception as error:
+            raise WeightVerificationError(
+                f"Downloaded weights from {url} failed verification: {error}"
+            ) from error
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def _publish_verified_temp(partial: Path, destination: Path) -> bool:
+    """Atomically publish ``partial`` without replacing ``destination``.
+
+    Windows rename is create-if-absent. POSIX rename replaces an existing
+    file, so use a same-directory hard link there to get the same no-clobber
+    contract. The caller removes the temporary name after publication.
+    """
+    try:
+        if os.name == "nt":
+            os.rename(partial, destination)
+        else:
+            os.link(partial, destination)
+    except FileExistsError:
+        return False
+    return True
+
+
 def download_weights(model_path: str, size: str):
     """Download weights from Hugging Face if not found locally."""
     path = Path(model_path)
-    if path.exists():
+
+    # An existing path is user-owned input, not a cache entry managed by this
+    # helper.  In particular, do not checksum, delete, or replace it merely
+    # because its filename also matches an official auto-download route.
+    if os.path.lexists(path):
         return
 
     from libreyolo.models.base.model import BaseModel
@@ -85,21 +229,10 @@ def download_weights(model_path: str, size: str):
         raise ValueError(f"Could not determine download URL for '{path.name}'.")
 
     notice = cls.get_download_notice(path.name, url)
-    if notice:
-        logger.warning(notice)
-
-    logger.info(
-        "Model weights not found at %s. Attempting download from %s...",
-        model_path,
-        url,
-    )
     path.parent.mkdir(parents=True, exist_ok=True)
 
     host = urlparse(url).netloc
     is_hf = host.endswith("huggingface.co")
-
-    if "cloudfront.net" in host or host.endswith("deci.ai"):
-        _notify_yolonas_license_once()
 
     headers = {}
     token = _get_hf_token()
@@ -111,46 +244,75 @@ def download_weights(model_path: str, size: str):
             "Tip: Run `huggingface-cli login` or set HF_TOKEN for faster downloads."
         )
 
-    # Stream to a temp file and rename at the end so a killed process can
+    # Stream to a temp file and publish it at the end so a killed process can
     # never leave a truncated weight at the final path (loading one fails
     # with an opaque zip error and requires a manual delete).
-    partial = path.with_name(path.name + ".part")
-    try:
-        response = requests.get(url, stream=True, headers=headers)
-        response.raise_for_status()
-        total_size = int(response.headers.get("content-length", 0))
+    with _download_lock(path):
+        # Another caller, or the user, may have created the destination while
+        # this caller was waiting for the lock.  It is no longer ours to
+        # inspect or replace.
+        if os.path.lexists(path):
+            return
 
-        with open(partial, "wb") as f:
-            downloaded = 0
-            last_logged = -1
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        percent = int(100 * downloaded / total_size)
-                        if percent % 25 == 0 and percent != last_logged:
-                            last_logged = percent
-                            logger.info(
-                                "Downloading: %d%% (%.1f/%.1f MB)",
-                                percent,
-                                downloaded / 1024 / 1024,
-                                total_size / 1024 / 1024,
-                            )
-        if total_size > 0 and downloaded != total_size:
-            raise IOError(
-                f"Incomplete download: got {downloaded} of {total_size} bytes"
+        if notice:
+            logger.warning(notice)
+        if "cloudfront.net" in host or host.endswith("deci.ai"):
+            _notify_yolonas_license_once()
+        logger.info(
+            "Model weights not found at %s. Attempting download from %s...",
+            model_path,
+            url,
+        )
+
+        last_error = None
+        for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+            partial = path.with_name(
+                f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.part"
             )
-        os.replace(partial, path)
-        logger.info("Download complete.")
-    except Exception as e:
-        if partial.exists():
-            partial.unlink()
-        raise RuntimeError(f"Failed to download weights from {url}: {e}") from e
+            try:
+                _download_to_verified_temp(
+                    url=url,
+                    partial=partial,
+                    headers=headers,
+                    verifier=cls.verify_downloaded_file,
+                )
+                published = _publish_verified_temp(partial, path)
+                try:
+                    partial.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    logger.warning(
+                        "Could not remove temporary download %s: %s",
+                        partial,
+                        cleanup_error,
+                    )
+                if published:
+                    logger.info("Download complete.")
+                else:
+                    logger.info(
+                        "Weights appeared at %s during download; preserving "
+                        "the existing filesystem entry.",
+                        path,
+                    )
+                return
+            except Exception as error:
+                last_error = error
+                try:
+                    partial.unlink()
+                except FileNotFoundError:
+                    pass
+                if attempt < _DOWNLOAD_ATTEMPTS:
+                    delay = 2 ** (attempt - 1)
+                    logger.warning(
+                        "Download attempt %d/%d failed; retrying in %ds: %s",
+                        attempt,
+                        _DOWNLOAD_ATTEMPTS,
+                        delay,
+                        error,
+                    )
+                    time.sleep(delay)
 
-    # Let the matched family verify the freshly downloaded file before anything
-    # loads it (e.g. checksum-pin a third-party CDN object). This runs for every
-    # download path — the LibreYOLO(...) factory and the per-family loaders all
-    # funnel through here — so the check cannot be bypassed. HF-hosted LibreYOLO
-    # weights use the trusting default and this is a no-op.
-    cls.verify_downloaded_file(str(path), url)
+        if isinstance(last_error, WeightVerificationError):
+            raise last_error
+        raise WeightDownloadError(
+            f"Failed to download weights from {url}: {last_error}"
+        ) from last_error

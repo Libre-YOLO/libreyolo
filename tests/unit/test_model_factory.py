@@ -6,11 +6,26 @@ import pytest
 from libreyolo import LibreYOLO
 from libreyolo.models import _needs_rfdetr_registration
 from libreyolo.models.base.model import BaseModel
-from libreyolo.models.yolo9.model import LibreYOLO9
 from libreyolo.models.yolo9.nn import LibreYOLO9Model
+from libreyolo.utils.download import WeightDownloadError
 from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
 
 pytestmark = pytest.mark.unit
+
+
+def test_factory_preserves_typed_download_failure(tmp_path, monkeypatch):
+    import libreyolo.models as models_module
+
+    missing = tmp_path / "LibreYOLO9t.pt"
+
+    def fail_download(model_path, size):
+        del model_path, size
+        raise WeightDownloadError("read timed out")
+
+    monkeypatch.setattr(models_module, "download_weights", fail_download)
+
+    with pytest.raises(WeightDownloadError, match="read timed out"):
+        LibreYOLO(str(missing), size="t", device="cpu")
 
 
 def test_rfdetr_lazy_registration_detects_enc_out_markers():
@@ -134,6 +149,7 @@ def test_factory_warns_for_legacy_libreyolo_metadata_checkpoint(tmp_path, caplog
             "names": {i: f"class_{i}" for i in range(80)},
             "model_family": "yolo9",
             "size": "t",
+            "libreyolo_version": "0.1.0",
         },
         ckpt_path,
     )

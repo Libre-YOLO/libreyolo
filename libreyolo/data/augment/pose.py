@@ -45,6 +45,29 @@ def brightness_contrast(img: np.ndarray) -> None:
     img[:] = np.clip(img.astype(np.float32) * alpha + beta, 0, 255).astype(np.uint8)
 
 
+def clip_keypoints_to_image(
+    kpts: np.ndarray,
+    *,
+    width: int | float,
+    height: int | float,
+) -> np.ndarray:
+    """Clip keypoint coordinates and hide points outside the image canvas."""
+    if kpts.size == 0:
+        return kpts
+    width = float(width)
+    height = float(height)
+    outside = (
+        (kpts[..., 0] < 0.0)
+        | (kpts[..., 0] > width)
+        | (kpts[..., 1] < 0.0)
+        | (kpts[..., 1] > height)
+    )
+    kpts[..., 0] = np.clip(kpts[..., 0], 0.0, width)
+    kpts[..., 1] = np.clip(kpts[..., 1], 0.0, height)
+    kpts[..., 2] = np.where(outside, 0.0, kpts[..., 2])
+    return kpts
+
+
 def random_affine_pose(
     img: np.ndarray,
     bboxes: np.ndarray,
@@ -108,15 +131,7 @@ def random_affine_pose(
         @ matrix.T
     )
     kpts[..., :2] = warped_points
-    outside = (
-        (kpts[..., 0] < 0)
-        | (kpts[..., 0] >= w)
-        | (kpts[..., 1] < 0)
-        | (kpts[..., 1] >= h)
-    )
-    kpts[..., 0] = kpts[..., 0].clip(0, w)
-    kpts[..., 1] = kpts[..., 1].clip(0, h)
-    kpts[..., 2] = np.where(outside, 0.0, kpts[..., 2])
+    clip_keypoints_to_image(kpts, width=w, height=h)
     return warped, bboxes, kpts
 
 
