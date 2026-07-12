@@ -7,8 +7,12 @@ import numpy as np
 import pytest
 import torch
 
-from libreyolo.backends.onnx import OnnxBackend, _resolve_onnx_providers
 from libreyolo.backends.coreml import CoreMLBackend
+from libreyolo.backends.onnx import (
+    OnnxBackend,
+    _load_validated_onnx_metadata,
+    _resolve_onnx_providers,
+)
 from libreyolo.backends.torchscript import TorchScriptBackend
 from libreyolo.validation.base import BaseValidator, validation_model_state
 from libreyolo.validation.detection_validator import DetectionValidator
@@ -64,9 +68,106 @@ def test_onnx_indexed_cuda_passes_device_id_to_execution_provider():
     assert resolved == "cuda:2"
 
 
+@pytest.mark.parametrize("device", [0, "0", torch.device("cuda:0")])
+def test_onnx_numeric_cuda_device_zero_selects_cuda_provider(device):
+    providers, resolved = _resolve_onnx_providers(
+        device,
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    assert providers == [
+        ("CUDAExecutionProvider", {"device_id": 0}),
+        "CPUExecutionProvider",
+    ]
+    assert resolved == "cuda:0"
+
+
 def test_onnx_runtime_rejects_unrepresentable_input_type():
     with pytest.raises(TypeError, match=r"tensor\(bfloat16\)"):
         OnnxBackend._numpy_dtype_for_onnx_type("tensor(bfloat16)")
+
+
+def _write_external_onnx(path, location, *, offset=None, length=None):
+    onnx = pytest.importorskip("onnx")
+    tensor = onnx.TensorProto()
+    tensor.name = "weight"
+    tensor.data_type = onnx.TensorProto.FLOAT
+    tensor.dims.append(1)
+    tensor.data_location = onnx.TensorProto.EXTERNAL
+    for key, value in (
+        ("location", location),
+        ("offset", offset),
+        ("length", length),
+    ):
+        if value is None:
+            continue
+        entry = tensor.external_data.add()
+        entry.key = key
+        entry.value = str(value)
+    graph = onnx.helper.make_graph([], "external", [], [], initializer=[tensor])
+    onnx.save_model(onnx.helper.make_model(graph), path)
+
+
+def test_onnx_external_data_is_confined_and_bounds_checked(tmp_path):
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+
+    assert _load_validated_onnx_metadata(str(model_path)) == {}
+
+
+@pytest.mark.parametrize("location", ["../outside.bin", "..\\outside.bin"])
+def test_onnx_external_data_rejects_parent_escape(tmp_path, location):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (tmp_path / "outside.bin").write_bytes(b"outside")
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, location)
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_absolute_path(tmp_path):
+    external_path = tmp_path / "outside.bin"
+    external_path.write_bytes(b"outside")
+    model_path = tmp_path / "model.onnx"
+    _write_external_onnx(model_path, str(external_path.resolve()))
+
+    with pytest.raises(ValueError, match="absolute location"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_symlink_escape(tmp_path):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside")
+    link = model_dir / "linked.bin"
+    try:
+        link.symlink_to(outside)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, "linked.bin")
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_missing_or_out_of_bounds_file(tmp_path):
+    missing_model = tmp_path / "missing.onnx"
+    _write_external_onnx(missing_model, "missing.bin")
+    with pytest.raises(FileNotFoundError, match="external tensor data not found"):
+        _load_validated_onnx_metadata(str(missing_model))
+
+    external_path = tmp_path / "short.bin"
+    external_path.write_bytes(b"1234")
+    bounds_model = tmp_path / "bounds.onnx"
+    _write_external_onnx(bounds_model, "short.bin", offset=3, length=2)
+    with pytest.raises(ValueError, match="references bytes outside"):
+        _load_validated_onnx_metadata(str(bounds_model))
 
 
 def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
@@ -94,9 +195,7 @@ def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
     class _Session:
         def get_inputs(self):
             return [
-                SimpleNamespace(
-                    name="images", type="tensor(float)", shape=[1, 3, 8, 8]
-                )
+                SimpleNamespace(name="images", type="tensor(float)", shape=[1, 3, 8, 8])
             ]
 
         def get_outputs(self):
@@ -110,12 +209,13 @@ def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
         InferenceSession=lambda path, providers: _Session(),
     )
     fake_onnx = SimpleNamespace(
-        load=lambda path: SimpleNamespace(
+        TensorProto=SimpleNamespace(EXTERNAL=1),
+        load=lambda path, load_external_data=False: SimpleNamespace(
+            ListFields=lambda: [],
             metadata_props=[
-                SimpleNamespace(key=key, value=value)
-                for key, value in metadata.items()
-            ]
-        )
+                SimpleNamespace(key=key, value=value) for key, value in metadata.items()
+            ],
+        ),
     )
     monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
     monkeypatch.setitem(sys.modules, "onnx", fake_onnx)
@@ -231,9 +331,7 @@ def test_coreml_validation_inverts_rfdetr_imagenet_normalization():
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
-    restored = backend._validation_tensor_to_canonical_rgb(
-        (canonical - mean) / std
-    )
+    restored = backend._validation_tensor_to_canonical_rgb((canonical - mean) / std)
 
     torch.testing.assert_close(restored, canonical * 255.0)
 

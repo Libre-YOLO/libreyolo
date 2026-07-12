@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 def _resolve_tensorrt_device(device) -> torch.device:
     """Resolve and validate the CUDA device used by a TensorRT runtime."""
+    if isinstance(device, bool):
+        raise ValueError(f"Invalid TensorRT CUDA device {device!r}.")
     if isinstance(device, int):
         index = device
     else:
@@ -346,6 +348,14 @@ class TensorRTBackend(BaseBackend):
                 "TensorRT execute_async_v3 returned False; inference was not executed."
             )
 
+    def _set_tensor_address(self, name: str, tensor: torch.Tensor) -> None:
+        """Bind one I/O tensor and fail if TensorRT rejects its device pointer."""
+        accepted = self.context.set_tensor_address(name, tensor.data_ptr())
+        if accepted is False:
+            raise RuntimeError(
+                f"TensorRT rejected the device address for tensor {name!r}."
+            )
+
     def _wait_for_input_copy(self) -> None:
         """Order TensorRT's stream after the PyTorch stream that filled input."""
         self.stream.wait_stream(torch.cuda.current_stream(self.device))
@@ -508,11 +518,9 @@ class TensorRTBackend(BaseBackend):
         self.inputs[self.input_name].copy_(input_tensor)
         self._wait_for_input_copy()
 
-        self.context.set_tensor_address(
-            self.input_name, self.inputs[self.input_name].data_ptr()
-        )
+        self._set_tensor_address(self.input_name, self.inputs[self.input_name])
         for name in self.output_names:
-            self.context.set_tensor_address(name, self.outputs[name].data_ptr())
+            self._set_tensor_address(name, self.outputs[name])
 
         self._execute()
         self.stream.synchronize()

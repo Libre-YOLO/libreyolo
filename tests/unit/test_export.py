@@ -158,6 +158,16 @@ class TestExporterFormats:
 
         assert not output.exists()
 
+    def test_blocked_int8_export_reports_support_before_calibration(self, tmp_path):
+        wrapper = _make_wrapper(model_name="rfdetr")
+        wrapper.task = "detect"
+        output = tmp_path / "model_ncnn"
+
+        with pytest.raises(NotImplementedError, match="NCNN export is not supported"):
+            NcnnExporter(wrapper)(output_path=str(output), int8=True)
+
+        assert not output.exists()
+
     def test_unsupported_exporter_rejects_embedded_nms(self):
         exporter = TorchScriptExporter(_make_wrapper())
 
@@ -427,9 +437,7 @@ class TestExporterFormats:
 
         monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
 
-        def fake_intermediate(
-            nn_model, dummy, output_path, opset, simplify, dynamic
-        ):
+        def fake_intermediate(nn_model, dummy, output_path, opset, simplify, dynamic):
             captured["intermediate_dynamic"] = dynamic
             return str(tmp_path / "intermediate.onnx")
 
@@ -466,9 +474,7 @@ class TestExporterFormats:
 
         monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
 
-        def fake_intermediate(
-            nn_model, dummy, output_path, opset, simplify, dynamic
-        ):
+        def fake_intermediate(nn_model, dummy, output_path, opset, simplify, dynamic):
             out = Path(output_path)
             generated = out.with_name(f"{out.stem}.export_intermediate.onnx")
             generated.write_bytes(b"generated")
@@ -506,9 +512,7 @@ class TestExporterFormats:
 
         monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
 
-        def fake_intermediate(
-            nn_model, dummy, output_path, opset, simplify, dynamic
-        ):
+        def fake_intermediate(nn_model, dummy, output_path, opset, simplify, dynamic):
             out = Path(output_path)
             generated = out.with_name(f"{out.stem}.export_intermediate.onnx")
             generated.write_bytes(b"generated")
@@ -532,6 +536,51 @@ class TestExporterFormats:
         generated = captured["generated"]
         assert not generated.exists()
         assert not generated.parent.exists()
+
+    @pytest.mark.parametrize(
+        ("exporter_cls", "suffix"),
+        [
+            (TensorRTExporter, ".engine"),
+            (OpenVINOExporter, "_openvino"),
+            (TFLiteExporter, ".tflite"),
+        ],
+    )
+    def test_intermediate_workspace_returns_requested_final_path(
+        self, monkeypatch, tmp_path, exporter_cls, suffix
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = exporter_cls(wrapper)
+        output_path = tmp_path / f"model{suffix}"
+        captured = {}
+
+        monkeypatch.setattr(exporter, "_preflight", lambda **kwargs: None)
+
+        def fake_intermediate(nn_model, dummy, workspace_output, *args):
+            generated = Path(workspace_output).with_suffix(".onnx")
+            generated.write_bytes(b"generated")
+            captured["generated"] = generated
+            return str(generated)
+
+        def fake_export(nn_model, dummy, *, output_path, onnx_path, **kwargs):
+            assert Path(onnx_path).read_bytes() == b"generated"
+            assert output_path == str(output_path_expected)
+            return output_path
+
+        output_path_expected = output_path
+        monkeypatch.setattr(exporter, "_export_intermediate_onnx", fake_intermediate)
+        monkeypatch.setattr(exporter, "_export", fake_export)
+
+        result = exporter(
+            output_path=str(output_path),
+            device="cpu",
+            simplify=False,
+            dynamic=False,
+        )
+
+        assert result == str(output_path)
+        assert not captured["generated"].exists()
+        assert not captured["generated"].parent.exists()
 
     def test_rfdetr_export_defaults_to_cpu(self):
         wrapper = _make_wrapper(model_name="rfdetr")

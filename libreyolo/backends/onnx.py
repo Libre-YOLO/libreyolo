@@ -1,7 +1,7 @@
 """ONNX runtime inference backend for LibreYOLO."""
 
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 
@@ -36,9 +36,138 @@ _ONNX_TENSOR_DTYPES = {
 }
 
 
+def _iter_onnx_tensors(message):
+    """Yield every TensorProto nested in an ONNX protobuf message."""
+    for field, value in message.ListFields():
+        if field.message_type is None:
+            continue
+        is_repeated = getattr(field, "is_repeated", None)
+        if is_repeated is None:
+            is_repeated = field.label == field.LABEL_REPEATED
+        if is_repeated:
+            children = (
+                value.values() if field.message_type.GetOptions().map_entry else value
+            )
+        else:
+            children = (value,)
+        for child in children:
+            descriptor = getattr(child, "DESCRIPTOR", None)
+            if descriptor is None:
+                continue
+            if descriptor.full_name == "onnx.TensorProto":
+                yield child
+            else:
+                yield from _iter_onnx_tensors(child)
+
+
+def _parse_external_data_integer(
+    value: str | None,
+    *,
+    key: str,
+    tensor_name: str,
+) -> int:
+    """Parse a non-negative ONNX external-data offset or length."""
+    if value in {None, ""}:
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"ONNX external tensor {tensor_name!r} has invalid {key}={value!r}."
+        ) from exc
+    if parsed < 0:
+        raise ValueError(
+            f"ONNX external tensor {tensor_name!r} has negative {key}={parsed}."
+        )
+    return parsed
+
+
+def _load_validated_onnx_metadata(onnx_path: str) -> dict:
+    """Parse metadata and confine every external tensor to the model directory."""
+    try:
+        import onnx
+    except ImportError as exc:
+        raise ImportError(
+            "Safe ONNX inference requires the 'onnx' package in addition to "
+            "onnxruntime. Install with: pip install 'libreyolo[onnx]'"
+        ) from exc
+
+    artifact = Path(onnx_path)
+    if not artifact.is_file():
+        raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
+    try:
+        model_proto = onnx.load(str(artifact), load_external_data=False)
+    except Exception as exc:
+        raise ValueError(f"Failed to parse ONNX model {onnx_path}: {exc}") from exc
+
+    base_dir = artifact.parent.resolve()
+    for tensor in _iter_onnx_tensors(model_proto):
+        if not tensor.HasField("data_location") or (
+            tensor.data_location != onnx.TensorProto.EXTERNAL
+        ):
+            continue
+
+        tensor_name = tensor.name or "<unnamed>"
+        entries = {}
+        for entry in tensor.external_data:
+            if entry.key in entries:
+                raise ValueError(
+                    f"ONNX external tensor {tensor_name!r} repeats "
+                    f"external_data key {entry.key!r}."
+                )
+            entries[entry.key] = entry.value
+
+        location = entries.get("location")
+        if not location or "\x00" in location:
+            raise ValueError(
+                f"ONNX external tensor {tensor_name!r} has no valid location."
+            )
+        windows_path = PureWindowsPath(location)
+        normalized_path = PurePosixPath(location.replace("\\", "/"))
+        if windows_path.drive or normalized_path.is_absolute():
+            raise ValueError(
+                f"ONNX external tensor {tensor_name!r} uses an absolute location: "
+                f"{location!r}."
+            )
+
+        candidate = (base_dir / Path(*normalized_path.parts)).resolve()
+        if not candidate.is_relative_to(base_dir):
+            raise ValueError(
+                f"ONNX external tensor {tensor_name!r} escapes the model directory: "
+                f"{location!r}."
+            )
+        if not candidate.is_file():
+            raise FileNotFoundError(
+                f"ONNX external tensor data not found for {tensor_name!r}: {candidate}"
+            )
+
+        offset = _parse_external_data_integer(
+            entries.get("offset"), key="offset", tensor_name=tensor_name
+        )
+        length = _parse_external_data_integer(
+            entries.get("length"), key="length", tensor_name=tensor_name
+        )
+        file_size = candidate.stat().st_size
+        if offset > file_size or (length and length > file_size - offset):
+            raise ValueError(
+                f"ONNX external tensor {tensor_name!r} references bytes outside "
+                f"{candidate.name!r} (offset={offset}, length={length}, "
+                f"size={file_size})."
+            )
+
+    return {entry.key: entry.value for entry in model_proto.metadata_props}
+
+
 def _resolve_onnx_providers(device, available_providers) -> tuple[list, str]:
     """Resolve ONNX Runtime providers without warning for an explicit CPU."""
-    key = str(device).lower()
+    if isinstance(device, bool):
+        raise ValueError(f"Invalid ONNX device {device!r}.")
+    if isinstance(device, int):
+        key = f"cuda:{device}"
+    else:
+        key = "auto" if device is None else str(device).strip().lower()
+        if key.isdigit():
+            key = f"cuda:{key}"
     if key == "auto":
         if "CUDAExecutionProvider" in available_providers:
             return ["CUDAExecutionProvider", "CPUExecutionProvider"], "cuda"
@@ -104,8 +233,7 @@ class OnnxBackend(BaseBackend):
                 "Install with: pip install onnxruntime"
             ) from e
 
-        if not Path(onnx_path).exists():
-            raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
+        validated_metadata = _load_validated_onnx_metadata(onnx_path)
 
         providers, resolved_device = _resolve_onnx_providers(
             device,
@@ -123,7 +251,7 @@ class OnnxBackend(BaseBackend):
             )
         except Exception:
             runtime_metadata = {}
-        metadata = runtime_metadata or self._load_embedded_metadata(onnx_path)
+        metadata = runtime_metadata or validated_metadata
 
         (
             model_family,
@@ -134,9 +262,7 @@ class OnnxBackend(BaseBackend):
             names,
             embedded_nms,
             metadata_imgsz,
-        ) = self._read_onnx_metadata(
-            onnx_path, nb_classes, runtime_metadata=metadata
-        )
+        ) = self._read_onnx_metadata(onnx_path, nb_classes, runtime_metadata=metadata)
         pose_metadata = self._read_onnx_pose_metadata(
             onnx_path, runtime_metadata=metadata
         )
@@ -189,20 +315,14 @@ class OnnxBackend(BaseBackend):
             supported_tasks=supported_tasks,
             default_task=default_task,
             dynamic_spatial=dynamic_spatial,
-            num_bins=(
-                int(metadata["num_bins"])
-                if metadata.get("num_bins")
-                else None
-            ),
+            num_bins=(int(metadata["num_bins"]) if metadata.get("num_bins") else None),
             bin_width_deg=(
                 float(metadata["bin_width_deg"])
                 if metadata.get("bin_width_deg")
                 else None
             ),
             offset_deg=(
-                float(metadata["offset_deg"])
-                if metadata.get("offset_deg")
-                else None
+                float(metadata["offset_deg"]) if metadata.get("offset_deg") else None
             ),
             **classification_metadata,
             **pose_metadata,
@@ -223,7 +343,7 @@ class OnnxBackend(BaseBackend):
         try:
             import onnx
 
-            model_proto = onnx.load(onnx_path)
+            model_proto = onnx.load(onnx_path, load_external_data=False)
             return {entry.key: entry.value for entry in model_proto.metadata_props}
         except Exception as exc:
             logger.warning("Failed to load ONNX metadata from %s: %s", onnx_path, exc)

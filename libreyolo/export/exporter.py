@@ -513,7 +513,12 @@ class BaseExporter(ABC):
             raise NotImplementedError(
                 f"{self.format_name.upper()} INT8 export is not supported."
             )
-        if int8 and data is None and not self.default_int8_calibration_data:
+        if (
+            available
+            and int8
+            and data is None
+            and not self.default_int8_calibration_data
+        ):
             raise ValueError("INT8 export requires calibration data. Pass data=...")
         return half, int8
 

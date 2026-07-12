@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,6 +16,7 @@ from libreyolo.export.tensorrt import (
     _calibration_cache_path,
     _create_calibrator_class,
     _profile_shape,
+    _publish_tensorrt_artifacts,
     _resolve_hardware_compatibility_level,
     _select_tensorrt_device,
     _validate_batch_profile,
@@ -47,15 +51,11 @@ def test_profile_shape_preserves_dynamic_spatial_dimensions():
 def test_same_compute_capability_uses_available_tensorrt_enum():
     expected = object()
     fake_trt = SimpleNamespace(
-        HardwareCompatibilityLevel=SimpleNamespace(
-            SAME_COMPUTE_CAPABILITY=expected
-        )
+        HardwareCompatibilityLevel=SimpleNamespace(SAME_COMPUTE_CAPABILITY=expected)
     )
 
     assert (
-        _resolve_hardware_compatibility_level(
-            fake_trt, "same_compute_capability"
-        )
+        _resolve_hardware_compatibility_level(fake_trt, "same_compute_capability")
         is expected
     )
 
@@ -66,9 +66,7 @@ def test_same_compute_capability_is_unavailable_on_older_tensorrt_api():
     )
 
     assert (
-        _resolve_hardware_compatibility_level(
-            fake_trt, "same_compute_capability"
-        )
+        _resolve_hardware_compatibility_level(fake_trt, "same_compute_capability")
         is None
     )
 
@@ -82,6 +80,66 @@ def test_tensorrt_export_selects_device_zero_explicitly(monkeypatch):
 
     assert _select_tensorrt_device(0) == 0
     assert selected == [0]
+
+
+@pytest.mark.parametrize("device", [True, False, 0.5, "0.5"])
+def test_tensorrt_export_rejects_non_integer_devices(device):
+    with pytest.raises(ValueError, match="non-negative integer"):
+        _select_tensorrt_device(device)
+
+
+def test_tensorrt_artifact_publication_is_atomic_and_returns_requested_path(tmp_path):
+    output = tmp_path / "model.engine"
+
+    result = _publish_tensorrt_artifacts(
+        b"new-engine",
+        output,
+        {"precision": "fp16"},
+    )
+
+    assert result == str(output)
+    assert output.read_bytes() == b"new-engine"
+    assert json.loads(Path(f"{output}.json").read_text()) == {"precision": "fp16"}
+    assert not list(tmp_path.glob("libreyolo-tensorrt-publish-*"))
+
+
+def test_tensorrt_artifact_staging_failure_preserves_existing_files(tmp_path):
+    output = tmp_path / "model.engine"
+    sidecar = Path(f"{output}.json")
+    output.write_bytes(b"old-engine")
+    sidecar.write_text('{"old": true}')
+
+    with pytest.raises(TypeError):
+        _publish_tensorrt_artifacts(b"new-engine", output, {"bad": {object()}})
+
+    assert output.read_bytes() == b"old-engine"
+    assert sidecar.read_text() == '{"old": true}'
+    assert not list(tmp_path.glob("libreyolo-tensorrt-publish-*"))
+
+
+def test_tensorrt_artifact_promotion_failure_rolls_back(monkeypatch, tmp_path):
+    output = tmp_path / "model.engine"
+    sidecar = Path(f"{output}.json")
+    output.write_bytes(b"old-engine")
+    sidecar.write_text('{"old": true}')
+    real_replace = os.replace
+    failed = False
+
+    def fail_sidecar_once(source, destination):
+        nonlocal failed
+        if Path(destination) == sidecar and not failed:
+            failed = True
+            raise OSError("synthetic sidecar promotion failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_sidecar_once)
+
+    with pytest.raises(OSError, match="synthetic sidecar promotion failure"):
+        _publish_tensorrt_artifacts(b"new-engine", output, {"new": True})
+
+    assert output.read_bytes() == b"old-engine"
+    assert sidecar.read_text() == '{"old": true}'
+    assert not list(tmp_path.glob("libreyolo-tensorrt-publish-*"))
 
 
 def test_tensorrt_calibration_cache_tracks_exact_preprocessed_batches(tmp_path):
@@ -109,9 +167,12 @@ def test_tensorrt_calibration_cache_tracks_exact_preprocessed_batches(tmp_path):
 
     assert first is not None
     assert len({first, second, third}) == 3
-    assert _calibration_cache_path(
-        tmp_path / "model.engine", b"onnx", loader, enabled=False
-    ) is None
+    assert (
+        _calibration_cache_path(
+            tmp_path / "model.engine", b"onnx", loader, enabled=False
+        )
+        is None
+    )
 
 
 def test_tensorrt_calibration_cache_disables_unstable_preprocessing(tmp_path):
@@ -123,12 +184,15 @@ def test_tensorrt_calibration_cache_disables_unstable_preprocessing(tmp_path):
             self.value += 1
             yield np.array([self.value], dtype=np.float32)
 
-    assert _calibration_cache_path(
-        tmp_path / "model.engine",
-        b"onnx",
-        _UnstableLoader(),
-        enabled=True,
-    ) is None
+    assert (
+        _calibration_cache_path(
+            tmp_path / "model.engine",
+            b"onnx",
+            _UnstableLoader(),
+            enabled=True,
+        )
+        is None
+    )
 
 
 def test_tensorrt_calibrator_creates_nested_cache_parent(monkeypatch, tmp_path):
@@ -240,6 +304,14 @@ def test_tensorrt_runtime_resolves_explicit_device_zero(monkeypatch, device):
     assert _resolve_tensorrt_device(device) == torch.device("cuda:0")
 
 
+@pytest.mark.parametrize("device", [True, False])
+def test_tensorrt_runtime_rejects_boolean_device(monkeypatch, device):
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+
+    with pytest.raises(ValueError, match="Invalid TensorRT CUDA device"):
+        _resolve_tensorrt_device(device)
+
+
 def test_tensorrt_runtime_resolves_indexed_cuda_device(monkeypatch):
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 3)
 
@@ -331,9 +403,7 @@ def test_buffer_allocation_sets_input_shape_before_reading_outputs(monkeypatch):
         return (2, 10)
 
     backend._runtime_output_shape = output_shape
-    monkeypatch.setattr(
-        torch.cuda, "Stream", lambda device=None: SimpleNamespace()
-    )
+    monkeypatch.setattr(torch.cuda, "Stream", lambda device=None: SimpleNamespace())
 
     allocations = []
 
@@ -359,6 +429,16 @@ def test_execute_async_false_is_a_hard_failure():
 
     with pytest.raises(RuntimeError, match="execute_async_v3 returned False"):
         backend._execute()
+
+
+def test_rejected_tensor_address_is_a_hard_failure():
+    backend = _bare_backend()
+    backend.context = SimpleNamespace(
+        set_tensor_address=lambda name, address: name != "scores"
+    )
+
+    with pytest.raises(RuntimeError, match="tensor 'scores'"):
+        backend._set_tensor_address("scores", torch.empty(1))
 
 
 def test_tensorrt_stream_waits_for_pytorch_input_copy(monkeypatch):
@@ -431,9 +511,7 @@ def test_tensorrt_inference_pads_below_profile_minimum_and_slices_outputs():
     backend._wait_for_input_copy = lambda: None
     backend._execute = lambda: None
 
-    outputs = backend._infer_current_device(
-        np.ones((1, 1, 1, 1), dtype=np.float32)
-    )
+    outputs = backend._infer_current_device(np.ones((1, 1, 1, 1), dtype=np.float32))
 
     assert backend.inputs["images"].tolist() == [1.0, 1.0]
     assert outputs["scores"].shape == (1, 1)

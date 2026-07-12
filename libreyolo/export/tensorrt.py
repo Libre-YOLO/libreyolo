@@ -3,8 +3,12 @@
 import hashlib
 import json
 import logging
+import os
+import shutil
+import uuid
 import warnings
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Union
 
 import numpy as np
@@ -175,10 +179,21 @@ def _resolve_hardware_compatibility_level(trt, requested: str):
 
 def _select_tensorrt_device(device: int) -> int:
     """Select the requested CUDA device before creating TensorRT objects."""
+    if isinstance(device, bool):
+        raise ValueError(
+            f"TensorRT device must be a non-negative integer, got {device!r}."
+        )
     try:
-        index = int(device)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"TensorRT device must be a non-negative integer, got {device!r}.") from exc
+        if isinstance(device, str):
+            if not device.strip().isdigit():
+                raise ValueError
+            index = int(device.strip())
+        else:
+            index = device.__index__()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"TensorRT device must be a non-negative integer, got {device!r}."
+        ) from exc
     if index < 0:
         raise ValueError(f"TensorRT device must be non-negative, got {index}.")
     if not torch.cuda.is_available():
@@ -191,6 +206,86 @@ def _select_tensorrt_device(device: int) -> int:
     torch.cuda.set_device(index)
     logger.info("Using GPU device: %d (%s)", index, torch.cuda.get_device_name(index))
     return index
+
+
+def _publish_tensorrt_artifacts(
+    serialized_engine,
+    output_path: str | Path,
+    metadata: dict | None,
+) -> str:
+    """Stage and transactionally publish an engine and optional sidecar."""
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = Path(str(output) + ".json")
+
+    with TemporaryDirectory(
+        prefix="libreyolo-tensorrt-publish-", dir=output.parent
+    ) as workspace_name:
+        workspace = Path(workspace_name)
+        staged = {output: workspace / output.name}
+        with open(staged[output], "xb") as file:
+            file.write(serialized_engine)
+            file.flush()
+            os.fsync(file.fileno())
+
+        if metadata is not None:
+            staged[sidecar] = workspace / sidecar.name
+            with open(staged[sidecar], "x", encoding="utf-8") as file:
+                json.dump(metadata, file, allow_nan=False, indent=2)
+                file.write("\n")
+                file.flush()
+                os.fsync(file.fileno())
+
+        backups: dict[Path, Path | None] = {}
+        for target in staged:
+            if not target.exists():
+                backups[target] = None
+                continue
+            backup = output.parent / (
+                f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.bak"
+            )
+            try:
+                os.link(target, backup)
+            except OSError:
+                shutil.copyfile(target, backup)
+            backups[target] = backup
+
+        promoted = []
+        retained_backups = set()
+        try:
+            for target, temporary in staged.items():
+                os.replace(temporary, target)
+                promoted.append(target)
+        except BaseException as promotion_error:
+            rollback_errors = []
+            for target in reversed(promoted):
+                backup = backups[target]
+                try:
+                    if backup is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, target)
+                        backups[target] = None
+                except OSError as rollback_error:
+                    if backup is not None:
+                        retained_backups.add(backup)
+                    rollback_errors.append(
+                        f"{target}: {rollback_error}; previous artifact retained "
+                        f"at {backup}"
+                    )
+            if rollback_errors:
+                raise RuntimeError(
+                    "TensorRT artifact publication failed and rollback was "
+                    "incomplete: " + "; ".join(rollback_errors)
+                ) from promotion_error
+            raise
+        finally:
+            for backup in backups.values():
+                if backup is None or backup in retained_backups:
+                    continue
+                backup.unlink(missing_ok=True)
+
+    return str(output)
 
 
 def _calibration_cache_fingerprint(calibration_data) -> str | None:
@@ -713,22 +808,15 @@ def export_tensorrt(
             "Try running with verbose=True for detailed error messages."
         )
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output_path, "wb") as f:
-        f.write(serialized_engine)
-
     if metadata is not None:
         # Reflect the precision actually realized by the build (e.g. fp16 after
         # an INT8→FP16 fallback) instead of the pre-build request.
         metadata["precision"] = actual_precision
-        sidecar_path = Path(str(output_path) + ".json")
-        with open(sidecar_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-        logger.info("Metadata sidecar: %s", sidecar_path)
+    result = _publish_tensorrt_artifacts(serialized_engine, output_path, metadata)
+    if metadata is not None:
+        logger.info("Metadata sidecar: %s.json", output_path)
 
-    engine_size_mb = output_path.stat().st_size / (1024 * 1024)
-    logger.info("Engine saved: %s (%.1f MB)", output_path, engine_size_mb)
+    engine_size_mb = Path(result).stat().st_size / (1024 * 1024)
+    logger.info("Engine saved: %s (%.1f MB)", result, engine_size_mb)
 
-    return str(output_path)
+    return result
