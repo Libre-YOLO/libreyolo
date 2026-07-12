@@ -196,9 +196,7 @@ def test_existing_user_path_is_not_verified_deleted_or_downloaded(
         ("https://sghub.deci.ai/models/unpinned.pth", "no pinned checksum"),
     ],
 )
-def test_yolonas_verifier_failure_does_not_delete_input(
-    tmp_path, source_url, message
-):
+def test_yolonas_verifier_failure_does_not_delete_input(tmp_path, source_url, message):
     from libreyolo.models.yolonas.model import LibreYOLONAS
 
     candidate = tmp_path / "candidate.pth"
