@@ -1,5 +1,7 @@
 """Unit tests for LibreLabel v1 (boxes only): the format oracle + dataset R/W."""
 
+import os
+
 import pytest
 
 from pathlib import Path
@@ -42,17 +44,22 @@ def test_empty_list_is_empty_file():
     assert format_label_text([]) == ""
 
 
-def test_sanitize_clamps_and_drops():
-    out = sanitize_boxes(
-        [
-            {"cls": 0, "cx": 1.4, "cy": -0.2, "w": 0.5, "h": 0.5},  # clamp
-            {"cls": 9, "cx": 0.5, "cy": 0.5, "w": 0.1, "h": 0.1},  # cls >= nc -> drop
-            {"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.0, "h": 0.1},  # zero area -> drop
-        ],
-        nc=2,
-    )
-    assert len(out) == 1
-    assert out[0]["cx"] == 1.0 and out[0]["cy"] == 0.0
+def test_sanitize_rejects_invalid_box_instead_of_clamping_or_dropping():
+    with pytest.raises(ValueError, match="normalized"):
+        sanitize_boxes(
+            [{"cls": 0, "cx": 1.4, "cy": -0.2, "w": 0.5, "h": 0.5}],
+            nc=2,
+        )
+    with pytest.raises(ValueError, match="outside"):
+        sanitize_boxes(
+            [{"cls": 9, "cx": 0.5, "cy": 0.5, "w": 0.1, "h": 0.1}],
+            nc=2,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        sanitize_boxes(
+            [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.0, "h": 0.1}],
+            nc=2,
+        )
 
 
 def _make_dataset(root, with_images_in_root=False, task=None):
@@ -146,8 +153,12 @@ def test_annotation_parse_format_roundtrip():
     assert anns[0]["type"] == "box" and anns[0]["cls"] == 0
     assert anns[1]["type"] == "poly" and len(anns[1]["points"]) == 6
     assert format_annotations(anns).splitlines()[0].split()[0] == "0"  # integer cls
-    # a 2-vertex "polygon" (4 nums) is invalid and dropped
-    assert sanitize_annotations([{"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.2, 0.2]}], nc=2) == []
+    # A 2-vertex "polygon" is rejected; a save never silently drops a shape.
+    with pytest.raises(ValueError, match="3 coordinate"):
+        sanitize_annotations(
+            [{"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.2, 0.2]}],
+            nc=2,
+        )
 
 
 def test_polygon_roundtrip(tmp_path):
@@ -213,7 +224,7 @@ def _make_nested_dataset(tmp_path):
         (root / sub).mkdir(parents=True)
         Image.new("RGB", (16, 12), (60, 60, 60)).save(root / sub / "0001.jpg")
     (root / "data.yaml").write_text(
-        f"path: {root.as_posix()}\ntrain: .\nnc: 1\nnames:\n  0: thing\n",
+        f"path: {root.as_posix()}\ntrain: .\ntask: detect\nnc: 1\nnames:\n  0: thing\n",
         encoding="utf-8",
     )
     return root
@@ -280,6 +291,67 @@ def test_shared_label_file_makes_session_read_only(tmp_path):
     assert "same label file" in ds.reason
     with pytest.raises(RuntimeError):
         ds.write_label(0, [{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}])
+
+
+def test_shared_label_file_detection_is_casefolded(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+
+    root = tmp_path / "ds"
+    (root / "images" / "train").mkdir(parents=True)
+    Image.new("RGB", (16, 12), (10, 10, 10)).save(
+        root / "images" / "train" / "foo.jpg"
+    )
+    Image.new("RGB", (16, 12), (20, 20, 20)).save(
+        root / "images" / "train" / "FOO.png"
+    )
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\ntask: detect\n"
+        "nc: 1\nnames:\n  0: thing\n",
+        encoding="utf-8",
+    )
+
+    session = DatasetSession(str(root / "data.yaml"))
+
+    assert session.writable is False
+    assert "same label file" in session.reason
+
+
+def test_case_distinct_posix_items_are_rejected_instead_of_omitted(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.export import export_dataset
+
+    if os.name == "nt":
+        pytest.skip("Windows paths are case-insensitive")
+    root = tmp_path / "ds"
+    images = root / "images" / "train"
+    labels = root / "labels" / "train"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    upper = images / "A.jpg"
+    lower = images / "a.jpg"
+    Image.new("RGB", (16, 12), (10, 10, 10)).save(upper)
+    Image.new("RGB", (16, 12), (20, 20, 20)).save(lower)
+    if upper.samefile(lower):
+        pytest.skip("the test filesystem is case-insensitive")
+    (labels / "A.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (labels / "a.txt").write_text("0 0.4 0.4 0.2 0.2\n", encoding="utf-8")
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\ntask: detect\n"
+        "nc: 1\nnames:\n  0: thing\n",
+        encoding="utf-8",
+    )
+
+    session = DatasetSession(str(root / "data.yaml"))
+
+    assert len(session._items) == 2
+    assert session._label_clash is True
+    assert session.writable is False
+    with pytest.raises(ValueError, match="share one derived label file"):
+        export_dataset(session, dst=str(tmp_path / "export"))
 
 
 def test_wizard_segment_project_polygon_roundtrip(tmp_path):

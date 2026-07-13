@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +20,7 @@ from libreyolo.training.callbacks import (
     TrainStartEvent,
 )
 from libreyolo.ui import train_monitor
+from libreyolo.training.trainer import BaseTrainer
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +37,7 @@ def _start(save_dir, *, start_epoch=1):
     )
 
 
-def _epoch(save_dir, *, epoch=0, metric=0.5, best_epoch=0):
+def _epoch(save_dir, *, epoch=1, metric=0.5, best_epoch=1):
     return TrainEpochEvent(
         epoch=epoch,
         total_epochs=4,
@@ -82,10 +88,11 @@ def test_status_running_then_completed(tmp_path):
     cb.on_train_start(_start(tmp_path))
     running = _load(tmp_path)
     assert running["state"] == "running"
+    assert running["schema_version"] == 2
     assert running["total_epochs"] == 4
     assert running["pid"] > 0
 
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=0, metric=0.5))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1, metric=0.5))
     mid = _load(tmp_path)
     assert mid["state"] == "running"
     assert mid["current_epoch"] == 0
@@ -99,17 +106,18 @@ def test_status_running_then_completed(tmp_path):
     done = _load(tmp_path)
     assert done["state"] == "completed"
     assert done["best_metric"] == pytest.approx(0.62)
+    assert done["best_epoch"] == 2
     assert done["checkpoints"]["best"].endswith("best.pt")
 
 
 def test_status_failed_records_error(tmp_path):
     cb = TrainingStatusCallback()
     cb.on_train_start(_start(tmp_path))
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=0))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1))
     exc = RuntimeError("CUDA out of memory")
     cb.on_train_exception(
         TrainExceptionEvent(
-            epoch=1,
+            epoch=2,
             total_epochs=4,
             model_family="yolo9",
             model_size="s",
@@ -123,6 +131,9 @@ def test_status_failed_records_error(tmp_path):
     )
     failed = _load(tmp_path)
     assert failed["state"] == "failed"
+    assert failed["current_epoch"] == 1
+    assert failed["completed_epochs"] == 1
+    assert failed["progress"] == pytest.approx(0.25)
     assert failed["error"]["type"] == "RuntimeError"
     assert "out of memory" in failed["error"]["message"]
 
@@ -131,7 +142,7 @@ def test_status_atomic_write_is_valid_json_every_time(tmp_path):
     """status.json must always parse; never a half-written file."""
     cb = TrainingStatusCallback(write_log=False)
     cb.on_train_start(_start(tmp_path))
-    for e in range(4):
+    for e in range(1, 5):
         cb.on_train_epoch_end(_epoch(tmp_path, epoch=e))
         json.loads((tmp_path / "status.json").read_text())  # raises if corrupt
 
@@ -154,7 +165,7 @@ def test_monitor_reads_status_and_results_csv_fallback(tmp_path):
 
     # results.csv is written by TrainingArtifactsCallback; emulate a couple rows.
     (tmp_path / "results.csv").write_text(
-        "epoch,train/loss,metrics/mAP50-95\n0,2.0,0.5\n1,1.9,0.55\n"
+        "epoch,train/loss,metrics/mAP50-95\n1,2.0,0.5\n2,1.9,0.55\n"
     )
     assert not (tmp_path / "metrics.jsonl").exists()
 
@@ -168,8 +179,8 @@ def test_metrics_jsonl_written_and_read(tmp_path):
     """Every family gets a universal, chart-ready metrics.jsonl history."""
     cb = TrainingStatusCallback(write_log=False)
     cb.on_train_start(_start(tmp_path))
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=0, metric=0.5))
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1, metric=0.55))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1, metric=0.5))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=2, metric=0.55))
 
     lines = (tmp_path / "metrics.jsonl").read_text().strip().splitlines()
     assert len(lines) == 2
@@ -178,18 +189,277 @@ def test_metrics_jsonl_written_and_read(tmp_path):
     assert "epoch" in parsed["columns"]
     assert "train/loss" in parsed["columns"]
     assert "metrics/mAP50-95" in parsed["columns"]
+    assert [row["epoch"] for row in parsed["rows"]] == [1, 2]
     assert parsed["rows"][1]["metrics/mAP50-95"] == pytest.approx(0.55)
 
 
 def test_metrics_jsonl_reset_on_fresh_run(tmp_path):
     cb = TrainingStatusCallback(write_log=False)
     cb.on_train_start(_start(tmp_path))
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=0))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1))
     # A new fresh run (start_epoch=1) must clear stale history.
     cb.on_train_start(_start(tmp_path, start_epoch=1))
-    cb.on_train_epoch_end(_epoch(tmp_path, epoch=0))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=1))
     lines = (tmp_path / "metrics.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
+
+
+def test_atomic_status_write_retries_transient_reader_sharing(monkeypatch, tmp_path):
+    from libreyolo.training import artifacts
+
+    real_replace = artifacts.os.replace
+    calls = 0
+
+    def transient_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("injected sharing violation")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(artifacts.os, "replace", transient_replace)
+    artifacts._atomic_write_json(tmp_path / "status.json", {"state": "running"})
+
+    assert calls == 3
+    assert json.loads((tmp_path / "status.json").read_text()) == {
+        "state": "running"
+    }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reader sharing semantics")
+def test_resume_waits_for_monitor_readers_before_rewriting_status_and_metrics(
+    tmp_path,
+):
+    cb = TrainingStatusCallback(write_log=False)
+    cb.on_train_start(_start(tmp_path))
+    for epoch in range(1, 5):
+        cb.on_train_epoch_end(_epoch(tmp_path, epoch=epoch))
+
+    readers = [
+        open(tmp_path / "status.json", encoding="utf-8"),
+        open(tmp_path / "metrics.jsonl", encoding="utf-8"),
+    ]
+
+    def release_readers():
+        time.sleep(0.05)
+        for reader in readers:
+            reader.close()
+
+    release = threading.Thread(target=release_readers)
+    release.start()
+    try:
+        cb.on_train_start(_start(tmp_path, start_epoch=3))
+    finally:
+        for reader in readers:
+            if not reader.closed:
+                reader.close()
+        release.join(timeout=2)
+
+    resumed = _load(tmp_path)
+    assert resumed["state"] == "running"
+    assert resumed["completed_epochs"] == 2
+    assert resumed["current_epoch"] is None
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=3))
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert [row["epoch"] for row in rows] == [1, 2, 3]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reader sharing semantics")
+def test_fresh_status_start_waits_for_monitor_reader_before_resetting_log(tmp_path):
+    cb = TrainingStatusCallback()
+    cb.on_train_start(_start(tmp_path))
+    logging.getLogger("libreyolo").info("stale log line")
+    cb._close_log()
+    reader = open(tmp_path / "train.log", encoding="utf-8")
+
+    def release_reader():
+        time.sleep(0.05)
+        reader.close()
+
+    release = threading.Thread(target=release_reader)
+    release.start()
+    try:
+        cb.on_train_start(_start(tmp_path))
+    finally:
+        if not reader.closed:
+            reader.close()
+        release.join(timeout=2)
+    logging.getLogger("libreyolo").info("fresh log line")
+    cb._close_log()
+
+    log = (tmp_path / "train.log").read_text()
+    assert "fresh log line" in log
+    assert "stale log line" not in log
+
+
+def test_metrics_jsonl_trims_stale_resume_rows(tmp_path):
+    cb = TrainingStatusCallback(write_log=False)
+    cb.on_train_start(_start(tmp_path))
+    for epoch in range(1, 5):
+        cb.on_train_epoch_end(_epoch(tmp_path, epoch=epoch))
+
+    cb.on_train_start(_start(tmp_path, start_epoch=3))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=3))
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert [row["epoch"] for row in rows] == [1, 2, 3]
+
+
+def test_resume_status_keeps_absolute_progress_through_train_end(tmp_path):
+    cb = TrainingStatusCallback(write_log=False)
+    cb.on_train_start(_start(tmp_path, start_epoch=3))
+    started = _load(tmp_path)
+    assert started["completed_epochs"] == 2
+    assert started["progress"] == pytest.approx(0.5)
+
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=3, best_epoch=3))
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=4, best_epoch=4))
+    end = _end(tmp_path)
+    end = TrainEndEvent(
+        total_epochs=end.total_epochs,
+        completed_epochs=2,  # current invocation only, as emitted by BaseTrainer
+        model_family=end.model_family,
+        model_size=end.model_size,
+        task=end.task,
+        save_dir=end.save_dir,
+        final_loss=end.final_loss,
+        best_metric=end.best_metric,
+        best_epoch=end.best_epoch,
+        total_seconds=end.total_seconds,
+        results=end.results,
+    )
+    cb.on_train_end(end)
+
+    done = _load(tmp_path)
+    assert done["completed_epochs"] == 4
+    assert done["current_epoch"] == 3
+    assert done["progress"] == pytest.approx(1.0)
+
+
+def test_concurrent_training_logs_are_isolated_and_level_restores(tmp_path):
+    lib_logger = logging.getLogger("libreyolo")
+    original_level = lib_logger.level
+    lib_logger.setLevel(logging.WARNING)
+    ready = threading.Barrier(3)
+    release_first = threading.Event()
+    first_closed = threading.Event()
+    errors = []
+
+    def run(name: str, wait_for_release: bool):
+        cb = TrainingStatusCallback()
+        run_dir = tmp_path / name
+        try:
+            cb.on_train_start(_start(run_dir))
+            lib_logger.info("message-%s", name)
+            ready.wait(timeout=2)
+            if wait_for_release:
+                assert release_first.wait(timeout=2)
+            cb.on_train_end(_end(run_dir))
+            if not wait_for_release:
+                first_closed.set()
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+            cb._close_log()
+
+    first = threading.Thread(target=run, args=("first", False))
+    second = threading.Thread(target=run, args=("second", True))
+    try:
+        first.start()
+        second.start()
+        ready.wait(timeout=2)
+        assert lib_logger.level == logging.INFO
+        assert first_closed.wait(timeout=2)
+        assert lib_logger.level == logging.INFO
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        assert not first.is_alive() and not second.is_alive()
+        assert not errors
+        assert lib_logger.level == logging.WARNING
+        first_log = (tmp_path / "first" / "train.log").read_text()
+        second_log = (tmp_path / "second" / "train.log").read_text()
+        assert "message-first" in first_log and "message-second" not in first_log
+        assert "message-second" in second_log and "message-first" not in second_log
+    finally:
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        lib_logger.setLevel(original_level)
+
+
+def test_training_run_directory_reservation_is_atomic(tmp_path):
+    trainers = [
+        SimpleNamespace(
+            config=SimpleNamespace(
+                project=str(tmp_path / "runs"), name="exp", exist_ok=False
+            )
+        )
+        for _ in range(12)
+    ]
+    barrier = threading.Barrier(len(trainers))
+
+    def reserve(trainer):
+        barrier.wait(timeout=5)
+        return BaseTrainer._get_save_dir(trainer)
+
+    with ThreadPoolExecutor(max_workers=len(trainers)) as pool:
+        paths = list(pool.map(reserve, trainers))
+
+    assert len(set(paths)) == len(trainers)
+    assert all(path.is_dir() for path in paths)
+    assert {path.name for path in paths} == {
+        "exp",
+        *(f"exp{index}" for index in range(2, len(trainers) + 1)),
+    }
+
+
+def test_training_run_directory_supports_nested_names(tmp_path):
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(
+            project=str(tmp_path / "runs"), name="sweep/exp", exist_ok=False
+        )
+    )
+
+    first = BaseTrainer._get_save_dir(trainer)
+    second = BaseTrainer._get_save_dir(trainer)
+
+    assert first == tmp_path / "runs" / "sweep" / "exp"
+    assert second == tmp_path / "runs" / "sweep" / "exp2"
+
+
+def test_training_run_directory_preserves_empty_name(tmp_path):
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(
+            project=str(tmp_path / "runs"), name="", exist_ok=False
+        )
+    )
+
+    first = BaseTrainer._get_save_dir(trainer)
+    second = BaseTrainer._get_save_dir(trainer)
+
+    assert first == tmp_path / "runs"
+    assert second == tmp_path / "runs2"
+    assert first.is_dir() and second.is_dir()
+
+
+def test_training_run_directory_reuses_resume_target(tmp_path):
+    resume_dir = tmp_path / "original" / "exp"
+    trainer = SimpleNamespace(
+        _resume_save_dir=resume_dir,
+        config=SimpleNamespace(
+            project=str(tmp_path / "other"), name="new", exist_ok=False
+        ),
+    )
+
+    assert BaseTrainer._get_save_dir(trainer) == resume_dir
+    assert resume_dir.is_dir()
+    assert not (tmp_path / "other").exists()
 
 
 def test_metrics_jsonl_skips_torn_line(tmp_path):

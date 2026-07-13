@@ -123,6 +123,13 @@ alongside the family artifact writer. `status.json` is the cheap read for a
 polling agent (a few tokens vs. re-parsing a log); the atomic write means a
 reader never observes a half-written file.
 
+`status.json` schema version 2 uses zero-based `current_epoch` and `best_epoch`
+indices, while `completed_epochs` is the absolute number of completed epochs
+and `progress` is bounded to `[0, 1]`. Public callback events and the `epoch`
+column in `metrics.jsonl`/`results.csv` remain one-based. Monitor clients should
+prefer `completed_epochs` for progress and use `schema_version` when reading
+older status files.
+
 ### Live web dashboard
 
 ```bash

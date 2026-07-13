@@ -42,6 +42,70 @@ _RUN_MARKERS = ("status.json", "metrics.jsonl", "results.csv")
 _MAX_LOG_BYTES = 200_000
 
 
+def _finite_number(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _normalize_status_view(status: dict) -> dict:
+    """Add tested display fields across status schema v1 and v2."""
+    view = dict(status)
+    schema = _finite_number(view.get("schema_version")) or 1
+    state = str(view.get("state") or "")
+    total = _finite_number(view.get("total_epochs"))
+    current = _finite_number(view.get("current_epoch"))
+    completed = _finite_number(view.get("completed_epochs"))
+    start = _finite_number(view.get("start_epoch")) or 1
+    raw_progress = _finite_number(view.get("progress"))
+
+    if schema >= 2:
+        display_epoch = current + 1 if state == "failed" and current is not None else completed
+        if display_epoch is None and current is not None:
+            display_epoch = current + 1
+        progress = raw_progress
+        if progress is None and completed is not None and total and total > 0:
+            progress = completed / total
+        best = _finite_number(view.get("best_epoch"))
+        display_best = best + 1 if best is not None else None
+    else:
+        if state == "completed" and completed is not None:
+            # Schema v1 TrainEndEvent stored invocation-local completion on resume.
+            display_epoch = max(start - 1, 0) + completed
+        elif current is not None:
+            # Schema v1 current_epoch came from an already one-based public event.
+            display_epoch = current
+        else:
+            display_epoch = completed
+        if total and total > 0:
+            if state == "completed" and completed is not None:
+                progress = (max(start - 1, 0) + completed) / total
+            elif state == "running" and current is not None:
+                progress = current / total
+            elif state == "failed" and current is not None:
+                progress = max(current - 1, start - 1, 0) / total
+            elif completed is not None:
+                progress = completed / total
+            else:
+                progress = raw_progress
+        else:
+            progress = raw_progress
+        display_best = _finite_number(view.get("best_epoch"))
+
+    if total is not None and display_epoch is not None:
+        display_epoch = min(display_epoch, max(total, 0))
+    view["display_epoch"] = max(0, int(display_epoch or 0))
+    view["display_progress"] = min(max(float(progress or 0.0), 0.0), 1.0)
+    view["display_best_epoch"] = (
+        max(0, int(display_best)) if display_best is not None else None
+    )
+    return view
+
+
 def is_run_dir(path: Path) -> bool:
     """True if ``path`` looks like a training run (carries a known marker)."""
     return path.is_dir() and any((path / m).exists() for m in _RUN_MARKERS)
@@ -115,7 +179,10 @@ def _read_status(run_dir: Path) -> dict:
     if not path.exists():
         return {"state": "missing", "save_dir": str(run_dir)}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        status = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(status, dict):
+            raise ValueError("status must be an object")
+        return _normalize_status_view(status)
     except (OSError, ValueError):
         return {"state": "unreadable", "save_dir": str(run_dir)}
 
@@ -237,6 +304,7 @@ def _run_summary(root: Path, run_dir: Path) -> dict:
     """Compact per-run record for the index page."""
     status = _read_status(run_dir)
     return {
+        "schema_version": status.get("schema_version"),
         "id": run_id_for(root, run_dir),
         "name": run_id_for(root, run_dir),
         "state": status.get("state", "unknown"),
@@ -244,7 +312,10 @@ def _run_summary(root: Path, run_dir: Path) -> dict:
         + (status.get("model_size") or ""),
         "task": status.get("task"),
         "progress": status.get("progress", 0.0),
+        "display_progress": status.get("display_progress"),
         "current_epoch": status.get("current_epoch"),
+        "completed_epochs": status.get("completed_epochs"),
+        "display_epoch": status.get("display_epoch"),
         "total_epochs": status.get("total_epochs"),
         "best_metric": status.get("best_metric"),
         "best_metric_name": status.get("best_metric_name"),

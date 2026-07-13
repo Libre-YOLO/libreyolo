@@ -40,6 +40,10 @@ async function load(i){
   try{ lab = await jget(`/api/label/${i}`); }
   catch(e){ if(myGen!==loadSeq) return; stageMsg = "Couldn't load this image's labels - pick another image."; draw(); return; }
   if(myGen !== loadSeq) return;
+  if(!DS || lab.epoch!==DS.epoch){
+    stageMsg = "Project changed in another tab - reopen it before labeling.";
+    banner(stageMsg); draw(); return;
+  }
   editable = lab.editable;
   curRev = (lab.rev!=null) ? lab.rev : null;
   stageMsg = "Loading…"; draw();
@@ -82,13 +86,30 @@ function polyToNorm(p){
 async function save(){
   clearTimeout(autosaveTimer); autosaveTimer = null;   // a real save supersedes any pending autosave
   if(!imgOk || !editable || (DS && !DS.writable)){ return true; }
+  if(!DS || curRev==null){
+    setSave("save failed"); banner("Labels were not loaded with a revision - reload this image before saving."); return false;
+  }
+  // Commit the same bounded geometry that the data layer persists.  Keeping the
+  // canvas in sync matters for polygons and oriented boxes: otherwise the save
+  // snapshot could describe out-of-image points while disk contains clipped or
+  // translated coordinates, and a later edit/navigation would look clean.
+  let invalidShapes = 0;
+  boxes.forEach(b=>{ normalizeRect(b); if(!clipToImage(b)) invalidShapes++; });
+  polys.forEach(p=>{ if(!clipPoly(p)) invalidShapes++; });
+  if(invalidShapes){
+    // Never send a partial annotation list: omitting one invalid canvas shape would
+    // make the server persist its deletion before this client could warn the user.
+    dirty = true; setSave("unsaved"); draw();
+    banner(`${invalidShapes} invalid shape${invalidShapes>1?"s":""} not saved - undo, fix, or delete before saving.`);
+    return false;
+  }
   const totalShapes = boxes.length + polys.length;   // everything on the canvas
-  const anns = boxes.map(pxToNorm).filter(b=>b.w>0&&b.h>0)
+  const anns = boxes.map(pxToNorm)
     .map(b=>({type:"box", cls:b.cls, cx:b.cx, cy:b.cy, w:b.w, h:b.h}));
-  polys.forEach(p=>{ const pts=polyToNorm(p); if(pts.length>=6) anns.push({type:"poly", cls:p.cls, points:pts}); });
+  polys.forEach(p=>{ anns.push({type:"poly", cls:p.cls, points:polyToNorm(p)}); });
   const cur = idx, sent = snap();   // snapshot of exactly what we're sending
   try{
-    const q = `epoch=${(DS&&DS.epoch)||0}` + (curRev!=null ? `&rev=${encodeURIComponent(curRev)}` : "");
+    const q = `epoch=${DS.epoch}&rev=${encodeURIComponent(curRev)}`;
     const r = await fetch(`/api/label/${cur}?${q}`,{method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({annotations:anns})});
     if(!r.ok){ setSave("save failed"); banner((await r.json()).error||"save failed"); return false; }
@@ -172,6 +193,7 @@ async function carryForward(){
   const myGen = loadSeq, srcIdx = idx;
   let lab; try{ lab = await jget(`/api/label/${prevId}`); }catch(e){ banner("Couldn't read the previous image's labels."); return; }
   if(myGen!==loadSeq || idx!==srcIdx) return;   // navigated during the fetch -> don't paste onto the wrong image
+  if(!DS || lab.epoch!==DS.epoch){ banner("Project changed - reopen it before copying labels."); return; }
   if(boxes.length + polys.length > 0){ banner("This image already has labels - carry-forward only fills an empty image."); return; }   // drawn during the fetch -> don't merge stale labels
   if(lab.editable===false){ banner("The previous image's labels are read-only (keypoints/unsupported) - can't carry them forward."); return; }   // partial view: don't drop the unparsed rows
   const anns = lab.annotations||[];
@@ -181,7 +203,7 @@ async function carryForward(){
   anns.forEach(a=>{
     if(a.type==="box"){ const b={cls:a.cls, x:(a.cx-a.w/2)*iw, y:(a.cy-a.h/2)*ih, w:a.w*iw, h:a.h*ih};
       clipToImage(b); if(b.w>0 && b.h>0){ boxes.push(b); n++; } }
-    else if(a.type==="poly"){ const q={cls:a.cls, pts:a.points.map((v,k)=> k%2===0? v*iw : v*ih)}; clipPoly(q); polys.push(q); n++; }
+    else if(a.type==="poly"){ const q={cls:a.cls, pts:a.points.map((v,k)=> k%2===0? v*iw : v*ih)}; if(clipPoly(q)){ polys.push(q); n++; } }
   });
   if(!n){ undoStack.pop(); return; }
   markDirty(); draw();
@@ -311,7 +333,7 @@ async function segmentAt(mx,my){
   if(X<0||Y<0||X>iw||Y>ih) return;
   segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM, on your machine)"); cv.style.cursor="wait";
   try{
-    const r = await fetch(`/api/assist/segment/${idx}`, {method:"POST", headers:{"Content-Type":"application/json"},
+    const r = await fetch(`/api/assist/segment/${idx}?epoch=${DS.epoch}`, {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({x:X/iw, y:Y/ih})});
     if(myGen!==loadSeq) return;
     if(!r.ok){ const e=await r.json().catch(()=>({})); banner("Segment failed: "+(e.error||r.status)); return; }
@@ -332,7 +354,7 @@ async function segmentBox(r){
   if(x2-x1<4 || y2-y1<4) return;
   segBusy=true; const myGen=loadSeq; banner("Segmenting… (SAM box prompt)"); cv.style.cursor="wait";
   try{
-    const rr = await fetch(`/api/assist/segment/${idx}`, {method:"POST", headers:{"Content-Type":"application/json"},
+    const rr = await fetch(`/api/assist/segment/${idx}?epoch=${DS.epoch}`, {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify({box:[x1/iw, y1/ih, x2/iw, y2/ih]})});
     if(myGen!==loadSeq) return;
     if(!rr.ok){ const e=await rr.json().catch(()=>({})); banner("Segment failed: "+(e.error||rr.status)); return; }

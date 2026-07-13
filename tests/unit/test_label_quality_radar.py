@@ -335,12 +335,14 @@ def test_mask_dataset_is_view_only(tmp_path):
     assert ds.writable is False
 
 
-def test_degenerate_polygon_dropped():
-    # Codex P2: a collapsed (collinear) polygon would yield a zero-area box -> drop it.
+def test_degenerate_polygon_rejected():
+    # A collapsed polygon is rejected so the caller cannot mistake a dropped shape
+    # for a successful save.
     from libreyolo.label.labelio import sanitize_annotations
 
     flat = {"type": "poly", "cls": 0, "points": [0.1, 0.5, 0.5, 0.5, 0.9, 0.5, 0.5, 0.5]}
-    assert sanitize_annotations([flat], nc=2) == []
+    with pytest.raises(ValueError, match="non-zero area"):
+        sanitize_annotations([flat], nc=2)
     good = {"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.4, 0.1, 0.4, 0.4, 0.1, 0.4]}
     assert len(sanitize_annotations([good], nc=2)) == 1
 
@@ -379,13 +381,14 @@ def test_my_images_ancestor_stays_writable(tmp_path):
     assert ds.writable is True
 
 
-def test_diagonal_collinear_polygon_dropped():
+def test_diagonal_collinear_polygon_rejected():
     # Codex round 3: a diagonal collinear polygon has positive bbox extents but
-    # zero area -- the area check must still drop it.
+    # zero area -- the area check must still reject it.
     from libreyolo.label.labelio import sanitize_annotations
 
     diag = {"type": "poly", "cls": 0, "points": [0.0, 0.0, 0.5, 0.5, 1.0, 1.0]}
-    assert sanitize_annotations([diag], nc=2) == []
+    with pytest.raises(ValueError, match="non-zero area"):
+        sanitize_annotations([diag], nc=2)
 
 
 def test_class_slip_requires_confidence():
@@ -557,19 +560,22 @@ def test_sanitize_rejects_non_finite_before_clamp():
 
     from libreyolo.label.labelio import sanitize_annotations, sanitize_boxes
 
-    assert sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": math.inf, "h": 0.2}], nc=2) == []
-    assert sanitize_annotations(
-        [{"type": "box", "cls": 0, "cx": -math.inf, "cy": 0.5, "w": 0.2, "h": 0.2}], nc=2) == []
+    with pytest.raises(ValueError, match="finite"):
+        sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": math.inf, "h": 0.2}], nc=2)
+    with pytest.raises(ValueError, match="finite"):
+        sanitize_annotations(
+            [{"type": "box", "cls": 0, "cx": -math.inf, "cy": 0.5, "w": 0.2, "h": 0.2}], nc=2)
     poly = {"type": "poly", "cls": 0, "points": [0.1, 0.1, 0.4, math.inf, 0.4, 0.4, 0.1, 0.4]}
-    assert sanitize_annotations([poly], nc=2) == []
+    with pytest.raises(ValueError, match="finite"):
+        sanitize_annotations([poly], nc=2)
     # a finite, valid box still round-trips
     assert len(sanitize_boxes([{"cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.3, "h": 0.3}], nc=2)) == 1
 
 
 def test_local_admin_gating_by_bind_and_client():
-    # Codex round 8+9: gate host-admin on a *wildcard* (--share -> 0.0.0.0) bind by
-    # requiring a loopback client; a loopback bind or an explicit NIC bind allow it
-    # (the host has to reach an advertised NIC by its own address).
+    # Wildcard sharing reserves host-level administration for loopback clients.
+    # A concrete NIC bind additionally permits a client whose source address is
+    # the accepted socket's local address.
     from types import SimpleNamespace
 
     from libreyolo.label.server import _Handler
@@ -586,15 +592,19 @@ def test_local_admin_gating_by_bind_and_client():
     h.client_address = ("127.0.0.1", 5000)
     assert h._local_admin() is True
 
-    # loopback bind: only reachable locally -> always admin
+    # A synthetic non-loopback peer on a loopback bind is denied defensively.
     h.state = SimpleNamespace(host="127.0.0.1")
     h.client_address = ("192.168.1.50", 5000)
-    assert h._local_admin() is True
+    h.connection = SimpleNamespace(getsockname=lambda: ("127.0.0.1", 8000))
+    assert h._local_admin() is False
 
-    # explicit NIC bind: the host must connect via that address -> admin allowed
+    # On an explicit NIC bind, only a peer using the local endpoint is admin.
     h.state = SimpleNamespace(host="192.168.1.5")
     h.client_address = ("192.168.1.5", 5000)
+    h.connection = SimpleNamespace(getsockname=lambda: ("192.168.1.5", 8000))
     assert h._local_admin() is True
+    h.client_address = ("192.168.1.50", 5000)
+    assert h._local_admin() is False
 
 
 def test_out_of_range_class_is_read_only(tmp_path):
@@ -649,6 +659,26 @@ def test_write_label_revision_conflict(tmp_path):
     with pytest.raises(RuntimeError):
         ds.write_label(0, box, expected_rev=rev - 1)   # stale rev -> refused
     ds.write_label(0, box, expected_rev=rev)           # matching rev -> allowed
+
+
+def test_label_revision_depends_on_content_not_timestamp(tmp_path):
+    import os
+
+    from libreyolo.label.dataset import DatasetSession
+
+    ds = DatasetSession(str(_make_split_dataset(tmp_path)))
+    first = [{"type": "box", "cls": 0, "cx": 0.3, "cy": 0.5, "w": 0.2, "h": 0.2}]
+    second = [{"type": "box", "cls": 0, "cx": 0.7, "cy": 0.5, "w": 0.2, "h": 0.2}]
+    ds.write_label(0, first)
+    label_path = tmp_path / "labels" / "train" / "a.txt"
+    original_mtime = label_path.stat().st_mtime_ns
+    first_rev = ds.label_rev(0)
+
+    ds.write_label(0, second, expected_rev=first_rev)
+    os.utime(label_path, ns=(original_mtime, original_mtime))
+
+    assert label_path.stat().st_mtime_ns == original_mtime
+    assert ds.label_rev(0) != first_rev
 
 
 def test_degenerate_polygon_file_is_read_only(tmp_path):

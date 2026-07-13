@@ -284,7 +284,16 @@ async function saveClassEdit(){
     const r=await fetch("/api/classes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({names, epoch:(DS&&DS.epoch)||0})});
     const d=await r.json();
     if(!r.ok){ err.textContent=d.error||"Could not save classes."; return; }
-    DS.names=d.names; DS.nc=d.nc;
+    DS.names=d.names; DS.nc=d.nc; DS.epoch=d.epoch;
+    // A class rename changes the meaning of numeric ids. The server starts a new
+    // project generation and clears its AI caches; discard the matching browser
+    // state too so an old ghost/Boost result cannot be accepted under new names.
+    ghosts=[]; radarFindings=[]; radarDeck=[]; mapPoints=[]; mapFit=null;
+    suggestedIds=new Set();
+    const chip=$("#boostchip"); if(chip) chip.className="chip";
+    try{ IMAGES=(await jget("/api/images")).images; }catch(e){}
+    renderList(); updateProgress();
+    await initAssist();
     if(active>=DS.names.length) active=0;
     renderPalette();
     if(imgOk) draw();        // box labels may now read a renamed class

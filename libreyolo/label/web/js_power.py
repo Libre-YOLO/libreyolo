@@ -161,7 +161,7 @@ async function runBoost(){
   if(dirty){ banner("You edited while saving - press → to save before boosting."); return; }   // in-flight edits: don't train on stale labels
   setBoostChip("run", "Boosting - warming up…");
   try{
-    const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const r=await fetch("/api/boost",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({epoch:DS.epoch})});
     const d=await r.json();
     if(!d.started){ setBoostChip("bad", d.reason||"Couldn't start Boost"); return; }
     pollBoost();

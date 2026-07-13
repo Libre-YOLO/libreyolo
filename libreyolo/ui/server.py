@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..utils.logging import LoggerLevelLease, ThreadLogFilter
 from .page import INDEX_HTML
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,26 @@ def _sanitize_filename(name: str) -> str:
     if "." not in base:
         base += ".jpg"
     return base
+
+
+def _reserve_incremented_directory(path: str | Path) -> Path:
+    """Atomically reserve ``path`` or its next numbered sibling.
+
+    ``increment_path(..., mkdir=True)`` checks existence before creating the
+    directory, so two UI servers can both select the same name.  Directory
+    creation itself is atomic; retrying on ``FileExistsError`` keeps the
+    familiar ``predict``, ``predict2``, ... naming without that race.
+    """
+    base = Path(path)
+    base.parent.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 10_000):
+        candidate = base if index == 1 else base.with_name(f"{base.name}{index}")
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
+        return candidate
+    raise FileExistsError(f"No free run directory available for {base}")
 
 
 def _plural(n: int, singular: str, plural: str | None = None) -> str:
@@ -330,7 +351,10 @@ class _UIState:
     def __init__(self, device: str = "auto"):
         self.device = device
         self._models: dict[str, object] = {}
-        self._lock = threading.Lock()  # serialize inference (model not thread-safe)
+        # ``new_run`` shares this lock with inference so a request cannot move
+        # the active output directory halfway through another request.  It is
+        # re-entrant because inference lazily starts its first run.
+        self._lock = threading.RLock()
         self._upload_lock = threading.Lock()
         self._used_upload_names: set[str] = set()
         self.run_dir: Path | None = None
@@ -415,12 +439,13 @@ class _UIState:
         return model
 
     def new_run(self) -> Path:
-        from libreyolo.utils.general import increment_path
-
-        self.run_dir = increment_path(Path("runs/detect") / "predict", mkdir=True)
-        with self._upload_lock:
-            self._used_upload_names.clear()
-        return self.run_dir
+        with self._lock:
+            self.run_dir = _reserve_incremented_directory(
+                Path("runs/detect") / "predict"
+            )
+            with self._upload_lock:
+                self._used_upload_names.clear()
+            return self.run_dir
 
     def _write_upload(self, filename: str, data: bytes) -> tuple[Path, str]:
         safe = _sanitize_filename(filename)
@@ -472,14 +497,18 @@ class _UIState:
         with self._lock:
             if self.run_dir is None:
                 self.new_run()
+            # Keep the request bound to the directory selected under the lock;
+            # a later /api/run/new request must not rewrite its response.
+            run_dir = self.run_dir
+            assert run_dir is not None
             in_path, safe = self._write_upload(filename, data)
             lg = logging.getLogger("libreyolo")
             handler = _StreamLogHandler(emit) if emit is not None else None
-            prev_level = lg.level
+            level_lease = None
             if handler is not None:
                 handler.setLevel(logging.INFO)
-                if prev_level == logging.NOTSET or prev_level > logging.INFO:
-                    lg.setLevel(logging.INFO)
+                handler.addFilter(ThreadLogFilter())
+                level_lease = LoggerLevelLease(lg, logging.INFO).acquire()
                 lg.addHandler(handler)
             try:
                 # _get_model triggers weight download on first use; keep it
@@ -497,7 +526,7 @@ class _UIState:
                         original = uploaded.convert("RGB")
                     prompt_box = bbox or [0.0, 0.0, float(width), float(height)]
                     result = model(str(in_path), conf=conf, bboxes=prompt_box)
-                    save_path = resolve_save_path(self.run_dir, safe, ext="jpg")
+                    save_path = resolve_save_path(run_dir, safe, ext="jpg")
                     InferenceRunner(model)._save_annotated_image(
                         result, original, save_path
                     )
@@ -506,12 +535,14 @@ class _UIState:
                         str(in_path),
                         conf=conf,
                         save=True,
-                        output_path=str(self.run_dir),
+                        output_path=str(run_dir),
                     )
             finally:
                 if handler is not None:
                     lg.removeHandler(handler)
-                    lg.setLevel(prev_level)
+                    handler.close()
+                    if level_lease is not None:
+                        level_lease.release()
 
         if isinstance(result, list):
             result = result[0] if result else None
@@ -536,15 +567,17 @@ class _UIState:
             "task": task,
             "label": label,
             "rendered": "data:image/" + mime + ";base64," + encoded,
-            "dir": str(self.run_dir),
+            "dir": str(run_dir),
             "saved": str(saved),
         }
 
     def open_folder(self) -> dict:
-        if self.run_dir is None or not Path(self.run_dir).exists():
-            return {"ok": False, "dir": str(self.run_dir) if self.run_dir else None}
-        ok = _open_in_file_manager(Path(self.run_dir))
-        return {"ok": ok, "dir": str(self.run_dir)}
+        with self._lock:
+            run_dir = self.run_dir
+            if run_dir is None or not run_dir.exists():
+                return {"ok": False, "dir": str(run_dir) if run_dir else None}
+            ok = _open_in_file_manager(run_dir)
+            return {"ok": ok, "dir": str(run_dir)}
 
 
 class _Handler(BaseHTTPRequestHandler):
