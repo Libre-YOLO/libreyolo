@@ -39,6 +39,7 @@ class LibreL2CS(BaseModel):
         "r101": 448,
         "r152": 448,
     }
+    INPUT_SIZE_FIXED = True
     SUPPORTED_TASKS = ("gaze",)
     DEFAULT_TASK = "gaze"
     NUM_BINS = 90

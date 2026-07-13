@@ -68,6 +68,7 @@ class LibrePPOCR(BaseModel):
     WEIGHT_EXT = ".pt"
     # The size value is the detection long-side limit (DetResizeForTest).
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 960, "l": 960}
+    INPUT_SIZE_MIN = 32
     SUPPORTED_TASKS = ("ocr",)
     DEFAULT_TASK = "ocr"
     REQUIRE_TASK_SUFFIX = True

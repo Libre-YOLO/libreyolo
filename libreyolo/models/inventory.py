@@ -1,122 +1,94 @@
-"""Model-family inventory used by CLI and generated export documentation."""
+"""Deterministic model-family inventory for CLI and generated documentation."""
 
 from __future__ import annotations
 
-import ast
-import importlib
 import importlib.util
-import inspect
-import textwrap
 
-
-OPTIONAL_MODELS = (
-    ("libreyolo.models.sam.model", "LibreSAM1", "sam", "transformers"),
-    ("libreyolo.models.sam.sam2", "LibreSAM2", "sam", "transformers"),
-    ("libreyolo.models.sam.sam3", "LibreSAM3", "sam", "transformers"),
-    ("libreyolo.models.mobilesam.model", "LibreMobileSAM", "sam", None),
-    ("libreyolo.models.picosam3.model", "LibrePicoSAM3", "sam", None),
-    ("libreyolo.models.vlm.florence2", "LibreFlorence2", "vlm", "transformers"),
-    ("libreyolo.models.vlm.kosmos2", "LibreKosmos2", "vlm", "transformers"),
-    ("libreyolo.models.vlm.internvl3", "LibreInternVL3", "vlm", "transformers"),
-    ("libreyolo.models.vlm.lfm2", "LibreLFM2VL", "vlm", "transformers"),
-    (
-        "libreyolo.models.vlm.locateanything",
-        "LibreLocateAnything",
-        "vlm",
-        "transformers",
-    ),
-    ("libreyolo.models.vlm.qwen3vl", "LibreQwen3VL", "vlm", "transformers"),
-    ("libreyolo.models.vlm.smolvlm", "LibreSmolVLM2", "vlm", "transformers"),
-    (
-        "libreyolo.models.openvocab.grounding_dino",
-        "LibreGroundingDINO",
-        "openvocab",
-        "transformers",
-    ),
-    ("libreyolo.models.openvocab.owlv2", "LibreOWLv2", "openvocab", "transformers"),
+from .manifest import (
+    ARTIFACT_BY_KEY,
+    CLI_MODEL_ALIASES,
+    FACTORY_DEFAULT_MODELS,
+    FactoryKind,
+    iter_family_specs,
 )
 
 
-def _export_override(cls, base_cls) -> str:
-    """Classify a family's ``export``: ``none``, ``custom``, or ``blocked``.
-
-    ``blocked`` means every path raises. A family that exports some formats
-    and raises for the rest (PicoSAM3 ships ONNX only) is ``custom``, so walk
-    the AST for an actual export call instead of matching source text: the
-    old ``"export_" not in source`` check missed ``torch.onnx.export``.
-    """
-    if cls.export is base_cls.export:
-        return "none"
-    tree = ast.parse(textwrap.dedent(inspect.getsource(cls.export)))
-    raises_not_implemented = False
-    performs_export = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Raise):
-            raised = node.exc
-            if isinstance(raised, ast.Call):
-                raised = raised.func
-            if isinstance(raised, ast.Name) and raised.id == "NotImplementedError":
-                raises_not_implemented = True
-        elif isinstance(node, ast.Call):
-            called = node.func
-            name = ""
-            if isinstance(called, ast.Attribute):
-                name = called.attr
-            elif isinstance(called, ast.Name):
-                name = called.id
-            if "export" in name.lower():
-                performs_export = True
-    if raises_not_implemented and not performs_export:
-        return "blocked"
-    return "custom"
+def _is_available(dependencies: tuple[str, ...]) -> bool:
+    return all(importlib.util.find_spec(name) is not None for name in dependencies)
 
 
 def collect_model_inventory() -> dict[str, dict]:
-    """Return eager and lazy family metadata without constructing models."""
-    from libreyolo.models import try_ensure_rfdetr
-    from libreyolo.models.base.model import BaseModel
-
-    optional: dict[str, tuple[str, bool]] = {}
-    try_ensure_rfdetr()
-    classes = list(BaseModel._registry)
-    if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
-        optional["rfdetr"] = ("rfdetr", True)
-        optional["dinov2"] = ("rfdetr", True)
-
-    for module_name, class_name, extra, requirement in OPTIONAL_MODELS:
-        available = (
-            requirement is None or importlib.util.find_spec(requirement) is not None
-        )
-        try:
-            cls = getattr(importlib.import_module(module_name), class_name)
-        except (ImportError, ModuleNotFoundError):
-            continue
-        optional[cls.FAMILY] = (extra, available)
-        if cls not in classes:
-            classes.append(cls)
-
+    """Return the complete public inventory without importing model modules."""
     inventory: dict[str, dict] = {}
-    for cls in classes:
-        family = str(getattr(cls, "FAMILY", ""))
-        if not family:
-            continue
-        extra, available = optional.get(family, (None, True))
-        task_sizes = {task: dict(sizes) for task, sizes in cls.TASK_INPUT_SIZES.items()}
-        all_sizes = dict(cls.INPUT_SIZES)
+    for family in iter_family_specs():
+        task_sizes = {
+            task.task: {size.code: size.native_imgsz for size in task.sizes}
+            for task in family.tasks
+        }
+        default_imgsz = dict(task_sizes[family.default_task])
+        # Retain the legacy flattened mapping for report consumers.  Task-aware
+        # consumers must use task_sizes because the same size code can have a
+        # different native resolution for another task.
+        all_sizes = dict(default_imgsz)
         for sizes in task_sizes.values():
             all_sizes.update(sizes)
-        inventory[family] = {
-            "class": f"{cls.__module__}.{cls.__name__}",
-            "tasks": list(cls.SUPPORTED_TASKS),
-            "default_task": cls.DEFAULT_TASK,
+
+        artifacts = []
+        for key, artifact in ARTIFACT_BY_KEY.items():
+            if key[0] != family.family:
+                continue
+            artifacts.append(
+                {
+                    "size": artifact.size,
+                    "task": artifact.task,
+                    "variant": artifact.variant,
+                    "imgsz": artifact.native_imgsz,
+                    "filename": artifact.canonical_filename,
+                    "publication": artifact.publication.value,
+                    "downloadable": artifact.downloadable,
+                    "download_kind": artifact.download_kind,
+                    "download_url": artifact.download_url,
+                    "aliases": list(artifact.aliases),
+                    "factory_model": artifact.factory_model,
+                    "invocation": artifact.invocation,
+                    "repository": artifact.repository,
+                    "revision": artifact.revision,
+                }
+            )
+
+        cli_names = sorted(
+            alias
+            for alias, artifact in CLI_MODEL_ALIASES.items()
+            if artifact.family == family.family
+        )
+        downloadable_cli_names = sorted(
+            alias
+            for alias, artifact in CLI_MODEL_ALIASES.items()
+            if artifact.family == family.family and artifact.downloadable
+        )
+        inventory[family.family] = {
+            "class": family.class_path,
+            "tasks": [task.task for task in family.tasks],
+            "default_task": family.default_task,
             "sizes": all_sizes,
-            "default_imgsz": dict(cls.INPUT_SIZES),
+            "default_imgsz": default_imgsz,
             "task_sizes": task_sizes,
-            "export_override": _export_override(cls, BaseModel),
-            "optional_extra": extra,
-            "available": available,
+            "export_override": family.export_override,
+            "optional_extra": family.optional_extra,
+            "available": _is_available(family.dependencies),
+            "factory": family.factory.value,
+            "public_entrypoint": family.public_entrypoint,
+            "factory_default_model": FACTORY_DEFAULT_MODELS.get(family.factory),
+            "generic_cli": family.factory is FactoryKind.CHECKPOINT,
+            "cli_names": cli_names,
+            "downloadable_cli_names": downloadable_cli_names,
+            "local_only_cli_names": sorted(
+                set(cli_names) - set(downloadable_cli_names)
+            ),
+            "artifacts": artifacts,
+            "dependencies": list(family.dependencies),
         }
     return dict(sorted(inventory.items()))
 
 
-__all__ = ["OPTIONAL_MODELS", "collect_model_inventory"]
+__all__ = ["collect_model_inventory"]

@@ -41,7 +41,7 @@ class TestPIDNetMetadata:
         assert LibrePIDNet.SUPPORTED_TASKS == ("semantic",)
         assert LibrePIDNet.DEFAULT_TASK == "semantic"
         assert LibrePIDNet.REQUIRE_TASK_SUFFIX
-        assert LibrePIDNet.semantic_resize_mode == "letterbox"
+        assert LibrePIDNet.semantic_resize_mode == "native"
         assert LibrePIDNet.semantic_imgsz_divisor == 8
         assert set(LibrePIDNet.INPUT_SIZES) == {"s", "m", "l"}
 
@@ -150,6 +150,72 @@ class TestPIDNetForwardAndPredict:
 
         assert result["semantic"].shape == (40, 80)
         assert torch.equal(result["semantic"].unique(), torch.tensor([1]))
+
+    def test_validation_uses_native_floor_geometry_and_postprocess(
+        self, tmp_path
+    ):
+        import yaml
+
+        from libreyolo.models.pidnet.model import LibrePIDNet
+        from libreyolo.validation import SemanticValidator, ValidationConfig
+
+        image_path = tmp_path / "images" / "val" / "a.png"
+        mask_path = tmp_path / "masks" / "val" / "a.png"
+        image_path.parent.mkdir(parents=True)
+        mask_path.parent.mkdir(parents=True)
+        Image.fromarray(
+            np.full((37, 100, 3), (20, 90, 180), dtype=np.uint8), mode="RGB"
+        ).save(image_path)
+        Image.fromarray(np.zeros((37, 100), dtype=np.uint8), mode="L").save(mask_path)
+        data = {
+            "path": str(tmp_path),
+            "val": "images/val",
+            "masks_dir": "masks",
+            "nc": 2,
+            "names": {0: "zero", 1: "one"},
+        }
+        data_path = tmp_path / "data.yaml"
+        data_path.write_text(yaml.safe_dump(data))
+
+        model = LibrePIDNet(
+            model_path=None, size="s", task="semantic", nb_classes=2, device="cpu"
+        )
+        config = ValidationConfig(
+            data=str(data_path),
+            imgsz=64,
+            batch_size=4,
+            device="cpu",
+            num_workers=0,
+            verbose=False,
+            save_dir=str(tmp_path / "runs"),
+        )
+        validator = SemanticValidator(model, config)
+        validator.dataloader = validator._setup_dataloader()
+        batch = next(iter(validator.dataloader))
+        images, targets, _, _ = validator._preprocess_batch(batch)
+        native, _, original_size, ratio = model._preprocess(
+            image_path, color_format="rgb", input_size=64
+        )
+
+        logits = torch.zeros(1, 2, 8, 8)
+        logits[:, 0] = 1.0
+        logits[:, 1, :3] = 2.0
+        actual = validator._postprocess_predictions(logits, batch)
+        expected = model._postprocess(
+            logits,
+            conf_thres=0.0,
+            iou_thres=0.6,
+            original_size=original_size,
+            ratio=ratio,
+            input_size=64,
+        )["semantic"].unsqueeze(0)
+
+        # 37 * (64 / 100) floors to 23 content rows in the native helper.
+        content_rows = (images[0] - 114.0 / 255.0).abs().amax(dim=(0, 2)) > 0
+        assert int(content_rows.sum()) == 23
+        assert torch.equal(images, native)
+        assert targets.shape == (1, 37, 100)
+        assert torch.equal(actual, expected)
 
     def test_predict_rejects_non_stride_imgsz(self, tmp_path):
         from libreyolo.models.pidnet.model import LibrePIDNet

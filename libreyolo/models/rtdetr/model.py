@@ -145,6 +145,8 @@ class LibreRTDETR(BaseModel):
         "l": 640,
         "x": 640,
     }
+    INPUT_SIZE_DIVISOR = 32
+    INPUT_SIZE_MIN = 128
     TRAIN_CONFIG = RTDETRConfig
     val_preprocessor_class = RTDETRValPreprocessor
 

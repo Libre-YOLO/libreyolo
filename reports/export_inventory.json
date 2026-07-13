@@ -13,10 +13,74 @@
       "t": 1024,
       "l": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "matte": {
+        "t": 1024,
+        "l": 1024
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "birefnet-l",
+      "birefnet-l-matte",
+      "birefnet-t",
+      "birefnet-t-matte"
+    ],
+    "downloadable_cli_names": [
+      "birefnet-l",
+      "birefnet-l-matte"
+    ],
+    "local_only_cli_names": [
+      "birefnet-t",
+      "birefnet-t-matte"
+    ],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "matte",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": "LibreBiRefNett-matte.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "birefnet-t",
+          "birefnet-t-matte"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreBiRefNett-matte.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "matte",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": "LibreBiRefNetl-matte.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreBiRefNetl-matte/resolve/main/LibreBiRefNetl-matte.pt",
+        "aliases": [
+          "birefnet-l",
+          "birefnet-l-matte"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreBiRefNetl-matte.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "clip": {
     "class": "libreyolo.models.clip.model.LibreCLIP",
@@ -34,10 +98,101 @@
       "b16": 224,
       "l14": 224
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "b32": 224,
+        "b16": 224,
+        "l14": 224
+      }
+    },
     "export_override": "custom",
-    "optional_extra": null,
-    "available": true
+    "optional_extra": "clip",
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "clip-b16",
+      "clip-b16-cls",
+      "clip-b32",
+      "clip-b32-cls",
+      "clip-l14",
+      "clip-l14-cls"
+    ],
+    "downloadable_cli_names": [
+      "clip-b16",
+      "clip-b16-cls",
+      "clip-b32",
+      "clip-b32-cls"
+    ],
+    "local_only_cli_names": [
+      "clip-l14",
+      "clip-l14-cls"
+    ],
+    "artifacts": [
+      {
+        "size": "b32",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreCLIPb32-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreCLIPb32-cls/resolve/main/LibreCLIPb32-cls.pt",
+        "aliases": [
+          "clip-b32",
+          "clip-b32-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreCLIPb32-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b16",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreCLIPb16-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreCLIPb16-cls/resolve/main/LibreCLIPb16-cls.pt",
+        "aliases": [
+          "clip-b16",
+          "clip-b16-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreCLIPb16-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l14",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreCLIPl14-cls.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "clip-l14",
+          "clip-l14-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreCLIPl14-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "regex",
+      "ftfy"
+    ]
   },
   "convnext": {
     "class": "libreyolo.models.convnext.model.LibreConvNeXt",
@@ -55,10 +210,97 @@
       "s": 224,
       "b": 224
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "t": 224,
+        "s": 224,
+        "b": 224
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "convnext-b",
+      "convnext-b-cls",
+      "convnext-s",
+      "convnext-s-cls",
+      "convnext-t",
+      "convnext-t-cls"
+    ],
+    "downloadable_cli_names": [
+      "convnext-b",
+      "convnext-b-cls",
+      "convnext-s",
+      "convnext-s-cls",
+      "convnext-t",
+      "convnext-t-cls"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreConvNeXtt-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreConvNeXtt-cls/resolve/main/LibreConvNeXtt-cls.pt",
+        "aliases": [
+          "convnext-t",
+          "convnext-t-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreConvNeXtt-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreConvNeXts-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreConvNeXts-cls/resolve/main/LibreConvNeXts-cls.pt",
+        "aliases": [
+          "convnext-s",
+          "convnext-s-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreConvNeXts-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreConvNeXtb-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreConvNeXtb-cls/resolve/main/LibreConvNeXtb-cls.pt",
+        "aliases": [
+          "convnext-b",
+          "convnext-b-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreConvNeXtb-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "deim": {
     "class": "libreyolo.models.deim.model.LibreDEIM",
@@ -80,10 +322,130 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "n": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "deim-l",
+      "deim-m",
+      "deim-n",
+      "deim-s",
+      "deim-x"
+    ],
+    "downloadable_cli_names": [
+      "deim-l",
+      "deim-m",
+      "deim-n",
+      "deim-s",
+      "deim-x"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "n",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMn.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMn/resolve/main/LibreDEIMn.pt",
+        "aliases": [
+          "deim-n"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMn.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMs/resolve/main/LibreDEIMs.pt",
+        "aliases": [
+          "deim-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMm/resolve/main/LibreDEIMm.pt",
+        "aliases": [
+          "deim-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMl/resolve/main/LibreDEIMl.pt",
+        "aliases": [
+          "deim-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMx/resolve/main/LibreDEIMx.pt",
+        "aliases": [
+          "deim-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMx.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "deimv2": {
     "class": "libreyolo.models.deimv2.model.LibreDEIMv2",
@@ -111,10 +473,193 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "atto": 320,
+        "femto": 416,
+        "pico": 640,
+        "n": 640,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "deimv2-atto",
+      "deimv2-femto",
+      "deimv2-l",
+      "deimv2-m",
+      "deimv2-n",
+      "deimv2-pico",
+      "deimv2-s",
+      "deimv2-x"
+    ],
+    "downloadable_cli_names": [
+      "deimv2-atto",
+      "deimv2-femto",
+      "deimv2-l",
+      "deimv2-m",
+      "deimv2-n",
+      "deimv2-pico",
+      "deimv2-s",
+      "deimv2-x"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "atto",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 320,
+        "filename": "LibreDEIMv2atto.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2atto/resolve/main/LibreDEIMv2atto.pt",
+        "aliases": [
+          "deimv2-atto"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2atto.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "femto",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreDEIMv2femto.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2femto/resolve/main/LibreDEIMv2femto.pt",
+        "aliases": [
+          "deimv2-femto"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2femto.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "pico",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2pico.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2pico/resolve/main/LibreDEIMv2pico.pt",
+        "aliases": [
+          "deimv2-pico"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2pico.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2n.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2n/resolve/main/LibreDEIMv2n.pt",
+        "aliases": [
+          "deimv2-n"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2n.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2s.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2s/resolve/main/LibreDEIMv2s.pt",
+        "aliases": [
+          "deimv2-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2s.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2m.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2m/resolve/main/LibreDEIMv2m.pt",
+        "aliases": [
+          "deimv2-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2l.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2l/resolve/main/LibreDEIMv2l.pt",
+        "aliases": [
+          "deimv2-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2l.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDEIMv2x.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDEIMv2x/resolve/main/LibreDEIMv2x.pt",
+        "aliases": [
+          "deimv2-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDEIMv2x.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "depth_anything": {
     "class": "libreyolo.models.depth_anything.model.LibreDepthAnythingV2",
@@ -134,10 +679,122 @@
       "l": 518,
       "g": 518
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "depth": {
+        "s": 518,
+        "b": 518,
+        "l": 518,
+        "g": 518
+      }
+    },
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "depth_anything-b",
+      "depth_anything-b-depth",
+      "depth_anything-g",
+      "depth_anything-g-depth",
+      "depth_anything-l",
+      "depth_anything-l-depth",
+      "depth_anything-s",
+      "depth_anything-s-depth"
+    ],
+    "downloadable_cli_names": [
+      "depth_anything-s",
+      "depth_anything-s-depth"
+    ],
+    "local_only_cli_names": [
+      "depth_anything-b",
+      "depth_anything-b-depth",
+      "depth_anything-g",
+      "depth_anything-g-depth",
+      "depth_anything-l",
+      "depth_anything-l-depth"
+    ],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDepthAnythingV2s-depth.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDepthAnythingV2s-depth/resolve/main/LibreDepthAnythingV2s-depth.pt",
+        "aliases": [
+          "depth_anything-s",
+          "depth_anything-s-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDepthAnythingV2s-depth.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDepthAnythingV2b-depth.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "depth_anything-b",
+          "depth_anything-b-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDepthAnythingV2b-depth.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDepthAnythingV2l-depth.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "depth_anything-l",
+          "depth_anything-l-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDepthAnythingV2l-depth.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "g",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDepthAnythingV2g-depth.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "depth_anything-g",
+          "depth_anything-g-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDepthAnythingV2g-depth.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "depth_anything3": {
     "class": "libreyolo.models.depth_anything3.model.LibreDepthAnything3",
@@ -151,10 +808,49 @@
     "default_imgsz": {
       "l": 504
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "depth": {
+        "l": 504
+      }
+    },
     "export_override": "blocked",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "depth_anything3-l",
+      "depth_anything3-l-depth"
+    ],
+    "downloadable_cli_names": [
+      "depth_anything3-l",
+      "depth_anything3-l-depth"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "l",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 504,
+        "filename": "LibreDepthAnything3l-depth.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDepthAnything3l-depth/resolve/main/LibreDepthAnything3l-depth.pt",
+        "aliases": [
+          "depth_anything3-l",
+          "depth_anything3-l-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDepthAnything3l-depth.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "dfine": {
     "class": "libreyolo.models.dfine.model.LibreDFINE",
@@ -195,7 +891,219 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "dfine-l",
+      "dfine-l-seg",
+      "dfine-m",
+      "dfine-m-seg",
+      "dfine-n",
+      "dfine-n-seg",
+      "dfine-s",
+      "dfine-s-seg",
+      "dfine-x",
+      "dfine-x-seg"
+    ],
+    "downloadable_cli_names": [
+      "dfine-l",
+      "dfine-l-seg",
+      "dfine-m",
+      "dfine-m-seg",
+      "dfine-n",
+      "dfine-n-seg",
+      "dfine-s",
+      "dfine-s-seg",
+      "dfine-x",
+      "dfine-x-seg"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "n",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEn.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEn/resolve/main/LibreDFINEn.pt",
+        "aliases": [
+          "dfine-n"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEn.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEs/resolve/main/LibreDFINEs.pt",
+        "aliases": [
+          "dfine-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEm/resolve/main/LibreDFINEm.pt",
+        "aliases": [
+          "dfine-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEl/resolve/main/LibreDFINEl.pt",
+        "aliases": [
+          "dfine-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEx/resolve/main/LibreDFINEx.pt",
+        "aliases": [
+          "dfine-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEx.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEn-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEn-seg/resolve/main/LibreDFINEn-seg.pt",
+        "aliases": [
+          "dfine-n-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEn-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEs-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEs-seg/resolve/main/LibreDFINEs-seg.pt",
+        "aliases": [
+          "dfine-s-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEs-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEm-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEm-seg/resolve/main/LibreDFINEm-seg.pt",
+        "aliases": [
+          "dfine-m-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEm-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEl-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEl-seg/resolve/main/LibreDFINEl-seg.pt",
+        "aliases": [
+          "dfine-l-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEl-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreDFINEx-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreDFINEx-seg/resolve/main/LibreDFINEx-seg.pt",
+        "aliases": [
+          "dfine-x-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDFINEx-seg.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "dinov2": {
     "class": "libreyolo.models.dinov2.model.LibreDINOv2",
@@ -217,6 +1125,12 @@
       "l": 518
     },
     "task_sizes": {
+      "semantic": {
+        "n": 518,
+        "s": 518,
+        "m": 518,
+        "l": 518
+      },
       "classify": {
         "n": 224,
         "s": 224,
@@ -226,7 +1140,193 @@
     },
     "export_override": "custom",
     "optional_extra": "rfdetr",
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "dinov2-l",
+      "dinov2-l-cls",
+      "dinov2-l-sem",
+      "dinov2-m",
+      "dinov2-m-cls",
+      "dinov2-m-sem",
+      "dinov2-n",
+      "dinov2-n-cls",
+      "dinov2-n-sem",
+      "dinov2-s",
+      "dinov2-s-cls",
+      "dinov2-s-sem"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "dinov2-l",
+      "dinov2-l-cls",
+      "dinov2-l-sem",
+      "dinov2-m",
+      "dinov2-m-cls",
+      "dinov2-m-sem",
+      "dinov2-n",
+      "dinov2-n-cls",
+      "dinov2-n-sem",
+      "dinov2-s",
+      "dinov2-s-cls",
+      "dinov2-s-sem"
+    ],
+    "artifacts": [
+      {
+        "size": "n",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDINOv2n.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-n",
+          "dinov2-n-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2n.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDINOv2s.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-s",
+          "dinov2-s-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2s.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDINOv2m.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-m",
+          "dinov2-m-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 518,
+        "filename": "LibreDINOv2l.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-l",
+          "dinov2-l-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2l.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreDINOv2n-cls.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-n-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2n-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreDINOv2s-cls.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-s-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2s-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreDINOv2m-cls.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-m-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2m-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreDINOv2l-cls.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "dinov2-l-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreDINOv2l-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "ec": {
     "class": "libreyolo.models.ec.model.LibreEC",
@@ -270,7 +1370,259 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "ec-l",
+      "ec-l-pose",
+      "ec-l-seg",
+      "ec-m",
+      "ec-m-pose",
+      "ec-m-seg",
+      "ec-s",
+      "ec-s-pose",
+      "ec-s-seg",
+      "ec-x",
+      "ec-x-pose",
+      "ec-x-seg"
+    ],
+    "downloadable_cli_names": [
+      "ec-l",
+      "ec-l-pose",
+      "ec-l-seg",
+      "ec-m",
+      "ec-m-pose",
+      "ec-m-seg",
+      "ec-s",
+      "ec-s-pose",
+      "ec-s-seg",
+      "ec-x",
+      "ec-x-pose",
+      "ec-x-seg"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECs/resolve/main/LibreECs.pt",
+        "aliases": [
+          "ec-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECm/resolve/main/LibreECm.pt",
+        "aliases": [
+          "ec-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECl/resolve/main/LibreECl.pt",
+        "aliases": [
+          "ec-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECx/resolve/main/LibreECx.pt",
+        "aliases": [
+          "ec-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECx.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECs-pose.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECs-pose/resolve/main/LibreECs-pose.pt",
+        "aliases": [
+          "ec-s-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECs-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECm-pose.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECm-pose/resolve/main/LibreECm-pose.pt",
+        "aliases": [
+          "ec-m-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECm-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECl-pose.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECl-pose/resolve/main/LibreECl-pose.pt",
+        "aliases": [
+          "ec-l-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECl-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECx-pose.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECx-pose/resolve/main/LibreECx-pose.pt",
+        "aliases": [
+          "ec-x-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECx-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECs-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECs-seg/resolve/main/LibreECs-seg.pt",
+        "aliases": [
+          "ec-s-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECs-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECm-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECm-seg/resolve/main/LibreECm-seg.pt",
+        "aliases": [
+          "ec-m-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECm-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECl-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECl-seg/resolve/main/LibreECl-seg.pt",
+        "aliases": [
+          "ec-l-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECl-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreECx-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreECx-seg/resolve/main/LibreECx-seg.pt",
+        "aliases": [
+          "ec-x-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreECx-seg.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "efficientnetv2": {
     "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
@@ -290,10 +1642,121 @@
       "b2": 260,
       "b3": 300
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "b0": 224,
+        "b1": 240,
+        "b2": 260,
+        "b3": 300
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "efficientnetv2-b0",
+      "efficientnetv2-b0-cls",
+      "efficientnetv2-b1",
+      "efficientnetv2-b1-cls",
+      "efficientnetv2-b2",
+      "efficientnetv2-b2-cls",
+      "efficientnetv2-b3",
+      "efficientnetv2-b3-cls"
+    ],
+    "downloadable_cli_names": [
+      "efficientnetv2-b0",
+      "efficientnetv2-b0-cls",
+      "efficientnetv2-b1",
+      "efficientnetv2-b1-cls",
+      "efficientnetv2-b2",
+      "efficientnetv2-b2-cls",
+      "efficientnetv2-b3",
+      "efficientnetv2-b3-cls"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b0",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreEfficientNetV2b0-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEfficientNetV2b0-cls/resolve/main/LibreEfficientNetV2b0-cls.pt",
+        "aliases": [
+          "efficientnetv2-b0",
+          "efficientnetv2-b0-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEfficientNetV2b0-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b1",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 240,
+        "filename": "LibreEfficientNetV2b1-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEfficientNetV2b1-cls/resolve/main/LibreEfficientNetV2b1-cls.pt",
+        "aliases": [
+          "efficientnetv2-b1",
+          "efficientnetv2-b1-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEfficientNetV2b1-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b2",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 260,
+        "filename": "LibreEfficientNetV2b2-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEfficientNetV2b2-cls/resolve/main/LibreEfficientNetV2b2-cls.pt",
+        "aliases": [
+          "efficientnetv2-b2",
+          "efficientnetv2-b2-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEfficientNetV2b2-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b3",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 300,
+        "filename": "LibreEfficientNetV2b3-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEfficientNetV2b3-cls/resolve/main/LibreEfficientNetV2b3-cls.pt",
+        "aliases": [
+          "efficientnetv2-b3",
+          "efficientnetv2-b3-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEfficientNetV2b3-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "eomt": {
     "class": "libreyolo.models.eomt.model.LibreEoMT",
@@ -331,8 +1794,228 @@
       }
     },
     "export_override": "custom",
-    "optional_extra": null,
-    "available": true
+    "optional_extra": "eomt",
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "eomt-b",
+      "eomt-b-panoptic",
+      "eomt-b-seg",
+      "eomt-b-sem",
+      "eomt-l",
+      "eomt-l-panoptic",
+      "eomt-l-seg",
+      "eomt-l-sem",
+      "eomt-s",
+      "eomt-s-panoptic",
+      "eomt-s-seg",
+      "eomt-s-sem"
+    ],
+    "downloadable_cli_names": [
+      "eomt-b-panoptic",
+      "eomt-l",
+      "eomt-l-panoptic",
+      "eomt-l-seg",
+      "eomt-l-sem",
+      "eomt-s-panoptic"
+    ],
+    "local_only_cli_names": [
+      "eomt-b",
+      "eomt-b-seg",
+      "eomt-b-sem",
+      "eomt-s",
+      "eomt-s-seg",
+      "eomt-s-sem"
+    ],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreEoMTs-sem.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "eomt-s",
+          "eomt-s-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTs-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreEoMTb-sem.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "eomt-b",
+          "eomt-b-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTb-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreEoMTl-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTl-sem/resolve/main/LibreEoMTl-sem.pt",
+        "aliases": [
+          "eomt-l",
+          "eomt-l-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTl-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTs-seg.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "eomt-s-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTs-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTb-seg.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "eomt-b-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTb-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTl-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTl-seg/resolve/main/LibreEoMTl-seg.pt",
+        "aliases": [
+          "eomt-l-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTl-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "panoptic",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTs-panoptic.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTs-panoptic/resolve/main/LibreEoMTs-panoptic.pt",
+        "aliases": [
+          "eomt-s-panoptic"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTs-panoptic.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "panoptic",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTb-panoptic.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTb-panoptic/resolve/main/LibreEoMTb-panoptic.pt",
+        "aliases": [
+          "eomt-b-panoptic"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTb-panoptic.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "panoptic",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreEoMTl-panoptic.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTl-panoptic/resolve/main/LibreEoMTl-panoptic.pt",
+        "aliases": [
+          "eomt-l-panoptic"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTl-panoptic.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": "1280",
+        "imgsz": 1280,
+        "filename": "LibreEoMTl-seg-1280.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreEoMTl-seg-1280/resolve/main/LibreEoMTl-seg-1280.pt",
+        "aliases": [],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreEoMTl-seg-1280.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "florence2": {
     "class": "libreyolo.models.vlm.florence2.LibreFlorence2",
@@ -348,10 +2031,65 @@
       "base": 768,
       "large": 768
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "base": 768,
+        "large": 768
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "base",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 768,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/florence-community/Florence-2-base",
+        "aliases": [
+          "florence-2",
+          "florence2",
+          "florence-2-base"
+        ],
+        "factory_model": "florence-2-base",
+        "invocation": "LibreVLM('florence-2-base')",
+        "repository": "florence-community/Florence-2-base",
+        "revision": null
+      },
+      {
+        "size": "large",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 768,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/florence-community/Florence-2-large",
+        "aliases": [
+          "florence-2-large"
+        ],
+        "factory_model": "florence-2-large",
+        "invocation": "LibreVLM('florence-2-large')",
+        "repository": "florence-community/Florence-2-large",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "fomo": {
     "class": "libreyolo.models.fomo.model.LibreFOMO",
@@ -369,10 +2107,97 @@
       "m": 192,
       "l": 224
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "point": {
+        "s": 96,
+        "m": 192,
+        "l": 224
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "fomo-l",
+      "fomo-l-point",
+      "fomo-m",
+      "fomo-m-point",
+      "fomo-s",
+      "fomo-s-point"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "fomo-l",
+      "fomo-l-point",
+      "fomo-m",
+      "fomo-m-point",
+      "fomo-s",
+      "fomo-s-point"
+    ],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "point",
+        "variant": null,
+        "imgsz": 96,
+        "filename": "LibreFOMOs-point.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "fomo-s",
+          "fomo-s-point"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreFOMOs-point.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "point",
+        "variant": null,
+        "imgsz": 192,
+        "filename": "LibreFOMOm-point.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "fomo-m",
+          "fomo-m-point"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreFOMOm-point.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "point",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreFOMOl-point.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "fomo-l",
+          "fomo-l-point"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreFOMOl-point.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "grounding_dino": {
     "class": "libreyolo.models.openvocab.grounding_dino.LibreGroundingDINO",
@@ -388,10 +2213,71 @@
       "t": 800,
       "b": 800
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 800,
+        "b": 800
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "factory": "openvocab",
+    "public_entrypoint": "LibreOpenVocab",
+    "factory_default_model": "grounding-dino-tiny",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 800,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreGroundingDINOt",
+        "aliases": [
+          "grounding-dino",
+          "groundingdino",
+          "grounding-dino-tiny",
+          "groundingdino-tiny",
+          "grounding-dino-t",
+          "groundingdino-t"
+        ],
+        "factory_model": "grounding-dino-tiny",
+        "invocation": "LibreOpenVocab('grounding-dino-tiny')",
+        "repository": "LibreYOLO/LibreGroundingDINOt",
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 800,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreGroundingDINOb",
+        "aliases": [
+          "grounding-dino-base",
+          "groundingdino-base",
+          "grounding-dino-b",
+          "groundingdino-b"
+        ],
+        "factory_model": "grounding-dino-base",
+        "invocation": "LibreOpenVocab('grounding-dino-base')",
+        "repository": "LibreYOLO/LibreGroundingDINOb",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "internvl3": {
     "class": "libreyolo.models.vlm.internvl3.LibreInternVL3",
@@ -409,10 +2295,83 @@
       "2b": 448,
       "8b": 448
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "1b": 448,
+        "2b": 448,
+        "8b": 448
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "1b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 448,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/OpenGVLab/InternVL3-1B-hf",
+        "aliases": [
+          "internvl3-1b"
+        ],
+        "factory_model": "internvl3-1b",
+        "invocation": "LibreVLM('internvl3-1b')",
+        "repository": "OpenGVLab/InternVL3-1B-hf",
+        "revision": null
+      },
+      {
+        "size": "2b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 448,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/OpenGVLab/InternVL3-2B-hf",
+        "aliases": [
+          "internvl3",
+          "internvl3-2b"
+        ],
+        "factory_model": "internvl3-2b",
+        "invocation": "LibreVLM('internvl3-2b')",
+        "repository": "OpenGVLab/InternVL3-2B-hf",
+        "revision": null
+      },
+      {
+        "size": "8b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 448,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/OpenGVLab/InternVL3-8B-hf",
+        "aliases": [
+          "internvl3-8b"
+        ],
+        "factory_model": "internvl3-8b",
+        "invocation": "LibreVLM('internvl3-8b')",
+        "repository": "OpenGVLab/InternVL3-8B-hf",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "kosmos2": {
     "class": "libreyolo.models.vlm.kosmos2.LibreKosmos2",
@@ -426,10 +2385,45 @@
     "default_imgsz": {
       "224": 224
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "224": 224
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "224",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 224,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/microsoft/kosmos-2-patch14-224",
+        "aliases": [
+          "kosmos-2",
+          "kosmos2"
+        ],
+        "factory_model": "kosmos-2",
+        "invocation": "LibreVLM('kosmos-2')",
+        "repository": "microsoft/kosmos-2-patch14-224",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "l2cs": {
     "class": "libreyolo.models.l2cs.model.LibreL2CS",
@@ -451,10 +2445,145 @@
       "r101": 448,
       "r152": 448
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "gaze": {
+        "r18": 448,
+        "r34": 448,
+        "r50": 448,
+        "r101": 448,
+        "r152": 448
+      }
+    },
     "export_override": "custom",
-    "optional_extra": null,
-    "available": true
+    "optional_extra": "gaze",
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "l2cs-r101",
+      "l2cs-r101-gaze",
+      "l2cs-r152",
+      "l2cs-r152-gaze",
+      "l2cs-r18",
+      "l2cs-r18-gaze",
+      "l2cs-r34",
+      "l2cs-r34-gaze",
+      "l2cs-r50",
+      "l2cs-r50-gaze"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "l2cs-r101",
+      "l2cs-r101-gaze",
+      "l2cs-r152",
+      "l2cs-r152-gaze",
+      "l2cs-r18",
+      "l2cs-r18-gaze",
+      "l2cs-r34",
+      "l2cs-r34-gaze",
+      "l2cs-r50",
+      "l2cs-r50-gaze"
+    ],
+    "artifacts": [
+      {
+        "size": "r18",
+        "task": "gaze",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreL2CSr18.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "l2cs-r18",
+          "l2cs-r18-gaze"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreL2CSr18.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r34",
+        "task": "gaze",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreL2CSr34.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "l2cs-r34",
+          "l2cs-r34-gaze"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreL2CSr34.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r50",
+        "task": "gaze",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreL2CSr50.pt",
+        "publication": "direct",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "l2cs-r50",
+          "l2cs-r50-gaze"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreL2CSr50.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r101",
+        "task": "gaze",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreL2CSr101.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "l2cs-r101",
+          "l2cs-r101-gaze"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreL2CSr101.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r152",
+        "task": "gaze",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreL2CSr152.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "l2cs-r152",
+          "l2cs-r152-gaze"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreL2CSr152.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "lfm2vl": {
     "class": "libreyolo.models.vlm.lfm2.LibreLFM2VL",
@@ -470,10 +2599,64 @@
       "450m": 512,
       "1.6b": 512
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "450m": 512,
+        "1.6b": 512
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "450m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 512,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LiquidAI/LFM2.5-VL-450M",
+        "aliases": [
+          "lfm2-vl",
+          "lfm2-vl-450m"
+        ],
+        "factory_model": "lfm2-vl-450m",
+        "invocation": "LibreVLM('lfm2-vl-450m')",
+        "repository": "LiquidAI/LFM2.5-VL-450M",
+        "revision": null
+      },
+      {
+        "size": "1.6b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 512,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B",
+        "aliases": [
+          "lfm2-vl-1.6b"
+        ],
+        "factory_model": "lfm2-vl-1.6b",
+        "invocation": "LibreVLM('lfm2-vl-1.6b')",
+        "repository": "LiquidAI/LFM2.5-VL-1.6B",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "locateanything": {
     "class": "libreyolo.models.vlm.locateanything.LibreLocateAnything",
@@ -488,10 +2671,74 @@
     "default_imgsz": {
       "3b": 2500
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "3b": 2500
+      },
+      "point": {
+        "3b": 2500
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": false,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "3b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 2500,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/nvidia/LocateAnything-3B",
+        "aliases": [
+          "locate-anything",
+          "locateanything",
+          "locate-anything-3b",
+          "locateanything-3b"
+        ],
+        "factory_model": "locate-anything-3b",
+        "invocation": "LibreVLM('locate-anything-3b')",
+        "repository": "nvidia/LocateAnything-3B",
+        "revision": "c32291ca5e996f5a7a485845b4f57a233936bba0"
+      },
+      {
+        "size": "3b",
+        "task": "point",
+        "variant": null,
+        "imgsz": 2500,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/nvidia/LocateAnything-3B",
+        "aliases": [
+          "locate-anything",
+          "locateanything",
+          "locate-anything-3b",
+          "locateanything-3b"
+        ],
+        "factory_model": "locate-anything-3b",
+        "invocation": "LibreVLM('locate-anything-3b')",
+        "repository": "nvidia/LocateAnything-3B",
+        "revision": "c32291ca5e996f5a7a485845b4f57a233936bba0"
+      }
+    ],
+    "dependencies": [
+      "transformers",
+      "decord",
+      "lmdb",
+      "peft"
+    ]
   },
   "mobilenetv4": {
     "class": "libreyolo.models.mobilenetv4.model.LibreMobileNetV4",
@@ -509,10 +2756,97 @@
       "m": 224,
       "l": 256
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "s": 224,
+        "m": 224,
+        "l": 256
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "mobilenetv4-l",
+      "mobilenetv4-l-cls",
+      "mobilenetv4-m",
+      "mobilenetv4-m-cls",
+      "mobilenetv4-s",
+      "mobilenetv4-s-cls"
+    ],
+    "downloadable_cli_names": [
+      "mobilenetv4-l",
+      "mobilenetv4-l-cls",
+      "mobilenetv4-m",
+      "mobilenetv4-m-cls",
+      "mobilenetv4-s",
+      "mobilenetv4-s-cls"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreMobileNetV4s-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreMobileNetV4s-cls/resolve/main/LibreMobileNetV4s-cls.pt",
+        "aliases": [
+          "mobilenetv4-s",
+          "mobilenetv4-s-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreMobileNetV4s-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreMobileNetV4m-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreMobileNetV4m-cls/resolve/main/LibreMobileNetV4m-cls.pt",
+        "aliases": [
+          "mobilenetv4-m",
+          "mobilenetv4-m-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreMobileNetV4m-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 256,
+        "filename": "LibreMobileNetV4l-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreMobileNetV4l-cls/resolve/main/LibreMobileNetV4l-cls.pt",
+        "aliases": [
+          "mobilenetv4-l",
+          "mobilenetv4-l-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreMobileNetV4l-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "mobilesam": {
     "class": "libreyolo.models.mobilesam.model.LibreMobileSAM",
@@ -526,10 +2860,49 @@
     "default_imgsz": {
       "tiny": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "segment": {
+        "tiny": 1024
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "factory": "sam",
+    "public_entrypoint": "LibreSAM",
+    "factory_default_model": "base",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "tiny",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreMobileSAM",
+        "aliases": [
+          "mobilesam",
+          "mobilesam-tiny",
+          "mobilesam_t",
+          "mobile-sam",
+          "mobile-sam-tiny"
+        ],
+        "factory_model": "mobilesam",
+        "invocation": "LibreSAM('mobilesam')",
+        "repository": "LibreYOLO/LibreMobileSAM",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers",
+      "huggingface_hub"
+    ]
   },
   "nafnet": {
     "class": "libreyolo.models.nafnet.model.LibreNAFNet",
@@ -545,10 +2918,89 @@
       "s": 256,
       "l": 256
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "restore": {
+        "s": 256,
+        "l": 256
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "nafnet-l",
+      "nafnet-l-restore",
+      "nafnet-s",
+      "nafnet-s-restore"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "nafnet-l",
+      "nafnet-l-restore",
+      "nafnet-s",
+      "nafnet-s-restore"
+    ],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 256,
+        "filename": "LibreNAFNets-restore.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "nafnet-s",
+          "nafnet-s-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreNAFNets-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 256,
+        "filename": "LibreNAFNetl-restore.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "nafnet-l",
+          "nafnet-l-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreNAFNetl-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "restore",
+        "variant": "sidd",
+        "imgsz": 256,
+        "filename": "LibreNAFNetl-restore-sidd.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreNAFNetl-restore-sidd/resolve/main/LibreNAFNetl-restore-sidd.pt",
+        "aliases": [],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreNAFNetl-restore-sidd.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "owlv2": {
     "class": "libreyolo.models.openvocab.owlv2.LibreOWLv2",
@@ -564,10 +3016,71 @@
       "b16": 960,
       "l14": 1008
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "b16": 960,
+        "l14": 1008
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "openvocab",
-    "available": true
+    "available": true,
+    "factory": "openvocab",
+    "public_entrypoint": "LibreOpenVocab",
+    "factory_default_model": "grounding-dino-tiny",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b16",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 960,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreOWLv2b16",
+        "aliases": [
+          "owlv2",
+          "owl-v2",
+          "owlv2-base",
+          "owl-v2-base",
+          "owlv2-b16",
+          "owl-v2-b16"
+        ],
+        "factory_model": "owlv2-b16",
+        "invocation": "LibreOpenVocab('owlv2-b16')",
+        "repository": "LibreYOLO/LibreOWLv2b16",
+        "revision": null
+      },
+      {
+        "size": "l14",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 1008,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreOWLv2l14",
+        "aliases": [
+          "owlv2-large",
+          "owl-v2-large",
+          "owlv2-l14",
+          "owl-v2-l14"
+        ],
+        "factory_model": "owlv2-l14",
+        "invocation": "LibreOpenVocab('owlv2-l14')",
+        "repository": "LibreYOLO/LibreOWLv2l14",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "picodet": {
     "class": "libreyolo.models.picodet.model.LibrePICODET",
@@ -585,10 +3098,88 @@
       "m": 416,
       "l": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "s": 320,
+        "m": 416,
+        "l": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "picodet-l",
+      "picodet-m",
+      "picodet-s"
+    ],
+    "downloadable_cli_names": [
+      "picodet-l",
+      "picodet-m",
+      "picodet-s"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 320,
+        "filename": "LibrePICODETs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePICODETs/resolve/main/LibrePICODETs.pt",
+        "aliases": [
+          "picodet-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePICODETs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibrePICODETm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePICODETm/resolve/main/LibrePICODETm.pt",
+        "aliases": [
+          "picodet-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePICODETm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibrePICODETl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePICODETl/resolve/main/LibrePICODETl.pt",
+        "aliases": [
+          "picodet-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePICODETl.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "picosam3": {
     "class": "libreyolo.models.picosam3.model.LibrePicoSAM3",
@@ -602,10 +3193,47 @@
     "default_imgsz": {
       "pico": 96
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "segment": {
+        "pico": 96
+      }
+    },
     "export_override": "custom",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "factory": "sam",
+    "public_entrypoint": "LibreSAM",
+    "factory_default_model": "base",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "pico",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 96,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePicoSAM3",
+        "aliases": [
+          "picosam3",
+          "picosam3-pico",
+          "picosam3_pico",
+          "pico-sam3"
+        ],
+        "factory_model": "picosam3",
+        "invocation": "LibreSAM('picosam3')",
+        "repository": "LibreYOLO/LibrePicoSAM3",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "huggingface_hub"
+    ]
   },
   "pidnet": {
     "class": "libreyolo.models.pidnet.model.LibrePIDNet",
@@ -623,10 +3251,97 @@
       "m": 1024,
       "l": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "semantic": {
+        "s": 1024,
+        "m": 1024,
+        "l": 1024
+      }
+    },
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "pidnet-l",
+      "pidnet-l-sem",
+      "pidnet-m",
+      "pidnet-m-sem",
+      "pidnet-s",
+      "pidnet-s-sem"
+    ],
+    "downloadable_cli_names": [
+      "pidnet-l",
+      "pidnet-l-sem",
+      "pidnet-m",
+      "pidnet-m-sem",
+      "pidnet-s",
+      "pidnet-s-sem"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": "LibrePIDNets-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePIDNets-sem/resolve/main/LibrePIDNets-sem.pt",
+        "aliases": [
+          "pidnet-s",
+          "pidnet-s-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePIDNets-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": "LibrePIDNetm-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePIDNetm-sem/resolve/main/LibrePIDNetm-sem.pt",
+        "aliases": [
+          "pidnet-m",
+          "pidnet-m-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePIDNetm-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": "LibrePIDNetl-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePIDNetl-sem/resolve/main/LibrePIDNetl-sem.pt",
+        "aliases": [
+          "pidnet-l",
+          "pidnet-l-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePIDNetl-sem.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "ppocr": {
     "class": "libreyolo.models.ppocr.model.LibrePPOCR",
@@ -642,10 +3357,73 @@
       "t": 960,
       "l": 960
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "ocr": {
+        "t": 960,
+        "l": 960
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "ppocr-l",
+      "ppocr-l-ocr",
+      "ppocr-t",
+      "ppocr-t-ocr"
+    ],
+    "downloadable_cli_names": [
+      "ppocr-l",
+      "ppocr-l-ocr",
+      "ppocr-t",
+      "ppocr-t-ocr"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "ocr",
+        "variant": null,
+        "imgsz": 960,
+        "filename": "LibrePPOCRt-ocr.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePPOCRt-ocr/resolve/main/LibrePPOCRt-ocr.pt",
+        "aliases": [
+          "ppocr-t",
+          "ppocr-t-ocr"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePPOCRt-ocr.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "ocr",
+        "variant": null,
+        "imgsz": 960,
+        "filename": "LibrePPOCRl-ocr.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibrePPOCRl-ocr/resolve/main/LibrePPOCRl-ocr.pt",
+        "aliases": [
+          "ppocr-l",
+          "ppocr-l-ocr"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibrePPOCRl-ocr.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "qwen3vl": {
     "class": "libreyolo.models.vlm.qwen3vl.LibreQwen3VL",
@@ -663,10 +3441,83 @@
       "4b": 1024,
       "8b": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "2b": 1024,
+        "4b": 1024,
+        "8b": 1024
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": true,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "2b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct",
+        "aliases": [
+          "qwen3-vl-2b"
+        ],
+        "factory_model": "qwen3-vl-2b",
+        "invocation": "LibreVLM('qwen3-vl-2b')",
+        "repository": "Qwen/Qwen3-VL-2B-Instruct",
+        "revision": null
+      },
+      {
+        "size": "4b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct",
+        "aliases": [
+          "qwen3-vl",
+          "qwen3-vl-4b"
+        ],
+        "factory_model": "qwen3-vl-4b",
+        "invocation": "LibreVLM('qwen3-vl-4b')",
+        "repository": "Qwen/Qwen3-VL-4B-Instruct",
+        "revision": null
+      },
+      {
+        "size": "8b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
+        "aliases": [
+          "qwen3-vl-8b"
+        ],
+        "factory_model": "qwen3-vl-8b",
+        "invocation": "LibreVLM('qwen3-vl-8b')",
+        "repository": "Qwen/Qwen3-VL-8B-Instruct",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "realesrgan": {
     "class": "libreyolo.models.realesrgan.model.LibreRealESRGAN",
@@ -684,10 +3535,97 @@
       "x2": 64,
       "x4t": 64
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "restore": {
+        "x4": 64,
+        "x2": 64,
+        "x4t": 64
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "realesrgan-x2",
+      "realesrgan-x2-restore",
+      "realesrgan-x4",
+      "realesrgan-x4-restore",
+      "realesrgan-x4t",
+      "realesrgan-x4t-restore"
+    ],
+    "downloadable_cli_names": [
+      "realesrgan-x2",
+      "realesrgan-x2-restore",
+      "realesrgan-x4",
+      "realesrgan-x4-restore",
+      "realesrgan-x4t",
+      "realesrgan-x4t-restore"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "x4",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreRealESRGANx4-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRealESRGANx4-restore/resolve/main/LibreRealESRGANx4-restore.pt",
+        "aliases": [
+          "realesrgan-x4",
+          "realesrgan-x4-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRealESRGANx4-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x2",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreRealESRGANx2-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRealESRGANx2-restore/resolve/main/LibreRealESRGANx2-restore.pt",
+        "aliases": [
+          "realesrgan-x2",
+          "realesrgan-x2-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRealESRGANx2-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x4t",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreRealESRGANx4t-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRealESRGANx4t-restore/resolve/main/LibreRealESRGANx4t-restore.pt",
+        "aliases": [
+          "realesrgan-x4t",
+          "realesrgan-x4t-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRealESRGANx4t-restore.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "resnet": {
     "class": "libreyolo.models.resnet.model.LibreResNet",
@@ -707,10 +3645,121 @@
       "50": 224,
       "101": 224
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "18": 224,
+        "34": 224,
+        "50": 224,
+        "101": 224
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "resnet-101",
+      "resnet-101-cls",
+      "resnet-18",
+      "resnet-18-cls",
+      "resnet-34",
+      "resnet-34-cls",
+      "resnet-50",
+      "resnet-50-cls"
+    ],
+    "downloadable_cli_names": [
+      "resnet-101",
+      "resnet-101-cls",
+      "resnet-18",
+      "resnet-18-cls",
+      "resnet-34",
+      "resnet-34-cls",
+      "resnet-50",
+      "resnet-50-cls"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "18",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreResNet18-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreResNet18-cls/resolve/main/LibreResNet18-cls.pt",
+        "aliases": [
+          "resnet-18",
+          "resnet-18-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreResNet18-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "34",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreResNet34-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreResNet34-cls/resolve/main/LibreResNet34-cls.pt",
+        "aliases": [
+          "resnet-34",
+          "resnet-34-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreResNet34-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "50",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreResNet50-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreResNet50-cls/resolve/main/LibreResNet50-cls.pt",
+        "aliases": [
+          "resnet-50",
+          "resnet-50-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreResNet50-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "101",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 224,
+        "filename": "LibreResNet101-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreResNet101-cls/resolve/main/LibreResNet101-cls.pt",
+        "aliases": [
+          "resnet-101",
+          "resnet-101-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreResNet101-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "rfdetr": {
     "class": "libreyolo.models.rfdetr.model.LibreRFDETR",
@@ -762,7 +3811,321 @@
     },
     "export_override": "custom",
     "optional_extra": "rfdetr",
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "rfdetr-l",
+      "rfdetr-l-obb",
+      "rfdetr-l-seg",
+      "rfdetr-m",
+      "rfdetr-m-obb",
+      "rfdetr-m-seg",
+      "rfdetr-n",
+      "rfdetr-n-obb",
+      "rfdetr-n-seg",
+      "rfdetr-s",
+      "rfdetr-s-obb",
+      "rfdetr-s-seg",
+      "rfdetr-x-pose",
+      "rfdetr-x-seg",
+      "rfdetr-xx-seg"
+    ],
+    "downloadable_cli_names": [
+      "rfdetr-l",
+      "rfdetr-l-obb",
+      "rfdetr-l-seg",
+      "rfdetr-m",
+      "rfdetr-m-obb",
+      "rfdetr-m-seg",
+      "rfdetr-n",
+      "rfdetr-n-obb",
+      "rfdetr-n-seg",
+      "rfdetr-s",
+      "rfdetr-s-obb",
+      "rfdetr-s-seg",
+      "rfdetr-x-pose",
+      "rfdetr-x-seg",
+      "rfdetr-xx-seg"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "n",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreRFDETRn.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRn/resolve/main/LibreRFDETRn.pt",
+        "aliases": [
+          "rfdetr-n"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRn.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreRFDETRs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRs/resolve/main/LibreRFDETRs.pt",
+        "aliases": [
+          "rfdetr-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 576,
+        "filename": "LibreRFDETRm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRm/resolve/main/LibreRFDETRm.pt",
+        "aliases": [
+          "rfdetr-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 704,
+        "filename": "LibreRFDETRl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRl/resolve/main/LibreRFDETRl.pt",
+        "aliases": [
+          "rfdetr-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 312,
+        "filename": "LibreRFDETRn-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRn-seg/resolve/main/LibreRFDETRn-seg.pt",
+        "aliases": [
+          "rfdetr-n-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRn-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreRFDETRs-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRs-seg/resolve/main/LibreRFDETRs-seg.pt",
+        "aliases": [
+          "rfdetr-s-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRs-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 432,
+        "filename": "LibreRFDETRm-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRm-seg/resolve/main/LibreRFDETRm-seg.pt",
+        "aliases": [
+          "rfdetr-m-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRm-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 504,
+        "filename": "LibreRFDETRl-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRl-seg/resolve/main/LibreRFDETRl-seg.pt",
+        "aliases": [
+          "rfdetr-l-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRl-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 624,
+        "filename": "LibreRFDETRx-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRx-seg/resolve/main/LibreRFDETRx-seg.pt",
+        "aliases": [
+          "rfdetr-x-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRx-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "xx",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 768,
+        "filename": "LibreRFDETRxx-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRxx-seg/resolve/main/LibreRFDETRxx-seg.pt",
+        "aliases": [
+          "rfdetr-xx-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRxx-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 576,
+        "filename": "LibreRFDETRx-pose.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRx-pose/resolve/main/LibreRFDETRx-pose.pt",
+        "aliases": [
+          "rfdetr-x-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRx-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "obb",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreRFDETRn-obb.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRn-obb/resolve/main/LibreRFDETRn-obb.pt",
+        "aliases": [
+          "rfdetr-n-obb"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRn-obb.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "obb",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreRFDETRs-obb.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRs-obb/resolve/main/LibreRFDETRs-obb.pt",
+        "aliases": [
+          "rfdetr-s-obb"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRs-obb.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "obb",
+        "variant": null,
+        "imgsz": 576,
+        "filename": "LibreRFDETRm-obb.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRm-obb/resolve/main/LibreRFDETRm-obb.pt",
+        "aliases": [
+          "rfdetr-m-obb"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRm-obb.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "obb",
+        "variant": null,
+        "imgsz": 704,
+        "filename": "LibreRFDETRl-obb.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRFDETRl-obb/resolve/main/LibreRFDETRl-obb.pt",
+        "aliases": [
+          "rfdetr-l-obb"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRFDETRl-obb.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "rtdetr": {
     "class": "libreyolo.models.rtdetr.model.LibreRTDETR",
@@ -788,10 +4151,172 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "r18": 640,
+        "r34": 640,
+        "r50": 640,
+        "r50m": 640,
+        "r101": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "rtdetr-l",
+      "rtdetr-r101",
+      "rtdetr-r18",
+      "rtdetr-r34",
+      "rtdetr-r50",
+      "rtdetr-r50m",
+      "rtdetr-x"
+    ],
+    "downloadable_cli_names": [
+      "rtdetr-l",
+      "rtdetr-r101",
+      "rtdetr-r18",
+      "rtdetr-r34",
+      "rtdetr-r50",
+      "rtdetr-r50m",
+      "rtdetr-x"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "r18",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRr18.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRr18/resolve/main/LibreRTDETRr18.pt",
+        "aliases": [
+          "rtdetr-r18"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRr18.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r34",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRr34.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRr34/resolve/main/LibreRTDETRr34.pt",
+        "aliases": [
+          "rtdetr-r34"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRr34.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r50",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRr50.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRr50/resolve/main/LibreRTDETRr50.pt",
+        "aliases": [
+          "rtdetr-r50"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRr50.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r50m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRr50m.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRr50m/resolve/main/LibreRTDETRr50m.pt",
+        "aliases": [
+          "rtdetr-r50m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRr50m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r101",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRr101.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRr101/resolve/main/LibreRTDETRr101.pt",
+        "aliases": [
+          "rtdetr-r101"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRr101.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRl/resolve/main/LibreRTDETRl.pt",
+        "aliases": [
+          "rtdetr-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRx/resolve/main/LibreRTDETRx.pt",
+        "aliases": [
+          "rtdetr-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRx.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "rtdetrv2": {
     "class": "libreyolo.models.rtdetrv2.model.LibreRTDETRv2",
@@ -813,10 +4338,130 @@
       "r50m": 640,
       "r101": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "r18": 640,
+        "r34": 640,
+        "r50": 640,
+        "r50m": 640,
+        "r101": 640
+      }
+    },
     "export_override": "custom",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "rtdetrv2-r101",
+      "rtdetrv2-r18",
+      "rtdetrv2-r34",
+      "rtdetrv2-r50",
+      "rtdetrv2-r50m"
+    ],
+    "downloadable_cli_names": [
+      "rtdetrv2-r101",
+      "rtdetrv2-r18",
+      "rtdetrv2-r34",
+      "rtdetrv2-r50",
+      "rtdetrv2-r50m"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "r18",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv2r18.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv2r18/resolve/main/LibreRTDETRv2r18.pt",
+        "aliases": [
+          "rtdetrv2-r18"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv2r18.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r34",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv2r34.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv2r34/resolve/main/LibreRTDETRv2r34.pt",
+        "aliases": [
+          "rtdetrv2-r34"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv2r34.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r50",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv2r50.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv2r50/resolve/main/LibreRTDETRv2r50.pt",
+        "aliases": [
+          "rtdetrv2-r50"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv2r50.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r50m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv2r50m.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv2r50m/resolve/main/LibreRTDETRv2r50m.pt",
+        "aliases": [
+          "rtdetrv2-r50m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv2r50m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "r101",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv2r101.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv2r101/resolve/main/LibreRTDETRv2r101.pt",
+        "aliases": [
+          "rtdetrv2-r101"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv2r101.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "rtdetrv4": {
     "class": "libreyolo.models.rtdetrv4.model.LibreRTDETRv4",
@@ -836,10 +4481,109 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "rtdetrv4-l",
+      "rtdetrv4-m",
+      "rtdetrv4-s",
+      "rtdetrv4-x"
+    ],
+    "downloadable_cli_names": [
+      "rtdetrv4-l",
+      "rtdetrv4-m",
+      "rtdetrv4-s",
+      "rtdetrv4-x"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv4s.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv4s/resolve/main/LibreRTDETRv4s.pt",
+        "aliases": [
+          "rtdetrv4-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv4s.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv4m.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv4m/resolve/main/LibreRTDETRv4m.pt",
+        "aliases": [
+          "rtdetrv4-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv4m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv4l.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv4l/resolve/main/LibreRTDETRv4l.pt",
+        "aliases": [
+          "rtdetrv4-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv4l.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTDETRv4x.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTDETRv4x/resolve/main/LibreRTDETRv4x.pt",
+        "aliases": [
+          "rtdetrv4-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTDETRv4x.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "rtmdet": {
     "class": "libreyolo.models.rtmdet.model.LibreRTMDet",
@@ -880,7 +4624,219 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "rtmdet-l",
+      "rtmdet-l-seg",
+      "rtmdet-m",
+      "rtmdet-m-seg",
+      "rtmdet-s",
+      "rtmdet-s-seg",
+      "rtmdet-t",
+      "rtmdet-t-seg",
+      "rtmdet-x",
+      "rtmdet-x-seg"
+    ],
+    "downloadable_cli_names": [
+      "rtmdet-l",
+      "rtmdet-l-seg",
+      "rtmdet-m",
+      "rtmdet-m-seg",
+      "rtmdet-s",
+      "rtmdet-s-seg",
+      "rtmdet-t",
+      "rtmdet-t-seg",
+      "rtmdet-x",
+      "rtmdet-x-seg"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDett.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDett/resolve/main/LibreRTMDett.pt",
+        "aliases": [
+          "rtmdet-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDett.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDets.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDets/resolve/main/LibreRTMDets.pt",
+        "aliases": [
+          "rtmdet-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDets.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetm/resolve/main/LibreRTMDetm.pt",
+        "aliases": [
+          "rtmdet-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetl/resolve/main/LibreRTMDetl.pt",
+        "aliases": [
+          "rtmdet-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetx/resolve/main/LibreRTMDetx.pt",
+        "aliases": [
+          "rtmdet-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetx.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "t",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDett-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDett-seg/resolve/main/LibreRTMDett-seg.pt",
+        "aliases": [
+          "rtmdet-t-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDett-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDets-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDets-seg/resolve/main/LibreRTMDets-seg.pt",
+        "aliases": [
+          "rtmdet-s-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDets-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetm-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetm-seg/resolve/main/LibreRTMDetm-seg.pt",
+        "aliases": [
+          "rtmdet-m-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetm-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetl-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetl-seg/resolve/main/LibreRTMDetl-seg.pt",
+        "aliases": [
+          "rtmdet-l-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetl-seg.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreRTMDetx-seg.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreRTMDetx-seg/resolve/main/LibreRTMDetx-seg.pt",
+        "aliases": [
+          "rtmdet-x-seg"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreRTMDetx-seg.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "sam": {
     "class": "libreyolo.models.sam.model.LibreSAM1",
@@ -898,10 +4854,91 @@
       "large": 1024,
       "huge": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "segment": {
+        "base": 1024,
+        "large": 1024,
+        "huge": 1024
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "factory": "sam",
+    "public_entrypoint": "LibreSAM",
+    "factory_default_model": "base",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "base",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/facebook/sam-vit-base",
+        "aliases": [
+          "base",
+          "b",
+          "sam-base",
+          "sam_b"
+        ],
+        "factory_model": "base",
+        "invocation": "LibreSAM('base')",
+        "repository": "facebook/sam-vit-base",
+        "revision": null
+      },
+      {
+        "size": "large",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/facebook/sam-vit-large",
+        "aliases": [
+          "large",
+          "l",
+          "sam-large",
+          "sam_l"
+        ],
+        "factory_model": "large",
+        "invocation": "LibreSAM('large')",
+        "repository": "facebook/sam-vit-large",
+        "revision": null
+      },
+      {
+        "size": "huge",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/facebook/sam-vit-huge",
+        "aliases": [
+          "huge",
+          "h",
+          "sam-huge",
+          "sam_h"
+        ],
+        "factory_model": "huge",
+        "invocation": "LibreSAM('huge')",
+        "repository": "facebook/sam-vit-huge",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "sam2": {
     "class": "libreyolo.models.sam.sam2.LibreSAM2",
@@ -921,10 +4958,110 @@
       "base-plus": 1024,
       "large": 1024
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "segment": {
+        "tiny": 1024,
+        "small": 1024,
+        "base-plus": 1024,
+        "large": 1024
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "factory": "sam",
+    "public_entrypoint": "LibreSAM",
+    "factory_default_model": "base",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "tiny",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSAM2tiny",
+        "aliases": [
+          "sam2-tiny",
+          "sam2-t",
+          "sam2_t"
+        ],
+        "factory_model": "sam2-tiny",
+        "invocation": "LibreSAM('sam2-tiny')",
+        "repository": "LibreYOLO/LibreSAM2tiny",
+        "revision": null
+      },
+      {
+        "size": "small",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSAM2small",
+        "aliases": [
+          "sam2-small",
+          "sam2-s",
+          "sam2_s"
+        ],
+        "factory_model": "sam2-small",
+        "invocation": "LibreSAM('sam2-small')",
+        "repository": "LibreYOLO/LibreSAM2small",
+        "revision": null
+      },
+      {
+        "size": "base-plus",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSAM2base-plus",
+        "aliases": [
+          "sam2-base-plus",
+          "sam2-baseplus",
+          "sam2-bp",
+          "sam2_bp"
+        ],
+        "factory_model": "sam2-base-plus",
+        "invocation": "LibreSAM('sam2-base-plus')",
+        "repository": "LibreYOLO/LibreSAM2base-plus",
+        "revision": null
+      },
+      {
+        "size": "large",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1024,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSAM2large",
+        "aliases": [
+          "sam2-large",
+          "sam2-l",
+          "sam2_l"
+        ],
+        "factory_model": "sam2-large",
+        "invocation": "LibreSAM('sam2-large')",
+        "repository": "LibreYOLO/LibreSAM2large",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "sam3": {
     "class": "libreyolo.models.sam.sam3.LibreSAM3",
@@ -938,10 +5075,46 @@
     "default_imgsz": {
       "large": 1008
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "segment": {
+        "large": 1008
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "sam",
-    "available": true
+    "available": true,
+    "factory": "sam",
+    "public_entrypoint": "LibreSAM",
+    "factory_default_model": "base",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "large",
+        "task": "segment",
+        "variant": null,
+        "imgsz": 1008,
+        "filename": null,
+        "publication": "gated",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/facebook/sam3",
+        "aliases": [
+          "sam3",
+          "sam-3",
+          "sam3-large"
+        ],
+        "factory_model": "sam3",
+        "invocation": "LibreSAM('sam3')",
+        "repository": "facebook/sam3",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers"
+    ]
   },
   "segformer": {
     "class": "libreyolo.models.segformer.model.LibreSegformer",
@@ -965,10 +5138,169 @@
       "b4": 512,
       "b5": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "semantic": {
+        "b0": 512,
+        "b1": 512,
+        "b2": 512,
+        "b3": 512,
+        "b4": 512,
+        "b5": 640
+      }
+    },
     "export_override": "blocked",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "segformer-b0",
+      "segformer-b0-sem",
+      "segformer-b1",
+      "segformer-b1-sem",
+      "segformer-b2",
+      "segformer-b2-sem",
+      "segformer-b3",
+      "segformer-b3-sem",
+      "segformer-b4",
+      "segformer-b4-sem",
+      "segformer-b5",
+      "segformer-b5-sem"
+    ],
+    "downloadable_cli_names": [
+      "segformer-b0",
+      "segformer-b0-sem",
+      "segformer-b1",
+      "segformer-b1-sem",
+      "segformer-b2",
+      "segformer-b2-sem",
+      "segformer-b3",
+      "segformer-b3-sem",
+      "segformer-b4",
+      "segformer-b4-sem",
+      "segformer-b5",
+      "segformer-b5-sem"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b0",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreSegformerb0-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb0-sem/resolve/main/LibreSegformerb0-sem.pt",
+        "aliases": [
+          "segformer-b0",
+          "segformer-b0-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb0-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b1",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreSegformerb1-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb1-sem/resolve/main/LibreSegformerb1-sem.pt",
+        "aliases": [
+          "segformer-b1",
+          "segformer-b1-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb1-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b2",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreSegformerb2-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb2-sem/resolve/main/LibreSegformerb2-sem.pt",
+        "aliases": [
+          "segformer-b2",
+          "segformer-b2-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb2-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b3",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreSegformerb3-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb3-sem/resolve/main/LibreSegformerb3-sem.pt",
+        "aliases": [
+          "segformer-b3",
+          "segformer-b3-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb3-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b4",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 512,
+        "filename": "LibreSegformerb4-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb4-sem/resolve/main/LibreSegformerb4-sem.pt",
+        "aliases": [
+          "segformer-b4",
+          "segformer-b4-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb4-sem.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b5",
+        "task": "semantic",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreSegformerb5-sem.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSegformerb5-sem/resolve/main/LibreSegformerb5-sem.pt",
+        "aliases": [
+          "segformer-b5",
+          "segformer-b5-sem"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSegformerb5-sem.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
@@ -984,10 +5316,75 @@
       "b16": 256,
       "so400m": 384
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "classify": {
+        "b16": 256,
+        "so400m": 384
+      }
+    },
     "export_override": "custom",
-    "optional_extra": null,
-    "available": true
+    "optional_extra": "siglip2",
+    "available": false,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "siglip2-b16",
+      "siglip2-b16-cls",
+      "siglip2-so400m",
+      "siglip2-so400m-cls"
+    ],
+    "downloadable_cli_names": [
+      "siglip2-b16",
+      "siglip2-b16-cls",
+      "siglip2-so400m",
+      "siglip2-so400m-cls"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b16",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 256,
+        "filename": "LibreSigLIP2b16-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSigLIP2b16-cls/resolve/main/LibreSigLIP2b16-cls.pt",
+        "aliases": [
+          "siglip2-b16",
+          "siglip2-b16-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSigLIP2b16-cls.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "so400m",
+        "task": "classify",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreSigLIP2so400m-cls.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSigLIP2so400m-cls/resolve/main/LibreSigLIP2so400m-cls.pt",
+        "aliases": [
+          "siglip2-so400m",
+          "siglip2-so400m-cls"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSigLIP2so400m-cls.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "sentencepiece"
+    ]
   },
   "smolvlm2": {
     "class": "libreyolo.models.vlm.smolvlm.LibreSmolVLM2",
@@ -1003,10 +5400,65 @@
       "2.2b": 512,
       "500m": 512
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "2.2b": 512,
+        "500m": 512
+      }
+    },
     "export_override": "blocked",
     "optional_extra": "vlm",
-    "available": true
+    "available": false,
+    "factory": "vlm",
+    "public_entrypoint": "LibreVLM",
+    "factory_default_model": "qwen3-vl-4b",
+    "generic_cli": false,
+    "cli_names": [],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "2.2b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 512,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+        "aliases": [
+          "smolvlm2",
+          "smolvlm2-2.2b"
+        ],
+        "factory_model": "smolvlm2-2.2b",
+        "invocation": "LibreVLM('smolvlm2-2.2b')",
+        "repository": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+        "revision": null
+      },
+      {
+        "size": "500m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 512,
+        "filename": null,
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "snapshot",
+        "download_url": "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        "aliases": [
+          "smolvlm2-500m"
+        ],
+        "factory_model": "smolvlm2-500m",
+        "invocation": "LibreVLM('smolvlm2-500m')",
+        "repository": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        "revision": null
+      }
+    ],
+    "dependencies": [
+      "transformers",
+      "num2words"
+    ]
   },
   "swinir": {
     "class": "libreyolo.models.swinir.model.LibreSwinIR",
@@ -1024,10 +5476,97 @@
       "m": 64,
       "l": 64
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "restore": {
+        "s": 64,
+        "m": 64,
+        "l": 64
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "swinir-l",
+      "swinir-l-restore",
+      "swinir-m",
+      "swinir-m-restore",
+      "swinir-s",
+      "swinir-s-restore"
+    ],
+    "downloadable_cli_names": [
+      "swinir-l",
+      "swinir-l-restore",
+      "swinir-m",
+      "swinir-m-restore",
+      "swinir-s",
+      "swinir-s-restore"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreSwinIRs-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSwinIRs-restore/resolve/main/LibreSwinIRs-restore.pt",
+        "aliases": [
+          "swinir-s",
+          "swinir-s-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSwinIRs-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreSwinIRm-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSwinIRm-restore/resolve/main/LibreSwinIRm-restore.pt",
+        "aliases": [
+          "swinir-m",
+          "swinir-m-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSwinIRm-restore.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "restore",
+        "variant": null,
+        "imgsz": 64,
+        "filename": "LibreSwinIRl-restore.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreSwinIRl-restore/resolve/main/LibreSwinIRl-restore.pt",
+        "aliases": [
+          "swinir-l",
+          "swinir-l-restore"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreSwinIRl-restore.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo1": {
     "class": "libreyolo.models.yolo1.model.LibreYOLO1",
@@ -1043,10 +5582,67 @@
       "t": 448,
       "b": 448
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 448,
+        "b": 448
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo1-b",
+      "yolo1-t"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "yolo1-b",
+      "yolo1-t"
+    ],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreYOLO1t.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "yolo1-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO1t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 448,
+        "filename": "LibreYOLO1b.pt",
+        "publication": "unknown",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "yolo1-b"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO1b.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo2": {
     "class": "libreyolo.models.yolo2.model.LibreYOLO2",
@@ -1062,10 +5658,67 @@
       "t": 416,
       "b": 608
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 416,
+        "b": 608
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo2-b",
+      "yolo2-t"
+    ],
+    "downloadable_cli_names": [
+      "yolo2-b",
+      "yolo2-t"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLO2t.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO2t/resolve/main/LibreYOLO2t.pt",
+        "aliases": [
+          "yolo2-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO2t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 608,
+        "filename": "LibreYOLO2b.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO2b/resolve/main/LibreYOLO2b.pt",
+        "aliases": [
+          "yolo2-b"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO2b.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo3": {
     "class": "libreyolo.models.yolo3.model.LibreYOLO3",
@@ -1083,10 +5736,88 @@
       "b": 416,
       "spp": 608
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 416,
+        "b": 416,
+        "spp": 608
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo3-b",
+      "yolo3-spp",
+      "yolo3-t"
+    ],
+    "downloadable_cli_names": [
+      "yolo3-b",
+      "yolo3-spp",
+      "yolo3-t"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLO3t.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO3t/resolve/main/LibreYOLO3t.pt",
+        "aliases": [
+          "yolo3-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO3t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLO3b.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO3b/resolve/main/LibreYOLO3b.pt",
+        "aliases": [
+          "yolo3-b"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO3b.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "spp",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 608,
+        "filename": "LibreYOLO3spp.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO3spp/resolve/main/LibreYOLO3spp.pt",
+        "aliases": [
+          "yolo3-spp"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO3spp.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo4": {
     "class": "libreyolo.models.yolo4.model.LibreYOLO4",
@@ -1102,10 +5833,67 @@
       "t": 416,
       "b": 608
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "t": 416,
+        "b": 608
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo4-b",
+      "yolo4-t"
+    ],
+    "downloadable_cli_names": [
+      "yolo4-b",
+      "yolo4-t"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLO4t.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO4t/resolve/main/LibreYOLO4t.pt",
+        "aliases": [
+          "yolo4-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO4t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 608,
+        "filename": "LibreYOLO4b.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO4b/resolve/main/LibreYOLO4b.pt",
+        "aliases": [
+          "yolo4-b"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO4b.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo7": {
     "class": "libreyolo.models.yolo7.model.LibreYOLO7",
@@ -1119,10 +5907,46 @@
     "default_imgsz": {
       "b": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "b": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo7-b"
+    ],
+    "downloadable_cli_names": [
+      "yolo7-b"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO7b.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO7b/resolve/main/LibreYOLO7b.pt",
+        "aliases": [
+          "yolo7-b"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO7b.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo9": {
     "class": "libreyolo.models.yolo9.model.LibreYOLO9",
@@ -1152,7 +5976,99 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo9-c",
+      "yolo9-m",
+      "yolo9-s",
+      "yolo9-t"
+    ],
+    "downloadable_cli_names": [
+      "yolo9-c",
+      "yolo9-m",
+      "yolo9-s",
+      "yolo9-t"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9t.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9t/resolve/main/LibreYOLO9t.pt",
+        "aliases": [
+          "yolo9-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9s.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9s/resolve/main/LibreYOLO9s.pt",
+        "aliases": [
+          "yolo9-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9s.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9m.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9m/resolve/main/LibreYOLO9m.pt",
+        "aliases": [
+          "yolo9-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9m.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "c",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9c.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9c/resolve/main/LibreYOLO9c.pt",
+        "aliases": [
+          "yolo9-c"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9c.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo9_e2e": {
     "class": "libreyolo.models.yolo9_e2e.model.LibreYOLO9E2E",
@@ -1182,7 +6098,99 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo9_e2e-c",
+      "yolo9_e2e-m",
+      "yolo9_e2e-s",
+      "yolo9_e2e-t"
+    ],
+    "downloadable_cli_names": [
+      "yolo9_e2e-c",
+      "yolo9_e2e-m",
+      "yolo9_e2e-s",
+      "yolo9_e2e-t"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9E2Et.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9E2Et/resolve/main/LibreYOLO9E2Et.pt",
+        "aliases": [
+          "yolo9_e2e-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9E2Et.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9E2Es.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9E2Es/resolve/main/LibreYOLO9E2Es.pt",
+        "aliases": [
+          "yolo9_e2e-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9E2Es.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9E2Em.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9E2Em/resolve/main/LibreYOLO9E2Em.pt",
+        "aliases": [
+          "yolo9_e2e-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9E2Em.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "c",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9E2Ec.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLO9E2Ec/resolve/main/LibreYOLO9E2Ec.pt",
+        "aliases": [
+          "yolo9_e2e-c"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9E2Ec.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolo9_p2": {
     "class": "libreyolo.models.yolo9_p2.model.LibreYOLO9P2",
@@ -1206,7 +6214,91 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolo9_p2-s",
+      "yolo9_p2-t"
+    ],
+    "downloadable_cli_names": [],
+    "local_only_cli_names": [
+      "yolo9_p2-s",
+      "yolo9_p2-t"
+    ],
+    "artifacts": [
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9P2t.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "yolo9_p2-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9P2t.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLO9P2s.pt",
+        "publication": "config_only",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [
+          "yolo9_p2-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9P2s.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": "visdrone",
+        "imgsz": 640,
+        "filename": "LibreYOLO9P2t-visdrone.pt",
+        "publication": "gated",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9P2t-visdrone.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": "visdrone",
+        "imgsz": 640,
+        "filename": "LibreYOLO9P2s-visdrone.pt",
+        "publication": "gated",
+        "downloadable": false,
+        "download_kind": "none",
+        "download_url": null,
+        "aliases": [],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLO9P2s-visdrone.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolonas": {
     "class": "libreyolo.models.yolonas.model.LibreYOLONAS",
@@ -1241,7 +6333,159 @@
     },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolonas-l",
+      "yolonas-l-pose",
+      "yolonas-m",
+      "yolonas-m-pose",
+      "yolonas-n-pose",
+      "yolonas-s",
+      "yolonas-s-pose"
+    ],
+    "downloadable_cli_names": [
+      "yolonas-l",
+      "yolonas-l-pose",
+      "yolonas-m",
+      "yolonas-m-pose",
+      "yolonas-n-pose",
+      "yolonas-s",
+      "yolonas-s-pose"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASs.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASm.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASl.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "n",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASn-pose.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-n-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASn-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASs-pose.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-s-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASs-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASm-pose.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-m-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASm-pose.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "pose",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLONASl-pose.pt",
+        "publication": "direct",
+        "downloadable": true,
+        "download_kind": "family",
+        "download_url": null,
+        "aliases": [
+          "yolonas-l-pose"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLONASl-pose.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "yolox": {
     "class": "libreyolo.models.yolox.model.LibreYOLOX",
@@ -1265,10 +6509,151 @@
       "l": 640,
       "x": 640
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "detect": {
+        "n": 416,
+        "t": 416,
+        "s": 640,
+        "m": 640,
+        "l": 640,
+        "x": 640
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "yolox-l",
+      "yolox-m",
+      "yolox-n",
+      "yolox-s",
+      "yolox-t",
+      "yolox-x"
+    ],
+    "downloadable_cli_names": [
+      "yolox-l",
+      "yolox-m",
+      "yolox-n",
+      "yolox-s",
+      "yolox-t",
+      "yolox-x"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "n",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLOXn.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXn/resolve/main/LibreYOLOXn.pt",
+        "aliases": [
+          "yolox-n"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXn.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "t",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 416,
+        "filename": "LibreYOLOXt.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXt/resolve/main/LibreYOLOXt.pt",
+        "aliases": [
+          "yolox-t"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXt.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "s",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLOXs.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXs/resolve/main/LibreYOLOXs.pt",
+        "aliases": [
+          "yolox-s"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXs.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "m",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLOXm.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXm/resolve/main/LibreYOLOXm.pt",
+        "aliases": [
+          "yolox-m"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXm.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "l",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLOXl.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXl/resolve/main/LibreYOLOXl.pt",
+        "aliases": [
+          "yolox-l"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXl.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "x",
+        "task": "detect",
+        "variant": null,
+        "imgsz": 640,
+        "filename": "LibreYOLOXx.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreYOLOXx/resolve/main/LibreYOLOXx.pt",
+        "aliases": [
+          "yolox-x"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreYOLOXx.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   },
   "zipdepth": {
     "class": "libreyolo.models.zipdepth.model.LibreZipDepth",
@@ -1284,9 +6669,72 @@
       "b": 384,
       "bnpu": 384
     },
-    "task_sizes": {},
+    "task_sizes": {
+      "depth": {
+        "b": 384,
+        "bnpu": 384
+      }
+    },
     "export_override": "none",
     "optional_extra": null,
-    "available": true
+    "available": true,
+    "factory": "libreyolo",
+    "public_entrypoint": "LibreYOLO",
+    "factory_default_model": null,
+    "generic_cli": true,
+    "cli_names": [
+      "zipdepth-b",
+      "zipdepth-b-depth",
+      "zipdepth-bnpu",
+      "zipdepth-bnpu-depth"
+    ],
+    "downloadable_cli_names": [
+      "zipdepth-b",
+      "zipdepth-b-depth",
+      "zipdepth-bnpu",
+      "zipdepth-bnpu-depth"
+    ],
+    "local_only_cli_names": [],
+    "artifacts": [
+      {
+        "size": "b",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreZipDepthb-depth.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreZipDepthb-depth/resolve/main/LibreZipDepthb-depth.pt",
+        "aliases": [
+          "zipdepth-b",
+          "zipdepth-b-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreZipDepthb-depth.pt')",
+        "repository": null,
+        "revision": null
+      },
+      {
+        "size": "bnpu",
+        "task": "depth",
+        "variant": null,
+        "imgsz": 384,
+        "filename": "LibreZipDepthbnpu-depth.pt",
+        "publication": "published",
+        "downloadable": true,
+        "download_kind": "hf",
+        "download_url": "https://huggingface.co/LibreYOLO/LibreZipDepthbnpu-depth/resolve/main/LibreZipDepthbnpu-depth.pt",
+        "aliases": [
+          "zipdepth-bnpu",
+          "zipdepth-bnpu-depth"
+        ],
+        "factory_model": null,
+        "invocation": "LibreYOLO('LibreZipDepthbnpu-depth.pt')",
+        "repository": null,
+        "revision": null
+      }
+    ],
+    "dependencies": []
   }
 }

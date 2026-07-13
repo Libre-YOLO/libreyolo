@@ -17,6 +17,7 @@ class LibreRTDETRv2(LibreRTDETR):
     FAMILY = "rtdetrv2"
     FILENAME_PREFIX = "LibreRTDETRv2"
     INPUT_SIZES = {"r18": 640, "r34": 640, "r50": 640, "r50m": 640, "r101": 640}
+    INPUT_SIZE_FIXED = True
     val_preprocessor_class = RTDETRv2ValPreprocessor
 
     @classmethod

@@ -10,10 +10,17 @@ All model families register here via ``__init_subclass__``. Adding a new model m
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from .base import BaseModel
-from ..tasks import resolve_task
+from .manifest import (
+    FactoryKind,
+    get_family_spec,
+    load_family_class,
+    match_weight_filename,
+)
+from ..tasks import normalize_task, resolve_task
 from ..utils.download import download_weights
 from ..utils.logging import ensure_default_logging
 from ..utils.serialization import (
@@ -98,6 +105,7 @@ from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 # vision_model.embeddings.patch_embedding + text_model.head, so order does not
 # matter. NB: SigLIP carries logit_bias, which CLIP lacks.
 from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
+
 # PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
 # on the composite det.*/rec.* checkpoint layout, so order does not matter.
 from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
@@ -141,10 +149,13 @@ def try_ensure_rfdetr():
 # =============================================================================
 
 
-def _resolve_weights_path(model_path: str) -> str:
+def _resolve_weights_path(model_path: str | os.PathLike[str]) -> str:
     """Resolve bare filenames to weights/ directory."""
+    model_path = os.fspath(model_path)
     path = Path(model_path)
-    if path.parent == Path(".") and not model_path.startswith(("./", "../")):
+    if path.parent == Path(".") and not model_path.startswith(
+        ("./", "../", ".\\", "..\\")
+    ):
         weights_path = Path("weights") / path.name
         if weights_path.exists():
             return str(weights_path)
@@ -225,7 +236,7 @@ def _has_any_libreyolo_metadata(loaded: object) -> bool:
 
 
 def LibreYOLO(
-    model_path: str,
+    model_path: str | os.PathLike[str],
     size: str | None = None,
     reg_max: int = 16,
     nb_classes: int | None = None,
@@ -253,31 +264,34 @@ def LibreYOLO(
         Model instance (LibreYOLOX, LibreYOLO9, LibreRFDETR, or inference backend).
     """
     ensure_default_logging()
+    requested_size = size
     model_path = _resolve_weights_path(model_path)
+    model_suffix = Path(model_path).suffix.casefold()
+    filename_artifact = match_weight_filename(model_path)
 
     # Non-PyTorch formats: delegate to inference backends
-    if model_path.endswith(".onnx"):
+    if model_suffix == ".onnx":
         from ..backends.onnx import OnnxBackend
 
         return OnnxBackend(
             model_path, nb_classes=nb_classes or 80, device=device, task=task
         )
 
-    if model_path.endswith(".torchscript"):
+    if model_suffix == ".torchscript":
         from ..backends.torchscript import TorchScriptBackend
 
         return TorchScriptBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
-    if model_path.endswith(".tflite"):
+    if model_suffix == ".tflite":
         from ..backends.tflite import TFLiteBackend
 
         return TFLiteBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
-    if model_path.endswith((".engine", ".tensorrt")):
+    if model_suffix in {".engine", ".tensorrt"}:
         from ..backends.tensorrt import TensorRTBackend
 
         return TensorRTBackend(
@@ -291,7 +305,7 @@ def LibreYOLO(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
-    if Path(model_path).is_dir() and Path(model_path).suffix == ".mlpackage":
+    if Path(model_path).is_dir() and model_suffix == ".mlpackage":
         from ..backends.coreml import CoreMLBackend
 
         return CoreMLBackend(
@@ -312,7 +326,28 @@ def LibreYOLO(
                 model_path, nb_classes=nb_classes, device=device, task=task
             )
 
-    if task is not None:
+    if filename_artifact is not None:
+        if filename_artifact.factory is not FactoryKind.CHECKPOINT:
+            family_spec = get_family_spec(filename_artifact.family)
+            entrypoint = family_spec.public_entrypoint if family_spec else "its factory"
+            raise ValueError(
+                f"{Path(model_path).name!r} belongs to the separate {entrypoint} "
+                "model tier and cannot be loaded through LibreYOLO()."
+            )
+        if not Path(model_path).exists():
+            if size is not None and str(size).lower() != filename_artifact.size:
+                raise ValueError(
+                    f"Explicit size {size!r} conflicts with canonical filename "
+                    f"size {filename_artifact.size!r}."
+                )
+            explicit_task = normalize_task(task) if task is not None else None
+            if explicit_task is not None and explicit_task != filename_artifact.task:
+                raise ValueError(
+                    f"Explicit task {explicit_task!r} is not supported by the "
+                    f"canonical artifact for task {filename_artifact.task!r}."
+                )
+            size = filename_artifact.size
+    elif task is not None:
         filename = Path(model_path).name
         for cls in BaseModel._registry:
             if cls.detect_size_from_filename(filename) is not None:
@@ -326,30 +361,12 @@ def LibreYOLO(
     # Download if missing
     if not Path(model_path).exists():
         if size is None:
-            for cls in BaseModel._registry:
-                detected = cls.detect_size_from_filename(Path(model_path).name)
-                if detected is not None:
-                    size = detected
-                    logger.debug("Detected size '%s' from filename", size)
-                    break
-            # Try RF-DETR (may not be registered yet — cheap check)
-            if size is None:
-                try:
-                    _ensure_rfdetr()
-                    for cls in BaseModel._registry:
-                        detected = cls.detect_size_from_filename(Path(model_path).name)
-                        if detected is not None:
-                            size = detected
-                            logger.debug("Detected size '%s' from filename", size)
-                            break
-                except ModuleNotFoundError:
-                    pass
-            if size is None:
-                raise ValueError(
-                    f"Model weights file not found: {model_path}\n"
-                    f"Cannot auto-download: unable to determine size from filename.\n"
-                    f"Please specify size explicitly or provide a valid weights file path."
-                )
+            raise ValueError(
+                f"Model weights file not found: {model_path}\n"
+                "Cannot auto-download: the filename is not a canonical public "
+                "model artifact.\n"
+                "Use a generic CLI model name or provide a valid weights file path."
+            )
 
         download_error = None
         try:
@@ -366,7 +383,7 @@ def LibreYOLO(
 
     # Load weights once
     try:
-        if Path(model_path).suffix == ".safetensors":
+        if model_suffix == ".safetensors":
             try:
                 from safetensors.torch import load_file as load_safetensors_file
             except ImportError as e:
@@ -403,6 +420,17 @@ def LibreYOLO(
     metadata_errors = validate_checkpoint_metadata(loaded, strict=False)
     has_v1_metadata = not metadata_errors
     has_partial_metadata = _has_any_libreyolo_metadata(loaded)
+    if has_v1_metadata:
+        checkpoint_size = str(loaded["size"]).casefold()
+        if (
+            requested_size is not None
+            and str(requested_size).casefold() != checkpoint_size
+        ):
+            raise ValueError(
+                f"Explicit size {requested_size!r} conflicts with checkpoint "
+                f"metadata size {checkpoint_size!r}."
+            )
+        size = checkpoint_size
     is_legacy_libreyolo = (
         not has_v1_metadata
         and isinstance(loaded, dict)
@@ -478,9 +506,30 @@ def LibreYOLO(
         else None
     )
     if metadata_family:
-        cls = _find_registered_family(metadata_family)
+        family_spec = get_family_spec(metadata_family)
+        if (
+            family_spec is not None
+            and family_spec.factory is not FactoryKind.CHECKPOINT
+        ):
+            raise ValueError(
+                f"Checkpoint metadata family {metadata_family!r} belongs to the "
+                f"separate {family_spec.public_entrypoint} model tier and cannot "
+                "be loaded through LibreYOLO()."
+            )
+        cls = (
+            load_family_class(family_spec)
+            if family_spec is not None and family_spec.factory is FactoryKind.CHECKPOINT
+            else _find_registered_family(metadata_family)
+        )
         if cls is not None and cls.can_load(weights_dict):
             matched_cls = cls
+
+    if matched_cls is None and filename_artifact is not None:
+        family_spec = get_family_spec(filename_artifact.family)
+        if family_spec is not None and family_spec.factory is FactoryKind.CHECKPOINT:
+            cls = load_family_class(family_spec)
+            if cls.can_load(weights_dict):
+                matched_cls = cls
 
     if matched_cls is None:
         filename = Path(model_path).name
@@ -559,13 +608,13 @@ def LibreYOLO(
     # the fresh model init too early. This matters for YOLO9-t where the class
     # branch width depends on COCO-vs-custom ``nc`` during construction.
     if nb_classes is None:
-        if matched_cls.FAMILY in ("rfdetr", "dinov2", "eomt"):
-            # Transformer dense heads build to the checkpoint's class width.
-            # The 80 default below is a YOLO9-family convention that would
-            # mis-size the head for a metadata-wrapped checkpoint.
+        if matched_cls.FAMILY in ("rfdetr", "dinov2", "eomt", "yolo1"):
+            # Dense transformer heads and fixed-width YOLO1 build to the
+            # checkpoint's class width.  The generic 80-class default would
+            # mis-size these models before their loaders can inspect metadata.
             nb_classes = matched_cls.detect_nb_classes(weights_dict)
             if nb_classes is None:
-                nb_classes = 80
+                nb_classes = 20 if matched_cls.FAMILY == "yolo1" else 80
         elif has_metadata:
             nb_classes = 80
         else:

@@ -40,6 +40,7 @@ class LibreDEIMv2(BaseModel):
     FAMILY = "deimv2"
     FILENAME_PREFIX = "LibreDEIMv2"
     INPUT_SIZES = {size: int(cfg["input_size"]) for size, cfg in SIZE_CONFIGS.items()}
+    INPUT_SIZE_FIXED = True
     TRAIN_CONFIG = DEIMv2Config
     val_preprocessor_class = DEIMv2ValPreprocessor
     TTA_FIXED_SIZE = True  # fixed decoder anchors require a fixed size; multi-scale TTA is invalid
@@ -408,6 +409,10 @@ class LibreDEIMv2(BaseModel):
                 f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
                 "but DEIMv2 is detection-only."
             )
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
         ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
         if ckpt_nc is None:
             ckpt_nc = self._normalize_checkpoint_nc(

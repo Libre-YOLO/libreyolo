@@ -101,6 +101,7 @@ class LibreSegformer(BaseModel):
     # Read by SegformerTrainer._setup_semantic_data and SemanticValidator.
     semantic_resize_mode: ClassVar[str] = "resize_crop"
     semantic_imgsz_divisor: ClassVar[int] = 32
+    SUPPORTS_RECTANGULAR_INPUT: ClassVar[bool] = True
     semantic_scale_jitter: ClassVar[Tuple[float, float]] = (0.5, 2.0)
     # The reference ADE20K recipe uses no photometric jitter. SemanticDataset
     # defaults to 0.5, so this has to be declared explicitly or training quietly
@@ -334,7 +335,7 @@ class LibreSegformer(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreSegformer checkpoints must be dictionaries")
-        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
             loaded,
             context="SegFormer semantic checkpoint",
         )
@@ -365,6 +366,11 @@ class LibreSegformer(BaseModel):
         ckpt_size = self.detect_size(state) or loaded.get("size")
         if ckpt_size is not None and ckpt_size != self.size:
             self._rebuild_for_new_size(str(ckpt_size))
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         ckpt_nc = loaded.get("nc") or self.detect_nb_classes(state)
         if ckpt_nc is not None and int(ckpt_nc) != self.nb_classes:

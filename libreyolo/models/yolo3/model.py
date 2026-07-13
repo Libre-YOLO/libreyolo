@@ -20,6 +20,7 @@ class LibreYOLO3(DarknetFamily):
     FAMILY = "yolo3"
     FILENAME_PREFIX = "LibreYOLO3"
     INPUT_SIZES = {"t": 416, "b": 416, "spp": 608}
+    INPUT_SIZE_DIVISOR = 32
 
     CFG_BY_SIZE = {"t": "yolov3-tiny", "b": "yolov3", "spp": "yolov3-spp"}
     CONV_COUNT_TO_SIZE = {13: "t", 75: "b", 76: "spp"}

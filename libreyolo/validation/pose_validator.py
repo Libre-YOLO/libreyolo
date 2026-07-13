@@ -100,6 +100,10 @@ class PoseValidator(BaseValidator):
     # =========================================================================
 
     def run(self, **_kwargs) -> Dict[str, float]:
+        with self._validation_model_state():
+            return self._run_pose(**_kwargs)
+
+    def _run_pose(self, **_kwargs) -> Dict[str, float]:
         try:
             from pycocotools.coco import COCO  # noqa: F401
             from pycocotools.cocoeval import COCOeval  # noqa: F401

@@ -277,7 +277,9 @@ class TestEoMTPredict:
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
         assert set(torch.unique(result.semantic_mask.data).tolist()) <= {0, 1, 2}
 
-    def test_predict_rejects_non_patch_imgsz(self, fake_eomt_net, tmp_path):
+    def test_predict_rejects_non_native_imgsz_before_preprocessing(
+        self, fake_eomt_net, tmp_path
+    ):
         from libreyolo.models.eomt.model import LibreEoMT
 
         img_path = tmp_path / "img.jpg"
@@ -286,7 +288,7 @@ class TestEoMTPredict:
             model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
         )
 
-        with pytest.raises(ValueError, match="divisible by 16"):
+        with pytest.raises(ValueError, match="requires imgsz=512"):
             model.predict(str(img_path), imgsz=66)
 
     def test_predict_rejects_non_native_imgsz(self, fake_eomt_net, tmp_path):
@@ -436,6 +438,29 @@ class _FakeEoMTNetSeg(nn.Module):
         from torch.nn.modules.module import _IncompatibleKeys
 
         return _IncompatibleKeys([], [])
+
+
+class _PositionAwareEoMTNet(_FakeEoMTNetSeg):
+    """Fake whose graph carries the resolution-dependent position table."""
+
+    def __init__(
+        self,
+        config: str = "l",
+        nb_classes: int = 80,
+        image_size: int = 640,
+        num_queries: int = 100,
+    ):
+        super().__init__(
+            config=config,
+            nb_classes=nb_classes,
+            image_size=image_size,
+            num_queries=num_queries,
+        )
+        self.embeddings.position_embeddings = nn.Embedding(
+            (self.image_size // 16) ** 2,
+            self.hidden_size,
+        )
+
 
 @pytest.fixture
 def fake_eomt_seg_net(monkeypatch):
@@ -623,6 +648,76 @@ class TestEoMTSizes:
         assert loaded.task == "segment"
         assert loaded.input_size == 640
 
+    def test_checkpoint_load_rebuilds_the_real_1280_graph(self, monkeypatch):
+        import libreyolo.models.eomt.model as eomt_model
+        from libreyolo.models.eomt.model import LibreEoMT
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        monkeypatch.setattr(eomt_model, "LibreEoMTNet", _PositionAwareEoMTNet)
+        source = _PositionAwareEoMTNet(
+            config="l",
+            nb_classes=80,
+            image_size=1280,
+            num_queries=100,
+        )
+        checkpoint = wrap_libreyolo_checkpoint(
+            source.state_dict(),
+            model_family="eomt",
+            size="l",
+            task="segment",
+            nc=80,
+            names={i: f"coco_{i}" for i in range(80)},
+            imgsz=1280,
+        )
+
+        loaded = LibreEoMT(
+            model_path=checkpoint,
+            size="l",
+            task="segment",
+            nb_classes=80,
+            device="cpu",
+        )
+
+        assert loaded.input_size == 1280
+        assert loaded.model.image_size == 1280
+        assert loaded.model.embeddings.position_embeddings.num_embeddings == 6400
+
+    def test_checkpoint_rejects_metadata_and_position_grid_disagreement(
+        self, monkeypatch
+    ):
+        import libreyolo.models.eomt.model as eomt_model
+        from libreyolo.models.eomt.model import LibreEoMT
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        monkeypatch.setattr(eomt_model, "LibreEoMTNet", _PositionAwareEoMTNet)
+        source = _PositionAwareEoMTNet(
+            config="l",
+            nb_classes=80,
+            image_size=1280,
+            num_queries=100,
+        )
+        checkpoint = wrap_libreyolo_checkpoint(
+            source.state_dict(),
+            model_family="eomt",
+            size="l",
+            task="segment",
+            nc=80,
+            names={i: f"coco_{i}" for i in range(80)},
+            imgsz=640,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"metadata imgsz=640 conflicts with state-derived imgsz=1280",
+        ):
+            LibreEoMT(
+                model_path=checkpoint,
+                size="l",
+                task="segment",
+                nb_classes=80,
+                device="cpu",
+            )
+
     def test_auto_task_and_size_from_filename(self, fake_eomt_seg_net, tmp_path):
         """LibreEoMT(path) infers task and size from the checkpoint without task= kwarg."""
         from libreyolo.models.eomt.model import LibreEoMT
@@ -808,6 +903,10 @@ def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
     model = LibreEoMT(
         model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
     )
+    model.model.train()
+    mixed_child = next(module for module in model.model.modules() if module is not model.model)
+    mixed_child.eval()
+    original_modes = [module.training for module in model.model.modules()]
 
     metrics = model.val(
         data=str(yaml_path),
@@ -826,6 +925,36 @@ def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
     assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
     assert "speed/preprocess_ms" in metrics
     assert (tmp_path / "val_out" / "config.yaml").exists()
+    assert [module.training for module in model.model.modules()] == original_modes
+
+
+def test_custom_semantic_val_restores_mode_after_exception(fake_eomt_net):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+    )
+    model.model.train()
+    mixed_child = next(module for module in model.model.modules() if module is not model.model)
+    mixed_child.eval()
+    original_modes = [module.training for module in model.model.modules()]
+
+    with pytest.raises(ValueError, match="requires data"):
+        model.val(data=None, imgsz=512, verbose=False)
+
+    assert model.device == torch.device("cpu")
+    assert [module.training for module in model.model.modules()] == original_modes
+
+
+def test_custom_semantic_val_rejects_non_integer_imgsz_before_data(fake_eomt_net):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+    )
+
+    with pytest.raises(ValueError, match="positive integer"):
+        model.val(data="missing.yaml", imgsz=512.0, verbose=False)
 
 
 def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
@@ -1135,8 +1264,8 @@ def _panoptic_stub(nc: int, thing_class_ids):
         thing_class_ids=thing_class_ids,
         _last_eomt_patch_offsets=None,
         _last_eomt_resized_shape=None,
-        _last_eomt_content_size=None,  # unpadded already
     )
+    stub._coco_content_size = LibreEoMT._coco_content_size
     stub._stuff_class_ids = lambda: LibreEoMT._stuff_class_ids(stub)
     stub._unpad_and_resize_mask_logits = lambda ml, osz: (
         LibreEoMT._unpad_and_resize_mask_logits(stub, ml, osz)
@@ -1281,8 +1410,56 @@ def test_preprocess_pads_for_coco_tasks_and_splits_for_semantic(fake_eomt_seg_ne
     tensor, _, orig_size, _ = seg._preprocess(img, "rgb")
     assert tuple(tensor.shape) == (1, 3, 640, 640)  # single padded image
     assert seg._last_eomt_patch_offsets is None
-    assert seg._last_eomt_content_size == (480, 640)
+    assert not hasattr(seg, "_last_eomt_content_size")
     assert orig_size == (768, 576)
     # Padding is zeros in [0, 1] space (the net normalizes afterwards).
     assert float(tensor[0, :, 500:, :].abs().max()) == 0.0
     assert float(tensor[0, :, :480, :640].abs().max()) > 0.0
+
+
+def test_segment_validation_preprocessor_matches_native_coco_geometry(
+    fake_eomt_seg_net,
+):
+    import numpy as np
+
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+    )
+    rgb = np.zeros((1194, 1536, 3), dtype=np.uint8)
+    rgb[..., 0] = 25
+    rgb[..., 1] = 100
+    rgb[..., 2] = 220
+    bgr = np.ascontiguousarray(rgb[..., ::-1])
+
+    expected, content_size = model._preprocess_pil_pad(Image.fromarray(rgb), 640)
+    preprocessor = model._get_val_preprocessor(img_size=640)
+    actual, _ = preprocessor(
+        bgr, np.zeros((0, 5), dtype=np.float32), (640, 640)
+    )
+
+    assert content_size == (498, 640)
+    assert torch.equal(torch.from_numpy(actual), expected[0])
+
+
+def test_eomt_unpadding_is_derived_from_current_image_not_stale_state(
+    fake_eomt_seg_net,
+):
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    model = LibreEoMT(
+        model_path=None, size="l", task="segment", nb_classes=80, device="cpu"
+    )
+    model._last_eomt_content_size = (1, 1)  # legacy stale state must be ignored
+    logits = torch.arange(160 * 160, dtype=torch.float32).reshape(1, 160, 160)
+
+    actual = model._unpad_and_resize_mask_logits(logits, (768, 576))
+    expected = torch.nn.functional.interpolate(
+        logits[:, :120, :160].unsqueeze(0),
+        size=(576, 768),
+        mode="bilinear",
+        align_corners=False,
+    )[0]
+
+    assert torch.equal(actual, expected)

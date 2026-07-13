@@ -180,6 +180,7 @@ class LibreDINOv2(BaseModel):
 
     # Semantic runs at the DINOv2-native 518 (37 × 14); classify runs at 224.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"n": 518, "s": 518, "m": 518, "l": 518}
+    INPUT_SIZE_DIVISOR: ClassVar[int] = 14
     TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
         "classify": {"n": 224, "s": 224, "m": 224, "l": 224},
     }
@@ -481,13 +482,16 @@ class LibreDINOv2(BaseModel):
 
         if not isinstance(loaded, dict):
             raise TypeError("LibreDINOv2 checkpoints must be dictionaries")
-        loaded, _is_native_v1 = self._parse_checkpoint_metadata(
+        loaded, is_native_v1 = self._parse_checkpoint_metadata(
             loaded,
             context=f"DINOv2 {self.task} checkpoint",
         )
 
         if self.task == "classify":
-            return self._load_classify_weights(loaded)
+            return self._load_classify_weights(
+                loaded,
+                is_native_v1=is_native_v1,
+            )
 
         # Accept both model_family="dinov2" (new) and "rfdetr" (legacy semantic).
         ckpt_family = loaded.get("model_family", "")
@@ -503,6 +507,11 @@ class LibreDINOv2(BaseModel):
                 f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
                 "but is being loaded into a LibreDINOv2 semantic model."
             )
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         # Detect and rebuild for checkpoint class count.
         state = self._extract_state(loaded)
@@ -532,7 +541,12 @@ class LibreDINOv2(BaseModel):
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
         self.model.to(self.device).eval()
 
-    def _load_classify_weights(self, loaded: dict) -> None:
+    def _load_classify_weights(
+        self,
+        loaded: dict,
+        *,
+        is_native_v1: bool,
+    ) -> None:
         """Load a LibreDINOv2 classification checkpoint.
 
         Clean break: legacy ``LibreRFDETR*-cls`` checkpoints
@@ -552,6 +566,11 @@ class LibreDINOv2(BaseModel):
                 f"Checkpoint was trained for task={normalize_task(ckpt_task)!r}, "
                 "but is being loaded into a LibreDINOv2 classification model."
             )
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         state = self._extract_state(loaded)
         lw = state.get("linear.weight")

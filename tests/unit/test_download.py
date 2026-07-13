@@ -317,3 +317,77 @@ def test_download_lock_timeout_is_typed(tmp_path, monkeypatch):
     with pytest.raises(download.WeightDownloadLockTimeout):
         with download._download_lock(destination):
             pytest.fail("lock unexpectedly acquired")
+
+
+@pytest.mark.parametrize(
+    ("filename", "size", "status"),
+    [
+        ("LibreYOLO1t.pt", "t", "unknown"),
+        ("LibreDepthAnythingV2b-depth.pt", "b", "config_only"),
+        ("LibreL2CSr50.pt", "r50", "direct"),
+        ("LibreYOLO9P2s-visdrone.pt", "s", "gated"),
+    ],
+)
+def test_known_unpublished_artifact_fails_before_network(
+    tmp_path, monkeypatch, filename, size, status
+):
+    def unexpected_request(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("unpublished artifact must fail before a network request")
+
+    monkeypatch.setattr(download.requests, "get", unexpected_request)
+
+    with pytest.raises(download.WeightPublicationError, match=status):
+        download.download_weights(str(tmp_path / filename), size)
+
+
+@pytest.mark.parametrize(
+    ("filename", "size"),
+    [
+        ("LibreYOLOXs.pt", "s"),
+        ("LibreRFDETRn.pt", "n"),
+    ],
+)
+def test_canonical_download_uses_manifest_route_not_registry(
+    tmp_path, monkeypatch, filename, size
+):
+    from libreyolo.models import manifest
+
+    destination = tmp_path / filename
+    seen = {}
+
+    class ManifestFamily:
+        @classmethod
+        def get_download_notice(cls, filename, url):
+            del cls, filename, url
+            return None
+
+        @classmethod
+        def verify_downloaded_file(cls, local_path, source_url):
+            del cls
+            seen["verified"] = (Path(local_path), source_url)
+
+    class RegistryTrap:
+        @classmethod
+        def get_download_url(cls, filename):
+            del cls, filename
+            pytest.fail("canonical routing must not inspect the mutable registry")
+
+    monkeypatch.setattr(BaseModel, "_registry", [RegistryTrap])
+    monkeypatch.setattr(manifest, "load_family_class", lambda family: ManifestFamily)
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        seen["kwargs"] = kwargs
+        return _Response(b"weights")
+
+    monkeypatch.setattr(download.requests, "get", fake_get)
+
+    download.download_weights(str(destination), size)
+
+    expected = (
+        f"https://huggingface.co/LibreYOLO/{destination.stem}/resolve/main/{filename}"
+    )
+    assert seen["url"] == expected
+    assert seen["verified"][1] == expected
+    assert destination.read_bytes() == b"weights"

@@ -42,7 +42,7 @@ class LibreDepthAnything3(BaseModel):
     REQUIRE_TASK_SUFFIX = True
 
     depth_imgsz_divisor = 14
-    depth_resize_mode = "letterbox"
+    depth_resize_mode = "native"
     SUPPORTS_BATCHED_PREDICT = False
 
     _UPSTREAM_URL = "https://github.com/ByteDance-Seed/Depth-Anything-3"

@@ -67,9 +67,13 @@ class OCRInferenceRunner:
         Args:
             source: Image path/PIL/array, list of those, directory, or video.
             conf: Minimum recognition confidence for a kept region.
-            imgsz: Detection long-side limit override (default 960).
+            imgsz: Detection long-side limit override (default: checkpoint/native).
             rec_batch: Recognition crops per forward pass.
         """
+        effective_imgsz = (
+            self.model._get_input_size() if imgsz is None else imgsz
+        )
+        imgsz = self.model._validate_predict_input_size(effective_imgsz)
         if augment:
             raise ValueError(
                 "TTA (augment=True) is not supported for OCR models. "
@@ -239,7 +243,7 @@ class OCRInferenceRunner:
         orig_shape = (src_h, src_w)
 
         pipeline = model.pipeline_config
-        limit = int(imgsz) if imgsz else int(pipeline.get("det_limit_side_len", 960))
+        limit = imgsz if imgsz is not None else model._get_input_size()
 
         # Stage 1: detection.
         resized, _, _ = det_resize(img_bgr, limit_side_len=limit)

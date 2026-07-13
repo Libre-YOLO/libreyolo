@@ -64,11 +64,16 @@ class GazeInferenceRunner:
         show: bool = False,
         output_file_format: Optional[str] = None,
         device: Optional[str] = None,
+        imgsz: Optional[int] = None,
         # Rejected with a clear message so detection-shaped kwargs fail loudly
         augment: bool = False,
         tiling: bool = False,
         **_: object,
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
+        effective_imgsz = (
+            self.model._get_input_size() if imgsz is None else imgsz
+        )
+        self.model._validate_predict_input_size(effective_imgsz)
         if augment:
             raise ValueError(
                 "TTA (augment=True) is not meaningful for gaze inference; "

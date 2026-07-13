@@ -21,6 +21,8 @@ GroupPose module:
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -268,10 +270,37 @@ def test_detection_model_has_no_keypoint_modules():
 
 @pytest.mark.parametrize("task", ["detect", "segment", "obb"])
 def test_release_checkpoint_without_empty_kp_active_mask_loads(monkeypatch, task):
+    import libreyolo.models.manifest as model_manifest
     import libreyolo.models.rfdetr.model as rfdetr_model
     from libreyolo.models.rfdetr.model import LibreRFDETR
 
     cfg = _small_pose_config()
+    canonical_artifact = model_manifest.get_artifact_spec("rfdetr", "n", task)
+    assert canonical_artifact is not None
+    synthetic_artifact = replace(
+        canonical_artifact,
+        size="tiny",
+        native_imgsz=cfg.resolution,
+        canonical_filename=None,
+    )
+    original_get_artifact_spec = model_manifest.get_artifact_spec
+
+    def get_artifact_spec(family, size, artifact_task, *, variant=None):
+        if (family, size, artifact_task, variant) == (
+            "rfdetr",
+            "tiny",
+            task,
+            None,
+        ):
+            return synthetic_artifact
+        return original_get_artifact_spec(
+            family,
+            size,
+            artifact_task,
+            variant=variant,
+        )
+
+    monkeypatch.setattr(model_manifest, "get_artifact_spec", get_artifact_spec)
     config_table = (
         rfdetr_model.RFDETR_SEG_CONFIGS
         if task == "segment"

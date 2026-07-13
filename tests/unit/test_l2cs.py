@@ -210,6 +210,21 @@ def test_libre_l2cs_callable_face_detector(tmp_path):
     assert isinstance(model.face_detector, type(None))  # not cached on instance
 
 
+@pytest.mark.parametrize("imgsz", [True, 448.0, "448", 640])
+def test_gaze_runner_rejects_invalid_or_non_native_imgsz_before_source(imgsz):
+    from libreyolo.models.l2cs.inference import GazeInferenceRunner
+
+    model = object.__new__(LibreL2CS)
+    model.input_size = 448
+    model.task = "gaze"
+    model.device = torch.device("cpu")
+    runner = GazeInferenceRunner(model)
+
+    with pytest.raises(ValueError, match="imgsz"):
+        runner(Path("definitely-missing.jpg"), imgsz=imgsz, device="cuda:0")
+    assert model.device == torch.device("cpu")
+
+
 def test_libre_l2cs_bare_predict_uses_default_detector(tmp_path, monkeypatch):
     """No face_boxes and no face_detector → default_face_detector() fallback,
     cached on the model. Stubbed so the test is offline and works on any

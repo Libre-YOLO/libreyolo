@@ -6,6 +6,7 @@ import logging
 import math
 import sys
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
@@ -27,10 +28,23 @@ from ...utils.serialization import (
     inspect_load_state_dict_result,
     load_untrusted_torch_file,
 )
+from ...validation.base import validation_model_state
+from ...validation.preprocessors import BaseValPreprocessor
 from ..base.model import BaseModel
 from .nn import LibreEoMTNet, normalize_eomt_state_dict
 
 logger = logging.getLogger(__name__)
+
+
+def _transactional_validation(method):
+    """Restore EoMT's live device and mixed module modes after custom val."""
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with validation_model_state(self, self.device):
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 def _extract_state(loaded: dict[str, Any]) -> dict[str, Any]:
@@ -42,6 +56,93 @@ def _extract_state(loaded: dict[str, Any]) -> dict[str, Any]:
 
 def _eomt_keys(weights_dict: dict[str, Any]) -> set[str]:
     return set(normalize_eomt_state_dict(weights_dict))
+
+
+def _eomt_coco_content_size(orig_h: int, orig_w: int, size: int) -> Tuple[int, int]:
+    """Return EoMT's aspect-preserving COCO content size."""
+    min_o, max_o = float(min(orig_h, orig_w)), float(max(orig_h, orig_w))
+    target = size
+    raw: Optional[float] = None
+    if max_o / min_o * size > size:
+        raw = size * min_o / max_o
+        target = int(round(raw))
+    if (orig_h <= orig_w and orig_h == target) or (
+        orig_w <= orig_h and orig_w == target
+    ):
+        return orig_h, orig_w
+    if orig_w < orig_h:
+        out_w = target
+        out_h = (
+            int(raw * orig_h / orig_w)
+            if raw is not None
+            else int(size * orig_h / orig_w)
+        )
+    else:
+        out_h = target
+        out_w = (
+            int(raw * orig_w / orig_h)
+            if raw is not None
+            else int(size * orig_w / orig_h)
+        )
+    return out_h, out_w
+
+
+def _preprocess_eomt_coco_pil(
+    img: Image.Image, input_size: int
+) -> tuple[torch.Tensor, Tuple[int, int]]:
+    """Resize and zero-pad one COCO image using EoMT's native geometry."""
+    orig_w, orig_h = img.size
+    content_h, content_w = _eomt_coco_content_size(orig_h, orig_w, input_size)
+    resized = TVF.resize(
+        TVF.pil_to_tensor(img).unsqueeze(0),
+        [content_h, content_w],
+        interpolation=InterpolationMode.BILINEAR,
+        antialias=True,
+    )[0].float()
+    resized.div_(255.0)
+    canvas = torch.zeros((3, input_size, input_size), dtype=resized.dtype)
+    canvas[:, :content_h, :content_w] = resized
+    return canvas.unsqueeze(0), (content_h, content_w)
+
+
+class _EoMTCOCOValPreprocessor(BaseValPreprocessor):
+    """Use EoMT's native COCO resize/pad helper for instance validation."""
+
+    @property
+    def normalize(self) -> bool:
+        return True
+
+    @property
+    def uses_letterbox(self) -> bool:
+        return True
+
+    @property
+    def wants_unresized_image(self) -> bool:
+        return True
+
+    def __call__(
+        self, img: np.ndarray, targets: np.ndarray, input_size: Tuple[int, int]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        target_h, target_w = input_size
+        if target_h != target_w:
+            raise ValueError(
+                "EoMT COCO validation requires a square input canvas, got "
+                f"{input_size}."
+            )
+        orig_h, orig_w = img.shape[:2]
+        rgb = np.ascontiguousarray(img[:, :, ::-1])
+        tensor, (content_h, content_w) = _preprocess_eomt_coco_pil(
+            Image.fromarray(rgb), target_h
+        )
+
+        padded_targets = np.zeros((self.max_labels, 5), dtype=np.float32)
+        if len(targets) > 0:
+            targets = np.asarray(targets, dtype=np.float32).copy()
+            n = min(len(targets), self.max_labels)
+            targets[:n, [0, 2]] *= content_w / orig_w
+            targets[:n, [1, 3]] *= content_h / orig_h
+            padded_targets[:n] = targets[:n]
+        return tensor[0].numpy(), padded_targets
 
 
 class LibreEoMT(BaseModel):
@@ -77,6 +178,9 @@ class LibreEoMT(BaseModel):
     _EMBED_DIM_TO_SIZE: ClassVar[Dict[int, str]] = {384: "s", 768: "b", 1024: "l"}
     _UPSTREAM_URL: ClassVar[str] = "https://github.com/tue-mps/eomt"
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
+    INPUT_SIZE_FIXED: ClassVar[bool] = True
+    INPUT_SIZE_DIVISOR: ClassVar[int] = 16
+    CHECKPOINT_INPUT_SIZE_OVERRIDE: ClassVar[bool] = True
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -240,6 +344,10 @@ class LibreEoMT(BaseModel):
                 layers[name] = module
         return layers
 
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        effective = self._get_input_size() if img_size is None else int(img_size)
+        return _EoMTCOCOValPreprocessor((effective, effective))
+
     @staticmethod
     def _get_preprocess_numpy():
         import cv2
@@ -358,31 +466,7 @@ class LibreEoMT(BaseModel):
         EoMT image processor uses for the COCO checkpoints, where both
         ``shortest_edge`` and ``longest_edge`` equal the model resolution.
         """
-        min_o, max_o = float(min(orig_h, orig_w)), float(max(orig_h, orig_w))
-        target = size
-        raw: Optional[float] = None
-        if max_o / min_o * size > size:
-            raw = size * min_o / max_o
-            target = int(round(raw))
-        if (orig_h <= orig_w and orig_h == target) or (
-            orig_w <= orig_h and orig_w == target
-        ):
-            return orig_h, orig_w
-        if orig_w < orig_h:
-            out_w = target
-            out_h = (
-                int(raw * orig_h / orig_w)
-                if raw is not None
-                else int(size * orig_h / orig_w)
-            )
-        else:
-            out_h = target
-            out_w = (
-                int(raw * orig_w / orig_h)
-                if raw is not None
-                else int(size * orig_w / orig_h)
-            )
-        return out_h, out_w
+        return _eomt_coco_content_size(orig_h, orig_w, size)
 
     def _preprocess_pil_pad(
         self,
@@ -395,18 +479,7 @@ class LibreEoMT(BaseModel):
         normalizes afterwards, so the padded region lands on ``-mean/std``,
         which is exactly what the upstream processor produces.
         """
-        orig_w, orig_h = img.size
-        content_h, content_w = self._coco_content_size(orig_h, orig_w, input_size)
-        resized = TVF.resize(
-            TVF.pil_to_tensor(img).unsqueeze(0),
-            [content_h, content_w],
-            interpolation=InterpolationMode.BILINEAR,
-            antialias=True,
-        )[0].float()
-        resized.div_(255.0)
-        canvas = torch.zeros((3, input_size, input_size), dtype=resized.dtype)
-        canvas[:, :content_h, :content_w] = resized
-        return canvas.unsqueeze(0), (content_h, content_w)
+        return _preprocess_eomt_coco_pil(img, input_size)
 
     def _preprocess(
         self,
@@ -441,12 +514,10 @@ class LibreEoMT(BaseModel):
             )
             self._last_eomt_resized_shape = resized_shape
             self._last_eomt_patch_offsets = patch_offsets
-            self._last_eomt_content_size = None
         else:
-            img_tensor, content_size = self._preprocess_pil_pad(img, effective_res)
+            img_tensor, _ = self._preprocess_pil_pad(img, effective_res)
             self._last_eomt_resized_shape = None
             self._last_eomt_patch_offsets = None
-            self._last_eomt_content_size = content_size
 
         return img_tensor, img, (orig_w, orig_h), 1.0
 
@@ -461,10 +532,16 @@ class LibreEoMT(BaseModel):
         matching the upstream post-process.
         """
         orig_w, orig_h = original_size
-        content = getattr(self, "_last_eomt_content_size", None)
-        if content is not None:
-            content_h, content_w = content
-            mask_logits = mask_logits[:, :content_h, :content_w]
+        canvas_h, canvas_w = mask_logits.shape[-2:]
+        if canvas_h != canvas_w:
+            raise ValueError(
+                "EoMT COCO mask logits must use a square padded canvas, got "
+                f"{(canvas_h, canvas_w)}."
+            )
+        content_h, content_w = self._coco_content_size(
+            orig_h, orig_w, int(canvas_h)
+        )
+        mask_logits = mask_logits[:, :content_h, :content_w]
         return F.interpolate(
             mask_logits.unsqueeze(0),
             size=(orig_h, orig_w),
@@ -864,13 +941,42 @@ class LibreEoMT(BaseModel):
         if ckpt_num_queries is not None and ckpt_num_queries != self.num_queries:
             self._rebuild_for_new_queries(ckpt_num_queries)
 
-        # State-dict detection is authoritative: position embeddings encode the
-        # native resolution and cannot be wrong. Metadata imgsz is a hint only.
-        ckpt_imgsz = self.detect_image_size(state)
-        if ckpt_imgsz is None:
-            ckpt_imgsz = loaded.get("imgsz") if isinstance(loaded, dict) else None
-        if ckpt_imgsz is not None and int(ckpt_imgsz) != self.input_size:
-            self._rebuild_for_new_image_size(int(ckpt_imgsz))
+        # Position embeddings encode the graph resolution. Native metadata is
+        # part of the same strict contract, so disagreement means the
+        # checkpoint is internally inconsistent rather than a reason to trust
+        # one source silently.
+        state_imgsz = self.detect_image_size(state)
+        metadata_imgsz = loaded.get("imgsz")
+        if metadata_imgsz is not None:
+            try:
+                metadata_imgsz = self._validate_input_size(
+                    metadata_imgsz,
+                    context="checkpoint",
+                    allow_fixed_override=True,
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    "Cannot use checkpoint imgsz="
+                    f"{loaded.get('imgsz')!r} for eomt: {exc}"
+                ) from exc
+        if state_imgsz is not None:
+            state_imgsz = self._validate_input_size(
+                state_imgsz,
+                context="checkpoint state",
+                allow_fixed_override=True,
+            )
+        if (
+            metadata_imgsz is not None
+            and state_imgsz is not None
+            and metadata_imgsz != state_imgsz
+        ):
+            raise RuntimeError(
+                f"EoMT checkpoint metadata imgsz={metadata_imgsz} conflicts "
+                f"with state-derived imgsz={state_imgsz}."
+            )
+        ckpt_imgsz = state_imgsz if state_imgsz is not None else metadata_imgsz
+        if ckpt_imgsz is not None and ckpt_imgsz != self.input_size:
+            self._rebuild_for_new_image_size(ckpt_imgsz)
 
         policy = self._checkpoint_load_policy(loaded, self.task)
         target_state = self.model.state_dict()
@@ -934,6 +1040,7 @@ class LibreEoMT(BaseModel):
             "LibreEoMT instance and panoptic export need query-mask runtime contracts."
         )
 
+    @_transactional_validation
     def val(
         self,
         data: str | None = None,
@@ -1033,13 +1140,10 @@ class LibreEoMT(BaseModel):
                 "Augmented validation does not support semantic segmentation yet. "
                 "Use augment=False for semantic models."
             )
-        effective_imgsz = self.input_size if imgsz is None else int(imgsz)
-        if effective_imgsz != self.input_size:
-            raise ValueError(
-                f"LibreEoMT validation requires imgsz={self.input_size}; got "
-                f"imgsz={effective_imgsz}. The EoMT checkpoint uses fixed "
-                "position embeddings."
-            )
+        effective_imgsz = self._validate_input_size(
+            self.input_size if imgsz is None else imgsz,
+            context="validation",
+        )
 
         from ...data.semantic_dataset import (
             _apply_label_mapping,

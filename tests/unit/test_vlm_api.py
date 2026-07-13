@@ -63,6 +63,36 @@ class TestSetClasses:
             m.set_classes(["Boat", "boat"])
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"imgsz": 640}, "does not support imgsz"),
+        ({"augment": True}, "augment=True"),
+        ({"tiling": True}, "tiling=True"),
+    ],
+)
+def test_vlm_rejects_processor_owned_or_undefined_geometry_modes(kwargs, message):
+    model = _bare_model()
+
+    with pytest.raises(ValueError, match=message):
+        model("definitely-missing.jpg", **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"imgsz": 640}, "does not support imgsz"),
+        ({"augment": True}, "augment=True"),
+        ({"tiling": True}, "tiling=True"),
+    ],
+)
+def test_vlm_track_rejects_ignored_geometry_modes_before_video_io(kwargs, message):
+    model = _bare_model()
+
+    with pytest.raises(ValueError, match=message):
+        model.track("definitely-missing.mp4", **kwargs)
+
+
 class TestFactoryResolution:
     """The LibreVLM(...) name resolution (offline; no model is loaded)."""
 

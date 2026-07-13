@@ -670,6 +670,23 @@ class LibreRFDETR(BaseModel):
             name=name,
         )
 
+    def _validate_input_size(
+        self,
+        imgsz,
+        *,
+        context: str,
+        allow_fixed_override: bool = False,
+    ):
+        imgsz = super()._validate_input_size(
+            imgsz,
+            context=context,
+            allow_fixed_override=allow_fixed_override,
+        )
+        return self._validate_imgsz(
+            imgsz,
+            name=f"RF-DETR {context} imgsz",
+        )
+
     def _get_val_preprocessor(self, img_size: int | None = None):
         if img_size is not None:
             img_size = self._validate_imgsz(
@@ -914,6 +931,11 @@ class LibreRFDETR(BaseModel):
                         "Pass the matching task or use explicit training transfer."
                     )
 
+            self._apply_checkpoint_input_size(
+                loaded,
+                is_native_v1=is_native_v1,
+            )
+
             # Replay LoRA injection for adapter checkpoints. A model trained with
             # lora=True saves its DINOv2 encoder under PeftModel keys; rebuild the
             # same wrapped graph here (the recipe is fixed, so re-running the
@@ -1111,11 +1133,9 @@ class LibreRFDETR(BaseModel):
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         """Export model. RF-DETR requires opset >= 17 for LayerNormalization."""
-        if kwargs.get("imgsz") is not None:
-            kwargs["imgsz"] = self._validate_imgsz(
-                kwargs["imgsz"],
-                name="RF-DETR export imgsz",
-            )
+        requested_imgsz = kwargs.get("imgsz")
+        if requested_imgsz is not None:
+            kwargs["imgsz"] = self._validate_export_input_size(requested_imgsz)
         return super().export(format, opset=opset, **kwargs)
 
     def val(self, *args, workers: int = 0, **kwargs) -> Dict:

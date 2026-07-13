@@ -12,6 +12,7 @@ import logging
 import random
 import re
 from abc import ABC, abstractmethod
+from numbers import Integral
 from pathlib import Path
 from typing import (
     Any,
@@ -99,8 +100,26 @@ def _wrap_train_with_cfg(train_fn: Callable) -> Callable:
         ):
             bound = sig.bind_partial(self, *args, **call_kwargs)
             bound.apply_defaults()
-            seed = bound.arguments.get("seed")
+            imgsz = bound.arguments.get("imgsz")
             variadic_kwargs = bound.arguments.get("kwargs")
+            if imgsz is None and isinstance(variadic_kwargs, dict):
+                imgsz = variadic_kwargs.get("imgsz")
+            if imgsz is not None:
+                validate_input_size = getattr(
+                    type(self),
+                    "_validate_input_size",
+                    None,
+                )
+                validated = (
+                    validate_input_size(self, imgsz, context="train")
+                    if callable(validate_input_size)
+                    else imgsz
+                )
+                if "imgsz" in call_kwargs:
+                    call_kwargs = dict(call_kwargs)
+                    call_kwargs["imgsz"] = validated
+
+            seed = bound.arguments.get("seed")
             if seed is None and isinstance(variadic_kwargs, dict):
                 seed = variadic_kwargs.get("seed")
             if seed is None:
@@ -184,6 +203,17 @@ class BaseModel(ABC):
     # classify-only family requires ``-cls``); detect families leave it optional.
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
     TASK_INPUT_SIZES: ClassVar[dict[str, dict[str, int]]] = {}
+    # User-facing input-size constraints. Fixed families accept only the
+    # instance-native canvas; dynamic families may declare a stride/divisor and
+    # minimum safe canvas. Family-local semantic/depth divisor attributes are
+    # also honored for backward compatibility.
+    INPUT_SIZE_FIXED: ClassVar[bool] = False
+    INPUT_SIZE_DIVISOR: ClassVar[int | None] = None
+    INPUT_SIZE_MIN: ClassVar[int] = 1
+    SUPPORTS_RECTANGULAR_INPUT: ClassVar[bool] = False
+    # Rare fixed-canvas families with separately published native resolutions
+    # may let validated checkpoint metadata replace the construction default.
+    CHECKPOINT_INPUT_SIZE_OVERRIDE: ClassVar[bool] = False
     TRAIN_CONFIG: ClassVar[Optional[type[TrainConfig]]] = None
     val_preprocessor_class = StandardValPreprocessor
     validator_class: ClassVar[Optional[type]] = None
@@ -417,6 +447,116 @@ class BaseModel(ABC):
     def _get_input_size(self) -> int:
         return self.input_size
 
+    def _validate_input_size(
+        self,
+        imgsz: Any,
+        *,
+        context: str,
+        allow_fixed_override: bool = False,
+    ) -> int:
+        """Validate one square runtime canvas before any expensive work."""
+        family = self.FAMILY or type(self).__name__
+        if isinstance(imgsz, bool) or not isinstance(imgsz, Integral):
+            raise ValueError(
+                f"{family} {context} imgsz must be a positive integer, got "
+                f"{imgsz!r}"
+            )
+        value = int(imgsz)
+        if value <= 0:
+            raise ValueError(
+                f"{family} {context} imgsz must be a positive integer, got "
+                f"{value}"
+            )
+
+        native = int(self._get_input_size())
+        if self.INPUT_SIZE_FIXED and value != native and not allow_fixed_override:
+            raise ValueError(
+                f"{family} only supports imgsz={native}; {context} requires "
+                f"imgsz={native}, got {value}"
+            )
+
+        minimum = int(getattr(self, "INPUT_SIZE_MIN", 1) or 1)
+        if value < minimum:
+            raise ValueError(
+                f"{family} {context} imgsz must be at least {minimum}; got {value}"
+            )
+
+        divisor = getattr(self, "INPUT_SIZE_DIVISOR", None)
+        if divisor is None:
+            if getattr(self, "task", None) == "semantic":
+                divisor = getattr(self, "semantic_imgsz_divisor", None)
+            elif getattr(self, "task", None) == "depth":
+                divisor = getattr(self, "depth_imgsz_divisor", None)
+        divisor = int(divisor or 1)
+        if divisor <= 0:
+            raise RuntimeError(
+                f"{family} declares invalid INPUT_SIZE_DIVISOR={divisor}"
+            )
+        if value % divisor:
+            raise ValueError(
+                f"{family} {context} imgsz={value} must be divisible by "
+                f"{divisor}"
+            )
+        return value
+
+    def _validate_predict_input_size(self, imgsz: Any) -> int | tuple[int, int]:
+        """Validate scalar or rectangular prediction canvas dimensions."""
+        if isinstance(imgsz, (list, tuple)):
+            if len(imgsz) != 2:
+                raise ValueError(
+                    f"{self.FAMILY or type(self).__name__} inference imgsz must "
+                    f"be an integer or (height, width), got {imgsz!r}"
+                )
+            height = self._validate_input_size(imgsz[0], context="inference")
+            width = self._validate_input_size(imgsz[1], context="inference")
+            if height == width:
+                return height
+            if not self.SUPPORTS_RECTANGULAR_INPUT:
+                raise ValueError(
+                    f"{self.FAMILY or type(self).__name__} inference does not "
+                    f"support rectangular imgsz={(height, width)}"
+                )
+            return height, width
+        return self._validate_input_size(imgsz, context="inference")
+
+    def _validate_export_input_size(self, imgsz: Any) -> int | tuple[int, int]:
+        """Validate export dimensions before exporter construction."""
+        if isinstance(imgsz, (list, tuple)):
+            if len(imgsz) != 2:
+                raise ValueError(
+                    f"{self.FAMILY or type(self).__name__} export imgsz must be "
+                    f"an integer or (height, width), got {imgsz!r}"
+                )
+            return (
+                self._validate_input_size(imgsz[0], context="export"),
+                self._validate_input_size(imgsz[1], context="export"),
+            )
+        return self._validate_input_size(imgsz, context="export")
+
+    def _apply_checkpoint_input_size(
+        self,
+        checkpoint: dict,
+        *,
+        is_native_v1: bool,
+    ) -> None:
+        """Adopt validated native checkpoint canvas metadata when supported."""
+        if not is_native_v1 or "imgsz" not in checkpoint:
+            return
+        raw_imgsz = checkpoint["imgsz"]
+        allow_fixed_override = bool(self.CHECKPOINT_INPUT_SIZE_OVERRIDE)
+        try:
+            validated = self._validate_input_size(
+                raw_imgsz,
+                context="checkpoint",
+                allow_fixed_override=allow_fixed_override,
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Cannot use checkpoint imgsz={raw_imgsz!r} for "
+                f"{self.FAMILY or type(self).__name__}: {exc}"
+            ) from exc
+        self.input_size = validated
+
     def _strict_loading(self) -> bool:
         """Return whether legacy raw checkpoints require exact loading."""
         return True
@@ -608,13 +748,44 @@ class BaseModel(ABC):
     @classmethod
     def get_download_url(cls, filename: str) -> Optional[str]:
         """Return the Hugging Face download URL for the given weight filename."""
+        # Exact public identities are owned by the static manifest.  In
+        # particular, do not synthesize a plausible URL for a known
+        # config-only or otherwise unpublished checkpoint.
+        from ..manifest import get_artifact_spec, match_weight_filename
+
+        artifact = match_weight_filename(filename)
+        if artifact is not None:
+            if artifact.family != cls.FAMILY or artifact.download_kind != "hf":
+                return None
+            return artifact.download_url
+
+        # Preserve the historical convention for compatible third-party or
+        # locally published filenames that are not part of the public catalog.
         size = cls.detect_size_from_filename(filename)
         if size is None:
             return None
-        task = cls.detect_task_from_filename(filename)
+        task = cls.detect_task_from_filename(filename) or cls.DEFAULT_TASK
+        variant = cls.detect_variant_from_filename(filename)
+
+        # A permissive legacy filename regex must not bypass a fail-closed
+        # publication declaration.  For example, adding an arbitrary prefix to
+        # a config-only canonical filename makes ``match_weight_filename`` miss,
+        # while ``detect_size_from_filename`` still recognizes the embedded
+        # model name.  Resolve the parsed identity through the manifest before
+        # retaining the compatibility URL fallback.
+        declared = get_artifact_spec(
+            cls.FAMILY,
+            size,
+            task,
+            variant=variant,
+        )
+        if declared is not None:
+            if declared.download_kind != "hf":
+                return None
+            return declared.download_url
+
         task_suffix = task_to_suffix(task)
         suffix = f"-{task_suffix}" if task_suffix else ""
-        variant = cls.detect_variant_from_filename(filename)
         variant_suffix = f"-{variant}" if variant else ""
         name = f"{cls.FILENAME_PREFIX}{size}{suffix}{variant_suffix}"
         return f"https://huggingface.co/LibreYOLO/{name}/resolve/main/{name}{cls.WEIGHT_EXT}"
@@ -755,6 +926,11 @@ class BaseModel(ABC):
                     f"but this model was initialized for task='{self.task}'. "
                     "Pass the matching task or use the correct checkpoint."
                 )
+
+        self._apply_checkpoint_input_size(
+            loaded,
+            is_native_v1=is_native_v1,
+        )
 
         ckpt_nc = self._normalize_checkpoint_nc(loaded.get("nc"))
         ckpt_names = loaded.get("names")
@@ -991,6 +1167,8 @@ class BaseModel(ABC):
         orig_w, orig_h = img_pil.size
 
         scales = (1.0,) if self.TTA_FIXED_SIZE else self.TTA_SCALES
+        postprocess_kwargs = dict(kwargs)
+        postprocess_kwargs["input_size"] = effective_imgsz
 
         aug_dets = []
         for scale in scales:
@@ -1013,7 +1191,13 @@ class BaseModel(ABC):
                 with torch.no_grad():
                     raw = self._forward(tensor.to(self.device))
                 det = self._postprocess(
-                    raw, conf, iou, orig_size, max_det=max_det, ratio=ratio, **kwargs
+                    raw,
+                    conf,
+                    iou,
+                    orig_size,
+                    max_det=max_det,
+                    ratio=ratio,
+                    **postprocess_kwargs,
                 )
                 aug_dets.append((det, orig_size, is_flipped, scale))
 
@@ -1405,6 +1589,9 @@ class BaseModel(ABC):
         """
         from libreyolo.export import BaseExporter
 
+        if kwargs.get("imgsz") is not None:
+            kwargs["imgsz"] = self._validate_export_input_size(kwargs["imgsz"])
+
         return BaseExporter.create(format, self)(**kwargs)
 
     def val(
@@ -1463,6 +1650,9 @@ class BaseModel(ABC):
 
         if imgsz is None:
             imgsz = self._get_input_size()
+        validate_input_size = getattr(type(self), "_validate_input_size", None)
+        if callable(validate_input_size):
+            imgsz = validate_input_size(self, imgsz, context="validation")
         if plots is not None and "save_plots" not in kwargs:
             kwargs["save_plots"] = plots
         if augment and self.task == "obb":

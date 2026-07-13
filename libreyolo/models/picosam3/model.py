@@ -10,11 +10,13 @@ from typing import ClassVar, Dict, Optional
 import torch
 import torch.nn as nn
 
+from ...utils.download import WeightPublicationError
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import (
     load_untrusted_torch_file,
     unwrap_libreyolo_checkpoint,
 )
+from ..manifest import get_artifact_spec
 from ..sam.base import _INSTALL_HINT, _SNAPSHOT_COMPLETE_MARKER, LibreSAMModel
 from ..sam.prompts import normalize_boxes
 from .nn import PicoSAM3Network
@@ -54,10 +56,34 @@ class LibrePicoSAM3(LibreSAMModel):
         ).exists()
 
     def _ensure_weights(self) -> str:
-        repo = self.HF_REPOS[self.size]
         local_dir = Path("weights") / f"{self.FILENAME_PREFIX}{self.size}"
         if self._snapshot_complete(local_dir):
             return str(local_dir)
+
+        artifact = get_artifact_spec(self.FAMILY, self.size, self.DEFAULT_TASK)
+        if (
+            artifact is None
+            or not artifact.downloadable
+            or artifact.download_kind != "snapshot"
+            or not artifact.repository
+        ):
+            publication = (
+                artifact.publication.value if artifact is not None else "undeclared"
+            )
+            raise WeightPublicationError(
+                f"{self.FAMILY!r} size {self.size!r} is a valid architecture "
+                f"artifact, but its publication state is {publication!r} and "
+                "LibreYOLO does not declare a public snapshot route. Provide "
+                "a complete local snapshot."
+            )
+
+        repo = artifact.repository
+        class_repo = self.HF_REPOS.get(self.size)
+        if class_repo != repo:
+            raise RuntimeError(
+                f"PicoSAM3 repository metadata drift: class declares "
+                f"{class_repo!r}, manifest declares {repo!r}."
+            )
         try:
             from huggingface_hub import hf_hub_download
         except ImportError as exc:

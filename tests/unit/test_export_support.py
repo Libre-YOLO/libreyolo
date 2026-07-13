@@ -16,7 +16,6 @@ from libreyolo.export.exporter import NcnnExporter, OnnxExporter
 from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
 from libreyolo.models.inventory import collect_model_inventory
 from libreyolo.tasks import TASKS
-from libreyolo.tasks import task_to_suffix
 
 
 pytestmark = pytest.mark.unit
@@ -168,7 +167,13 @@ def test_dump_inventory_refuses_partial_overwrite(tmp_path):
 )
 def test_committed_inventory_matches_runtime_inventory():
     committed = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
-    assert committed == collect_model_inventory()
+    runtime = collect_model_inventory()
+    # Dependency availability is intentionally local-environment state; every
+    # declarative capability/publication field must still match the snapshot.
+    for inventory in (committed, runtime):
+        for metadata in inventory.values():
+            metadata.pop("available", None)
+    assert committed == runtime
 
 
 def test_partial_exporters_are_custom_not_blocked():
@@ -195,28 +200,25 @@ def test_partial_exporters_are_custom_not_blocked():
 
 def test_default_download_urls_keep_task_repo_suffixes():
     from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.manifest import ARTIFACT_BY_FILENAME
 
     for metadata in collect_model_inventory().values():
+        if not metadata["generic_cli"] or not metadata["available"]:
+            continue
         module_name, class_name = metadata["class"].rsplit(".", 1)
         cls = getattr(importlib.import_module(module_name), class_name)
         if "get_download_url" in cls.__dict__:
             continue
-        for task in metadata["tasks"]:
-            sizes = metadata["task_sizes"].get(task) or metadata["default_imgsz"]
-            if not sizes or not cls.FILENAME_PREFIX:
-                continue
-            size = next(iter(sizes))
-            suffix = task_to_suffix(task)
-            filename = f"{cls.FILENAME_PREFIX}{size}"
-            if suffix:
-                filename += f"-{suffix}"
-            filename += cls.WEIGHT_EXT
+        artifacts = [
+            artifact
+            for artifact in ARTIFACT_BY_FILENAME.values()
+            if artifact.family == cls.FAMILY and artifact.download_kind == "hf"
+        ]
+        for artifact in artifacts:
+            filename = artifact.canonical_filename
             url = BaseModel.get_download_url.__func__(cls, filename)
-            assert url is not None
-            expected_repo = f"/{cls.FILENAME_PREFIX}{size}"
-            if suffix:
-                expected_repo += f"-{suffix}"
-            assert expected_repo + "/resolve/main/" in url
+            assert url == artifact.download_url
+            assert f"/{filename.removesuffix(cls.WEIGHT_EXT)}/resolve/main/" in url
 
 
 def test_generated_export_docs_are_current():

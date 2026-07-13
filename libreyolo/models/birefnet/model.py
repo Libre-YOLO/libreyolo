@@ -38,6 +38,7 @@ class LibreBiRefNet(BaseModel):
     FILENAME_PREFIX = "LibreBiRefNet"
     WEIGHT_EXT = ".pt"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 1024, "l": 1024}
+    INPUT_SIZE_FIXED = True
     SUPPORTED_TASKS = ("matte",)
     DEFAULT_TASK = "matte"
     REQUIRE_TASK_SUFFIX = True

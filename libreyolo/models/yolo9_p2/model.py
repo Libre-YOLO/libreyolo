@@ -51,7 +51,8 @@ class LibreYOLO9P2(LibreYOLO9):
     # Base yolo9 detect checkpoints are valid transfer sources (their tensors
     # are remapped by _prepare_state_dict).
     TRANSFER_COMPATIBLE_FAMILIES = ("yolo9",)
-    # Published VisDrone research-preview checkpoint (10 aerial classes).
+    # Recognized local VisDrone research-checkpoint variant (10 aerial classes).
+    # LibreYOLO does not publish or auto-download these restricted weights.
     WEIGHT_VARIANTS = ("visdrone",)
 
     # =====================================================================
@@ -79,6 +80,12 @@ class LibreYOLO9P2(LibreYOLO9):
         claim upstream YOLOv9 checkpoints for this family (it is registered
         first) and misattribute them to yolo9_p2.
         """
+        return None
+
+    @classmethod
+    def get_download_url(cls, filename: str) -> None:
+        """P2 architectures are available, but no public weights are hosted."""
+        del filename
         return None
 
     @classmethod

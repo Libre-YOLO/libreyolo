@@ -462,6 +462,34 @@ class TestSegformerReferenceFidelity:
         assert loaded.size == size
         assert loaded.input_size == LibreSegformer.INPUT_SIZES[size]
 
+    def test_native_checkpoint_applies_imgsz_after_size_rebuild(self, tmp_path):
+        from libreyolo.models.segformer.model import LibreSegformer
+        from libreyolo.models.segformer.nn import LibreSegformerNet
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        net = LibreSegformerNet(size="b1", num_classes=3)
+        checkpoint = wrap_libreyolo_checkpoint(
+            net.state_dict(),
+            model_family="segformer",
+            size="b1",
+            task="semantic",
+            nc=3,
+            names=["road", "sky", "tree"],
+            imgsz=640,
+        )
+        checkpoint_path = tmp_path / "LibreSegformerb1-sem.pt"
+        torch.save(checkpoint, checkpoint_path)
+
+        loaded = LibreSegformer(
+            model_path=str(checkpoint_path),
+            size="b0",
+            nb_classes=3,
+            device="cpu",
+        )
+
+        assert loaded.size == "b1"
+        assert loaded.input_size == 640
+
     def test_class_rebuild_keeps_the_reference_init(self):
         """Re-heading for a new dataset is THE fine-tuning path. A fresh nn.Conv2d
         carries torch's default init, so the new classifier must be re-initialized

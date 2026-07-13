@@ -231,6 +231,31 @@ def test_restore_collate_pads_inputs_and_targets_separately():
     assert targets.shape[-2:] == (32, 48)  # target max (independent)
 
 
+def test_x2_validation_pads_odd_input_and_crops_to_target_canvas():
+    from libreyolo.validation.restore_validator import RestoreValidator
+
+    model = LibreRealESRGAN(size="x2", device="cpu")
+    validator = object.__new__(RestoreValidator)
+    validator.model = model
+    images = torch.rand(1, 3, 3, 5)
+    targets = torch.rand(1, 3, 6, 10)
+    batch = (
+        images,
+        targets,
+        [{"orig_shape": (3, 5), "target_shape": (6, 10)}],
+        [0],
+    )
+
+    padded, _, _, _ = validator._preprocess_batch(batch)
+    with torch.no_grad():
+        output = model._forward(padded)
+    restored = validator._postprocess_predictions(output, batch)
+
+    assert padded.shape[-2:] == (4, 6)
+    assert output.shape[-2:] == (8, 12)
+    assert restored.shape[-2:] == (6, 10)
+
+
 def test_val_runs_on_correct_hr_pairs(tmp_path):
     root = tmp_path / "srval"
     yaml_path = _write_pairs(root, "val", (8, 8), (32, 32))

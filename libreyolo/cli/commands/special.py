@@ -163,20 +163,9 @@ def models_cmd(
 ) -> None:
     """List available model families and sizes."""
     from libreyolo.models.inventory import collect_model_inventory
-    from libreyolo.tasks import task_to_suffix
 
     families = []
     for family, metadata in collect_model_inventory().items():
-        cli_names = []
-        task_sizes = metadata["task_sizes"] or {
-            metadata["default_task"]: metadata["default_imgsz"]
-        }
-        for task, sizes in task_sizes.items():
-            suffix = task_to_suffix(task)
-            for size in sizes:
-                name = f"{family}-{size}" + (f"-{suffix}" if suffix else "")
-                if name not in cli_names:
-                    cli_names.append(name)
         extra = metadata["optional_extra"]
         families.append(
             {
@@ -186,10 +175,17 @@ def models_cmd(
                 "task_sizes": metadata["task_sizes"],
                 "tasks": metadata["tasks"],
                 "default_task": metadata["default_task"],
-                "cli_names": cli_names,
+                "cli_names": metadata["cli_names"],
+                "downloadable_cli_names": metadata["downloadable_cli_names"],
+                "local_only_cli_names": metadata["local_only_cli_names"],
                 "available": metadata["available"],
                 "optional_extra": extra,
                 "install_hint": f"pip install libreyolo[{extra}]" if extra else None,
+                "factory": metadata["factory"],
+                "public_entrypoint": metadata["public_entrypoint"],
+                "factory_default_model": metadata["factory_default_model"],
+                "generic_cli": metadata["generic_cli"],
+                "artifacts": metadata["artifacts"],
             }
         )
 
@@ -204,7 +200,37 @@ def models_cmd(
                 f"    Tasks: {', '.join(f['tasks'])} (default: {f['default_task']})"
             )
             lines.append(f"    Sizes: {', '.join(f['sizes'])}")
-            lines.append(f"    Names: {', '.join(f['cli_names'])}")
+            if f["cli_names"]:
+                lines.append(f"    Names: {', '.join(f['cli_names'])}")
+                if f["downloadable_cli_names"]:
+                    lines.append(
+                        "    Auto-download: " + ", ".join(f["downloadable_cli_names"])
+                    )
+                if f["local_only_cli_names"]:
+                    lines.append(
+                        "    Local checkpoint required: "
+                        + ", ".join(f["local_only_cli_names"])
+                    )
+            else:
+                model_states = sorted(
+                    {
+                        (artifact["factory_model"], artifact["publication"])
+                        for artifact in f["artifacts"]
+                        if artifact["factory_model"] is not None
+                    }
+                )
+                lines.append(
+                    f"    API: {f['public_entrypoint']} (separate {f['factory']} factory)"
+                )
+                lines.append(
+                    "    Models: "
+                    + ", ".join(
+                        f"{model} [{publication}]"
+                        for model, publication in model_states
+                    )
+                )
+                if f["factory_default_model"] is not None:
+                    lines.append(f"    Default: {f['factory_default_model']}")
             imgsz_str = ", ".join(f"{s}={v}" for s, v in f["default_imgsz"].items())
             lines.append(f"    Input: {imgsz_str}")
             if not f["available"] and f["install_hint"]:
@@ -270,9 +296,7 @@ def formats_cmd(
             "requires_onnx": cls.requires_onnx,
         }
         aliases = sorted(
-            alias
-            for alias, target in BaseExporter._aliases.items()
-            if target == name
+            alias for alias, target in BaseExporter._aliases.items() if target == name
         )
         if aliases:
             info["aliases"] = aliases

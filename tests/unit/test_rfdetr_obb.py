@@ -234,6 +234,8 @@ def test_rfdetr_top_level_names_override_nested_args_metadata():
 
     class DummyRFDETR(torch.nn.Module):
         nb_classes = 2
+        patch_size = 16
+        num_windows = 2
 
         def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
             from torch.nn.modules.module import _IncompatibleKeys
@@ -247,6 +249,8 @@ def test_rfdetr_top_level_names_override_nested_args_metadata():
     wrapper._model_num_classes = 2
     wrapper._allow_detect_to_obb_transfer = False
     wrapper._allow_detect_to_pose_transfer = False
+    wrapper.size = "n"
+    wrapper.input_size = 384
     checkpoint = wrap_libreyolo_checkpoint(
         {},
         model_family="rfdetr",
@@ -261,6 +265,46 @@ def test_rfdetr_top_level_names_override_nested_args_metadata():
     wrapper._load_weights(checkpoint)
 
     assert wrapper.names == {0: "top-left", 1: "top-right"}
+    assert wrapper.input_size == 384
+    assert wrapper.model.training is False
+
+
+def test_rfdetr_custom_loader_adopts_native_checkpoint_imgsz():
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    class DummyRFDETR(torch.nn.Module):
+        nb_classes = 2
+        patch_size = 16
+        num_windows = 2
+
+        def load_state_dict(self, state_dict, strict=False, canonical_v1=False):
+            from torch.nn.modules.module import _IncompatibleKeys
+
+            return _IncompatibleKeys([], [])
+
+    wrapper = object.__new__(LibreRFDETR)
+    wrapper.task = "detect"
+    wrapper.model = DummyRFDETR()
+    wrapper.nb_classes = 2
+    wrapper._model_num_classes = 2
+    wrapper._allow_detect_to_obb_transfer = False
+    wrapper._allow_detect_to_pose_transfer = False
+    wrapper.size = "n"
+    wrapper.input_size = 384
+    checkpoint = wrap_libreyolo_checkpoint(
+        {},
+        model_family="rfdetr",
+        size="n",
+        task="detect",
+        nc=2,
+        names={0: "left", 1: "right"},
+        imgsz=416,
+    )
+
+    wrapper._load_weights(checkpoint)
+
+    assert wrapper.input_size == 416
     assert wrapper.model.training is False
 
 

@@ -2,9 +2,12 @@
 
 This document catalogs the model-naming conventions **currently in use** in
 the LibreYOLO repository. It is descriptive — it records what is there today,
-not a proposal. Sources of truth are the `FAMILY` and `FILENAME_PREFIX`
-class constants in `libreyolo/models/<family>/model.py` and the
-task-resolution rules in [`libreyolo/tasks.py`](../libreyolo/tasks.py).
+not a proposal. The public identity source of truth is
+[`libreyolo/models/manifest.py`](../libreyolo/models/manifest.py), together
+with the task-resolution rules in
+[`libreyolo/tasks.py`](../libreyolo/tasks.py). Family-class `FAMILY` and
+`FILENAME_PREFIX` constants remain runtime compatibility metadata and must
+agree with the manifest.
 
 ## Filename schema
 
@@ -316,9 +319,8 @@ LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-do
 are converted from NVIDIA's ADE20K checkpoints, whose license permits
 redistribution (with the license attached) but restricts use to research or
 evaluation only. LibreYOLO hosts them and prints that restriction before each
-download, exactly as it does for the VisDrone research-preview weights. They are
-not covered by LibreYOLO's permissive license; train from scratch for
-unrestricted use. See `libreyolo/models/segformer/NOTICE`.
+download. They are not covered by LibreYOLO's permissive license; train from
+scratch for unrestricted use. See `libreyolo/models/segformer/NOTICE`.
 
 ## Examples by family + task
 
@@ -520,6 +522,24 @@ number, which sits a hair below the test-size figure. Each family threads its
 `crop_pct`/`interpolation` through `predict()`, `val()`, and exported-backend
 inference so all three agree.
 
+## Runtime input-size contract
+
+The task-and-size entry selects the model's native square canvas. Public
+`imgsz` overrides are validated before source loading, dataset setup, training,
+or exporter construction:
+
+- fixed-canvas families accept only the instance's native resolution;
+- dynamic convolutional families may require a declared stride divisor and
+  minimum canvas;
+- patch-transformer families require their patch-grid divisor; and
+- rectangular exports validate the height and width independently.
+
+A validated native v1 checkpoint `imgsz` becomes the default canvas for a
+dynamic family. Fixed-canvas families reject conflicting checkpoint metadata
+unless they explicitly publish multiple native resolutions; EoMT's 1280 COCO
+instance variant is the current opt-in case. Legacy/raw state dictionaries do
+not change the constructed runtime default.
+
 ## Resolution precedence
 
 When loading via `LibreYOLO("...")`, the task is resolved with this priority
@@ -535,7 +555,13 @@ Official LibreYOLO v1.0 checkpoints must carry `task` metadata; see
 legacy compatibility path for old LibreYOLO checkpoints, not the standard for
 new artifacts.
 
-## Filename regex
+## Filename identity and legacy regex
+
+`libreyolo.models.manifest` is the source of truth for public canonical
+filenames, aliases, family/task/size combinations, variants, and publication
+routes. Public resolution requires an exact manifest identity (matched
+case-insensitively); impossible combinations are rejected rather than inferred
+through a permissive pattern.
 
 `BaseModel._filename_regex` builds the canonical pattern as:
 
@@ -544,12 +570,15 @@ new artifacts.
 ```
 
 with `task_suffixes` derived from `SUPPORTED_TASKS` via
-`libreyolo.tasks.task_suffix_pattern`. This is the single source of truth for
-parsing a filename back into `(family, size, task, variant)`.
+`libreyolo.tasks.task_suffix_pattern`. Class regexes remain a compatibility
+parser for legacy, upstream, and third-party filenames outside the public
+manifest; they do not advertise or authorize a public artifact.
 
 The `variant` group only exists for families that declare `WEIGHT_VARIANTS`, a
 dataset suffix for published checkpoints trained on a non-default dataset.
-Example: `yolo9_p2` declares `("visdrone",)`, so `LibreYOLO9P2s-visdrone.pt`
-resolves the Hugging Face repo `LibreYOLO/LibreYOLO9P2s-visdrone` (a research
-preview under VisDrone's CC BY-NC-SA license, announced by a download notice).
+Example: `yolo9_p2` recognizes the local filename
+`LibreYOLO9P2s-visdrone.pt`, but neither the base P2 checkpoint nor the
+VisDrone variant has a public auto-download route. The variant remains gated
+by VisDrone's CC BY-NC-SA terms; users must supply a checkpoint they are
+authorized to use.
 Plain COCO-default weights never carry a variant suffix.

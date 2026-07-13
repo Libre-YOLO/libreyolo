@@ -379,3 +379,147 @@ def test_wrap_checkpoint_does_not_fall_back_to_default_size_for_empty_task_map(
             nc=1,
             names={0: "person"},
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("model_family", "not-a-family", "public model manifest"),
+        ("size", "not-a-size", "declared model artifact"),
+        ("task", "semantic", "declared model artifact"),
+    ],
+)
+def test_native_metadata_requires_declared_family_size_task_identity(
+    field, value, message
+):
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=1,
+        names={0: "object"},
+        imgsz=640,
+    )
+    checkpoint[field] = value
+
+    with pytest.raises(serialization.CheckpointMetadataError, match=message):
+        serialization.validate_checkpoint_metadata(checkpoint, strict=True)
+
+
+def test_checkpoint_wrapper_writes_canonical_identity_values():
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        model_family=" YOLO9 ",
+        size="T",
+        task="DETECTION",
+        nc=1,
+        names={0: "object"},
+        imgsz=640,
+    )
+
+    assert checkpoint["model_family"] == "yolo9"
+    assert checkpoint["size"] == "t"
+    assert checkpoint["task"] == "detect"
+
+
+@pytest.mark.parametrize("imgsz", [True, 640.5, "640", 0, -1])
+def test_checkpoint_wrapper_rejects_lossy_or_invalid_imgsz(imgsz):
+    with pytest.raises(serialization.CheckpointMetadataError, match="positive int"):
+        serialization.wrap_libreyolo_checkpoint(
+            {"layer.weight": object()},
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=1,
+            names={0: "object"},
+            imgsz=imgsz,
+        )
+
+
+def test_checkpoint_writer_and_validator_enforce_family_imgsz_contract():
+    kwargs = {
+        "model_family": "yolo9",
+        "size": "t",
+        "task": "detect",
+        "nc": 1,
+        "names": {0: "object"},
+        "imgsz": 641,
+    }
+    with pytest.raises(serialization.CheckpointMetadataError, match="divisible by 32"):
+        serialization.wrap_libreyolo_checkpoint(
+            {"layer.weight": object()},
+            **kwargs,
+        )
+
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        **{**kwargs, "imgsz": 640},
+    )
+    checkpoint["imgsz"] = 641
+    with pytest.raises(serialization.CheckpointMetadataError, match="divisible by 32"):
+        serialization.validate_checkpoint_metadata(checkpoint, strict=True)
+
+
+def test_checkpoint_writer_uses_rfdetr_patch_window_contract():
+    common = {
+        "model_family": "rfdetr",
+        "size": "n",
+        "task": "detect",
+        "nc": 1,
+        "names": {0: "object"},
+    }
+    valid = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        imgsz=384,
+        **common,
+    )
+    assert valid["imgsz"] == 384
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="divisible by 32"):
+        serialization.wrap_libreyolo_checkpoint(
+            {"layer.weight": object()},
+            imgsz=641,
+            **common,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("model_family", "YOLO9"),
+        ("size", "T"),
+        ("task", "DETECTION"),
+    ],
+)
+def test_native_metadata_rejects_noncanonical_identity_values(field, value):
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        model_family="yolo9",
+        size="t",
+        task="detect",
+        nc=1,
+        names={0: "object"},
+        imgsz=640,
+    )
+    checkpoint[field] = value
+
+    with pytest.raises(serialization.CheckpointMetadataError, match="canonical"):
+        serialization.validate_checkpoint_metadata(checkpoint, strict=True)
+
+
+def test_checkpoint_imgsz_inference_is_independent_of_runtime_registry(monkeypatch):
+    from libreyolo.models.base import BaseModel
+
+    monkeypatch.setattr(BaseModel, "_registry", [])
+
+    checkpoint = serialization.wrap_libreyolo_checkpoint(
+        {"layer.weight": object()},
+        model_family="dinov2",
+        size="n",
+        task="semantic",
+        nc=1,
+        names={0: "foreground"},
+    )
+
+    assert checkpoint["imgsz"] == 518

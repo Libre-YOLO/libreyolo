@@ -120,7 +120,14 @@ class DetectionValidator(BaseValidator):
                 allow_scripts=self.config.allow_download_scripts,
             )
             data_dir = data_cfg["root"]
-            self.nc = int(data_cfg.get("nc", self.nc))
+            dataset_nc = int(data_cfg.get("nc", self.nc))
+            if dataset_nc != int(self.nc):
+                raise ValueError(
+                    f"Detection dataset has {dataset_nc} classes but "
+                    f"{type(self.model).__name__} predicts {self.nc}. Load a "
+                    "checkpoint with the matching class head before validation."
+                )
+            self.nc = dataset_nc
 
             names = data_cfg.get("names", None)
             if isinstance(names, dict):

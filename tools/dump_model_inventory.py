@@ -14,12 +14,10 @@ DEFAULT_OUTPUT = REPO_ROOT / "reports" / "export_inventory.json"
 def write_inventory(output: Path, *, allow_family_removal: bool = False) -> dict:
     """Collect the runtime inventory and write it to ``output``.
 
-    The committed snapshot is canonical: it is collected in a fully
-    provisioned environment where every optional tier imports. When optional
-    dependencies are missing, ``collect_model_inventory()`` silently returns a
-    subset, and writing that subset would drop families from the generated
-    compatibility tables. Refuse to shrink the family set unless the caller
-    explicitly allows it (for intentional family removals).
+    The committed snapshot is canonical. Model-family membership comes from
+    the static manifest and is complete even when optional dependencies are
+    absent. Refuse to shrink the family set unless the caller explicitly
+    allows it for an intentional family removal.
     """
     from libreyolo.models.inventory import collect_model_inventory
 
@@ -31,10 +29,8 @@ def write_inventory(output: Path, *, allow_family_removal: bool = False) -> dict
             raise SystemExit(
                 f"Refusing to overwrite {output}: the fresh inventory is "
                 f"missing families present in the committed snapshot: "
-                f"{', '.join(missing)}. This usually means optional "
-                "dependencies (for example libreyolo[rfdetr]) are not "
-                "installed in this environment. Install them and rerun, or "
-                "pass --allow-family-removal for an intentional removal."
+                f"{', '.join(missing)}. Update the static manifest, then pass "
+                "--allow-family-removal only for an intentional removal."
             )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
