@@ -25,11 +25,18 @@ The authoritative alias table is `_ALIASES` in
 `libreyolo/models/openvocab/__init__.py`.
 
 OMDet-Turbo is the real-time member of the tier. It is an RT-DETR-based
-open-vocabulary detector that decouples class embeddings from a task prompt,
-which lets it cache text embeddings and run its own NMS in post-processing.
-Because the classes are decoupled, its post-processing returns labels that map
-directly back to the queried class list (no phrase disambiguation like Grounding
-DINO). It does not expose `text_threshold=`.
+open-vocabulary detector that decouples class embeddings from a task prompt and
+runs its own NMS in post-processing. Its post-processing returns labels that
+map directly back to the queried class list (no phrase disambiguation like
+Grounding DINO). It does not expose `text_threshold=`.
+
+Public `LibreOMDetTurbo.predict()` calls the maintained `transformers`
+implementation, including its processor and post-processing. The
+parity-verified native `OmDetTurboDetectionModel` under
+`libreyolo/models/omdet_turbo/` is groundwork for a possible future
+fixed-vocabulary export path; it is not called by `predict()`. Export remains
+unsupported under ADR 0008 and would require a separate contract change plus
+tensor, decoded-detection, and metric parity verification.
 
 Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 
@@ -59,7 +66,7 @@ string, empty lists, blank labels, and case-insensitive duplicates.
 
 ## Thresholds
 
-`conf=` is the box-score threshold for both families.
+`conf=` is the box-score threshold for all three families.
 
 Grounding DINO also has a text-token threshold. LibreYOLO exposes it as
 `text_threshold=` on prediction calls:
@@ -68,7 +75,7 @@ Grounding DINO also has a text-token threshold. LibreYOLO exposes it as
 model.predict("image.jpg", conf=0.25, text_threshold=0.25)
 ```
 
-OWLv2 does not have this threshold and rejects `text_threshold=`.
+OWLv2 and OMDet-Turbo do not have this threshold and reject `text_threshold=`.
 
 ## Grounding DINO Phrase Mapping
 

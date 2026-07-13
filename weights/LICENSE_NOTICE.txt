@@ -78,6 +78,17 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    OMDet-Turbo (LibreOMDetTurbot)                     Apache-2.0
+             upstream: omlab/omdet-turbo-swin-tiny-hf
+             pinned revision:
+               7fe93cecfb770c4d76cf71163956221249cab566
+             LibreYOLO mirror revision:
+               d569ff1da5668156f07b5859246be435804fed2d
+             Model, configuration, processor, and tokenizer assets are
+             byte-identical to the pinned upstream snapshot; no learned
+             parameters were changed. model.safetensors SHA-256:
+               439d1575d7e237ad565ed6969ea2a2dfcedf2086155e9ca3ac96cd6180a48cfd
+
     Depth Anything 3 (LibreDepthAnything3l-depth)      Apache-2.0
              upstream: depth-anything/DA3MONO-LARGE
              pinned revision: f465978e618db8cc79c83b8bbf24964857db1875

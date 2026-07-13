@@ -11,14 +11,14 @@ LibreYOLO already has two open-vocabulary surfaces:
 - `LibreCLIP`, for zero-shot image classification.
 - `LibreVLM`, for generative vision-language models used as detectors.
 
-Grounding DINO and OWLv2 are different from both. They are purpose-built
-object detectors conditioned on text labels. They return boxes with real model
-scores, but they load as multi-file Hugging Face snapshots rather than
-single-file LibreYOLO checkpoints.
+Grounding DINO, OWLv2, and OMDet-Turbo are different from both. They are
+purpose-built object detectors conditioned on text labels. They return boxes
+with real model scores, but they load as multi-file Hugging Face snapshots
+rather than single-file LibreYOLO checkpoints.
 
 They also do not belong in the generic VLM tier. VLM models generate text and
-the VLM wrapper parses that text into boxes. Grounding DINO and OWLv2 expose
-detector heads and processor postprocessing functions.
+the VLM wrapper parses that text into boxes. Open-vocabulary detector families
+expose detector heads and processor postprocessing functions.
 
 ## Decision
 
@@ -56,7 +56,8 @@ The default vocabulary is COCO-80, matching the detector tier. Calling
 `set_classes()` replaces it until called again.
 
 `conf=` maps to the model's box-score threshold. Grounding DINO also accepts
-`text_threshold=` on prediction calls; OWLv2 does not.
+`text_threshold=` on prediction calls; OWLv2 and OMDet-Turbo do not. OMDet-Turbo
+uses its processor's fixed NMS threshold of `0.5`, so `iou=` is ignored.
 
 ## Validation
 

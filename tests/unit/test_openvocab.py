@@ -13,7 +13,7 @@ from libreyolo.models.openvocab.grounding_dino import LibreGroundingDINO
 from libreyolo.models.openvocab.omdet_turbo import LibreOMDetTurbo
 from libreyolo.models.openvocab.owlv2 import LibreOWLv2
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.openvocab]
 
 
 def _bare(cls=LibreOWLv2):
@@ -47,6 +47,15 @@ class TestSetClasses:
         m = _bare()
         with pytest.raises(ValueError):
             m.set_classes(["Boat", "boat"])
+
+    def test_second_call_replaces_the_vocabulary(self):
+        m = _bare()
+        m.set_classes(["person", "remote control"])
+        m.set_classes(["Traffic Light"])
+
+        assert m.names == {0: "Traffic Light"}
+        assert m.nb_classes == 1
+        assert m._name_to_id == {"traffic light": 0}
 
 
 class TestFactoryAliases:
@@ -164,6 +173,11 @@ class TestCallDefaults:
 
     def test_text_threshold_rejected_for_owlv2(self):
         m = _bare(LibreOWLv2)
+        with pytest.raises(TypeError, match="does not support text_threshold"):
+            m("image.jpg", text_threshold=0.4)
+
+    def test_text_threshold_rejected_for_omdet_turbo(self):
+        m = _bare(LibreOMDetTurbo)
         with pytest.raises(TypeError, match="does not support text_threshold"):
             m("image.jpg", text_threshold=0.4)
 
@@ -399,8 +413,11 @@ class TestOMDetTurboMapping:
         m = _bare(LibreOMDetTurbo)
         m.set_classes(["cat", "dog"])
 
+        captured = {}
+
         class Processor:
             def post_process_grounded_object_detection(self, *args, **kwargs):
+                captured.update(kwargs)
                 return [
                     {
                         "boxes": torch.tensor(
@@ -420,6 +437,43 @@ class TestOMDetTurboMapping:
         det = m._postprocess(object(), 0.3, 0.45, (20, 20))
         assert det["num_detections"] == 2
         assert det["classes"].tolist() == [1, 0]
+        assert captured == {
+            "text_labels": ["cat", "dog"],
+            "threshold": pytest.approx(0.3),
+            "nms_threshold": pytest.approx(0.5),
+            "target_sizes": [(20, 20)],
+        }
+
+    def test_multiword_labels_map_case_insensitively(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["Traffic Light", "Remote Control"])
+
+        labels = m._labels_to_class_ids(["traffic light", "REMOTE CONTROL"])
+
+        assert labels.tolist() == [0, 1]
+
+    def test_postprocess_handles_no_detections(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["giraffe"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                return [
+                    {
+                        "boxes": torch.zeros((0, 4)),
+                        "scores": torch.zeros((0,)),
+                        "labels": torch.zeros((0,), dtype=torch.int64),
+                        "text_labels": [],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
+
+        assert det["num_detections"] == 0
+        assert det["boxes"].shape == (0, 4)
+        assert det["scores"].shape == (0,)
+        assert det["classes"].shape == (0,)
 
     def test_postprocess_falls_back_to_classes_key(self):
         m = _bare(LibreOMDetTurbo)
@@ -427,7 +481,7 @@ class TestOMDetTurboMapping:
 
         class Processor:
             def post_process_grounded_object_detection(self, *args, **kwargs):
-                # Older transformers used the integer "classes" key.
+                # Keep compatibility with processors that use the "classes" key.
                 return [
                     {
                         "boxes": torch.tensor([[1.0, 2.0, 10.0, 12.0]]),

@@ -1,9 +1,9 @@
 """Base class for open-vocabulary detector wrappers.
 
-Grounding DINO and OWLv2 are discriminative Hugging Face detectors: they take
-an image plus a text vocabulary and return real detection scores. They are not
-LibreYOLO checkpoint families, so this tier intentionally does not define
-``can_load`` and stays out of the ``LibreYOLO(...)`` state-dict factory.
+These discriminative Hugging Face detectors take an image plus a text
+vocabulary and return real detection scores. They are not LibreYOLO checkpoint
+families, so this tier intentionally does not define ``can_load`` and stays out
+of the ``LibreYOLO(...)`` state-dict factory.
 """
 
 from __future__ import annotations
