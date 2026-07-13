@@ -1,0 +1,577 @@
+from __future__ import annotations
+
+import sys
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+from libreyolo.backends.coreml import CoreMLBackend
+from libreyolo.backends.onnx import (
+    OnnxBackend,
+    _load_validated_onnx_metadata,
+    _resolve_onnx_providers,
+    _stage_validated_onnx_artifact,
+)
+from libreyolo.backends.torchscript import TorchScriptBackend
+from libreyolo.validation.base import BaseValidator, validation_model_state
+from libreyolo.validation.detection_validator import DetectionValidator
+
+
+pytestmark = pytest.mark.unit
+
+
+def test_onnx_runtime_input_is_cast_to_declared_dtype():
+    captured = {}
+
+    class _Session:
+        def run(self, output_names, feed):
+            captured["output_names"] = output_names
+            captured["blob"] = feed["images"]
+            return [np.zeros((1,), dtype=np.float16)]
+
+    backend = OnnxBackend.__new__(OnnxBackend)
+    backend.session = _Session()
+    backend.input_name = "images"
+    backend.input_dtype = np.dtype(np.float16)
+
+    outputs = backend._run_inference(np.ones((1, 3, 4, 4), dtype=np.float32))
+
+    assert outputs[0].dtype == np.float16
+    assert captured["output_names"] is None
+    assert captured["blob"].dtype == np.float16
+    assert captured["blob"].flags.c_contiguous
+
+
+@pytest.mark.parametrize("device", ["cpu", "CPU", torch.device("cpu")])
+def test_onnx_explicit_cpu_uses_cpu_provider_without_warning(device, caplog):
+    providers, resolved = _resolve_onnx_providers(
+        device,
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    assert providers == ["CPUExecutionProvider"]
+    assert resolved == "cpu"
+    assert not caplog.records
+
+
+def test_onnx_indexed_cuda_passes_device_id_to_execution_provider():
+    providers, resolved = _resolve_onnx_providers(
+        "cuda:2",
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    assert providers == [
+        ("CUDAExecutionProvider", {"device_id": 2}),
+        "CPUExecutionProvider",
+    ]
+    assert resolved == "cuda:2"
+
+
+@pytest.mark.parametrize("device", [0, "0", torch.device("cuda:0")])
+def test_onnx_numeric_cuda_device_zero_selects_cuda_provider(device):
+    providers, resolved = _resolve_onnx_providers(
+        device,
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    assert providers == [
+        ("CUDAExecutionProvider", {"device_id": 0}),
+        "CPUExecutionProvider",
+    ]
+    assert resolved == "cuda:0"
+
+
+def test_onnx_runtime_rejects_unrepresentable_input_type():
+    with pytest.raises(TypeError, match=r"tensor\(bfloat16\)"):
+        OnnxBackend._numpy_dtype_for_onnx_type("tensor(bfloat16)")
+
+
+def _write_external_onnx(path, location, *, offset=None, length=None):
+    onnx = pytest.importorskip("onnx")
+    tensor = onnx.TensorProto()
+    tensor.name = "weight"
+    tensor.data_type = onnx.TensorProto.FLOAT
+    tensor.dims.append(1)
+    tensor.data_location = onnx.TensorProto.EXTERNAL
+    for key, value in (
+        ("location", location),
+        ("offset", offset),
+        ("length", length),
+    ):
+        if value is None:
+            continue
+        entry = tensor.external_data.add()
+        entry.key = key
+        entry.value = str(value)
+    graph = onnx.helper.make_graph([], "external", [], [], initializer=[tensor])
+    onnx.save_model(onnx.helper.make_model(graph), path)
+
+
+def _write_shared_external_onnx(path, location, slices):
+    onnx = pytest.importorskip("onnx")
+    tensors = []
+    for index, (offset, length) in enumerate(slices):
+        tensor = onnx.TensorProto()
+        tensor.name = f"weight-{index}"
+        tensor.data_type = onnx.TensorProto.FLOAT
+        tensor.dims.append(1)
+        tensor.data_location = onnx.TensorProto.EXTERNAL
+        for key, value in (
+            ("location", location),
+            ("offset", offset),
+            ("length", length),
+        ):
+            entry = tensor.external_data.add()
+            entry.key = key
+            entry.value = str(value)
+        tensors.append(tensor)
+    graph = onnx.helper.make_graph([], "shared-external", [], [], initializer=tensors)
+    onnx.save_model(onnx.helper.make_model(graph), path)
+
+
+def test_onnx_external_data_is_confined_and_bounds_checked(tmp_path):
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+
+    assert _load_validated_onnx_metadata(str(model_path)) == {}
+
+
+@pytest.mark.parametrize("location", ["../outside.bin", "..\\outside.bin"])
+def test_onnx_external_data_rejects_parent_escape(tmp_path, location):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (tmp_path / "outside.bin").write_bytes(b"outside")
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, location)
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_missing_parent_escape_before_open(tmp_path):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, "../missing-outside.bin")
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_absolute_path(tmp_path):
+    external_path = tmp_path / "outside.bin"
+    external_path.write_bytes(b"outside")
+    model_path = tmp_path / "model.onnx"
+    _write_external_onnx(model_path, str(external_path.resolve()))
+
+    with pytest.raises(ValueError, match="absolute location"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_symlink_escape(tmp_path):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside")
+    link = model_dir / "linked.bin"
+    try:
+        link.symlink_to(outside)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    model_path = model_dir / "model.onnx"
+    _write_external_onnx(model_path, "linked.bin")
+
+    with pytest.raises(ValueError, match="escapes the model directory"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_external_data_rejects_missing_or_out_of_bounds_file(tmp_path):
+    missing_model = tmp_path / "missing.onnx"
+    _write_external_onnx(missing_model, "missing.bin")
+    with pytest.raises(FileNotFoundError, match="external tensor data not found"):
+        _load_validated_onnx_metadata(str(missing_model))
+
+    external_path = tmp_path / "short.bin"
+    external_path.write_bytes(b"1234")
+    bounds_model = tmp_path / "bounds.onnx"
+    _write_external_onnx(bounds_model, "short.bin", offset=3, length=2)
+    with pytest.raises(ValueError, match="references bytes outside"):
+        _load_validated_onnx_metadata(str(bounds_model))
+
+
+def test_onnx_external_data_rejects_open_path_identity_race(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.onnx"
+    expected = tmp_path / "weights.bin"
+    outside = tmp_path / "outside.bin"
+    expected.write_bytes(b"safe")
+    outside.write_bytes(b"outside")
+    _write_external_onnx(model_path, "weights.bin", length=4)
+
+    original_open = os.open
+
+    def raced_open(path, *args, **kwargs):
+        if Path(path) == expected:
+            return original_open(outside, *args, **kwargs)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("libreyolo.backends.onnx.os.open", raced_open)
+    with pytest.raises(RuntimeError, match="changed while it was being validated"):
+        _load_validated_onnx_metadata(str(model_path))
+
+
+def test_onnx_runtime_uses_private_validated_snapshot(tmp_path):
+    onnx = pytest.importorskip("onnx")
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+
+    with _stage_validated_onnx_artifact(str(model_path)) as (staged, metadata):
+        assert staged != model_path
+        assert staged.is_file()
+        assert metadata == {}
+        loaded = onnx.load(str(staged), load_external_data=True)
+        assert loaded.graph.initializer[0].raw_data == b"2345"
+
+
+def test_onnx_shared_external_data_uses_one_captured_snapshot(tmp_path, monkeypatch):
+    model_path = tmp_path / "model.onnx"
+    external_path = tmp_path / "weights.bin"
+    external_path.write_bytes(b"AAAA")
+    _write_shared_external_onnx(
+        model_path,
+        "weights.bin",
+        [(0, 4), (4, 4)],
+    )
+    real_open = os.open
+    external_opens = 0
+
+    def counted_open(path, *args, **kwargs):
+        nonlocal external_opens
+        if Path(path) == external_path:
+            external_opens += 1
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("libreyolo.backends.onnx.os.open", counted_open)
+    with pytest.raises(ValueError, match="references bytes outside"):
+        with _stage_validated_onnx_artifact(str(model_path)):
+            pass
+
+    assert external_opens == 1
+
+
+def test_onnx_backend_opens_runtime_session_from_private_snapshot(
+    tmp_path, monkeypatch
+):
+    onnx = pytest.importorskip("onnx")
+    model_path = tmp_path / "model.onnx"
+    (tmp_path / "weights.bin").write_bytes(b"01234567")
+    _write_external_onnx(model_path, "weights.bin", offset=2, length=4)
+    captured = {}
+
+    class _Session:
+        def __init__(self, path, providers):
+            staged = Path(path)
+            captured["path"] = staged
+            captured["providers"] = providers
+            captured["raw_data"] = (
+                onnx.load(str(staged), load_external_data=True)
+                .graph.initializer[0]
+                .raw_data
+            )
+
+        def get_inputs(self):
+            return [
+                SimpleNamespace(name="images", type="tensor(float)", shape=[1, 3, 8, 8])
+            ]
+
+        def get_outputs(self):
+            return [SimpleNamespace(name="scores")]
+
+        def get_modelmeta(self):
+            return SimpleNamespace(custom_metadata_map={})
+
+    monkeypatch.setitem(
+        sys.modules,
+        "onnxruntime",
+        SimpleNamespace(
+            get_available_providers=lambda: ["CPUExecutionProvider"],
+            InferenceSession=_Session,
+        ),
+    )
+
+    OnnxBackend(str(model_path), device="cpu")
+
+    assert captured["path"] != model_path
+    assert captured["path"].parent.name.startswith("libreyolo-onnx-runtime-")
+    assert captured["providers"] == ["CPUExecutionProvider"]
+    assert captured["raw_data"] == b"2345"
+
+
+def test_onnx_embedded_metadata_fallback_is_used_for_all_runtime_contracts(
+    monkeypatch, tmp_path
+):
+    metadata = {
+        "model_family": "clip",
+        "model_size": "tiny",
+        "task": "classify",
+        "supported_tasks": '["classify"]',
+        "default_task": "classify",
+        "names": '{"0": "cat", "1": "dog"}',
+        "imgsz": "8",
+        "classification_mean": "[0.1, 0.2, 0.3]",
+        "classification_std": "[0.4, 0.5, 0.6]",
+        "classification_crop_pct": "1.0",
+        "classification_interpolation": "bicubic",
+        "classification_square_resize": "true",
+        "classification_activation": "sigmoid",
+        "num_bins": "12",
+        "bin_width_deg": "5.0",
+        "offset_deg": "-30.0",
+    }
+
+    class _Session:
+        def get_inputs(self):
+            return [
+                SimpleNamespace(name="images", type="tensor(float)", shape=[1, 3, 8, 8])
+            ]
+
+        def get_outputs(self):
+            return [SimpleNamespace(name="scores")]
+
+        def get_modelmeta(self):
+            raise RuntimeError("runtime metadata unavailable")
+
+    fake_ort = SimpleNamespace(
+        get_available_providers=lambda: ["CPUExecutionProvider"],
+        InferenceSession=lambda path, providers: _Session(),
+    )
+    fake_model = SimpleNamespace(
+        ListFields=lambda: [],
+        metadata_props=[
+            SimpleNamespace(key=key, value=value) for key, value in metadata.items()
+        ],
+        SerializeToString=lambda: b"staged-placeholder",
+    )
+    fake_onnx = SimpleNamespace(
+        TensorProto=SimpleNamespace(EXTERNAL=1),
+        load_model_from_string=lambda payload: fake_model,
+    )
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+    monkeypatch.setitem(sys.modules, "onnx", fake_onnx)
+    model_path = tmp_path / "classifier.onnx"
+    model_path.write_bytes(b"placeholder")
+
+    backend = OnnxBackend(str(model_path), device="cpu")
+
+    assert backend.task == "classify"
+    assert backend.classification_mean == (0.1, 0.2, 0.3)
+    assert backend.classification_std == (0.4, 0.5, 0.6)
+    assert backend.crop_pct == 1.0
+    assert backend.interpolation == "bicubic"
+    assert backend.classification_square_resize is True
+    assert backend.classification_activation == "sigmoid"
+    assert backend.num_bins == 12
+    assert backend.bin_width_deg == 5.0
+    assert backend.offset_deg == -30.0
+
+
+def test_torchscript_uses_first_floating_parameter_dtype():
+    model = torch.nn.Conv2d(3, 2, 1).half()
+
+    assert TorchScriptBackend._floating_model_dtype(model) == torch.float16
+
+
+def test_torchscript_uses_floating_buffer_for_parameterless_module():
+    class _Buffered(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_buffer("scale", torch.ones(1, dtype=torch.float64))
+
+    assert TorchScriptBackend._floating_model_dtype(_Buffered()) == torch.float64
+
+
+def test_torchscript_runtime_casts_input_to_loaded_model_dtype():
+    class _Capture(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen_dtype = None
+
+        def forward(self, tensor):
+            self.seen_dtype = tensor.dtype
+            return tensor
+
+    backend = TorchScriptBackend.__new__(TorchScriptBackend)
+    backend.model = _Capture()
+    backend.device = torch.device("cpu")
+    backend.input_dtype = torch.float16
+
+    outputs = backend._run_inference(np.ones((1, 3, 2, 2), dtype=np.float32))
+
+    assert backend.model.seen_dtype == torch.float16
+    assert outputs[0].dtype == np.float16
+
+
+def test_validation_state_allows_runtime_without_inner_torch_model():
+    runtime = SimpleNamespace(device="cpu")
+
+    with validation_model_state(runtime, torch.device("cpu")):
+        pass
+
+
+def test_validator_eval_hook_is_noop_for_non_pytorch_runtime():
+    validator = SimpleNamespace(model=SimpleNamespace(model=SimpleNamespace()))
+
+    BaseValidator._set_model_eval(validator)
+
+
+def test_coreml_validation_forward_restores_canonical_rgb_pixels():
+    backend = CoreMLBackend.__new__(CoreMLBackend)
+    backend.model_family = "yolo9"
+    backend._has_embedded_nms = False
+    captured = {}
+
+    def run(blob):
+        captured["blob"] = blob.copy()
+        return [np.zeros((1, 1), dtype=np.float32)]
+
+    backend._run_inference = run
+    backend._forward(torch.full((1, 3, 2, 2), 0.5))
+
+    np.testing.assert_allclose(captured["blob"], 128.0)
+
+
+def test_coreml_embedded_nms_forward_restores_batch_axis():
+    backend = CoreMLBackend.__new__(CoreMLBackend)
+    backend.model_family = "yolo9"
+    backend._has_embedded_nms = True
+
+    def run(blob):
+        marker = float(blob[0, 0, 0, 0])
+        return [
+            np.full((3, 2), marker, dtype=np.float32),
+            np.full((3, 4), marker, dtype=np.float32),
+        ]
+
+    backend._run_inference = run
+    confidence, coordinates = backend._forward(
+        torch.tensor([0.25, 0.75]).view(2, 1, 1, 1).expand(2, 3, 1, 1)
+    )
+
+    assert confidence.shape == (2, 3, 2)
+    assert coordinates.shape == (2, 3, 4)
+    assert confidence[0, 0, 0].item() == 64.0
+    assert confidence[1, 0, 0].item() == 191.0
+
+
+def test_coreml_validation_inverts_rfdetr_imagenet_normalization():
+    backend = CoreMLBackend.__new__(CoreMLBackend)
+    backend.model_family = "rfdetr"
+    canonical = torch.tensor([0.2, 0.4, 0.6]).view(1, 3, 1, 1)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+    restored = backend._validation_tensor_to_canonical_rgb((canonical - mean) / std)
+
+    torch.testing.assert_close(restored, canonical * 255.0)
+
+
+def test_coreml_validation_converts_yolox_bgr_to_rgb():
+    backend = CoreMLBackend.__new__(CoreMLBackend)
+    backend.model_family = "yolox"
+    bgr = torch.tensor([10.0, 20.0, 30.0]).view(1, 3, 1, 1)
+
+    restored = backend._validation_tensor_to_canonical_rgb(bgr)
+
+    torch.testing.assert_close(
+        restored,
+        torch.tensor([30.0, 20.0, 10.0]).view(1, 3, 1, 1),
+    )
+
+
+class _RuntimeValidator(BaseValidator):
+    def _setup_dataloader(self):
+        return []
+
+    def _init_metrics(self):
+        pass
+
+    def _preprocess_batch(self, batch):
+        return batch, None, None, None
+
+    def _postprocess_predictions(self, preds, batch):
+        return preds
+
+    def _update_metrics(self, detections, targets, img_info, img_ids):
+        pass
+
+    def _compute_metrics(self):
+        return {}
+
+
+class _Runtime:
+    def __init__(self):
+        self.forward_calls = 0
+
+    def _forward(self, images):
+        self.forward_calls += 1
+        return []
+
+
+def test_validator_normal_loop_allows_runtime_without_model_eval():
+    validator = object.__new__(_RuntimeValidator)
+    validator.model = _Runtime()
+    validator.config = SimpleNamespace(augment=False, verbose=False, half=False)
+    validator.device = torch.device("cpu")
+    validator.dataloader = [torch.zeros(1, 3, 2, 2)]
+    validator.speed = {
+        "preprocess": 0.0,
+        "inference": 0.0,
+        "postprocess": 0.0,
+        "total": 0.0,
+    }
+    validator.seen = 0
+
+    validator._run_validation()
+
+    assert validator.model.forward_calls == 1
+
+
+def test_validator_warmup_allows_runtime_without_model_eval():
+    validator = object.__new__(_RuntimeValidator)
+    validator.model = _Runtime()
+    validator.config = SimpleNamespace(
+        verbose=False,
+        imgsz=4,
+        batch_size=1,
+        half=False,
+    )
+    validator.device = torch.device("cpu")
+    validator.dataloader = SimpleNamespace(batch_size=1)
+
+    validator._warmup_model(n_warmup=1)
+
+    assert validator.model.forward_calls == 1
+
+
+def test_augmented_loop_allows_runtime_without_model_eval():
+    class _EmptyLoader(list):
+        dataset = []
+
+    validator = object.__new__(DetectionValidator)
+    validator.model = SimpleNamespace(model=SimpleNamespace(), model_family="coreml")
+    validator.config = SimpleNamespace(verbose=False, conf_thres=0.25)
+    validator.device = torch.device("cpu")
+    validator.dataloader = _EmptyLoader()
+    validator.speed = {"inference": 0.0, "total": 0.0}
+    validator.seen = 0
+
+    validator._run_validation_augmented()
+
+    assert validator.seen == 0

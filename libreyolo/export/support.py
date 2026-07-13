@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Literal
 
+from ..models.manifest import get_family_spec
 from ..tasks import TASKS
 
 
@@ -28,6 +29,28 @@ class SupportEntry:
     reason: str = ""
     since: str | None = None
     constraint: str | None = None
+
+
+@dataclass(frozen=True)
+class ExportCapabilities:
+    """Effective option support for one family, task, and export format."""
+
+    support: SupportEntry
+    supports_dynamic: bool
+    supports_fp16: bool
+    supports_int8: bool
+
+
+_FORMAT_CAPABILITIES: dict[str, tuple[bool, bool, bool]] = {
+    # format: (dynamic input, FP16, INT8)
+    "onnx": (True, True, True),
+    "torchscript": (False, True, False),
+    "tensorrt": (True, True, True),
+    "openvino": (True, True, True),
+    "ncnn": (False, False, False),
+    "tflite": (False, False, False),
+    "coreml": (False, True, False),
+}
 
 
 SUPPORT: dict[tuple[str, str, str], SupportEntry] = {}
@@ -709,6 +732,13 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
     exact = SUPPORT.get((family, task, fmt))
     if exact is not None:
         return exact
+    family_spec = get_family_spec(family)
+    if family_spec is not None:
+        declared_tasks = {item.task for item in family_spec.tasks}
+        if task not in declared_tasks:
+            return SupportEntry(
+                "blocked", f"{family!r} does not declare the canonical task {task!r}."
+            )
     if family in _FAMILY_BLOCKS:
         return SupportEntry("blocked", _FAMILY_BLOCKS[family])
     if task in _TASK_BLOCKS:
@@ -720,6 +750,11 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
             f"NCNN export is not supported for {label}: the model requires decoder "
             "or sampling operations unavailable in NCNN. "
             "Use ONNX, OpenVINO, TorchScript, or TensorRT instead.",
+        )
+    if family_spec is not None and family_spec.export_override == "blocked":
+        return SupportEntry(
+            "blocked",
+            f"{family!r} declares export as blocked in the public model manifest.",
         )
     if fmt in {"tensorrt", "openvino"}:
         runtime = "TensorRT" if fmt == "tensorrt" else "OpenVINO"
@@ -741,6 +776,42 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
     return SupportEntry(
         "experimental",
         "This combination exports without a numeric parity guarantee.",
+    )
+
+
+def get_export_capabilities(family: str, task: str, fmt: str) -> ExportCapabilities:
+    """Return family-aware option support for an export combination.
+
+    Format-level capability flags are narrowed by the canonical support matrix.
+    ONNX INT8 is currently implemented only for YOLO9 detection, even though the
+    ONNX exporter also supports FP16 and dynamic shapes for other families.
+    """
+    normalized_family = str(family or "").lower()
+    normalized_task = str(task or "detect").lower()
+    normalized_format = str(fmt or "").lower()
+    support = get_support(normalized_family, normalized_task, normalized_format)
+    format_capabilities = _FORMAT_CAPABILITIES.get(
+        normalized_format, (False, False, False)
+    )
+    available = support.tier != "blocked"
+    supports_dynamic, supports_fp16, supports_int8 = format_capabilities
+    if normalized_task in {"depth", "matte"} or (
+        normalized_task == "restore" and normalized_family != "realesrgan"
+    ):
+        supports_dynamic = False
+    if (normalized_family, normalized_task) in {
+        ("clip", "classify"),
+        ("siglip2", "classify"),
+        ("picosam3", "segment"),
+    }:
+        supports_fp16 = False
+    if normalized_format == "onnx":
+        supports_int8 = normalized_family == "yolo9" and normalized_task == "detect"
+    return ExportCapabilities(
+        support=support,
+        supports_dynamic=available and supports_dynamic,
+        supports_fp16=available and supports_fp16,
+        supports_int8=available and supports_int8,
     )
 
 
@@ -774,10 +845,12 @@ def validated_alternatives(family: str, task: str) -> tuple[str, ...]:
 
 __all__ = [
     "EXPORT_FORMATS",
+    "ExportCapabilities",
     "SUPPORT",
     "SupportEntry",
     "Tier",
     "get_support",
+    "get_export_capabilities",
     "iter_blocked",
     "iter_entries",
     "iter_validated",

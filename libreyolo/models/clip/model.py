@@ -71,7 +71,9 @@ class LibreCLIP(BaseModel):
     # the model resizes to a fixed square; keep predict to a single forward.
     TTA_ENABLED: ClassVar[bool] = False
 
-    validator_class: ClassVar[Optional[type]] = None  # set lazily (see _resolve_validator)
+    validator_class: ClassVar[Optional[type]] = (
+        None  # set lazily (see _resolve_validator)
+    )
 
     # =========================================================================
     # Registry classmethods
@@ -141,10 +143,14 @@ class LibreCLIP(BaseModel):
         else:
             # Zero-config: pick a default size and autodownload its checkpoint.
             size = size or "b32"
-            weight_source = self._resolve_weights_path(f"{self.FILENAME_PREFIX}{size}-cls.pt")
+            weight_source = self._resolve_weights_path(
+                f"{self.FILENAME_PREFIX}{size}-cls.pt"
+            )
         size = size or "b32"
 
-        self._default_templates = list(templates) if templates else list(DEFAULT_TEMPLATES)
+        self._default_templates = (
+            list(templates) if templates else list(DEFAULT_TEMPLATES)
+        )
         self._text_embeds: Optional[torch.Tensor] = None
         self.tokenizer = None  # built after super().__init__
 
@@ -269,8 +275,12 @@ class LibreCLIP(BaseModel):
         def _preprocess_numpy(img_rgb_hwc, input_size=224):
             res = input_size if isinstance(input_size, int) else input_size[0]
             transform = build_classify_transforms(
-                res, augment=False, mean=CLIP_MEAN, std=CLIP_STD,
-                interpolation=InterpolationMode.BICUBIC, crop_pct=1.0,
+                res,
+                augment=False,
+                mean=CLIP_MEAN,
+                std=CLIP_STD,
+                interpolation=InterpolationMode.BICUBIC,
+                crop_pct=1.0,
             )
             pil = Image.fromarray(_np.asarray(img_rgb_hwc).astype("uint8"))
             return transform(pil).numpy(), 1.0
@@ -419,7 +429,23 @@ class LibreCLIP(BaseModel):
     # Export — frozen-class ONNX
     # =========================================================================
 
-    def export(self, format: str = "onnx", **kwargs) -> str:
+    def export(
+        self,
+        format: str = "onnx",
+        *,
+        output: str | Path | None = None,
+        output_path: str | Path | None = None,
+        imgsz: int | tuple[int, int] | list[int] | None = None,
+        opset: int | None = None,
+        simplify: bool = True,
+        dynamic: bool = True,
+        half: bool = False,
+        int8: bool = False,
+        batch: int = 1,
+        device: str | torch.device | int | None = None,
+        verbose: bool = False,
+        **kwargs,
+    ) -> str:
         """Export a **frozen-class** ONNX classifier for the current labels.
 
         The current ``set_classes`` text embeddings are baked into a final
@@ -428,20 +454,51 @@ class LibreCLIP(BaseModel):
         inference). The ONNX is fixed to the labels set at export time and to a
         fixed input resolution; re-export to change either.
         """
-        if format.lower() != "onnx":
+        if str(format).lower() != "onnx":
             raise NotImplementedError(
                 f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "
                 "(frozen-class) is supported. Open-vocabulary export (two towers "
                 "+ tokenizer) is out of scope for v1."
             )
-        requested_imgsz = kwargs.get("imgsz")
-        kwargs["imgsz"] = self._validate_input_size(
-            self._get_input_size() if requested_imgsz is None else requested_imgsz,
-            context="export",
+        if half:
+            raise NotImplementedError(
+                "LibreCLIP frozen-class ONNX export does not support half=True."
+            )
+        if int8:
+            raise NotImplementedError(
+                "LibreCLIP frozen-class ONNX export does not support int8=True."
+            )
+        if kwargs:
+            unknown = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unsupported LibreCLIP export arguments: {unknown}")
+        if output is not None and output_path is not None:
+            raise ValueError("Pass only one of output= or output_path=.")
+        if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
+            raise ValueError(
+                f"LibreCLIP export batch must be a positive integer, got {batch!r}."
+            )
+        validated_imgsz = self._validate_export_input_size(
+            self._get_input_size() if imgsz is None else imgsz,
+        )
+        export_imgsz = (
+            int(validated_imgsz[0])
+            if isinstance(validated_imgsz, tuple)
+            else int(validated_imgsz)
         )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
 
         from .export import export_frozen_onnx
 
-        return export_frozen_onnx(self, **kwargs)
+        destination = output_path if output_path is not None else output
+        return export_frozen_onnx(
+            self,
+            imgsz=export_imgsz,
+            opset=opset,
+            output=None if destination is None else str(destination),
+            batch=batch,
+            dynamic=dynamic,
+            device=device,
+            simplify=simplify,
+            verbose=verbose,
+        )

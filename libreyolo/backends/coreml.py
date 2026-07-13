@@ -26,6 +26,7 @@ from .base import (
     BaseBackend,
     ImageSize,
     _imgsz_hw,
+    _read_classification_metadata,
     _read_metadata_imgsz,
     _read_pose_metadata,
 )
@@ -85,8 +86,7 @@ class CoreMLBackend(BaseBackend):
     ):
         if sys.platform != "darwin":
             raise RuntimeError(
-                "CoreML inference requires macOS. "
-                f"Current platform: {sys.platform}."
+                f"CoreML inference requires macOS. Current platform: {sys.platform}."
             )
         try:
             import coremltools as ct
@@ -137,6 +137,9 @@ class CoreMLBackend(BaseBackend):
             default_task=default_task,
             supported_tasks=supported_tasks,
         )
+        classification_metadata = (
+            _read_classification_metadata(meta) if resolved_task == "classify" else {}
+        )
 
         self._has_embedded_nms = has_embedded_nms
 
@@ -151,6 +154,7 @@ class CoreMLBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **classification_metadata,
             **pose_metadata,
         )
 
@@ -353,6 +357,65 @@ class CoreMLBackend(BaseBackend):
         boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, orig_w)
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, orig_h)
         return boxes, max_scores, class_ids, None
+
+    def _forward(self, input_tensor: torch.Tensor):
+        """Adapt validator-native tensors to the package's canonical RGB input."""
+        canonical = self._validation_tensor_to_canonical_rgb(input_tensor)
+        if self._has_embedded_nms:
+            # CoreML's NMS adapter intentionally removes the graph batch axis,
+            # so concatenate would mix detections from different images. Run
+            # the batch-1 package per image and restore an explicit leading
+            # batch dimension for validator slicing.
+            per_image = [
+                self._run_inference(
+                    canonical[index : index + 1].detach().cpu().numpy()
+                )
+                for index in range(canonical.shape[0])
+            ]
+            outputs = [
+                np.stack(
+                    [np.asarray(item[output_index]) for item in per_image],
+                    axis=0,
+                )
+                for output_index in range(len(per_image[0]))
+            ]
+            return [torch.from_numpy(output) for output in outputs]
+        return super()._forward(canonical)
+
+    def _validation_tensor_to_canonical_rgb(
+        self, input_tensor: torch.Tensor
+    ) -> torch.Tensor:
+        """Invert first-party validation normalization for CoreML ImageType.
+
+        Normal prediction already supplies canonical RGB pixels through
+        :meth:`_preprocess`. Validators instead hand back the native family
+        tensor, so convert only this internal ``_forward`` path.
+        """
+        if input_tensor.ndim != 4 or input_tensor.shape[1] != 3:
+            raise ValueError(
+                "CoreML validation expects an NCHW three-channel tensor, got "
+                f"{tuple(input_tensor.shape)}."
+            )
+        family = (self.model_family or "").lower()
+        if family == "yolox":
+            # Validator uses BGR [0,255]; the package ImageType accepts RGB.
+            canonical = input_tensor[:, [2, 1, 0], :, :]
+        elif family == "rfdetr":
+            mean = input_tensor.new_tensor((0.485, 0.456, 0.406)).view(1, 3, 1, 1)
+            std = input_tensor.new_tensor((0.229, 0.224, 0.225)).view(1, 3, 1, 1)
+            canonical = (input_tensor * std + mean) * 255.0
+        elif family in {"yolo9", "rtdetr"}:
+            # Validator already uses canonical RGB, normalized to [0,1].
+            canonical = input_tensor * 255.0
+        else:
+            raise NotImplementedError(
+                "CoreML validation preprocessing is not defined for model family "
+                f"{self.model_family!r}."
+            )
+        # Validation originates from uint8 images; rounding recovers the exact
+        # pixel after normalization/de-normalization instead of truncating an
+        # expression such as 127.999 to 127 at the ImageType boundary.
+        return canonical.round().clamp_(0, 255)
 
     def _run_inference(self, blob: np.ndarray) -> list:
         """Run CoreML inference on a (1, 3, H, W) canonical RGB uint8 blob.

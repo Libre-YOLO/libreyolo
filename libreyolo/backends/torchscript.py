@@ -12,7 +12,12 @@ import torch
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.general import COCO_CLASSES
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    _read_classification_metadata,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,7 @@ class TorchScriptBackend(BaseBackend):
             model_path, map_location=map_location, _extra_files=extra_files
         )
         self.model.eval()
+        self.input_dtype = self._floating_model_dtype(self.model)
 
         metadata = {}
         raw_meta = extra_files.get("libreyolo_metadata.json", "")
@@ -79,6 +85,11 @@ class TorchScriptBackend(BaseBackend):
         if metadata_imgsz is not None:
             input_size = metadata_imgsz
         pose_metadata = _read_pose_metadata(metadata)
+        classification_metadata = (
+            _read_classification_metadata(metadata)
+            if resolved_task == "classify"
+            else {}
+        )
 
         if nb_classes is not None:
             resolved_nb_classes = nb_classes
@@ -108,11 +119,31 @@ class TorchScriptBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            **classification_metadata,
             **pose_metadata,
         )
 
+    @staticmethod
+    def _floating_model_dtype(model) -> torch.dtype:
+        """Return the first floating parameter/buffer dtype used by a module."""
+        for attribute in ("parameters", "buffers"):
+            tensor_iter = getattr(model, attribute, None)
+            if not callable(tensor_iter):
+                continue
+            try:
+                tensors = tensor_iter()
+            except (AttributeError, RuntimeError, TypeError):
+                continue
+            for tensor in tensors:
+                if isinstance(tensor, torch.Tensor) and tensor.is_floating_point():
+                    return tensor.dtype
+        return torch.float32
+
     def _run_inference(self, blob: np.ndarray) -> list:
-        tensor = torch.from_numpy(blob).to(self.device)
+        tensor = torch.from_numpy(blob).to(
+            device=self.device,
+            dtype=self.input_dtype,
+        )
         with torch.no_grad():
             outputs = self.model(tensor)
 

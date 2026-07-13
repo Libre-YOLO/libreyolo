@@ -8,7 +8,13 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    ImageSize,
+    _read_classification_metadata,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,7 @@ class OpenVINOBackend(BaseBackend):
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
         pose_metadata = {}
+        classification_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -74,6 +81,7 @@ class OpenVINOBackend(BaseBackend):
                 resolved_nb_classes,
                 names,
                 pose_metadata,
+                classification_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -103,6 +111,7 @@ class OpenVINOBackend(BaseBackend):
         core = ov.Core()
         ov_model = core.read_model(str(xml_path))
         self._dynamic_batch_axis = self._detect_dynamic_batch_axis(ov_model)
+        dynamic_spatial = self._detect_dynamic_spatial_axes(ov_model)
         self.compiled_model = core.compile_model(ov_model, ov_device)
 
         static_imgsz = self._read_static_input_imgsz(ov_model)
@@ -120,6 +129,8 @@ class OpenVINOBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            dynamic_spatial=dynamic_spatial,
+            **classification_metadata,
             **pose_metadata,
         )
 
@@ -132,6 +143,15 @@ class OpenVINOBackend(BaseBackend):
         """
         try:
             return bool(ov_model.inputs[0].get_partial_shape()[0].is_dynamic)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _detect_dynamic_spatial_axes(ov_model) -> bool:
+        """True when either input height or width is dynamic."""
+        try:
+            shape = ov_model.inputs[0].get_partial_shape()
+            return len(shape) == 4 and any(shape[index].is_dynamic for index in (2, 3))
         except Exception:
             return False
 
@@ -159,7 +179,9 @@ class OpenVINOBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
+            Tuple of (model_family, model_size, task, supported_tasks,
+            default_task, imgsz, nb_classes, names, pose metadata,
+            classification metadata).
         """
         import yaml
 
@@ -175,7 +197,9 @@ class OpenVINOBackend(BaseBackend):
         model_size = meta.get("model_size") or meta.get("size")
         default_task = normalize_task(meta.get("default_task"), default="detect")
         task = normalize_task(meta.get("task"), default=default_task)
-        supported_tasks = normalize_supported_tasks(meta.get("supported_tasks", (task,)))
+        supported_tasks = normalize_supported_tasks(
+            meta.get("supported_tasks", (task,))
+        )
         imgsz = (
             _read_metadata_imgsz(
                 meta,
@@ -207,6 +231,7 @@ class OpenVINOBackend(BaseBackend):
             nb_classes,
             names,
             _read_pose_metadata(meta),
+            _read_classification_metadata(meta) if task == "classify" else {},
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:

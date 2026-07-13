@@ -3,8 +3,13 @@
 import hashlib
 import json
 import logging
+import os
+import shutil
+import stat
+import uuid
 import warnings
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, Optional, Union
 
 import numpy as np
@@ -48,12 +53,21 @@ def _create_calibrator_class():
         class _TensorRTCalibratorImpl(trt.IInt8EntropyCalibrator2):
             """INT8 entropy calibrator for TensorRT engine builds."""
 
-            def __init__(self, data_loader, cache_file="calibration.cache"):
+            def __init__(
+                self,
+                data_loader,
+                cache_file="calibration.cache",
+                *,
+                device_index=0,
+            ):
                 super().__init__()
                 self.data_loader = data_loader
-                self.cache_file = Path(cache_file)
+                self.cache_file = Path(cache_file) if cache_file else None
                 self.batch_iter = None
                 self._device_input = None
+                self._allocation_backend = None
+                self._pycuda_context = None
+                self._device_index = int(device_index)
                 self._batch_size = data_loader.batch
                 self._batch_idx = 0
 
@@ -81,10 +95,14 @@ def _create_calibrator_class():
                 try:
                     from cuda.bindings import runtime as cudart
 
+                    (err,) = cudart.cudaSetDevice(self._device_index)
+                    if err != cudart.cudaError_t.cudaSuccess:
+                        raise RuntimeError(f"cudaSetDevice failed: {err}")
                     if self._device_input is None:
                         err, self._device_input = cudart.cudaMalloc(batch.nbytes)
                         if err != cudart.cudaError_t.cudaSuccess:
                             raise RuntimeError(f"cudaMalloc failed: {err}")
+                        self._allocation_backend = "cuda-bindings"
                     (err,) = cudart.cudaMemcpy(
                         self._device_input,
                         batch.ctypes.data,
@@ -100,13 +118,22 @@ def _create_calibrator_class():
                 # Fall back to pycuda
                 try:
                     import pycuda.driver as cuda
-                    import pycuda.autoinit  # noqa: F401
 
-                    if self._device_input is None:
-                        self._device_input = cuda.mem_alloc(batch.nbytes)
+                    if self._pycuda_context is None:
+                        cuda.init()
+                        self._pycuda_context = cuda.Device(
+                            self._device_index
+                        ).retain_primary_context()
+                    self._pycuda_context.push()
+                    try:
+                        if self._device_input is None:
+                            self._device_input = cuda.mem_alloc(batch.nbytes)
+                            self._allocation_backend = "pycuda"
 
-                    cuda.memcpy_htod(self._device_input, batch)
-                    return int(self._device_input)
+                        cuda.memcpy_htod(self._device_input, batch)
+                        return int(self._device_input)
+                    finally:
+                        self._pycuda_context.pop()
                 except ImportError:
                     raise ImportError(
                         "INT8 calibration requires cuda-python or pycuda.\n"
@@ -114,24 +141,54 @@ def _create_calibrator_class():
                         "Or: pip install pycuda (requires python3-dev)"
                     )
 
-            def __del__(self):
-                if self._device_input is not None:
-                    try:
+            def _release_cuda_memory(self):
+                try:
+                    if (
+                        self._device_input is not None
+                        and self._allocation_backend == "cuda-bindings"
+                    ):
                         from cuda.bindings import runtime as cudart
 
-                        cudart.cudaFree(self._device_input)
-                    except (ImportError, Exception):
-                        pass  # pycuda frees via its own DeviceAllocation.__del__
+                        (err,) = cudart.cudaSetDevice(self._device_index)
+                        if err == cudart.cudaError_t.cudaSuccess:
+                            cudart.cudaFree(self._device_input)
+                    elif (
+                        self._device_input is not None
+                        and self._allocation_backend == "pycuda"
+                        and self._pycuda_context is not None
+                    ):
+                        self._pycuda_context.push()
+                        try:
+                            self._device_input.free()
+                        finally:
+                            self._pycuda_context.pop()
+                except Exception:
+                    pass
+                finally:
+                    self._device_input = None
+                    self._allocation_backend = None
+                    if self._pycuda_context is not None:
+                        try:
+                            self._pycuda_context.detach()
+                        except Exception:
+                            pass
+                        self._pycuda_context = None
+
+            def __del__(self):
+                self._release_cuda_memory()
 
             def read_calibration_cache(self):
-                if self.cache_file.exists():
+                if self.cache_file is not None and self.cache_file.exists():
                     logger.info("Loading calibration cache: %s", self.cache_file)
                     with open(self.cache_file, "rb") as f:
                         return f.read()
                 return None
 
             def write_calibration_cache(self, cache):
+                if self.cache_file is None:
+                    return
                 logger.info("Saving calibration cache: %s", self.cache_file)
+                self.cache_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.cache_file, "wb") as f:
                     f.write(cache)
 
@@ -146,6 +203,340 @@ def _create_calibrator_class():
 def get_calibrator_class():
     """Get the appropriate calibrator class based on TensorRT availability."""
     return _create_calibrator_class()
+
+
+def _validate_batch_profile(min_batch: int, opt_batch: int, max_batch: int) -> None:
+    """Validate TensorRT's ordered, positive dynamic-batch profile bounds."""
+    if not (1 <= min_batch <= opt_batch <= max_batch):
+        raise ValueError(
+            "TensorRT dynamic batch bounds must satisfy "
+            "1 <= min_batch <= opt_batch <= max_batch, got "
+            f"{min_batch}, {opt_batch}, {max_batch}."
+        )
+
+
+def _resolve_hardware_compatibility_level(trt, requested: str):
+    """Resolve a TensorRT compatibility enum without assuming API availability."""
+    levels = getattr(trt, "HardwareCompatibilityLevel", None)
+    if levels is None:
+        return None
+    attribute = {
+        "ampere_plus": "AMPERE_PLUS",
+        "same_compute_capability": "SAME_COMPUTE_CAPABILITY",
+    }.get(requested)
+    return getattr(levels, attribute, None) if attribute is not None else None
+
+
+def _select_tensorrt_device(device: int) -> int:
+    """Select the requested CUDA device before creating TensorRT objects."""
+    if isinstance(device, bool):
+        raise ValueError(
+            f"TensorRT device must be a non-negative integer, got {device!r}."
+        )
+    try:
+        if isinstance(device, str):
+            if not device.strip().isdigit():
+                raise ValueError
+            index = int(device.strip())
+        else:
+            index = device.__index__()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"TensorRT device must be a non-negative integer, got {device!r}."
+        ) from exc
+    if index < 0:
+        raise ValueError(f"TensorRT device must be non-negative, got {index}.")
+    if not torch.cuda.is_available():
+        raise RuntimeError("TensorRT export requires a CUDA-capable GPU.")
+    if index >= torch.cuda.device_count():
+        raise ValueError(
+            f"TensorRT CUDA device index {index} is unavailable; "
+            f"detected {torch.cuda.device_count()} CUDA device(s)."
+        )
+    torch.cuda.set_device(index)
+    logger.info("Using GPU device: %d (%s)", index, torch.cuda.get_device_name(index))
+    return index
+
+
+def _publish_tensorrt_artifacts(
+    serialized_engine,
+    output_path: str | Path,
+    metadata: dict | None,
+) -> str:
+    """Stage and transactionally publish an engine and optional sidecar."""
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = Path(str(output) + ".json")
+
+    with TemporaryDirectory(
+        prefix="libreyolo-tensorrt-publish-", dir=output.parent
+    ) as workspace_name:
+        workspace = Path(workspace_name)
+        staged: dict[Path, Path | None] = {output: workspace / output.name}
+        with open(staged[output], "xb") as file:
+            file.write(serialized_engine)
+            file.flush()
+            os.fsync(file.fileno())
+
+        if metadata is not None:
+            staged[sidecar] = workspace / sidecar.name
+            with open(staged[sidecar], "x", encoding="utf-8") as file:
+                json.dump(metadata, file, allow_nan=False, indent=2)
+                file.write("\n")
+                file.flush()
+                os.fsync(file.fileno())
+        else:
+            # A metadata-free rebuild must not leave metadata from an older
+            # engine describing the newly-published artifact.
+            staged[sidecar] = None
+
+        backups: dict[Path, Path | None] = {}
+        target_modes: dict[Path, int] = {}
+        pending_backup: Path | None = None
+        try:
+            for target in staged:
+                if not target.exists():
+                    backups[target] = None
+                    continue
+                target_modes[target] = stat.S_IMODE(target.stat().st_mode)
+                pending_backup = output.parent / (
+                    f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.bak"
+                )
+                try:
+                    os.link(target, pending_backup)
+                except OSError:
+                    # Keep restrictive source modes on a backup that may need
+                    # to survive an incomplete rollback.
+                    shutil.copy2(target, pending_backup)
+                backups[target] = pending_backup
+                pending_backup = None
+        except BaseException:
+            if pending_backup is not None:
+                pending_backup.unlink(missing_ok=True)
+            for backup in backups.values():
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
+            raise
+
+        promoted = []
+        retained_backups = set()
+        try:
+            for target, temporary in staged.items():
+                if temporary is None:
+                    if not target.exists():
+                        continue
+                    target.unlink()
+                else:
+                    if target in target_modes:
+                        temporary.chmod(target_modes[target])
+                    os.replace(temporary, target)
+                promoted.append(target)
+        except BaseException as promotion_error:
+            rollback_errors = []
+            for target in reversed(promoted):
+                backup = backups[target]
+                try:
+                    if backup is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, target)
+                        backups[target] = None
+                except OSError as rollback_error:
+                    if backup is not None:
+                        retained_backups.add(backup)
+                    rollback_errors.append(
+                        f"{target}: {rollback_error}; previous artifact retained "
+                        f"at {backup}"
+                    )
+            if rollback_errors:
+                raise RuntimeError(
+                    "TensorRT artifact publication failed and rollback was "
+                    "incomplete: " + "; ".join(rollback_errors)
+                ) from promotion_error
+            raise
+        finally:
+            for backup in backups.values():
+                if backup is None or backup in retained_backups:
+                    continue
+                backup.unlink(missing_ok=True)
+
+    return str(output)
+
+
+def _calibration_cache_fingerprint(calibration_data) -> str | None:
+    """Hash exact preprocessed batches, disabling reuse if they are not stable."""
+    try:
+        if iter(calibration_data) is calibration_data:
+            return None
+    except TypeError:
+        return None
+
+    def hash_pass() -> str | None:
+        digest = hashlib.sha256()
+        count = 0
+        try:
+            for batch in calibration_data:
+                array = np.ascontiguousarray(np.asarray(batch))
+                if array.size == 0 or array.dtype.hasobject:
+                    return None
+                digest.update(array.dtype.str.encode("ascii"))
+                digest.update(json.dumps(array.shape).encode("ascii"))
+                digest.update(array.tobytes())
+                count += 1
+        except Exception:
+            return None
+        return digest.hexdigest() if count else None
+
+    first = hash_pass()
+    second = hash_pass()
+    return first if first is not None and first == second else None
+
+
+def _calibration_cache_path(
+    output_path: str | Path,
+    onnx_data: bytes,
+    calibration_data,
+    *,
+    enabled: bool,
+) -> Path | None:
+    """Return a cache path keyed by both graph and calibration identity."""
+    if not enabled:
+        return None
+    calibration_hash = _calibration_cache_fingerprint(calibration_data)
+    if calibration_hash is None:
+        return None
+    digest = hashlib.sha256(onnx_data)
+    digest.update(calibration_hash.encode("ascii"))
+    cache_out = Path(output_path)
+    return cache_out.with_name(f"{cache_out.stem}.{digest.hexdigest()[:16]}.cache")
+
+
+def _validate_dynamic_calibration_contract(
+    calibration_data,
+    *,
+    int8: bool,
+    dynamic: bool,
+    opt_batch: int,
+    traced_shape: tuple[int, ...] | None,
+) -> None:
+    """Require TensorRT dynamic INT8 calibration to use the OPT batch-1 shape."""
+    if not int8 or not dynamic:
+        return
+    if calibration_data is None:
+        raise ValueError("INT8 quantization requires calibration data.")
+    try:
+        calibration_shape = tuple(int(dim) for dim in calibration_data.shape)
+        calibration_batch = int(calibration_data.batch)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Dynamic TensorRT INT8 calibration requires a loader with batch and "
+            "NCHW shape metadata."
+        ) from exc
+    if opt_batch != 1 or calibration_batch != 1 or calibration_shape[0] != 1:
+        raise ValueError(
+            "Dynamic TensorRT INT8 calibration requires opt_batch=1 and a "
+            f"batch-1 calibration loader, got opt_batch={opt_batch}, "
+            f"loader batch={calibration_batch}, shape={calibration_shape}."
+        )
+    if traced_shape is not None and calibration_shape[1:] != traced_shape[1:]:
+        raise ValueError(
+            "Dynamic TensorRT INT8 calibration shape must match the traced input "
+            f"CHW dimensions, got {calibration_shape} versus {traced_shape}."
+        )
+
+
+def _validate_static_calibration_contract(
+    calibration_data,
+    *,
+    int8: bool,
+    dynamic: bool,
+    traced_shape: tuple[int, ...] | None,
+    network_shape: tuple[int, ...] | None = None,
+) -> None:
+    """Require a static INT8 loader to match its traced and parsed NCHW input."""
+    if not int8 or dynamic:
+        return
+    if calibration_data is None:
+        raise ValueError("INT8 quantization requires calibration data.")
+    try:
+        calibration_shape = tuple(int(dim) for dim in calibration_data.shape)
+        calibration_batch = int(calibration_data.batch)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires a loader with batch and "
+            "NCHW shape metadata."
+        ) from exc
+    if (
+        len(calibration_shape) != 4
+        or any(dim <= 0 for dim in calibration_shape)
+        or calibration_batch <= 0
+        or calibration_shape[0] != calibration_batch
+    ):
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires positive NCHW shape "
+            "metadata whose first axis equals loader.batch, got "
+            f"batch={calibration_batch}, shape={calibration_shape}."
+        )
+
+    if traced_shape is not None and calibration_shape != traced_shape:
+        raise ValueError(
+            "Static TensorRT INT8 calibration shape must match the traced input "
+            f"NCHW shape, got {calibration_shape} versus {traced_shape}."
+        )
+
+    if network_shape is None:
+        return
+    declared = tuple(int(dim) for dim in network_shape)
+    if len(declared) != 4:
+        raise ValueError(
+            "Static TensorRT INT8 calibration requires a rank-4 network input, "
+            f"got shape {declared}."
+        )
+    for axis, (actual, fixed) in enumerate(zip(calibration_shape, declared)):
+        if fixed > 0 and actual != fixed:
+            raise ValueError(
+                "Static TensorRT INT8 calibration shape does not match the parsed "
+                f"network input at axis {axis}: got {calibration_shape}, network "
+                f"declares {declared}."
+            )
+
+
+def _profile_shape(
+    declared_shape,
+    traced_shape: tuple[int, ...] | None,
+    *,
+    batch: int,
+) -> tuple[int, ...]:
+    """Resolve one profile shape without replacing non-batch axes by batch."""
+    declared = tuple(int(dim) for dim in declared_shape)
+    traced = None if traced_shape is None else tuple(int(dim) for dim in traced_shape)
+    if traced is not None:
+        if len(traced) != len(declared) or any(dim <= 0 for dim in traced):
+            raise ValueError(
+                "TensorRT traced input_shape must contain one positive value per "
+                f"network axis, got {traced} for declared shape {declared}."
+            )
+        for axis, (actual, fixed) in enumerate(zip(traced, declared)):
+            if fixed > 0 and actual != fixed:
+                raise ValueError(
+                    f"TensorRT traced input_shape axis {axis} is {actual}, but the "
+                    f"ONNX input fixes it at {fixed}."
+                )
+
+    resolved = []
+    for axis, dim in enumerate(declared):
+        if dim > 0:
+            resolved.append(dim)
+        elif axis == 0:
+            resolved.append(batch)
+        elif traced is not None:
+            resolved.append(traced[axis])
+        else:
+            raise ValueError(
+                "TensorRT cannot derive a dynamic non-batch profile axis without "
+                f"the traced input_shape; ONNX input shape is {declared}."
+            )
+    return tuple(resolved)
 
 
 def export_tensorrt(
@@ -165,6 +556,7 @@ def export_tensorrt(
     device: int = 0,
     config: Optional[Union[str, Path, dict, TensorRTExportConfig]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    input_shape: tuple[int, int, int, int] | None = None,
 ) -> str:
     """Export ONNX model to TensorRT engine.
 
@@ -201,6 +593,8 @@ def export_tensorrt(
                If provided, overrides individual parameters.
         metadata: Optional dict of model metadata to write as a JSON sidecar
                  file alongside the engine (e.g. model_family, nb_classes, names).
+        input_shape: Concrete NCHW shape of the tensor used to trace the ONNX
+                     graph. Required when a non-batch input axis is dynamic.
 
     Returns:
         Path to exported .engine file.
@@ -225,6 +619,7 @@ def export_tensorrt(
         export_tensorrt("model.onnx", "model.engine",
                        config="tensorrt_default.yaml")
     """
+    use_calibration_cache = True
     if config is not None:
         from .config import load_export_config
 
@@ -235,23 +630,59 @@ def export_tensorrt(
         verbose = cfg.verbose
         hardware_compatibility = cfg.hardware_compatibility
         device = cfg.device
-        if cfg.dynamic.enabled:
-            dynamic = True
+        use_calibration_cache = bool(cfg.int8_calibration.cache)
+        dynamic = bool(cfg.dynamic.enabled)
+        if dynamic:
             min_batch = cfg.dynamic.min_batch
             opt_batch = cfg.dynamic.opt_batch
             max_batch = cfg.dynamic.max_batch
         if cfg.int8:
-            # int8_calibration (dataset/fraction/cache) is parsed and validated
-            # by TensorRTExportConfig but not consumed here: calibration comes
+            # int8_calibration dataset/fraction are parsed and validated by
+            # TensorRTExportConfig but not consumed here: calibration comes
             # from the pre-built ``calibration_data`` loader (the export()
             # data=/fraction= arguments). Warn rather than silently drop it.
             warnings.warn(
-                "TensorRTExportConfig.int8_calibration "
-                "(dataset/fraction/cache) is currently ignored: INT8 "
+                "TensorRTExportConfig.int8_calibration dataset/fraction are "
+                "currently ignored: INT8 "
                 "calibration is driven by the export() data=/fraction= "
                 "arguments (passed here as calibration_data). Set those to "
                 "control INT8 calibration."
             )
+
+    min_batch = int(min_batch)
+    opt_batch = int(opt_batch)
+    max_batch = int(max_batch)
+    _validate_batch_profile(min_batch, opt_batch, max_batch)
+    traced_input_shape = (
+        None if input_shape is None else tuple(int(dim) for dim in input_shape)
+    )
+    if traced_input_shape is not None and (
+        len(traced_input_shape) != 4 or any(dim <= 0 for dim in traced_input_shape)
+    ):
+        raise ValueError(
+            "TensorRT input_shape must be a positive NCHW tuple, got "
+            f"{traced_input_shape}."
+        )
+
+    if int8 and calibration_data is None:
+        raise ValueError(
+            "INT8 quantization requires calibration data.\n"
+            "Provide calibration_data parameter or use data='coco8.yaml' "
+            "in the export() call."
+        )
+    _validate_dynamic_calibration_contract(
+        calibration_data,
+        int8=int8,
+        dynamic=dynamic,
+        opt_batch=opt_batch,
+        traced_shape=traced_input_shape,
+    )
+    _validate_static_calibration_contract(
+        calibration_data,
+        int8=int8,
+        dynamic=dynamic,
+        traced_shape=traced_input_shape,
+    )
 
     if metadata is not None:
         metadata = dict(metadata)
@@ -267,19 +698,7 @@ def export_tensorrt(
     check_tensorrt_available()
     import tensorrt as trt
 
-    if device != 0:
-        if torch.cuda.is_available():
-            torch.cuda.set_device(device)
-            logger.info(
-                "Using GPU device: %d (%s)", device, torch.cuda.get_device_name(device)
-            )
-
-    if int8 and calibration_data is None:
-        raise ValueError(
-            "INT8 quantization requires calibration data.\n"
-            "Provide calibration_data parameter or use data='coco8.yaml' "
-            "in the export() call."
-        )
+    device = _select_tensorrt_device(device)
 
     if half and int8:
         warnings.warn(
@@ -316,6 +735,19 @@ def export_tensorrt(
         network.num_outputs,
         network.num_layers,
     )
+    if int8:
+        if network.num_inputs != 1:
+            raise ValueError(
+                "TensorRT INT8 calibration currently supports exactly one network "
+                f"input, but the parsed ONNX graph has {network.num_inputs}."
+            )
+        _validate_static_calibration_contract(
+            calibration_data,
+            int8=int8,
+            dynamic=dynamic,
+            traced_shape=traced_input_shape,
+            network_shape=tuple(int(dim) for dim in network.get_input(0).shape),
+        )
 
     builder_config = builder.create_builder_config()
 
@@ -325,30 +757,22 @@ def export_tensorrt(
 
     if hardware_compatibility != "none":
         try:
-            compat_level = {
-                "ampere_plus": trt.HardwareCompatibilityLevel.AMPERE_PLUS,
-                "same_compute_capability": trt.HardwareCompatibilityLevel.NONE,  # TRT 8.x fallback
-            }.get(hardware_compatibility)
+            compat_level = _resolve_hardware_compatibility_level(
+                trt, hardware_compatibility
+            )
 
             if compat_level is not None:
                 builder_config.hardware_compatibility_level = compat_level
-                if (
-                    hardware_compatibility == "same_compute_capability"
-                    and compat_level == trt.HardwareCompatibilityLevel.NONE
-                ):
-                    # This TRT build has no real "same compute capability" level;
-                    # it falls back to NONE, which yields a current-GPU-only
-                    # engine. Do not claim portability was applied.
-                    warnings.warn(
-                        "hardware_compatibility='same_compute_capability' is not "
-                        "supported on this TensorRT build and maps to NONE: the "
-                        "engine is optimized for the current GPU only and is not "
-                        "portable to other GPUs of the same compute capability."
-                    )
-                else:
-                    logger.info(
-                        "Hardware compatibility: %s", hardware_compatibility
-                    )
+                logger.info("Hardware compatibility: %s", hardware_compatibility)
+            elif hardware_compatibility in {
+                "ampere_plus",
+                "same_compute_capability",
+            }:
+                warnings.warn(
+                    f"hardware_compatibility={hardware_compatibility!r} is not "
+                    "supported by this TensorRT API. The engine will use the "
+                    "default current-GPU compatibility."
+                )
             else:
                 warnings.warn(
                     f"Unknown hardware_compatibility '{hardware_compatibility}'. "
@@ -379,6 +803,7 @@ def export_tensorrt(
             # FP32 (mixed precision); no-op for CNN backbones.
             try:
                 import onnx as _onnx
+
                 _vit = any(
                     n.op_type in ("LayerNormalization", "Erf")
                     and "backbone" in (n.name or "")
@@ -391,11 +816,17 @@ def export_tensorrt(
                 _npin = 0
                 for _i in range(network.num_layers):
                     _lyr = network.get_layer(_i)
-                    if "backbone" not in (_lyr.name or "") or _lyr.type == trt.LayerType.SHAPE:
+                    if (
+                        "backbone" not in (_lyr.name or "")
+                        or _lyr.type == trt.LayerType.SHAPE
+                    ):
                         continue
                     try:
                         _outs = [_lyr.get_output(_j) for _j in range(_lyr.num_outputs)]
-                        if any(o is None or o.dtype not in (trt.float32, trt.float16) for o in _outs):
+                        if any(
+                            o is None or o.dtype not in (trt.float32, trt.float16)
+                            for o in _outs
+                        ):
                             continue
                         _lyr.precision = trt.float32
                         for _j in range(_lyr.num_outputs):
@@ -424,12 +855,22 @@ def export_tensorrt(
             # Key the calibration cache on model identity (ONNX content hash) so
             # calibration scales for one model are never reused for another that
             # happens to export to the same output path.
-            model_hash = hashlib.sha1(onnx_data).hexdigest()[:12]
-            cache_out = Path(output_path)
-            cache_file = cache_out.with_name(f"{cache_out.stem}.{model_hash}.cache")
+            cache_file = _calibration_cache_path(
+                output_path,
+                onnx_data,
+                calibration_data,
+                enabled=use_calibration_cache,
+            )
+            if use_calibration_cache and cache_file is None:
+                warnings.warn(
+                    "TensorRT calibration cache reuse is disabled because a "
+                    "complete calibration dataset/preprocessor identity could not "
+                    "be established."
+                )
             calibrator = CalibratorClass(
                 calibration_data,
-                cache_file=str(cache_file),
+                cache_file=str(cache_file) if cache_file is not None else None,
+                device_index=device,
             )
             builder_config.int8_calibrator = calibrator
             logger.info(
@@ -442,26 +883,54 @@ def export_tensorrt(
 
     logger.info("Precision: %s", precision_str)
 
-    # Dynamic shapes (only if ONNX has dynamic batch dimension)
-    input_tensor = network.get_input(0)
-    input_shape = input_tensor.shape
-    has_dynamic_batch = input_shape[0] == -1  # -1 means dynamic in ONNX/TRT
+    # Dynamic profiles. Non-batch dynamic axes are fixed to the concrete shape
+    # used for tracing; they must never be substituted with a batch value.
+    network_input_shapes = [
+        tuple(int(dim) for dim in network.get_input(i).shape)
+        for i in range(network.num_inputs)
+    ]
+    has_dynamic_axes = any(dim == -1 for shape in network_input_shapes for dim in shape)
 
-    if dynamic and has_dynamic_batch:
+    if has_dynamic_axes:
         profile = builder.create_optimization_profile()
+        if dynamic:
+            profile_batches = (min_batch, opt_batch, max_batch)
+        else:
+            fixed_batch = traced_input_shape[0] if traced_input_shape else 1
+            profile_batches = (fixed_batch, fixed_batch, fixed_batch)
 
         for i in range(network.num_inputs):
             input_tensor = network.get_input(i)
             input_name = input_tensor.name
-            input_shape = input_tensor.shape
+            declared_shape = network_input_shapes[i]
+            concrete_shape = traced_input_shape if i == 0 else None
+            min_shape = _profile_shape(
+                declared_shape,
+                concrete_shape,
+                batch=profile_batches[0],
+            )
+            opt_shape = _profile_shape(
+                declared_shape,
+                concrete_shape,
+                batch=profile_batches[1],
+            )
+            max_shape = _profile_shape(
+                declared_shape,
+                concrete_shape,
+                batch=profile_batches[2],
+            )
 
-            _, c, h, w = input_shape  # (batch, channels, height, width)
-
-            min_shape = (min_batch, c, h, w)
-            opt_shape = (opt_batch, c, h, w)
-            max_shape = (max_batch, c, h, w)
-
-            profile.set_shape(input_name, min_shape, opt_shape, max_shape)
+            accepted = profile.set_shape(
+                input_name,
+                min_shape,
+                opt_shape,
+                max_shape,
+            )
+            if accepted is False:
+                raise ValueError(
+                    f"TensorRT rejected optimization profile for {input_name!r}: "
+                    f"min={min_shape}, opt={opt_shape}, max={max_shape}."
+                )
             logger.info(
                 "Dynamic input '%s': min=%s, opt=%s, max=%s",
                 input_name,
@@ -471,10 +940,10 @@ def export_tensorrt(
             )
 
         builder_config.add_optimization_profile(profile)
-    elif dynamic and not has_dynamic_batch:
+    elif dynamic:
         logger.info(
-            "Note: ONNX has static batch size (%s), using static optimization",
-            input_shape[0],
+            "Note: ONNX inputs are static, using static optimization (%s)",
+            network_input_shapes,
         )
 
     logger.info("Building TensorRT engine... (this may take several minutes)")
@@ -490,22 +959,15 @@ def export_tensorrt(
             "Try running with verbose=True for detailed error messages."
         )
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output_path, "wb") as f:
-        f.write(serialized_engine)
-
     if metadata is not None:
         # Reflect the precision actually realized by the build (e.g. fp16 after
         # an INT8→FP16 fallback) instead of the pre-build request.
         metadata["precision"] = actual_precision
-        sidecar_path = Path(str(output_path) + ".json")
-        with open(sidecar_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-        logger.info("Metadata sidecar: %s", sidecar_path)
+    result = _publish_tensorrt_artifacts(serialized_engine, output_path, metadata)
+    if metadata is not None:
+        logger.info("Metadata sidecar: %s.json", output_path)
 
-    engine_size_mb = output_path.stat().st_size / (1024 * 1024)
-    logger.info("Engine saved: %s (%.1f MB)", output_path, engine_size_mb)
+    engine_size_mb = Path(result).stat().st_size / (1024 * 1024)
+    logger.info("Engine saved: %s (%.1f MB)", result, engine_size_mb)
 
-    return str(output_path)
+    return result

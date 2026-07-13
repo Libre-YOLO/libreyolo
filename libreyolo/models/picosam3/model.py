@@ -13,6 +13,7 @@ import torch.nn as nn
 from ...utils.download import WeightPublicationError
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import (
+    SCHEMA_VERSION,
     load_untrusted_torch_file,
     unwrap_libreyolo_checkpoint,
 )
@@ -44,6 +45,7 @@ class LibrePicoSAM3(LibreSAMModel):
     FILENAME_PREFIX = "LibrePicoSAM3"
     HF_REPOS: ClassVar[Dict[str, str]] = {"pico": "LibreYOLO/LibrePicoSAM3"}
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"pico": 96}
+    INPUT_SIZE_FIXED: ClassVar[bool] = True
     WEIGHT_FILE: ClassVar[str] = "LibrePicoSAM3pico.pt"
 
     def __init__(self, size: str = "pico", **kwargs) -> None:
@@ -243,39 +245,141 @@ class LibrePicoSAM3(LibreSAMModel):
         *,
         output: str | Path | None = None,
         output_path: str | Path | None = None,
-        opset: int = 13,
+        imgsz: int | tuple[int, int] | list[int] | None = None,
+        opset: int | None = None,
+        simplify: bool = True,
         dynamic: bool = True,
+        half: bool = False,
+        int8: bool = False,
+        batch: int = 1,
+        device: str | torch.device | int | None = None,
+        verbose: bool = False,
         **kwargs,
     ) -> str:
         """Export the raw 96x96 ROI CNN as ``roi_image -> mask_logits``."""
 
-        if kwargs:
-            unknown = ", ".join(sorted(kwargs))
-            raise TypeError(f"Unsupported PicoSAM3 export arguments: {unknown}")
         if str(format).lower() != "onnx":
             raise NotImplementedError(
                 "LibrePicoSAM3 export currently supports ONNX only."
             )
+        if half:
+            raise NotImplementedError(
+                "LibrePicoSAM3 ONNX export does not support half=True."
+            )
+        if int8:
+            raise NotImplementedError(
+                "LibrePicoSAM3 ONNX export does not support int8=True."
+            )
+        if kwargs:
+            unknown = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unsupported PicoSAM3 export arguments: {unknown}")
         if output is not None and output_path is not None:
             raise ValueError("Pass only one of output= or output_path=.")
-        destination = Path(output_path or output or "LibrePicoSAM3pico.onnx")
+        if isinstance(batch, bool) or not isinstance(batch, int) or batch < 1:
+            raise ValueError(
+                f"LibrePicoSAM3 export batch must be a positive integer, got {batch!r}."
+            )
+        native_imgsz = self.INPUT_SIZES[self.size]
+        export_imgsz = native_imgsz if imgsz is None else imgsz
+        if isinstance(export_imgsz, (list, tuple)):
+            if len(export_imgsz) == 2 and all(
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value == native_imgsz
+                for value in export_imgsz
+            ):
+                export_imgsz = native_imgsz
+        if (
+            isinstance(export_imgsz, bool)
+            or not isinstance(export_imgsz, int)
+            or export_imgsz != native_imgsz
+        ):
+            raise ValueError(
+                f"LibrePicoSAM3 export requires imgsz={native_imgsz}, "
+                f"got {export_imgsz!r}."
+            )
+        opset = 13 if opset is None else int(opset)
+
+        destination_value = output_path if output_path is not None else output
+        destination = Path(destination_value or "LibrePicoSAM3pico.onnx")
         destination.parent.mkdir(parents=True, exist_ok=True)
         axes = None
         if dynamic:
             axes = {"roi_image": {0: "batch"}, "mask_logits": {0: "batch"}}
-        imgsz = self.INPUT_SIZES[self.size]
-        self.model.eval()
-        torch.onnx.export(
-            self.model,
-            torch.zeros((1, 3, imgsz, imgsz), device=self.device),
-            str(destination),
-            input_names=["roi_image"],
-            output_names=["mask_logits"],
-            dynamic_axes=axes,
-            opset_version=int(opset),
-            dynamo=False,
-        )
+
+        first_parameter = next(self.model.parameters())
+        original_device = first_parameter.device
+        trace_device = _resolve_export_device(device, original_device)
+        trace_dtype = first_parameter.dtype
+        training_states = {module: module.training for module in self.model.modules()}
+
+        try:
+            self.model.to(trace_device).eval()
+            torch.onnx.export(
+                self.model,
+                torch.zeros(
+                    (batch, 3, export_imgsz, export_imgsz),
+                    device=trace_device,
+                    dtype=trace_dtype,
+                ),
+                str(destination),
+                input_names=["roi_image"],
+                output_names=["mask_logits"],
+                dynamic_axes=axes,
+                opset_version=opset,
+                verbose=bool(verbose),
+                dynamo=False,
+            )
+
+            from ...export.onnx import _get_version, finalize_onnx_artifact
+
+            nb_classes = int(getattr(self, "nb_classes", 1))
+            names = getattr(self, "names", {0: "object"})
+            metadata = {
+                "schema_version": SCHEMA_VERSION,
+                "libreyolo_version": _get_version(),
+                "model_family": self.FAMILY,
+                "size": self.size,
+                "model_size": self.size,
+                "task": "segment",
+                "supported_tasks": json.dumps(["segment"]),
+                "default_task": "segment",
+                "nc": str(nb_classes),
+                "nb_classes": str(nb_classes),
+                "names": json.dumps({str(key): value for key, value in names.items()}),
+                "imgsz": str(export_imgsz),
+                "imgsz_h": str(export_imgsz),
+                "imgsz_w": str(export_imgsz),
+                "precision": "fp16" if trace_dtype == torch.float16 else "fp32",
+                "dynamic": str(bool(dynamic)),
+                "half": str(trace_dtype == torch.float16),
+            }
+            finalize_onnx_artifact(
+                str(destination),
+                simplify=bool(simplify),
+                dynamic=bool(dynamic),
+                half=trace_dtype == torch.float16,
+                metadata=metadata,
+            )
+        finally:
+            self.model.to(original_device)
+            for module, training in training_states.items():
+                module.training = training
         return str(destination)
+
+
+def _resolve_export_device(
+    requested: str | torch.device | int | None,
+    current: torch.device,
+) -> torch.device:
+    """Resolve the tracing device without changing the owning model's device."""
+    if requested is None or str(requested).lower() == "auto":
+        return current
+    if isinstance(requested, int) or (
+        isinstance(requested, str) and requested.isdigit()
+    ):
+        requested = f"cuda:{requested}"
+    return torch.device(requested)
 
 
 __all__ = ["LibrePicoSAM3", "PicoSAM3Network"]

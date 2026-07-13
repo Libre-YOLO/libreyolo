@@ -13,6 +13,7 @@ import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional, Tuple, Union
 
 import torch
@@ -25,7 +26,7 @@ from .onnx import (
     quantize_onnx_int8,
 )
 from .torchscript import export_torchscript
-from .support import get_support, validated_alternatives
+from .support import get_export_capabilities, validated_alternatives
 from ..tasks import task_to_suffix
 from ..utils.serialization import SCHEMA_VERSION
 
@@ -307,6 +308,8 @@ class BaseExporter(ABC):
             Path to the exported model file.
         """
         task = getattr(self.model, "task", "detect")
+        if not isinstance(task, str):
+            task = "detect"
         if task == "depth":
             # Depth export uses the fixed-resolution dense contract: backends
             # stretch-resize to the exported canvas and resize the depth map
@@ -352,6 +355,20 @@ class BaseExporter(ABC):
                 stacklevel=2,
             )
             dynamic = False
+        family = self.model._get_model_name()
+        capabilities = get_export_capabilities(family, task, self.format_name)
+        if (
+            dynamic
+            and capabilities.support.tier != "blocked"
+            and not capabilities.supports_dynamic
+        ):
+            warnings.warn(
+                f"{self.format_name.upper()} export uses a static input graph; "
+                "forcing dynamic=False.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            dynamic = False
         half, int8 = self._validate(half, int8, data)
         self._preflight(half=half, int8=int8, data=data, **kwargs)
         data = self._resolve_calibration_data(int8, data)
@@ -388,7 +405,7 @@ class BaseExporter(ABC):
         precision = _resolve_precision(half, int8)
         onnx_path = None
 
-        try:
+        with self._intermediate_onnx_workspace(output_path) as intermediate_output:
             with self._model_context(device, half, int8, batch, imgsz) as (
                 nn_model,
                 dummy,
@@ -400,6 +417,7 @@ class BaseExporter(ABC):
                         batch,
                         fraction,
                         allow_download_scripts,
+                        input_shape=tuple(int(dim) for dim in dummy.shape),
                     )
                     if int8 and data is not None
                     else None
@@ -409,7 +427,7 @@ class BaseExporter(ABC):
                     self._export_intermediate_onnx(
                         nn_model,
                         dummy,
-                        output_path,
+                        intermediate_output,
                         opset,
                         simplify,
                         dynamic,
@@ -441,9 +459,6 @@ class BaseExporter(ABC):
                     verbose=verbose,
                     **kwargs,
                 )
-        finally:
-            if onnx_path and Path(onnx_path).exists():
-                Path(onnx_path).unlink()
 
         self._print_summary(result, precision, imgsz)
         return result
@@ -481,13 +496,81 @@ class BaseExporter(ABC):
                 stacklevel=2,
             )
             half = False
-        if int8 and not self.supports_int8:
+        task = getattr(self.model, "task", "detect")
+        if not isinstance(task, str):
+            task = "detect"
+        capabilities = get_export_capabilities(
+            self.model._get_model_name(),
+            task,
+            self.format_name,
+        )
+        available = capabilities.support.tier != "blocked"
+        if half and available and not capabilities.supports_fp16:
+            raise NotImplementedError(
+                f"{self.format_name.upper()} FP16 export is not supported."
+            )
+        if int8 and available and not capabilities.supports_int8:
             raise NotImplementedError(
                 f"{self.format_name.upper()} INT8 export is not supported."
             )
-        if int8 and data is None and not self.default_int8_calibration_data:
+        if (
+            available
+            and int8
+            and data is None
+            and not self.default_int8_calibration_data
+        ):
             raise ValueError("INT8 export requires calibration data. Pass data=...")
         return half, int8
+
+    def _classification_runtime_metadata(self) -> dict:
+        """Return the complete exported-classifier preprocessing contract."""
+        task = getattr(self.model, "task", "detect")
+        if task != "classify":
+            return {}
+
+        from ..data.classify_dataset import IMAGENET_MEAN, IMAGENET_STD
+
+        def _triplet(value, default):
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                return tuple(float(item) for item in default)
+            try:
+                return tuple(float(item) for item in value)
+            except (TypeError, ValueError):
+                return tuple(float(item) for item in default)
+
+        mean = _triplet(
+            getattr(self.model, "classification_mean", None),
+            IMAGENET_MEAN,
+        )
+        std = _triplet(
+            getattr(self.model, "classification_std", None),
+            IMAGENET_STD,
+        )
+        crop_pct = getattr(self.model, "crop_pct", 0.875)
+        if not isinstance(crop_pct, (int, float)):
+            crop_pct = 0.875
+        interpolation = getattr(self.model, "interpolation", "bilinear")
+        if not isinstance(interpolation, str):
+            interpolation = getattr(interpolation, "value", "bilinear")
+        interpolation = str(interpolation).lower()
+        square_resize = getattr(self.model, "classification_square_resize", False)
+        if not isinstance(square_resize, bool):
+            square_resize = False
+        activation = getattr(self.model, "classification_activation", "softmax")
+        if not isinstance(activation, str) or activation.lower() not in {
+            "softmax",
+            "sigmoid",
+        }:
+            activation = "softmax"
+
+        return {
+            "classification_mean": list(mean),
+            "classification_std": list(std),
+            "classification_crop_pct": float(crop_pct),
+            "classification_interpolation": interpolation,
+            "classification_square_resize": square_resize,
+            "classification_activation": activation.lower(),
+        }
 
     def _resolve_calibration_data(
         self, int8: bool, data: Optional[str]
@@ -509,7 +592,11 @@ class BaseExporter(ABC):
         task = getattr(self.model, "task", "detect")
         if not isinstance(task, str):
             task = "detect"
-        support = get_support(family, task, self.format_name)
+        support = get_export_capabilities(
+            family,
+            task,
+            self.format_name,
+        ).support
         if support.tier == "blocked":
             alternatives = validated_alternatives(family, task)
             alternatives_text = (
@@ -674,8 +761,134 @@ class BaseExporter(ABC):
         return f"-{suffix}" if suffix else ""
 
     @contextmanager
+    def _preserve_live_model_state(self, *, restore_values: bool):
+        """Restore the user's live module exactly after an export attempt.
+
+        Export setup temporarily changes device, precision, and evaluation
+        modes.  Module-level ``train()`` restoration is insufficient for a
+        mixed train/eval tree, and casting a mixed-precision model back with
+        ``float()`` loses both dtypes and values.  Snapshot the owning slots so
+        replaced buffers/parameters and existing gradients are restored too.
+        Tensor values only need cloning when an FP16 trace can round them.
+        """
+        root_model = self.model.model
+        module_modes = [
+            (module, bool(module.training)) for module in root_model.modules()
+        ]
+        attribute_states = []
+        for module in root_model.modules():
+            for name in (
+                "export",
+                "_export",
+                "_forward_origin",
+                "shape",
+                "forward",
+                "interpolate_pos_encoding",
+            ):
+                had_own_value = name in module.__dict__
+                attribute_states.append(
+                    (
+                        module,
+                        name,
+                        had_own_value,
+                        module.__dict__.get(name),
+                    )
+                )
+        tensor_states = []
+        for module in root_model.modules():
+            for kind, slots in (
+                ("parameter", module._parameters),
+                ("buffer", module._buffers),
+            ):
+                for name, tensor in slots.items():
+                    if tensor is None:
+                        continue
+                    value = tensor.detach().clone() if restore_values else None
+                    grad = tensor.grad if kind == "parameter" else None
+                    grad_value = (
+                        grad.detach().clone()
+                        if restore_values and grad is not None
+                        else None
+                    )
+                    tensor_states.append(
+                        (
+                            module,
+                            kind,
+                            name,
+                            tensor,
+                            tensor.device,
+                            tensor.dtype,
+                            value,
+                            grad,
+                            grad.device if grad is not None else None,
+                            grad.dtype if grad is not None else None,
+                            grad_value,
+                        )
+                    )
+        try:
+            yield
+        finally:
+            with torch.no_grad():
+                for (
+                    module,
+                    kind,
+                    name,
+                    original,
+                    device,
+                    dtype,
+                    value,
+                    original_grad,
+                    grad_device,
+                    grad_dtype,
+                    grad_value,
+                ) in tensor_states:
+                    slots = (
+                        module._parameters if kind == "parameter" else module._buffers
+                    )
+                    slots[name] = original
+                    restored = value if value is not None else original.detach()
+                    original.data = restored.to(device=device, dtype=dtype)
+                    if kind == "parameter":
+                        if original_grad is None:
+                            original.grad = None
+                        else:
+                            restored_grad = (
+                                grad_value
+                                if grad_value is not None
+                                else original_grad.detach()
+                            )
+                            original_grad.data = restored_grad.to(
+                                device=grad_device,
+                                dtype=grad_dtype,
+                            )
+                            original.grad = original_grad
+            for module, name, had_own_value, value in attribute_states:
+                if had_own_value:
+                    setattr(module, name, value)
+                else:
+                    module.__dict__.pop(name, None)
+            # Assign the flag directly: Module.train() recursively overwrites
+            # child modes and cannot reproduce a deliberately mixed-mode tree.
+            for module, training in module_modes:
+                module.training = training
+
+    @contextmanager
     def _model_context(self, device, half, int8, batch, imgsz):
-        """Setup model for export and restore state afterwards."""
+        """Setup model for export while preserving the live model exactly."""
+        restore_values = bool(half and not int8 and self.apply_model_half)
+        with self._preserve_live_model_state(restore_values=restore_values):
+            with self._model_context_impl(
+                device,
+                half,
+                int8,
+                batch,
+                imgsz,
+            ) as prepared:
+                yield prepared
+
+    @contextmanager
+    def _model_context_impl(self, device, half, int8, batch, imgsz):
+        """Prepare the trace module; the outer context restores live state."""
         nn_model = self.model.model
         root_model = nn_model
         original_training = root_model.training
@@ -869,6 +1082,8 @@ class BaseExporter(ABC):
         batch,
         fraction,
         allow_download_scripts=False,
+        *,
+        input_shape=None,
     ):
         from .calibration import get_calibration_dataloader
 
@@ -880,6 +1095,10 @@ class BaseExporter(ABC):
             fraction=fraction,
             preprocess_fn=preprocess_fn,
             allow_download_scripts=allow_download_scripts,
+            model_family=self.model._get_model_name(),
+            task=getattr(self.model, "task", "detect"),
+            model_size=getattr(self.model, "size", None),
+            input_shape=input_shape,
         )
         logger.info(
             "Calibration dataset: %d batches, %d images",
@@ -891,9 +1110,8 @@ class BaseExporter(ABC):
     def _export_intermediate_onnx(
         self, nn_model, dummy, output_path, opset, simplify, dynamic
     ):
-        # Use a distinct intermediate name so it never collides with (and the
-        # finally-block cleanup never deletes) a real ONNX export the user may
-        # have written to the default ``<stem>.onnx`` path.
+        # Keep a recognizable name inside the invocation-owned workspace.
+        # Workspace isolation prevents collisions with user-owned ONNX files.
         out = Path(output_path)
         onnx_output = str(out.with_name(f"{out.stem}.export_intermediate.onnx"))
         logger.info("Step 1/2: Exporting to ONNX (%s)", onnx_output)
@@ -911,6 +1129,19 @@ class BaseExporter(ABC):
                 imgsz=(dummy.shape[-2], dummy.shape[-1]),
             ),
         )
+
+    @contextmanager
+    def _intermediate_onnx_workspace(self, output_path):
+        """Yield an invocation-owned output path for intermediate ONNX files."""
+        if not self.requires_onnx:
+            yield output_path
+            return
+
+        output = Path(output_path)
+        with TemporaryDirectory(
+            prefix="libreyolo-export-", dir=output.parent
+        ) as workspace:
+            yield str(Path(workspace) / output.name)
 
     def _build_metadata(
         self,
@@ -956,6 +1187,13 @@ class BaseExporter(ABC):
         }
         if onnx_path is not None:
             meta["exported_from"] = str(Path(onnx_path).name)
+        classification_meta = self._classification_runtime_metadata()
+        if classification_meta:
+            meta.update(classification_meta)
+            # Transitional aliases read by artifacts from the earlier, partial
+            # classifier metadata contract.
+            meta["crop_pct"] = classification_meta["classification_crop_pct"]
+            meta["interpolation"] = classification_meta["classification_interpolation"]
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
         if task == "gaze":
@@ -1016,14 +1254,35 @@ class BaseExporter(ABC):
             ).lower(),
             "obb": str(task == "obb").lower(),
         }
-        # Classification eval preprocessing — lets exported-backend inference
-        # match native predict()/val() (per-family crop_pct + interpolation).
-        _crop_pct = getattr(self.model, "crop_pct", None)
-        _interp = getattr(self.model, "interpolation", None)
-        if _crop_pct is not None:
-            meta["crop_pct"] = str(_crop_pct)
-        if _interp is not None:
-            meta["interpolation"] = str(_interp)
+        classification_meta = self._classification_runtime_metadata()
+        if classification_meta:
+            meta.update(
+                {
+                    "classification_mean": json.dumps(
+                        classification_meta["classification_mean"]
+                    ),
+                    "classification_std": json.dumps(
+                        classification_meta["classification_std"]
+                    ),
+                    "classification_crop_pct": str(
+                        classification_meta["classification_crop_pct"]
+                    ),
+                    "classification_interpolation": classification_meta[
+                        "classification_interpolation"
+                    ],
+                    "classification_square_resize": str(
+                        classification_meta["classification_square_resize"]
+                    ).lower(),
+                    "classification_activation": classification_meta[
+                        "classification_activation"
+                    ],
+                    # Legacy aliases retained for older backend readers.
+                    "crop_pct": str(classification_meta["classification_crop_pct"]),
+                    "interpolation": classification_meta[
+                        "classification_interpolation"
+                    ],
+                }
+            )
         if task == "pose":
             pose_meta = _pose_keypoint_shape_metadata(self.model)
             meta.update(
@@ -1100,6 +1359,7 @@ class OnnxExporter(BaseExporter):
     default_int8_calibration_data = True
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
         if int8:
             task = getattr(self.model, "task", "detect")
             if not isinstance(task, str):
@@ -1118,7 +1378,6 @@ class OnnxExporter(BaseExporter):
                     "Embedded NMS ONNX export currently supports YOLO9 "
                     "detection models only."
                 )
-        super()._preflight(half=half, int8=int8, data=data, **kwargs)
 
     def _export(
         self,
@@ -1256,6 +1515,30 @@ class TensorRTExporter(BaseExporter):
     supports_fp16 = True
     apply_model_half = False
 
+    def __call__(self, *args, trt_config=None, **kwargs):
+        # Resolve graph-affecting config before the intermediate ONNX is traced.
+        # The low-level TensorRT builder loads the same config for workspace,
+        # profile bounds, device, and hardware compatibility.
+        if trt_config is not None:
+            from .config import load_export_config
+
+            config = load_export_config(trt_config)
+            kwargs.update(
+                {
+                    "dynamic": bool(config.dynamic.enabled),
+                    "half": bool(config.half),
+                    "int8": bool(config.int8),
+                    "verbose": bool(config.verbose),
+                }
+            )
+            trace_device = kwargs.get("device")
+            if trace_device is None or str(trace_device).lower() == "auto":
+                # One TensorRT config device governs both ONNX tracing and the
+                # engine build; otherwise a GPU-1 graph could silently be built
+                # under GPU 0's CUDA context.
+                kwargs["device"] = int(config.device)
+        return super().__call__(*args, trt_config=trt_config, **kwargs)
+
     def _preflight(self, **kwargs):
         super()._preflight(**kwargs)
         from .tensorrt import check_tensorrt_available
@@ -1281,11 +1564,63 @@ class TensorRTExporter(BaseExporter):
         opt_batch=1,
         max_batch=8,
         hardware_compatibility="none",
-        gpu_device=0,
+        gpu_device=None,
         trt_config=None,
         **kwargs,
     ):
         from .tensorrt import export_tensorrt
+
+        dummy_device = torch.device(dummy.device)
+        traced_gpu = None
+        if dummy_device.type == "cuda":
+            traced_gpu = dummy_device.index
+            if traced_gpu is None:
+                traced_gpu = torch.cuda.current_device()
+
+        def normalize_gpu(value):
+            if isinstance(value, bool):
+                raise ValueError(
+                    "TensorRT gpu_device must be a non-negative integer, got "
+                    f"{value!r}."
+                )
+            try:
+                if isinstance(value, str):
+                    if not value.strip().isdigit():
+                        raise ValueError
+                    index = int(value.strip())
+                else:
+                    index = value.__index__()
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "TensorRT gpu_device must be a non-negative integer, got "
+                    f"{value!r}."
+                ) from exc
+            if index < 0:
+                raise ValueError(
+                    f"TensorRT gpu_device must be non-negative, got {index}."
+                )
+            return index
+
+        configured_gpu = None
+        if trt_config is not None:
+            from .config import load_export_config
+
+            configured_gpu = int(load_export_config(trt_config).device)
+            if gpu_device is not None and normalize_gpu(gpu_device) != configured_gpu:
+                raise ValueError(
+                    "TensorRT config and gpu_device must select the same build "
+                    f"device, got cuda:{configured_gpu} and cuda:{gpu_device}."
+                )
+        requested_gpu = configured_gpu if configured_gpu is not None else gpu_device
+        if requested_gpu is None:
+            requested_gpu = traced_gpu if traced_gpu is not None else 0
+        requested_gpu = normalize_gpu(requested_gpu)
+        if traced_gpu is not None and requested_gpu != traced_gpu:
+            raise ValueError(
+                "TensorRT trace and build devices must match: the ONNX graph was "
+                f"traced on cuda:{traced_gpu}, but the engine requested "
+                f"cuda:{requested_gpu}."
+            )
 
         trt_metadata = dict(metadata or {})
         if dynamic:
@@ -1311,9 +1646,10 @@ class TensorRTExporter(BaseExporter):
             opt_batch=opt_batch,
             max_batch=max_batch,
             hardware_compatibility=hardware_compatibility,
-            device=gpu_device,
+            device=requested_gpu,
             config=trt_config,
             metadata=trt_metadata,
+            input_shape=tuple(int(dim) for dim in dummy.shape),
         )
 
 
@@ -1468,6 +1804,7 @@ class CoreMLExporter(BaseExporter):
     supports_embedded_nms = True
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
         if kwargs.get("nms"):
             family = self.model._get_model_name()
             task = getattr(self.model, "task", "detect")
@@ -1488,7 +1825,6 @@ class CoreMLExporter(BaseExporter):
                     "CoreML embedded NMS does not support max_det. "
                     "Use ONNX embedded NMS when max_det control is required."
                 )
-        super()._preflight(half=half, int8=int8, data=data, **kwargs)
 
     def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
         # CoreML uses a hard-fixed ct.ImageType(shape=...); the exported graph

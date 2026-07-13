@@ -13,7 +13,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from libreyolo.export.exporter import NcnnExporter, OnnxExporter
-from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
+from libreyolo.export.support import (
+    EXPORT_FORMATS,
+    SUPPORT,
+    get_export_capabilities,
+    get_support,
+)
 from libreyolo.models.inventory import collect_model_inventory
 from libreyolo.tasks import TASKS
 
@@ -196,6 +201,98 @@ def test_partial_exporters_are_custom_not_blocked():
                     f"{family}/{task}/{format} is validated in the support "
                     "matrix but the inventory reports export as blocked"
                 )
+
+
+def test_export_capabilities_are_family_and_task_aware():
+    yolo9_onnx = get_export_capabilities("yolo9", "detect", "onnx")
+    yolox_onnx = get_export_capabilities("yolox", "detect", "onnx")
+    yolo9_torchscript = get_export_capabilities("yolo9", "detect", "torchscript")
+    yolo9_ncnn = get_export_capabilities("yolo9", "detect", "ncnn")
+
+    assert yolo9_onnx.supports_int8 is True
+    assert yolox_onnx.supports_int8 is False
+    assert yolo9_torchscript.supports_dynamic is False
+    assert yolo9_ncnn.supports_dynamic is False
+    assert yolo9_ncnn.supports_fp16 is False
+
+
+@pytest.mark.parametrize(
+    ("family", "task"),
+    [
+        ("depth_anything", "depth"),
+        ("birefnet", "matte"),
+        ("nafnet", "restore"),
+        ("swinir", "restore"),
+    ],
+)
+def test_fixed_runtime_contracts_do_not_advertise_dynamic_onnx(family, task):
+    assert get_export_capabilities(family, task, "onnx").supports_dynamic is False
+
+
+def test_realesrgan_keeps_dynamic_onnx_capability():
+    assert get_export_capabilities("realesrgan", "restore", "onnx").supports_dynamic
+
+
+@pytest.mark.parametrize(
+    ("family", "task"),
+    [
+        ("clip", "classify"),
+        ("siglip2", "classify"),
+        ("picosam3", "segment"),
+    ],
+)
+def test_custom_onnx_exporters_do_not_advertise_unsupported_fp16(family, task):
+    assert get_export_capabilities(family, task, "onnx").supports_fp16 is False
+
+
+def test_blocked_export_has_no_effective_option_capabilities():
+    capabilities = get_export_capabilities("rfdetr", "detect", "ncnn")
+
+    assert capabilities.support.tier == "blocked"
+    assert capabilities.supports_dynamic is False
+    assert capabilities.supports_fp16 is False
+    assert capabilities.supports_int8 is False
+
+
+def test_manifest_blocked_override_prevents_generic_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    from libreyolo.export import support
+
+    manifest_entry = SimpleNamespace(
+        tasks=(SimpleNamespace(task="detect"),), export_override="blocked"
+    )
+    monkeypatch.setattr(support, "get_family_spec", lambda family: manifest_entry)
+
+    entry = support.get_support("future_family", "detect", "onnx")
+
+    assert entry.tier == "blocked"
+    assert "public model manifest" in entry.reason
+
+
+def test_concrete_exporters_are_publicly_importable():
+    from libreyolo.export import (
+        CoreMLExporter,
+        NcnnExporter,
+        OnnxExporter,
+        OpenVINOExporter,
+        TensorRTExporter,
+        TFLiteExporter,
+        TorchScriptExporter,
+    )
+
+    assert {
+        exporter.format_name
+        for exporter in (
+            CoreMLExporter,
+            NcnnExporter,
+            OnnxExporter,
+            OpenVINOExporter,
+            TensorRTExporter,
+            TFLiteExporter,
+            TorchScriptExporter,
+        )
+    } == set(EXPORT_FORMATS)
 
 
 def test_default_download_urls_keep_task_repo_suffixes():

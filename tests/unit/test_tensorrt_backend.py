@@ -101,7 +101,7 @@ def test_tensorrt_dynamic_max_batch_uses_engine_profile():
     backend.input_name = "input"
     backend._metadata = {}
 
-    assert backend._detect_max_batch() == 16
+    assert backend._detect_batch_limits() == (1, 16)
 
 
 def test_tensorrt_dynamic_max_batch_falls_back_to_metadata():
@@ -112,9 +112,9 @@ def test_tensorrt_dynamic_max_batch_falls_back_to_metadata():
     backend._dynamic_batch = True
     backend.engine = _Engine()
     backend.input_name = "input"
-    backend._metadata = {"trt_max_batch": "12"}
+    backend._metadata = {"trt_min_batch": "2", "trt_max_batch": "12"}
 
-    assert backend._detect_max_batch() == 12
+    assert backend._detect_batch_limits() == (2, 12)
 
 
 def test_tensorrt_backend_reads_static_input_imgsz():
@@ -136,6 +136,7 @@ def test_tensorrt_dynamic_batching_caps_requested_batch_to_profile():
             torch.zeros(1, 3, imgsz, imgsz),
             np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
             (imgsz, imgsz),
+            1.0,
         )
 
     def infer(batched_input):
@@ -198,6 +199,7 @@ def test_tensorrt_dynamic_batching_preserves_pose_keypoints():
             torch.zeros(1, 3, imgsz, imgsz),
             np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
             (imgsz, imgsz),
+            1.0,
         )
 
     def infer(batched_input):

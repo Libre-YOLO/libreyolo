@@ -181,6 +181,92 @@ def _read_pose_metadata(meta: dict) -> dict[str, Any]:
     return pose_meta
 
 
+def _read_classification_metadata(meta: dict) -> dict[str, Any]:
+    """Parse the portable classifier preprocessing/postprocessing contract.
+
+    Missing fields preserve the legacy ImageNet/softmax behavior. Present but
+    malformed fields are rejected so an artifact cannot silently run with a
+    different normalization or probability interpretation.
+    """
+
+    def _triplet(key: str, default: tuple[float, float, float]):
+        raw = meta.get(key)
+        if raw is None:
+            return default
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid {key} metadata: expected three numbers."
+                ) from exc
+        if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+            raise ValueError(f"Invalid {key} metadata: expected three numbers.")
+        try:
+            values = tuple(float(item) for item in raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid {key} metadata: expected three numbers."
+            ) from exc
+        if not all(np.isfinite(item) for item in values):
+            raise ValueError(f"Invalid {key} metadata: values must be finite.")
+        return values
+
+    mean = _triplet("classification_mean", (0.485, 0.456, 0.406))
+    std = _triplet("classification_std", (0.229, 0.224, 0.225))
+    if any(item <= 0 for item in std):
+        raise ValueError(
+            "Invalid classification_std metadata: values must be positive."
+        )
+
+    raw_crop = meta.get("classification_crop_pct", meta.get("crop_pct", 0.875))
+    try:
+        crop_pct = float(raw_crop)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid classification_crop_pct metadata.") from exc
+    if not 0 < crop_pct <= 1:
+        raise ValueError("classification_crop_pct metadata must be in (0, 1].")
+
+    interpolation = str(
+        meta.get(
+            "classification_interpolation",
+            meta.get("interpolation", "bilinear"),
+        )
+    ).lower()
+    if interpolation not in {"bilinear", "bicubic", "nearest"}:
+        raise ValueError(
+            "classification_interpolation metadata must be bilinear, bicubic, or nearest."
+        )
+
+    raw_square = meta.get("classification_square_resize", False)
+    if isinstance(raw_square, str):
+        normalized_square = raw_square.strip().lower()
+        if normalized_square not in {"true", "false"}:
+            raise ValueError(
+                "classification_square_resize metadata must be true or false."
+            )
+        square_resize = normalized_square == "true"
+    elif isinstance(raw_square, bool):
+        square_resize = raw_square
+    else:
+        raise ValueError("classification_square_resize metadata must be a boolean.")
+
+    activation = str(meta.get("classification_activation", "softmax")).lower()
+    if activation not in {"softmax", "sigmoid"}:
+        raise ValueError(
+            "classification_activation metadata must be softmax or sigmoid."
+        )
+
+    return {
+        "crop_pct": crop_pct,
+        "interpolation": interpolation,
+        "classification_mean": mean,
+        "classification_std": std,
+        "classification_square_resize": square_resize,
+        "classification_activation": activation,
+    }
+
+
 def _nms_numpy(
     boxes: np.ndarray, scores: np.ndarray, iou_threshold: float = 0.45
 ) -> list:
@@ -322,6 +408,11 @@ class BaseBackend(ABC):
         default_task: str | None = None,
         crop_pct: float | None = None,
         interpolation: str | None = None,
+        classification_mean: tuple[float, float, float] | None = None,
+        classification_std: tuple[float, float, float] | None = None,
+        classification_square_resize: bool = False,
+        classification_activation: str = "softmax",
+        dynamic_spatial: bool = False,
         num_keypoints: int | None = None,
         keypoint_dim: int | None = None,
         num_keypoints_per_class: list[int] | None = None,
@@ -371,6 +462,15 @@ class BaseBackend(ABC):
         # legacy behavior. Lets exported-backend classify inference match native.
         self.crop_pct = crop_pct if crop_pct is not None else 0.875
         self.interpolation = interpolation or "bilinear"
+        self.classification_mean = classification_mean or (0.485, 0.456, 0.406)
+        self.classification_std = classification_std or (0.229, 0.224, 0.225)
+        self.classification_square_resize = bool(classification_square_resize)
+        self._dynamic_spatial = bool(dynamic_spatial)
+        if classification_activation not in {"softmax", "sigmoid"}:
+            raise ValueError(
+                "classification_activation must be 'softmax' or 'sigmoid'."
+            )
+        self.classification_activation = classification_activation
         # Set by backends that load a model with NMS baked into the graph; such
         # models emit final (1, max_det, 6) detections instead of raw tensors.
         if not hasattr(self, "embedded_nms"):
@@ -417,7 +517,7 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
-            if self.model_family == "realesrgan":
+            if self.model_family == "realesrgan" and self._dynamic_spatial:
                 return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "depth":
@@ -537,8 +637,11 @@ class BaseBackend(ABC):
         transform = build_classify_transforms(
             h,
             augment=False,
+            mean=self.classification_mean,
+            std=self.classification_std,
             crop_pct=getattr(self, "crop_pct", 0.875),
             interpolation=getattr(self, "interpolation", "bilinear"),
+            square_resize=self.classification_square_resize,
         )
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
@@ -2046,8 +2149,7 @@ class BaseBackend(ABC):
     # Result building
     # =========================================================================
 
-    @staticmethod
-    def _parse_classify_probs(all_outputs) -> torch.Tensor:
+    def _parse_classify_probs(self, all_outputs) -> torch.Tensor:
         logits = np.asarray(all_outputs[0])
         if logits.ndim == 1:
             logits = logits[None, :]
@@ -2057,6 +2159,8 @@ class BaseBackend(ABC):
                 f"got {tuple(logits.shape)}."
             )
         logits_t = torch.from_numpy(logits).float()
+        if self.classification_activation == "sigmoid":
+            return torch.sigmoid(logits_t)[0]
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod

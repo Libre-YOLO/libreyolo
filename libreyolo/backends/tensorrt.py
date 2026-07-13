@@ -11,9 +11,46 @@ import torch
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    ImageSize,
+    _read_classification_metadata,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_tensorrt_device(device) -> torch.device:
+    """Resolve and validate the CUDA device used by a TensorRT runtime."""
+    if isinstance(device, bool):
+        raise ValueError(f"Invalid TensorRT CUDA device {device!r}.")
+    if isinstance(device, int):
+        index = device
+    else:
+        key = "auto" if device is None else str(device).strip().lower()
+        if key in {"auto", "cuda", "gpu"}:
+            index = int(torch.cuda.current_device())
+        elif key.isdigit():
+            index = int(key)
+        elif key.startswith("cuda:"):
+            try:
+                index = int(key.split(":", 1)[1])
+            except ValueError as exc:
+                raise ValueError(f"Invalid TensorRT CUDA device {device!r}.") from exc
+        else:
+            raise ValueError(
+                "TensorRT inference requires device=0, device='0', 'cuda', "
+                "'cuda:N', 'gpu', or 'auto'; "
+                f"got {device!r}."
+            )
+    if index < 0 or index >= torch.cuda.device_count():
+        raise ValueError(
+            f"TensorRT CUDA device index {index} is unavailable; "
+            f"detected {torch.cuda.device_count()} CUDA device(s)."
+        )
+    return torch.device("cuda", index)
 
 
 class TensorRTBackend(BaseBackend):
@@ -26,7 +63,9 @@ class TensorRTBackend(BaseBackend):
             from it automatically.
         nb_classes: Number of classes. When ``None`` (default), uses the value
             from the sidecar file if available, otherwise defaults to 80.
-        device: Device for inference. Must be "cuda" or "auto" (TensorRT requires GPU).
+        device: CUDA device for inference. Accepts an integer index, numeric
+            string, ``"cuda"``, ``"cuda:N"``, ``"gpu"``, ``"auto"``, or a
+            CUDA ``torch.device``.
 
     Example:
         >>> model = TensorRTBackend("model.engine")
@@ -38,7 +77,7 @@ class TensorRTBackend(BaseBackend):
         self,
         engine_path: str,
         nb_classes: int | None = None,
-        device: str = "auto",
+        device: str | int | torch.device = "auto",
         task: str | None = None,
     ):
         try:
@@ -51,6 +90,9 @@ class TensorRTBackend(BaseBackend):
 
         if not torch.cuda.is_available():
             raise RuntimeError("TensorRT requires CUDA. No CUDA-capable GPU detected.")
+        resolved_device = _resolve_tensorrt_device(device)
+        torch.cuda.set_device(resolved_device)
+        self.device = resolved_device
 
         if not Path(engine_path).exists():
             raise FileNotFoundError(f"TensorRT engine not found: {engine_path}")
@@ -74,13 +116,17 @@ class TensorRTBackend(BaseBackend):
             else self._metadata.get("nb_classes", self._metadata.get("nc", 80))
         )
         model_family = self._metadata.get("model_family")
-        default_task = normalize_task(self._metadata.get("default_task"), default="detect")
+        default_task = normalize_task(
+            self._metadata.get("default_task"), default="detect"
+        )
         metadata_task = normalize_task(self._metadata.get("task"), default=default_task)
         supported_tasks = normalize_supported_tasks(
             self._metadata.get("supported_tasks", (metadata_task,))
         )
         pose_metadata = _read_pose_metadata(self._metadata)
-        self._sidecar_size = self._metadata.get("model_size") or self._metadata.get("size")
+        self._sidecar_size = self._metadata.get("model_size") or self._metadata.get(
+            "size"
+        )
 
         sidecar_names = self._metadata.get("names")
         if sidecar_names is not None and nb_classes is None:
@@ -104,26 +150,39 @@ class TensorRTBackend(BaseBackend):
         self.output_names: List[str] = []
         self.input_shape = None
         self.output_shapes: Dict[str, Tuple] = {}
+        self.input_numpy_dtype = None
+        self.input_torch_dtype = None
+        self.output_numpy_dtypes: Dict[str, np.dtype] = {}
+        self.output_torch_dtypes: Dict[str, torch.dtype] = {}
 
         for i in range(self.engine.num_io_tensors):
             name = self.engine.get_tensor_name(i)
             shape = self.engine.get_tensor_shape(name)
             mode = self.engine.get_tensor_mode(name)
+            numpy_dtype, torch_dtype = self._binding_dtypes(
+                trt,
+                self.engine.get_tensor_dtype(name),
+                tensor_name=name,
+            )
 
             if mode == trt.TensorIOMode.INPUT:
                 self.input_name = name
                 self.input_shape = tuple(shape)
+                self.input_numpy_dtype = numpy_dtype
+                self.input_torch_dtype = torch_dtype
             else:
                 self.output_names.append(name)
                 self.output_shapes[name] = tuple(shape)
+                self.output_numpy_dtypes[name] = numpy_dtype
+                self.output_torch_dtypes[name] = torch_dtype
 
         if self.input_name is None:
             raise RuntimeError("No input tensor found in TensorRT engine")
 
+        self._dynamic_input = any(dim == -1 for dim in self.input_shape)
         self._dynamic_batch = self.input_shape[0] == -1  # -1 = dynamic batch
-        self._max_batch = self._detect_max_batch()
-
-        self._allocate_buffers()
+        self._min_batch, self._max_batch = self._detect_batch_limits()
+        dynamic_spatial = self._detect_dynamic_spatial_profile()
 
         if model_family is None:
             model_family = self._detect_model_family()
@@ -133,6 +192,7 @@ class TensorRTBackend(BaseBackend):
             artifact=f"TensorRT metadata sidecar {sidecar_path}",
         )
         imgsz = self._read_static_input_imgsz(self.input_shape) or metadata_imgsz or 640
+        self._allocate_buffers(self._initial_input_shape(imgsz))
         if not self._metadata:
             inferred_task = self._detect_task_from_filename()
             if inferred_task is not None:
@@ -146,11 +206,16 @@ class TensorRTBackend(BaseBackend):
             default_task=default_task,
             supported_tasks=supported_tasks,
         )
+        classification_metadata = (
+            _read_classification_metadata(self._metadata)
+            if resolved_task == "classify"
+            else {}
+        )
 
         super().__init__(
             model_path=engine_path,
             nb_classes=resolved_nb_classes,
-            device="cuda",
+            device=str(resolved_device),
             imgsz=imgsz,
             model_family=model_family,
             names=names,
@@ -158,6 +223,8 @@ class TensorRTBackend(BaseBackend):
             task=resolved_task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            dynamic_spatial=dynamic_spatial,
+            **classification_metadata,
             **pose_metadata,
         )
 
@@ -174,47 +241,176 @@ class TensorRTBackend(BaseBackend):
             return h if h == w else (h, w)
         return None
 
-    def _allocate_buffers(self, batch_size: int = 1):
-        """Allocate CUDA memory for input and output tensors."""
-        self.inputs = {}
-        self.outputs = {}
-        self.bindings = []
-        self.stream = torch.cuda.Stream()
-        self._current_batch = batch_size
+    def _detect_dynamic_spatial_profile(self) -> bool:
+        """Return whether the active TensorRT profile varies height or width."""
+        if len(self.input_shape) != 4 or not any(
+            dim == -1 for dim in self.input_shape[2:4]
+        ):
+            return False
+        try:
+            min_shape, _, max_shape = self.engine.get_tensor_profile_shape(
+                self.input_name, 0
+            )
+            return any(
+                int(min_shape[index]) != int(max_shape[index]) for index in (2, 3)
+            )
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return False
 
-        def _resolve_shape(shape):
-            return tuple(batch_size if d == -1 else d for d in shape)
+    @staticmethod
+    def _binding_dtypes(trt, trt_dtype, *, tensor_name: str):
+        """Return NumPy and torch dtypes for a TensorRT I/O tensor."""
+        try:
+            numpy_dtype = np.dtype(trt.nptype(trt_dtype))
+            torch_dtype = torch.from_numpy(np.empty((0,), dtype=numpy_dtype)).dtype
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise TypeError(
+                f"TensorRT tensor {tensor_name!r} uses unsupported dtype {trt_dtype!r}."
+            ) from exc
+        return numpy_dtype, torch_dtype
 
-        resolved_input = _resolve_shape(self.input_shape)
-        input_size = int(np.prod(resolved_input))
-        self.inputs[self.input_name] = torch.zeros(
-            input_size, dtype=torch.float32, device="cuda"
-        )
-
-        for name in self.output_names:
-            shape = _resolve_shape(self.output_shapes[name])
-            size = int(np.prod(shape))
-            self.outputs[name] = torch.zeros(size, dtype=torch.float32, device="cuda")
-
-    def _detect_max_batch(self) -> int:
-        """Return the largest batch size this engine can execute."""
-        if not self._dynamic_batch:
-            return int(self.input_shape[0])
+    def _initial_input_shape(self, imgsz: ImageSize) -> tuple[int, ...]:
+        """Resolve a concrete startup shape, preferring profile-opt dimensions."""
+        if not self._dynamic_input:
+            return tuple(int(dim) for dim in self.input_shape)
 
         try:
             profile_shapes = self.engine.get_tensor_profile_shape(self.input_name, 0)
-            return int(profile_shapes[2][0])
+            opt_shape = tuple(int(dim) for dim in profile_shapes[1])
+            if len(opt_shape) == len(self.input_shape) and all(
+                dim > 0 for dim in opt_shape
+            ):
+                return opt_shape
         except (AttributeError, IndexError, TypeError, ValueError):
             pass
 
+        if len(self.input_shape) != 4:
+            raise RuntimeError(
+                "TensorRT dynamic input has no usable optimization-profile shape: "
+                f"{self.input_shape}."
+            )
+        if isinstance(imgsz, tuple):
+            input_h, input_w = (int(imgsz[0]), int(imgsz[1]))
+        else:
+            input_h = input_w = int(imgsz)
+        fallback = (1, 3, input_h, input_w)
+        return tuple(
+            int(engine_dim) if engine_dim > 0 else fallback[index]
+            for index, engine_dim in enumerate(self.input_shape)
+        )
+
+    def _validate_input_shape(self, shape: tuple[int, ...]) -> None:
+        """Validate a concrete runtime shape against the engine declaration."""
+        if len(shape) != len(self.input_shape):
+            raise ValueError(
+                f"TensorRT input {self.input_name!r} expects {len(self.input_shape)} "
+                f"dimensions, got shape {shape}."
+            )
+        for axis, (actual, declared) in enumerate(zip(shape, self.input_shape)):
+            if actual <= 0:
+                raise ValueError(f"TensorRT input shape must be positive, got {shape}.")
+            if declared > 0 and actual != declared:
+                raise ValueError(
+                    f"TensorRT input {self.input_name!r} axis {axis} is fixed at "
+                    f"{declared}, got {actual} (shape {shape})."
+                )
+
+    def _set_runtime_input_shape(self, shape: tuple[int, ...]) -> None:
+        """Set a dynamic input shape and reject profiles that do not accept it."""
+        self._validate_input_shape(shape)
+        if not self._dynamic_input:
+            return
+        accepted = self.context.set_input_shape(self.input_name, shape)
+        if accepted is False:
+            raise ValueError(
+                f"TensorRT optimization profile rejected input shape {shape} "
+                f"for tensor {self.input_name!r}."
+            )
+
+    def _runtime_output_shape(self, name: str) -> tuple[int, ...]:
+        """Read a fully resolved output shape after the input shape is set."""
+        try:
+            shape = tuple(int(dim) for dim in self.context.get_tensor_shape(name))
+        except AttributeError:
+            shape = tuple(int(dim) for dim in self.output_shapes[name])
+        if not shape or any(dim <= 0 for dim in shape):
+            raise RuntimeError(
+                f"TensorRT output {name!r} has unresolved runtime shape {shape}; "
+                "ensure the optimization profile covers the input shape."
+            )
+        return shape
+
+    def _execute(self) -> None:
+        """Execute the current bindings and fail if TensorRT rejects the launch."""
+        executed = self.context.execute_async_v3(self.stream.cuda_stream)
+        if not executed:
+            raise RuntimeError(
+                "TensorRT execute_async_v3 returned False; inference was not executed."
+            )
+
+    def _set_tensor_address(self, name: str, tensor: torch.Tensor) -> None:
+        """Bind one I/O tensor and fail if TensorRT rejects its device pointer."""
+        accepted = self.context.set_tensor_address(name, tensor.data_ptr())
+        if accepted is False:
+            raise RuntimeError(
+                f"TensorRT rejected the device address for tensor {name!r}."
+            )
+
+    def _wait_for_input_copy(self) -> None:
+        """Order TensorRT's stream after the PyTorch stream that filled input."""
+        self.stream.wait_stream(torch.cuda.current_stream(self.device))
+
+    def _allocate_buffers(self, input_shape: tuple[int, ...]):
+        """Set the input shape, then allocate dtype-correct CUDA I/O buffers."""
+        concrete_shape = tuple(int(dim) for dim in input_shape)
+        self._set_runtime_input_shape(concrete_shape)
+
+        self.inputs = {}
+        self.outputs = {}
+        if not hasattr(self, "stream"):
+            self.stream = torch.cuda.Stream(device=self.device)
+        self._current_input_shape = concrete_shape
+        self._current_batch = concrete_shape[0]
+
+        input_size = int(np.prod(concrete_shape))
+        self.inputs[self.input_name] = torch.empty(
+            input_size, dtype=self.input_torch_dtype, device=self.device
+        )
+
+        self._runtime_output_shapes: Dict[str, tuple[int, ...]] = {}
+        for name in self.output_names:
+            shape = self._runtime_output_shape(name)
+            self._runtime_output_shapes[name] = shape
+            size = int(np.prod(shape))
+            self.outputs[name] = torch.empty(
+                size,
+                dtype=self.output_torch_dtypes[name],
+                device=self.device,
+            )
+
+    def _detect_batch_limits(self) -> tuple[int, int]:
+        """Return the smallest and largest batch sizes the engine can execute."""
+        if not self._dynamic_batch:
+            batch = int(self.input_shape[0])
+            return batch, batch
+
+        try:
+            profile_shapes = self.engine.get_tensor_profile_shape(self.input_name, 0)
+            return int(profile_shapes[0][0]), int(profile_shapes[2][0])
+        except (AttributeError, IndexError, TypeError, ValueError):
+            pass
+
+        metadata_min = self._metadata.get("trt_min_batch")
         metadata_max = self._metadata.get("trt_max_batch")
-        if metadata_max is not None:
+        if metadata_min is not None or metadata_max is not None:
             try:
-                return max(1, int(metadata_max))
+                minimum = max(1, int(metadata_min or 1))
+                maximum = max(minimum, int(metadata_max or minimum))
+                return minimum, maximum
             except (TypeError, ValueError):
                 pass
 
-        return 1
+        return 1, 1
 
     def _detect_model_family(self) -> Optional[str]:
         """Detect model family from output shapes when sidecar metadata is absent."""
@@ -286,37 +482,55 @@ class TensorRTBackend(BaseBackend):
         Returns:
             Dict mapping output tensor names to numpy arrays.
         """
-        input_array = np.ascontiguousarray(input_array, dtype=np.float32)
+        with torch.cuda.device(self.device):
+            return self._infer_current_device(input_array)
 
+    def _infer_current_device(self, input_array: np.ndarray) -> Dict[str, np.ndarray]:
+        """Run inference while the engine's CUDA device is current."""
+        input_array = np.asarray(input_array)
         if input_array.ndim == 3:
             input_array = input_array[np.newaxis]
-        actual_batch = input_array.shape[0]
+        requested_batch = int(input_array.shape[0])
+        if requested_batch < 1:
+            raise ValueError("TensorRT inference requires at least one input image.")
+        if requested_batch < self._min_batch:
+            padding = np.repeat(
+                input_array[-1:], self._min_batch - requested_batch, axis=0
+            )
+            input_array = np.concatenate((input_array, padding), axis=0)
+        actual_shape = tuple(int(dim) for dim in input_array.shape)
+        self._validate_input_shape(actual_shape)
+        if actual_shape[0] > self._max_batch:
+            raise ValueError(
+                f"TensorRT engine supports at most batch {self._max_batch}, "
+                f"got batch {actual_shape[0]}."
+            )
+        if actual_shape != self._current_input_shape:
+            # Dynamic output dimensions are resolved only after the actual
+            # input shape is applied, so shape changes must precede allocation.
+            self._allocate_buffers(actual_shape)
 
-        if actual_batch != self._current_batch:
-            self._allocate_buffers(actual_batch)
-
-        if self._dynamic_batch:
-            _, c, h, w = self.input_shape
-            self.context.set_input_shape(self.input_name, (actual_batch, c, h, w))
-
-        input_tensor = torch.from_numpy(input_array).cuda().flatten()
-        self.inputs[self.input_name].copy_(input_tensor)
-
-        self.context.set_tensor_address(
-            self.input_name, self.inputs[self.input_name].data_ptr()
+        runtime_input = np.ascontiguousarray(
+            input_array,
+            dtype=self.input_numpy_dtype,
         )
-        for name in self.output_names:
-            self.context.set_tensor_address(name, self.outputs[name].data_ptr())
+        input_tensor = torch.from_numpy(runtime_input).to(self.device).flatten()
+        self.inputs[self.input_name].copy_(input_tensor)
+        self._wait_for_input_copy()
 
-        self.context.execute_async_v3(self.stream.cuda_stream)
+        self._set_tensor_address(self.input_name, self.inputs[self.input_name])
+        for name in self.output_names:
+            self._set_tensor_address(name, self.outputs[name])
+
+        self._execute()
         self.stream.synchronize()
 
         results = {}
         for name in self.output_names:
-            shape = tuple(
-                actual_batch if d == -1 else d for d in self.output_shapes[name]
-            )
+            shape = self._runtime_output_shapes[name]
             output = self.outputs[name].cpu().numpy().reshape(shape)
+            if output.ndim > 0 and output.shape[0] == actual_shape[0]:
+                output = output[:requested_batch]
             results[name] = output
 
         return results
@@ -329,6 +543,10 @@ class TensorRTBackend(BaseBackend):
         """Run TensorRT inference and return outputs as a list."""
         outputs_dict = self._infer(blob)
         return [outputs_dict[name] for name in self.output_names]
+
+    def _supports_batched_inference(self) -> bool:
+        """Use the shared task-complete batch path for dynamic-batch engines."""
+        return self._max_batch > 1
 
     def _process_in_batches(
         self,
@@ -343,127 +561,23 @@ class TensorRTBackend(BaseBackend):
         max_det: int = 300,
         color_format: str = "auto",
     ) -> list:
-        """Process multiple images with GPU batching when possible.
-
-        When batch > 1 and the engine supports it (dynamic batch or static
-        batch >= requested), images are preprocessed, stacked, and inferred
-        together in a single forward pass. Otherwise falls back to sequential
-        processing.
-        """
-        effective_batch = batch
+        """Clamp chunks to the engine profile, then use shared task dispatch."""
         if self._dynamic_batch:
             effective_batch = min(batch, self._max_batch)
-
-        can_batch = batch > 1 and (
-            (self._dynamic_batch and effective_batch > 1)
-            or (not self._dynamic_batch and self._max_batch >= batch)
+        else:
+            effective_batch = self._max_batch
+        return super()._process_in_batches(
+            images,
+            batch=effective_batch,
+            save=save,
+            output_path=output_path,
+            conf=conf,
+            iou=iou,
+            imgsz=imgsz,
+            classes=classes,
+            max_det=max_det,
+            color_format=color_format,
         )
-        if not can_batch:
-            return super()._process_in_batches(
-                images,
-                batch=batch,
-                save=save,
-                output_path=output_path,
-                conf=conf,
-                iou=iou,
-                imgsz=imgsz,
-                classes=classes,
-                max_det=max_det,
-                color_format=color_format,
-            )
-
-        effective_imgsz = self._resolve_predict_imgsz(imgsz)
-        results = []
-
-        for i in range(0, len(images), effective_batch):
-            chunk = images[i : i + effective_batch]
-
-            tensors = []
-            preprocess_info = []
-            for offset, image in enumerate(chunk):
-                preprocess_out = self._preprocess(image, effective_imgsz, color_format)
-                if len(preprocess_out) == 4:
-                    tensor, orig_img, orig_size, ratio = preprocess_out
-                else:
-                    tensor, orig_img, orig_size = preprocess_out
-                    ratio = None
-                tensors.append(tensor)
-                # In-memory images have no path: keep Results.path None and
-                # use an indexed stem so save=True does not overwrite files.
-                image_path = image if isinstance(image, (str, Path)) else None
-                save_name = (
-                    image_path if image_path is not None else f"image{i + offset}"
-                )
-                preprocess_info.append(
-                    (orig_img, orig_size, ratio, image_path, save_name)
-                )
-
-            batched_input = np.concatenate(
-                [t.numpy() for t in tensors], axis=0
-            )  # (B, C, H, W)
-            batch_outputs = self._infer(batched_input)
-
-            for idx, (
-                orig_img,
-                orig_size,
-                ratio,
-                image_path,
-                save_name,
-            ) in enumerate(preprocess_info):
-                per_image = [
-                    batch_outputs[name][idx : idx + 1] for name in self.output_names
-                ]
-
-                orig_w, orig_h = orig_size
-                orig_shape = (orig_h, orig_w)
-                # Mirror _predict_single: classify exports skip the detection
-                # parser, and iou/max_det reach parsers that apply NMS.
-                if self.task == "classify":
-                    result = self._build_classify_result(
-                        per_image,
-                        orig_shape=orig_shape,
-                        image_path=image_path,
-                    )
-                elif self.task == "depth":
-                    result = self._build_depth_result(
-                        per_image,
-                        orig_shape=orig_shape,
-                        original_size=orig_size,
-                        image_path=image_path,
-                    )
-                else:
-                    parsed = self._parse_outputs(
-                        per_image,
-                        effective_imgsz,
-                        orig_size,
-                        conf,
-                        ratio=ratio if ratio is not None else 1.0,
-                        iou=iou,
-                        max_det=max_det,
-                    )
-                    boxes, max_scores, class_ids, masks, obb, keypoints = (
-                        self._unpack_parsed_outputs(parsed)
-                    )
-                    result = self._build_result(
-                        boxes,
-                        max_scores,
-                        class_ids,
-                        masks=masks,
-                        obb=obb,
-                        keypoints=keypoints,
-                        orig_shape=orig_shape,
-                        image_path=image_path,
-                        iou=iou,
-                        classes=classes,
-                        max_det=max_det,
-                    )
-
-                if save:
-                    self._save_annotated(result, orig_img, save_name, output_path)
-
-                results.append(result)
-
-        return results
 
     # =========================================================================
     # Metadata helpers

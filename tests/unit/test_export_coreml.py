@@ -78,6 +78,94 @@ class _DummyRtdetrExportModel(torch.nn.Module):
         }
 
 
+class _DummyRtdetrStaticEncoder(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.eval_spatial_size = [96, 80]
+        self.use_encoder_idx = [0, 1]
+        self.feat_strides = [8, 16]
+        self.hidden_dim = 4
+        self.pe_temperature = 10_000
+        self.register_buffer(
+            "pos_embed0",
+            torch.full((1, 1, self.hidden_dim), -1.0),
+            persistent=False,
+        )
+
+    @staticmethod
+    def build_2d_sincos_position_embedding(width, height, hidden_dim, temperature):
+        del temperature
+        return torch.full((1, width * height, hidden_dim), 7.0)
+
+
+class _DummyRtdetrStaticDecoder(torch.nn.Module):
+    def __init__(self, *, fail_preparation=False):
+        super().__init__()
+        self.eval_spatial_size = [96, 80]
+        self.fail_preparation = fail_preparation
+        self.register_buffer("anchors", torch.full((1, 4), -2.0), persistent=False)
+
+    def _generate_anchors(self, *, device):
+        if self.fail_preparation:
+            raise RuntimeError("anchor preparation failed")
+        return torch.full((1, 4), 3.0, device=device), torch.ones(
+            (1, 1), dtype=torch.bool, device=device
+        )
+
+
+class _DummyRtdetrStaticModel(torch.nn.Module):
+    def __init__(self, *, fail_preparation=False):
+        super().__init__()
+        self.scale = torch.nn.Parameter(torch.tensor(2.0))
+        self.encoder = _DummyRtdetrStaticEncoder()
+        self.decoder = _DummyRtdetrStaticDecoder(fail_preparation=fail_preparation)
+
+    def forward(self, x):
+        batch = x.shape[0]
+        return {
+            "pred_logits": self.scale
+            * torch.ones(batch, 2, 3, dtype=x.dtype, device=x.device),
+            "pred_boxes": self.scale
+            * torch.ones(batch, 2, 4, dtype=x.dtype, device=x.device),
+        }
+
+
+def _snapshot_module_tensors(model):
+    return {
+        "parameters": {
+            name: (tensor, tensor.detach().clone(), tensor.device, tensor.dtype)
+            for name, tensor in model.named_parameters()
+        },
+        "buffers": {
+            name: (tensor, tensor.detach().clone(), tensor.device, tensor.dtype)
+            for name, tensor in model.named_buffers()
+        },
+        "modes": [(module, module.training) for module in model.modules()],
+        "attribute_keys": [
+            (module, frozenset(module.__dict__)) for module in model.modules()
+        ],
+    }
+
+
+def _assert_module_tensors_unchanged(model, snapshot):
+    for kind in ("parameters", "buffers"):
+        current = dict(
+            model.named_parameters() if kind == "parameters" else model.named_buffers()
+        )
+        assert current.keys() == snapshot[kind].keys()
+        for name, (original, value, device, dtype) in snapshot[kind].items():
+            assert current[name] is original
+            assert current[name].device == device
+            assert current[name].dtype == dtype
+            assert torch.equal(current[name], value)
+    assert [(module, module.training) for module in model.modules()] == snapshot[
+        "modes"
+    ]
+    assert [
+        (module, frozenset(module.__dict__)) for module in model.modules()
+    ] == snapshot["attribute_keys"]
+
+
 def _patch_ct(monkeypatch):
     """Reset the fake coremltools module and return the mock for assertions."""
     # Create the main coremltools mock
@@ -208,6 +296,57 @@ class TestExportCoreML:
 
         assert logits.shape == (1, 300, 80)
         assert boxes.shape == (1, 300, 4)
+
+    @pytest.mark.parametrize("failure_stage", [None, "trace", "preparation"])
+    def test_rtdetr_static_preparation_does_not_mutate_live_model(
+        self, tmp_path, monkeypatch, failure_stage
+    ):
+        fake, _ = _patch_ct(monkeypatch)
+        from libreyolo.export.coreml import export_coreml
+
+        model = _DummyRtdetrStaticModel(fail_preparation=failure_stage == "preparation")
+        model.train()
+        model.encoder.eval()  # Exercise restoration of a mixed-mode module tree.
+        encoder_size = model.encoder.eval_spatial_size
+        decoder_size = model.decoder.eval_spatial_size
+        snapshot = _snapshot_module_tensors(model)
+
+        def trace(prepared, dummy):
+            inner = prepared.model
+            assert inner is not model
+            assert inner.encoder.eval_spatial_size == (32, 48)
+            assert inner.decoder.eval_spatial_size == (32, 48)
+            assert torch.all(inner.encoder.pos_embed0 == 7)
+            assert hasattr(inner.encoder, "pos_embed1")
+            assert torch.all(inner.decoder.anchors == 3)
+            assert torch.all(inner.decoder.valid_mask)
+            if failure_stage == "trace":
+                raise RuntimeError("trace failed")
+            return MagicMock(name="traced")
+
+        monkeypatch.setattr(torch.jit, "trace", trace)
+
+        def call():
+            return export_coreml(
+                model,
+                torch.randn(1, 3, 32, 48),
+                output_path=str(tmp_path / "rtdetr.mlpackage"),
+                metadata={"model_family": "rtdetr"},
+                model_family="rtdetr",
+            )
+
+        if failure_stage is None:
+            call()
+            fake.convert.assert_called_once()
+        else:
+            with pytest.raises(RuntimeError):
+                call()
+
+        _assert_module_tensors_unchanged(model, snapshot)
+        assert model.encoder.eval_spatial_size is encoder_size
+        assert model.decoder.eval_spatial_size is decoder_size
+        assert not hasattr(model.encoder, "pos_embed1")
+        assert "valid_mask" not in model.decoder._buffers
 
 
 class TestUnsupportedFamily:

@@ -1,7 +1,9 @@
 """Unit tests for the ncnn export module."""
 
 import tempfile
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -165,6 +167,30 @@ class TestNCNNMetadataYAML:
         assert parsed[5] == (320, 640)
 
 
+class TestNCNNBlobDiscovery:
+    def test_param_parser_preserves_all_terminal_output_names(self, tmp_path):
+        from libreyolo.backends.ncnn import NcnnBackend
+
+        param_path = tmp_path / "model.ncnn.param"
+        param_path.write_text(
+            "\n".join(
+                [
+                    "7767517",
+                    "4 5",
+                    "Input input 0 1 images",
+                    "Split split 1 2 images left right",
+                    "Convolution scores_head 1 1 left scores 0=4",
+                    "Convolution boxes_head 1 1 right boxes 0=4",
+                ]
+            )
+        )
+
+        inputs, outputs = NcnnBackend._discover_blob_names(param_path)
+
+        assert inputs == ["images"]
+        assert outputs == ["scores", "boxes"]
+
+
 class TestNCNNExportValidation:
     """Test ncnn export validation in exporter."""
 
@@ -183,3 +209,87 @@ class TestNCNNExportValidation:
         with tempfile.TemporaryDirectory() as tmpdir:
             with pytest.raises(ImportError, match="pnnx"):
                 exporter(output_path=str(Path(tmpdir) / "model_ncnn"))
+
+    def test_low_level_ncnn_rejects_half_before_dependency_check(self, tmp_path):
+        from libreyolo.export.ncnn import export_ncnn
+
+        output = tmp_path / "model_ncnn"
+        with pytest.raises(NotImplementedError, match="NCNN FP16"):
+            export_ncnn(
+                _TinyModel().eval(),
+                torch.zeros(1, 3, 8, 8),
+                output_path=str(output),
+                half=True,
+            )
+        assert not output.exists()
+
+
+class TestPNNXOptionalLoaderFailure:
+    """Only a completed conversion may tolerate a missing PNNX helper."""
+
+    @staticmethod
+    def _run_direct_export(monkeypatch, tmp_path, export):
+        from libreyolo.export.ncnn import _export_pnnx_direct
+
+        monkeypatch.setitem(sys.modules, "pnnx", SimpleNamespace(export=export))
+        model = _TinyModel().eval()
+        dummy = torch.zeros(1, 3, 8, 8)
+        return _export_pnnx_direct(model, dummy, tmp_path, half=False)
+
+    def test_accepts_missing_matching_optional_loader_after_artifacts(
+        self, monkeypatch, tmp_path
+    ):
+        def fake_export(model, traced_path, dummy, fp16):
+            trace_dir = Path(traced_path).parent
+            (trace_dir / "model.ncnn.param").write_text("param", encoding="utf-8")
+            (trace_dir / "model.ncnn.bin").write_bytes(b"bin")
+            raise FileNotFoundError("model_pnnx.py")
+
+        param_path, bin_path = self._run_direct_export(
+            monkeypatch, tmp_path, fake_export
+        )
+
+        assert param_path.read_text(encoding="utf-8") == "param"
+        assert bin_path.read_bytes() == b"bin"
+
+    def test_reraises_unrelated_missing_file_even_after_artifacts(
+        self, monkeypatch, tmp_path
+    ):
+        def fake_export(model, traced_path, dummy, fp16):
+            trace_dir = Path(traced_path).parent
+            (trace_dir / "model.ncnn.param").write_text("param", encoding="utf-8")
+            (trace_dir / "model.ncnn.bin").write_bytes(b"bin")
+            raise FileNotFoundError("labels.txt")
+
+        with pytest.raises(FileNotFoundError, match="labels.txt"):
+            self._run_direct_export(monkeypatch, tmp_path, fake_export)
+
+    def test_reraises_missing_loader_when_artifacts_are_incomplete(
+        self, monkeypatch, tmp_path
+    ):
+        def fake_export(model, traced_path, dummy, fp16):
+            trace_dir = Path(traced_path).parent
+            (trace_dir / "model.ncnn.param").write_text("param", encoding="utf-8")
+            raise FileNotFoundError("model_pnnx.py")
+
+        with pytest.raises(FileNotFoundError, match="model_pnnx.py"):
+            self._run_direct_export(monkeypatch, tmp_path, fake_export)
+
+
+def test_ncnn_metadata_is_safe_loadable_with_classifier_sequences(tmp_path):
+    import yaml
+
+    from libreyolo.export.ncnn import _save_metadata
+
+    _save_metadata(
+        tmp_path,
+        {
+            "task": "classify",
+            "classification_mean": (0.485, 0.456, 0.406),
+            "classification_std": [0.229, 0.224, 0.225],
+        },
+    )
+
+    loaded = yaml.safe_load((tmp_path / "metadata.yaml").read_text(encoding="utf-8"))
+    assert loaded["classification_mean"] == [0.485, 0.456, 0.406]
+    assert loaded["classification_std"] == [0.229, 0.224, 0.225]

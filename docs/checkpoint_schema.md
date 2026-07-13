@@ -164,15 +164,28 @@ Pose runtime exports may also write these flat metadata keys:
   counts for GroupPose-style heads. Readers must preserve zero-keypoint class
   slots because they define the class-to-keypoint schema.
 
-Classification runtime exports (MobileNetV4 / ConvNeXt / EfficientNetV2 /
-ResNet) may also write these flat metadata keys so that exported-backend
-preprocessing reproduces the native model's resize/crop and the logits stay
-bit-identical:
+Classification runtime exports, including frozen-class CLIP and SigLIP2 ONNX
+artifacts, write these flat metadata keys so backend preprocessing and
+probability semantics reproduce native inference:
 
-- `crop_pct`: float center-crop ratio. The pre-crop resize target is
-  `round(imgsz / crop_pct)`. Readers default to `0.875` when the key is absent.
-- `interpolation`: resize filter, `"bilinear"` or `"bicubic"`. Readers default
-  to `"bilinear"` when the key is absent.
+- `classification_mean` / `classification_std`: three RGB normalization
+  values. ONNX stores them as JSON lists; native sidecars store ordinary
+  sequences. Legacy artifacts without them use ImageNet defaults.
+- `classification_crop_pct`: center-crop ratio in `(0, 1]`. The aspect-preserving
+  pre-crop resize target is `floor(imgsz / classification_crop_pct)`. Readers
+  also accept legacy `crop_pct`; the default is `0.875`.
+- `classification_interpolation`: `"nearest"`, `"bilinear"`, or `"bicubic"`.
+  Readers also accept legacy `interpolation`; the default is `"bilinear"`.
+- `classification_square_resize`: boolean. `true` stretches directly to the
+  square model canvas instead of aspect-preserving resize plus center crop.
+  Missing means `false`.
+- `classification_activation`: `"softmax"` for mutually exclusive classes or
+  `"sigmoid"` for independent multi-label probabilities. Missing means
+  `"softmax"`.
+
+Writers temporarily retain `crop_pct` and `interpolation` aliases for older
+backend readers. New readers prefer the `classification_*` keys and reject
+malformed values instead of silently changing the inference contract.
 
 For ONNX YOLO9 detection exports with `nms=true`, output `0` / `output` is the
 standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and

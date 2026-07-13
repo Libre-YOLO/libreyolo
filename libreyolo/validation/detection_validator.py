@@ -500,7 +500,7 @@ class DetectionValidator(BaseValidator):
         import time
         from tqdm import tqdm
 
-        self.model.model.eval()
+        self._set_model_eval()
         dataset = self.dataloader.dataset
         n_images = len(dataset)
         n_passes = 2  # original + hflip
