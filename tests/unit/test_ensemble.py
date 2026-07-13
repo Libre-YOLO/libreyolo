@@ -229,15 +229,24 @@ class TestPredict:
         assert len(result) == 3
         assert torch.all(result.boxes.conf[:-1] >= result.boxes.conf[1:])
 
-    def test_negative_one_max_det_keeps_every_fused_detection(self, image):
+    def test_negative_max_det_is_rejected(self, image):
         a = StubMember(
             COCOISH,
             boxes=[[0, 0, 10, 10], [50, 50, 60, 60]],
             scores=[0.9, 0.8],
             cls=[0, 1],
         )
-        result = LibreEnsemble([a, StubMember(COCOISH)])(image, max_det=-1)
-        assert len(result) == 2
+        with pytest.raises(ValueError, match="max_det must be non-negative"):
+            LibreEnsemble([a, StubMember(COCOISH)])(image, max_det=-1)
+
+    @pytest.mark.parametrize("max_det", [True, 1.5, "3"])
+    def test_non_integer_max_det_is_rejected(self, image, max_det):
+        with pytest.raises(TypeError, match="max_det must be an integer"):
+            LibreEnsemble(list(_pair_members()))(image, max_det=max_det)
+
+    def test_zero_max_det_returns_empty_result(self, image):
+        result = LibreEnsemble(list(_pair_members()))(image, max_det=0)
+        assert len(result) == 0
 
     def test_classes_filter_uses_union_ids(self, image):
         a = StubMember(

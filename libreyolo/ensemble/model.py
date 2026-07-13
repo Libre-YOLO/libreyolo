@@ -359,8 +359,12 @@ class LibreEnsemble:
         normalize_predict_kwargs(kwargs)
         del batch
         if isinstance(max_det, bool) or not isinstance(max_det, Integral):
-            raise ValueError(f"max_det must be an integer, got {max_det!r}")
+            raise TypeError(
+                f"max_det must be an integer, got {type(max_det).__name__}."
+            )
         max_det = int(max_det)
+        if max_det < 0:
+            raise ValueError(f"max_det must be non-negative, got {max_det!r}.")
         if stream or is_video_file(source):
             raise NotImplementedError(
                 "video and stream ensembling are not available yet; run the "
@@ -469,8 +473,7 @@ class LibreEnsemble:
             )
             f_boxes, f_scores, f_labels = f_boxes[keep], f_scores[keep], f_labels[keep]
         order = torch.argsort(f_scores, descending=True)
-        if max_det >= 0:
-            order = order[:max_det]
+        order = order[:max_det]
         f_boxes, f_scores, f_labels = f_boxes[order], f_scores[order], f_labels[order]
 
         result = Results(
