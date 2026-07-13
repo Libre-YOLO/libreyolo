@@ -81,6 +81,27 @@ class TestFactoryAliases:
         with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
             LibreOpenVocab("definitely-not-real")
 
+    def test_every_name_the_inventory_advertises_is_loadable(self):
+        """`libreyolo models` prints <family>-<size>, with the family's
+        underscore. Those names must resolve, or the CLI advertises models the
+        factory rejects."""
+        from libreyolo.models.inventory import collect_model_inventory
+        from libreyolo.models.openvocab import _ALIASES
+
+        inventory = collect_model_inventory()
+        advertised = [
+            f"{family}-{size}"
+            for family, entry in inventory.items()
+            if entry["optional_extra"] == "openvocab"
+            for size in entry["sizes"]
+        ]
+        assert advertised  # guard against the filter silently matching nothing
+
+        unloadable = [
+            name for name in advertised if name.replace("_", "-") not in _ALIASES
+        ]
+        assert not unloadable
+
 
 class TestSnapshotComplete:
     def _mark_complete(self, path, marker=None):

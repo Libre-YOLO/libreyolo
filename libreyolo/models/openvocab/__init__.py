@@ -50,7 +50,10 @@ def LibreOpenVocab(
     model: str = _DEFAULT_MODEL, **kwargs
 ) -> LibreOpenVocabDetector:
     """Load an open-vocabulary detector by alias."""
-    key = str(model).strip().lower()
+    # Underscores fold to hyphens so the family-qualified names the inventory
+    # and `libreyolo models` print (omdet_turbo-t, grounding_dino-t) load as
+    # given; the aliases themselves are hyphenated.
+    key = str(model).strip().lower().replace("_", "-")
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(
