@@ -34,6 +34,12 @@ OPTIONAL_MODELS = (
         "transformers",
     ),
     ("libreyolo.models.openvocab.owlv2", "LibreOWLv2", "openvocab", "transformers"),
+    (
+        "libreyolo.models.openvocab.omdet_turbo",
+        "LibreOMDetTurbo",
+        "openvocab",
+        "transformers",
+    ),
 )
 
 

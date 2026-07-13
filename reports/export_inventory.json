@@ -550,6 +550,23 @@
     "optional_extra": null,
     "available": true
   },
+  "omdet_turbo": {
+    "class": "libreyolo.models.openvocab.omdet_turbo.LibreOMDetTurbo",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "t": 640
+    },
+    "default_imgsz": {
+      "t": 640
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "openvocab",
+    "available": true
+  },
   "owlv2": {
     "class": "libreyolo.models.openvocab.owlv2.LibreOWLv2",
     "tasks": [

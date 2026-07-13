@@ -38,6 +38,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | mobilesam | segment |  |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
+| omdet_turbo | detect |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |
@@ -221,6 +222,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `mobilesam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `nafnet` / `restore` / `tflite`: onnx2tf 2.4.x converts the fixed-canvas graph, but LiteRT fails at invoke time because an internal input tensor lacks data.
 - `nafnet` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `omdet_turbo` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
+- `omdet_turbo` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.

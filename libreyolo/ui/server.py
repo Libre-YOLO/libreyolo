@@ -195,7 +195,13 @@ def _factory_openvocab_names() -> list[str]:
         from libreyolo.models.openvocab import LibreOpenVocab  # noqa: F401
     except Exception:
         return []
-    return ["grounding-dino-t", "grounding-dino-b", "owlv2-b16", "owlv2-l14"]
+    return [
+        "grounding-dino-t",
+        "grounding-dino-b",
+        "owlv2-b16",
+        "owlv2-l14",
+        "omdet-turbo",
+    ]
 
 
 def _factory_picosam_names() -> list[str]:

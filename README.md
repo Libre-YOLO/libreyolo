@@ -103,6 +103,7 @@ Training capabilities are documented per family in
 | mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | mobilesam | segment |  |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
+| omdet_turbo | detect |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |
