@@ -626,9 +626,20 @@ class LibreEoMT(BaseModel):
             return empty
         return {"panoptic": segmentation.cpu(), "segments_info": segments_info}
 
-    def _postprocess_semantic(
-        self, output: Any, original_size: Tuple[int, int]
-    ) -> Dict:
+    def _postprocess_semantic_logits(
+        self, output: Any, original_size: Tuple[int, int], **kwargs
+    ) -> torch.Tensor:
+        """Interpolate/stitch raw semantic logits to ``original_size``, pre-argmax.
+
+        Shared by ``_postprocess_semantic`` (single-view predict/val),
+        ``LibreEoMT.val()``'s own per-image augment branch, and
+        ``BaseModel._predict_augment_semantic`` (flip TTA), which needs the
+        pre-argmax logits to average across augmented views. Always returns
+        a ``[1, C, H, W]`` tensor, whether or not the patch-stitch branch
+        (only taken when ``_preprocess`` split the image into sliding-window
+        patches, i.e. per-image predict — never during batched validation)
+        fires.
+        """
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("logits"))
@@ -650,14 +661,19 @@ class LibreEoMT(BaseModel):
                 resized_shape=resized_shape,
                 original_shape=(orig_h, orig_w),
             )
-            return {"semantic": logits_hw.argmax(dim=0).cpu()}
+            return logits_hw.unsqueeze(0)
 
-        logits = F.interpolate(
+        return F.interpolate(
             logits.float(),
             size=(orig_h, orig_w),
             mode="bilinear",
             align_corners=False,
         )
+
+    def _postprocess_semantic(
+        self, output: Any, original_size: Tuple[int, int]
+    ) -> Dict:
+        logits = self._postprocess_semantic_logits(output, original_size)
         return {"semantic": logits.argmax(dim=1)[0].cpu()}
 
     def _postprocess_segment(
@@ -1006,11 +1022,6 @@ class LibreEoMT(BaseModel):
             logger.warning("LibreEoMT validation does not generate plots yet.")
         if data is None:
             raise ValueError("LibreEoMT validation requires data= (a dataset YAML).")
-        if augment:
-            raise ValueError(
-                "Augmented validation does not support semantic segmentation yet. "
-                "Use augment=False for semantic models."
-            )
         effective_imgsz = self.input_size if imgsz is None else int(imgsz)
         if effective_imgsz != self.input_size:
             raise ValueError(
@@ -1026,6 +1037,7 @@ class LibreEoMT(BaseModel):
             resolve_semantic_data,
         )
         from ...data.utils import get_img_files
+        from ...utils.tta import average_flip_softmax
 
         if device is not None and str(device).lower() != "auto":
             device_str = f"cuda:{device}" if str(device).isdigit() else str(device)
@@ -1114,8 +1126,15 @@ class LibreEoMT(BaseModel):
                         "Use label_mapping to remap source IDs."
                     )
 
+                # Original and (if augment) flipped views each run their own
+                # preprocess -> forward -> postprocess in sequence, not
+                # interleaved: _preprocess stashes per-call instance state
+                # (self._last_eomt_patch_offsets / _resized_shape) that
+                # _postprocess_semantic_logits reads back, so a later
+                # _preprocess call must not run before the earlier view's
+                # postprocess has consumed its own state.
                 t1 = time.time()
-                tensor, _, original_size, _ = self._preprocess(
+                tensor, loaded_img, original_size, _ = self._preprocess(
                     img_path,
                     color_format="rgb",
                     input_size=effective_imgsz,
@@ -1131,17 +1150,38 @@ class LibreEoMT(BaseModel):
                 inference_time += time.time() - t2
 
                 t3 = time.time()
-                pred = (
-                    self._postprocess(
-                        output,
-                        conf_thres=0.0,
-                        iou_thres=0.0,
-                        original_size=original_size,
-                    )["semantic"]
-                    .long()
-                    .view(-1)
-                )
+                logits = self._postprocess_semantic_logits(output, original_size)
+                if not augment:
+                    pred = logits.argmax(dim=1)[0].cpu().long().view(-1)
                 postprocess_time += time.time() - t3
+
+                if augment:
+                    # Reuse the image _preprocess already loaded from disk
+                    # instead of reading img_path a second time.
+                    t1f = time.time()
+                    flipped = loaded_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                    flip_tensor, _, flip_original_size, _ = self._preprocess(
+                        flipped,
+                        color_format="rgb",
+                        input_size=effective_imgsz,
+                    )
+                    preprocess_time += time.time() - t1f
+
+                    t2f = time.time()
+                    if half and self.device.type == "cuda":
+                        with torch.amp.autocast("cuda"):
+                            flip_output = self._forward(flip_tensor.to(self.device))
+                    else:
+                        flip_output = self._forward(flip_tensor.to(self.device))
+                    inference_time += time.time() - t2f
+
+                    t3f = time.time()
+                    flip_logits = self._postprocess_semantic_logits(
+                        flip_output, flip_original_size
+                    ).flip(-1)
+                    avg_probs = average_flip_softmax(logits, flip_logits)
+                    pred = avg_probs.argmax(dim=1)[0].cpu().long().view(-1)
+                    postprocess_time += time.time() - t3f
 
                 target = (
                     torch.from_numpy(np.ascontiguousarray(target_np)).long().view(-1)

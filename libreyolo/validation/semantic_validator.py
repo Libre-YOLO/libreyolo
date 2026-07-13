@@ -20,6 +20,7 @@ from ..data.semantic_dataset import (
     SemanticDataset,
     resolve_semantic_data,
     semantic_collate_fn,
+    valid_content_hw,
 )
 from .base import BaseValidator
 
@@ -47,6 +48,7 @@ class SemanticValidator(BaseValidator):
                 f"divisible by {int(divisor)} for this model family."
             )
         resize_mode = getattr(self.model, "semantic_resize_mode", "letterbox")
+        self._resize_mode = resize_mode
         dataset = SemanticDataset(
             data_config,
             split=split,
@@ -82,8 +84,8 @@ class SemanticValidator(BaseValidator):
         images, targets, img_info, img_ids = batch
         return images, targets, img_info, img_ids
 
-    def _postprocess_predictions(self, preds: Any, batch: Any) -> Any:
-        """Decode raw model output into ``[B, H, W]`` class maps."""
+    def _extract_logits(self, preds: Any, target_hw: tuple) -> torch.Tensor:
+        """Unwrap raw model output into ``[B, C, H, W]`` logits at ``target_hw``."""
         logits = preds
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("logits"))
@@ -91,18 +93,136 @@ class SemanticValidator(BaseValidator):
             logits = logits[0]
         logits = torch.as_tensor(logits)
 
-        targets = batch[1]
-        target_hw = tuple(targets.shape[-2:])
         if logits.ndim != 4:
             raise ValueError(
                 f"Semantic validation expects [B, C, H, W] logits, got shape "
                 f"{tuple(logits.shape)}."
             )
+        # Upcast before, not inside, the interpolate branch: under half=True a
+        # model whose logits already sit at target_hw would otherwise stay fp16
+        # all the way into the softmax merge. (.float() on an fp32 tensor is a
+        # no-op that returns self, so the common path allocates nothing.)
+        logits = logits.float()
         if tuple(logits.shape[-2:]) != target_hw:
             logits = F.interpolate(
-                logits.float(), size=target_hw, mode="bilinear", align_corners=False
+                logits, size=target_hw, mode="bilinear", align_corners=False
             )
+        return logits
+
+    def _postprocess_predictions(self, preds: Any, batch: Any) -> Any:
+        """Decode raw model output into ``[B, H, W]`` class maps."""
+        targets = batch[1]
+        target_hw = tuple(targets.shape[-2:])
+        logits = self._extract_logits(preds, target_hw)
         return logits.argmax(dim=1)
+
+    def _flip_content(
+        self, tensor: torch.Tensor, img_info: Any, inplace: bool = False
+    ) -> torch.Tensor:
+        """Flip each item's real (unpadded) content along width.
+
+        ``SemanticDataset`` anchors real content at the top-left origin and
+        pads only the bottom/right (see ``valid_content_hw``). A naive
+        ``torch.flip`` on the whole padded canvas would relocate that
+        padding to the top-left for the flipped view — an input layout the
+        model never saw in training or non-augmented validation. Flipping
+        only the valid content window, in its original position, keeps the
+        padding exactly where the model expects it in both views. Applying
+        this same operation to a logits tensor undoes the mirroring
+        (flip-back), since flipping a fixed window twice restores its
+        original order.
+
+        ``stretch`` resize mode has no padding (the whole canvas is
+        content), so a plain full-width flip is exact there.
+
+        ``inplace`` mutates ``tensor`` and is for the flip-back of a logits
+        tensor the caller solely owns — at ADE20K scale the defensive copy is
+        1.2 GB. Never pass it for the dataloader's image batch.
+        """
+        if self._resize_mode == "stretch":
+            return tensor.flip(-1)
+        if self._resize_mode not in ("letterbox", "resize_crop"):
+            # Anything else pads somewhere this window math does not model
+            # (EoMT's "split", say). Unreachable today only because
+            # SemanticDataset rejects such modes outright; fail loudly rather
+            # than silently mirroring the wrong region if that ever changes.
+            raise ValueError(
+                f"Flip TTA does not know how to place letterbox padding for "
+                f"semantic_resize_mode={self._resize_mode!r}."
+            )
+
+        canvas_hw = tuple(tensor.shape[-2:])
+        flipped = tensor if inplace else tensor.clone()
+        for i, info in enumerate(img_info):
+            new_h, new_w = valid_content_hw(info["orig_shape"], info["ratio"], canvas_hw)
+            window = tensor[i, ..., :new_h, :new_w]
+            # .flip() already materializes a copy, so this stays correct even
+            # when source and destination are the same storage.
+            flipped[i, ..., :new_h, :new_w] = window.flip(-1)
+        return flipped
+
+    def _run_validation_augmented(self) -> None:
+        """Flip TTA: average softmax(original) and softmax(h-flip), then argmax.
+
+        Runs directly on the dataloader's already-letterboxed batch tensors
+        (unlike DetectionValidator, which reloads each image from disk to
+        recover true-original-resolution boxes). Semantic targets are dense
+        per-pixel masks already aligned 1:1 with the input tensor, so
+        flipping the batch tensor and merging in that same space is both
+        correct and far cheaper than re-deriving full-resolution masks per
+        image and resizing them back down — as long as the flip only
+        mirrors the real content and leaves letterbox padding in place
+        (see ``_flip_content``).
+        """
+        import sys
+        import time
+
+        from tqdm import tqdm
+
+        from ..utils.tta import average_flip_softmax
+
+        # BaseValidator._run_validation already put the model in eval() before
+        # dispatching here.
+        pbar = tqdm(
+            self.dataloader,
+            desc="Validating (TTA x2)",
+            total=len(self.dataloader),
+            disable=not self.config.verbose or not sys.stderr.isatty(),
+            file=sys.stderr,
+        )
+
+        total_start = time.time()
+
+        with torch.no_grad():
+            for batch in pbar:
+                t1 = time.time()
+                images, targets, img_info, img_ids = self._preprocess_batch(batch)
+                self.speed["preprocess"] += time.time() - t1
+
+                t2 = time.time()
+                preds_orig = self._inference(images)
+                preds_flip = self._inference(self._flip_content(images, img_info))
+                self.speed["inference"] += time.time() - t2
+
+                t3 = time.time()
+                target_hw = tuple(targets.shape[-2:])
+                logits_orig = self._extract_logits(preds_orig, target_hw)
+                # inplace: the extracted flipped logits are a private buffer
+                # here (nothing else reads preds_flip afterwards), and at
+                # ADE20K scale each [B, C, H, W] float copy is ~1.2 GB.
+                logits_flip = self._flip_content(
+                    self._extract_logits(preds_flip, target_hw), img_info, inplace=True
+                )
+                avg_probs = average_flip_softmax(logits_orig, logits_flip)
+                del logits_orig, logits_flip, preds_orig, preds_flip
+                detections = avg_probs.argmax(dim=1)
+                del avg_probs
+                self.speed["postprocess"] += time.time() - t3
+
+                self._update_metrics(detections, targets, img_info, img_ids)
+                self.seen += len(images)
+
+        self.speed["total"] = time.time() - total_start
 
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None

@@ -225,6 +225,40 @@ class TestSegformerWrapper:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
+    def test_wrapper_predict_augment_returns_semantic_mask(self, tmp_path):
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        m = LibreSegformer(model_path=None, size="b0", task="semantic", nb_classes=3, device="cpu")
+        result = m.predict(str(img_path), imgsz=64, augment=True)
+
+        assert result.boxes is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+
+    def test_val_augment_smoke(self, tmp_path):
+        """augment=True must run the shared BaseModel/SemanticValidator flip
+        TTA path, not raise the old 'does not support semantic segmentation'
+        error."""
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        yaml_path = _make_semantic_yaml(tmp_path)
+        m = LibreSegformer(model_path=None, size="b0", task="semantic", nb_classes=2, device="cpu")
+
+        metrics = m.val(
+            data=str(yaml_path),
+            imgsz=64,
+            batch=2,
+            workers=0,
+            augment=True,
+            verbose=False,
+        )
+
+        assert "metrics/mIoU" in metrics
+        assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
+
     def test_wrapper_class_rebuild_only_touches_classifier(self):
         from libreyolo.models.segformer.model import LibreSegformer
 

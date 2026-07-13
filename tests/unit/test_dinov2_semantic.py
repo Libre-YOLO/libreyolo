@@ -140,6 +140,21 @@ class TestDINOv2SemanticSegmenter:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
+    def test_wrapper_predict_augment_returns_semantic_mask(self, fake_backbone, tmp_path):
+        from libreyolo.models.dinov2.model import LibreDINOv2
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        m = LibreDINOv2(
+            model_path=None, size="n", task="semantic", nb_classes=3, device="cpu"
+        )
+        result = m.predict(str(img_path), imgsz=70, augment=True)
+
+        assert result.boxes is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+
     def test_wrapper_class_rebuild(self, fake_backbone):
         from libreyolo.models.dinov2.model import LibreDINOv2
 

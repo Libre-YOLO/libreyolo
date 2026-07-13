@@ -757,11 +757,6 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
             )
-        if getattr(self, "task", "detect") == "semantic":
-            raise ValueError(
-                "Test-time augmentation does not support semantic segmentation yet. "
-                "Use augment=False for semantic models."
-            )
         if getattr(self, "task", "detect") == "panoptic":
             raise ValueError(
                 "Test-time augmentation does not support panoptic segmentation yet. "
@@ -790,6 +785,16 @@ class BaseModel(ABC):
         img_pil = ImageLoader.load(image, color_format=color_format)
         image_path = image if isinstance(image, (str, Path)) else None
         orig_w, orig_h = img_pil.size
+
+        if getattr(self, "task", "detect") == "semantic":
+            return self._predict_augment_semantic(
+                img_pil,
+                image_path,
+                (orig_w, orig_h),
+                effective_imgsz,
+                color_format,
+                **kwargs,
+            )
 
         scales = (1.0,) if self.TTA_FIXED_SIZE else self.TTA_SCALES
 
@@ -822,6 +827,77 @@ class BaseModel(ABC):
             return self._merge_classify_tta(aug_dets, image_path, (orig_w, orig_h))
 
         return self._merge_tta(aug_dets, iou, image_path, (orig_w, orig_h), classes)
+
+    def _postprocess_semantic_logits(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+        **kwargs,
+    ) -> torch.Tensor:
+        """Return raw ``[1, C, H, W]`` semantic logits at ``original_size``.
+
+        Semantic families must implement this: flip TTA merges views before
+        the argmax, so it needs the pre-argmax logits that ``_postprocess``
+        throws away.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _postprocess_semantic_logits(), "
+            "which the semantic task requires (it backs both _postprocess and "
+            "flip TTA)."
+        )
+
+    def _predict_augment_semantic(
+        self,
+        img_pil,
+        image_path,
+        original_size: Tuple[int, int],
+        effective_imgsz,
+        color_format: str,
+        **kwargs,
+    ) -> Results:
+        """Flip-only TTA for semantic segmentation.
+
+        Runs the image and its horizontal flip, flips the flipped view's
+        logits back into alignment, averages softmax probabilities across
+        the two views (not raw logits — see ``_postprocess_semantic_logits``
+        callers), then argmaxes once. Scale variation (``TTA_SCALES``) does
+        not apply to dense per-pixel prediction, so this always runs exactly
+        two forward passes regardless of the family's TTA policy flags.
+        """
+        from PIL import Image as PILImage
+
+        from ...utils.results import Results, SemanticMask
+        from ...utils.tta import average_flip_softmax
+
+        orig_w, orig_h = original_size
+        logits_views = []
+        for is_flipped in (False, True):
+            src = (
+                img_pil.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT)
+                if is_flipped
+                else img_pil
+            )
+            tensor, _, orig_size, ratio = self._preprocess(
+                src, color_format, input_size=effective_imgsz
+            )
+            with torch.no_grad():
+                raw = self._forward(tensor.to(self.device))
+            logits = self._postprocess_semantic_logits(
+                raw, orig_size, ratio=ratio, input_size=effective_imgsz, **kwargs
+            )
+            if is_flipped:
+                logits = logits.flip(-1)
+            logits_views.append(logits)
+
+        avg_probs = average_flip_softmax(logits_views[0], logits_views[1])
+        mask = avg_probs.argmax(dim=1)[0].cpu()
+        return Results(
+            boxes=None,
+            orig_shape=(orig_h, orig_w),
+            path=str(image_path) if image_path else None,
+            names=self.names,
+            semantic_mask=SemanticMask(mask.long(), (orig_h, orig_w)),
+        )
 
     def _merge_classify_tta(
         self,
@@ -1280,11 +1356,6 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support point-task models yet. "
                 "Use augment=False for point models."
-            )
-        if augment and self.task == "semantic":
-            raise ValueError(
-                "Augmented validation does not support semantic segmentation "
-                "yet. Use augment=False for semantic models."
             )
         if augment and self.task == "panoptic":
             raise ValueError(

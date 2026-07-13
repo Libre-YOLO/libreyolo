@@ -129,6 +129,21 @@ class TestPIDNetForwardAndPredict:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
+    def test_predict_augment_returns_semantic_mask(self, tmp_path):
+        from libreyolo.models.pidnet.model import LibrePIDNet
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        model = LibrePIDNet(
+            model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
+        )
+        result = model.predict(str(img_path), imgsz=64, augment=True)
+
+        assert result.boxes is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+
     def test_postprocess_crops_letterbox_padding(self):
         from libreyolo.models.pidnet.model import LibrePIDNet
 

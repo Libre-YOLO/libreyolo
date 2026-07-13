@@ -150,6 +150,30 @@ def _rasterize_polygon_labels(
     return np.asarray(canvas).astype(np.int64)
 
 
+def valid_content_hw(
+    orig_shape: Tuple[int, int], ratio: float, canvas_hw: Tuple[int, int]
+) -> Tuple[int, int]:
+    """Size of the real (unpadded) content region inside a letterboxed canvas.
+
+    This is the content size *after* :meth:`SemanticDataset._resize` finishes,
+    so callers (e.g. flip-TTA validation, which must flip only the real content
+    and leave letterbox padding in place) can locate the top-left-anchored valid
+    region without re-deriving the math.
+
+    The clamp to the canvas is what makes it the *final* content size rather
+    than the intermediate resize size: ``_resize`` may scale past ``imgsz`` when
+    ``scale > 1`` (training jitter) and then random-crop the overflow back down,
+    so the stored content is capped at the canvas either way. Do not use this to
+    compute ``_resize``'s resize step itself — clamping there would squash the
+    aspect ratio and skip the crop.
+    """
+    orig_h, orig_w = orig_shape
+    canvas_h, canvas_w = canvas_hw
+    new_h = min(canvas_h, max(1, int(round(orig_h * ratio))))
+    new_w = min(canvas_w, max(1, int(round(orig_w * ratio))))
+    return new_h, new_w
+
+
 def resolve_semantic_data(data: str | Path, allow_scripts: bool = False) -> Dict:
     """Load and sanity-check a semantic dataset YAML config.
 
@@ -299,6 +323,12 @@ class SemanticDataset(Dataset):
             ratio = 1.0
         else:
             ratio = min(self.imgsz / h0, self.imgsz / w0) * scale
+            # Deliberately NOT clamped to imgsz: with scale > 1 (training
+            # jitter) this overshoots the canvas on purpose, and the random-crop
+            # below takes the overflow back out. Clamping here instead would
+            # squash the aspect ratio and make that crop dead code, turning
+            # zoom-in jitter into a plain resize. valid_content_hw() reports the
+            # post-crop size and is the right thing for readers of the canvas.
             new_w = max(1, int(round(w0 * ratio)))
             new_h = max(1, int(round(h0 * ratio)))
 

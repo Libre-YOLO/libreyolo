@@ -325,3 +325,51 @@ def test_polygon_out_of_range_class_raises(tmp_path):
 
     with pytest.raises(ValueError, match="outside 0..0"):
         dataset[0]
+
+
+def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, monkeypatch):
+    """Training scale jitter > 1 must resize PAST the canvas (keeping aspect) and
+    let the random crop take the overflow out — not clamp the resize to imgsz.
+
+    Both behaviours yield the same 64x64 padded canvas, so this asserts on
+    CONTENT: a marker band living only in the bottom rows of the source must be
+    cropped AWAY when we force the crop to the top of an oversized resize. If
+    the resize were clamped to imgsz instead, the whole image (band included)
+    would be squashed into the canvas and the band would survive.
+    """
+    from libreyolo.data import semantic_dataset as sd
+
+    imgsz = 64
+    orig_h, orig_w = 100, 50  # portrait, aspect 2.0
+    _write_image(tmp_path / "images" / "train" / "a.jpg", orig_w, orig_h)
+    _write_mask(tmp_path / "masks" / "train" / "a.png", np.zeros((orig_h, orig_w), np.uint8))
+    config = {
+        "path": str(tmp_path),
+        "train": str(tmp_path / "images" / "train"),
+        "masks_dir": "masks",
+        "names": {0: "bg"},
+        "nc": 1,
+    }
+    dataset = SemanticDataset(config, split="train", imgsz=imgsz, resize_mode="letterbox")
+
+    # Marker band in the bottom 10 source rows only.
+    img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
+    img[-10:, :, :] = 255
+    mask = np.zeros((orig_h, orig_w), dtype=np.uint8)
+
+    monkeypatch.setattr(sd.random, "randint", lambda a, b: 0)  # crop from the top
+    scale = 1.5
+    img_out, _, ratio, _ = dataset._resize(img, mask, scale)
+
+    assert ratio == pytest.approx(min(imgsz / orig_h, imgsz / orig_w) * scale)
+    assert round(orig_h * ratio) > imgsz  # there IS overflow, so a crop must happen
+    assert img_out.shape[:2] == (imgsz, imgsz)
+
+    # Content is the aspect-preserving width, padded on the right.
+    content_w = round(orig_w * ratio)
+    assert content_w < imgsz
+
+    # The band lived in the bottom of the source; cropping from the top must
+    # have discarded it. A clamped (squashing) resize would keep it.
+    content = img_out[:, :content_w, :]
+    assert content.max() == 0, "bottom marker band survived: resize squashed instead of cropping"
