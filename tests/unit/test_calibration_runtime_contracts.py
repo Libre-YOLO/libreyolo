@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -20,6 +22,27 @@ def _loader(*, family: str | None, task: str | None, shape=(1, 3, 8, 12)):
     loader.model_size = None
     loader._preprocess_fn = None
     return loader
+
+
+def _iter_loader(sample_ids, *, batch: int, failing_ids=()):
+    loader = CalibrationDataLoader.__new__(CalibrationDataLoader)
+    loader.batch = batch
+    loader.img_files = [Path(str(sample_id)) for sample_id in sample_ids]
+    loader._num_batches = (len(loader.img_files) + batch - 1) // batch
+    failing_ids = set(failing_ids)
+
+    def preprocess(path):
+        sample_id = int(path.name)
+        if sample_id in failing_ids:
+            raise ValueError("invalid calibration sample")
+        return np.full((1, 1, 1), sample_id, dtype=np.float32)
+
+    loader._preprocess = preprocess
+    return loader
+
+
+def _batch_ids(batch):
+    return batch[:, 0, 0, 0].astype(int).tolist()
 
 
 def test_depth_calibration_uses_fixed_runtime_stretch():
@@ -72,3 +95,42 @@ def test_generic_calibration_rejects_variable_preprocess_shape():
 
     with pytest.raises(ValueError, match="must match the exported runtime"):
         loader._preprocess_array(np.zeros((4, 4, 3), dtype=np.uint8))
+
+
+@pytest.mark.parametrize(
+    ("sample_ids", "batch_size", "expected_counts"),
+    [
+        (range(8), 16, [2] * 8),
+        (range(18), 16, [2] * 14 + [1] * 4),
+    ],
+)
+def test_calibration_tail_padding_balances_valid_samples(
+    sample_ids, batch_size, expected_counts
+):
+    batches = list(_iter_loader(sample_ids, batch=batch_size))
+    observed = np.bincount(
+        [sample_id for batch in batches for sample_id in _batch_ids(batch)],
+        minlength=len(expected_counts),
+    )
+
+    assert all(batch.shape == (batch_size, 1, 1, 1) for batch in batches)
+    assert observed.tolist() == expected_counts
+
+
+def test_calibration_tail_padding_excludes_invalid_samples():
+    batches = list(_iter_loader(range(4), batch=4, failing_ids={1}))
+
+    assert _batch_ids(batches[0]) == [0, 2, 3, 0]
+
+
+def test_calibration_loader_rejects_all_invalid_samples():
+    loader = _iter_loader(range(2), batch=4, failing_ids={0, 1})
+
+    with pytest.raises(RuntimeError, match="No calibration images matched"):
+        list(loader)
+
+
+def test_calibration_exact_batches_are_not_padded():
+    batches = list(_iter_loader(range(4), batch=2))
+
+    assert [_batch_ids(batch) for batch in batches] == [[0, 1], [2, 3]]

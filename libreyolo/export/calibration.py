@@ -245,12 +245,15 @@ class CalibrationDataLoader:
     def __iter__(self) -> Iterator[np.ndarray]:
         """Yield batches of calibration data as numpy arrays."""
         batch_data = []
+        padding_pool = []
         valid_samples = 0
 
         for img_path in self.img_files:
             try:
                 img = self._preprocess(img_path)
                 batch_data.append(img)
+                if len(padding_pool) < self.batch - 1:
+                    padding_pool.append(img)
                 valid_samples += 1
             except Exception as e:
                 logger.warning("Skipping %s: %s", img_path, e)
@@ -260,10 +263,15 @@ class CalibrationDataLoader:
                 yield np.stack(batch_data, axis=0)
                 batch_data = []
 
-        # Pad last batch to full size (required by TensorRT)
+        # Static calibration graphs require a full final batch. Cycle over a
+        # bounded pool of valid samples instead of repeating the tail image,
+        # which would give one sample disproportionate calibration weight.
         if batch_data:
-            while len(batch_data) < self.batch:
-                batch_data.append(batch_data[-1].copy())
+            missing = self.batch - len(batch_data)
+            batch_data.extend(
+                padding_pool[index % len(padding_pool)].copy()
+                for index in range(missing)
+            )
             yield np.stack(batch_data, axis=0)
         elif valid_samples == 0:
             raise RuntimeError(
