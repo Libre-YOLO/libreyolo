@@ -29,6 +29,7 @@ import os
 import re
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
@@ -57,6 +58,15 @@ from .sam import SamEngine
 
 logger = logging.getLogger(__name__)
 
+# Request bodies are deliberately bounded. JSON endpoints never need image-sized
+# payloads, while the larger ceiling keeps the raw single-image upload useful.
+_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024
+_MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
+_BODY_READ_CHUNK_BYTES = 64 * 1024
+_BODY_READ_TIMEOUT_SECONDS = 10.0
+_BODY_DISCARD_TIMEOUT_SECONDS = 1.0
+_MAX_CONTENT_LENGTH_DIGITS = 20
+
 # Absolute filesystem paths (Windows ``C:\...`` or POSIX ``/...``) we must not leak
 # to LAN clients in error strings on a shared server.
 _ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
@@ -64,6 +74,14 @@ _ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/)[^\s\"']+")
 
 class _ProjectConflict(RuntimeError):
     """A request was bound to a project generation that is no longer current."""
+
+
+class _RequestBodyError(ValueError):
+    """The POST body framing is invalid or the declared body is incomplete."""
+
+
+class _RequestBodyTooLarge(_RequestBodyError):
+    """The declared POST body exceeds an endpoint's bounded body limit."""
 
 
 def _nonnegative_int(value, name: str) -> int:
@@ -731,6 +749,23 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _send_after_body_discard(
+        self, code: int, body, ctype: str = "application/json"
+    ) -> None:
+        """Finish an early POST response without closing on unread request bytes."""
+        try:
+            # Keep memory and wall time bounded, but consume every body that is
+            # valid under the server-wide framing contract.  A smaller size cap
+            # leaves otherwise-valid bytes unread and can make Windows reset the
+            # socket before the client receives this response.
+            self._discard_request_body()
+        except _RequestBodyTooLarge:
+            self._send(413, {"error": "request body too large"})
+        except _RequestBodyError:
+            self._send(400, {"error": "invalid or incomplete request body"})
+        else:
+            self._send(code, body, ctype)
+
     # -- GET ---------------------------------------------------------------
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)
@@ -888,14 +923,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     # -- POST --------------------------------------------------------------
     def do_POST(self):  # noqa: N802
+        # A handler can process more than one HTTP/1.1 request, so body framing
+        # state belongs to one dispatch rather than the lifetime of the handler.
+        self._request_body_length = None
+        self._request_body_consumed = False
         parsed = urlparse(self.path)
         path = parsed.path
         try:
             if not self._host_allowed():
-                self._send(403, {"error": "host not allowed"})
+                self._send_after_body_discard(403, {"error": "host not allowed"})
                 return
             if not self._same_origin():
-                self._send(403, {"error": "cross-origin request blocked"})
+                self._send_after_body_discard(403, {"error": "cross-origin request blocked"})
                 return
             # Host-admin only: switching the project, pruning duplicates, and the
             # heavy full-dataset compute streams all rebind/clobber server-global
@@ -907,20 +946,25 @@ class _Handler(BaseHTTPRequestHandler):
                         "/api/projects/forget", "/api/pick-folder", "/api/classes", "/api/insights/fix",
                         "/api/boost", "/api/assist/autolabel", "/api/assist/radar",
                         "/api/embeddings") and not self._local_admin():
-                self._send(403, {"error": "This action (create / switch project, edit classes, "
-                                          "prune duplicates, full-dataset auto-label, Radar, "
-                                          "embeddings, Boost) is only allowed from the host "
-                                          "machine on a shared server."})
+                self._send_after_body_discard(
+                    403,
+                    {"error": "This action (create / switch project, edit classes, "
+                              "prune duplicates, full-dataset auto-label, Radar, "
+                              "embeddings, Boost) is only allowed from the host "
+                              "machine on a shared server."},
+                )
                 return
             if self.state.session is None and path not in (
                     "/api/projects/open", "/api/projects/create", "/api/projects/new", "/api/upload",
                     "/api/projects/inspect", "/api/projects/forget", "/api/projects/rename",
                     "/api/projects/delete", "/api/pick-folder"):
-                self._send(409, {"error": "no project open"})
+                self._send_after_body_discard(409, {"error": "no project open"})
                 return
             if (path.startswith("/api/assist/") or path in ("/api/embeddings", "/api/boost")) \
                     and not self.state.engine.enabled:
-                self._send(403, {"error": "AI assist is disabled (started with --no-assist)."})
+                self._send_after_body_discard(
+                    403, {"error": "AI assist is disabled (started with --no-assist)."}
+                )
                 return
             # Task-gate the assist stack. OBB: everything it emits (axis-aligned
             # boxes from prelabel/autolabel/Radar/Boost, free polygons from SAM)
@@ -932,14 +976,20 @@ class _Handler(BaseHTTPRequestHandler):
             if task == "obb" and (
                     path.startswith(("/api/assist/prelabel", "/api/assist/segment"))
                     or path in ("/api/assist/autolabel", "/api/assist/radar", "/api/boost")):
-                self._send(409, {"error": "AI assist works with boxes and masks, not oriented "
-                                          "boxes - it is disabled for OBB projects."})
+                self._send_after_body_discard(
+                    409,
+                    {"error": "AI assist works with boxes and masks, not oriented "
+                              "boxes - it is disabled for OBB projects."},
+                )
                 return
             if task == "segment" and (
                     path.startswith("/api/assist/prelabel")
                     or path in ("/api/assist/autolabel", "/api/boost")):
-                self._send(409, {"error": "Box auto-label is disabled for segmentation projects "
-                                          "- use SAM (S) or the polygon tool instead."})
+                self._send_after_body_discard(
+                    409,
+                    {"error": "Box auto-label is disabled for segmentation projects "
+                              "- use SAM (S) or the polygon tool instead."},
+                )
                 return
             if path == "/api/projects/open":
                 payload = self._read_json()
@@ -1216,29 +1266,129 @@ class _Handler(BaseHTTPRequestHandler):
                     epochs=int(kw.get("epochs", 2)), imgsz=int(kw.get("imgsz", 512)),
                     batch=int(kw.get("batch", 4))))
             else:
-                self._send(404, {"error": "not found"})
+                self._send_after_body_discard(404, {"error": "not found"})
+        except _RequestBodyTooLarge:
+            self._send(413, {"error": "request body too large"})
+        except _RequestBodyError:
+            self._send(400, {"error": "invalid or incomplete request body"})
         except (IndexError, ValueError) as exc:
-            self._send(400, {"error": str(exc)})
+            self._send_after_body_discard(400, {"error": str(exc)})
         except RuntimeError as exc:  # read-only / non-box file -> 409
             # 409 reasons are mostly path-free (read-only/conflict), but one can carry
             # an absolute path; scrub it for non-admin LAN clients.
             msg = str(exc) if self._local_admin() else _redact_paths(str(exc))
-            self._send(409, {"error": msg})
+            self._send_after_body_discard(409, {"error": msg})
         except Exception as exc:  # noqa: BLE001
             logger.exception("label POST failed: %s", path)
-            self._send(500, {"error": str(exc) if self._local_admin() else "internal error"})
+            self._send_after_body_discard(
+                500, {"error": str(exc) if self._local_admin() else "internal error"}
+            )
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        data = self.rfile.read(length) if length else b""
+        data = self._read_body_bytes(limit=_MAX_JSON_BODY_BYTES)
         return (
             json.loads(data.decode("utf-8"), object_pairs_hook=_unique_json_object)
             if data else {}
         )
 
-    def _read_body_bytes(self) -> bytes:
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        return self.rfile.read(length) if length else b""
+    def _declared_request_body_length(self) -> int:
+        cached = getattr(self, "_request_body_length", None)
+        if cached is not None:
+            return cached
+
+        transfer_encoding = self.headers.get_all("Transfer-Encoding", [])
+        content_lengths = self.headers.get_all("Content-Length", [])
+        if transfer_encoding:
+            self._request_body_consumed = True
+            self.close_connection = True
+            raise _RequestBodyError("Transfer-Encoding request bodies are unsupported")
+        if len(content_lengths) > 1:
+            self._request_body_consumed = True
+            self.close_connection = True
+            raise _RequestBodyError("exactly one Content-Length header is allowed")
+        if not content_lengths:
+            length = 0
+        else:
+            raw = content_lengths[0].strip()
+            if (
+                not raw
+                or len(raw) > _MAX_CONTENT_LENGTH_DIGITS
+                or re.fullmatch(r"[0-9]+", raw) is None
+            ):
+                self._request_body_consumed = True
+                self.close_connection = True
+                raise _RequestBodyError("invalid Content-Length header")
+            length = int(raw)
+        if length > _MAX_REQUEST_BODY_BYTES:
+            self._request_body_consumed = True
+            self.close_connection = True
+            raise _RequestBodyTooLarge("request body too large")
+        self._request_body_length = length
+        return length
+
+    def _consume_request_body(
+        self, *, collect: bool, limit: int, timeout: float
+    ) -> bytes:
+        if getattr(self, "_request_body_consumed", False):
+            if collect:
+                raise _RequestBodyError("request body was already consumed")
+            return b""
+
+        length = self._declared_request_body_length()
+        if length > limit:
+            self._request_body_consumed = True
+            self.close_connection = True
+            raise _RequestBodyTooLarge("request body too large")
+        self._request_body_consumed = True
+        if length == 0:
+            return b""
+
+        chunks = [] if collect else None
+        remaining = length
+        deadline = time.monotonic() + timeout
+        previous_timeout = self.connection.gettimeout()
+        read = getattr(self.rfile, "read1", self.rfile.read)
+        try:
+            while remaining:
+                time_left = deadline - time.monotonic()
+                if time_left <= 0:
+                    raise _RequestBodyError("incomplete request body")
+                try:
+                    self.connection.settimeout(time_left)
+                    chunk = read(min(remaining, _BODY_READ_CHUNK_BYTES))
+                except (OSError, ValueError) as exc:
+                    raise _RequestBodyError("incomplete request body") from exc
+                if not chunk:
+                    raise _RequestBodyError("incomplete request body")
+                remaining -= len(chunk)
+                if chunks is not None:
+                    chunks.append(chunk)
+        except _RequestBodyError:
+            self.close_connection = True
+            raise
+        finally:
+            try:
+                self.connection.settimeout(previous_timeout)
+            except OSError:
+                self.close_connection = True
+        return b"".join(chunks) if chunks is not None else b""
+
+    def _discard_request_body(self, *, limit: int = _MAX_REQUEST_BODY_BYTES) -> None:
+        self._consume_request_body(
+            collect=False,
+            limit=limit,
+            timeout=_BODY_DISCARD_TIMEOUT_SECONDS,
+        )
+
+    def _read_body_bytes(self, *, limit: int = _MAX_REQUEST_BODY_BYTES) -> bytes:
+        if self._declared_request_body_length() > limit:
+            # The endpoint limit prevents allocation; still drain bodies within the
+            # global framing ceiling so Windows clients reliably receive the 413.
+            self._discard_request_body(limit=_MAX_REQUEST_BODY_BYTES)
+            raise _RequestBodyTooLarge("request body too large")
+        return self._consume_request_body(
+            collect=True, limit=limit, timeout=_BODY_READ_TIMEOUT_SECONDS
+        )
 
     @staticmethod
     def _required_query_int(qs: dict, name: str) -> int:
@@ -1471,9 +1621,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Stream NDJSON: one ``{"type":"progress"}`` per image, then a final
         ``{"type":"done"}`` (or ``{"type":"error"}``). No Content-Length so each
         flushed line reaches the browser's fetch stream immediately."""
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        if length:
-            self.rfile.read(length)
+        self._discard_request_body()
         model, conf = self._model_conf(qs)
         engine = (qs.get("engine") or ["yolo"])[0]
         classes = [c for c in (qs.get("classes") or [""])[0].split(",") if c.strip()]
@@ -1540,9 +1688,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Audit accepted labels with the model; stream per-image progress then a
         sorted ``deck`` of disagreements. Per-image findings are parked in state
         for the UI to overlay (``GET /api/assist/radar/<id>``)."""
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        if length:
-            self.rfile.read(length)
+        self._discard_request_body()
         epoch = self._required_query_int(qs, "epoch")
         sess = self.state.capture_session(epoch, "running Radar")
         model, conf = self._model_conf(qs)
@@ -1564,9 +1710,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle_embeddings_stream(self, qs: dict) -> None:
         """Embed every image and stream the 2-D PCA scatter (``{id,x,y}``)."""
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        if length:
-            self.rfile.read(length)
+        self._discard_request_body()
         epoch = self._required_query_int(qs, "epoch")
         sess = self.state.capture_session(epoch, "mapping")
         if not self.state.embed.available():

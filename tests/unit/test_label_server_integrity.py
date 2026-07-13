@@ -17,6 +17,8 @@ from PIL import Image
 
 pytestmark = pytest.mark.unit
 
+_REJECTED_POST_BODY = b"x" * (128 * 1024)
+
 
 def test_label_client_rejects_partial_save_before_posting():
     from libreyolo.label.page import INDEX_HTML
@@ -189,10 +191,64 @@ def test_post_origin_matrix_normalizes_authority_and_rejects_opaque_origins(tmp_
                 url,
                 "/not-found",
                 method="POST",
-                body=b"{}",
+                body=_REJECTED_POST_BODY,
                 headers=headers,
             )
             assert status == expected, (host, origin)
+
+
+def test_assist_disabled_rejection_consumes_nonempty_post_body(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    body = b'{"epoch":0,"padding":"' + _REJECTED_POST_BODY + b'"}'
+    with _label_server(yaml_path) as url:
+        for _ in range(8):
+            status, response = _post(url, "/api/boost", body)
+            assert status == 403
+            assert "AI assist is disabled" in response["error"]
+
+
+def test_assist_disabled_rejection_consumes_maximum_json_sized_body(tmp_path):
+    yaml_path = _make_dataset(tmp_path)
+    body = b"x" * (8 * 1024 * 1024)
+    with _label_server(yaml_path) as url:
+        for _ in range(3):
+            status, response = _post(url, "/api/boost", body)
+            assert status == 403
+            assert "AI assist is disabled" in response["error"]
+
+
+def test_json_body_limit_discards_oversize_payload_before_413(monkeypatch, tmp_path):
+    from libreyolo.label import server
+
+    monkeypatch.setattr(server, "_MAX_JSON_BODY_BYTES", 1024)
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        for _ in range(8):
+            status, response = _post(url, "/api/label/0?epoch=0&rev=0", _REJECTED_POST_BODY)
+            assert status == 413
+            assert response == {"error": "request body too large"}
+
+
+@pytest.mark.parametrize(
+    ("framing", "expected"),
+    (
+        ("Content-Length: invalid\r\n", 400),
+        ("Content-Length: 0\r\nContent-Length: 0\r\n", 400),
+        ("Transfer-Encoding: chunked\r\n", 400),
+        (f"Content-Length: {64 * 1024 * 1024 + 1}\r\n", 413),
+        ("Content-Length: 1\r\n", 400),
+    ),
+)
+def test_rejected_post_body_framing_is_bounded(tmp_path, framing, expected):
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        port = urlsplit(url).port
+        assert _raw_status(
+            url,
+            "POST /not-found HTTP/1.1\r\n"
+            f"Host: localhost:{port}\r\nOrigin: http://localhost:{port}\r\n"
+            f"{framing}Connection: close\r\n\r\n",
+        ) == expected
 
 
 def test_duplicate_authorities_and_absolute_targets_are_unambiguous(tmp_path):
