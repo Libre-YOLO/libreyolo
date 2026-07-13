@@ -87,6 +87,7 @@ Training capabilities are documented per family in
 | ec | detect | ✓ | ✓ | exp | exp |  |  |  |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| edgetam | segment |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |

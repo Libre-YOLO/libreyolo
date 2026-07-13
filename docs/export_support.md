@@ -22,6 +22,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | ec | detect | ✓ | ✓ | exp | exp |  |  |  |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| edgetam | segment |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |
@@ -136,6 +137,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `ec` / `segment` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `edgetam` / `segment` / `onnx`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `torchscript`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `tensorrt`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `openvino`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `ncnn`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `tflite`: Promptable model export is out of scope for the v1 runtime contract.
+- `edgetam` / `segment` / `coreml`: Promptable model export is out of scope for the v1 runtime contract.
 - `efficientnetv2` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `eomt` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `eomt` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.

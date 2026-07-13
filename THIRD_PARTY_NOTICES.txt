@@ -795,3 +795,30 @@ Used for: the native LibrePicoSAM3 ROI segmentation network in
 
 The full Apache License 2.0 text is included at
 libreyolo/models/picosam3/LICENSE.
+
+--------------------------------------------------------------------
+EdgeTAM / Hugging Face Transformers EdgeTAM converter
+--------------------------------------------------------------------
+Model source: https://github.com/facebookresearch/EdgeTAM
+Model commit: 7711e012a30a2402c4eaab637bdb00a521302c91
+Converter source: https://github.com/huggingface/transformers
+Converter commit: bd37c453544e83eb875ed3608980a1660376007a
+Converter file:
+  src/transformers/models/edgetam_video/convert_edgetam_video_to_hf.py
+Payload reference: https://huggingface.co/yonigozlan/EdgeTAM-hf
+Payload revision: c266ce53b3fc00f0f495b583f6a116c4e57f53bb
+License: Apache License 2.0
+Copyright (c) Meta Platforms, Inc. and affiliates
+Copyright 2025 The Hugging Face Inc. team
+Used for: the Transformers-backed LibreEdgeTAM adapter in
+          libreyolo/models/sam/edgetam.py and the lossless checkpoint mapping
+          in weights/convert_edgetam_weights.py. No EdgeTAM architecture source
+          is vendored. The runtime adapter reproduces the pinned square image
+          transform and prompt-coordinate scaling from sam2/utils/transforms.py.
+          The conversion remaps keys and splits/concatenates tensors so the
+          official Apache-2.0 checkpoint can be loaded by Transformers.
+          Hash-pinned configuration and processor files are copied from the
+          Apache-2.0-declared payload reference; learned tensors are converted
+          independently and then checked exactly against it.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.

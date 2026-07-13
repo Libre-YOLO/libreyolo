@@ -671,6 +671,7 @@ _FAMILY_BLOCKS = {
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
+    "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam3": "Promptable model export is out of scope for the v1 runtime contract.",
     "mobilesam": "Promptable model export is out of scope for the v1 runtime contract.",
     "grounding_dino": "Open-vocabulary runtime export is out of scope for v1.",

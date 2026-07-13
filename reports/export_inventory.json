@@ -272,6 +272,23 @@
     "optional_extra": null,
     "available": true
   },
+  "edgetam": {
+    "class": "libreyolo.models.sam.edgetam.LibreEdgeTAM",
+    "tasks": [
+      "segment"
+    ],
+    "default_task": "segment",
+    "sizes": {
+      "edge": 1024
+    },
+    "default_imgsz": {
+      "edge": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "sam",
+    "available": true
+  },
   "efficientnetv2": {
     "class": "libreyolo.models.efficientnetv2.model.LibreEfficientNetV2",
     "tasks": [

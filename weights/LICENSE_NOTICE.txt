@@ -145,6 +145,20 @@ project the weights were derived from. Per-family summary:
              requires accepting Meta's terms. LibreYOLO downloads the weights
              directly and does not distribute them under the MIT license.
 
+    EdgeTAM (LibreYOLO/LibreEdgeTAM)                   Apache-2.0
+             Converted from facebook/EdgeTAM revision
+             14d7ecc48c656b94e5184519f698cd5386c5a2bf (edgetam.pt
+             SHA-256 ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df).
+             The official EdgeTAM repository explicitly licenses both code
+             and checkpoints under Apache-2.0. Conversion uses the pinned
+             Apache-2.0 Transformers mapping at commit
+             bd37c453544e83eb875ed3608980a1660376007a and is verified against
+             yonigozlan/EdgeTAM-hf revision
+             c266ce53b3fc00f0f495b583f6a116c4e57f53bb.
+             Hash-pinned configuration and processor files are copied from
+             that Apache-2.0-declared reference; learned tensors are converted
+             independently from the official checkpoint and checked exactly.
+
     PicoSAM3 (LibreYOLO/LibrePicoSAM3)                 Apache-2.0
              Converted and rehosted by LibreYOLO. Upstream sources:
              upstream code commit:

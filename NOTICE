@@ -203,6 +203,28 @@ D-FINE-seg (Apache License 2.0)
     D-FINE-seg repository is Apache-2.0; its maintainer approved reuse
     with attribution in ArgoHA/D-FINE-seg#70.
 
+EdgeTAM runtime preprocessing and Transformers checkpoint converter (Apache License 2.0)
+    Path:    libreyolo/models/sam/edgetam.py,
+             weights/convert_edgetam_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/facebookresearch/EdgeTAM
+             commit 7711e012a30a2402c4eaab637bdb00a521302c91
+    Converter: https://github.com/huggingface/transformers
+             commit bd37c453544e83eb875ed3608980a1660376007a
+    Payload reference: https://huggingface.co/yonigozlan/EdgeTAM-hf
+             revision c266ce53b3fc00f0f495b583f6a116c4e57f53bb
+
+    The EdgeTAM checkpoint key mapping is adapted from Hugging Face
+    Transformers' Apache-2.0 converter. LibreYOLO replaces its direct pickle
+    load with the repository's safe untrusted-checkpoint loader, pins and
+    verifies both source and reference artifact digests, and builds a
+    provenance-complete mirror payload. The runtime adapter uses Transformers
+    for the model architecture and reproduces the pinned EdgeTAM square image
+    transform and prompt-coordinate scaling from sam2/utils/transforms.py.
+    The mirror's hash-pinned configuration and processor files are copied from
+    the Apache-2.0-declared payload reference; learned tensors are independently
+    converted from the official checkpoint and checked exactly.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------
