@@ -78,6 +78,47 @@ def test_new_run_waits_for_inference_and_does_not_rewrite_response_dir(
     assert state.run_dir == second_run
 
 
+def test_new_run_waits_for_open_folder_and_response_uses_opened_dir(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    state = _UIState(device="cpu")
+    first_run = state.new_run()
+    open_entered = threading.Event()
+    release_open = threading.Event()
+    new_run_started = threading.Event()
+    opened: list[Path] = []
+
+    def open_in_file_manager(path: Path) -> bool:
+        opened.append(path)
+        open_entered.set()
+        assert release_open.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr(
+        "libreyolo.ui.server._open_in_file_manager", open_in_file_manager
+    )
+
+    def start_new_run():
+        new_run_started.set()
+        return state.new_run()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        opening = pool.submit(state.open_folder)
+        assert open_entered.wait(timeout=5)
+        next_run = pool.submit(start_new_run)
+        assert new_run_started.wait(timeout=5)
+        assert not next_run.done()
+        release_open.set()
+        response = opening.result(timeout=5)
+        second_run = next_run.result(timeout=5)
+
+    assert opened == [first_run]
+    assert response == {"ok": True, "dir": str(first_run)}
+    assert second_run != first_run
+    assert state.run_dir == second_run
+
+
 def test_ui_and_training_log_capture_are_isolated_when_interleaved(
     tmp_path, monkeypatch
 ):

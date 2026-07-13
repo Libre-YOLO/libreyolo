@@ -98,3 +98,12 @@ def test_monitor_page_uses_zero_based_status_and_one_based_metric_contracts():
 def test_monitor_page_bounds_progress_and_can_derive_it_from_completed_epochs():
     assert "completed / total" in INDEX_HTML
     assert "Math.max(0, Math.min(1, value))" in INDEX_HTML
+
+
+def test_monitor_page_clears_stale_failure_banner_after_resume():
+    refresh = INDEX_HTML[INDEX_HTML.index("async function refreshStatus()") :]
+    failed = refresh.index('if (state === "failed" && s.error)')
+    cleanup = refresh.index("box.remove();")
+    returned = refresh.index("return state;")
+
+    assert failed < cleanup < returned

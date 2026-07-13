@@ -572,10 +572,12 @@ class _UIState:
         }
 
     def open_folder(self) -> dict:
-        if self.run_dir is None or not Path(self.run_dir).exists():
-            return {"ok": False, "dir": str(self.run_dir) if self.run_dir else None}
-        ok = _open_in_file_manager(Path(self.run_dir))
-        return {"ok": ok, "dir": str(self.run_dir)}
+        with self._lock:
+            run_dir = self.run_dir
+            if run_dir is None or not run_dir.exists():
+                return {"ok": False, "dir": str(run_dir) if run_dir else None}
+            ok = _open_in_file_manager(run_dir)
+            return {"ok": ok, "dir": str(run_dir)}
 
 
 class _Handler(BaseHTTPRequestHandler):

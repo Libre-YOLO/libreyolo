@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -202,6 +204,97 @@ def test_metrics_jsonl_reset_on_fresh_run(tmp_path):
     assert len(lines) == 1
 
 
+def test_atomic_status_write_retries_transient_reader_sharing(monkeypatch, tmp_path):
+    from libreyolo.training import artifacts
+
+    real_replace = artifacts.os.replace
+    calls = 0
+
+    def transient_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("injected sharing violation")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(artifacts.os, "replace", transient_replace)
+    artifacts._atomic_write_json(tmp_path / "status.json", {"state": "running"})
+
+    assert calls == 3
+    assert json.loads((tmp_path / "status.json").read_text()) == {
+        "state": "running"
+    }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reader sharing semantics")
+def test_resume_waits_for_monitor_readers_before_rewriting_status_and_metrics(
+    tmp_path,
+):
+    cb = TrainingStatusCallback(write_log=False)
+    cb.on_train_start(_start(tmp_path))
+    for epoch in range(1, 5):
+        cb.on_train_epoch_end(_epoch(tmp_path, epoch=epoch))
+
+    readers = [
+        open(tmp_path / "status.json", encoding="utf-8"),
+        open(tmp_path / "metrics.jsonl", encoding="utf-8"),
+    ]
+
+    def release_readers():
+        time.sleep(0.05)
+        for reader in readers:
+            reader.close()
+
+    release = threading.Thread(target=release_readers)
+    release.start()
+    try:
+        cb.on_train_start(_start(tmp_path, start_epoch=3))
+    finally:
+        for reader in readers:
+            if not reader.closed:
+                reader.close()
+        release.join(timeout=2)
+
+    resumed = _load(tmp_path)
+    assert resumed["state"] == "running"
+    assert resumed["completed_epochs"] == 2
+    assert resumed["current_epoch"] is None
+    cb.on_train_epoch_end(_epoch(tmp_path, epoch=3))
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert [row["epoch"] for row in rows] == [1, 2, 3]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows reader sharing semantics")
+def test_fresh_status_start_waits_for_monitor_reader_before_resetting_log(tmp_path):
+    cb = TrainingStatusCallback()
+    cb.on_train_start(_start(tmp_path))
+    logging.getLogger("libreyolo").info("stale log line")
+    cb._close_log()
+    reader = open(tmp_path / "train.log", encoding="utf-8")
+
+    def release_reader():
+        time.sleep(0.05)
+        reader.close()
+
+    release = threading.Thread(target=release_reader)
+    release.start()
+    try:
+        cb.on_train_start(_start(tmp_path))
+    finally:
+        if not reader.closed:
+            reader.close()
+        release.join(timeout=2)
+    logging.getLogger("libreyolo").info("fresh log line")
+    cb._close_log()
+
+    log = (tmp_path / "train.log").read_text()
+    assert "fresh log line" in log
+    assert "stale log line" not in log
+
+
 def test_metrics_jsonl_trims_stale_resume_rows(tmp_path):
     cb = TrainingStatusCallback(write_log=False)
     cb.on_train_start(_start(tmp_path))
@@ -338,6 +431,21 @@ def test_training_run_directory_supports_nested_names(tmp_path):
 
     assert first == tmp_path / "runs" / "sweep" / "exp"
     assert second == tmp_path / "runs" / "sweep" / "exp2"
+
+
+def test_training_run_directory_preserves_empty_name(tmp_path):
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(
+            project=str(tmp_path / "runs"), name="", exist_ok=False
+        )
+    )
+
+    first = BaseTrainer._get_save_dir(trainer)
+    second = BaseTrainer._get_save_dir(trainer)
+
+    assert first == tmp_path / "runs"
+    assert second == tmp_path / "runs2"
+    assert first.is_dir() and second.is_dir()
 
 
 def test_training_run_directory_reuses_resume_target(tmp_path):

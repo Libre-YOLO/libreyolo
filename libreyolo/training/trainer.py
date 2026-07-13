@@ -794,10 +794,11 @@ class BaseTrainer(ABC):
 
         project = Path(self.config.project)
         name = self.config.name
-        project.mkdir(parents=True, exist_ok=True)
         base = project / name
         # ``name`` may include a grouping path such as ``sweep/exp``. Preserve
         # that long-standing layout while atomically reserving only the leaf.
+        # Do not pre-create ``project`` itself: an empty public ``name`` makes
+        # that directory the leaf that must be reserved by the loop below.
         base.parent.mkdir(parents=True, exist_ok=True)
         if self.config.exist_ok:
             save_dir = base

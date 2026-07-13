@@ -278,10 +278,12 @@ async function refreshStatus() {
     <div class="sub">${(progress * 100).toFixed(1)}%</div></div>`;
   $("cards").innerHTML = cardsHtml;
 
+  let box = $("errbox");
   if (state === "failed" && s.error) {
-    let box = $("errbox");
     if (!box) { box = document.createElement("div"); box.id = "errbox"; box.className = "err-box"; $("cards").after(box); }
     box.textContent = `${s.error.type || "Error"}: ${s.error.message || ""}`;
+  } else if (box) {
+    box.remove();
   }
   return state;
 }

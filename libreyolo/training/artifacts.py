@@ -24,6 +24,33 @@ from .callbacks import (
 
 logger = logging.getLogger("libreyolo")
 
+_FILE_SHARING_RETRY_SECONDS = 1.0
+_FILE_SHARING_RETRY_INITIAL_SECONDS = 0.005
+_FILE_SHARING_RETRY_MAX_SECONDS = 0.05
+
+
+def _retry_transient_file_access(operation):
+    """Retry bounded Windows-style sharing violations from short-lived readers."""
+    deadline = time.monotonic() + _FILE_SHARING_RETRY_SECONDS
+    delay = _FILE_SHARING_RETRY_INITIAL_SECONDS
+    while True:
+        try:
+            return operation()
+        except PermissionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2.0, _FILE_SHARING_RETRY_MAX_SECONDS)
+
+
+def _replace_with_retry(source, destination) -> None:
+    _retry_transient_file_access(lambda: os.replace(source, destination))
+
+
+def _unlink_with_retry(path: Path) -> None:
+    _retry_transient_file_access(path.unlink)
+
 
 def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
     """Write ``value`` to ``path`` atomically (tmp file + ``os.replace``).
@@ -41,7 +68,7 @@ def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
                 _json_safe(value), f, allow_nan=False, indent=2, sort_keys=True
             )
             f.write("\n")
-        os.replace(tmp_name, path)
+        _replace_with_retry(tmp_name, path)
     except BaseException:
         try:
             os.unlink(tmp_name)
@@ -91,7 +118,7 @@ class TrainingArtifactsCallback:
             for filename in (self.results_name, self.summary_name):
                 path = save_dir / filename
                 if path.exists():
-                    path.unlink()
+                    _unlink_with_retry(path)
         else:
             self._trim_csv_before_epoch(
                 save_dir / self.results_name,
@@ -234,7 +261,7 @@ class TrainingArtifactsCallback:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(rows)
-            os.replace(tmp_name, path)
+            _replace_with_retry(tmp_name, path)
         except BaseException:
             try:
                 os.unlink(tmp_name)
@@ -271,7 +298,7 @@ class TrainingArtifactsCallback:
                     sort_keys=True,
                 )
                 f.write("\n")
-            os.replace(tmp_name, path)
+            _replace_with_retry(tmp_name, path)
         except BaseException:
             try:
                 os.unlink(tmp_name)
@@ -415,7 +442,7 @@ class TrainingStatusCallback:
             metrics_path = save_dir / self.metrics_name
             if metrics_path.exists():
                 try:
-                    metrics_path.unlink()
+                    _unlink_with_retry(metrics_path)
                 except OSError:
                     logger.debug("Could not reset %s", self.metrics_name, exc_info=True)
         else:
@@ -565,7 +592,7 @@ class TrainingStatusCallback:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 if kept:
                     handle.write("\n".join(kept) + "\n")
-            os.replace(tmp_name, path)
+            _replace_with_retry(tmp_name, path)
         except BaseException:
             try:
                 os.unlink(tmp_name)
@@ -579,7 +606,7 @@ class TrainingStatusCallback:
         try:
             self._log_path = save_dir / self.log_name
             if fresh and self._log_path.exists():
-                self._log_path.unlink()
+                _unlink_with_retry(self._log_path)
             handler = logging.FileHandler(self._log_path, encoding="utf-8")
             handler.setLevel(logging.INFO)
             handler.setFormatter(
