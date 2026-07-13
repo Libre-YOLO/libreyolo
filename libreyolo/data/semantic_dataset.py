@@ -150,6 +150,24 @@ def _rasterize_polygon_labels(
     return np.asarray(canvas).astype(np.int64)
 
 
+def valid_content_hw(
+    orig_shape: Tuple[int, int], ratio: float, canvas_hw: Tuple[int, int]
+) -> Tuple[int, int]:
+    """Size of the real (unpadded) content region inside a letterboxed canvas.
+
+    Matches :meth:`SemanticDataset._resize`'s own ``new_h``/``new_w``
+    computation exactly, so callers (e.g. flip-TTA validation, which must
+    flip only the real content and leave letterbox padding in place) can
+    locate the top-left-anchored valid region without re-deriving this math
+    and risking it drifting out of sync with the dataset's actual resize.
+    """
+    orig_h, orig_w = orig_shape
+    canvas_h, canvas_w = canvas_hw
+    new_h = min(canvas_h, max(1, int(round(orig_h * ratio))))
+    new_w = min(canvas_w, max(1, int(round(orig_w * ratio))))
+    return new_h, new_w
+
+
 def resolve_semantic_data(data: str | Path, allow_scripts: bool = False) -> Dict:
     """Load and sanity-check a semantic dataset YAML config.
 
@@ -299,8 +317,9 @@ class SemanticDataset(Dataset):
             ratio = 1.0
         else:
             ratio = min(self.imgsz / h0, self.imgsz / w0) * scale
-            new_w = max(1, int(round(w0 * ratio)))
-            new_h = max(1, int(round(h0 * ratio)))
+            new_h, new_w = valid_content_hw(
+                (h0, w0), ratio, (self.imgsz, self.imgsz)
+            )
 
         img_pil = Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR)
         mask_pil = Image.fromarray(mask.astype(np.int32), mode="I").resize(

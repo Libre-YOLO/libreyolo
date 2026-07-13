@@ -444,17 +444,31 @@ class LibreDINOv2(BaseModel):
                 logits = logits.get("logits", logits.get("predictions"))
             probs = torch.softmax(logits.float(), dim=1)[0]
             return {"probs": probs.cpu()}
+        logits = self._postprocess_semantic_logits(output, original_size, **kwargs)
+        return {"semantic": logits.argmax(dim=1)[0].cpu()}
+
+    def _postprocess_semantic_logits(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+        **kwargs,
+    ) -> torch.Tensor:
+        """Interpolate raw semantic logits to ``original_size``, pre-argmax.
+
+        Shared by ``_postprocess`` (single-view predict/val) and
+        ``BaseModel._predict_augment_semantic`` (flip TTA), which needs the
+        pre-argmax logits to average across augmented views.
+        """
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("predictions"))
         orig_w, orig_h = original_size
-        logits = torch.nn.functional.interpolate(
+        return torch.nn.functional.interpolate(
             logits.float(),
             size=(orig_h, orig_w),
             mode="bilinear",
             align_corners=False,
         )
-        return {"semantic": logits.argmax(dim=1)[0].cpu()}
 
     # =========================================================================
     # Weights I/O

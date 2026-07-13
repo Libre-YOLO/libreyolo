@@ -254,16 +254,19 @@ class LibrePIDNet(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
-    def _postprocess(
+    def _postprocess_semantic_logits(
         self,
         output: Any,
-        conf_thres: float,
-        iou_thres: float,
         original_size: Tuple[int, int],
-        max_det: int = 300,
         ratio: float = 1.0,
         **kwargs,
-    ) -> Dict:
+    ) -> torch.Tensor:
+        """Interpolate raw semantic logits to ``original_size``, pre-argmax.
+
+        Shared by ``_postprocess`` (single-view predict/val) and
+        ``BaseModel._predict_augment_semantic`` (flip TTA), which needs the
+        pre-argmax logits to average across augmented views.
+        """
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("predictions"))
@@ -277,12 +280,24 @@ class LibrePIDNet(BaseModel):
         valid_h = min(logits.shape[-2], max(int(round(orig_h * ratio * scale_y)), 1))
         valid_w = min(logits.shape[-1], max(int(round(orig_w * ratio * scale_x)), 1))
         logits = logits[..., :valid_h, :valid_w]
-        logits = F.interpolate(
+        return F.interpolate(
             logits.float(),
             size=(orig_h, orig_w),
             mode="bilinear",
             align_corners=True,
         )
+
+    def _postprocess(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        ratio: float = 1.0,
+        **kwargs,
+    ) -> Dict:
+        logits = self._postprocess_semantic_logits(output, original_size, ratio=ratio, **kwargs)
         return {"semantic": logits.argmax(dim=1)[0].cpu()}
 
     def _strict_loading(self) -> bool:

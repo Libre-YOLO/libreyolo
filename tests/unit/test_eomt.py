@@ -252,6 +252,22 @@ class TestEoMTPredict:
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
         assert set(torch.unique(result.semantic_mask.data).tolist()) <= {0, 1, 2}
 
+    def test_predict_augment_returns_semantic_mask(self, fake_eomt_net, tmp_path):
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        model = LibreEoMT(
+            model_path=None, size="l", task="semantic", nb_classes=3, device="cpu"
+        )
+        result = model.predict(str(img_path), imgsz=512, augment=True)
+
+        assert result.boxes is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+        assert set(torch.unique(result.semantic_mask.data).tolist()) <= {0, 1, 2}
+
     def test_predict_rejects_non_patch_imgsz(self, fake_eomt_net, tmp_path):
         from libreyolo.models.eomt.model import LibreEoMT
 
@@ -795,6 +811,46 @@ def test_val_smoke_uses_split_inference_path(fake_eomt_net, tmp_path):
     assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
     assert "speed/preprocess_ms" in metrics
     assert (tmp_path / "val_out" / "config.yaml").exists()
+
+
+def test_val_augment_smoke(fake_eomt_net, tmp_path):
+    """augment=True must run LibreEoMT's own flip-TTA branch, not raise."""
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    for i in range(2):
+        img_dir = tmp_path / "images" / "val"
+        mask_dir = tmp_path / "masks" / "val"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (64, 64), color=(20 + i, 30, 40)).save(img_dir / f"img{i}.jpg")
+        Image.new("L", (64, 64), color=i % 2).save(mask_dir / f"img{i}.png")
+
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(tmp_path),
+                "val": "images/val",
+                "masks_dir": "masks",
+                "nc": 2,
+                "names": {0: "left", 1: "right"},
+            }
+        )
+    )
+    model = LibreEoMT(
+        model_path=None, size="l", task="semantic", nb_classes=2, device="cpu"
+    )
+
+    metrics = model.val(
+        data=str(yaml_path),
+        imgsz=512,
+        augment=True,
+        save_dir=str(tmp_path / "val_out"),
+        verbose=False,
+    )
+
+    assert "metrics/mIoU" in metrics
+    assert 0.0 <= metrics["metrics/mIoU"] <= 1.0
 
 
 def test_val_segment_routes_to_base_val(fake_eomt_seg_net, monkeypatch):
