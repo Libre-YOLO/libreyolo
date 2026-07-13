@@ -57,7 +57,9 @@ def _keypoint_log_mean_trace(active_keypoints: torch.Tensor) -> torch.Tensor:
     )
     result = log_numerator - log_denominator
     return torch.where(
-        has_finite & torch.isfinite(result), result, torch.zeros_like(result)
+        has_finite & torch.isfinite(result),
+        result,
+        torch.full_like(result, float("inf")),
     )
 
 
@@ -126,6 +128,8 @@ def _postprocess_grouppose_keypoints(
     selected_labels = labels_i[valid_indices]
     selected_keypoints = reshaped[valid_indices, selected_labels]
     has_precision = selected_keypoints.shape[-1] >= 7
+    usable_pose = torch.zeros_like(selected_labels, dtype=torch.bool)
+    scores_i = scores_i.clone()
 
     if trace_alpha > 0 and has_precision:
         log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
@@ -139,7 +143,6 @@ def _postprocess_grouppose_keypoints(
             log_mean_traces[class_mask] = _keypoint_log_mean_trace(
                 selected_keypoints[class_mask, :num_active]
             )
-        scores_i = scores_i.clone()
         fused_scores = scores_i[valid_indices] * torch.exp(-trace_alpha * log_mean_traces)
         scores_i[valid_indices] = torch.nan_to_num(
             fused_scores, nan=0.0, posinf=1.0, neginf=0.0
@@ -156,6 +159,7 @@ def _postprocess_grouppose_keypoints(
         out_idx = valid_indices[class_mask]
         active_keypoints = selected_keypoints[class_mask, :num_active]
         valid_public = torch.isfinite(active_keypoints[..., :3]).all(dim=-1)
+        usable_pose[class_mask] = valid_public.any(dim=-1)
         output_keypoints[out_idx, :num_active, 0] = torch.where(
             valid_public,
             active_keypoints[..., 0] * img_w,
@@ -179,6 +183,11 @@ def _postprocess_grouppose_keypoints(
                 precision,
                 torch.zeros_like(precision),
             )
+
+    # A detection with no usable public keypoint is not a usable pose. Give it
+    # zero confidence even when uncertainty fusion is explicitly disabled so
+    # the caller's standard ``scores > conf`` filter removes it.
+    scores_i[valid_indices[~usable_pose]] = 0.0
 
     return scores_i, output_keypoints, output_keypoint_precision
 

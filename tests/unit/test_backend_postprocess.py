@@ -534,14 +534,15 @@ def test_rfdetr_pose_backend_sanitizes_nonfinite_grouppose_keypoints(
         "rfdetr",
         task="pose",
         supported_tasks=("detect", "pose"),
-        num_keypoints_per_class=[0, 1],
+        num_keypoints_per_class=[0, 2],
     )
     backend.nb_classes = 1
     boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
     logits = np.array([[[-10.0, 4.0]]], dtype=np.float32)
-    keypoints = np.zeros((1, 1, 2, 8), dtype=np.float32)
-    keypoints[0, 0, 1, :3] = [0.25, 0.5, 4.0]
-    keypoints[0, 0, 1, invalid_channel] = np.nan
+    keypoints = np.zeros((1, 1, 4, 8), dtype=np.float32)
+    keypoints[0, 0, 2, :3] = [0.25, 0.5, 4.0]
+    keypoints[0, 0, 3, :3] = [0.75, 0.25, 2.0]
+    keypoints[0, 0, 2, invalid_channel] = np.nan
 
     parsed = backend._parse_rfdetr(
         [boxes, logits, keypoints],
@@ -552,9 +553,37 @@ def test_rfdetr_pose_backend_sanitizes_nonfinite_grouppose_keypoints(
     )
     parsed_keypoints = parsed[5]
 
+    assert parsed[0].shape == (1, 4)
     assert np.isfinite(parsed_keypoints).all()
     if invalid_channel in {0, 2}:
         np.testing.assert_array_equal(parsed_keypoints[0, 0], np.zeros(3))
+
+
+def test_rfdetr_pose_backend_filters_all_unusable_grouppose_keypoints():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+        num_keypoints_per_class=[0, 2],
+    )
+    backend.nb_classes = 1
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 4.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 4, 8), dtype=np.float32)
+    keypoints[0, 0, 2:, :7] = np.nan
+
+    parsed = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert parsed[0].shape == (0, 4)
+    assert parsed[1].shape == (0,)
+    assert parsed[2].shape == (0,)
+    assert parsed[5].shape == (0, 2, 3)
 
 
 def test_rfdetr_classic_pose_backend_sanitizes_nonfinite_keypoints():

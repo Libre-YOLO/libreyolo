@@ -22,6 +22,7 @@ GroupPose module:
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -545,6 +546,71 @@ def test_grouppose_sanitizes_nonfinite_active_keypoint_outputs(invalid_channel):
         torch.testing.assert_close(
             result["keypoint_precision_cholesky"][0, 0], torch.zeros(3)
         )
+
+
+@pytest.mark.parametrize("trace_alpha", [0.0, 0.2])
+def test_grouppose_zeroes_score_when_all_active_keypoints_are_unusable(
+    trace_alpha,
+):
+    from libreyolo.postprocess.rfdetr import postprocess
+
+    keypoints = torch.zeros(1, 1, 34, 8)
+    active = keypoints[0, 0, 17:]
+    active[:, :7] = float("nan")
+
+    result = postprocess(
+        {
+            "pred_logits": torch.tensor([[[-10.0, 4.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": keypoints,
+        },
+        torch.tensor([[100.0, 200.0]]),
+        num_select=1,
+        num_keypoints_per_class=[0, 17],
+        trace_alpha=trace_alpha,
+    )[0]
+
+    torch.testing.assert_close(result["scores"], torch.zeros(1))
+    torch.testing.assert_close(result["keypoints"], torch.zeros(1, 17, 3))
+    torch.testing.assert_close(
+        result["keypoint_precision_cholesky"], torch.zeros(1, 17, 3)
+    )
+
+
+def test_rfdetr_model_filters_unusable_grouppose_detection_at_zero_conf():
+    from libreyolo.models.rfdetr.model import LibreRFDETR
+
+    inner = SimpleNamespace(
+        use_grouppose_keypoints=True,
+        get_num_keypoints_per_class=lambda: [0, 17],
+    )
+    model = LibreRFDETR.__new__(LibreRFDETR)
+    model.task = "pose"
+    model.nb_classes = 1
+    model.device = torch.device("cpu")
+    model.model = SimpleNamespace(
+        model=inner,
+        num_select=1,
+        postprocess_trace_alpha=0.2,
+    )
+
+    keypoints = torch.zeros(1, 1, 34, 8)
+    keypoints[0, 0, 17:, :7] = float("nan")
+    result = model._postprocess(
+        {
+            "pred_logits": torch.tensor([[[-10.0, 4.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+            "pred_keypoints": keypoints,
+        },
+        conf_thres=0.0,
+        iou_thres=0.45,
+        original_size=(200, 100),
+        max_det=1,
+    )
+
+    assert result["num_detections"] == 0
+    assert result["scores"] == []
+    assert result["keypoints"].shape == (0, 17, 3)
 
 
 def test_classic_pose_sanitizes_nonfinite_keypoint_outputs():

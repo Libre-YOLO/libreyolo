@@ -400,7 +400,9 @@ def _rfdetr_keypoint_log_mean_trace_np(active_keypoints: np.ndarray) -> np.ndarr
     result = np.zeros_like(log_numerator)
     np.subtract(log_numerator, log_denominator, out=result, where=has_finite)
     return np.where(
-        has_finite & np.isfinite(result), result, np.zeros_like(result)
+        has_finite & np.isfinite(result),
+        result,
+        np.full_like(result, np.inf),
     )
 
 
@@ -1980,6 +1982,7 @@ class BaseBackend(ABC):
                     keypoint_counts[0] = 0
             active_counts = keypoint_counts[internal_class_ids]
             valid_pose_class = active_counts > 0
+            usable_pose = np.zeros(len(selected), dtype=bool)
 
             if np.any(valid_pose_class):
                 trace_alpha = 0.2
@@ -2011,12 +2014,20 @@ class BaseBackend(ABC):
             for row_idx, active_count in enumerate(active_counts):
                 if active_count <= 0:
                     continue
+                usable_pose[row_idx] = np.isfinite(
+                    selected[row_idx, :active_count, :3]
+                ).all(axis=-1).any()
                 keypoints_selected[row_idx, :active_count, :3] = selected[
                     row_idx,
                     :active_count,
                     :3,
                 ]
                 active_keypoint_mask[row_idx, :active_count] = True
+
+            # Keep exported runtime behavior aligned with native GroupPose:
+            # poses with no usable public keypoint must fail the standard
+            # ``score > conf`` filter instead of exposing a confident zero pose.
+            max_scores[~usable_pose] = 0.0
 
             boxes_raw = boxes_raw[valid_pose_class]
             max_scores = max_scores[valid_pose_class]
