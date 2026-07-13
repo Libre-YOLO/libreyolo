@@ -90,11 +90,16 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
             )
 
     # The open-vocabulary detector tier follows the same lazy-import rule.
-    from libreyolo import LibreGroundingDINO, LibreOpenVocab, LibreOWLv2
+    from libreyolo import (
+        LibreGroundingDINO,
+        LibreOMDetTurbo,
+        LibreOpenVocab,
+        LibreOWLv2,
+    )
 
     if not callable(LibreOpenVocab):
         raise AssertionError("LibreOpenVocab import did not resolve to a callable")
-    for family in (LibreGroundingDINO, LibreOWLv2):
+    for family in (LibreGroundingDINO, LibreOWLv2, LibreOMDetTurbo):
         if not isinstance(family, type):
             raise AssertionError(
                 "Open-vocabulary detector export did not resolve to a class: "

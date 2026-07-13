@@ -357,6 +357,23 @@ Used for: LibreOWLv2 open-vocabulary detector. The shipped path
           LibreYOLO/LibreOWLv2l14.
 
 --------------------------------------------------------------------
+OMDet-Turbo (Om Research Lab / Hugging Face Transformers)
+--------------------------------------------------------------------
+Architecture: https://github.com/om-ai-lab/OmDet
+Reference implementation: https://github.com/huggingface/transformers
+Path: src/transformers/models/omdet_turbo/
+License: Apache License 2.0
+Copyright 2024 Om Research Lab and The HuggingFace Inc. team.
+Used for: LibreOMDetTurbo open-vocabulary detection. The adapter at
+          libreyolo/models/openvocab/omdet_turbo.py calls the Transformers
+          OmDetTurboForObjectDetection implementation, its processor, and its
+          post-processing. No OMDet-Turbo model source is vendored.
+
+Weights: omlab/omdet-turbo-swin-tiny-hf revision
+         7fe93cecfb770c4d76cf71163956221249cab566, Apache-2.0, mirrored
+         without learned-parameter changes at LibreYOLO/LibreOMDetTurbot.
+
+--------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
 --------------------------------------------------------------------
 Source: https://github.com/Atten4Vis/LW-DETR
@@ -626,7 +643,8 @@ License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
           timm architectures — libreyolo/models/{mobilenetv4,convnext,
-          efficientnetv2,resnet}/. Module/attribute names mirror timm so
+          efficientnetv2,resnet}/ — and the shared Swin backbone at
+          libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
           inference is bit-identical. Architecture lineage: ConvNeXt also
           derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from

@@ -79,6 +79,18 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+OMDet-Turbo / Transformers (Apache License 2.0)
+    Path:    libreyolo/models/openvocab/omdet_turbo.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/huggingface/transformers
+    Architecture: https://github.com/om-ai-lab/OmDet
+
+    LibreYOLO ships no OMDet-Turbo model source. The adapter calls the
+    Apache-2.0 Transformers OmDetTurboForObjectDetection implementation, its
+    processor, and its post-processing. Apache-2.0 checkpoint assets are
+    mirrored unchanged from omlab/omdet-turbo-swin-tiny-hf revision
+    7fe93cecfb770c4d76cf71163956221249cab566 at LibreYOLO/LibreOMDetTurbot.
+
 SegFormer / transformers (Apache License 2.0)
     Path:    libreyolo/models/segformer/
     License: libreyolo/models/segformer/NOTICE  (Apache-2.0 code source)

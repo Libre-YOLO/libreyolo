@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import warnings
+
 import pytest
 import torch
 
 from libreyolo.models.base.model import BaseModel
 from libreyolo.models.openvocab import LibreOpenVocab
 from libreyolo.models.openvocab.grounding_dino import LibreGroundingDINO
+from libreyolo.models.openvocab.omdet_turbo import LibreOMDetTurbo
 from libreyolo.models.openvocab.owlv2 import LibreOWLv2
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.openvocab]
 
 
 def _bare(cls=LibreOWLv2):
@@ -47,6 +50,15 @@ class TestSetClasses:
         with pytest.raises(ValueError):
             m.set_classes(["Boat", "boat"])
 
+    def test_second_call_replaces_the_vocabulary(self):
+        m = _bare()
+        m.set_classes(["person", "remote control"])
+        m.set_classes(["Traffic Light"])
+
+        assert m.names == {0: "Traffic Light"}
+        assert m.nb_classes == 1
+        assert m._name_to_id == {"traffic light": 0}
+
 
 class TestFactoryAliases:
     def test_default_resolves_to_grounding_dino_tiny(self):
@@ -61,10 +73,34 @@ class TestFactoryAliases:
         assert _ALIASES["grounding-dino-base"] == (LibreGroundingDINO, "b")
         assert _ALIASES["owlv2"] == (LibreOWLv2, "b16")
         assert _ALIASES["owl-v2-large"] == (LibreOWLv2, "l14")
+        assert _ALIASES["omdet-turbo"] == (LibreOMDetTurbo, "t")
+        assert _ALIASES["omdet"] == (LibreOMDetTurbo, "t")
+        assert _ALIASES["omdet-turbo-swin-tiny"] == (LibreOMDetTurbo, "t")
 
     def test_unknown_alias_raises_before_loading(self):
         with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
             LibreOpenVocab("definitely-not-real")
+
+    def test_every_name_the_inventory_advertises_is_loadable(self):
+        """`libreyolo models` prints <family>-<size>, with the family's
+        underscore. Those names must resolve, or the CLI advertises models the
+        factory rejects."""
+        from libreyolo.models.inventory import collect_model_inventory
+        from libreyolo.models.openvocab import _ALIASES
+
+        inventory = collect_model_inventory()
+        advertised = [
+            f"{family}-{size}"
+            for family, entry in inventory.items()
+            if entry["optional_extra"] == "openvocab"
+            for size in entry["sizes"]
+        ]
+        assert advertised  # guard against the filter silently matching nothing
+
+        unloadable = [
+            name for name in advertised if name.replace("_", "-") not in _ALIASES
+        ]
+        assert not unloadable
 
 
 class TestSnapshotComplete:
@@ -118,6 +154,18 @@ class TestCallDefaults:
         assert m("image.jpg") == "ok"
         assert captured["conf"] == pytest.approx(0.1)
 
+    def test_omdet_turbo_default_conf_is_injected(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        assert m("image.jpg") == "ok"
+        assert captured["conf"] == pytest.approx(0.3)
+
     def test_explicit_conf_is_preserved(self, monkeypatch):
         captured = {}
 
@@ -151,6 +199,11 @@ class TestCallDefaults:
         with pytest.raises(TypeError, match="does not support text_threshold"):
             m("image.jpg", text_threshold=0.4)
 
+    def test_text_threshold_rejected_for_omdet_turbo(self):
+        m = _bare(LibreOMDetTurbo)
+        with pytest.raises(TypeError, match="does not support text_threshold"):
+            m("image.jpg", text_threshold=0.4)
+
     def test_text_threshold_rejected_for_streaming_call(self):
         m = _bare(LibreGroundingDINO)
         m._text_threshold = 0.25
@@ -168,7 +221,7 @@ class TestCallDefaults:
         with pytest.raises(ValueError, match="augment=True"):
             m("image.jpg", augment=True)
 
-    def test_iou_warns_because_hf_postprocess_has_no_nms(self, monkeypatch):
+    def test_iou_warns_for_families_that_suppress_nothing(self, monkeypatch):
         def fake_call(self, source=None, **kwargs):
             return "ok"
 
@@ -176,6 +229,35 @@ class TestCallDefaults:
         m = _bare(LibreOWLv2)
         with pytest.warns(UserWarning, match="iou=.+ignored"):
             assert m("image.jpg", iou=0.7) == "ok"
+
+    def test_omdet_turbo_honours_an_explicit_iou(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # honouring it must not also warn
+            assert m("image.jpg", iou=0.7) == "ok"
+        assert captured["iou"] == pytest.approx(0.7)
+
+    def test_omdet_turbo_injects_its_own_nms_default_when_iou_is_unset(
+        self, monkeypatch
+    ):
+        """predict() defaults iou=0.45, which is not OMDet-Turbo's default."""
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        assert m("image.jpg") == "ok"
+        assert captured["iou"] == pytest.approx(0.5)
 
     def test_track_raises_in_v1(self):
         m = _bare(LibreOWLv2)
@@ -347,6 +429,122 @@ class TestOWLv2Mapping:
 
         m.processor = Processor()
         det = m._postprocess(object(), 0.1, 0.45, (20, 20))
+        assert det["num_detections"] == 1
+        assert det["classes"].tolist() == [1]
+
+
+class TestOMDetTurboMapping:
+    def test_task_prompt_lists_all_classes(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["person", "remote control"])
+        names = m._class_names()
+        assert names == ["person", "remote control"]
+        assert m._task_prompt(names) == "Detect person, remote control."
+
+    def test_build_inputs_passes_classes_and_task_to_processor(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        captured = {}
+
+        class Processor:
+            def __call__(self, *, images, text, task, return_tensors):
+                captured.update(images=images, text=text, task=task, rt=return_tensors)
+                return {"ok": True}
+
+        m.processor = Processor()
+        sentinel = object()
+        out = m._build_inputs(sentinel)
+        assert out == {"ok": True}
+        assert captured["images"] is sentinel
+        assert captured["text"] == ["cat", "dog"]
+        assert captured["task"] == "Detect cat, dog."
+        assert captured["rt"] == "pt"
+
+    def test_postprocess_maps_text_labels_directly(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        captured = {}
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                captured.update(kwargs)
+                return [
+                    {
+                        "boxes": torch.tensor(
+                            [
+                                [1.0, 2.0, 10.0, 12.0],
+                                [3.0, 4.0, 9.0, 11.0],
+                                [0.0, 0.0, 5.0, 5.0],
+                            ]
+                        ),
+                        "scores": torch.tensor([0.9, 0.8, 0.7]),
+                        # "elephant" is not in the vocabulary -> dropped.
+                        "text_labels": ["dog", "cat", "elephant"],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
+        assert det["num_detections"] == 2
+        assert det["classes"].tolist() == [1, 0]
+        assert captured == {
+            "text_labels": ["cat", "dog"],
+            "threshold": pytest.approx(0.3),
+            # Reaches the processor as given: __call__ owns the default.
+            "nms_threshold": pytest.approx(0.45),
+            "target_sizes": [(20, 20)],
+        }
+
+    def test_multiword_labels_map_case_insensitively(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["Traffic Light", "Remote Control"])
+
+        labels = m._labels_to_class_ids(["traffic light", "REMOTE CONTROL"])
+
+        assert labels.tolist() == [0, 1]
+
+    def test_postprocess_handles_no_detections(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["giraffe"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                return [
+                    {
+                        "boxes": torch.zeros((0, 4)),
+                        "scores": torch.zeros((0,)),
+                        "labels": torch.zeros((0,), dtype=torch.int64),
+                        "text_labels": [],
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
+
+        assert det["num_detections"] == 0
+        assert det["boxes"].shape == (0, 4)
+        assert det["scores"].shape == (0,)
+        assert det["classes"].shape == (0,)
+
+    def test_postprocess_falls_back_to_classes_key(self):
+        m = _bare(LibreOMDetTurbo)
+        m.set_classes(["cat", "dog"])
+
+        class Processor:
+            def post_process_grounded_object_detection(self, *args, **kwargs):
+                # Keep compatibility with processors that use the "classes" key.
+                return [
+                    {
+                        "boxes": torch.tensor([[1.0, 2.0, 10.0, 12.0]]),
+                        "scores": torch.tensor([0.9]),
+                        "classes": torch.tensor([1]),
+                    }
+                ]
+
+        m.processor = Processor()
+        det = m._postprocess(object(), 0.3, 0.45, (20, 20))
         assert det["num_detections"] == 1
         assert det["classes"].tolist() == [1]
 

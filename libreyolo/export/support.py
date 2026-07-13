@@ -676,6 +676,7 @@ _FAMILY_BLOCKS = {
     "mobilesam": "Promptable model export is out of scope for the v1 runtime contract.",
     "grounding_dino": "Open-vocabulary runtime export is out of scope for v1.",
     "owlv2": "Open-vocabulary runtime export is out of scope for v1.",
+    "omdet_turbo": "Open-vocabulary runtime export is out of scope for v1.",
     "florence2": "Generative VLM export is out of scope for v1.",
     "kosmos2": "Generative VLM export is out of scope for v1.",
     "lfm2vl": "Generative VLM export is out of scope for v1.",

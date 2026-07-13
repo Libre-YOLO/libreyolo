@@ -211,8 +211,8 @@ They live in sibling factories with their own contracts:
 
 - **`LibreOpenVocab`** (`models/openvocab/`) — text-conditioned open-vocabulary
   detectors returning standard detection `Results`: Grounding DINO
-  (`models/grounding_dino/`) and OWLv2 (`models/owlv2/`) are aliased today;
-  the native OMDet-Turbo port (`models/omdet_turbo/`) is built for this tier.
+  (`models/grounding_dino/`), OWLv2 (`models/owlv2/`), and OMDet-Turbo, which
+  runs through `transformers` with no vendored model source.
   Shared towers live in `models/bert/` (text) and `models/swin/` (vision).
 - **`LibreSAM`** — promptable segmentation: SAM-1 and SAM-2 (`models/sam/`),
   MobileSAM (`models/mobilesam/`).

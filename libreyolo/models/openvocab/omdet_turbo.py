@@ -1,4 +1,4 @@
-"""OWLv2 open-vocabulary detector adapter."""
+"""OMDet-Turbo open-vocabulary detector adapter."""
 
 from __future__ import annotations
 
@@ -10,43 +10,55 @@ from .base import _INSTALL_HINT
 from .base import LibreOpenVocabDetector
 
 
-class LibreOWLv2(LibreOpenVocabDetector):
-    """OWLv2 zero-shot object detector loaded through ``transformers``."""
+class LibreOMDetTurbo(LibreOpenVocabDetector):
+    """OMDet-Turbo real-time zero-shot detector loaded through ``transformers``.
 
-    FAMILY = "owlv2"
-    FILENAME_PREFIX = "LibreOWLv2"
+    Unlike Grounding DINO, OMDet-Turbo decouples the class embeddings from the
+    task prompt, so its post-processing returns labels that map directly back to
+    the queried class list. There is no phrase-to-class disambiguation. It also
+    runs its own NMS inside ``post_process_grounded_object_detection``, which
+    takes the threshold as an argument, so this is the one family in the tier
+    that honours ``iou=`` (defaulting to ``NMS_THRESHOLD`` when it is unset).
+    """
+
+    FAMILY = "omdet_turbo"
+    FILENAME_PREFIX = "LibreOMDetTurbo"
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "b16": "LibreYOLO/LibreOWLv2b16",
-        "l14": "LibreYOLO/LibreOWLv2l14",
+        "t": "LibreYOLO/LibreOMDetTurbot",
     }
     # Informational only: the HF processor owns resizing and predict(imgsz=...)
-    # is rejected by the open-vocab base. Values mirror the published configs.
-    INPUT_SIZES: ClassVar[Dict[str, int]] = {"b16": 960, "l14": 1008}
-    DEFAULT_CONF: ClassVar[float] = 0.1
-    PROMPT_TEMPLATE: ClassVar[str] = "a photo of a {}"
+    # is rejected by the open-vocab base. Mirrors the published config image_size.
+    INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 640}
+    DEFAULT_CONF: ClassVar[float] = 0.3
+    # OMDet-Turbo suppresses boxes inside its own post-processing rather than
+    # through the LibreYOLO NMS path. Its processor takes the threshold as an
+    # argument, so iou= is honoured; this is the default when iou= is unset.
+    NMS_THRESHOLD: ClassVar[float] = 0.5
+    TASK_TEMPLATE: ClassVar[str] = "Detect {}."
 
     def _load_pretrained(self, snapshot_dir: str):
         try:
-            from transformers import AutoProcessor, Owlv2ForObjectDetection
+            from transformers import AutoProcessor, OmDetTurboForObjectDetection
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
-        model = Owlv2ForObjectDetection.from_pretrained(
+        model = OmDetTurboForObjectDetection.from_pretrained(
             snapshot_dir, dtype=self._resolve_dtype()
         )
         processor = AutoProcessor.from_pretrained(snapshot_dir)
         return model, processor
 
-    def _text_labels(self) -> list[list[str]]:
-        labels = []
-        for class_id in range(len(self.names)):
-            name = str(self.names[class_id]).strip().lower()
-            labels.append(self.PROMPT_TEMPLATE.format(name))
-        return [labels]
+    def _class_names(self) -> list[str]:
+        return [str(self.names[class_id]) for class_id in range(len(self.names))]
+
+    def _task_prompt(self, names: list[str]) -> str:
+        return self.TASK_TEMPLATE.format(", ".join(names))
 
     def _build_inputs(self, img: Any) -> Any:
+        names = self._class_names()
         return self.processor(
-            text=self._text_labels(),
             images=img,
+            text=names,
+            task=self._task_prompt(names),
             return_tensors="pt",
         )
 
@@ -61,18 +73,22 @@ class LibreOWLv2(LibreOpenVocabDetector):
         **kwargs,
     ) -> Dict:
         width, height = original_size
+        names = self._class_names()
         results = self.processor.post_process_grounded_object_detection(
             output,
+            text_labels=names,
             threshold=float(conf_thres),
+            nms_threshold=float(iou_thres),
             target_sizes=[(height, width)],
-            text_labels=self._text_labels(),
         )
         result = results[0]
         boxes = result.get("boxes", [])
         scores = result.get("scores", [])
-        raw_labels = result.get("labels")
+        raw_labels = result.get("text_labels")
         if raw_labels is None:
-            raw_labels = result.get("text_labels", [])
+            raw_labels = result.get("classes")
+        if raw_labels is None:
+            raw_labels = result.get("labels", [])
 
         class_ids = self._labels_to_class_ids(raw_labels)
         boxes_t = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
@@ -96,4 +112,4 @@ class LibreOWLv2(LibreOpenVocabDetector):
         )
 
 
-__all__ = ["LibreOWLv2"]
+__all__ = ["LibreOMDetTurbo"]

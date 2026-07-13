@@ -19,9 +19,23 @@ labels directly.
 |---|---|---|---|
 | `grounding-dino`, `grounding-dino-tiny`, `grounding-dino-base` | Grounding DINO | tiny | Apache-2.0 |
 | `owlv2`, `owlv2-base`, `owlv2-large` | OWLv2 | base-patch16 ensemble | Apache-2.0 |
+| `omdet-turbo`, `omdet`, `omdet-turbo-swin-tiny` | OMDet-Turbo | Swin-T | Apache-2.0 |
 
 The authoritative alias table is `_ALIASES` in
 `libreyolo/models/openvocab/__init__.py`.
+
+OMDet-Turbo is the real-time member of the tier. It is an RT-DETR-based
+open-vocabulary detector that decouples class embeddings from a task prompt and
+runs its own NMS in post-processing. Its post-processing returns labels that
+map directly back to the queried class list (no phrase disambiguation like
+Grounding DINO). It does not expose `text_threshold=`.
+
+`LibreOMDetTurbo.predict()` calls the maintained `transformers` implementation,
+including its processor and post-processing; LibreYOLO vendors no OMDet-Turbo
+model source. Because that post-processing takes the suppression threshold as
+an argument, OMDet-Turbo is the one family in the tier that honours `iou=`;
+the other two suppress nothing and warn that `iou=` is ignored. Export stays
+unsupported under ADR 0008.
 
 Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 
@@ -29,6 +43,7 @@ Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 - `LibreYOLO/LibreGroundingDINOb`
 - `LibreYOLO/LibreOWLv2b16`
 - `LibreYOLO/LibreOWLv2l14`
+- `LibreYOLO/LibreOMDetTurbot`
 
 The model cards in those repos record the original upstream source repos.
 
@@ -50,7 +65,7 @@ string, empty lists, blank labels, and case-insensitive duplicates.
 
 ## Thresholds
 
-`conf=` is the box-score threshold for both families.
+`conf=` is the box-score threshold for all three families.
 
 Grounding DINO also has a text-token threshold. LibreYOLO exposes it as
 `text_threshold=` on prediction calls:
@@ -59,7 +74,7 @@ Grounding DINO also has a text-token threshold. LibreYOLO exposes it as
 model.predict("image.jpg", conf=0.25, text_threshold=0.25)
 ```
 
-OWLv2 does not have this threshold and rejects `text_threshold=`.
+OWLv2 and OMDet-Turbo do not have this threshold and reject `text_threshold=`.
 
 ## Grounding DINO Phrase Mapping
 
