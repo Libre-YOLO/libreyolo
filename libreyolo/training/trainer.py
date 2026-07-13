@@ -99,6 +99,32 @@ _TRAINING_CHECKPOINT_CORE_KEYS = set(REQUIRED_CHECKPOINT_METADATA_KEYS) | {
 }
 
 
+def _classification_drop_last(
+    visible_samples: int,
+    batch_size: int,
+    minimum_batch_size: int,
+    *,
+    family: str,
+) -> bool:
+    """Drop only a partial batch that violates a classifier's batch contract."""
+    if minimum_batch_size < 1:
+        raise ValueError(
+            f"{family} declares invalid MIN_TRAIN_BATCH_SIZE={minimum_batch_size}"
+        )
+    if batch_size < minimum_batch_size:
+        raise ValueError(
+            f"{family} training needs an effective per-rank batch size >= "
+            f"{minimum_batch_size}, got {batch_size}"
+        )
+    if visible_samples < minimum_batch_size:
+        raise ValueError(
+            f"{family} training needs at least {minimum_batch_size} samples per rank, "
+            f"got {visible_samples}"
+        )
+    remainder = visible_samples % batch_size
+    return 0 < remainder < minimum_batch_size
+
+
 def _atomic_save_checkpoint(checkpoint: Dict[str, Any], targets: List[Path]) -> None:
     """Validate once and atomically replace each target with error rollback.
 
@@ -1057,24 +1083,27 @@ class BaseTrainer(ABC):
         )
 
         per_rank_batch = self._per_rank_batch_size()
-        if per_rank_batch < 2:
-            raise ValueError(
-                "Classification training needs an effective per-rank batch size >= 2 "
-                f"(got {per_rank_batch} from batch={self.config.batch}, "
-                f"world_size={self.world_size}). A batch of 1 breaks the BatchNorm in "
-                "the pooled classifier head (e.g. MobileNetV4/EfficientNetV2 norm_head). "
-                "Increase batch (or reduce world_size)."
-            )
+        family = str(getattr(wrapper, "family", "classification"))
+        minimum_batch_size = int(
+            getattr(wrapper, "MIN_TRAIN_BATCH_SIZE", 1)
+        )
         sampler = None
         if self.is_distributed:
             from torch.utils.data.distributed import DistributedSampler
 
+            # Prefer truncation when every rank still receives a valid batch.
+            # Otherwise let DistributedSampler pad evenly; this can turn a
+            # one-sample shard into a valid two-sample MobileNetV4 shard.
+            sampler_drop_last = len(train_dataset) >= self.world_size and (
+                minimum_batch_size == 1
+                or len(train_dataset) // self.world_size >= minimum_batch_size
+            )
             sampler = DistributedSampler(
                 train_dataset,
                 num_replicas=self.world_size,
                 rank=self.rank,
                 shuffle=True,
-                drop_last=len(train_dataset) >= self.world_size,
+                drop_last=sampler_drop_last,
                 seed=distributed_sampler_seed(self.config.seed),
             )
 
@@ -1086,6 +1115,12 @@ class BaseTrainer(ABC):
             visible_samples = len(sampler) if sampler is not None else len(train_dataset)
         except TypeError:
             visible_samples = len(train_dataset)
+        drop_last = _classification_drop_last(
+            visible_samples,
+            per_rank_batch,
+            minimum_batch_size,
+            family=family,
+        )
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=per_rank_batch,
@@ -1094,7 +1129,7 @@ class BaseTrainer(ABC):
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
             collate_fn=collate_fn,
-            drop_last=visible_samples >= per_rank_batch,
+            drop_last=drop_last,
             **dataloader_seed_kwargs(
                 self.config.seed,
                 rank=self.rank,

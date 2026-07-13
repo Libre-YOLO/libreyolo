@@ -168,14 +168,17 @@ class TestCallDefaults:
         with pytest.raises(ValueError, match="augment=True"):
             m("image.jpg", augment=True)
 
-    def test_iou_warns_because_hf_postprocess_has_no_nms(self, monkeypatch):
+    def test_iou_is_forwarded_for_shared_nms(self, monkeypatch):
+        captured = {}
+
         def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
             return "ok"
 
         monkeypatch.setattr(BaseModel, "__call__", fake_call)
         m = _bare(LibreOWLv2)
-        with pytest.warns(UserWarning, match="iou=.+ignored"):
-            assert m("image.jpg", iou=0.7) == "ok"
+        assert m("image.jpg", iou=0.7) == "ok"
+        assert captured["iou"] == pytest.approx(0.7)
 
     def test_track_raises_in_v1(self):
         m = _bare(LibreOWLv2)
@@ -184,6 +187,11 @@ class TestCallDefaults:
 
 
 class TestGroundingDinoPhraseMapping:
+    def test_prompt_does_not_double_leading_article(self):
+        m = _bare(LibreGroundingDINO)
+        m.set_classes(["a red car", "an apple"])
+        assert m._prompt() == "a red car. an apple."
+
     def test_exact_match(self):
         m = _bare(LibreGroundingDINO)
         m.set_classes(["remote control", "cat"])
@@ -329,6 +337,26 @@ class TestOWLv2Mapping:
         m.set_classes(["Remote Control", "Cat"])
         assert m._text_labels() == [["a photo of a remote control", "a photo of a cat"]]
 
+    def test_prompt_template_does_not_double_leading_articles(self):
+        m = _bare(LibreOWLv2)
+        m.set_classes(["a Red Car", "an Apple", "the Cat"])
+        assert m._text_labels() == [
+            ["a photo of a red car", "a photo of an apple", "a photo of the cat"]
+        ]
+
+    @pytest.mark.parametrize(
+        "labels",
+        [
+            torch.tensor([1.9, float("nan"), float("inf"), 1.0]),
+            [1.9, float("nan"), float("inf"), 1.0],
+        ],
+    )
+    def test_fractional_and_nonfinite_query_ids_are_rejected(self, labels):
+        m = _bare(LibreOWLv2)
+        m.set_classes(["cat", "dog"])
+
+        assert m._labels_to_class_ids(labels).tolist() == [-1, -1, -1, 1]
+
     def test_postprocess_filters_invalid_query_ids(self):
         m = _bare(LibreOWLv2)
         m.set_classes(["cat", "dog"])
@@ -365,3 +393,43 @@ class TestDetectionDict:
         assert det["boxes"].device.type == "cpu"
         assert det["scores"].device.type == "cpu"
         assert det["classes"].device.type == "cpu"
+
+    def test_shared_finalizer_validates_bounds_shape_and_runs_class_aware_nms(self):
+        m = _bare(LibreOWLv2)
+        det = m._detections_to_dict(
+            [
+                [-3.0, -2.0, 12.0, 12.0],
+                [0.0, 0.0, 11.0, 11.0],
+                [0.0, 0.0, 11.0, 11.0],
+                [float("nan"), 0.0, 5.0, 5.0],
+                [18.0, 18.0, 30.0, 30.0],
+                [3.0, 2.0, 1.0, 8.0],
+            ],
+            [0.9, 0.8, 0.7, 1.0, 0.6, 0.5],
+            [0, 0, 1, 0, 1, 0],
+            conf_thres=0.1,
+            original_size=(20, 20),
+            max_det=10,
+            iou_thres=0.5,
+        )
+
+        assert det["boxes"].tolist() == [
+            [0.0, 0.0, 12.0, 12.0],
+            [0.0, 0.0, 11.0, 11.0],
+            [18.0, 18.0, 20.0, 20.0],
+        ]
+        assert det["classes"].tolist() == [0, 1, 1]
+
+    def test_malformed_box_shape_returns_empty_contract(self):
+        m = _bare(LibreOWLv2)
+        det = m._detections_to_dict(
+            [1.0, 2.0, 3.0],
+            [0.9],
+            [0],
+            conf_thres=0.1,
+            original_size=(20, 20),
+            max_det=10,
+        )
+
+        assert det["num_detections"] == 0
+        assert det["boxes"].shape == (0, 4)

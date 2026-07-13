@@ -5,6 +5,7 @@ import pytest
 from libreyolo.models.vlm.parsing import (
     build_detection_dict,
     extract_detections,
+    finalize_detection_dict,
     normalize_bbox,
     resolve_label,
 )
@@ -228,6 +229,16 @@ class TestBuildDetectionDict:
             "classes": [],
             "num_detections": 0,
         }
+
+    def test_exact_duplicate_keeps_highest_score_before_deduplication(self):
+        det = finalize_detection_dict(
+            [[1, 1, 5, 5], [1, 1, 5, 5]],
+            [0.2, 0.9],
+            [0, 0],
+            (10, 10),
+        )
+
+        assert det["scores"] == [0.9]
 
     def test_box_format_xywh(self):
         # x,y,w,h: [0.25,0.25,0.25,0.5] -> xyxy [0.25,0.25,0.5,0.75] -> px

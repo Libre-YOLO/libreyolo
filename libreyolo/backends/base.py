@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from ..data.obb import scale_xywhr
 from ..models.yolo9.utils import (
     _YOLO9_MAX_NMS_CANDIDATES,
     postprocess as yolo9_postprocess,
@@ -360,16 +361,28 @@ def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
 
 def _logsumexp_np(values: np.ndarray, axis: int) -> np.ndarray:
     max_values = np.max(values, axis=axis, keepdims=True)
-    return np.squeeze(max_values, axis=axis) + np.log(
-        np.sum(np.exp(values - max_values), axis=axis)
+    finite_max = np.isfinite(max_values)
+    shifted = np.full_like(values, -np.inf)
+    np.subtract(
+        values,
+        max_values,
+        out=shifted,
+        where=np.broadcast_to(finite_max, values.shape),
     )
+    exp_sum = np.sum(np.exp(shifted), axis=axis)
+    log_sum = np.zeros_like(exp_sum)
+    np.log(exp_sum, out=log_sum, where=exp_sum > 0)
+    result = np.squeeze(max_values, axis=axis) + log_sum
+    return np.where(np.squeeze(finite_max, axis=axis), result, -np.inf)
 
 
 def _rfdetr_keypoint_log_mean_trace_np(active_keypoints: np.ndarray) -> np.ndarray:
-    log_l11 = active_keypoints[..., 4]
-    l21 = active_keypoints[..., 5]
-    log_l22 = active_keypoints[..., 6]
-    w_find = 1.0 / (1.0 + np.exp(-active_keypoints[..., 2]))
+    finite = np.isfinite(active_keypoints[..., [0, 1, 2, 4, 5, 6]]).all(axis=-1)
+    safe_keypoints = np.where(finite[..., None], active_keypoints, 0.0)
+    log_l11 = safe_keypoints[..., 4]
+    l21 = safe_keypoints[..., 5]
+    log_l22 = safe_keypoints[..., 6]
+    w_find = 1.0 / (1.0 + np.exp(-safe_keypoints[..., 2]))
     log_t1 = -2.0 * log_l11
     log_t2 = -2.0 * log_l22
     log_t3 = 2.0 * np.log(np.clip(np.abs(l21), 1e-12, None)) + log_t1 + log_t2
@@ -378,9 +391,18 @@ def _rfdetr_keypoint_log_mean_trace_np(active_keypoints: np.ndarray) -> np.ndarr
         axis=-1,
     )
     log_w_find = np.log(np.clip(w_find, 1e-12, None))
-    return _logsumexp_np(log_trace_sigma + log_w_find, axis=-1) - _logsumexp_np(
-        log_w_find,
-        axis=-1,
+    masked_log_w_find = np.where(finite, log_w_find, -np.inf)
+    log_numerator = _logsumexp_np(
+        np.where(finite, log_trace_sigma + log_w_find, -np.inf), axis=-1
+    )
+    log_denominator = _logsumexp_np(masked_log_w_find, axis=-1)
+    has_finite = finite.any(axis=-1)
+    result = np.zeros_like(log_numerator)
+    np.subtract(log_numerator, log_denominator, out=result, where=has_finite)
+    return np.where(
+        has_finite & np.isfinite(result),
+        result,
+        np.full_like(result, np.inf),
     )
 
 
@@ -1308,6 +1330,8 @@ class BaseBackend(ABC):
             keypoints_all = np.asarray(all_outputs[1][0], dtype=np.float32)
 
         if self.model_family == "yolo9_e2e" and self.task == "detect":
+            valid_geometry = np.isfinite(boxes_input_all).all(axis=1, keepdims=True)
+            scores = np.where(np.isfinite(scores) & valid_geometry, scores, -np.inf)
             topk_anchors = min(max_det, scores.shape[0])
             if topk_anchors == 0 or scores.shape[-1] == 0:
                 return (
@@ -1828,13 +1852,18 @@ class BaseBackend(ABC):
             else:
                 raw_masks = all_outputs[2][0]
 
-        if raw_keypoint_output is not None and not getattr(
-            self, "num_keypoints_per_class", None
-        ):
-            public_classes = int(self.nb_classes)
-            if 0 < public_classes < logits.shape[-1]:
-                logits = logits[:, :public_classes]
+        finite_logits = np.isfinite(logits)
         scores = 1.0 / (1.0 + np.exp(-logits.astype(np.float64))).astype(np.float32)
+        finite_geometry = np.isfinite(boxes_all).all(axis=-1)
+        if raw_angles is not None:
+            finite_geometry &= np.isfinite(raw_angles).reshape(len(boxes_all), -1).all(
+                axis=1
+            )
+        scores = np.where(
+            finite_logits & finite_geometry[:, None],
+            scores,
+            -np.inf,
+        )
         num_queries, num_classes = scores.shape
         if raw_keypoint_output is not None:
             raw_keypoints = self._normalize_rfdetr_keypoint_output(
@@ -1842,21 +1871,68 @@ class BaseBackend(ABC):
                 query_count=num_queries,
                 num_classes=num_classes,
             )
+
+        class_id_map = np.arange(num_classes, dtype=np.int64)
+        schema = getattr(self, "num_keypoints_per_class", None)
+        has_grouppose_layout = (
+            self.task == "pose"
+            and raw_keypoints is not None
+            and raw_keypoints.ndim == 3
+            and raw_keypoints.shape[-1] >= 7
+            and num_classes > 1
+            and raw_keypoints.shape[1] % num_classes == 0
+        )
+        if self.task == "pose" and schema:
+            schema_counts = np.asarray([int(count) for count in schema], dtype=np.int64)
+            if schema_counts.size != num_classes:
+                raise ValueError(
+                    "Invalid RF-DETR GroupPose num_keypoints_per_class metadata "
+                    f"for {num_classes} classes: {list(schema_counts)}"
+                )
+            class_id_map.fill(-1)
+            keypoint_classes = np.flatnonzero(schema_counts > 0)
+            class_id_map[keypoint_classes] = np.arange(len(keypoint_classes), dtype=np.int64)
+        elif has_grouppose_layout and self.nb_classes == num_classes - 1:
+            class_id_map.fill(-1)
+            class_id_map[1:] = np.arange(num_classes - 1, dtype=np.int64)
+        elif num_classes == 91 and self.nb_classes == 80:
+            from ..models.rfdetr.model import _COCO91_TO_COCO80
+
+            class_id_map = np.asarray(
+                [_COCO91_TO_COCO80.get(class_id, -1) for class_id in range(num_classes)],
+                dtype=np.int64,
+            )
+        elif 0 < int(self.nb_classes) < num_classes:
+            class_id_map[int(self.nb_classes) :] = -1
+
+        valid_internal_classes = np.flatnonzero(class_id_map >= 0)
+        candidate_scores = scores[:, valid_internal_classes]
         model_size = self.model_size or getattr(self, "size", None)
         num_select = (
             _rfdetr_num_select(self.task, model_size)
             if int(max_det) == 300
             else int(max_det)
         )
-        k = min(
-            num_select,
-            num_queries * num_classes,
+        k = max(
+            0,
+            min(
+                num_select,
+                num_queries * len(valid_internal_classes),
+            ),
         )
-        flat_indexes = np.argpartition(scores.reshape(-1), -k)[-k:]
-        flat_indexes = flat_indexes[np.argsort(scores.reshape(-1)[flat_indexes])[::-1]]
-        max_scores = scores.reshape(-1)[flat_indexes]
-        query_idx = flat_indexes // num_classes
-        class_ids = flat_indexes % num_classes
+        flat_scores = candidate_scores.reshape(-1)
+        if k > 0:
+            flat_indexes = np.argpartition(-flat_scores, k - 1)[:k]
+            flat_indexes = flat_indexes[np.argsort(flat_scores[flat_indexes])[::-1]]
+        else:
+            flat_indexes = np.empty(0, dtype=np.int64)
+        max_scores = flat_scores[flat_indexes]
+        candidate_class_count = len(valid_internal_classes)
+        query_idx = flat_indexes // max(candidate_class_count, 1)
+        internal_class_ids = valid_internal_classes[
+            flat_indexes % max(candidate_class_count, 1)
+        ]
+        class_ids = class_id_map[internal_class_ids]
         boxes_raw = boxes_all[query_idx]
         angles_raw = raw_angles[query_idx] if raw_angles is not None else None
         keypoints_raw = (
@@ -1865,14 +1941,7 @@ class BaseBackend(ABC):
         if raw_masks is not None:
             raw_masks = raw_masks[query_idx]
 
-        if (
-            self.task == "pose"
-            and keypoints_raw is not None
-            and keypoints_raw.ndim == 3
-            and keypoints_raw.shape[-1] >= 7
-            and num_classes > 1
-            and keypoints_raw.shape[1] % num_classes == 0
-        ):
+        if has_grouppose_layout and keypoints_raw is not None:
             schema = getattr(self, "num_keypoints_per_class", None)
             keypoint_counts = None
             if schema:
@@ -1900,7 +1969,7 @@ class BaseBackend(ABC):
                 max_num_keypoints,
                 keypoints_raw.shape[-1],
             )
-            selected = grouped[np.arange(len(class_ids)), class_ids]
+            selected = grouped[np.arange(len(internal_class_ids)), internal_class_ids]
 
             # GroupPose exports use internal class 0 for no-keypoint detections
             # and keypoint-bearing classes after it. Public pose labels are
@@ -1911,8 +1980,9 @@ class BaseBackend(ABC):
                 )
                 if self.nb_classes == num_classes - 1:
                     keypoint_counts[0] = 0
-            active_counts = keypoint_counts[class_ids]
+            active_counts = keypoint_counts[internal_class_ids]
             valid_pose_class = active_counts > 0
+            usable_pose = np.zeros(len(selected), dtype=bool)
 
             if np.any(valid_pose_class):
                 trace_alpha = 0.2
@@ -1920,13 +1990,18 @@ class BaseBackend(ABC):
                 for class_idx, active_count in enumerate(keypoint_counts):
                     if active_count <= 0:
                         continue
-                    class_mask = class_ids == class_idx
+                    class_mask = internal_class_ids == class_idx
                     if not np.any(class_mask):
                         continue
                     log_mean_traces[class_mask] = _rfdetr_keypoint_log_mean_trace_np(
                         selected[class_mask, :active_count]
                     )
-                max_scores = max_scores * np.exp(-trace_alpha * log_mean_traces)
+                max_scores = np.nan_to_num(
+                    max_scores * np.exp(-trace_alpha * log_mean_traces),
+                    nan=0.0,
+                    posinf=1.0,
+                    neginf=0.0,
+                ).clip(0.0, 1.0)
 
             keypoints_selected = np.zeros(
                 (len(selected), max_num_keypoints, 3),
@@ -1939,6 +2014,9 @@ class BaseBackend(ABC):
             for row_idx, active_count in enumerate(active_counts):
                 if active_count <= 0:
                     continue
+                usable_pose[row_idx] = np.isfinite(
+                    selected[row_idx, :active_count, :3]
+                ).all(axis=-1).any()
                 keypoints_selected[row_idx, :active_count, :3] = selected[
                     row_idx,
                     :active_count,
@@ -1946,13 +2024,15 @@ class BaseBackend(ABC):
                 ]
                 active_keypoint_mask[row_idx, :active_count] = True
 
-            kp_classes = np.flatnonzero(keypoint_counts > 0)
-            remap = np.full(num_classes, -1, dtype=class_ids.dtype)
-            remap[kp_classes] = np.arange(len(kp_classes), dtype=class_ids.dtype)
+            # Keep exported runtime behavior aligned with native GroupPose:
+            # poses with no usable public keypoint must fail the standard
+            # ``score > conf`` filter instead of exposing a confident zero pose.
+            max_scores[~usable_pose] = 0.0
 
             boxes_raw = boxes_raw[valid_pose_class]
             max_scores = max_scores[valid_pose_class]
-            class_ids = remap[class_ids[valid_pose_class]]
+            class_ids = class_ids[valid_pose_class]
+            internal_class_ids = internal_class_ids[valid_pose_class]
             if angles_raw is not None:
                 angles_raw = angles_raw[valid_pose_class]
             if keypoints_raw is not None:
@@ -1986,44 +2066,6 @@ class BaseBackend(ABC):
                 return boxes_raw, max_scores, class_ids, None, None, keypoints_raw
             return boxes_raw, max_scores, class_ids, None
 
-        # COCO 91→80 class mapping
-        if num_classes == 91 and self.nb_classes == 80:
-            from ..models.rfdetr.model import _COCO91_TO_COCO80
-
-            mapped = np.array([_COCO91_TO_COCO80.get(int(c), -1) for c in class_ids])
-            valid = mapped >= 0
-            boxes_raw = boxes_raw[valid]
-            max_scores = max_scores[valid]
-            class_ids = mapped[valid]
-            if angles_raw is not None:
-                angles_raw = angles_raw[valid]
-            if keypoints_raw is not None:
-                keypoints_raw = keypoints_raw[valid]
-                if grouppose_active_keypoints is not None:
-                    grouppose_active_keypoints = grouppose_active_keypoints[valid]
-            if raw_masks is not None:
-                raw_masks = raw_masks[valid]
-
-        if len(boxes_raw) == 0:
-            if self.task == "obb":
-                return (
-                    boxes_raw,
-                    max_scores,
-                    class_ids,
-                    None,
-                    np.zeros((0, 7), dtype=np.float32),
-                )
-            if self.task == "pose" and keypoints_raw is not None:
-                return (
-                    boxes_raw,
-                    max_scores,
-                    class_ids,
-                    None,
-                    None,
-                    keypoints_raw,
-                )
-            return boxes_raw, max_scores, class_ids, None
-
         cx, cy, w, h = (
             boxes_raw[:, 0],
             boxes_raw[:, 1],
@@ -2042,15 +2084,17 @@ class BaseBackend(ABC):
         obb_out = None
         if angles_raw is not None:
             angles = np.asarray(angles_raw, dtype=np.float32).reshape(-1)
-            obb_out = np.stack(
+            obb_xywhr = scale_xywhr(
+                np.stack([cx, cy, w, h, angles], axis=1),
+                float(orig_w),
+                float(orig_h),
+                min_size=1e-4,
+            )
+            obb_out = np.concatenate(
                 [
-                    cx * orig_w,
-                    cy * orig_h,
-                    w * orig_w,
-                    h * orig_h,
-                    angles,
-                    max_scores,
-                    class_ids.astype(np.float32),
+                    obb_xywhr,
+                    max_scores[:, None],
+                    class_ids.astype(np.float32)[:, None],
                 ],
                 axis=1,
             ).astype(np.float32, copy=False)
@@ -2070,13 +2114,27 @@ class BaseBackend(ABC):
         keypoints_out = None
         if keypoints_raw is not None:
             keypoints_out = np.asarray(keypoints_raw, dtype=np.float32).copy()
+            public_width = min(keypoints_out.shape[-1], 3)
+            finite_keypoints = np.isfinite(
+                keypoints_out[..., :public_width]
+            ).all(axis=-1)
+            keypoints_out = np.where(
+                finite_keypoints[..., None],
+                keypoints_out,
+                np.zeros_like(keypoints_out),
+            )
             keypoints_out[..., 0] *= float(orig_w)
             keypoints_out[..., 1] *= float(orig_h)
             if keypoints_out.shape[-1] == 2:
-                visibility = np.ones((*keypoints_out.shape[:-1], 1), dtype=np.float32)
+                visibility = finite_keypoints[..., None].astype(np.float32)
                 keypoints_out = np.concatenate([keypoints_out, visibility], axis=-1)
             else:
                 keypoints_out[..., 2] = 1.0 / (1.0 + np.exp(-keypoints_out[..., 2]))
+                keypoints_out[..., 2] = np.where(
+                    finite_keypoints,
+                    keypoints_out[..., 2],
+                    0.0,
+                )
                 keypoints_out = keypoints_out[..., :3]
             if grouppose_active_keypoints is not None:
                 keypoints_out[~grouppose_active_keypoints] = 0.0

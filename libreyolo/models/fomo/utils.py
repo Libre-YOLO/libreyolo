@@ -56,20 +56,26 @@ def decode_points_from_logits(
             continue
 
         scores = prob[ys, xs]
-        order = torch.argsort(scores, descending=True)
-        suppressed = torch.zeros((h, w), dtype=torch.bool, device=prob.device)
+        order = torch.argsort(scores, descending=True, stable=True)
+        suppressed = torch.zeros(
+            (probs.shape[1] - class_offset, h, w),
+            dtype=torch.bool,
+            device=prob.device,
+        )
         kept = []
         for idx in order:
             y = int(ys[idx])
             x = int(xs[idx])
-            if suppressed[y, x]:
+            class_channel = int(cls_idx[b, y, x])
+            class_index = class_channel - class_offset
+            if suppressed[class_index, y, x]:
                 continue
             kept.append(torch.stack((xs[idx].float(), ys[idx].float(), cls_idx[b, y, x].float(), scores[idx].float())))
             y0 = max(0, y - nms_radius)
             y1 = min(h, y + nms_radius + 1)
             x0 = max(0, x - nms_radius)
             x1 = min(w, x + nms_radius + 1)
-            suppressed[y0:y1, x0:x1] = True
+            suppressed[class_index, y0:y1, x0:x1] = True
             if max_points is not None and len(kept) >= max_points:
                 break
         batch_points.append(torch.stack(kept) if kept else torch.zeros((0, 4), dtype=pred_logits.dtype, device=pred_logits.device))

@@ -220,6 +220,52 @@ def test_yolo9_e2e_backend_uses_native_topk_anchor_ranking():
     np.testing.assert_allclose(boxes[0], [20, 20, 25, 25])
 
 
+def test_yolo9_e2e_backend_masks_nan_before_anchor_topk():
+    backend = _DummyBackend("yolo9_e2e")
+    output = np.zeros((1, 5, 2), dtype=np.float32)
+    output[0, :4, :] = np.array(
+        [[10, 30], [10, 30], [20, 40], [20, 40]],
+        dtype=np.float32,
+    )
+    output[0, 4, :] = np.array([np.nan, 0.9], dtype=np.float32)
+
+    boxes, scores, classes = backend._parse_yolo9(
+        [output],
+        effective_imgsz=100,
+        orig_w=100,
+        orig_h=100,
+        conf=0.25,
+        max_det=1,
+    )
+
+    np.testing.assert_allclose(boxes, [[30, 30, 40, 40]])
+    np.testing.assert_allclose(scores, [0.9])
+    np.testing.assert_array_equal(classes, [0])
+
+
+def test_yolo9_e2e_backend_masks_nonfinite_boxes_before_anchor_topk():
+    backend = _DummyBackend("yolo9_e2e")
+    output = np.zeros((1, 5, 2), dtype=np.float32)
+    output[0, :4, :] = np.array(
+        [[np.nan, 30], [10, 30], [20, 40], [20, 40]],
+        dtype=np.float32,
+    )
+    output[0, 4, :] = np.array([0.99, 0.9], dtype=np.float32)
+
+    boxes, scores, classes = backend._parse_yolo9(
+        [output],
+        effective_imgsz=100,
+        orig_w=100,
+        orig_h=100,
+        conf=0.25,
+        max_det=1,
+    )
+
+    np.testing.assert_allclose(boxes, [[30, 30, 40, 40]])
+    np.testing.assert_allclose(scores, [0.9])
+    np.testing.assert_array_equal(classes, [0])
+
+
 def test_yolox_backend_recomputes_validation_letterbox_ratio():
     backend = _DummyBackend("yolox")
     # Canvas-space xywh for an original 200x100 image letterboxed to 100x100.
@@ -311,7 +357,36 @@ def test_rfdetr_backend_uses_topk_over_queries_and_classes():
     np.testing.assert_allclose(parsed_boxes[1], [37.5, 37.5, 62.5, 62.5])
 
 
+@pytest.mark.parametrize("invalid_field", ["logit", "box"])
+def test_rfdetr_backend_filters_nonfinite_candidates_before_topk(invalid_field):
+    backend = _DummyBackend("rfdetr")
+    boxes = np.array(
+        [[[0.2, 0.2, 0.1, 0.1], [0.7, 0.7, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    logits = np.array([[[8.0], [4.0]]], dtype=np.float32)
+    if invalid_field == "logit":
+        logits[0, 0, 0] = np.nan
+    else:
+        boxes[0, 0, 0] = np.nan
+
+    parsed_boxes, scores, classes, masks = backend._parse_rfdetr(
+        [boxes, logits],
+        orig_w=100,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert masks is None
+    np.testing.assert_allclose(scores, [1.0 / (1.0 + np.exp(-4.0))])
+    np.testing.assert_allclose(parsed_boxes, [[65.0, 65.0, 75.0, 75.0]])
+    np.testing.assert_array_equal(classes, [0])
+
+
 def test_rfdetr_obb_backend_parses_angle_output():
+    from libreyolo.postprocess.rfdetr import postprocess
+
     backend = _DummyBackend(
         "rfdetr",
         task="obb",
@@ -331,12 +406,49 @@ def test_rfdetr_obb_backend_parses_angle_output():
     assert masks is None
     assert classes.tolist() == [1]
     np.testing.assert_allclose(parsed_boxes[0], [80.0, 20.0, 120.0, 30.0])
+    native_obb = postprocess(
+        {
+            "pred_boxes": torch.from_numpy(boxes),
+            "pred_logits": torch.from_numpy(logits),
+            "pred_angles": torch.from_numpy(angles),
+        },
+        torch.tensor([[100, 200]]),
+        num_select=1,
+    )[0]["obb"]
     np.testing.assert_allclose(
-        obb[0],
-        [100.0, 25.0, 40.0, 10.0, 0.3, scores[0], 1.0],
-        rtol=1e-6,
-        atol=1e-6,
+        obb,
+        native_obb.numpy(),
+        rtol=1e-5,
+        atol=1e-5,
     )
+
+
+def test_rfdetr_obb_backend_filters_nonfinite_angles_before_topk():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="obb",
+        supported_tasks=("detect", "segment", "obb"),
+    )
+    boxes = np.array(
+        [[[0.2, 0.2, 0.1, 0.1], [0.7, 0.7, 0.1, 0.1]]],
+        dtype=np.float32,
+    )
+    logits = np.array([[[8.0], [4.0]]], dtype=np.float32)
+    angles = np.array([[[np.nan], [0.2]]], dtype=np.float32)
+
+    parsed_boxes, scores, classes, masks, obb = backend._parse_rfdetr(
+        [boxes, logits, angles],
+        orig_w=100,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert masks is None
+    assert np.isfinite(obb).all()
+    np.testing.assert_allclose(scores, [1.0 / (1.0 + np.exp(-4.0))])
+    np.testing.assert_allclose(parsed_boxes, [[65.0, 65.0, 75.0, 75.0]])
+    np.testing.assert_array_equal(classes, [0])
 
 
 def test_rfdetr_pose_backend_parses_keypoints_not_masks():
@@ -414,7 +526,90 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     assert 0.7 < scores[0] < 1.0
 
 
-def test_rfdetr_grouppose_backend_honors_requested_max_det():
+@pytest.mark.parametrize("invalid_channel", [0, 2, 4])
+def test_rfdetr_pose_backend_sanitizes_nonfinite_grouppose_keypoints(
+    invalid_channel,
+):
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+        num_keypoints_per_class=[0, 2],
+    )
+    backend.nb_classes = 1
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 4.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 4, 8), dtype=np.float32)
+    keypoints[0, 0, 2, :3] = [0.25, 0.5, 4.0]
+    keypoints[0, 0, 3, :3] = [0.75, 0.25, 2.0]
+    keypoints[0, 0, 2, invalid_channel] = np.nan
+
+    parsed = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+    parsed_keypoints = parsed[5]
+
+    assert parsed[0].shape == (1, 4)
+    assert np.isfinite(parsed_keypoints).all()
+    if invalid_channel in {0, 2}:
+        np.testing.assert_array_equal(parsed_keypoints[0, 0], np.zeros(3))
+
+
+def test_rfdetr_pose_backend_filters_all_unusable_grouppose_keypoints():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("detect", "pose"),
+        num_keypoints_per_class=[0, 2],
+    )
+    backend.nb_classes = 1
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[-10.0, 4.0]]], dtype=np.float32)
+    keypoints = np.zeros((1, 1, 4, 8), dtype=np.float32)
+    keypoints[0, 0, 2:, :7] = np.nan
+
+    parsed = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert parsed[0].shape == (0, 4)
+    assert parsed[1].shape == (0,)
+    assert parsed[2].shape == (0,)
+    assert parsed[5].shape == (0, 2, 3)
+
+
+def test_rfdetr_classic_pose_backend_sanitizes_nonfinite_keypoints():
+    backend = _DummyBackend(
+        "rfdetr",
+        task="pose",
+        supported_tasks=("pose",),
+    )
+    backend.nb_classes = 1
+    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
+    logits = np.array([[[4.0]]], dtype=np.float32)
+    keypoints = np.array([[[[np.nan, 0.5, 4.0]]]], dtype=np.float32)
+
+    parsed = backend._parse_rfdetr(
+        [boxes, logits, keypoints],
+        orig_w=200,
+        orig_h=100,
+        conf=0.0,
+        max_det=1,
+    )
+
+    assert np.isfinite(parsed[5]).all()
+    np.testing.assert_array_equal(parsed[5][0, 0], np.zeros(3))
+
+
+def test_rfdetr_grouppose_backend_filters_internal_classes_before_max_det():
     backend = _DummyBackend(
         "rfdetr",
         task="pose",
@@ -441,10 +636,10 @@ def test_rfdetr_grouppose_backend_honors_requested_max_det():
 
     assert masks is None
     assert obb is None
-    assert parsed_boxes.shape == (0, 4)
-    assert scores.shape == (0,)
-    assert classes.shape == (0,)
-    assert parsed_keypoints.shape == (0, 17, 3)
+    assert parsed_boxes.shape == (1, 4)
+    assert scores.shape == (1,)
+    assert classes.tolist() == [0]
+    assert parsed_keypoints.shape == (1, 17, 3)
 
 
 def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
@@ -1252,7 +1447,7 @@ def test_backend_sets_pose_metadata_attributes():
     assert backend.num_keypoints_per_class == [0, 17, 4]
 
 
-def test_rfdetr_classic_pose_slices_background_logits_before_topk():
+def test_rfdetr_classic_pose_filters_background_logits_before_topk():
     backend = _DummyBackend(
         "rfdetr",
         task="pose",

@@ -156,8 +156,38 @@ class _EmbTrack(_Track):
 
     def update_emb(self, emb: np.ndarray, alpha: float):
         """Blend a new detection embedding into the track EMA."""
-        self.emb = alpha * self.emb + (1 - alpha) * emb
-        self.emb /= np.linalg.norm(self.emb)
+        blended = alpha * self.emb + (1 - alpha) * emb
+        norm = np.linalg.norm(blended)
+        if not np.isfinite(norm) or norm <= np.finfo(blended.dtype).eps:
+            # Exact cancellation can occur for opposite unit vectors at
+            # alpha=0.5. Keeping the last valid appearance is safer than
+            # injecting NaN into every later association matrix.
+            return
+        self.emb = blended / norm
+
+
+def _validated_embeddings(embs: np.ndarray, count: int) -> np.ndarray:
+    """Return finite, non-zero, row-normalized embeddings for ``count`` boxes."""
+    embs = np.asarray(embs, dtype=np.float64)
+    if count == 0:
+        if embs.size == 0:
+            return np.empty((0, 1), dtype=np.float64)
+        if embs.ndim != 2 or embs.shape[0] != 0:
+            raise ValueError(
+                "appearance embeddings must have shape (N, D) aligned with detections"
+            )
+        return embs
+    if embs.ndim != 2 or embs.shape[0] != count or embs.shape[1] == 0:
+        raise ValueError(
+            "appearance embeddings must have shape (N, D) aligned with detections; "
+            f"got {embs.shape} for {count} detections"
+        )
+    if not np.all(np.isfinite(embs)):
+        raise ValueError("appearance embeddings must contain only finite values")
+    norms = np.linalg.norm(embs, axis=1)
+    if not np.all(np.isfinite(norms)) or np.any(norms <= 0):
+        raise ValueError("appearance embeddings must have non-zero finite norms")
+    return embs / norms[:, np.newaxis]
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +273,7 @@ class DeepOCSortTracker:
                 with ``dets``.
             orig: ``(N,)`` original detection indices for Results slicing.
         """
+        embs = _validated_embeddings(embs, len(dets))
         cfg = self.config
         self.frame_count += 1
 

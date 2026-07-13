@@ -153,6 +153,28 @@ def test_rfdetr_postprocess_tolerates_degenerate_obb_prediction():
     assert results[0]["obb"][0, 3] > 0.0
 
 
+def test_rfdetr_postprocess_filters_nonfinite_angles_before_topk():
+    from libreyolo.models.rfdetr.utils import postprocess
+
+    outputs = {
+        "pred_logits": torch.tensor([[[8.0], [4.0]]]),
+        "pred_boxes": torch.tensor(
+            [[[0.2, 0.2, 0.1, 0.1], [0.7, 0.7, 0.1, 0.1]]]
+        ),
+        "pred_angles": torch.tensor([[[float("nan")], [0.2]]]),
+    }
+
+    result = postprocess(
+        outputs,
+        torch.tensor([[100.0, 100.0]]),
+        num_select=1,
+    )[0]
+
+    assert torch.isfinite(result["obb"]).all()
+    torch.testing.assert_close(result["scores"], torch.tensor([4.0]).sigmoid())
+    torch.testing.assert_close(result["boxes"][0, :2], torch.tensor([65.0, 65.0]))
+
+
 def test_rfdetr_obb_load_rejects_detect_checkpoint_without_transfer_flag():
     from libreyolo.models.rfdetr.model import LibreRFDETR
 
@@ -325,6 +347,69 @@ def test_rfdetr_angle_loss_is_pi_periodic():
     losses = criterion.loss_angles(outputs, targets, indices, num_boxes=1.0)
 
     torch.testing.assert_close(losses["loss_angle"], torch.tensor(0.0), atol=1e-6, rtol=0.0)
+
+
+def test_rfdetr_obb_losses_accept_width_height_swap_with_quarter_turn():
+    from libreyolo.models.rfdetr.loss import SetCriterion
+
+    criterion = SetCriterion(
+        num_classes=1,
+        matcher=None,
+        weight_dict={"loss_bbox": 1.0, "loss_giou": 1.0, "loss_angle": 1.0},
+        focal_alpha=0.25,
+        losses=["boxes", "angles"],
+    )
+    outputs = {
+        "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.4]]]),
+        "pred_angles": torch.tensor([[[0.25]]]),
+    }
+    targets = [
+        {
+            "boxes": torch.tensor([[0.5, 0.5, 0.4, 0.2]]),
+            "angles": torch.tensor([0.25 + torch.pi / 2]),
+        }
+    ]
+    indices = [(torch.tensor([0]), torch.tensor([0]))]
+
+    losses = {
+        **criterion.loss_boxes(outputs, targets, indices, num_boxes=1.0),
+        **criterion.loss_angles(outputs, targets, indices, num_boxes=1.0),
+    }
+
+    for loss in losses.values():
+        torch.testing.assert_close(loss, torch.tensor(0.0), atol=1e-6, rtol=0.0)
+
+
+def test_rfdetr_obb_matcher_accepts_equivalent_target_encodings():
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    matcher = HungarianMatcher(
+        cost_class=0.0,
+        cost_bbox=5.0,
+        cost_giou=2.0,
+        cost_angle=1.0,
+    )
+    outputs = {
+        "pred_logits": torch.zeros(1, 2, 1),
+        "pred_boxes": torch.tensor(
+            [[[0.5, 0.5, 0.4, 0.2], [0.5, 0.5, 0.2, 0.4]]]
+        ),
+        "pred_angles": torch.full((1, 2, 1), torch.pi / 2),
+    }
+    targets = [
+        {
+            "labels": torch.tensor([0, 0]),
+            "boxes": torch.tensor(
+                [[0.5, 0.5, 0.2, 0.4], [0.5, 0.5, 0.4, 0.2]]
+            ),
+            "angles": torch.zeros(2),
+        }
+    ]
+
+    indices = matcher(outputs, targets)
+
+    assert indices[0][0].tolist() == [0, 1]
+    assert indices[0][1].tolist() == [0, 1]
 
 
 def test_rfdetr_trainer_forward_passes_obb_angles_to_criterion():

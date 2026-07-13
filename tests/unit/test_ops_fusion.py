@@ -89,6 +89,8 @@ class TestSharedBehavior:
             op(boxes, scores, labels, model_ids, weights=[1.0, -1.0])
         with pytest.raises(ValueError, match="positive"):
             op(boxes, scores, labels, model_ids, weights=[float("nan"), 1.0])
+        with pytest.raises(ValueError, match="finite"):
+            op(boxes, scores, labels, model_ids, weights=[float("inf"), 1.0])
         with pytest.raises(ValueError, match="model_ids contains index"):
             op(boxes, scores, labels, model_ids, num_models=1)
 
@@ -106,6 +108,30 @@ class TestSharedBehavior:
         boxes, scores, _, model_ids = _pair()
         with pytest.raises(ValueError, match="non-negative"):
             op(boxes, scores, torch.tensor([0, -1]), model_ids, num_models=2)
+
+    @pytest.mark.parametrize("op", ALL_OPS)
+    @pytest.mark.parametrize("field", ["labels", "model_ids"])
+    def test_fractional_ids_rejected_before_integer_conversion(self, op, field):
+        boxes, scores, labels, model_ids = _pair()
+        values = torch.tensor([0.0, 0.5])
+        if field == "labels":
+            labels = values
+        else:
+            model_ids = values
+        with pytest.raises(ValueError, match=rf"{field} must contain integer-valued"):
+            op(boxes, scores, labels, model_ids, num_models=2)
+
+    @pytest.mark.parametrize("op", ALL_OPS)
+    def test_nonfinite_boxes_and_scores_rejected(self, op):
+        boxes, scores, labels, model_ids = _pair()
+        bad_boxes = boxes.clone()
+        bad_boxes[0, 0] = float("nan")
+        with pytest.raises(ValueError, match="only finite values"):
+            op(bad_boxes, scores, labels, model_ids, num_models=2)
+        bad_scores = scores.clone()
+        bad_scores[0] = float("inf")
+        with pytest.raises(ValueError, match="only finite values"):
+            op(boxes, bad_scores, labels, model_ids, num_models=2)
 
 
 class TestWeightedBoxesFusion:

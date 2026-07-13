@@ -21,7 +21,9 @@ automatically capped per class by how many members know that class.
 from __future__ import annotations
 
 import logging
+import math
 import time
+from numbers import Integral
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -48,7 +50,44 @@ Detections = Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 def _sanitize_names(names) -> Dict[int, str]:
     if not isinstance(names, dict) or not names:
         raise TypeError("names must be a non-empty dict mapping class id to name")
-    return {int(k): str(v) for k, v in names.items()}
+    clean: Dict[int, str] = {}
+    seen_names = set()
+    for raw_id, raw_name in names.items():
+        if isinstance(raw_id, bool) or not isinstance(raw_id, Integral):
+            raise TypeError(
+                "names keys must be non-negative integers; implicit casting can "
+                f"merge distinct keys, got {raw_id!r}"
+            )
+        class_id = int(raw_id)
+        if class_id < 0:
+            raise ValueError(f"names keys must be non-negative, got {class_id}")
+        if not isinstance(raw_name, str):
+            raise TypeError(
+                "class names must be strings; implicit casting can merge distinct "
+                f"values, got {raw_name!r}"
+            )
+        if raw_name in seen_names:
+            raise ValueError(
+                f"class names must be unique within a member, duplicate {raw_name!r}"
+            )
+        clean[class_id] = raw_name
+        seen_names.add(raw_name)
+    return clean
+
+
+def _labels_as_int(labels, *, context: str) -> torch.Tensor:
+    """Validate label ids before converting them to integer indices."""
+    labels = torch.as_tensor(labels).reshape(-1)
+    if labels.dtype == torch.bool or labels.is_complex():
+        raise ValueError(f"{context} labels must be integer-valued class ids")
+    if labels.dtype.is_floating_point:
+        if not bool(torch.isfinite(labels).all()):
+            raise ValueError(f"{context} labels must contain only finite values")
+        if not bool((labels == labels.round()).all()):
+            raise ValueError(
+                f"{context} labels must be integer-valued; fractional ids are invalid"
+            )
+    return labels.to(dtype=torch.long)
 
 
 class ExternalDetector:
@@ -84,7 +123,7 @@ class ExternalDetector:
             )
         boxes = torch.as_tensor(out[0], dtype=torch.float32)
         scores = torch.as_tensor(out[1], dtype=torch.float32).reshape(-1)
-        labels = torch.as_tensor(out[2]).reshape(-1)
+        labels = _labels_as_int(out[2], context="ExternalDetector")
         if boxes.numel() == 0:
             boxes = boxes.reshape(0, 4)
         if boxes.ndim != 2 or boxes.shape[1] != 4:
@@ -172,10 +211,13 @@ class LibreEnsemble:
                 raise ValueError(
                     f"weights has {len(weights)} entries for {n} members"
                 )
-            # Positivity (not non-negativity) so NaN weights also fail loudly.
-            if not all(w > 0 for w in weights):
-                raise ValueError("weights must all be positive")
-            self.weights = [float(w) for w in weights]
+            try:
+                parsed_weights = [float(w) for w in weights]
+            except (TypeError, ValueError) as exc:
+                raise ValueError("weights must all be finite positive numbers") from exc
+            if not all(math.isfinite(w) and w > 0 for w in parsed_weights):
+                raise ValueError("weights must all be finite and positive")
+            self.weights = parsed_weights
         else:
             self.weights = [1.0] * n
 
@@ -204,6 +246,10 @@ class LibreEnsemble:
             )
         self.min_votes = min_votes
         self.fusion_iou = float(fusion_iou)
+        if not math.isfinite(self.fusion_iou) or not 0 <= self.fusion_iou <= 1:
+            raise ValueError(
+                f"fusion_iou must be a finite value in [0, 1], got {fusion_iou!r}"
+            )
 
         (
             self.names,
@@ -312,6 +358,13 @@ class LibreEnsemble:
         """
         normalize_predict_kwargs(kwargs)
         del batch
+        if isinstance(max_det, bool) or not isinstance(max_det, Integral):
+            raise TypeError(
+                f"max_det must be an integer, got {type(max_det).__name__}."
+            )
+        max_det = int(max_det)
+        if max_det < 0:
+            raise ValueError(f"max_det must be non-negative, got {max_det!r}.")
         if stream or is_video_file(source):
             raise NotImplementedError(
                 "video and stream ensembling are not available yet; run the "
@@ -410,14 +463,17 @@ class LibreEnsemble:
             label_weights=self._label_weights.to(boxes.device),
         )
         speed["fusion"] = (time.perf_counter() - start) * 1000.0
-        f_boxes, f_scores, f_labels = self._validate_fused(fused)
+        f_boxes, f_scores, f_labels = self._validate_fused(
+            fused, num_classes=len(self.names)
+        )
 
         if classes is not None and f_labels.numel() > 0:
             keep = torch.isin(
                 f_labels, torch.as_tensor(list(classes), device=f_labels.device)
             )
             f_boxes, f_scores, f_labels = f_boxes[keep], f_scores[keep], f_labels[keep]
-        order = torch.argsort(f_scores, descending=True)[:max_det]
+        order = torch.argsort(f_scores, descending=True)
+        order = order[:max_det]
         f_boxes, f_scores, f_labels = f_boxes[order], f_scores[order], f_labels[order]
 
         result = Results(
@@ -447,7 +503,7 @@ class LibreEnsemble:
                 continue
             b = torch.as_tensor(bx.xyxy, dtype=torch.float32)
             s = torch.as_tensor(bx.conf, dtype=torch.float32).reshape(-1)
-            c = torch.as_tensor(bx.cls).reshape(-1).long()
+            c = _labels_as_int(bx.cls, context=f"ensemble member {i}")
             if device is None:
                 device = b.device
             b, s, c = b.to(device), s.to(device), c.to(device)
@@ -485,7 +541,7 @@ class LibreEnsemble:
         )
 
     @staticmethod
-    def _validate_fused(fused) -> Detections:
+    def _validate_fused(fused, *, num_classes: int) -> Detections:
         if not isinstance(fused, (tuple, list)) or len(fused) != 3:
             raise TypeError(
                 "fusion must return (boxes, scores, labels), got "
@@ -493,7 +549,7 @@ class LibreEnsemble:
             )
         boxes = torch.as_tensor(fused[0], dtype=torch.float32)
         scores = torch.as_tensor(fused[1], dtype=torch.float32).reshape(-1)
-        labels = torch.as_tensor(fused[2]).reshape(-1).long()
+        labels = _labels_as_int(fused[2], context="fusion output")
         if boxes.numel() == 0:
             boxes = boxes.reshape(0, 4)
         if (
@@ -506,6 +562,20 @@ class LibreEnsemble:
                 "fusion returned inconsistent shapes: "
                 f"boxes {tuple(boxes.shape)}, scores {tuple(scores.shape)}, "
                 f"labels {tuple(labels.shape)}"
+            )
+        if not bool(torch.isfinite(boxes).all()) or not bool(
+            torch.isfinite(scores).all()
+        ):
+            raise ValueError("fusion output boxes and scores must be finite")
+        if bool(((scores < 0) | (scores > 1)).any()):
+            raise ValueError("fusion output scores must be in [0, 1]")
+        if boxes.numel() and bool((boxes[:, 2:] < boxes[:, :2]).any()):
+            raise ValueError("fusion output boxes must satisfy x2 >= x1 and y2 >= y1")
+        if labels.numel() and (
+            int(labels.min()) < 0 or int(labels.max()) >= num_classes
+        ):
+            raise ValueError(
+                f"fusion output labels must be in [0, {num_classes - 1}]"
             )
         return boxes, scores, labels
 

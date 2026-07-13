@@ -50,8 +50,13 @@ def _classic_keypoint_matching_cost(
     visible = finite_xy & finite_vis & (target_vis > 0)
     visible_f = visible.to(pred.dtype)
     visible_count = visible_f.sum(dim=-1).clamp(min=1.0)
+    safe_target_xy = torch.where(
+        finite_xy.unsqueeze(-1), target_xy, torch.zeros_like(target_xy)
+    )
 
-    l1 = (pred[:, :, None, :, :2] - target_xy[None, None, :, :, :]).abs().sum(dim=-1)
+    l1 = (
+        pred[:, :, None, :, :2] - safe_target_xy[None, None, :, :, :]
+    ).abs().sum(dim=-1)
     cost_l1 = (l1 * visible_f[None, None]).sum(dim=-1) / visible_count[None, None]
 
     pred_vis_logits = pred[..., 2][:, :, None, :].expand(
@@ -215,9 +220,44 @@ class HungarianMatcher(nn.Module):
         if keypoints_present:
             tgt_keypoints = torch.cat([v["keypoints"] for v in targets], dim=0)
 
-        # Compute the giou cost between boxes
-        giou = generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
-        cost_giou = -giou
+        # Compute the geometry cost. An OBB has two equivalent parameterizations:
+        # (w, h, angle) and (h, w, angle + pi/2). Compare each prediction with
+        # both complete target encodings and keep the cheaper combined geometry
+        # cost; minimizing each term independently could mix representations.
+        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        cost_giou = -generalized_box_iou(
+            box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox)
+        )
+        cost_angle = 0
+        if out_angles is not None and tgt_angles is not None:
+            cost_angle = 1.0 - torch.cos(
+                2.0 * (out_angles[:, None] - tgt_angles[None, :])
+            )
+            swapped_tgt_bbox = tgt_bbox[:, [0, 1, 3, 2]]
+            swapped_tgt_angles = tgt_angles + torch.pi / 2
+            swapped_cost_bbox = torch.cdist(out_bbox, swapped_tgt_bbox, p=1)
+            swapped_cost_giou = -generalized_box_iou(
+                box_cxcywh_to_xyxy(out_bbox),
+                box_cxcywh_to_xyxy(swapped_tgt_bbox),
+            )
+            swapped_cost_angle = 1.0 - torch.cos(
+                2.0 * (out_angles[:, None] - swapped_tgt_angles[None, :])
+            )
+            direct_geometry_cost = (
+                self.cost_bbox * cost_bbox
+                + self.cost_giou * cost_giou
+                + self.cost_angle * cost_angle
+            )
+            swapped_geometry_cost = (
+                self.cost_bbox * swapped_cost_bbox
+                + self.cost_giou * swapped_cost_giou
+                + self.cost_angle * swapped_cost_angle
+            )
+            geometry_cost = torch.minimum(
+                direct_geometry_cost, swapped_geometry_cost
+            )
+        else:
+            geometry_cost = self.cost_bbox * cost_bbox + self.cost_giou * cost_giou
 
         # Compute the classification cost.
         alpha = 0.25
@@ -242,12 +282,6 @@ class HungarianMatcher(nn.Module):
         if self.num_keypoints_per_class:
             cls_tgt_ids = map_labels_to_keypoint_schema(tgt_ids, self.num_keypoints_per_class)
         cost_class = pos_cost_class[:, cls_tgt_ids] - neg_cost_class[:, cls_tgt_ids]
-
-        # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
-        cost_angle = 0
-        if out_angles is not None and tgt_angles is not None and self.cost_angle:
-            cost_angle = 1.0 - torch.cos(2.0 * (out_angles[:, None] - tgt_angles[None, :]))
 
         if masks_present:
             tgt_masks = torch.cat([v["masks"] for v in targets])
@@ -324,10 +358,8 @@ class HungarianMatcher(nn.Module):
 
         # Final cost matrix
         cost_matrix = (
-            self.cost_bbox * cost_bbox
+            geometry_cost
             + self.cost_class * cost_class
-            + self.cost_giou * cost_giou
-            + self.cost_angle * cost_angle
         )
         if masks_present:
             cost_matrix = cost_matrix + self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice

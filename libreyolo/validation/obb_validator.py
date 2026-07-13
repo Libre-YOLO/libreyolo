@@ -481,11 +481,11 @@ class OBBValidator(BaseValidator):
                 [xywhr_iou(pred["xywhr"], gt) for gt in gt_rows],
                 dtype=np.float32,
             )
+            ious[matched[image_id]] = -1.0
             best_idx = int(ious.argmax()) if ious.size else -1
             if (
                 best_idx >= 0
                 and float(ious[best_idx]) >= iou_threshold
-                and not matched[image_id][best_idx]
             ):
                 tp[pred_idx] = 1.0
                 matched[image_id][best_idx] = True

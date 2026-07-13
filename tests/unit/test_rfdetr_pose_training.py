@@ -24,10 +24,17 @@ from __future__ import annotations
 import pytest
 import torch
 
-from libreyolo.models.rfdetr.keypoints import map_labels_to_keypoint_schema
-from libreyolo.models.rfdetr.loss import SetCriterion
+from libreyolo.models.rfdetr.keypoints import (
+    compute_keypoint_matching_cost,
+    compute_l1_keypoint_loss,
+    map_labels_to_keypoint_schema,
+)
+from libreyolo.models.rfdetr.loss import SetCriterion, _classic_keypoint_losses
 from libreyolo.models.rfdetr.lwdetr import build_criterion_and_postprocessors, build_model
-from libreyolo.models.rfdetr.matcher import HungarianMatcher
+from libreyolo.models.rfdetr.matcher import (
+    HungarianMatcher,
+    _classic_keypoint_matching_cost,
+)
 from libreyolo.models.rfdetr.nn import RFDETRSizeConfig, _make_args
 from libreyolo.models.rfdetr.tensors import NestedTensor
 
@@ -210,3 +217,162 @@ def test_grouppose_criterion_keeps_two_logit_head():
     assert criterion.num_classes == 2
     assert "loss_keypoints_l1" in criterion.weight_dict
     assert "keypoints" in criterion.losses
+
+
+def test_grouppose_nonfinite_invisible_targets_keep_losses_and_costs_finite():
+    pred = torch.zeros(1, _K_TOTAL, 8, requires_grad=True)
+    target = torch.zeros(1, max(_SCHEMA), 3)
+    target[..., :2] = 0.5
+    target[..., 2] = 2.0
+    target[0, 0] = torch.tensor([float("nan"), float("nan"), 0.0])
+    target[0, 1] = torch.tensor([float("nan"), float("nan"), float("nan")])
+    target_classes = torch.tensor([1])
+    target_areas = torch.tensor([0.25])
+
+    losses = compute_l1_keypoint_loss(
+        pred, target, target_classes, target_areas, _SCHEMA
+    )
+    assert all(torch.isfinite(loss).all() for loss in losses)
+    sum(loss.sum() for loss in losses).backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all()
+
+    costs = compute_keypoint_matching_cost(
+        pred.detach().unsqueeze(0),
+        target,
+        target_classes,
+        target_areas,
+        _SCHEMA,
+    )
+    assert all(torch.isfinite(cost).all() for cost in costs)
+
+
+def test_grouppose_nonfinite_prediction_is_quarantined_from_matching():
+    from libreyolo.models.rfdetr.matcher import HungarianMatcher
+
+    schema = [0, 1]
+    pred_keypoints = torch.zeros(1, 2, 2, 8)
+    pred_keypoints[0, 0, 1, :2] = float("nan")
+    pred_keypoints[0, 1, 1, :2] = 0.6
+    outputs = {
+        "pred_logits": torch.zeros(1, 2, 2),
+        "pred_boxes": torch.tensor(
+            [[[0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]]]
+        ),
+        "pred_keypoints": pred_keypoints,
+    }
+    targets = [
+        {
+            "labels": torch.tensor([0]),
+            "boxes": torch.tensor([[0.5, 0.5, 0.5, 0.5]]),
+            "keypoints": torch.tensor([[[0.5, 0.5, 2.0]]]),
+        }
+    ]
+    matcher = HungarianMatcher(
+        num_keypoints_per_class=schema,
+        keypoint_l1_loss_coef=1.0,
+        keypoint_nll_loss_coef=1.0,
+    )
+
+    [(pred_indices, target_indices)] = matcher(outputs, targets)
+
+    assert pred_indices.tolist() == [1]
+    assert target_indices.tolist() == [0]
+
+
+def test_grouppose_matched_nonfinite_prediction_reaches_finite_loss_guard():
+    schema = [0, 1]
+    pred = torch.zeros(1, 2, 8, requires_grad=True)
+    with torch.no_grad():
+        pred[0, 1, :2] = float("nan")
+    target = torch.tensor([[[0.5, 0.5, 2.0]]])
+
+    losses = compute_l1_keypoint_loss(
+        pred,
+        target,
+        torch.tensor([1]),
+        torch.tensor([0.25]),
+        schema,
+    )
+
+    assert not torch.isfinite(losses[0]).all()
+    assert not torch.isfinite(losses[3]).all()
+
+
+def test_classic_pose_nonfinite_invisible_targets_keep_loss_and_grad_finite():
+    pred = torch.zeros(1, 3, 3, requires_grad=True)
+    target = torch.tensor(
+        [[[float("nan"), float("nan"), 0.0], [0.5, 0.5, 2.0], [0.0, 0.0, float("nan")]]]
+    )
+
+    losses = _classic_keypoint_losses(pred, target)
+    assert all(torch.isfinite(loss).all() for loss in losses)
+    sum(loss.sum() for loss in losses).backward()
+    assert pred.grad is not None
+    assert torch.isfinite(pred.grad).all()
+
+    costs = _classic_keypoint_matching_cost(pred.detach().unsqueeze(0), target)
+    assert all(torch.isfinite(cost).all() for cost in costs)
+
+
+def test_pose_validation_evaluates_and_restores_criterion_mode():
+    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
+
+    class DummyModel(torch.nn.Module):
+        def forward(self, imgs, targets=None):
+            return {"loss": imgs.sum() * 0.0}
+
+    class RecordingCriterion(torch.nn.Module):
+        weight_dict = {"loss": 1.0}
+
+        def __init__(self):
+            super().__init__()
+            self.seen_modes = []
+
+        def forward(self, outputs, targets):
+            self.seen_modes.append(self.training)
+            return {"loss": outputs["loss"]}
+
+    trainer = object.__new__(RFDETRTrainer)
+    trainer.wrapper_model = type("Wrapper", (), {"task": "pose"})()
+    trainer.model = DummyModel().train()
+    trainer.criterion = RecordingCriterion().train()
+    trainer.ema_model = None
+    trainer.val_loader = [(torch.zeros(1, 3, 8, 8), torch.zeros(1, 1, 1))]
+    trainer.device = torch.device("cpu")
+    trainer.is_distributed = False
+    trainer._targets_to_rfdetr_list = lambda targets, height, width: []
+    trainer._run_pose_metric_validation = (
+        lambda model, epoch, save_plots=None: None
+    )
+
+    trainer._run_validation(0)
+
+    assert trainer.criterion.seen_modes == [False]
+    assert trainer.model.training is True
+    assert trainer.criterion.training is True
+
+
+def test_pose_validation_restores_modes_after_metric_failure():
+    from libreyolo.models.rfdetr.trainer import RFDETRTrainer
+
+    trainer = object.__new__(RFDETRTrainer)
+    trainer.wrapper_model = type("Wrapper", (), {"task": "pose"})()
+    trainer.model = torch.nn.Linear(1, 1).eval()
+    trainer.criterion = torch.nn.Linear(1, 1).train()
+    trainer.criterion.weight_dict = {}
+    trainer.ema_model = None
+    trainer.val_loader = []
+    trainer.device = torch.device("cpu")
+    trainer.is_distributed = False
+
+    def fail_validation(model, epoch, save_plots=None):
+        raise RuntimeError("metric failure")
+
+    trainer._run_pose_metric_validation = fail_validation
+
+    with pytest.raises(RuntimeError, match="metric failure"):
+        trainer._run_validation(0)
+
+    assert trainer.model.training is False
+    assert trainer.criterion.training is True

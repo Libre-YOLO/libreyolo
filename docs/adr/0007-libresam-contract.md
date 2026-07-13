@@ -94,7 +94,11 @@ r.boxes.xyxy      # tight boxes derived from masks
 - `conf` filters by predicted mask-IoU (mask quality, **not** a detection
   confidence). `None` keeps all in the prompted path and applies the family grid
   threshold in "segment everything"; `0.0` disables filtering in either mode.
-- `device=` on `predict` moves the model and invalidates the cached embedding.
+- `device=` on `predict` moves the model and any cached embeddings together.
+- Interactive session operations on one model instance are serialized. A
+  `set_image()`/`reset_image()`/device move cannot interleave with `predict()`
+  and pair prompts with a different image's embeddings; use separate model
+  instances when concurrent inference is required.
 - SAM 3 visual prompts follow the same contract through `Sam3TrackerModel`.
   Its `text=` extension instead performs Promptable Concept Segmentation through
   a lazily loaded `Sam3Model`; text is mutually exclusive with points and boxes.
@@ -111,9 +115,10 @@ r.boxes.xyxy      # tight boxes derived from masks
 `LibreSAMModel` satisfies `BaseModel`'s abstract hooks but overrides `predict()`
 / `__call__` directly rather than driving `InferenceRunner` — the promptless
 preprocess/forward/postprocess hooks have no meaning here and raise. The
-encode-once lifecycle lives in `set_image()` (caches image embeddings) and is
-reused by every later `predict()` until `reset_image()`. A `device=` switch moves
-cached embeddings when possible so interactive sessions survive device changes.
+encode-once lifecycle lives in `set_image()` and commits the image, path, and
+embeddings as one instance-locked session. The same lock serializes later
+`predict()`, `reset_image()`, and device moves. A `device=` switch moves cached
+embeddings when possible so interactive sessions survive device changes.
 
 | Field             | Meaning                                              |
 |-------------------|------------------------------------------------------|

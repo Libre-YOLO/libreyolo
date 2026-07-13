@@ -40,6 +40,9 @@ class LibreMobileNetV4(BaseModel):
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreMobileNetV4<size>-cls.pt
     TRAIN_CONFIG = MobileNetV4Config
+    # ``norm_head`` runs after global pooling, where a singleton batch leaves
+    # BatchNorm2d with only one value per channel during training.
+    MIN_TRAIN_BATCH_SIZE = 2
 
     # timm eval crop_pct per checkpoint — matches the upstream benchmark preprocessing.
     CROP_PCT = {"s": 0.875, "m": 0.95, "l": 0.95}

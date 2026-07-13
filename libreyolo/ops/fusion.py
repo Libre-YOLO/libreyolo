@@ -57,12 +57,25 @@ WeightsLike = Union[torch.Tensor, Sequence[float], None]
 _EPS = 1e-12
 
 
+def _as_integral_ids(values, *, name: str, device: torch.device) -> torch.Tensor:
+    """Validate public integer-id tensors before converting their dtype."""
+    values = torch.as_tensor(values, device=device).reshape(-1)
+    if values.dtype == torch.bool or values.is_complex():
+        raise ValueError(f"{name} must contain integer-valued ids")
+    if values.dtype.is_floating_point:
+        if not bool(torch.isfinite(values).all()):
+            raise ValueError(f"{name} must contain only finite ids")
+        if not bool((values == values.round()).all()):
+            raise ValueError(f"{name} must contain integer-valued ids")
+    return values.to(dtype=torch.long)
+
+
 def _validate_stacked(boxes, scores, labels, model_ids):
     """Convert inputs to canonical tensors and check shapes line up."""
     boxes = torch.as_tensor(boxes, dtype=torch.float32)
     scores = torch.as_tensor(scores, dtype=torch.float32, device=boxes.device)
-    labels = torch.as_tensor(labels, device=boxes.device).long()
-    model_ids = torch.as_tensor(model_ids, device=boxes.device).long()
+    labels = _as_integral_ids(labels, name="labels", device=boxes.device)
+    model_ids = _as_integral_ids(model_ids, name="model_ids", device=boxes.device)
 
     if boxes.numel() == 0:
         boxes = boxes.reshape(0, 4)
@@ -76,6 +89,10 @@ def _validate_stacked(boxes, scores, labels, model_ids):
                 f"got {t.reshape(-1).shape[0]}"
             )
     labels = labels.reshape(-1)
+    if not bool(torch.isfinite(boxes).all()) or not bool(
+        torch.isfinite(scores).all()
+    ):
+        raise ValueError("boxes and scores must contain only finite values")
     # Negative ids would index per-class metadata (models_per_label,
     # label_weights) from the wrong end instead of failing fast.
     if labels.numel() > 0 and int(labels.min()) < 0:
@@ -113,9 +130,8 @@ def _resolve_weights(
             f"got {w.reshape(-1).shape[0]}"
         )
     w = w.reshape(-1)
-    # Positivity (not non-negativity) so NaN weights also fail loudly.
-    if not bool((w > 0).all()):
-        raise ValueError("weights must all be positive")
+    if not bool(torch.isfinite(w).all()) or not bool((w > 0).all()):
+        raise ValueError("weights must all be finite and positive")
     return w
 
 

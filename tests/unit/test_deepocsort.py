@@ -92,10 +92,16 @@ def test_config_defaults():
         {"max_age": -1},
         {"min_hits": -1},
         {"delta_t": 0},
+        {"delta_t": 1.5},
+        {"delta_t": True},
         {"inertia": -0.5},
         {"w_association_emb": -0.1},
         {"alpha_fixed_emb": 1.5},
         {"aw_param": -1.0},
+        {"max_age": float("nan")},
+        {"inertia": float("nan")},
+        {"w_association_emb": float("inf")},
+        {"aw_param": float("nan")},
     ],
 )
 def test_config_validation_rejects_bad_values(kwargs):
@@ -239,6 +245,32 @@ def test_custom_embedder_skips_osnet_construction():
     tracker.update(_make_results([_box(100, 200)], [0.9], [0]), IMAGE)
     assert fake.calls == 1
     assert tracker._embedder is fake
+
+
+def test_zero_norm_embedder_output_is_rejected_before_association():
+    class ZeroEmbedder:
+        def __call__(self, image, boxes):
+            return np.zeros((len(boxes), 8), dtype=np.float32)
+
+    tracker = DeepOCSortTracker(
+        config=DeepOCSortConfig(min_hits=1), embedder=ZeroEmbedder()
+    )
+    result = _make_results([_box(100, 200)], [0.9], [0])
+
+    with pytest.raises(ValueError, match="non-zero finite norms"):
+        tracker.update(result, IMAGE)
+
+    assert tracker.trackers == []
+    assert tracker.frame_count == 0
+
+
+def test_embedding_ema_exact_cancellation_keeps_last_valid_vector():
+    emb = np.array([1.0, 0.0])
+    trk = _EmbTrack(np.array(_box(100, 100) + [0.9]), 0, 0, 3, emb.copy())
+
+    trk.update_emb(-emb, alpha=0.5)
+
+    np.testing.assert_array_equal(trk.emb, emb)
 
 
 def test_update_tracks_numeric_entry():

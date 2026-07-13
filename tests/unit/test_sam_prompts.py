@@ -8,6 +8,7 @@ from libreyolo.models.sam.prompts import (
     normalize_boxes,
     normalize_labels,
     normalize_points,
+    validate_max_det,
 )
 
 pytestmark = pytest.mark.unit
@@ -56,6 +57,19 @@ class TestNormalizePoints:
         # processor with an opaque numpy error; reject it up front.
         with pytest.raises(ValueError, match="same number of points"):
             normalize_points([[[400, 370]], [[500, 370], [600, 370]]])
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), "x", True])
+    def test_nonfinite_or_nonnumeric_coordinates_raise(self, value):
+        with pytest.raises(ValueError, match="finite numbers"):
+            normalize_points([value, 1])
+
+    @pytest.mark.parametrize("point", [[-1, 2], [10, 2], [2, -1], [2, 8]])
+    def test_out_of_image_points_raise(self, point):
+        with pytest.raises(ValueError, match="outside image bounds"):
+            normalize_points(point, image_size=(10, 8))
+
+    def test_points_on_last_pixel_are_valid(self):
+        assert normalize_points([9, 7], image_size=(10, 8)) == [[[9.0, 7.0]]]
 
 
 class TestNormalizeLabels:
@@ -135,6 +149,31 @@ class TestNormalizeBoxes:
             [100, 100, 200, 200]
         ]
 
+    @pytest.mark.parametrize(
+        "box",
+        [
+            [4, 1, 2, 5],
+            [1, 4, 5, 2],
+            [1, 1, float("nan"), 5],
+            [1, 1, float("inf"), 5],
+        ],
+    )
+    def test_reversed_or_nonfinite_boxes_raise(self, box):
+        with pytest.raises(ValueError):
+            normalize_boxes(box)
+
+    @pytest.mark.parametrize(
+        "box", [[-1, 0, 5, 5], [0, -1, 5, 5], [0, 0, 11, 5], [0, 0, 5, 9]]
+    )
+    def test_out_of_image_boxes_raise(self, box):
+        with pytest.raises(ValueError, match="outside image bounds"):
+            normalize_boxes(box, image_size=(10, 8))
+
+    def test_full_image_box_is_valid(self):
+        assert normalize_boxes([0, 0, 10, 8], image_size=(10, 8)) == [
+            [0.0, 0.0, 10.0, 8.0]
+        ]
+
 
 class TestBuildPointGrid:
     def test_count(self):
@@ -153,3 +192,13 @@ class TestBuildPointGrid:
     def test_invalid_raises(self):
         with pytest.raises(ValueError):
             build_point_grid(0)
+
+
+@pytest.mark.parametrize("value", [-1, 0, 1.5, True, "3"])
+def test_validate_max_det_rejects_nonpositive_or_noninteger_values(value):
+    with pytest.raises(ValueError, match="integer >= 1"):
+        validate_max_det(value)
+
+
+def test_validate_max_det_accepts_positive_integer():
+    assert validate_max_det(np.int64(3)) == 3

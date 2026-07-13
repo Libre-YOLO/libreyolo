@@ -792,10 +792,18 @@ class LibreRFDETR(BaseModel):
         is_grouppose = self._is_pose and len(num_keypoints_per_class) > 0
 
         logits = output["pred_logits"]
-        if self._is_pose and not is_grouppose and logits.shape[-1] > self.nb_classes:
-            output = dict(output)
-            output["pred_logits"] = logits[..., : self.nb_classes]
-            logits = output["pred_logits"]
+        raw_num_classes = logits.shape[-1]
+        class_id_map = None
+        if not is_grouppose and raw_num_classes == 91 and self.nb_classes == 80:
+            class_id_map = [
+                _COCO91_TO_COCO80.get(internal_id, -1)
+                for internal_id in range(raw_num_classes)
+            ]
+        elif not is_grouppose and raw_num_classes > self.nb_classes:
+            class_id_map = [
+                internal_id if internal_id < self.nb_classes else -1
+                for internal_id in range(raw_num_classes)
+            ]
         default_num_select = getattr(self.model, "num_select", max_det)
         requested_num_select = kwargs.get(
             "num_select",
@@ -815,6 +823,7 @@ class LibreRFDETR(BaseModel):
             num_select=num_select,
             num_keypoints_per_class=num_keypoints_per_class if is_grouppose else None,
             trace_alpha=trace_alpha,
+            class_id_map=class_id_map,
         )
 
         result = results[0]
@@ -838,29 +847,6 @@ class LibreRFDETR(BaseModel):
             keypoint_precision = keypoint_precision[keep]
         if obb is not None:
             obb = obb[keep]
-
-        # Map COCO 91-class IDs to YOLO 80-class indices if needed
-        num_output_classes = output["pred_logits"].shape[-1]
-        if num_output_classes == 91 and self.nb_classes == 80:
-            mapped = torch.tensor(
-                [_COCO91_TO_COCO80.get(int(c), -1) for c in labels.cpu()],
-                dtype=labels.dtype,
-                device=labels.device,
-            )
-            valid = mapped >= 0
-            boxes = boxes[valid]
-            scores = scores[valid]
-            labels = mapped[valid]
-            if masks is not None:
-                masks = masks[valid]
-            if keypoints is not None:
-                keypoints = keypoints[valid]
-            if keypoint_precision is not None:
-                keypoint_precision = keypoint_precision[valid]
-            if obb is not None:
-                obb = obb[valid]
-                obb[:, 5] = scores
-                obb[:, 6] = labels.float()
 
         det = {
             "boxes": boxes.cpu().tolist(),

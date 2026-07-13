@@ -6,11 +6,10 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
-from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
 from .contracts import require_finite, require_matching_batch_sizes
-from .point_validator import PointValidator
+from .point_validator import PointValidator, _hungarian_match
 
 __all__ = ["FOMOValidator"]
 
@@ -101,9 +100,11 @@ class FOMOValidator(PointValidator):
             if len(rows) > 0:
                 preds_xy = rows[:, :2].numpy()
                 preds_cls = (rows[:, 2].long() - 1).numpy()
+                pred_scores = rows[:, 3].numpy()
             else:
                 preds_xy = np.zeros((0, 2))
                 preds_cls = np.zeros(0, dtype=np.int64)
+                pred_scores = np.zeros(0, dtype=np.float64)
 
             if len(preds_xy) == 0 and len(trues_xy) == 0:
                 continue
@@ -115,25 +116,19 @@ class FOMOValidator(PointValidator):
                 continue
 
             dist_mat = cdist(preds_xy, trues_xy)
-            for pi in range(len(preds_cls)):
-                for ti in range(len(true_cls_np)):
-                    if preds_cls[pi] != true_cls_np[ti]:
-                        dist_mat[pi, ti] = np.inf
-
-            row_ind, col_ind = linear_sum_assignment(
-                np.where(np.isfinite(dist_mat), dist_mat, 1e9)
+            dist_mat[preds_cls[:, None] != true_cls_np[None, :]] = np.inf
+            tp_pairs, fp_idx, fn_idx = _hungarian_match(
+                dist_mat,
+                self.distance_tolerance,
+                pred_scores,
             )
-            matched_preds = set()
-            matched_trues = set()
-            for r, c in zip(row_ind, col_ind):
-                d = dist_mat[r, c]
-                if np.isfinite(d) and d <= self.distance_tolerance:
-                    stats["tp"] += 1
-                    stats["total_dist"] += d
-                    matched_preds.add(r)
-                    matched_trues.add(c)
-            stats["fp"] += len(preds_xy) - len(matched_preds)
-            stats["fn"] += len(trues_xy) - len(matched_trues)
+            stats["tp"] += len(tp_pairs)
+            if len(tp_pairs):
+                stats["total_dist"] += float(
+                    dist_mat[tp_pairs[:, 0], tp_pairs[:, 1]].sum()
+                )
+            stats["fp"] += len(fp_idx)
+            stats["fn"] += len(fn_idx)
 
     def _update_metrics(self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None) -> None:
         logits = getattr(self, "last_logits", None)

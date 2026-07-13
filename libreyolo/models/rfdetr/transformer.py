@@ -755,11 +755,20 @@ class TransformerDecoder(nn.Module):
 
         Ported from RF-DETR v1.8.0 (GroupPose keypoint additions).
         """
+        existing_mask = self._buffers.get("keypoint_class_mask")
+        if existing_mask is not None:
+            device = existing_mask.device
+        elif self.keypoint_pos_embed is not None:
+            device = self.keypoint_pos_embed.device
+        else:
+            device = self.ref_point_head.layers[0].weight.device
         if not self.num_keypoints_per_class:
-            mask = torch.zeros(1, 1, dtype=torch.bool)
+            mask = torch.zeros(1, 1, dtype=torch.bool, device=device)
         else:
             total_kp = sum(self.num_keypoints_per_class)
-            mask = torch.zeros(1 + total_kp, 1 + total_kp, dtype=torch.bool)
+            mask = torch.zeros(
+                1 + total_kp, 1 + total_kp, dtype=torch.bool, device=device
+            )
             offset = 1
             for class_idx_i, num_kp_i in enumerate(self.num_keypoints_per_class):
                 if num_kp_i == 0:

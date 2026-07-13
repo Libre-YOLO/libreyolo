@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -254,6 +255,43 @@ def test_smeasure_all_background_and_all_foreground():
     assert s_measure(np.zeros_like(gt0), gt0) == pytest.approx(1.0)
     gt1 = np.ones((16, 16), np.float32)
     assert s_measure(np.ones_like(gt1), gt1) == pytest.approx(1.0)
+
+
+def test_smeasure_region_quadrants_are_weighted_by_spatial_area(monkeypatch):
+    import libreyolo.validation.matte_validator as matte_validator
+
+    gt = np.zeros((4, 4), dtype=np.float32)
+    gt[0, 0] = 1.0
+    pred = np.zeros_like(gt)
+    monkeypatch.setattr(
+        matte_validator,
+        "_ssim",
+        lambda pred_region, gt_region: float(gt_region.sum() == 0),
+    )
+
+    assert matte_validator._s_region(pred, gt) == pytest.approx(15 / 16)
+
+
+def test_matte_validator_keeps_ground_truth_native_canvas(monkeypatch):
+    import libreyolo.validation.matte_validator as matte_validator
+
+    gt = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32)
+    model = SimpleNamespace(
+        predict=lambda *args, **kwargs: [
+            SimpleNamespace(matte=SimpleNamespace(array=np.array([[0.5]], np.float32)))
+        ]
+    )
+    config = SimpleNamespace(data="data", split="val", verbose=False)
+    monkeypatch.setattr(
+        matte_validator,
+        "resolve_matte_pairs",
+        lambda data, split: [(Path("image.png"), Path("matte.png"))],
+    )
+    monkeypatch.setattr(matte_validator, "_load_matte_gt", lambda path: gt.copy())
+
+    metrics = matte_validator.MatteValidator(model, config)()
+
+    assert metrics["metrics/MAE"] == pytest.approx(0.5)
 
 
 # --------------------------------------------------------------------------

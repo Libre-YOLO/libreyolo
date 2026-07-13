@@ -13,10 +13,54 @@ mechanism, but its boxes are coarse compared with newer grounders.
 
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
 from ...utils.image_loader import ImageInput, ImageLoader
 from .base import LibreVLMModel
+from .parsing import finalize_detection_dict
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_LEADING_ARTICLES = {"a", "an", "the"}
+
+
+def _phrase_tokens(value: str) -> list[str]:
+    tokens = _TOKEN_RE.findall(str(value).lower())
+    while tokens and tokens[0] in _LEADING_ARTICLES:
+        tokens.pop(0)
+    return tokens
+
+
+def _plural_forms(token: str) -> set[str]:
+    """Return conservative English plural forms for one label token."""
+    forms = {token, f"{token}s"}
+    if token.endswith(("s", "x", "z", "ch", "sh")):
+        forms.add(f"{token}es")
+    if (
+        len(token) > 1
+        and token.endswith("y")
+        and token[-2] not in "aeiou"
+    ):
+        forms.add(f"{token[:-1]}ies")
+    return forms
+
+
+def _same_label_token(left: str, right: str) -> bool:
+    return right in _plural_forms(left) or left in _plural_forms(right)
+
+
+def _contains_label_phrase(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    width = len(needle)
+    return any(
+        all(
+            _same_label_token(haystack[start + offset], needle[offset])
+            for offset in range(width)
+        )
+        for start in range(len(haystack) - width + 1)
+    )
 
 
 class LibreKosmos2(LibreVLMModel):
@@ -37,14 +81,25 @@ class LibreKosmos2(LibreVLMModel):
 
     def _match_label(self, name: str) -> Optional[int]:
         # Kosmos grounds noun phrases ("the boats"), so match leniently against
-        # the vocabulary in addition to exact lookup.
+        # the vocabulary in addition to exact lookup. Prefer the longest unique
+        # match so overlapping labels never depend on vocabulary insertion order.
         key = str(name).strip().lower()
         if key in self._name_to_id:
             return self._name_to_id[key]
+        phrase_tokens = _phrase_tokens(key)
+        matches = []
         for cname, cid in self._name_to_id.items():
-            if cname in key or key in cname:
-                return cid
-        return None
+            class_tokens = _phrase_tokens(cname)
+            if _contains_label_phrase(
+                phrase_tokens, class_tokens
+            ) or _contains_label_phrase(class_tokens, phrase_tokens):
+                matches.append((len(class_tokens), len(cname), cname, cid))
+        if not matches:
+            return None
+        matches.sort(reverse=True)
+        best_specificity = matches[0][:2]
+        best = [match for match in matches if match[:2] == best_specificity]
+        return best[0][3] if len(best) == 1 else None
 
     def _preprocess(
         self,
@@ -78,41 +133,49 @@ class LibreKosmos2(LibreVLMModel):
         _caption, entities = self.processor.post_process_generation(text)
         width, height = original_size
         boxes, scores, classes = [], [], []
-        allowed_classes = (
-            set(kwargs["classes"]) if kwargs.get("classes") is not None else None
-        )
-        if max_det <= 0:
-            return {
-                "boxes": boxes,
-                "scores": scores,
-                "classes": classes,
-                "num_detections": 0,
-            }
-        # Every box carries the placeholder score, so conf filtering is all-or-nothing.
-        scored = entities if self.DEFAULT_SCORE >= conf_thres else []
-        for name, _span, entity_boxes in scored:
-            if len(boxes) >= max_det:
-                break
+        try:
+            entity_rows = list(entities)
+        except (TypeError, ValueError):
+            entity_rows = []
+        for entity in entity_rows:
+            try:
+                name, _span, entity_boxes = entity
+                entity_boxes = list(entity_boxes)
+            except (TypeError, ValueError):
+                continue
             class_id = self._match_label(name)
             if class_id is None:
                 continue
-            if allowed_classes is not None and class_id not in allowed_classes:
-                continue
             for box in entity_boxes:  # normalized [0,1] xyxy
-                x1, y1, x2, y2 = box
-                if x2 <= x1 or y2 <= y1:
+                try:
+                    values = list(box)
+                except (TypeError, ValueError):
                     continue
-                boxes.append([x1 * width, y1 * height, x2 * width, y2 * height])
+                if len(values) != 4:
+                    continue
+                try:
+                    boxes.append(
+                        [
+                            float(values[0]) * width,
+                            float(values[1]) * height,
+                            float(values[2]) * width,
+                            float(values[3]) * height,
+                        ]
+                    )
+                except (TypeError, ValueError):
+                    continue
                 scores.append(self.DEFAULT_SCORE)
                 classes.append(class_id)
-                if len(boxes) >= max_det:
-                    break
-        return {
-            "boxes": boxes,
-            "scores": scores,
-            "classes": classes,
-            "num_detections": len(boxes),
-        }
+        return finalize_detection_dict(
+            boxes,
+            scores,
+            classes,
+            original_size,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            max_det=max_det,
+            classes=kwargs.get("classes"),
+        )
 
     def chat(self, *args, **kwargs):
         raise NotImplementedError(

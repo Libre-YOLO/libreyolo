@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from numbers import Real
 from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import torch
 
-from .base import _INSTALL_HINT, _contains_subsequence, _label_tokens
+from .base import (
+    _INSTALL_HINT,
+    _contains_subsequence,
+    _has_leading_article,
+    _label_tokens,
+    _prompt_label,
+)
 from .base import LibreOpenVocabDetector
 
 
@@ -39,8 +46,11 @@ class LibreOWLv2(LibreOpenVocabDetector):
     def _text_labels(self) -> list[list[str]]:
         labels = []
         for class_id in range(len(self.names)):
-            name = str(self.names[class_id]).strip().lower()
-            labels.append(self.PROMPT_TEMPLATE.format(name))
+            name = _prompt_label(self.names[class_id])
+            if _has_leading_article(name):
+                labels.append(f"a photo of {name}")
+            else:
+                labels.append(self.PROMPT_TEMPLATE.format(name))
         return [labels]
 
     def _build_inputs(self, img: Any) -> Any:
@@ -75,43 +85,50 @@ class LibreOWLv2(LibreOpenVocabDetector):
             raw_labels = result.get("text_labels", [])
 
         class_ids = self._labels_to_class_ids(raw_labels)
-        boxes_t = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
-        scores_t = torch.as_tensor(scores, dtype=torch.float32).reshape(-1)
-        keep = class_ids >= 0
-        n = min(boxes_t.shape[0], scores_t.shape[0], class_ids.shape[0])
-        boxes_t, scores_t, class_ids, keep = (
-            boxes_t[:n],
-            scores_t[:n],
-            class_ids[:n],
-            keep[:n],
-        )
         return self._detections_to_dict(
-            boxes_t[keep],
-            scores_t[keep],
-            class_ids[keep],
+            boxes,
+            scores,
+            class_ids,
             conf_thres=conf_thres,
             original_size=original_size,
             max_det=max_det,
             classes=kwargs.get("classes"),
+            iou_thres=iou_thres,
         )
 
     def _labels_to_class_ids(self, labels: Any) -> torch.Tensor:
         if isinstance(labels, torch.Tensor):
-            class_ids = labels.detach().cpu().long().reshape(-1)
+            raw = labels.detach().cpu().reshape(-1)
+            if raw.dtype == torch.bool:
+                return torch.full((raw.numel(),), -1, dtype=torch.int64)
+            try:
+                numeric = raw.to(torch.float64)
+            except (TypeError, RuntimeError):
+                return torch.full((raw.numel(),), -1, dtype=torch.int64)
         else:
-            values = list(labels)
+            if isinstance(labels, (str, bytes)):
+                values = [labels]
+            else:
+                try:
+                    values = list(labels)
+                except TypeError:
+                    values = [labels]
             if not values:
                 return torch.zeros((0,), dtype=torch.int64)
-            if all(isinstance(value, (int, float)) for value in values):
-                class_ids = torch.as_tensor(values, dtype=torch.int64).reshape(-1)
+            if all(isinstance(value, Real) and not isinstance(value, bool) for value in values):
+                numeric = torch.as_tensor(values, dtype=torch.float64).reshape(-1)
             else:
                 mapped = [self._text_label_to_class_id(str(value)) for value in values]
                 return torch.as_tensor(
                     [-1 if class_id is None else class_id for class_id in mapped],
                     dtype=torch.int64,
                 )
-        valid = (class_ids >= 0) & (class_ids < len(self.names))
-        return torch.where(valid, class_ids, torch.full_like(class_ids, -1))
+        integral = torch.isfinite(numeric) & (numeric == numeric.round())
+        in_range = (numeric >= 0) & (numeric < len(self.names))
+        valid = integral & in_range
+        class_ids = torch.full(numeric.shape, -1, dtype=torch.int64)
+        class_ids[valid] = numeric[valid].to(torch.int64)
+        return class_ids
 
     def _text_label_to_class_id(self, text: str) -> Optional[int]:
         phrase = _label_tokens(text)

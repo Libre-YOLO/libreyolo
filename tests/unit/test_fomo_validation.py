@@ -233,6 +233,24 @@ class TestLibreFOMOParseGtPoints:
         np.testing.assert_allclose(xy[0], [0.5, 0.5], atol=1e-5)
         assert cls[0] == 0
 
+    def test_one_pixel_class_zero_box_is_not_misread_as_normalized(self) -> None:
+        from libreyolo.validation.point_validator import PointValidator
+
+        validator = object.__new__(PointValidator)
+        validator.nc = 1
+        validator._actual_imgsz = 100
+        validator.val_preproc = type("_Preproc", (), {"uses_letterbox": False})()
+        row = np.array([[0.0, 0.0, 1.0, 1.0, 0.0]], dtype=np.float32)
+
+        xy, classes = validator.parse_gt_points_from_boxes(
+            row,
+            orig_h=100,
+            orig_w=100,
+        )
+
+        np.testing.assert_allclose(xy, [[0.005, 0.005]])
+        assert classes.tolist() == [0]
+
 
 class TestLibreFOMOValidator:
     """FOMOValidator grid-specific metric handling."""
@@ -261,6 +279,8 @@ class TestLibreFOMOValidator:
             conf_thresholds=(0.9,),
             nms_radii=(1,),
         )
+        validator._actual_imgsz = 96
+        validator.val_preproc = type("_Preproc", (), {"uses_letterbox": False})()
         validator._init_metrics()
         assert validator.last_logits is None
         assert not hasattr(validator, "grid_cached")
@@ -275,7 +295,10 @@ class TestLibreFOMOValidator:
                 "classes": np.array([0], dtype=np.int64),
             }
         ]
-        targets = torch.tensor([[[0.0, 0.5, 0.5, 0.05, 0.05]]], dtype=torch.float32)
+        targets = torch.tensor(
+            [[[43.2, 43.2, 52.8, 52.8, 0.0]]],
+            dtype=torch.float32,
+        )
 
         validator._update_metrics(preds, targets, [(96, 96)])
 
@@ -284,6 +307,28 @@ class TestLibreFOMOValidator:
         assert stats["fp"] == 0.0
         assert stats["fn"] == 0.0
         assert not hasattr(validator, "grid_cached")
+
+    def test_grid_matching_maximizes_pairs_before_distance(self) -> None:
+        from libreyolo.validation.fomo_validator import FOMOValidator
+
+        validator = object.__new__(FOMOValidator)
+        validator.distance_tolerance = 4.0
+        decoded = [
+            torch.tensor(
+                [[8.0, 6.0, 1.0, 0.9], [7.0, 5.0, 1.0, 0.8]],
+                dtype=torch.float32,
+            )
+        ]
+        targets = torch.zeros((1, 10, 10), dtype=torch.long)
+        targets[0, 2, 9] = 1
+        targets[0, 4, 8] = 1
+        stats = {"tp": 0.0, "fp": 0.0, "fn": 0.0, "total_dist": 0.0}
+
+        validator._update_grid_stats(decoded, targets, stats)
+
+        assert stats["tp"] == 2.0
+        assert stats["fp"] == 0.0
+        assert stats["fn"] == 0.0
 
 
 class TestDecodePoints:
@@ -319,6 +364,22 @@ class TestDecodePoints:
         results_r2 = _decode_points(logits, conf_threshold=0.01, nms_radius=2)
         results_r0 = _decode_points(logits, conf_threshold=0.01, nms_radius=0)
         assert len(results_r2[0]) < len(results_r0[0])
+
+    def test_nms_does_not_suppress_adjacent_different_classes(self) -> None:
+        from libreyolo.models.fomo.utils import decode_points_from_logits as _decode_points
+
+        logits = torch.zeros(1, 3, 6, 6)
+        logits[0, 1, 3, 3] = 20.0
+        logits[0, 2, 3, 4] = 19.0
+
+        [points] = _decode_points(
+            logits,
+            conf_threshold=0.6,
+            nms_radius=1,
+        )
+
+        assert len(points) == 2
+        assert set(points[:, 2].long().tolist()) == {1, 2}
 
     def test_class_index_correct(self) -> None:
         """Returned class channel index must equal the argmax foreground channel."""

@@ -42,6 +42,7 @@ _DEFAULT_PIPELINE: Dict[str, Any] = {
     "det_db_thresh": 0.3,
     "det_db_box_thresh": 0.6,
     "det_db_unclip_ratio": 1.5,
+    "rec_image_shape": [3, 48, 320],
 }
 
 
@@ -164,15 +165,42 @@ class LibrePPOCR(BaseModel):
             pipeline = checkpoint.get("pipeline")
             if isinstance(pipeline, dict):
                 self.pipeline_config = {**_DEFAULT_PIPELINE, **pipeline}
+        from .preprocess import normalize_rec_image_shape
+
+        self.pipeline_config["rec_image_shape"] = list(
+            normalize_rec_image_shape(
+                self.pipeline_config.get("rec_image_shape", [3, 48, 320])
+            )
+        )
         fc = state_dict.get("rec.head.ctc_head.fc.weight")
-        if fc is not None and self.charset is not None:
-            expected = len(self.charset)
-            if int(fc.shape[0]) != expected:
+        if fc is not None:
+            if not isinstance(fc, torch.Tensor) or fc.ndim != 2 or fc.shape[0] <= 0:
                 raise RuntimeError(
-                    f"Checkpoint CTC head emits {int(fc.shape[0])} classes but its "
-                    f"charset metadata lists {expected} entries; the checkpoint "
+                    "Checkpoint rec.head.ctc_head.fc.weight must be a non-empty "
+                    "2D tensor."
+                )
+            output_width = int(fc.shape[0])
+            if self.charset is not None and output_width != len(self.charset):
+                raise RuntimeError(
+                    f"Checkpoint CTC head emits {output_width} classes but its "
+                    f"charset metadata lists {len(self.charset)} entries; the checkpoint "
                     "is inconsistent."
                 )
+            bias = state_dict.get("rec.head.ctc_head.fc.bias")
+            if bias is not None and (
+                not isinstance(bias, torch.Tensor)
+                or bias.ndim != 1
+                or int(bias.shape[0]) != output_width
+            ):
+                raise RuntimeError(
+                    "Checkpoint CTC head weight and bias output widths do not match."
+                )
+
+            current_width = self.model.rec.head.ctc_head.fc.out_features
+            if current_width != output_width:
+                rec_training = self.model.rec.training
+                self.model.rec = PPOCRRecModel(self.size, output_width).to(self.device)
+                self.model.rec.train(rec_training)
         return None
 
     def _rebuild_for_checkpoint_classes(self, new_nb_classes: int, state_dict: dict):

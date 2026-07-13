@@ -138,6 +138,34 @@ def test_obb_validator_metrics_are_perfect_for_exact_prediction():
     assert metrics["metrics/mAP50-95"] == pytest.approx(1.0)
 
 
+def test_obb_validator_matches_best_remaining_ground_truth(monkeypatch):
+    import libreyolo.validation.obb_validator as obb_validator_module
+
+    ious = np.array([[0.9, 0.1], [0.8, 0.7]], dtype=np.float32)
+    monkeypatch.setattr(
+        obb_validator_module,
+        "xywhr_iou",
+        lambda prediction, target: float(ious[int(prediction[0]), int(target[0])]),
+    )
+    validator = OBBValidator.__new__(OBBValidator)
+    validator._num_gt_by_class = {0: 2}
+    validator._gt_by_class = {
+        0: {0: [np.array([0.0]), np.array([1.0])]}
+    }
+    validator._predictions_by_class = {
+        0: [
+            {"image_id": 0, "score": 0.9, "xywhr": np.array([0.0])},
+            {"image_id": 0, "score": 0.8, "xywhr": np.array([1.0])},
+        ]
+    }
+
+    precision, recall, average_precision = validator._evaluate_class(0, 0.5)
+
+    assert precision == pytest.approx(1.0)
+    assert recall == pytest.approx(1.0)
+    assert average_precision == pytest.approx(1.0)
+
+
 def test_obb_validation_rejects_augmented_validation_before_base_tta():
     with pytest.raises(ValueError, match="oriented boxes"):
         BaseModel.val(_DummyOBBModel(), data="unused.yaml", imgsz=64, augment=True)

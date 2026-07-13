@@ -279,6 +279,12 @@ class LibreLocateAnything(LibreVLMModel):
 
     def _generate(self, inputs: Any, max_new_tokens: Optional[int] = None):
         inputs = self._prepare_generation_inputs(inputs)
+        input_ids = inputs.get("input_ids") if isinstance(inputs, MutableMapping) else None
+        prompt_length = (
+            int(input_ids.shape[1])
+            if isinstance(input_ids, torch.Tensor) and input_ids.ndim == 2
+            else None
+        )
         generation_kwargs = dict(inputs)
         generation_kwargs.update(
             {
@@ -294,7 +300,27 @@ class LibreLocateAnything(LibreVLMModel):
         if self.do_sample:
             generation_kwargs["temperature"] = self.temperature
             generation_kwargs["top_p"] = self.top_p
-        return self.model.generate(**generation_kwargs)
+        output = self.model.generate(**generation_kwargs)
+        return self._strip_prompt_tokens(output, prompt_length)
+
+    @staticmethod
+    def _strip_prompt_tokens(output: Any, prompt_length: int | None) -> Any:
+        """Remove the input prefix from standard autoregressive token output."""
+        if prompt_length is None:
+            return output
+
+        def strip(tokens):
+            if (
+                isinstance(tokens, torch.Tensor)
+                and tokens.ndim == 2
+                and tokens.shape[1] >= prompt_length
+            ):
+                return tokens[:, prompt_length:]
+            return tokens
+
+        if isinstance(output, tuple) and output:
+            return (strip(output[0]), *output[1:])
+        return strip(output)
 
     def _decode_output(self, output: Any, inputs: Any | None = None) -> str:
         if isinstance(output, tuple):
@@ -332,7 +358,7 @@ class LibreLocateAnything(LibreVLMModel):
         inputs = self._processor_inputs(img, prompt).to(self.device)
         with torch.no_grad():
             output = self._generate(inputs, max_new_tokens=max_new_tokens)
-        return self._decode_output(output, inputs)
+        return self._decode_output(output)
 
     def _preprocess(
         self,

@@ -59,6 +59,15 @@ def postprocess(
     preds = predictions.transpose(1, 2)  # (B, N, 4+nc)
     boxes = preds[..., :4]
     scores = preds[..., 4:]
+    # ``topk`` ranks NaNs ahead of finite values on supported Torch backends.
+    # Mask them before the first anchor reduction so one invalid score cannot
+    # consume a small max_det budget and hide a valid detection.
+    valid_geometry = torch.isfinite(boxes).all(dim=-1, keepdim=True)
+    scores = torch.where(
+        torch.isfinite(scores) & valid_geometry,
+        scores,
+        torch.full_like(scores, -torch.inf),
+    )
 
     batch_size, num_anchors, num_classes = scores.shape
     topk_anchors = min(max_det, num_anchors)

@@ -218,6 +218,8 @@ class LibreVLMModel(BaseModel):
             raise ValueError("set_classes() requires a non-empty list of labels.")
         names = [str(c) for c in classes]
         keys = [name.strip().lower() for name in names]
+        if any(not key for key in keys):
+            raise ValueError("set_classes() labels must not be blank.")
         if len(keys) != len(set(keys)):
             raise ValueError("set_classes() labels must be unique case-insensitively.")
         self.names = {i: name for i, name in enumerate(names)}

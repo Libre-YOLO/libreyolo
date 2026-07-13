@@ -203,6 +203,19 @@ D-FINE-seg (Apache License 2.0)
     D-FINE-seg repository is Apache-2.0; its maintainer approved reuse
     with attribution in ArgoHA/D-FINE-seg#70.
 
+RF-DETR / Roboflow (Apache License 2.0)
+    Path:    libreyolo/models/rfdetr/, libreyolo/postprocess/rfdetr.py,
+             libreyolo/training/lora.py, libreyolo/data/yolo_coco_api.py
+    License: libreyolo/models/rfdetr/NOTICE  (Apache-2.0)
+    Source:  https://github.com/roboflow/rf-detr
+    Commit:  779e55254ccfbffc8cc23b7ecee29a4201489e13 (tag 1.8.0)
+
+    LibreYOLO's RF-DETR family and GroupPose-style keypoint support are
+    derived from Roboflow's RF-DETR implementation (Copyright 2025 Roboflow,
+    Inc.). The port includes the keypoint token stream, matcher and losses,
+    task-aware postprocessing, LoRA recipe helpers, and COCO evaluation glue.
+    The Apache-2.0 license text is available at licenses/Apache-2.0.txt.
+
 ------------------------------------------------------------------------
 Pretrained model weights
 ------------------------------------------------------------------------

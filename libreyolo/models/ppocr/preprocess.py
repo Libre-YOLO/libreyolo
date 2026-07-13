@@ -17,6 +17,7 @@ before normalization. Keep that in mind before "fixing" the channel order.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import List, Tuple
 
 import cv2
@@ -30,6 +31,35 @@ _DET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 REC_IMAGE_SHAPE = (3, 48, 320)  # C, H, W
 
 
+def normalize_rec_image_shape(value: object) -> Tuple[int, int, int]:
+    """Validate a checkpoint ``pipeline.rec_image_shape`` value."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(
+            "PPOCR pipeline.rec_image_shape must be a three-item sequence "
+            f"[channels, height, width], got {value!r}."
+        )
+    if len(value) != 3:
+        raise ValueError(
+            "PPOCR pipeline.rec_image_shape must contain exactly three values "
+            f"[channels, height, width], got {value!r}."
+        )
+    shape = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, np.integer)):
+            raise ValueError(
+                "PPOCR pipeline.rec_image_shape values must be positive integers, "
+                f"got {value!r}."
+            )
+        shape.append(int(item))
+    channels, height, width = shape
+    if channels != 3 or height != REC_IMAGE_SHAPE[1] or width <= 0:
+        raise ValueError(
+            "PPOCR pipeline.rec_image_shape must be [3, 48, positive width] "
+            f"for the height-1 CTC encoder, got {value!r}."
+        )
+    return channels, height, width
+
+
 def det_resize(
     img: np.ndarray,
     limit_side_len: int = 960,
@@ -39,7 +69,8 @@ def det_resize(
 
     Returns the resized image and ``(ratio_h, ratio_w)``.
     """
-    h, w = img.shape[:2]
+    source_h, source_w = img.shape[:2]
+    h, w = source_h, source_w
     if h + w < 64:
         pad = np.zeros((max(32, h), max(32, w), img.shape[2]), dtype=np.uint8)
         pad[:h, :w] = img
@@ -59,6 +90,10 @@ def det_resize(
     resize_h = max(int(round(resize_h / 32) * 32), 32)
     resize_w = max(int(round(resize_w / 32) * 32), 32)
     resized = cv2.resize(img, (resize_w, resize_h))
+    # These ratios describe the source pixels' transform into the resized
+    # tensor.  For tiny inputs the source occupies only the top-left of the
+    # padded canvas, so callers must retain the ratios and crop the detector's
+    # probability map back to that valid extent before mapping boxes.
     return resized, resize_h / h, resize_w / w
 
 
@@ -98,12 +133,16 @@ def get_rotate_crop_image(img: np.ndarray, points: np.ndarray) -> np.ndarray:
     return dst
 
 
-def rec_resize_norm(img_bgr: np.ndarray, max_wh_ratio: float) -> np.ndarray:
-    """Resize a BGR crop to height 48 preserving aspect, pad to the bucket width.
+def rec_resize_norm(
+    img_bgr: np.ndarray,
+    max_wh_ratio: float,
+    rec_image_shape: Sequence[int] = REC_IMAGE_SHAPE,
+) -> np.ndarray:
+    """Resize to the configured recognition height and pad to the bucket width.
 
-    Returns a ``(3, 48, W)`` float32 array normalized to ``[-1, 1]``.
+    Returns a ``(C, H, W)`` float32 array normalized to ``[-1, 1]``.
     """
-    img_c, img_h, _ = REC_IMAGE_SHAPE
+    img_c, img_h, _ = normalize_rec_image_shape(rec_image_shape)
     img_w = int(img_h * max_wh_ratio)
     h, w = img_bgr.shape[:2]
     ratio = w / float(h)
@@ -120,14 +159,15 @@ def rec_resize_norm(img_bgr: np.ndarray, max_wh_ratio: float) -> np.ndarray:
 def rec_batches(
     crops: List[np.ndarray],
     batch_size: int = 6,
+    rec_image_shape: Sequence[int] = REC_IMAGE_SHAPE,
 ) -> List[Tuple[List[int], np.ndarray]]:
     """Bucket crops by aspect ratio into padded batches, upstream-style.
 
     Crops are sorted by width/height ratio; each chunk shares one padded
-    width driven by the widest member (never narrower than 320/48). Returns
-    ``(original_indices, batch_tensor)`` pairs.
+    width driven by the widest member (never narrower than the configured
+    width/height ratio). Returns ``(original_indices, batch_tensor)`` pairs.
     """
-    img_c, img_h, img_w = REC_IMAGE_SHAPE
+    _img_c, img_h, img_w = normalize_rec_image_shape(rec_image_shape)
     ratios = [c.shape[1] / float(c.shape[0]) for c in crops]
     indices = np.argsort(np.array(ratios))
 
@@ -137,7 +177,10 @@ def rec_batches(
         max_wh_ratio = img_w / img_h
         for i in chunk:
             max_wh_ratio = max(max_wh_ratio, ratios[i])
-        norm = [rec_resize_norm(crops[i], max_wh_ratio) for i in chunk]
+        norm = [
+            rec_resize_norm(crops[i], max_wh_ratio, rec_image_shape)
+            for i in chunk
+        ]
         batches.append((chunk, np.stack(norm)))
     return batches
 
@@ -149,4 +192,5 @@ __all__ = [
     "rec_resize_norm",
     "rec_batches",
     "REC_IMAGE_SHAPE",
+    "normalize_rec_image_shape",
 ]

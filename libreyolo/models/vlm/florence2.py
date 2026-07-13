@@ -19,6 +19,7 @@ from typing import Any, ClassVar, Dict, Tuple
 
 from ...utils.image_loader import ImageInput, ImageLoader
 from .base import LibreVLMModel
+from .parsing import finalize_detection_dict
 
 
 class LibreFlorence2(LibreVLMModel):
@@ -79,46 +80,32 @@ class LibreFlorence2(LibreVLMModel):
             text, task=self.TASK, image_size=original_size
         )
         od = parsed.get(self.TASK, {})
-        labels = od.get("bboxes_labels", od.get("labels", []))
+        raw_boxes = od.get("bboxes", [])
+        raw_labels = od.get("bboxes_labels", od.get("labels", []))
+        try:
+            detections = zip(list(raw_boxes), list(raw_labels))
+        except (TypeError, ValueError):
+            detections = []
         boxes, scores, classes = [], [], []
-        allowed_classes = (
-            set(kwargs["classes"]) if kwargs.get("classes") is not None else None
-        )
-        if max_det <= 0:
-            return {
-                "boxes": boxes,
-                "scores": scores,
-                "classes": classes,
-                "num_detections": 0,
-            }
-        # Every box carries the placeholder score, so conf filtering is all-or-nothing.
-        detections = zip(od.get("bboxes", []), labels) if self.DEFAULT_SCORE >= conf_thres else []
-        # Florence returns pixel xyxy already, so no normalize/scale step.
         for box, label in detections:
             class_id = self._name_to_id.get(str(label).strip().lower())
             if class_id is None:
                 continue
-            if allowed_classes is not None and class_id not in allowed_classes:
-                continue
-            if not isinstance(box, (list, tuple)) or len(box) != 4:
-                continue
-            try:
-                x1, y1, x2, y2 = (float(v) for v in box)
-            except (TypeError, ValueError):
-                continue
-            if x2 <= x1 or y2 <= y1:
-                continue
-            boxes.append([x1, y1, x2, y2])
+            boxes.append(box)
             scores.append(self.DEFAULT_SCORE)
             classes.append(class_id)
-            if len(boxes) >= max_det:
-                break
-        return {
-            "boxes": boxes,
-            "scores": scores,
-            "classes": classes,
-            "num_detections": len(boxes),
-        }
+        # Florence returns pixel xyxy already, so the shared finalizer only
+        # validates/clips/filter/NMSes; it does not rescale geometry.
+        return finalize_detection_dict(
+            boxes,
+            scores,
+            classes,
+            original_size,
+            conf_thres=conf_thres,
+            iou_thres=iou_thres,
+            max_det=max_det,
+            classes=kwargs.get("classes"),
+        )
 
     def chat(self, *args, **kwargs):
         raise NotImplementedError(

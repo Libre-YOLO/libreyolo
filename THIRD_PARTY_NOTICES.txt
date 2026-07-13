@@ -230,8 +230,9 @@ Used for: RT-DETR model family (libreyolo/models/rtdetr/) including
 RF-DETR (Roboflow)
 --------------------------------------------------------------------
 Source: https://github.com/roboflow/rf-detr
+Commit: 779e55254ccfbffc8cc23b7ecee29a4201489e13 (tag 1.8.0)
 License: Apache License 2.0
-Copyright (c) 2024-2025 Roboflow, Inc.
+Copyright (c) 2025 Roboflow, Inc.
 Used for: RF-DETR model family (libreyolo/models/rfdetr/), LoRA
           adapter recipe helpers (libreyolo/training/lora.py), and
           COCO evaluation glue (libreyolo/data/yolo_coco_api.py).
@@ -241,6 +242,14 @@ Used for: RF-DETR model family (libreyolo/models/rfdetr/), LoRA
           RF-DETR v1.8.0 into libreyolo/models/rfdetr/. The published
           RF-DETR keypoint preview weights (Apache-2.0, COCO person
           pretrained) are redistributed with attribution.
+
+The separately hosted LibreRFDETR{n,s,m,l}-obb checkpoints are LibreYOLO
+fine-tunes on the Roboflow Universe dataset "My First Project - v8" supplied
+by user bobo:
+https://universe.roboflow.com/bobo-48pem/my-first-project-ewwrm
+The dataset and resulting fine-tuned weights are published under Creative
+Commons Attribution 4.0 International (CC BY 4.0), not Apache-2.0. The base
+RF-DETR code and initialization weights remain Apache-2.0.
 
 --------------------------------------------------------------------
 DINOv2 (Meta AI / facebookresearch)

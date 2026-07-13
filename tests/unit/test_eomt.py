@@ -1361,6 +1361,47 @@ def test_panoptic_merge_without_thing_class_ids_fuses_nothing():
     assert all(e["isthing"] for e in out["segments_info"])
 
 
+def test_panoptic_merge_empty_thing_ids_treats_every_category_as_stuff():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[])
+    out = LibreEoMT._postprocess_panoptic(
+        stub, _quadrant_panoptic_output(nc=4), 0.5, (4, 4)
+    )
+
+    assert len(out["segments_info"]) == 2
+    assert all(not entry["isthing"] for entry in out["segments_info"])
+
+
+def test_panoptic_overlap_uses_actual_surviving_mask_area():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=2, thing_class_ids=[0, 1])
+    class_logits = torch.full((1, 2, 3), -10.0)
+    class_logits[0, 0, 0] = 5.0
+    class_logits[0, 1, 1] = 5.0
+    mask_logits = torch.full((1, 2, 4, 4), -2.1972246)
+    mask_logits[0, 0] = -0.0400053  # p=0.49: wins outside but is not its mask
+    mask_logits[0, 0, :2, :2] = 0.4054651  # p=0.60: four-pixel own mask
+    mask_logits[0, 1, 0, 0] = -2.1972246
+    mask_logits[0, 1, 0, 1] = 2.1972246
+    mask_logits[0, 1, 1, 0] = 2.1972246
+    mask_logits[0, 1, 1, 1] = 2.1972246
+
+    out = LibreEoMT._postprocess_panoptic(
+        stub,
+        {
+            "class_queries_logits": class_logits,
+            "masks_queries_logits": mask_logits,
+        },
+        0.5,
+        (4, 4),
+    )
+
+    assert all(entry["category_id"] != 0 for entry in out["segments_info"])
+    assert int((out["panoptic"] > 0).sum()) == 3
+
+
 def test_panoptic_merge_empty_when_all_queries_are_null():
     from libreyolo.models.eomt.model import LibreEoMT
 
@@ -1388,10 +1429,18 @@ def test_coco_content_size_matches_upstream_aspect_ratio_rule():
         (576, 768): (480, 640),  # landscape
         (1194, 1536): (498, 640),  # landscape, rounds to 498
         (852, 1280): (426, 640),  # landscape
+        (12, 13): (591, 640),  # longest edge remains exact after rounding
         (640, 640): (640, 640),  # already square
     }
     for (oh, ow), expected in cases.items():
         assert LibreEoMT._coco_content_size(oh, ow, 640) == expected
+
+
+def test_coco_content_size_never_rounds_a_valid_side_to_zero():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    assert LibreEoMT._coco_content_size(1, 10000, 640) == (1, 640)
+    assert LibreEoMT._coco_content_size(10000, 1, 640) == (640, 1)
 
 
 def test_preprocess_pads_for_coco_tasks_and_splits_for_semantic(fake_eomt_seg_net):

@@ -274,8 +274,9 @@ Two layouts are accepted:
 Matte rules:
 
 - the matte is grayscale; values are read as alpha in `[0, 1]` (`/255`);
-- a matte is resized to the prediction canvas with bilinear interpolation when
-  the shapes differ;
+- a prediction is resized to the matte's native canvas with bilinear
+  interpolation when the shapes differ; the ground-truth matte is never
+  resampled for metric computation;
 - metrics are MAE and S-measure (Fan et al., ICCV 2017), computed on the
   original image canvas; best-checkpoint fitness is S-measure.
 

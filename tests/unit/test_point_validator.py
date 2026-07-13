@@ -414,11 +414,11 @@ def test_point_validator_edge_custom_threshold_changes_values():
 # Coordinate Normalization & Target Parsing
 # ===========================================================================
 
-def test_point_validator_parse_gt_yolo_normalised():
+def test_point_validator_parse_gt_pixel_boxes():
     row = np.array(
         [
-            [0.0, 0.25, 0.75, 0.10, 0.10],
-            [1.0, 0.80, 0.20, 0.05, 0.05],
+            [20.0, 70.0, 30.0, 80.0, 0.0],
+            [75.0, 15.0, 85.0, 25.0, 1.0],
             [0.0, 0.00, 0.00, 0.00, 0.00],
         ],
         dtype=np.float32,
@@ -433,7 +433,7 @@ def test_point_validator_parse_gt_yolo_normalised():
 
 
 def test_point_validator_parse_gt_clipped_coords():
-    row = np.array([[0.0, 1.2, -0.1, 0.1, 0.1]], dtype=np.float32)
+    row = np.array([[-20.0, -10.0, 260.0, 120.0, 0.0]], dtype=np.float32)
     v = _make_validator_for_parsing()
     xy, cls = v._parse_gt_points(row, orig_h=640, orig_w=640)
     assert xy.shape == (1, 2)
@@ -464,7 +464,7 @@ def test_point_validator_parse_gt_empty_padded_yolo_row():
 def test_point_validator_parse_gt_single_valid_with_padding():
     row = np.array(
         [
-            [0.0, 0.5, 0.5, 0.1, 0.1],
+            [45.0, 45.0, 55.0, 55.0, 0.0],
             [0.0, 0.0, 0.0, 0.0, 0.0],
             [0.0, 0.0, 0.0, 0.0, 0.0],
         ],
@@ -477,7 +477,7 @@ def test_point_validator_parse_gt_single_valid_with_padding():
 
 
 def test_point_validator_parse_gt_1d_row():
-    row = np.array([0.0, 0.3, 0.7, 0.1, 0.1], dtype=np.float32)
+    row = np.array([25.0, 65.0, 35.0, 75.0, 0.0], dtype=np.float32)
     v = _make_validator_for_parsing()
     xy, cls = v._parse_gt_points(row, orig_h=640, orig_w=640)
     assert xy.shape == (1, 2)
@@ -655,7 +655,7 @@ def test_point_validator_update_metrics_numpy():
             "classes": np.array([0], np.int64),
         }
     ]
-    targets = np.array([[[0.0, 0.5, 0.5, 0.1, 0.1]]], np.float32)
+    targets = np.array([[[288.0, 288.0, 352.0, 352.0, 0.0]]], np.float32)
     img_info = [(640, 640)]
 
     v._update_metrics(preds, targets, img_info)
@@ -686,7 +686,10 @@ def test_point_validator_update_metrics_torch_tensor():
             "classes": np.array([1], np.int64),
         }
     ]
-    targets = torch.tensor([[[1.0, 0.2, 0.8, 0.1, 0.1]]], dtype=torch.float32)
+    targets = torch.tensor(
+        [[[96.0, 480.0, 160.0, 544.0, 1.0]]],
+        dtype=torch.float32,
+    )
     img_info = [(640, 640)]
 
     v._update_metrics(preds, targets, img_info)
@@ -845,3 +848,17 @@ def test_point_validator_hungarian_match_confidence_priority():
     tp_with_score, _, _ = _hungarian_match(dist_mat, threshold=0.05, pred_scores=pred_scores)
     assert len(tp_with_score) == 1
     assert tp_with_score[0, 0] == 0
+
+
+def test_point_match_confidence_priority_survives_invalid_assignment_fillers():
+    from libreyolo.validation.point_validator import _hungarian_match
+
+    # Both predictions can match GT 0; GT 1 is outside tolerance for both.
+    # Penalizing invalid edges and subtracting score from every row makes the
+    # score terms cancel in a square assignment and incorrectly picks row 1.
+    distances = np.array([[0.04, 0.051], [0.01, 0.052]], dtype=np.float64)
+    scores = np.array([0.9, 0.3], dtype=np.float64)
+
+    pairs, _, _ = _hungarian_match(distances, threshold=0.05, pred_scores=scores)
+
+    assert pairs.tolist() == [[0, 0]]

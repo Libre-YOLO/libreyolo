@@ -60,30 +60,14 @@ def _eomt_keys(weights_dict: dict[str, Any]) -> set[str]:
 
 def _eomt_coco_content_size(orig_h: int, orig_w: int, size: int) -> Tuple[int, int]:
     """Return EoMT's aspect-preserving COCO content size."""
-    min_o, max_o = float(min(orig_h, orig_w)), float(max(orig_h, orig_w))
-    target = size
-    raw: Optional[float] = None
-    if max_o / min_o * size > size:
-        raw = size * min_o / max_o
-        target = int(round(raw))
-    if (orig_h <= orig_w and orig_h == target) or (
-        orig_w <= orig_h and orig_w == target
-    ):
+    if max(orig_h, orig_w) == size:
         return orig_h, orig_w
     if orig_w < orig_h:
-        out_w = target
-        out_h = (
-            int(raw * orig_h / orig_w)
-            if raw is not None
-            else int(size * orig_h / orig_w)
-        )
+        out_h = size
+        out_w = max(1, int(round(size * orig_w / orig_h)))
     else:
-        out_h = target
-        out_w = (
-            int(raw * orig_w / orig_h)
-            if raw is not None
-            else int(size * orig_w / orig_h)
-        )
+        out_w = size
+        out_h = max(1, int(round(size * orig_h / orig_w)))
     return out_h, out_w
 
 
@@ -596,7 +580,7 @@ class LibreEoMT(BaseModel):
         than silently mislabeled.
         """
         thing_ids = getattr(self, "thing_class_ids", None)
-        if not thing_ids:
+        if thing_ids is None:
             logger.warning(
                 "LibreEoMT panoptic checkpoint has no 'thing_class_ids' metadata; "
                 "treating every category as a thing. Stuff regions will not be "
@@ -678,12 +662,12 @@ class LibreEoMT(BaseModel):
             won = winner == k
             own_mask = mask_probs[k] >= self.PANOPTIC_MASK_THRESHOLD
             final_mask = won & own_mask
-            won_area = int(won.sum())
+            final_area = int(final_mask.sum())
             own_area = int(own_mask.sum())
-            if won_area == 0 or own_area == 0 or int(final_mask.sum()) == 0:
+            if own_area == 0 or final_area == 0:
                 continue
             # Mostly-occluded queries are dropped rather than left as slivers.
-            if won_area / own_area <= self.PANOPTIC_OVERLAP_THRESHOLD:
+            if final_area / own_area <= self.PANOPTIC_OVERLAP_THRESHOLD:
                 continue
 
             if is_stuff and label in stuff_memory:

@@ -972,7 +972,9 @@ class RFDETRTrainer(BaseTrainer):
 
         model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
         was_training = model.training
+        criterion_was_training = self.criterion.training
         model.eval()
+        self.criterion.eval()
 
         total_loss = 0.0
         num_batches = 0
@@ -999,8 +1001,8 @@ class RFDETRTrainer(BaseTrainer):
                         num_batches += 1
             pose_metrics = self._run_pose_metric_validation(model, epoch, save_plots=save_plots)
         finally:
-            if was_training:
-                model.train()
+            model.train(was_training)
+            self.criterion.train(criterion_was_training)
 
         avg_loss = total_loss / max(num_batches, 1)
         metrics = {"loss/val": avg_loss}

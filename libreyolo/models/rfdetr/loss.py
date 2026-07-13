@@ -52,15 +52,19 @@ def _classic_keypoint_losses(
     visible = finite_xy & finite_vis & (target_vis > 0)
     visible_f = visible.to(src_keypoints.dtype)
     visible_count = visible_f.sum(dim=-1).clamp(min=1.0)
+    safe_target_xy = torch.where(
+        finite_xy.unsqueeze(-1), target_xy, torch.zeros_like(target_xy)
+    )
     loss_l1 = (
-        F.l1_loss(src_keypoints[..., :2], target_xy, reduction="none").sum(dim=-1)
+        F.l1_loss(src_keypoints[..., :2], safe_target_xy, reduction="none").sum(dim=-1)
         * visible_f
     ).sum(dim=-1) / visible_count
 
     valid_vis_f = finite_vis.to(src_keypoints.dtype)
     vis_count = valid_vis_f.sum(dim=-1).clamp(min=1.0)
     pred_vis_logits = src_keypoints[..., 2]
-    target_findable = (target_vis > 0).to(src_keypoints.dtype)
+    safe_target_vis = torch.where(finite_vis, target_vis, torch.zeros_like(target_vis))
+    target_findable = (safe_target_vis > 0).to(src_keypoints.dtype)
     loss_findable = (
         F.binary_cross_entropy_with_logits(
             pred_vis_logits,
@@ -72,6 +76,30 @@ def _classic_keypoint_losses(
     loss_visible = torch.zeros_like(loss_findable)
     loss_nll = torch.zeros_like(loss_l1)
     return loss_l1, loss_findable, loss_visible, loss_nll
+
+
+def _align_equivalent_obb_targets(
+    src_boxes: torch.Tensor,
+    target_boxes: torch.Tensor,
+    src_angles: torch.Tensor,
+    target_angles: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Choose the closest equivalent ``(w, h, angle)`` target encoding."""
+    if src_boxes.numel() == 0:
+        return target_boxes, target_angles
+
+    swapped_boxes = target_boxes[..., [0, 1, 3, 2]]
+    swapped_angles = target_angles + torch.pi / 2
+    direct_cost = (src_boxes - target_boxes).abs().sum(dim=-1) + 1.0 - torch.cos(
+        2.0 * (src_angles - target_angles)
+    )
+    swapped_cost = (src_boxes - swapped_boxes).abs().sum(dim=-1) + 1.0 - torch.cos(
+        2.0 * (src_angles - swapped_angles)
+    )
+    use_swapped = (swapped_cost < direct_cost).detach()
+    aligned_boxes = torch.where(use_swapped.unsqueeze(-1), swapped_boxes, target_boxes)
+    aligned_angles = torch.where(use_swapped, swapped_angles, target_angles)
+    return aligned_boxes, aligned_angles
 
 
 @torch.no_grad()
@@ -434,6 +462,14 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
         target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        if "pred_angles" in outputs and all("angles" in target for target in targets):
+            src_angles = outputs["pred_angles"][idx].squeeze(-1)
+            target_angles = torch.cat(
+                [t["angles"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            )
+            target_boxes, _ = _align_equivalent_obb_targets(
+                src_boxes, target_boxes, src_angles, target_angles
+            )
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
 
@@ -463,6 +499,14 @@ class SetCriterion(nn.Module):
 
         src_angles = src_angles_all[idx].squeeze(-1)
         target_angles = torch.cat([t["angles"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        if "pred_boxes" in outputs and all("boxes" in target for target in targets):
+            src_boxes = outputs["pred_boxes"][idx]
+            target_boxes = torch.cat(
+                [t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0
+            )
+            _, target_angles = _align_equivalent_obb_targets(
+                src_boxes, target_boxes, src_angles, target_angles
+            )
         loss_angle = 1.0 - torch.cos(2.0 * (src_angles - target_angles))
         return {"loss_angle": loss_angle.sum() / num_boxes}
 

@@ -1,7 +1,29 @@
 """Tracking configuration for ByteTrack."""
 
+import math
 import warnings
 from dataclasses import dataclass, fields
+from numbers import Integral
+
+
+def _require_finite(config, *names: str) -> None:
+    """Reject NaN/Inf before one-sided range checks can accidentally accept them."""
+    for name in names:
+        value = getattr(config, name)
+        try:
+            finite = math.isfinite(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{name} must be a finite number, got {value!r}") from exc
+        if not finite:
+            raise ValueError(f"{name} must be finite, got {value}")
+
+
+def _require_integral(config, *names: str) -> None:
+    """Validate frame/count fields before they reach ``range`` or counters."""
+    for name in names:
+        value = getattr(config, name)
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise ValueError(f"{name} must be an integer, got {value!r}")
 
 
 @dataclass(kw_only=True)
@@ -35,6 +57,24 @@ class TrackConfig:
     minimum_consecutive_frames: int = 1
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "track_high_thresh",
+            "track_low_thresh",
+            "new_track_thresh",
+            "match_thresh",
+            "match_thresh_low",
+            "match_thresh_unconfirmed",
+            "track_buffer",
+            "frame_rate",
+            "minimum_consecutive_frames",
+        )
+        _require_integral(
+            self,
+            "track_buffer",
+            "frame_rate",
+            "minimum_consecutive_frames",
+        )
         if self.frame_rate <= 0:
             raise ValueError(f"frame_rate must be > 0, got {self.frame_rate}")
         if not (0 <= self.track_high_thresh <= 1):
@@ -129,6 +169,19 @@ class DeepOCSortConfig:
     embedder: str = "osnet_ain_x0_25"
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "det_thresh",
+            "max_age",
+            "min_hits",
+            "iou_threshold",
+            "delta_t",
+            "inertia",
+            "w_association_emb",
+            "alpha_fixed_emb",
+            "aw_param",
+        )
+        _require_integral(self, "max_age", "min_hits", "delta_t")
         if not (0 <= self.det_thresh < 1):
             # < 1 because the appearance EMA trust term divides by
             # (1 - det_thresh).
@@ -204,6 +257,16 @@ class OCSortConfig:
     use_byte: bool = False
 
     def __post_init__(self):
+        _require_finite(
+            self,
+            "det_thresh",
+            "max_age",
+            "min_hits",
+            "iou_threshold",
+            "delta_t",
+            "inertia",
+        )
+        _require_integral(self, "max_age", "min_hits", "delta_t")
         if not (0 <= self.det_thresh <= 1):
             raise ValueError(f"det_thresh must be in [0, 1], got {self.det_thresh}")
         if not (0 <= self.iou_threshold <= 1):
