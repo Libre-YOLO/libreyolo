@@ -29,22 +29,25 @@ pytestmark = [
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TOLERANCE = 1e-4
+# Digests are of the upstream bytes as published (LF). A checkout made with
+# git's autocrlf translation active will not match; clone with
+# core.autocrlf=false to run this gate.
 _UPSTREAM_TREE_SHA256 = (
-    "e93885c6f71c1d636b824c37385e95c06ffd61833b0d5a3447499a50ee3124e7"
+    "a5ca617d3899c586ea55e82aeaac321ce296ef0bea0877f43a153417196db7ba"
 )
 _UPSTREAM_FILE_SHA256 = {
-    "LICENSE": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
     "sam2/configs/edgetam.yaml": (
-        "251eca7a25c0acc415c477a696820b56c7f5efd63eb1f8d36de681403b6d0abc"
+        "25c2fda8490e7684f924abba130775487ca6eccee87b1d9cf92ddccf2436afe1"
     ),
     "sam2/build_sam.py": (
-        "ccb8fee60c981626d54e16635fef185061a12c855dc1f59e8350aba6e1dca7c9"
+        "36406726bf6320445927900e1ad1e6336f337eebb0ba724662fad7dbf2e17cb5"
     ),
     "sam2/sam2_image_predictor.py": (
-        "edd7281ec91bea1c5c9ee498b09c823b534fe31e36fc3dfbe7696e6d7a216bef"
+        "f13e5f9d94e5c8d9d2c3622dab20c8f334c089ef2ee5ea8e199da7d332b029ba"
     ),
     "sam2/utils/transforms.py": (
-        "c200d1931d501ea70cd73a84128dfa20f92b3f1f4e2d74760d032410fda0d0be"
+        "ba3a64f4600c62f209206a6df3b40e3fcf133edae32fad658831bb0c2a6d1146"
     ),
 }
 
