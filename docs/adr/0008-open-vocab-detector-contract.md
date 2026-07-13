@@ -56,8 +56,12 @@ The default vocabulary is COCO-80, matching the detector tier. Calling
 `set_classes()` replaces it until called again.
 
 `conf=` maps to the model's box-score threshold. Grounding DINO also accepts
-`text_threshold=` on prediction calls; OWLv2 and OMDet-Turbo do not. OMDet-Turbo
-uses its processor's fixed NMS threshold of `0.5`, so `iou=` is ignored.
+`text_threshold=` on prediction calls; OWLv2 and OMDet-Turbo do not.
+
+`iou=` is honoured only by families that suppress boxes themselves, declared by
+setting `NMS_THRESHOLD`. OMDet-Turbo does (its processor takes the threshold as
+an argument, defaulting to `0.5`); Grounding DINO and OWLv2 suppress nothing, so
+they warn that `iou=` is accepted for API compatibility and ignored.
 
 ## Validation
 

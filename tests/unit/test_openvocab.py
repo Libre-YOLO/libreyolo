@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import warnings
+
 import pytest
 import torch
 
@@ -198,7 +200,7 @@ class TestCallDefaults:
         with pytest.raises(ValueError, match="augment=True"):
             m("image.jpg", augment=True)
 
-    def test_iou_warns_because_hf_postprocess_has_no_nms(self, monkeypatch):
+    def test_iou_warns_for_families_that_suppress_nothing(self, monkeypatch):
         def fake_call(self, source=None, **kwargs):
             return "ok"
 
@@ -206,6 +208,35 @@ class TestCallDefaults:
         m = _bare(LibreOWLv2)
         with pytest.warns(UserWarning, match="iou=.+ignored"):
             assert m("image.jpg", iou=0.7) == "ok"
+
+    def test_omdet_turbo_honours_an_explicit_iou(self, monkeypatch):
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # honouring it must not also warn
+            assert m("image.jpg", iou=0.7) == "ok"
+        assert captured["iou"] == pytest.approx(0.7)
+
+    def test_omdet_turbo_injects_its_own_nms_default_when_iou_is_unset(
+        self, monkeypatch
+    ):
+        """predict() defaults iou=0.45, which is not OMDet-Turbo's default."""
+        captured = {}
+
+        def fake_call(self, source=None, **kwargs):
+            captured.update(kwargs)
+            return "ok"
+
+        monkeypatch.setattr(BaseModel, "__call__", fake_call)
+        m = _bare(LibreOMDetTurbo)
+        assert m("image.jpg") == "ok"
+        assert captured["iou"] == pytest.approx(0.5)
 
     def test_track_raises_in_v1(self):
         m = _bare(LibreOWLv2)
@@ -440,7 +471,8 @@ class TestOMDetTurboMapping:
         assert captured == {
             "text_labels": ["cat", "dog"],
             "threshold": pytest.approx(0.3),
-            "nms_threshold": pytest.approx(0.5),
+            # Reaches the processor as given: __call__ owns the default.
+            "nms_threshold": pytest.approx(0.45),
             "target_sizes": [(20, 20)],
         }
 

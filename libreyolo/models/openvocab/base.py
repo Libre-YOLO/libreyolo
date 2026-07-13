@@ -69,6 +69,10 @@ class LibreOpenVocabDetector(BaseModel):
     DEFAULT_CONF: ClassVar[float] = 0.25
     DEFAULT_TEXT_THRESHOLD: ClassVar[float | None] = None
     SUPPORTS_TEXT_THRESHOLD: ClassVar[bool] = False
+    # Families whose processor runs its own NMS set their default threshold
+    # here, and honour iou=. ``None`` means the family suppresses nothing, so
+    # iou= has no meaning and is warned about instead.
+    NMS_THRESHOLD: ClassVar[float | None] = None
 
     TTA_ENABLED: ClassVar[bool] = False
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
@@ -105,7 +109,9 @@ class LibreOpenVocabDetector(BaseModel):
         if text_threshold is not None and not self.SUPPORTS_TEXT_THRESHOLD:
             raise TypeError(f"{type(self).__name__} does not support text_threshold.")
         self._text_threshold = (
-            self.DEFAULT_TEXT_THRESHOLD if text_threshold is None else float(text_threshold)
+            self.DEFAULT_TEXT_THRESHOLD
+            if text_threshold is None
+            else float(text_threshold)
         )
         super().__init__(
             model_path=self.HF_REPOS[size],
@@ -148,11 +154,17 @@ class LibreOpenVocabDetector(BaseModel):
                 "test-time augmentation is out of scope for this tier."
             )
         if "iou" in kwargs:
-            warnings.warn(
-                f"{type(self).__name__} does not run LibreYOLO NMS; iou= is "
-                "accepted for API compatibility but ignored.",
-                stacklevel=2,
-            )
+            if self.NMS_THRESHOLD is None:
+                warnings.warn(
+                    f"{type(self).__name__} does not run NMS; iou= is "
+                    "accepted for API compatibility but ignored.",
+                    stacklevel=2,
+                )
+        elif self.NMS_THRESHOLD is not None:
+            # predict() defaults iou=0.45, which is not this family's NMS
+            # default. Inject the family's own, exactly as conf= is injected
+            # above, so an unset iou= keeps the upstream suppression behaviour.
+            kwargs["iou"] = self.NMS_THRESHOLD
         if text_threshold is None:
             return super().__call__(source, conf=conf, **kwargs)
         if not self.SUPPORTS_TEXT_THRESHOLD:
@@ -245,7 +257,9 @@ class LibreOpenVocabDetector(BaseModel):
                 except (ValueError, OSError):
                     return False
                 shards = set(weight_map.values())
-                return bool(shards) and all((local_dir / shard).exists() for shard in shards)
+                return bool(shards) and all(
+                    (local_dir / shard).exists() for shard in shards
+                )
         return any(local_dir.glob("*.safetensors")) or any(local_dir.glob("*.bin"))
 
     @classmethod

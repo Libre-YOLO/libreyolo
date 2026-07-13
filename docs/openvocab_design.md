@@ -30,13 +30,12 @@ runs its own NMS in post-processing. Its post-processing returns labels that
 map directly back to the queried class list (no phrase disambiguation like
 Grounding DINO). It does not expose `text_threshold=`.
 
-Public `LibreOMDetTurbo.predict()` calls the maintained `transformers`
-implementation, including its processor and post-processing. The
-parity-verified native `OmDetTurboDetectionModel` under
-`libreyolo/models/omdet_turbo/` is groundwork for a possible future
-fixed-vocabulary export path; it is not called by `predict()`. Export remains
-unsupported under ADR 0008 and would require a separate contract change plus
-tensor, decoded-detection, and metric parity verification.
+`LibreOMDetTurbo.predict()` calls the maintained `transformers` implementation,
+including its processor and post-processing; LibreYOLO vendors no OMDet-Turbo
+model source. Because that post-processing takes the suppression threshold as
+an argument, OMDet-Turbo is the one family in the tier that honours `iou=`;
+the other two suppress nothing and warn that `iou=` is ignored. Export stays
+unsupported under ADR 0008.
 
 Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 
