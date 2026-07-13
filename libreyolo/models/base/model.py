@@ -828,6 +828,24 @@ class BaseModel(ABC):
 
         return self._merge_tta(aug_dets, iou, image_path, (orig_w, orig_h), classes)
 
+    def _postprocess_semantic_logits(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+        **kwargs,
+    ) -> torch.Tensor:
+        """Return raw ``[1, C, H, W]`` semantic logits at ``original_size``.
+
+        Semantic families must implement this: flip TTA merges views before
+        the argmax, so it needs the pre-argmax logits that ``_postprocess``
+        throws away.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _postprocess_semantic_logits(), "
+            "which the semantic task requires (it backs both _postprocess and "
+            "flip TTA)."
+        )
+
     def _predict_augment_semantic(
         self,
         img_pil,

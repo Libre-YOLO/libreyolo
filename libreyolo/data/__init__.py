@@ -48,6 +48,7 @@ from .semantic_dataset import (
     img2mask_paths,
     resolve_semantic_data,
     semantic_collate_fn,
+    valid_content_hw,
 )
 from .utils import (
     DATASETS_DIR,
@@ -105,4 +106,5 @@ __all__ = [
     "img2mask_paths",
     "resolve_semantic_data",
     "semantic_collate_fn",
+    "valid_content_hw",
 ]

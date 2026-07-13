@@ -221,6 +221,119 @@ def test_augmented_validation_matches_non_augmented_on_content_aware_model(tmp_p
     assert metrics["metrics/pixel_accuracy"] == pytest.approx(1.0)
 
 
+def test_augmented_validation_keeps_padding_on_the_right_for_nonsquare_input(tmp_path):
+    """End-to-end guard for the letterbox-padding bug on a NON-SQUARE image.
+
+    A pixelwise stub cannot catch a naive whole-canvas flip end-to-end (flip
+    then flip-back cancels for any permutation-equivariant model), and a square
+    image has no padding to misplace — so neither existing test would notice if
+    ``_flip_content`` regressed to ``tensor.flip(-1)``. Instead, capture the
+    tensors the model is actually fed and assert the flipped view still has its
+    letterbox padding on the RIGHT, where every non-TTA code path puts it. A
+    whole-canvas flip would relocate it to the left and fail here.
+    """
+    from libreyolo.data.semantic_dataset import _PAD_COLOR
+
+    content_w = IMGSZ // 2  # portrait -> pads on the width axis, which flip touches
+
+    class _RecordingModel(_ContentAwareSemanticModel):
+        def __init__(self):
+            super().__init__()
+            self.seen_inputs = []
+
+        def _forward(self, images: torch.Tensor) -> torch.Tensor:
+            self.seen_inputs.append(images.clone())
+            return super()._forward(images)
+
+    for i in range(2):
+        img = Image.new("RGB", (content_w, IMGSZ), color=(30, 60, 90))  # dark -> class 0
+        pixels = img.load()
+        for y in range(IMGSZ):
+            for x in range(content_w // 2, content_w):
+                pixels[x, y] = (255, 255, 255)  # light -> class 1
+        path = tmp_path / "images" / "val" / f"img{i}.jpg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(path)
+
+        mask = np.zeros((IMGSZ, content_w), dtype=np.uint8)
+        mask[:, content_w // 2 :] = 1
+        _write_mask(tmp_path / "masks" / "val" / f"img{i}.png", mask)
+
+    yaml_path = tmp_path / "data.yaml"
+    yaml_path.write_text(
+        "\n".join(
+            [
+                f"path: {tmp_path.as_posix()}",
+                "val: images/val",
+                "masks_dir: masks",
+                "nc: 2",
+                "names:",
+                "  0: left",
+                "  1: right",
+                "",
+            ]
+        )
+    )
+    config = ValidationConfig(
+        data=str(yaml_path),
+        imgsz=IMGSZ,
+        batch_size=2,
+        device="cpu",
+        num_workers=0,
+        verbose=False,
+        save_dir=str(tmp_path / "runs"),
+        augment=True,
+    )
+    model = _RecordingModel()
+    metrics = SemanticValidator(model, config).run()
+
+    # BaseValidator._warmup_model fires dummy forwards first; the real batch is
+    # the last two calls (one original view + one flipped view).
+    assert len(model.seen_inputs) >= 2
+    original, flipped = model.seen_inputs[-2:]
+    pad_value = _PAD_COLOR / 255.0
+
+    # Sanity: the un-augmented view is letterboxed with padding on the right.
+    assert torch.allclose(
+        original[:, :, :, content_w:], torch.full_like(original[:, :, :, content_w:], pad_value), atol=1e-2
+    )
+
+    # The contract: the flipped view's padding is STILL on the right. A naive
+    # tensor.flip(-1) would put pad_value in columns [0:content_w) instead.
+    assert torch.allclose(
+        flipped[:, :, :, content_w:], torch.full_like(flipped[:, :, :, content_w:], pad_value), atol=1e-2
+    )
+    # ...and its real content is the mirror of the original's real content.
+    assert torch.allclose(
+        flipped[:, :, :, :content_w], original[:, :, :, :content_w].flip(-1)
+    )
+
+    assert metrics["metrics/mIoU"] == pytest.approx(1.0)
+
+
+def test_flip_content_rejects_unknown_resize_mode():
+    """Modes whose padding this window math does not model must fail loudly
+    (EoMT's "split", say) rather than silently mirror the wrong region."""
+    from types import SimpleNamespace
+
+    fake_self = SimpleNamespace(_resize_mode="split")
+    with pytest.raises(ValueError, match="split"):
+        SemanticValidator._flip_content(
+            fake_self, torch.zeros(1, 1, 1, 4), [{"orig_shape": (1, 2), "ratio": 1.0}]
+        )
+
+
+def test_extract_logits_upcasts_half_precision_at_target_resolution():
+    """Under half=True a model whose logits already sit at target_hw must not
+    carry fp16 into the softmax merge."""
+    from types import SimpleNamespace
+
+    half_logits = torch.zeros(1, 2, 4, 4, dtype=torch.float16)
+    out = SemanticValidator._extract_logits(SimpleNamespace(), half_logits, (4, 4))
+
+    assert out.dtype == torch.float32
+
+
 def _run_validator(tmp_path, prediction: str, **overrides):
     yaml_path = _make_dataset_yaml(tmp_path)
     config = ValidationConfig(

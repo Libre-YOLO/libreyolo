@@ -22,5 +22,14 @@ def average_flip_softmax(logits_a: torch.Tensor, logits_b: torch.Tensor) -> torc
     a proper simplex before combining, so a logit-scale mismatch between the
     two views (e.g. near letterbox-padding borders) can't disproportionately
     dominate the merge.
+
+    The accumulate/divide runs in place on this function's own freshly
+    allocated softmax buffer (never on a caller's tensor) so that a dense
+    semantic merge holds two full ``[B, C, H, W]`` float tensors rather than
+    four: at ADE20K scale (150 classes, 512x512, batch 8) each one is 1.2 GB,
+    so the naive ``(a.softmax() + b.softmax()) / 2`` spends several GB on
+    temporaries that exist only to be discarded.
     """
-    return (logits_a.softmax(dim=1) + logits_b.softmax(dim=1)) / 2
+    probs = logits_a.softmax(dim=1)
+    probs.add_(logits_b.softmax(dim=1)).div_(2)
+    return probs
