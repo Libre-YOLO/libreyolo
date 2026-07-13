@@ -181,7 +181,8 @@ class SemanticValidator(BaseValidator):
 
         from ..utils.tta import average_flip_softmax
 
-        self.model.model.eval()
+        # BaseValidator._run_validation already put the model in eval() before
+        # dispatching here.
         pbar = tqdm(
             self.dataloader,
             desc="Validating (TTA x2)",
