@@ -46,7 +46,9 @@ _ALIASES: Dict[str, Tuple[Type[LibreOpenVocabDetector], str]] = {
 _DEFAULT_MODEL = "grounding-dino-tiny"
 
 
-def LibreOpenVocab(model: str = _DEFAULT_MODEL, **kwargs) -> LibreOpenVocabDetector:
+def LibreOpenVocab(
+    model: str = _DEFAULT_MODEL, **kwargs
+) -> LibreOpenVocabDetector:
     """Load an open-vocabulary detector by alias."""
     key = str(model).strip().lower()
     match = _ALIASES.get(key)

@@ -76,10 +76,7 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
     def _prompt_chunks(self) -> list[str]:
         max_text_len = self._max_text_len()
         all_class_ids = list(range(len(self.names)))
-        if (
-            max_text_len is None
-            or self._token_count(self._prompt(all_class_ids)) <= max_text_len
-        ):
+        if max_text_len is None or self._token_count(self._prompt(all_class_ids)) <= max_text_len:
             return [self._prompt(all_class_ids)]
 
         chunks: list[str] = []
