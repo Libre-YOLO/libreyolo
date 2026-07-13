@@ -101,6 +101,18 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
                 f"{family!r}"
             )
 
+    # Promptable-segmentation exports are lazy and importable without installing
+    # the optional model runtime itself.
+    from libreyolo import LibreEdgeTAM, LibreSAM, LibreSAM1, LibreSAM2, LibreSAM3
+
+    if not callable(LibreSAM):
+        raise AssertionError("LibreSAM import did not resolve to a callable")
+    for family in (LibreSAM1, LibreSAM2, LibreEdgeTAM, LibreSAM3):
+        if not isinstance(family, type):
+            raise AssertionError(
+                f"SAM family export did not resolve to a class: {family!r}"
+            )
+
     package_version = importlib.metadata.version("libreyolo")
     if package_version != libreyolo.__version__:
         raise AssertionError(

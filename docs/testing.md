@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.3
+Version: 2.4
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -75,6 +75,7 @@ Matrix:
 
 Checks: fresh venv, selected install mode, `pip check`, `import libreyolo`,
 `LibreYOLO`, `Results`, `SAMPLE_IMAGE`, bundled sample image exists,
+lazy VLM, promptable-segmentation, and open-vocabulary family exports,
 `libreyolo --help`, `libreyolo version --json --quiet`,
 `libreyolo checks --json --quiet`, and import location check.
 

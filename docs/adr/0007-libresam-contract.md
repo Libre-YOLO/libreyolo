@@ -40,8 +40,9 @@ shape:
 - A base class `LibreSAMModel(BaseModel)` that does **not** define `can_load`,
   keeping the family out of the detector `_registry` and the `LibreYOLO`
   factory.
-- SAM-1 and SAM-2 load through the permissive `transformers` APIs and ship no
-  model source. SAM-2 weights are mirrored in the LibreYOLO Hugging Face org.
+- SAM-1, SAM-2, and EdgeTAM load through the permissive `transformers` APIs and
+  ship no model source. SAM-2 and EdgeTAM weights are mirrored in the LibreYOLO
+  Hugging Face org.
   MobileSAM uses a native Apache-2.0 port because its TinyViT
   image encoder is not representable as a `transformers` SAM-1/2 checkpoint.
 - Returns the same `Results` (with `masks`, plus tight `boxes` derived from the
@@ -55,6 +56,7 @@ The default family remains **SAM-1** (`facebook/sam-vit-base` / `-large` /
 |---|---|---|---|
 | SAM-1 | `LibreSAM("base")`, `LibreSAM1("base")` | `facebook/sam-vit-*` | Default promptable family. |
 | SAM-2 image | `LibreSAM("sam2-tiny")`, `LibreSAM2("tiny")` | `LibreYOLO/LibreSAM2*` | Image segmentation only in v1. |
+| EdgeTAM image | `LibreSAM("edgetam")`, `LibreEdgeTAM("edge")` | `LibreYOLO/LibreEdgeTAM` | On-device EdgeTAM profile; image segmentation only in v1. |
 | SAM 3 image | `LibreSAM("sam3")`, `LibreSAM3("large")` | `facebook/sam3` | Visual prompts plus concept text prompts; gated custom-license weights. |
 | MobileSAM | `LibreSAM("mobilesam")`, `LibreMobileSAM()` | `LibreYOLO/LibreMobileSAM` | Native TinyViT port with converted weights. |
 | PicoSAM3 | `LibreSAM("picosam3")`, `LibrePicoSAM3()` | `LibreYOLO/LibrePicoSAM3` | Native 96px ROI CNN; box prompts only. |
@@ -78,6 +80,9 @@ model.set_image("img.jpg")                                 # encode once...
 a = model.predict(points=[500, 375], labels=[1])           # ...prompt cheaply
 b = model.predict(bboxes=[100, 100, 200, 200])
 model.reset_image()
+
+edge = LibreSAM("edgetam")
+edge.predict("img.jpg", points=[500, 375], labels=[1])
 
 sam3 = LibreSAM("sam3")
 r = sam3.predict("img.jpg", text="yellow school bus")  # all matching instances
@@ -117,10 +122,10 @@ cached embeddings when possible so interactive sessions survive device changes.
 
 | Field             | Meaning                                              |
 |-------------------|------------------------------------------------------|
-| `FAMILY`          | family id (`sam`, `sam2`, `sam3`, `mobilesam`, `picosam3`) |
+| `FAMILY`          | family id (`sam`, `sam2`, `edgetam`, `sam3`, `mobilesam`, `picosam3`) |
 | `FILENAME_PREFIX` | `Libre`-prefixed weights-dir prefix                  |
 | `HF_REPOS`        | `{size: hf_repo_id}`; drives autodownload            |
-| `INPUT_SIZES`     | `{size: nominal_px}` (1024; the processor owns resize)|
+| `INPUT_SIZES`     | `{size: nominal_px}` (the processor/family transform owns resize)|
 
 ## Confidence
 
@@ -135,6 +140,13 @@ Hugging Face repositories; SAM-2 loads from LibreYOLO Hugging Face mirrors of
 the upstream Transformers-compatible snapshots. MobileSAM code and weights are
 Apache-2.0; LibreYOLO carries a native port plus a NOTICE, and the converted
 checkpoint is hosted separately as `LibreMobileSAM.pt`.
+
+EdgeTAM code and checkpoints are Apache-2.0. LibreYOLO does not vendor its model
+architecture; image inference uses the Apache-2.0 Transformers adapter and
+reproduces the pinned upstream square image and prompt-coordinate transforms. The
+`LibreYOLO/LibreEdgeTAM` snapshot is converted from `facebook/EdgeTAM` revision
+`14d7ecc48c656b94e5184519f698cd5386c5a2bf`, whose raw `edgetam.pt` SHA-256 is
+`ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df`.
 
 PicoSAM3 code and weights are Apache-2.0. LibreYOLO carries only the compact
 ROI CNN and downloads `LibrePicoSAM3pico.pt` from the LibreYOLO Hugging Face
@@ -161,11 +173,12 @@ part of a separate future video plan.
 
 ## Out Of Scope (v1)
 
-- SAM-2/SAM-3 video and memory paths.
+- SAM-2/SAM-3/EdgeTAM video and memory paths. A follow-up should add one shared
+  video-session contract rather than an EdgeTAM-only tracking API.
 - SAM 3 image exemplars and SAM 3.1, subject to the trigger above.
-- Mask prompts (`masks=`), `train()`, `val()`, and `track()` raise. SAM-1/2/3
-  and MobileSAM export also raise; PicoSAM3 alone exports its raw 96px ROI CNN
-  to ONNX.
+- Mask prompts (`masks=`), `train()`, `val()`, and `track()` raise. SAM-1/2/3,
+  EdgeTAM, and MobileSAM export also raise; PicoSAM3 alone exports its raw 96px
+  ROI CNN to ONNX.
 - "Segment everything" is a simplified grid AMG (predicted-IoU threshold +
   box-IoU dedup); it omits stability-score filtering, multi-crop, and mask-IoU
   dedup, and is documented as approximate. The prompted path is the precise API.
