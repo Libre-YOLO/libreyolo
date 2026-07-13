@@ -64,7 +64,7 @@ _MAX_JSON_BODY_BYTES = 8 * 1024 * 1024
 _MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 _BODY_READ_CHUNK_BYTES = 64 * 1024
 _BODY_READ_TIMEOUT_SECONDS = 10.0
-_BODY_DISCARD_TIMEOUT_SECONDS = 1.0
+_BODY_DISCARD_TIMEOUT_SECONDS = 3.0
 _MAX_CONTENT_LENGTH_DIGITS = 20
 
 # Absolute filesystem paths (Windows ``C:\...`` or POSIX ``/...``) we must not leak
@@ -1319,15 +1319,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 raise _RequestBodyError("invalid Content-Length header")
             length = int(raw)
-        if length > _MAX_REQUEST_BODY_BYTES:
-            self._request_body_consumed = True
-            self.close_connection = True
-            raise _RequestBodyTooLarge("request body too large")
         self._request_body_length = length
         return length
 
     def _consume_request_body(
-        self, *, collect: bool, limit: int, timeout: float
+        self, *, collect: bool, limit: Optional[int], timeout: float
     ) -> bytes:
         if getattr(self, "_request_body_consumed", False):
             if collect:
@@ -1335,7 +1331,7 @@ class _Handler(BaseHTTPRequestHandler):
             return b""
 
         length = self._declared_request_body_length()
-        if length > limit:
+        if limit is not None and length > limit:
             self._request_body_consumed = True
             self.close_connection = True
             raise _RequestBodyTooLarge("request body too large")
@@ -1373,19 +1369,37 @@ class _Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
         return b"".join(chunks) if chunks is not None else b""
 
-    def _discard_request_body(self, *, limit: int = _MAX_REQUEST_BODY_BYTES) -> None:
-        self._consume_request_body(
-            collect=False,
-            limit=limit,
-            timeout=_BODY_DISCARD_TIMEOUT_SECONDS,
-        )
-
-    def _read_body_bytes(self, *, limit: int = _MAX_REQUEST_BODY_BYTES) -> bytes:
-        if self._declared_request_body_length() > limit:
-            # The endpoint limit prevents allocation; still drain bodies within the
-            # global framing ceiling so Windows clients reliably receive the 413.
-            self._discard_request_body(limit=_MAX_REQUEST_BODY_BYTES)
+    def _discard_request_body(self, *, limit: Optional[int] = None) -> None:
+        if limit is None:
+            limit = _MAX_REQUEST_BODY_BYTES
+        else:
+            limit = min(limit, _MAX_REQUEST_BODY_BYTES)
+        oversized = self._declared_request_body_length() > limit
+        try:
+            # Discarding is O(1) in memory and bounded by an absolute deadline.
+            # Do not reject from the declared length alone: closing with a queued
+            # body can make Windows discard the already-written HTTP response.
+            self._consume_request_body(
+                collect=False,
+                limit=None,
+                timeout=_BODY_DISCARD_TIMEOUT_SECONDS,
+            )
+        except _RequestBodyError as exc:
+            if oversized:
+                raise _RequestBodyTooLarge("request body too large") from exc
+            raise
+        if oversized:
             raise _RequestBodyTooLarge("request body too large")
+
+    def _read_body_bytes(self, *, limit: Optional[int] = None) -> bytes:
+        if limit is None:
+            limit = _MAX_REQUEST_BODY_BYTES
+        else:
+            limit = min(limit, _MAX_REQUEST_BODY_BYTES)
+        if self._declared_request_body_length() > limit:
+            # The endpoint limit prevents allocation.  Still drain under the
+            # absolute discard deadline so the client can receive the 413.
+            self._discard_request_body(limit=limit)
         return self._consume_request_body(
             collect=True, limit=limit, timeout=_BODY_READ_TIMEOUT_SECONDS
         )

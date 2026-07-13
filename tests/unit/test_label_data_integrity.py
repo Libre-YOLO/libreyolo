@@ -240,6 +240,40 @@ def test_segment_polygon_is_clipped_to_persisted_canvas(tmp_path):
     assert all(0.0 <= value <= 1.0 for value in points)
 
 
+def test_segment_rejects_clipping_overflow_without_publishing_nan(tmp_path):
+    session = _dataset(tmp_path / "segment-overflow", task="segment")
+    good = {
+        "type": "poly",
+        "cls": 0,
+        "points": [0.1, 0.1, 0.8, 0.1, 0.4, 0.7],
+    }
+    session.write_label(0, [good])
+    label = session._items[0][1]
+    before = label.read_bytes()
+
+    with pytest.raises(ValueError, match="finite and normalized"):
+        session.write_label(
+            0,
+            [
+                {
+                    "type": "poly",
+                    "cls": 0,
+                    "points": [
+                        1e308,
+                        1e308,
+                        -1e308,
+                        -1e308,
+                        0.5,
+                        0.5,
+                    ],
+                }
+            ],
+        )
+
+    assert label.read_bytes() == before
+    assert b"nan" not in label.read_bytes().lower()
+
+
 def test_segment_rejects_diagonal_polygon_outside_canvas_corner(tmp_path):
     session = _dataset(tmp_path / "segment", task="segment")
     points = [-0.45, 0.35, 0.35, -0.45, 0.36, -0.44, -0.44, 0.36]
@@ -794,7 +828,257 @@ def test_in_place_export_rolls_back_all_moves_on_mid_commit_failure(tmp_path, mo
         export_dataset(session, formats=("yolo",), split="none", in_place=True)
 
     assert _file_snapshot(root) == before
-    assert not list(tmp_path.glob(".source-libreyolo-export-*"))
+    assert not list(tmp_path.glob(".source-librelabel-export-*"))
+
+
+@pytest.mark.parametrize("source_kind", ("image", "label"))
+def test_in_place_export_rejects_link_sources_but_copy_export_remains_safe(
+    tmp_path, source_kind
+):
+    root = tmp_path / "source"
+    session = _dataset(root)
+    if source_kind == "label":
+        session.write_label(
+            0, [{"cls": 0, "cx": 0.4, "cy": 0.4, "w": 0.2, "h": 0.2}]
+        )
+    source = session._items[0][0 if source_kind == "image" else 1]
+    target = source.with_name(f"linked-target{source.suffix}")
+    source.replace(target)
+    try:
+        source.symlink_to(target.name)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+    expected = target.read_bytes()
+
+    with pytest.raises(ValueError, match="symbolic-link or reparse-point"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert source.is_symlink()
+    assert source.read_bytes() == expected
+    assert target.read_bytes() == expected
+
+    destination = tmp_path / "copy"
+    export_dataset(
+        session, dst=str(destination), formats=("yolo",), split="none"
+    )
+    assert destination.is_dir()
+
+
+def test_in_place_export_rejects_link_source_ancestor_but_copy_remains_safe(
+    tmp_path,
+):
+    root = tmp_path / "source"
+    external = tmp_path / "external"
+    external.mkdir()
+    image = external / "sample.jpg"
+    Image.new("RGB", (24, 16), "red").save(image)
+    (root / "images").mkdir(parents=True)
+    linked_split = root / "images" / "raw"
+    try:
+        linked_split.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink creation is unavailable: {exc}")
+    (root / "data.yaml").write_text(
+        "\n".join(
+            (
+                f"path: {root.as_posix()}",
+                "train: images/raw",
+                "nc: 1",
+                "names: [cat]",
+                "task: detect",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session = DatasetSession(str(root / "data.yaml"))
+    expected = image.read_bytes()
+
+    with pytest.raises(ValueError, match="symbolic-link or reparse-point"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert linked_split.is_symlink()
+    assert image.read_bytes() == expected
+    destination = tmp_path / "copy"
+    export_dataset(session, dst=str(destination), formats=("yolo",), split="none")
+    assert (destination / "images" / "train" / "sample.jpg").read_bytes() == expected
+
+
+def test_in_place_export_rejects_link_destination_ancestor(tmp_path):
+    root = tmp_path / "source"
+    source = root / "incoming" / "sample.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (24, 16), "red").save(source)
+    external = tmp_path / "external"
+    external.mkdir()
+    (root / "images").mkdir()
+    linked_destination = root / "images" / "train"
+    try:
+        linked_destination.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink creation is unavailable: {exc}")
+    (root / "data.yaml").write_text(
+        "\n".join(
+            (
+                f"path: {root.as_posix()}",
+                "train: incoming",
+                "nc: 1",
+                "names: [cat]",
+                "task: detect",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session = DatasetSession(str(root / "data.yaml"))
+    expected = source.read_bytes()
+
+    with pytest.raises(ValueError, match="symbolic-link or reparse-point"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert source.read_bytes() == expected
+    assert linked_destination.is_symlink()
+    assert not list(external.iterdir())
+
+
+def test_in_place_export_rejects_future_label_destination_through_link(tmp_path):
+    root = tmp_path / "source"
+    source = root / "incoming" / "sample.jpg"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (24, 16), "red").save(source)
+    external = tmp_path / "external-labels"
+    external.mkdir()
+    (root / "labels").mkdir()
+    linked_destination = root / "labels" / "train"
+    try:
+        linked_destination.symlink_to(external, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink creation is unavailable: {exc}")
+    (root / "data.yaml").write_text(
+        "\n".join(
+            (
+                f"path: {root.as_posix()}",
+                "train: incoming",
+                "nc: 1",
+                "names: [cat]",
+                "task: detect",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session = DatasetSession(str(root / "data.yaml"))
+    expected = source.read_bytes()
+
+    with pytest.raises(ValueError, match="symbolic-link or reparse-point"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert source.read_bytes() == expected
+    assert linked_destination.is_symlink()
+    assert not list(external.iterdir())
+
+
+def test_in_place_export_rejects_source_swapped_to_link_during_move(
+    tmp_path, monkeypatch
+):
+    from libreyolo.label import export as export_module
+
+    root = tmp_path / "source"
+    session = _dataset(root)
+    source = session._items[0][0]
+    original = source.read_bytes()
+    backup = source.with_name(f"{source.name}.original")
+    alternate = tmp_path / "alternate.jpg"
+    Image.new("RGB", (24, 16), "green").save(alternate)
+    probe = tmp_path / "symlink-probe"
+    try:
+        probe.symlink_to(alternate)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+    probe.unlink()
+    real_move = export_module.shutil.move
+    swapped = False
+
+    def swap_source_then_move(src, dst, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            source.replace(backup)
+            source.symlink_to(alternate)
+        return real_move(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(export_module.shutil, "move", swap_source_then_move)
+    with pytest.raises(ValueError, match="symbolic-link or reparse-point"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert source.is_symlink()
+    assert source.read_bytes() == alternate.read_bytes()
+    assert backup.read_bytes() == original
+    assert not list(tmp_path.glob(".source-librelabel-export-*"))
+
+
+@pytest.mark.parametrize("interrupt_call", (1, 3))
+def test_in_place_export_recovers_move_that_completes_before_interrupt(
+    tmp_path, monkeypatch, interrupt_call
+):
+    from libreyolo.label import export as export_module
+
+    root = tmp_path / "source"
+    session = _dataset(root)
+    before = _file_snapshot(root)
+    real_move = export_module.shutil.move
+    calls = 0
+
+    def interrupt_after_move(src, dst, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = real_move(src, dst, *args, **kwargs)
+        if calls == interrupt_call:
+            raise KeyboardInterrupt("injected after completed move")
+        return result
+
+    monkeypatch.setattr(export_module.shutil, "move", interrupt_after_move)
+    with pytest.raises(KeyboardInterrupt, match="completed move"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    assert _file_snapshot(root) == before
+    assert not list(tmp_path.glob(".source-librelabel-export-*"))
+
+
+def test_in_place_export_preserves_stage_when_rollback_cannot_finish(
+    tmp_path, monkeypatch
+):
+    from libreyolo.label import export as export_module
+
+    root = tmp_path / "source"
+    session = _dataset(root)
+    before = _file_snapshot(root)
+    real_move = export_module.shutil.move
+    calls = 0
+
+    def fail_finalization_then_rollback(src, dst, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("injected finalization failure")
+        if calls == 4:
+            raise OSError("injected rollback failure")
+        return real_move(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(
+        export_module.shutil, "move", fail_finalization_then_rollback
+    )
+    with pytest.raises(RuntimeError, match="staging directory was preserved"):
+        export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    recovery_dirs = list(tmp_path.glob(".source-librelabel-export-*"))
+    assert len(recovery_dirs) == 1
+    recovered_files = [
+        path.read_bytes() for path in recovery_dirs[0].rglob("*") if path.is_file()
+    ]
+    assert recovered_files
+    remaining = list(_file_snapshot(root).values()) + recovered_files
+    assert sorted(remaining) == sorted(before.values())
 
 
 def test_in_place_export_rolls_back_when_yaml_commit_fails(tmp_path, monkeypatch):

@@ -19,6 +19,7 @@ import json
 import math
 import os
 import shutil
+import stat
 import tempfile
 import xml.sax.saxutils as _sx
 import zipfile
@@ -286,6 +287,35 @@ def _normpath(path: Path) -> str:
     return _path_identity(path)
 
 
+def _is_link_or_reparse(path: Path) -> bool:
+    """Whether moving ``path`` could relocate link semantics instead of bytes."""
+    if path.is_symlink():
+        return True
+    try:
+        attributes = getattr(os.lstat(path), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _link_or_reparse_component(path: Path) -> Path | None:
+    """Return the first lexical path component that redirects filesystem access."""
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    for component in reversed((absolute, *absolute.parents)):
+        if _is_link_or_reparse(component):
+            return component
+    return None
+
+
+def _reject_link_or_reparse_components(path: Path, role: str) -> None:
+    component = _link_or_reparse_component(path)
+    if component is not None:
+        raise ValueError(
+            f"In-place export cannot safely use {role} through symbolic-link or "
+            f"reparse-point component {component}; use a copy export instead."
+        )
+
+
 def _flatten_split_sources(value):
     if isinstance(value, (list, tuple)):
         for item in value:
@@ -328,18 +358,133 @@ def _reject_destination_inside_source(session, destination: Path) -> None:
         )
 
 
+def _infer_move_location(move: dict) -> str:
+    """Resolve an interruptible move from its phase and filesystem state."""
+    state = move["location"]
+    candidates = {
+        "orig": ("orig",),
+        "moving_to_stage": ("orig", "stage"),
+        "stage": ("stage",),
+        "moving_to_dest": ("stage", "dest"),
+        "dest": ("dest",),
+        "rolling_dest_to_stage": ("dest", "stage"),
+        "rolling_stage_to_orig": ("stage", "orig"),
+    }.get(state)
+    if candidates is None:
+        raise RuntimeError(f"unknown in-place move phase: {state}")
+
+    existing = []
+    seen = set()
+    for location in candidates:
+        path = move[location]
+        identity = _normpath(path)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if os.path.lexists(path):
+            existing.append(location)
+    if len(existing) != 1:
+        raise RuntimeError(
+            f"cannot determine in-place move location during phase {state}"
+        )
+    location = existing[0]
+    if location == "dest" and _normpath(move["orig"]) == _normpath(move["dest"]):
+        return "orig"
+    return location
+
+
 def _rollback_moves(moves: List[dict]) -> None:
     """Return every staged/finalized move to its original path in two phases."""
+    errors: List[BaseException] = []
+
+    # First vacate every final destination.  This preserves permutation-style
+    # reorganizations where one file's destination is another file's origin.
     for move in moves:
-        if move["location"] == "dest" and move["dest"].exists():
+        try:
+            location = _infer_move_location(move)
+        except BaseException as exc:
+            errors.append(exc)
+            continue
+        move["location"] = location
+        if location != "dest":
+            continue
+        try:
             move["stage"].parent.mkdir(parents=True, exist_ok=True)
+            _reject_link_or_reparse_components(
+                move["dest"].parent, "a rollback source parent"
+            )
+            _reject_link_or_reparse_components(
+                move["stage"].parent, "a rollback staging parent"
+            )
+        except BaseException as exc:
+            errors.append(exc)
+            continue
+        move["location"] = "rolling_dest_to_stage"
+        try:
             shutil.move(str(move["dest"]), str(move["stage"]))
-            move["location"] = "stage"
+        except BaseException as exc:
+            try:
+                location = _infer_move_location(move)
+            except BaseException as state_exc:
+                errors.extend((exc, state_exc))
+                continue
+            if location != "stage":
+                errors.append(exc)
+                move["location"] = location
+                continue
+        move["location"] = "stage"
+
+    # Then restore every staged source.  If a move completed before an async
+    # exception was delivered, filesystem inference recognizes that completion.
     for move in moves:
-        if move["location"] == "stage" and move["stage"].exists():
+        try:
+            location = _infer_move_location(move)
+        except BaseException as exc:
+            errors.append(exc)
+            continue
+        move["location"] = location
+        if location == "orig":
+            continue
+        if location != "stage":
+            errors.append(RuntimeError("in-place source remains at its destination"))
+            continue
+        try:
             move["orig"].parent.mkdir(parents=True, exist_ok=True)
+            _reject_link_or_reparse_components(
+                move["stage"].parent, "a rollback staging parent"
+            )
+            _reject_link_or_reparse_components(
+                move["orig"].parent, "a rollback destination parent"
+            )
+        except BaseException as exc:
+            errors.append(exc)
+            continue
+        move["location"] = "rolling_stage_to_orig"
+        try:
             shutil.move(str(move["stage"]), str(move["orig"]))
-            move["location"] = "orig"
+        except BaseException as exc:
+            try:
+                location = _infer_move_location(move)
+            except BaseException as state_exc:
+                errors.extend((exc, state_exc))
+                continue
+            if location != "orig":
+                errors.append(exc)
+                move["location"] = location
+                continue
+        move["location"] = "orig"
+
+    for move in moves:
+        try:
+            location = _infer_move_location(move)
+        except BaseException as exc:
+            errors.append(exc)
+        else:
+            move["location"] = location
+            if location != "orig":
+                errors.append(RuntimeError("in-place source was not restored"))
+    if errors:
+        raise RuntimeError("one or more in-place moves could not be restored") from errors[0]
 
 
 def _mkdir_parents_recorded(path: Path, created: List[Path]) -> None:
@@ -372,13 +517,23 @@ def _in_place_export(
         ip, lp = Path(ip), Path(lp)
         if not ip.is_file():
             raise FileNotFoundError(f"Image disappeared before export: {ip}")
+        _reject_link_or_reparse_components(ip, "an image source")
+        label_exists = os.path.lexists(lp)
+        if label_exists:
+            _reject_link_or_reparse_components(lp, "a label source")
+        if label_exists and not lp.is_file():
+            raise ValueError(f"In-place export label source is not a file: {lp}")
         dest_name = unique(split_name, ip.name)
+        dest_img = base / "images" / split_name / dest_name
+        dest_lbl = base / "labels" / split_name / f"{Path(dest_name).stem}.txt"
+        _reject_link_or_reparse_components(dest_img, "an image destination")
+        _reject_link_or_reparse_components(dest_lbl, "a label destination")
         plans.append(
             (
                 ip,
-                base / "images" / split_name / dest_name,
-                lp if lp.exists() else None,
-                base / "labels" / split_name / f"{Path(dest_name).stem}.txt",
+                dest_img,
+                lp if label_exists else None,
+                dest_lbl,
             )
         )
 
@@ -441,12 +596,13 @@ def _in_place_export(
                         f"{existing}"
                     )
 
-    stage = Path(tempfile.mkdtemp(prefix=f".{base.name}-librelabel-export-", dir=str(base.parent)))
     yaml_path = Path(yaml_path).resolve()
     original_yaml = yaml_path.read_bytes() if yaml_path.exists() else None
+    stage = Path(tempfile.mkdtemp(prefix=f".{base.name}-librelabel-export-", dir=str(base.parent)))
     moves: List[dict] = []
     created_dirs: List[Path] = []
     committed = False
+    preserve_stage = False
     try:
         for index, (ip, dest_img, lp, dest_lbl) in enumerate(plans):
             pairs = [(ip, dest_img)]
@@ -454,14 +610,30 @@ def _in_place_export(
                 pairs.append((lp, dest_lbl))
             for subindex, (orig, dest) in enumerate(pairs):
                 staged = stage / f"{index}-{subindex}{orig.suffix}"
-                shutil.move(str(orig), str(staged))
                 moves.append(
-                    {"orig": orig, "stage": staged, "dest": dest, "location": "stage"}
+                    {"orig": orig, "stage": staged, "dest": dest, "location": "orig"}
                 )
         for move in moves:
+            _reject_link_or_reparse_components(move["orig"], "a source")
+            move["location"] = "moving_to_stage"
+            shutil.move(str(move["orig"]), str(move["stage"]))
+            move["location"] = "stage"
+            _reject_link_or_reparse_components(move["stage"], "a staged source")
+            _reject_link_or_reparse_components(
+                move["orig"].parent, "a source parent"
+            )
+        for move in moves:
+            _reject_link_or_reparse_components(move["dest"], "a destination")
             _mkdir_parents_recorded(move["dest"].parent, created_dirs)
+            _reject_link_or_reparse_components(move["dest"], "a destination")
+            if os.path.lexists(move["dest"]):
+                raise FileExistsError(
+                    f"In-place export destination appeared during export: {move['dest']}"
+                )
+            move["location"] = "moving_to_dest"
             shutil.move(str(move["stage"]), str(move["dest"]))
             move["location"] = "dest"
+            _reject_link_or_reparse_components(move["dest"], "a destination")
         written_yaml = _write_yaml(
             base, splits, names, nc, task, output_path=yaml_path
         )
@@ -469,15 +641,38 @@ def _in_place_export(
         committed = True
         return written_yaml, reopened
     except BaseException:
-        if any(move["location"] != "orig" for move in moves):
+        committed = False
+        recovery_errors: List[BaseException] = []
+        try:
             _rollback_moves(moves)
-        if original_yaml is None:
+        except BaseException as exc:
+            recovery_errors.append(exc)
+        try:
+            if original_yaml is None:
+                try:
+                    yaml_path.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                _atomic_write_bytes(yaml_path, original_yaml)
+        except BaseException as exc:
             try:
-                yaml_path.unlink()
-            except FileNotFoundError:
-                pass
-        else:
-            _atomic_write_bytes(yaml_path, original_yaml)
+                restored = (
+                    not yaml_path.exists()
+                    if original_yaml is None
+                    else yaml_path.read_bytes() == original_yaml
+                )
+            except OSError:
+                restored = False
+            if not restored:
+                recovery_errors.append(exc)
+        if recovery_errors:
+            preserve_stage = True
+            raise RuntimeError(
+                "In-place export failed and rollback was incomplete; "
+                f"the staging directory was preserved at {stage}. Files may "
+                "remain at their original, staging, or destination paths."
+            ) from recovery_errors[0]
         raise
     finally:
         if not committed:
@@ -486,7 +681,14 @@ def _in_place_export(
                     directory.rmdir()
                 except OSError:
                     pass
-        shutil.rmtree(stage, ignore_errors=True)
+        try:
+            stage_holds_files = any(
+                path.is_file() or path.is_symlink() for path in stage.rglob("*")
+            )
+        except OSError:
+            stage_holds_files = True
+        if not preserve_stage and not stage_holds_files:
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),

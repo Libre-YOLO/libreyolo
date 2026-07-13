@@ -230,6 +230,27 @@ def test_json_body_limit_discards_oversize_payload_before_413(monkeypatch, tmp_p
 
 
 @pytest.mark.parametrize(
+    "path",
+    (
+        "/api/boost",
+        "/api/label/0?epoch=0&rev=0",
+    ),
+)
+def test_global_body_limit_discards_oversize_payload_before_413(
+    monkeypatch, tmp_path, path
+):
+    from libreyolo.label import server
+
+    monkeypatch.setattr(server, "_MAX_REQUEST_BODY_BYTES", 1024)
+    yaml_path = _make_dataset(tmp_path)
+    with _label_server(yaml_path) as url:
+        for _ in range(8):
+            status, response = _post(url, path, _REJECTED_POST_BODY)
+            assert status == 413
+            assert response == {"error": "request body too large"}
+
+
+@pytest.mark.parametrize(
     ("framing", "expected"),
     (
         ("Content-Length: invalid\r\n", 400),

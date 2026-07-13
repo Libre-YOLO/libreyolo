@@ -552,6 +552,13 @@ def sanitize_annotations(
                         f"{where}: polygon does not overlap the image canvas"
                     )
             pts = [_disk_float(value) for value in pts]
+            if any(
+                not math.isfinite(value) or value < 0.0 or value > 1.0
+                for value in pts
+            ):
+                raise ValueError(
+                    f"{where}: clipped polygon points must remain finite and normalized"
+                )
             if len(set(zip(pts[0::2], pts[1::2], strict=True))) < 3:
                 raise ValueError(
                     f"{where}: polygon needs 3 distinct points at six-decimal precision"
