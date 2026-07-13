@@ -9,12 +9,12 @@ them. No database; the filesystem dataset is the store.
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import math
 import os
 import random
 import re
-import shutil
 import stat
 import tempfile
 import threading
@@ -47,13 +47,34 @@ _SIDECAR_LOCK = threading.RLock()
 
 
 def _path_identity(path) -> str:
-    """Canonical, case-folded identity for cross-platform dataset paths."""
+    """Canonical identity using the current platform's path case semantics."""
     value = Path(path).expanduser()
     try:
         value = value.resolve(strict=False)
     except (OSError, RuntimeError):
         value = Path(os.path.abspath(os.path.normpath(str(value))))
-    return os.path.normcase(str(value)).casefold()
+    return os.path.normcase(str(value))
+
+
+def _portable_path_identity(path) -> str:
+    """Case-folded identity for locks and portable collision detection."""
+    return _path_identity(path).casefold()
+
+
+def _windows_handle_identity_matches(
+    expected: Tuple[int, int], observed: Tuple[int, int]
+) -> bool:
+    """Compare CPython stat identity with the full Windows handle identity."""
+    expected_volume, expected_file = expected
+    observed_volume, observed_file = observed
+    if expected_file != observed_file:
+        return False
+    # CPython 3.10 exposes the legacy 32-bit Windows volume serial in st_dev;
+    # newer CPython exposes the 64-bit FileIdInfo value used by the handle API.
+    return expected_volume == observed_volume or (
+        0 <= expected_volume <= 0xFFFFFFFF
+        and expected_volume == observed_volume & 0xFFFFFFFF
+    )
 
 
 @contextmanager
@@ -61,7 +82,9 @@ def _interprocess_path_lock(path: Path, *, namespace: str = "librelabel-locks"):
     """Serialize one canonical filesystem target across LibreLabel processes."""
     lock_root = Path(tempfile.gettempdir()) / namespace
     lock_root.mkdir(parents=True, exist_ok=True)
-    identity = _path_identity(path).encode("utf-8")
+    # Preserve the historical case-folded namespace so older LibreLabel
+    # processes and case-insensitive filesystems lock the same target.
+    identity = _portable_path_identity(path).encode("utf-8")
     lock_path = lock_root / (hashlib.sha256(identity).hexdigest() + ".lock")
     with open(lock_path, "a+b") as handle:
         if os.name == "nt":
@@ -342,6 +365,319 @@ def _is_link_or_reparse_point(path: Path) -> bool:
     )
 
 
+def _validated_project_root(
+    lexical_root: Path,
+    *,
+    expected: Optional[Tuple[str, Tuple[int, int]]] = None,
+) -> Tuple[Path, Tuple[str, Tuple[int, int]]]:
+    """Resolve a non-linked project root and capture its filesystem identity."""
+    if any(
+        _is_link_or_reparse_point(path)
+        for path in reversed([lexical_root, *lexical_root.parents])
+    ):
+        raise ValueError(
+            "Refusing to trash a project opened through a directory link; "
+            "reopen its real path first."
+        )
+    try:
+        canonical = lexical_root.resolve(strict=True)
+        info = canonical.stat()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("The project path changed during trash validation.") from exc
+    if not stat.S_ISDIR(info.st_mode) or _is_link_or_reparse_point(canonical):
+        raise ValueError("The project path changed during trash validation.")
+    snapshot = (
+        os.path.normcase(str(canonical)),
+        (int(info.st_dev), int(info.st_ino)),
+    )
+    if expected is not None and snapshot != expected:
+        raise ValueError("The project path changed during trash validation.")
+    return canonical, snapshot
+
+
+def _move_validated_project_root(
+    source: Path,
+    dest: Path,
+    expected: Tuple[str, Tuple[int, int]],
+    expected_trash_identity: Tuple[int, int],
+) -> None:
+    """Move the validated directory without resolving its source path again."""
+    if os.name == "nt":
+        _move_validated_project_root_windows(
+            source, dest, expected[1], expected_trash_identity
+        )
+    else:
+        _move_validated_project_root_posix(
+            source, dest, expected[1], expected_trash_identity
+        )
+
+
+def _move_validated_project_root_posix(
+    source: Path,
+    dest: Path,
+    expected_identity: Tuple[int, int],
+    expected_trash_identity: Tuple[int, int],
+) -> None:
+    """Rename through held directory descriptors so ancestor swaps cannot redirect it."""
+    if os.rename not in os.supports_dir_fd:
+        raise OSError("Safe directory-relative rename is unavailable on this platform.")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+
+    def open_directory_strict(path: Path) -> int:
+        absolute = Path(os.path.abspath(os.fspath(path)))
+        descriptor = os.open(absolute.anchor or os.sep, flags | nofollow)
+        try:
+            for component in absolute.parts[1:]:
+                child = os.open(component, flags | nofollow, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    descriptors = []
+    try:
+        parent_fd = open_directory_strict(source.parent)
+        descriptors.append(parent_fd)
+        root_fd = os.open(source.name, flags | nofollow, dir_fd=parent_fd)
+        descriptors.append(root_fd)
+        trash_fd = open_directory_strict(dest.parent)
+        descriptors.append(trash_fd)
+        root_info = os.fstat(root_fd)
+        entry_info = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        trash_info = os.fstat(trash_fd)
+        root_identity = (int(root_info.st_dev), int(root_info.st_ino))
+        entry_identity = (int(entry_info.st_dev), int(entry_info.st_ino))
+        if (
+            root_identity != expected_identity
+            or entry_identity != expected_identity
+            or not stat.S_ISDIR(root_info.st_mode)
+            or not stat.S_ISDIR(entry_info.st_mode)
+        ):
+            raise ValueError("The project path changed before it could be trashed.")
+        trash_identity = (int(trash_info.st_dev), int(trash_info.st_ino))
+        if trash_identity != expected_trash_identity:
+            raise ValueError("The trash directory changed before the project could be moved.")
+        if trash_identity[0] != expected_identity[0]:
+            raise ValueError(
+                "Cannot safely trash a project across filesystem boundaries; "
+                "move it manually instead."
+            )
+        try:
+            os.stat(dest.name, dir_fd=trash_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError(f"Trash destination already exists: {dest}")
+        try:
+            os.rename(
+                source.name,
+                dest.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=trash_fd,
+            )
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise ValueError(
+                    "Cannot safely trash a project across filesystem boundaries; "
+                    "move it manually instead."
+                ) from exc
+            raise
+        moved_fd = os.open(dest.name, flags | nofollow, dir_fd=trash_fd)
+        descriptors.append(moved_fd)
+        moved_info = os.fstat(moved_fd)
+        moved_identity = (int(moved_info.st_dev), int(moved_info.st_ino))
+        if moved_identity != expected_identity:
+            raise RuntimeError(
+                "The project changed during trash; an unexpected directory was "
+                f"quarantined at {dest}."
+            )
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _move_validated_project_root_windows(
+    source: Path,
+    dest: Path,
+    expected_identity: Tuple[int, int],
+    expected_trash_identity: Tuple[int, int],
+) -> None:
+    """Rename the exact validated Windows directory through its open handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _FileId128(ctypes.Structure):
+        _fields_ = [("identifier", ctypes.c_ubyte * 16)]
+
+    class _FileIdInfo(ctypes.Structure):
+        _fields_ = [
+            ("volume_serial_number", ctypes.c_ulonglong),
+            ("file_id", _FileId128),
+        ]
+
+    class _FileAttributeTagInfo(ctypes.Structure):
+        _fields_ = [
+            ("file_attributes", wintypes.DWORD),
+            ("reparse_tag", wintypes.DWORD),
+        ]
+
+    class _FileRenameHeader(ctypes.Structure):
+        _fields_ = [
+            ("replace_if_exists", wintypes.DWORD),
+            ("root_directory", wintypes.HANDLE),
+            ("file_name_length", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    get_info = kernel32.GetFileInformationByHandleEx
+    get_info.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    get_info.restype = wintypes.BOOL
+    set_info = kernel32.SetFileInformationByHandle
+    set_info.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    set_info.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    delete_access = 0x00010000
+    read_attributes = 0x00000080
+    share_read = 0x00000001
+    share_write = 0x00000002
+    open_existing = 3
+    backup_semantics = 0x02000000
+    open_reparse_point = 0x00200000
+    file_attribute_directory = 0x00000010
+    file_attribute_reparse_point = 0x00000400
+    file_attribute_tag_info = 9
+    file_rename_info = 3
+    file_id_info = 18
+    invalid_handle = ctypes.c_void_p(-1).value
+
+    def extended_path(path: Path) -> str:
+        value = os.path.abspath(os.fspath(path))
+        if value.startswith("\\\\?\\"):
+            return value
+        if value.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + value[2:]
+        return "\\\\?\\" + value
+
+    def open_directory(path: Path, access: int):
+        opened = create_file(
+            extended_path(path),
+            access,
+            share_read | share_write,
+            None,
+            open_existing,
+            backup_semantics | open_reparse_point,
+            None,
+        )
+        if opened == invalid_handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return opened
+
+    def directory_identity(opened, *, message: str) -> Tuple[int, int]:
+        identity = _FileIdInfo()
+        if not get_info(
+            opened,
+            file_id_info,
+            ctypes.byref(identity),
+            ctypes.sizeof(identity),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        attributes = _FileAttributeTagInfo()
+        if not get_info(
+            opened,
+            file_attribute_tag_info,
+            ctypes.byref(attributes),
+            ctypes.sizeof(attributes),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if (
+            not attributes.file_attributes & file_attribute_directory
+            or attributes.file_attributes & file_attribute_reparse_point
+        ):
+            raise ValueError(message)
+        return (
+            int(identity.volume_serial_number),
+            int.from_bytes(bytes(identity.file_id.identifier), "little"),
+        )
+
+    source_handle = open_directory(source, delete_access | read_attributes)
+    trash_handle = None
+    try:
+        handle_identity = directory_identity(
+            source_handle,
+            message="The project path changed before it could be trashed.",
+        )
+        if not _windows_handle_identity_matches(expected_identity, handle_identity):
+            raise ValueError("The project path changed before it could be trashed.")
+        trash_handle = open_directory(dest.parent, read_attributes)
+        trash_identity = directory_identity(
+            trash_handle,
+            message="The trash directory changed before the project could be moved.",
+        )
+        if not _windows_handle_identity_matches(
+            expected_trash_identity, trash_identity
+        ):
+            raise ValueError("The trash directory changed before the project could be moved.")
+        if trash_identity[0] != handle_identity[0]:
+            raise ValueError(
+                "Cannot safely trash a project across filesystem boundaries; "
+                "move it manually instead."
+            )
+
+        encoded_dest = extended_path(dest).encode("utf-16-le")
+        name_offset = (
+            _FileRenameHeader.file_name_length.offset + ctypes.sizeof(wintypes.DWORD)
+        )
+        buffer = ctypes.create_string_buffer(name_offset + len(encoded_dest) + 2)
+        header = _FileRenameHeader.from_buffer(buffer)
+        header.replace_if_exists = 0
+        header.root_directory = None
+        header.file_name_length = len(encoded_dest)
+        ctypes.memmove(
+            ctypes.addressof(buffer) + name_offset,
+            encoded_dest,
+            len(encoded_dest),
+        )
+        if not set_info(source_handle, file_rename_info, buffer, len(buffer)):
+            error = ctypes.get_last_error()
+            if error == 17:
+                raise ValueError(
+                    "Cannot safely trash a project across filesystem boundaries; "
+                    "move it manually instead."
+                )
+            raise ctypes.WinError(error)
+    finally:
+        if trash_handle is not None:
+            close_handle(trash_handle)
+        close_handle(source_handle)
+
+
 def set_sidecar_name(data: str, name: str) -> str:
     """Update (or create) the project display name in the ``librelabel.json``
     sidecar next to ``data.yaml``. Returns the project root path."""
@@ -366,18 +702,19 @@ def update_sidecar(data: str, **fields) -> str:
 def trash_project(data: str) -> str:
     """Soft-delete a project: move its whole folder to ``~/.librelabel/trash/``
     (recoverable) rather than erasing anything. Returns the trash path."""
+    requested = Path(data).expanduser()
+    if requested.suffix.lower() in (".yaml", ".yml") and _is_link_or_reparse_point(
+        requested
+    ):
+        raise ValueError(
+            "Refusing to trash a project opened through a filesystem link; "
+            "reopen its real path first."
+        )
     root = _project_root(data)
     if not root.is_dir():
         raise FileNotFoundError(f"Not a folder: {root}")
-    if _is_link_or_reparse_point(root):
-        raise ValueError(
-            "Refusing to trash a project opened through a directory link; "
-            "reopen its real path first."
-        )
-    try:
-        canonical = root.resolve(strict=True)
-    except (OSError, RuntimeError):
-        canonical = Path(os.path.abspath(str(root)))
+    lexical_root = Path(os.path.abspath(str(root.expanduser())))
+    canonical, snapshot = _validated_project_root(lexical_root)
     anchor = Path(canonical.anchor)
     home = Path.home().resolve(strict=False)
     registry = (home / ".librelabel").resolve(strict=False)
@@ -389,15 +726,17 @@ def trash_project(data: str) -> str:
         or registry.is_relative_to(canonical)
     ):
         raise ValueError("Refusing to trash a filesystem, home, or LibreLabel root.")
-    trash = Path.home() / ".librelabel" / "trash"
-    trash.mkdir(parents=True, exist_ok=True)
-    trash = trash.resolve(strict=True)
+    trash_root = Path.home() / ".librelabel" / "trash"
+    trash_root.mkdir(parents=True, exist_ok=True)
+    trash_lexical = Path(os.path.abspath(str(trash_root.expanduser())))
+    trash, trash_snapshot = _validated_project_root(trash_lexical)
     if canonical == trash or canonical.is_relative_to(trash):
         raise ValueError("This project is already inside LibreLabel's trash.")
     dest = trash / (
-        f"{time.time_ns()}-{uuid.uuid4().hex[:12]}-{root.name or 'dataset'}"
+        f"{time.time_ns()}-{uuid.uuid4().hex}-{root.name or 'dataset'}"
     )
-    shutil.move(str(root), str(dest))
+    canonical, _ = _validated_project_root(lexical_root, expected=snapshot)
+    _move_validated_project_root(canonical, dest, snapshot, trash_snapshot[1])
     return str(dest)
 
 
@@ -640,7 +979,8 @@ class DatasetSession:
         _linked_lab = Path(self.yaml_file).parent / "labels"
 
         self._items: List[Tuple[Path, Path, str]] = []
-        seen: dict = {}                # normalized label path -> normalized image path
+        seen: dict = {}                # native label path -> native image path
+        portable_seen: dict = {}       # portable label path -> native image path
         self._path_splits: dict = {}   # normalized label path -> {splits it appears in}
         label_clash: Optional[Tuple[str, str]] = None   # two DIFFERENT images, one label file
         for split in ("train", "val", "test"):
@@ -651,7 +991,7 @@ class DatasetSession:
             for ip, lp in zip(imgs, labels, strict=True):
                 if self.linked:
                     h = hashlib.sha1(
-                        _path_identity(ip).encode("utf-8")
+                        _portable_path_identity(ip).encode("utf-8")
                     ).hexdigest()[:8]
                     lp = _linked_lab / split / f"{Path(ip).stem}-{h}.txt"
                 # A yaml may reuse a folder across splits; expose each label file
@@ -659,6 +999,7 @@ class DatasetSession:
                 # remember every split it was in, for exact-overlap leakage detection.
                 key = _path_identity(lp)
                 ikey = _path_identity(ip)
+                portable_key = _portable_path_identity(lp)
                 self._path_splits.setdefault(key, set()).add(split)
                 if key in seen:
                     # Same label file again. Same image -> split overlap (leakage,
@@ -668,7 +1009,15 @@ class DatasetSession:
                     if label_clash is None and seen[key] != ikey:
                         label_clash = (Path(seen[key]).name, Path(ip).name)
                     continue
+                portable_image = portable_seen.get(portable_key)
+                if (
+                    label_clash is None
+                    and portable_image is not None
+                    and portable_image != ikey
+                ):
+                    label_clash = (Path(portable_image).name, Path(ip).name)
                 seen[key] = ikey
+                portable_seen.setdefault(portable_key, ikey)
                 self._items.append((Path(ip), Path(lp), split))
 
         # Raw split sources (resolved paths/lists) so the duplicate fixer can

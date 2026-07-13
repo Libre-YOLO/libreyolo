@@ -1,5 +1,7 @@
 """Unit tests for LibreLabel v1 (boxes only): the format oracle + dataset R/W."""
 
+import os
+
 import pytest
 
 from pathlib import Path
@@ -314,6 +316,42 @@ def test_shared_label_file_detection_is_casefolded(tmp_path):
 
     assert session.writable is False
     assert "same label file" in session.reason
+
+
+def test_case_distinct_posix_items_are_rejected_instead_of_omitted(tmp_path):
+    from PIL import Image
+
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.export import export_dataset
+
+    if os.name == "nt":
+        pytest.skip("Windows paths are case-insensitive")
+    root = tmp_path / "ds"
+    images = root / "images" / "train"
+    labels = root / "labels" / "train"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    upper = images / "A.jpg"
+    lower = images / "a.jpg"
+    Image.new("RGB", (16, 12), (10, 10, 10)).save(upper)
+    Image.new("RGB", (16, 12), (20, 20, 20)).save(lower)
+    if upper.samefile(lower):
+        pytest.skip("the test filesystem is case-insensitive")
+    (labels / "A.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (labels / "a.txt").write_text("0 0.4 0.4 0.2 0.2\n", encoding="utf-8")
+    (root / "data.yaml").write_text(
+        f"path: {root.as_posix()}\ntrain: images/train\ntask: detect\n"
+        "nc: 1\nnames:\n  0: thing\n",
+        encoding="utf-8",
+    )
+
+    session = DatasetSession(str(root / "data.yaml"))
+
+    assert len(session._items) == 2
+    assert session._label_clash is True
+    assert session.writable is False
+    with pytest.raises(ValueError, match="share one derived label file"):
+        export_dataset(session, dst=str(tmp_path / "export"))
 
 
 def test_wizard_segment_project_polygon_roundtrip(tmp_path):

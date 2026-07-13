@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing
+import os
 import queue
+import subprocess
 import threading
 import zipfile
 from pathlib import Path
@@ -27,6 +29,26 @@ from libreyolo.label.labelio import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_windows_handle_identity_accepts_python310_volume_serial_width():
+    from libreyolo.label.dataset import _windows_handle_identity_matches
+
+    full_volume = 0x746CA1C46CA1818A
+    file_id = 0x5000000243155
+
+    assert _windows_handle_identity_matches(
+        (full_volume & 0xFFFFFFFF, file_id), (full_volume, file_id)
+    )
+    assert _windows_handle_identity_matches(
+        (full_volume, file_id), (full_volume, file_id)
+    )
+    assert not _windows_handle_identity_matches(
+        (full_volume & 0xFFFFFFFF, file_id + 1), (full_volume, file_id)
+    )
+    assert not _windows_handle_identity_matches(
+        ((full_volume + 1) & 0xFFFFFFFF, file_id), (full_volume, file_id)
+    )
 
 
 def _process_upload(root, name, payload, ready, start, outcomes):
@@ -1070,6 +1092,191 @@ def test_trash_project_rejects_directory_links_without_moving_target(tmp_path):
 
     assert target.is_dir()
     assert (target / "data.yaml").is_file()
+
+
+def test_trash_project_rejects_directory_link_ancestor(tmp_path):
+    from libreyolo.label.dataset import trash_project
+
+    real_parent = tmp_path / "real-parent"
+    target = real_parent / "project"
+    target.mkdir(parents=True)
+    marker = target / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    alias = tmp_path / "parent-alias"
+    try:
+        alias.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory links unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="directory link"):
+        trash_project(str(alias / "project"))
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_trash_project_rejects_ancestor_swap_during_validation(tmp_path, monkeypatch):
+    from libreyolo.label import dataset as dataset_module
+
+    alias_parent = tmp_path / "alias-parent"
+    safe_project = alias_parent / "project"
+    safe_project.mkdir(parents=True)
+    safe_marker = safe_project / "safe.txt"
+    safe_marker.write_text("safe", encoding="utf-8")
+    victim_parent = tmp_path / "victim-parent"
+    victim_project = victim_parent / "project"
+    victim_project.mkdir(parents=True)
+    victim_marker = victim_project / "victim.txt"
+    victim_marker.write_text("victim", encoding="utf-8")
+    saved_parent = tmp_path / "saved-parent"
+
+    def make_directory_link(alias, target):
+        if os.name == "nt":
+            result = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode:
+                pytest.skip(f"directory junctions unavailable: {result.stderr}")
+        else:
+            alias.symlink_to(target, target_is_directory=True)
+
+    real_check = dataset_module._is_link_or_reparse_point
+    swapped = False
+
+    def swap_after_check(path):
+        nonlocal swapped
+        result = real_check(path)
+        if not swapped and Path(path) == safe_project:
+            os.replace(alias_parent, saved_parent)
+            make_directory_link(alias_parent, victim_parent)
+            swapped = True
+        return result
+
+    move_called = False
+
+    def reject_move(*args, **kwargs):
+        nonlocal move_called
+        move_called = True
+        raise AssertionError("unsafe move reached")
+
+    monkeypatch.setattr(dataset_module, "_is_link_or_reparse_point", swap_after_check)
+    monkeypatch.setattr(dataset_module, "_move_validated_project_root", reject_move)
+
+    with pytest.raises(ValueError, match="directory link|path changed"):
+        dataset_module.trash_project(str(safe_project))
+
+    assert move_called is False
+    assert (saved_parent / "project" / "safe.txt").read_text(encoding="utf-8") == "safe"
+    assert victim_marker.read_text(encoding="utf-8") == "victim"
+
+
+def test_trash_project_binds_move_after_final_validation(tmp_path, monkeypatch):
+    from libreyolo.label import dataset as dataset_module
+
+    alias_parent = tmp_path / "alias-parent"
+    safe_project = alias_parent / "project"
+    safe_project.mkdir(parents=True)
+    (safe_project / "safe.txt").write_text("safe", encoding="utf-8")
+    victim_parent = tmp_path / "victim-parent"
+    victim_project = victim_parent / "project"
+    victim_project.mkdir(parents=True)
+    victim_marker = victim_project / "victim.txt"
+    victim_marker.write_text("victim", encoding="utf-8")
+    saved_parent = tmp_path / "saved-parent"
+
+    def make_directory_link(alias, target):
+        if os.name == "nt":
+            result = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode:
+                pytest.skip(f"directory junctions unavailable: {result.stderr}")
+        else:
+            alias.symlink_to(target, target_is_directory=True)
+
+    real_validate = dataset_module._validated_project_root
+    validations = 0
+
+    def swap_after_final_validation(*args, **kwargs):
+        nonlocal validations
+        result = real_validate(*args, **kwargs)
+        validations += 1
+        if validations == 2:
+            os.replace(alias_parent, saved_parent)
+            make_directory_link(alias_parent, victim_parent)
+        return result
+
+    monkeypatch.setattr(
+        dataset_module, "_validated_project_root", swap_after_final_validation
+    )
+
+    with pytest.raises((OSError, ValueError)):
+        dataset_module.trash_project(str(safe_project))
+
+    assert (saved_parent / "project" / "safe.txt").read_text(encoding="utf-8") == "safe"
+    assert victim_marker.read_text(encoding="utf-8") == "victim"
+
+
+def test_trash_project_binds_selected_trash_directory(tmp_path, monkeypatch):
+    from libreyolo.label import dataset as dataset_module
+
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    project_marker = project / "project.txt"
+    project_marker.write_text("project", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    real_move = dataset_module._move_validated_project_root
+    saved_trash = home / ".librelabel" / "saved-trash"
+
+    def swap_before_open(source, dest, expected, expected_trash_identity):
+        os.replace(dest.parent, saved_trash)
+        dest.parent.mkdir()
+        (dest.parent / "replacement.txt").write_text("replacement", encoding="utf-8")
+        return real_move(source, dest, expected, expected_trash_identity)
+
+    monkeypatch.setattr(
+        dataset_module, "_move_validated_project_root", swap_before_open
+    )
+
+    with pytest.raises(ValueError, match="trash directory changed"):
+        dataset_module.trash_project(str(project))
+
+    assert project_marker.read_text(encoding="utf-8") == "project"
+    assert (saved_trash).is_dir()
+    assert (home / ".librelabel" / "trash" / "replacement.txt").read_text(
+        encoding="utf-8"
+    ) == "replacement"
+
+
+def test_trash_project_rejects_linked_yaml_without_moving_alias_parent(tmp_path):
+    from libreyolo.label.dataset import trash_project
+
+    real_project = tmp_path / "real-project"
+    real_project.mkdir()
+    real_yaml = real_project / "data.yaml"
+    real_yaml.write_text("names: []\n", encoding="utf-8")
+    alias_parent = tmp_path / "unrelated"
+    alias_parent.mkdir()
+    marker = alias_parent / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    alias_yaml = alias_parent / "data.yaml"
+    try:
+        alias_yaml.symlink_to(real_yaml)
+    except OSError as exc:
+        pytest.skip(f"file links unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="filesystem link"):
+        trash_project(str(alias_yaml))
+
+    assert marker.read_text(encoding="utf-8") == "keep"
+    assert real_yaml.is_file()
 
 
 def test_trash_project_rejects_missing_yaml_without_moving_its_parent(tmp_path):

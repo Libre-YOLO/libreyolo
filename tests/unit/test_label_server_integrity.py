@@ -556,6 +556,31 @@ def test_delete_matches_current_project_by_root_and_detaches(monkeypatch, tmp_pa
     assert {Path(value) for value in forgotten} == {tmp_path, yaml_path}
 
 
+def test_delete_trash_failure_keeps_live_session_and_registry(monkeypatch, tmp_path):
+    from libreyolo.label.dataset import DatasetSession
+    from libreyolo.label.server import _LabelState
+
+    yaml_path = _make_dataset(tmp_path)
+    session = DatasetSession(str(yaml_path))
+    state = _LabelState(session, assist=False)
+    state._data = str(yaml_path)
+    forgotten = []
+
+    def fail_trash(data):
+        raise RuntimeError("unexpected directory quarantined")
+
+    monkeypatch.setattr("libreyolo.label.server.trash_project", fail_trash)
+    monkeypatch.setattr("libreyolo.label.server.projects.forget", forgotten.append)
+
+    with pytest.raises(RuntimeError, match="quarantined"):
+        state.delete_project(str(tmp_path), expected_epoch=0)
+
+    assert state.session is session
+    assert state._data == str(yaml_path)
+    assert state.epoch == 0
+    assert forgotten == []
+
+
 def test_delete_rejects_project_subtree_and_keeps_live_session(monkeypatch, tmp_path):
     from libreyolo.label.dataset import DatasetSession
     from libreyolo.label.server import _LabelState
