@@ -260,10 +260,11 @@ def _validate_request(task: str, formats, in_place: bool) -> set[str]:
     return fmts
 
 
-def _validated_label_text(path: Path, nc: int, task: str) -> tuple[str, List[dict]]:
+def _validated_label_text(path: Path, nc: int, task: str) -> tuple[bytes, List[dict]]:
     if not path.exists():
-        return "", []
-    text = path.read_text(encoding="utf-8")
+        return b"", []
+    raw = path.read_bytes()
+    text = raw.decode("utf-8")
     invalid = (
         has_unsupported_rows(text)
         or has_out_of_range_rows(text, nc)
@@ -278,7 +279,7 @@ def _validated_label_text(path: Path, nc: int, task: str) -> tuple[str, List[dic
         sanitize_annotations(annotations, nc, task=task)
     except ValueError as exc:
         raise ValueError(f"Cannot export invalid label file {path}: {exc}") from exc
-    return text, annotations
+    return raw, annotations
 
 
 def _normpath(path: Path) -> str:
@@ -506,19 +507,27 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
     names = list(session.names or [])
     nc = int(session.nc or len(names))
     task = getattr(session, "_task", None) or "detect"
+    task_resolved = bool(
+        getattr(
+            session,
+            "_task_declared_or_inferred",
+            bool(getattr(session, "_task", None)),
+        )
+    )
     if getattr(session, "_lossy_export", False):
         raise ValueError(
             "This project uses pose, mask, depth, classification, or other task-specific "
             "labels that LibreLabel's box/polygon exporter cannot preserve."
         )
     fmts = _validate_request(task, formats, in_place)
-    if not getattr(session, "_task_declared_or_inferred", bool(getattr(session, "_task", None))):
+    if not task_resolved and fmts != {"yolo"}:
         raise ValueError(
             "This dataset does not declare a task and its labels do not resolve "
-            "one unambiguously. Declare task: detect, segment, or obb before "
-            "copying, converting, or reorganizing it; a generic export could omit "
-            "default task-specific targets."
+            "one unambiguously. Only a lossless YOLO copy or in-place reorganization "
+            "is safe until task: detect, segment, or obb is declared; converting it "
+            "could omit default task-specific targets."
         )
+    yaml_task = task if task_resolved else ""
     if in_place and make_zip:
         raise ValueError("Create a copy export before making a zip; in-place export cannot be zipped safely.")
     splits = _assign_splits(len(items), split, val_frac, test_frac, seed)
@@ -526,11 +535,7 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
     for ip, lp in items:
         if not Path(ip).is_file():
             raise FileNotFoundError(f"Image disappeared before export: {ip}")
-        validation_task = (
-            task
-            if getattr(session, "_task_declared_or_inferred", False)
-            else ""
-        )
+        validation_task = task if task_resolved else ""
         payloads.append(_validated_label_text(Path(lp), nc, validation_task))
 
     if in_place and getattr(session, "linked", False):
@@ -544,7 +549,7 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
             splits,
             names,
             nc,
-            task,
+            yaml_task,
             yaml_path=Path(session.yaml_file),
             validator=_in_place_validator,
         )
@@ -581,7 +586,7 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
     committed = False
     try:
         unique = _uniquifier()
-        for ((ip, _lp), sp, (txt, anns)) in zip(items, splits, payloads, strict=True):
+        for (ip, _lp), sp, (raw, anns) in zip(items, splits, payloads, strict=True):
             ip = Path(ip)
             img_out = stage / "images" / sp / unique(sp, ip.name)
             img_out.parent.mkdir(parents=True, exist_ok=True)
@@ -589,7 +594,7 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
             if "yolo" in fmts:
                 lo = stage / "labels" / sp / (img_out.stem + ".txt")
                 lo.parent.mkdir(parents=True, exist_ok=True)
-                _atomic_write_text(lo, txt)
+                _atomic_write_bytes(lo, raw)
             if need_dims:
                 W, H = _img_size(ip)
                 if W <= 0 or H <= 0:
@@ -600,7 +605,9 @@ def export_dataset(session, *, dst: Optional[str] = None, formats=("yolo",),
                     _voc_write(stage / "voc" / sp / "Annotations", img_out.name, W, H, anns, names)
 
         if "yolo" in fmts:
-            _write_yaml(stage, splits, names, nc, task, dataset_root=dstp.absolute())
+            _write_yaml(
+                stage, splits, names, nc, yaml_task, dataset_root=dstp.absolute()
+            )
         if "coco" in fmts:
             ann_dir = stage / "annotations"
             ann_dir.mkdir(exist_ok=True)

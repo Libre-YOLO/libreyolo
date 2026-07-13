@@ -432,24 +432,72 @@ def test_native_coco_project_is_view_only_and_cannot_export_empty_labels(tmp_pat
     assert not (tmp_path / "out").exists()
 
 
-def test_taskless_dataset_rejects_transforming_exports(tmp_path):
+def test_taskless_dataset_allows_lossless_yolo_copy_only(tmp_path):
+    import yaml
+
     session = _dataset(tmp_path / "source", task=None)
-    with pytest.raises(ValueError, match="does not declare a task"):
-        export_dataset(session, dst=str(tmp_path / "coco"), formats=("coco",))
+    label = session._items[0][1]
+    label.parent.mkdir(parents=True, exist_ok=True)
+    original_label = b"0 0.500000 0.500000 0.250000 0.250000\r\n"
+    label.write_bytes(original_label)
+
+    assert session.writable is True
+    assert session.meta()["task"] == "detect"
+    assert session._task_declared_or_inferred is False
+
+    for index, formats in enumerate((("coco",), ("voc",), ("yolo", "coco"))):
+        destination = tmp_path / f"converted-{index}"
+        with pytest.raises(ValueError, match="does not declare a task"):
+            export_dataset(session, dst=str(destination), formats=formats)
+        assert not destination.exists()
+
     with pytest.raises(ValueError, match="detection annotations require boxes"):
         session.write_label(
             0,
-            [{
-                "type": "poly",
-                "cls": 0,
-                "points": [0.1, 0.1, 0.8, 0.1, 0.4, 0.7],
-            }],
+            [
+                {
+                    "type": "poly",
+                    "cls": 0,
+                    "points": [0.1, 0.1, 0.8, 0.1, 0.4, 0.7],
+                }
+            ],
         )
 
-    with pytest.raises(ValueError, match="does not declare a task"):
-        export_dataset(
-            session, dst=str(tmp_path / "yolo"), formats=("yolo",), split="none"
-        )
+    destination = tmp_path / "yolo"
+    export_dataset(session, dst=str(destination), formats=("yolo",), split="none")
+
+    exported_labels = [
+        path.read_bytes() for path in (destination / "labels" / "train").iterdir()
+    ]
+    assert original_label in exported_labels
+    config = yaml.safe_load((destination / "data.yaml").read_text(encoding="utf-8"))
+    assert "task" not in config
+    reopened = DatasetSession(str(destination / "data.yaml"))
+    assert reopened._task_declared_or_inferred is False
+    assert reopened.meta()["task"] == "detect"
+
+
+def test_taskless_dataset_allows_lossless_yolo_in_place(tmp_path):
+    import yaml
+
+    root = tmp_path / "source"
+    session = _dataset(root, task=None)
+    label = session._items[0][1]
+    label.parent.mkdir(parents=True, exist_ok=True)
+    original_label = b"0 0.400000 0.600000 0.200000 0.300000\r\n"
+    label.write_bytes(original_label)
+
+    result = export_dataset(session, formats=("yolo",), split="none", in_place=True)
+
+    exported_labels = [
+        path.read_bytes() for path in (root / "labels" / "train").rglob("*.txt")
+    ]
+    assert original_label in exported_labels
+    config = yaml.safe_load(Path(result["yaml"]).read_text(encoding="utf-8"))
+    assert "task" not in config
+    reopened = DatasetSession(result["yaml"])
+    assert reopened._task_declared_or_inferred is False
+    assert reopened.meta()["task"] == "detect"
 
 
 def test_taskless_nonquad_polygons_infer_segment_and_reject_voc(tmp_path):
@@ -466,13 +514,14 @@ def test_taskless_nonquad_polygons_infer_segment_and_reject_voc(tmp_path):
 
 
 def test_taskless_quad_dataset_is_globally_view_only(tmp_path):
+    import yaml
+
     root = tmp_path / "source"
     initial = _dataset(root, task=None)
     label = initial._items[0][1]
     label.parent.mkdir(parents=True, exist_ok=True)
-    label.write_text(
-        "0 0.1 0.1 0.7 0.1 0.7 0.6 0.1 0.6\n", encoding="utf-8"
-    )
+    original_label = b"0 0.1 0.1 0.7 0.1 0.7 0.6 0.1 0.6\r\n"
+    label.write_bytes(original_label)
     session = DatasetSession(str(root / "data.yaml"))
 
     assert session._task_ambiguous is True
@@ -483,6 +532,15 @@ def test_taskless_quad_dataset_is_globally_view_only(tmp_path):
             1,
             [{"type": "box", "cls": 0, "cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2}],
         )
+
+    destination = tmp_path / "quad-yolo"
+    export_dataset(session, dst=str(destination), formats=("yolo",), split="none")
+    exported_labels = [
+        path.read_bytes() for path in (destination / "labels" / "train").iterdir()
+    ]
+    assert original_label in exported_labels
+    config = yaml.safe_load((destination / "data.yaml").read_text(encoding="utf-8"))
+    assert "task" not in config
 
 
 @pytest.mark.parametrize(
