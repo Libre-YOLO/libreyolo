@@ -136,14 +136,19 @@ class LibreEdgeTAM(LibreSAMModel):
         # Preserve upstream float32 operation order. Sam2Processor computes an
         # equivalent ratio first, which can shift 1024-frame coordinates by a
         # few ULPs and needlessly breaks exact preprocessing parity.
+        # clone() because as_tensor can share storage with a tensor/ndarray
+        # caller, and the scaling below is in-place: without it, prompting twice
+        # with the same array would rescale it and move the second mask.
         width, height = img.size
         if points is not None:
-            point_tensor = torch.as_tensor(points, dtype=torch.float32)
+            point_tensor = torch.as_tensor(points, dtype=torch.float32).clone()
             point_tensor[..., 0] /= width
             point_tensor[..., 1] /= height
             enc["input_points"] = (point_tensor * size).unsqueeze(0)
         if boxes is not None:
-            box_tensor = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 2, 2)
+            box_tensor = (
+                torch.as_tensor(boxes, dtype=torch.float32).clone().reshape(-1, 2, 2)
+            )
             box_tensor[..., 0] /= width
             box_tensor[..., 1] /= height
             enc["input_boxes"] = (box_tensor * size).reshape(-1, 4).unsqueeze(0)

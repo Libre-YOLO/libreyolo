@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -301,6 +302,43 @@ def test_encode_replaces_processor_pixels_with_official_square_transform():
     expected_points[..., 1] /= image.height
     expected_points *= 8
     assert torch.equal(enc["input_points"], expected_points.unsqueeze(0))
+
+
+def test_reusing_one_prompt_array_does_not_drift_between_predictions():
+    """The prompt scaling is in-place, so caller arrays must never be aliased.
+
+    Prompt normalization already copies (it goes via ``tolist()``), and
+    ``_encode`` clones on top of that. Assert the user-visible property rather
+    than either mechanism: predicting twice with the same array must give the
+    same mask, and must leave the caller's array untouched.
+    """
+    model = _bare_edgetam()
+    image = Image.new("RGB", (20, 16), color="white")
+    points = np.array([[10.0, 8.0]], dtype=np.float32)
+    boxes = np.array([[4.0, 3.0, 16.0, 13.0]], dtype=np.float32)
+
+    first = model.predict(image, points=points, labels=[1])
+    second = model.predict(image, points=points, labels=[1])
+    box_first = model.predict(image, bboxes=boxes)
+    box_second = model.predict(image, bboxes=boxes)
+
+    assert np.array_equal(points, np.array([[10.0, 8.0]], dtype=np.float32))
+    assert np.array_equal(boxes, np.array([[4.0, 3.0, 16.0, 13.0]], dtype=np.float32))
+    assert torch.equal(first.masks.data, second.masks.data)
+    assert torch.equal(box_first.masks.data, box_second.masks.data)
+
+
+def test_segment_everything_grid_runs_through_the_edgetam_transform():
+    """The grid path slices prompt tensors that _encode rebuilds; cover it."""
+    model = _bare_edgetam()
+    image = Image.new("RGB", (20, 16), color="white")
+
+    result = model.predict(image, points_per_side=2, conf=0.0)
+
+    assert result.masks is not None
+    assert len(result.masks) >= 1
+    assert model.model.embedding_calls == 1  # encoded once, then prompted
+    assert result.masks.data.shape[-2:] == (16, 20)
 
 
 def test_fake_edgetam_point_prompt_returns_result():

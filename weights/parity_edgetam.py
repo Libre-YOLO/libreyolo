@@ -32,11 +32,6 @@ import numpy as np
 import torch
 from PIL import Image
 
-# These assignments deliberately override false-valued ambient settings. The
-# script promises not to contact the Hub, including during timm/model setup.
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
 try:
     from convert_edgetam_weights import (
         OFFICIAL_CHECKPOINT_SHA256,
@@ -82,6 +77,20 @@ UPSTREAM_RUNTIME_TREE_SHA256 = (
     "34747b5dd93ef43aa325a9a1d4c4512cf256c341cbfba43620b86d8c2243f9a1"
 )
 UPSTREAM_RUNTIME_FILE_COUNT = 36
+
+
+def _force_offline() -> None:
+    """Override false-valued ambient settings so the run cannot reach the Hub.
+
+    Deliberately not done at import: this module is importable (see the
+    ``weights.parity_edgetam`` fallback above), and flipping process-wide
+    offline flags as an import side effect would break unrelated
+    ``from_pretrained`` calls in whatever imported it. ``timm`` and
+    ``transformers`` are imported lazily inside the run, after this point, so
+    setting the flags here still covers model setup.
+    """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 
 def _stage(index: int, message: str) -> None:
@@ -615,6 +624,7 @@ def run_parity(
     image: str | Path | None = None,
 ) -> dict[str, Any]:
     """Execute every artifact and native-runtime comparison locally."""
+    _force_offline()
     checkpoint_path = Path(checkpoint).resolve()
     mirror = Path(mirror_dir).resolve()
     upstream_root = Path(upstream_dir).resolve()
