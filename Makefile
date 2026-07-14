@@ -46,7 +46,8 @@ typecheck:
 test: test_pr_gate
 
 test_pr_gate:
-	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network"
+	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network and not distributed" -n auto --dist loadfile
+	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network and distributed"
 
 test_install_smoke:
 	$(UV) python tests/smoke/run_install_smoke.py --mode $${MODE:-editable}
