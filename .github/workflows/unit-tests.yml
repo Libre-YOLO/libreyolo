@@ -54,10 +54,15 @@ jobs:
       - name: Run PR gate tests
         env:
           LIBREYOLO_PR_GATE: "1"
-          # One torch thread per worker. Parallelism comes from the workers, so
-          # letting each of them also spin up torch's default thread pool just
-          # oversubscribes the box.
-          OMP_NUM_THREADS: "1"
+        # Deliberately NOT setting OMP_NUM_THREADS. Pinning torch to one thread
+        # per worker is the obvious way to stop N workers each opening a thread
+        # pool, but the thread count changes the floating-point reduction order,
+        # which moves numerical results. With OMP_NUM_THREADS=1 the strict xfail
+        # at test_detr_cpu_export_matrix.py (the known DEIM ONNX parity gap)
+        # XPASSes: the drift falls back inside tolerance. Speeding up CI must not
+        # change what the numbers are, so the workers keep torch's default thread
+        # count and we accept the oversubscription.
+        #
         # loadfile keeps a file's tests on one worker, which preserves the
         # module-scoped model fixtures (they are rebuilt per worker, not per
         # test) and contains the few file-local stateful tests.
