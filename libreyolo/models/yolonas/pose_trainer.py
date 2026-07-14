@@ -294,7 +294,9 @@ class YOLONASPoseTrainer(BaseTrainer):
                     total_loss += float(loss.item())
                     num_batches += 1
 
-            pose_metrics = self._run_pose_metric_validation(model, epoch)
+            pose_metrics = self._run_pose_metric_validation(
+                model, epoch, save_plots=save_plots
+            )
         finally:
             if was_training:
                 model.train()
@@ -332,7 +334,11 @@ class YOLONASPoseTrainer(BaseTrainer):
         }
 
     def _run_pose_metric_validation(
-        self, eval_model: torch.nn.Module, epoch: int
+        self,
+        eval_model: torch.nn.Module,
+        epoch: int,
+        *,
+        save_plots: bool | None = None,
     ) -> Dict[str, float] | None:
         if self.wrapper_model is None:
             logger.warning("Skipping pose mAP validation: wrapper_model is missing")
@@ -341,6 +347,12 @@ class YOLONASPoseTrainer(BaseTrainer):
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
 
+            val_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False))
+                and self._is_final_epoch(epoch)
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
@@ -354,6 +366,7 @@ class YOLONASPoseTrainer(BaseTrainer):
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,
                 oks_sigmas=self._resolve_oks_sigmas(),
+                save_plots=val_save_plots,
                 save_dir=str(self.save_dir / "val"),
             )
 

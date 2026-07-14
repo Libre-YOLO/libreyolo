@@ -9,6 +9,8 @@ the full dataset on every rank.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -248,12 +250,17 @@ def test_yolonas_pose_validation_skipped_on_non_main_rank(tmp_path, monkeypatch)
 
 
 def test_yolonas_pose_main_rank_barriers_after_validation(tmp_path, monkeypatch):
+    """Rank 0 must hit the finally-barrier after running the validation body
+    (empty val loader drives the full body without needing a real model).
+    """
     import libreyolo.training.distributed as dist_mod
 
     data_yaml = _write_pose_dataset(tmp_path)
     trainer = _build_pose_trainer(data_yaml)
     _fake_two_rank_ddp(trainer, rank=0)
-    trainer.val_loader = None
+    trainer.val_loader = []
+    trainer.ema_model = None
+    trainer.wrapper_model = None
 
     barrier_calls = []
     monkeypatch.setattr(dist_mod, "barrier", lambda: barrier_calls.append(1))
@@ -261,7 +268,8 @@ def test_yolonas_pose_main_rank_barriers_after_validation(tmp_path, monkeypatch)
 
     result = trainer._validate_epoch(0)
 
-    assert result is None
+    assert result is not None
+    assert result["best_metric_key"] == "loss/val"
     assert barrier_calls == [1]
 
 
@@ -276,6 +284,41 @@ def test_yolonas_pose_validate_epoch_accepts_save_plots(tmp_path):
     assert trainer._validate_epoch(0, save_plots=True) is None
 
 
+@pytest.mark.parametrize(
+    "save_plots,expected",
+    [(True, True), (False, False), (None, False)],
+)
+def test_yolonas_pose_save_plots_reaches_validation_config(
+    tmp_path, monkeypatch, save_plots, expected
+):
+    """``save_plots`` must flow into ``ValidationConfig`` (None resolves to the
+    config default, final-epoch only), not be accepted and dropped.
+    """
+    import libreyolo.validation as validation_mod
+
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml, epochs=10)
+    trainer.save_dir = tmp_path
+    trainer.wrapper_model = SimpleNamespace(model=None)
+
+    captured = {}
+
+    class _FakeValidator:
+        def __init__(self, model, config):
+            captured["config"] = config
+
+        def run(self):
+            return {}
+
+    monkeypatch.setattr(validation_mod, "PoseValidator", _FakeValidator)
+
+    trainer._run_pose_metric_validation(
+        torch.nn.Identity(), epoch=0, save_plots=save_plots
+    )
+
+    assert captured["config"].save_plots is expected
+
+
 class _SpySampler(DistributedSampler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -287,15 +330,22 @@ class _SpySampler(DistributedSampler):
 
 
 @pytest.mark.parametrize("family", ["deim", "dfine"])
-def test_detr_train_epoch_sets_sampler_epoch(tmp_path, family):
-    """The DEIM/D-FINE ``_train_epoch`` overrides must set the sampler epoch
-    like ``BaseTrainer._train_epoch`` does, or every DDP epoch reuses the
-    same shuffle order.
+@pytest.mark.parametrize("accum", [False, True])
+def test_detr_train_epoch_sets_sampler_epoch(tmp_path, family, accum):
+    """The DEIM/D-FINE ``_train_epoch`` AND ``_train_epoch_accum`` overrides
+    must set the sampler epoch like ``BaseTrainer._train_epoch`` does, or
+    every DDP epoch reuses the same shuffle order.
     """
     trainer_cls = _detr_trainer_classes()[family]
     data_yaml = _write_detect_dataset(tmp_path)
     model = torch.nn.Linear(2, 2)
-    trainer = _build_detr_trainer(trainer_cls, data_yaml, model=model)
+    # nbs=8 with batch=4 makes _accum_steps=2, so _train_epoch delegates to
+    # _train_epoch_accum.
+    overrides = {"model": model}
+    if accum:
+        overrides["nbs"] = 8
+    trainer = _build_detr_trainer(trainer_cls, data_yaml, **overrides)
+    assert (trainer._accum_steps > 1) is accum
 
     empty_ds = TensorDataset(torch.empty(0, 2))
     sampler = _SpySampler(empty_ds, num_replicas=2, rank=0, shuffle=True)
