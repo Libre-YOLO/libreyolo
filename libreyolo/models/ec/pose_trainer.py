@@ -398,10 +398,6 @@ class ECPoseTrainer(BaseTrainer):
     def _validate_epoch(self, epoch: int, *, save_plots: bool | None = None):
         from ...training.distributed import barrier, is_main_process, unwrap_model
 
-        if self.is_distributed and not is_main_process():
-            barrier()
-            return None
-
         if getattr(self, "val_loader", None) is None:
             if self.is_distributed:
                 barrier()
@@ -414,6 +410,11 @@ class ECPoseTrainer(BaseTrainer):
         total_loss, num_batches = 0.0, 0
         pose_metrics = None
         try:
+            # The val-loss pass runs on EVERY rank: the criterion all-reduces
+            # its box normalizer (a collective), so a rank-0-only pass would
+            # pair rank 0's all_reduce with the other ranks' barrier and
+            # deadlock. The val loader is identical on all ranks, so
+            # collectives align.
             with torch.no_grad():
                 for batch in self.val_loader:
                     imgs = batch[0].to(self.device, non_blocking=True)
@@ -431,12 +432,17 @@ class ECPoseTrainer(BaseTrainer):
                     model.eval()
                     total_loss += float(sum(losses.values()).item())
                     num_batches += 1
-            pose_metrics = self._run_pose_metric_validation(model, epoch)
+            # Only rank 0 runs the file-writing pose mAP validator.
+            if not self.is_distributed or is_main_process():
+                pose_metrics = self._run_pose_metric_validation(model, epoch)
         finally:
             if was_training:
                 model.train()
             if self.is_distributed:
                 barrier()
+
+        if self.is_distributed and not is_main_process():
+            return None
 
         avg_loss = total_loss / max(num_batches, 1)
         metrics = {"loss/val": avg_loss}

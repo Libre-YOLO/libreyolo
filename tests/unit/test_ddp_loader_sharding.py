@@ -9,6 +9,9 @@ the full dataset on every rank.
 
 from __future__ import annotations
 
+import contextlib
+import socket
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -220,24 +223,33 @@ def test_detr_dataset_smaller_than_batch_keeps_partial_batch(tmp_path, family):
 # ---------------------------------------------------------------------------
 
 
-class _ExplodingLoader:
-    """Iterating this loader means the rank ran validation when it must not."""
-
-    def __iter__(self):
-        raise AssertionError("validation ran on a non-main rank")
-
-
-def test_yolonas_pose_validation_skipped_on_non_main_rank(tmp_path, monkeypatch):
-    """Every rank used to run pose mAP validation, racing on the shared
-    save_dir's predictions.json (issue #484 screenshots). Non-zero ranks must
-    barrier and return without validating.
+def test_yolonas_pose_non_main_rank_runs_loss_but_not_metric_phase(
+    tmp_path, monkeypatch
+):
+    """Non-zero ranks must run the val-loss pass (YoloNASPoseLoss all-reduces
+    its normalizer, a collective, so skipping the pass on some ranks pairs
+    rank 0's all_reduce with the others' barrier and deadlocks) but must NOT
+    run the pose mAP validator, which races on the shared save_dir's
+    predictions.json (issue #484 screenshots).
     """
     import libreyolo.training.distributed as dist_mod
 
     data_yaml = _write_pose_dataset(tmp_path)
     trainer = _build_pose_trainer(data_yaml)
     _fake_two_rank_ddp(trainer, rank=1)
-    trainer.val_loader = _ExplodingLoader()
+    trainer.ema_model = None
+    trainer.val_loader = [(torch.zeros(1, 3, 64, 64), torch.zeros(1, 2, 17))]
+
+    loss_calls = []
+
+    def _stub_loss(outputs, targets):
+        loss_calls.append(1)
+        return torch.tensor(0.5), None
+
+    trainer.loss_fn = _stub_loss
+    trainer._run_pose_metric_validation = lambda *a, **k: pytest.fail(
+        "pose mAP validation ran on a non-main rank"
+    )
 
     barrier_calls = []
     monkeypatch.setattr(dist_mod, "barrier", lambda: barrier_calls.append(1))
@@ -246,6 +258,7 @@ def test_yolonas_pose_validation_skipped_on_non_main_rank(tmp_path, monkeypatch)
     result = trainer._validate_epoch(0)
 
     assert result is None
+    assert loss_calls == [1]
     assert barrier_calls == [1]
 
 
@@ -355,3 +368,90 @@ def test_detr_train_epoch_sets_sampler_epoch(tmp_path, family, accum):
     trainer._train_epoch(epoch=3)
 
     assert sampler.epochs == [3]
+
+
+# ---------------------------------------------------------------------------
+# Real 2-rank gloo regression: validation collectives must stay aligned
+# ---------------------------------------------------------------------------
+
+
+def _free_port() -> int:
+    with contextlib.closing(socket.socket()) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _pose_val_gate_worker(rank, world_size, port, out_dir):
+    import os
+    from pathlib import Path
+
+    import torch
+    import torch.distributed as dist
+
+    out_path = Path(out_dir) / f"rank_{rank}.txt"
+    try:
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ["MASTER_PORT"] = str(port)
+        dist.init_process_group("gloo", rank=rank, world_size=world_size)
+
+        from libreyolo.data import default_oks_sigmas
+        from libreyolo.models.yolonas.loss import YoloNASPoseLoss
+        from libreyolo.models.yolonas.nn import LibreYOLONASPoseModel
+        from libreyolo.models.yolonas.pose_trainer import YOLONASPoseTrainer
+
+        K = 4
+        torch.manual_seed(0)
+        model = LibreYOLONASPoseModel(config="s", num_keypoints=K).eval()
+
+        targets = torch.zeros(1, 4, 5 + 3 * K)
+        targets[0, 0, 1:5] = torch.tensor([320.0, 300.0, 120.0, 200.0])
+        for k in range(K):
+            targets[0, 0, 5 + 3 * k] = 320.0 + k * 5.0
+            targets[0, 0, 5 + 3 * k + 1] = 300.0 + k * 5.0
+            targets[0, 0, 5 + 3 * k + 2] = 2.0
+
+        trainer = YOLONASPoseTrainer.__new__(YOLONASPoseTrainer)
+        trainer.is_distributed = True
+        trainer.rank = rank
+        trainer.world_size = world_size
+        trainer.device = torch.device("cpu")
+        trainer.model = model
+        trainer.ema_model = None
+        trainer.loss_fn = YoloNASPoseLoss(oks_sigmas=default_oks_sigmas(K))
+        trainer.val_loader = [(torch.zeros(1, 3, 640, 640), targets)]
+        trainer._run_pose_metric_validation = lambda *a, **k: None
+
+        result = trainer._validate_epoch(0)
+
+        if rank == 0:
+            assert result is not None and "loss/val" in result["metrics"]
+        else:
+            assert result is None
+        out_path.write_text("ok\n")
+    except Exception as exc:
+        out_path.write_text(f"error: {type(exc).__name__}: {exc}\n")
+        raise
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" and sys.version_info < (3, 8),
+    reason="mp.spawn on Windows needs Python 3.8+",
+)
+def test_yolonas_pose_validation_collectives_align_2_ranks_gloo(tmp_path):
+    """Regression for the collective mismatch: YoloNASPoseLoss calls
+    all_reduce_avg_scalar, so the val-loss pass must run on every rank. With
+    a rank-0-only gate around the whole body, gloo pairs rank 0's all_reduce
+    with rank 1's barrier and the run errors or hangs.
+    """
+    import torch.multiprocessing as mp
+
+    port = _free_port()
+    mp.spawn(
+        _pose_val_gate_worker, args=(2, port, str(tmp_path)), nprocs=2, join=True
+    )
+    for rank in range(2):
+        text = (tmp_path / f"rank_{rank}.txt").read_text()
+        assert text == "ok\n", f"rank {rank}: {text!r}"
