@@ -70,6 +70,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
+| yolo9 | obb | ✓ | ✓ | exp | exp | exp |  |  |
 | yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
@@ -350,6 +351,8 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `yolo4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo7` / `detect` / `tflite`: The converted LiteRT graph changes decoded box coordinates beyond the detector parity tolerance.
 - `yolo7` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `yolo9` / `obb` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolo9` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo9_e2e` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolo9_e2e` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo9_p2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
