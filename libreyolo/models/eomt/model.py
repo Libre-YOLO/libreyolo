@@ -672,6 +672,7 @@ class LibreEoMT(BaseModel):
         scores: torch.Tensor,
         labels: torch.Tensor,
         mask_probs: torch.Tensor,
+        view_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Merge same-class queries from different flip-TTA views that
         describe the same real instance, before fusion.
@@ -690,6 +691,15 @@ class LibreEoMT(BaseModel):
         ``PANOPTIC_TTA_DEDUP_IOU`` against an already-kept query is folded
         into it (mask probabilities and scores averaged) instead of
         competing against it separately in the fusion step.
+
+        ``view_ids`` (one int per query, matching ``scores``) restricts
+        merging to pairs from *different* views. Without it, two genuinely
+        distinct same-class instances the model detected within a single
+        view (e.g. two overlapping people in a crowd) could have high enough
+        mask IoU to be wrongly folded into one segment — a risk this
+        function only exists to dedup cross-view duplicates, not to
+        second-guess a single view's own instance separation. Pass ``None``
+        (the default) to merge on mask IoU alone, ignoring view origin.
         """
         n = mask_probs.shape[0]
         if n <= 1:
@@ -711,6 +721,8 @@ class LibreEoMT(BaseModel):
             group = [idx]
             for jdx in order:
                 if jdx == idx or consumed[jdx] or int(labels[jdx]) != int(labels[idx]):
+                    continue
+                if view_ids is not None and int(view_ids[jdx]) == int(view_ids[idx]):
                     continue
                 inter = (binary_masks[idx] & binary_masks[jdx]).sum().float()
                 union = areas[idx] + areas[jdx] - inter
@@ -752,6 +764,7 @@ class LibreEoMT(BaseModel):
         scores_views = []
         labels_views = []
         mask_probs_views = []
+        view_ids_views = []
         # Each view's preprocess -> forward -> query-decode runs in sequence,
         # not interleaved: _preprocess stashes per-call instance state
         # (self._last_eomt_content_size) that _panoptic_queries reads back
@@ -774,11 +787,21 @@ class LibreEoMT(BaseModel):
             scores_views.append(scores)
             labels_views.append(labels)
             mask_probs_views.append(mask_probs)
+            # Tags each query with the view it came from, so dedup only ever
+            # merges cross-view duplicates of the same real object — never
+            # two genuinely distinct same-class instances one view detected
+            # on its own (e.g. two overlapping people in a crowd).
+            view_ids_views.append(
+                torch.full((scores.shape[0],), int(is_flipped), dtype=torch.long)
+            )
 
         scores = torch.cat(scores_views, dim=0)
         labels = torch.cat(labels_views, dim=0)
         mask_probs = torch.cat(mask_probs_views, dim=0)
-        scores, labels, mask_probs = self._dedup_panoptic_queries(scores, labels, mask_probs)
+        view_ids = torch.cat(view_ids_views, dim=0)
+        scores, labels, mask_probs = self._dedup_panoptic_queries(
+            scores, labels, mask_probs, view_ids
+        )
         detections = self._fuse_panoptic_queries(scores, labels, mask_probs, original_size)
 
         return Results(

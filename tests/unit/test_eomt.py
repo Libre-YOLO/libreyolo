@@ -1145,8 +1145,8 @@ def _panoptic_stub(nc: int, thing_class_ids):
         LibreEoMT._fuse_panoptic_queries(stub, scores, labels, mask_probs, osz)
     )
     stub.PANOPTIC_TTA_DEDUP_IOU = LibreEoMT.PANOPTIC_TTA_DEDUP_IOU
-    stub._dedup_panoptic_queries = lambda scores, labels, mask_probs: (
-        LibreEoMT._dedup_panoptic_queries(stub, scores, labels, mask_probs)
+    stub._dedup_panoptic_queries = lambda scores, labels, mask_probs, view_ids=None: (
+        LibreEoMT._dedup_panoptic_queries(stub, scores, labels, mask_probs, view_ids)
     )
     return stub
 
@@ -1363,17 +1363,99 @@ def test_dedup_prevents_two_agreeing_views_from_losing_to_each_other():
     # row 1; query B is the mirror image. Both "own" both pixels, but each
     # only wins the pixel where it's more confident.
     mask_probs = torch.tensor([[[0.95], [0.62]], [[0.62], [0.95]]])
+    view_ids = torch.tensor([0, 1])  # one query per view, as flip-TTA produces
 
     undeduped = LibreEoMT._fuse_panoptic_queries(stub, scores, labels, mask_probs, (1, 2))
     assert undeduped["segments_info"] == []  # both queries lose to each other
 
     d_scores, d_labels, d_masks = LibreEoMT._dedup_panoptic_queries(
-        stub, scores, labels, mask_probs
+        stub, scores, labels, mask_probs, view_ids
     )
     deduped = LibreEoMT._fuse_panoptic_queries(stub, d_scores, d_labels, d_masks, (1, 2))
     assert len(deduped["segments_info"]) == 1
     assert deduped["segments_info"][0]["category_id"] == 0
     assert int((deduped["panoptic"] != 0).sum()) == 2
+
+
+def test_dedup_panoptic_queries_never_merges_same_view_duplicates():
+    """Two distinct, same-class, overlapping-mask queries from the SAME view
+    must stay separate. Dedup exists to merge one real object seen twice
+    across the two flip-TTA views, not to second-guess a single view's own
+    instance separation — e.g. two overlapping people in a crowd, which a
+    single forward pass can legitimately emit as two high-IoU same-class
+    queries. Without the view_ids guard this would wrongly collapse them
+    into one segment (reported as a Greptile review finding on this PR)."""
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.85])
+    labels = torch.tensor([0, 0])
+    mask_probs = torch.full((2, 4, 4), 0.02)
+    mask_probs[0, 0:2, 0:2] = 0.9
+    mask_probs[1, 0:2, 0:2] = 0.9  # identical quadrant -> IoU 1.0
+    view_ids = torch.tensor([0, 0])  # both from the same view
+
+    out_scores, out_labels, _ = LibreEoMT._dedup_panoptic_queries(
+        stub, scores, labels, mask_probs, view_ids
+    )
+
+    assert out_scores.shape == (2,)  # kept separate despite IoU 1.0
+    assert out_labels.tolist() == [0, 0]
+
+
+def test_predict_augment_panoptic_tags_queries_with_their_source_view():
+    """Integration check that _predict_augment_panoptic actually wires
+    per-query view_ids through to _dedup_panoptic_queries (the unit-level
+    fix is tested directly in
+    test_dedup_panoptic_queries_never_merges_same_view_duplicates; this
+    confirms the caller doesn't drop that information on the way in).
+    Two same-class, identical-mask queries both coming from the ORIGINAL
+    view must reach fusion un-merged (2 queries in), not folded into 1 by
+    dedup, even though their mask IoU is 1.0 -- well above
+    PANOPTIC_TTA_DEDUP_IOU."""
+    from PIL import Image
+
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    def _two_overlapping_queries_output(nc=4):
+        class_logits = torch.full((1, 2, nc + 1), -10.0)
+        class_logits[0, :, 0] = 5.0
+        mask_logits = torch.full((1, 2, 4, 4), -4.0)
+        mask_logits[0, :, 0:2, 0:2] = 4.0
+        return {"class_queries_logits": class_logits, "masks_queries_logits": mask_logits}
+
+    all_null = {
+        "class_queries_logits": torch.full((1, 2, 5), -10.0).index_fill_(
+            -1, torch.tensor([4]), 5.0
+        ),
+        "masks_queries_logits": torch.full((1, 2, 4, 4), 4.0),
+    }
+    stub = _panoptic_tta_stub(
+        nc=4,
+        thing_class_ids=[0, 1],
+        forward_outputs=[_two_overlapping_queries_output(nc=4), all_null],
+    )
+    seen_query_count = {}
+    real_fuse = stub._fuse_panoptic_queries
+
+    def _spy_fuse(scores, labels, mask_probs, osz):
+        seen_query_count["n"] = mask_probs.shape[0]
+        return real_fuse(scores, labels, mask_probs, osz)
+
+    stub._fuse_panoptic_queries = _spy_fuse
+
+    LibreEoMT._predict_augment_panoptic(
+        stub,
+        Image.new("RGB", (4, 4)),
+        image_path=None,
+        original_size=(4, 4),
+        effective_imgsz=4,
+        color_format="auto",
+    )
+
+    # Both same-view queries reach fusion un-merged: dedup only collapses
+    # cross-view duplicates.
+    assert seen_query_count["n"] == 2
 
 
 def test_predict_augment_panoptic_concatenates_queries_across_views():
