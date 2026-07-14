@@ -1210,6 +1210,37 @@ class BaseTrainer(ABC):
     # Setup / train / epoch
     # =========================================================================
 
+    def _check_ddp_train_loader(self) -> None:
+        """Verify the train loader actually shards across DDP ranks.
+
+        Duck-types on ``num_replicas``/``rank`` rather than requiring
+        ``DistributedSampler`` so distributed-aware custom samplers pass.
+        """
+        loader = getattr(self, "train_loader", None)
+        if loader is None:
+            return
+        sampler = getattr(loader, "sampler", None)
+        if (
+            getattr(sampler, "num_replicas", None) != self.world_size
+            or getattr(sampler, "rank", None) != self.rank
+        ):
+            raise ValueError(
+                f"{type(self).__name__} built a train loader that does not "
+                f"shard across DDP ranks (sampler={type(sampler).__name__}): "
+                "every rank would train on the full dataset. Build the loader "
+                "with a DistributedSampler and batch // world_size per rank, "
+                "like BaseTrainer._setup_data."
+            )
+        per_rank_batch = max(1, self.config.batch // self.world_size)
+        loader_batch = getattr(loader, "batch_size", None)
+        if loader_batch is not None and loader_batch != per_rank_batch:
+            raise ValueError(
+                f"{type(self).__name__} built a train loader with "
+                f"batch_size={loader_batch}, but batch={self.config.batch} is "
+                f"the global batch: world_size={self.world_size} requires "
+                f"{per_rank_batch} per rank."
+            )
+
     def setup(self):
         if self._is_setup:
             return
@@ -1252,6 +1283,30 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("AutoBatch: resolved global batch size = %d", self.config.batch)
 
+        if int(getattr(self.config, "batch", 16)) < 1:
+            raise ValueError(
+                f"batch={self.config.batch} is invalid: use a positive global "
+                "batch size, or -1 for AutoBatch."
+            )
+
+        # ``batch`` is the global batch under DDP: every rank trains at
+        # batch // world_size, so a non-divisible value would silently train
+        # at a different global batch than requested (e.g. batch=6 on 4 GPUs
+        # trains at 4). Fail fast instead of silently changing the batch.
+        # AutoBatch above already returns world_size-divisible values.
+        if self.is_distributed and self.config.batch % self.world_size != 0:
+            lower = (self.config.batch // self.world_size) * self.world_size
+            higher = lower + self.world_size
+            options = (
+                f"batch={higher}" if lower == 0 else f"batch={lower} or batch={higher}"
+            )
+            raise ValueError(
+                f"batch={self.config.batch} is the global batch and must be "
+                f"divisible by world_size={self.world_size}: each rank trains at "
+                f"batch // world_size, so this value would silently train at a "
+                f"different global batch than requested. Use {options}."
+            )
+
         # BN statistics quality under DDP: with SyncBatchNorm off, each rank's
         # BatchNorm tracks only its own per-rank shard (batch // world_size).
         # A small per-rank batch produces noisy running stats and degrades the
@@ -1275,6 +1330,15 @@ class BaseTrainer(ABC):
                 )
 
         self._setup_data()
+
+        # DDP loader invariant: trainers that own their data pipeline must
+        # shard like BaseTrainer._setup_data does (issue #484: three trainers
+        # built plain DataLoaders and every rank trained the full dataset at
+        # the full global batch). Catch that bug class at startup for every
+        # current and future family.
+        if self.is_distributed:
+            self._check_ddp_train_loader()
+
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
         self._setup_distillation()

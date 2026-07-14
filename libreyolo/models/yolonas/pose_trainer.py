@@ -164,7 +164,23 @@ class YOLONASPoseTrainer(BaseTrainer):
             affine_interpolation=self.config.affine_interpolation,
         )
         train_ds = self._build_dataset(train_imgs, train_lbls, train_tf)
-        drop_last = len(train_ds) >= self.config.batch
+        # ``batch`` is the global batch under DDP. Each rank's loader is built
+        # with ``batch // world_size`` over a DistributedSampler shard.
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        train_sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            train_sampler = DistributedSampler(
+                train_ds,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_ds) >= self.world_size,
+            )
+
+        visible_samples = len(train_sampler) if train_sampler is not None else len(train_ds)
+        drop_last = visible_samples >= per_rank_batch
         loader_kwargs = {}
         if self.config.workers > 0:
             loader_kwargs.update(
@@ -174,8 +190,9 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
         self.train_loader = DataLoader(
             train_ds,
-            batch_size=self.config.batch,
-            shuffle=True,
+            batch_size=per_rank_batch,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             num_workers=self.config.workers,
             pin_memory=self.config.pin_memory,
             drop_last=drop_last,
@@ -197,7 +214,7 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
             self.val_loader = DataLoader(
                 val_ds,
-                batch_size=self.config.batch,
+                batch_size=per_rank_batch,
                 shuffle=False,
                 num_workers=self.config.workers,
                 pin_memory=self.config.pin_memory,
@@ -214,7 +231,12 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
 
         logger.info("Training dataset: %d images", len(train_ds))
-        logger.info("Iterations per epoch: %d", len(self.train_loader))
+        logger.info(
+            "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+            len(self.train_loader),
+            per_rank_batch,
+            self.world_size,
+        )
         return train_ds
 
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
@@ -241,17 +263,25 @@ class YOLONASPoseTrainer(BaseTrainer):
             "pose_reg": log_losses[4],
         }
 
-    def _validate_epoch(self, epoch: int):
+    def _validate_epoch(self, epoch: int, *, save_plots: bool | None = None):
+        from ...training.distributed import barrier, is_main_process, unwrap_model
+
         if getattr(self, "val_loader", None) is None:
+            if self.is_distributed:
+                barrier()
             return None
 
-        model = self.ema_model.ema if self.ema_model else self.model
+        model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
         was_training = model.training
         model.eval()
 
         total_loss, num_batches = 0.0, 0
         pose_metrics = None
         try:
+            # The val-loss pass runs on EVERY rank: YoloNASPoseLoss all-reduces
+            # its normalizer (a collective), so a rank-0-only pass would pair
+            # rank 0's all_reduce with the other ranks' barrier and deadlock.
+            # The val loader is identical on all ranks, so collectives align.
             with torch.no_grad():
                 for batch in self.val_loader:
                     imgs = batch[0].to(self.device, non_blocking=True)
@@ -260,10 +290,21 @@ class YOLONASPoseTrainer(BaseTrainer):
                     total_loss += float(loss.item())
                     num_batches += 1
 
-            pose_metrics = self._run_pose_metric_validation(model, epoch)
+            # Only rank 0 runs the file-writing pose mAP validator: concurrent
+            # ranks writing predictions.json into the shared save_dir corrupt
+            # the JSON another rank is reading (issue #484).
+            if not self.is_distributed or is_main_process():
+                pose_metrics = self._run_pose_metric_validation(
+                    model, epoch, save_plots=save_plots
+                )
         finally:
             if was_training:
                 model.train()
+            if self.is_distributed:
+                barrier()
+
+        if self.is_distributed and not is_main_process():
+            return None
 
         avg_loss = total_loss / max(num_batches, 1)
         metrics = {"loss/val": avg_loss}
@@ -296,7 +337,11 @@ class YOLONASPoseTrainer(BaseTrainer):
         }
 
     def _run_pose_metric_validation(
-        self, eval_model: torch.nn.Module, epoch: int
+        self,
+        eval_model: torch.nn.Module,
+        epoch: int,
+        *,
+        save_plots: bool | None = None,
     ) -> Dict[str, float] | None:
         if self.wrapper_model is None:
             logger.warning("Skipping pose mAP validation: wrapper_model is missing")
@@ -305,10 +350,21 @@ class YOLONASPoseTrainer(BaseTrainer):
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
 
+            val_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False))
+                and self._is_final_epoch(epoch)
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                batch_size=self.config.batch,
+                # Rank-local capacity, matching BaseTrainer._run_validation.
+                # No runtime effect today: PoseValidator runs per-image
+                # inference and ignores batch_size. Kept consistent so a
+                # future batched PoseValidator doesn't inherit the global
+                # batch on the single rank that runs it.
+                batch_size=max(1, self.config.batch // max(self.world_size, 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
@@ -318,6 +374,7 @@ class YOLONASPoseTrainer(BaseTrainer):
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,
                 oks_sigmas=self._resolve_oks_sigmas(),
+                save_plots=val_save_plots,
                 save_dir=str(self.save_dir / "val"),
             )
 

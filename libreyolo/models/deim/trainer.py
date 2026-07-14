@@ -422,14 +422,37 @@ class DEIMTrainer(BaseTrainer):
 
             collate_fn = yolox_collate_fn
 
+        # ``batch`` is the global batch under DDP. Each rank's loader is built
+        # with ``batch // world_size`` over a DistributedSampler shard.
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        train_sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            train_sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        # Under DDP each rank only sees ``len(sampler)`` samples, so base the
+        # drop_last decision on the per-rank visible count. Otherwise a small
+        # dataset split across ranks could drop every rank's only partial
+        # batch and leave zero iterations.
+        visible_samples = (
+            len(train_sampler) if train_sampler is not None else len(train_dataset)
+        )
         self.train_loader = DataLoader(
             train_dataset,
-            batch_size=self.config.batch,
+            batch_size=per_rank_batch,
             num_workers=self.config.workers,
-            shuffle=True,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             pin_memory=True,
             collate_fn=collate_fn,
-            drop_last=True,
+            drop_last=visible_samples >= per_rank_batch,
         )
 
         return train_dataset
@@ -455,6 +478,11 @@ class DEIMTrainer(BaseTrainer):
             return self._train_epoch_accum(epoch)
 
         # 1. Epoch propagation.
+        # DistributedSampler needs its epoch set so shuffling differs per
+        # epoch while staying deterministic for resume.
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)
@@ -557,6 +585,11 @@ class DEIMTrainer(BaseTrainer):
         the optimizer step, clipping, EMA and LR update fire once per window.
         """
         # 1. Epoch propagation.
+        # DistributedSampler needs its epoch set so shuffling differs per
+        # epoch while staying deterministic for resume.
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)
