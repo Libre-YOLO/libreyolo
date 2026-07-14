@@ -1138,6 +1138,16 @@ def _panoptic_stub(nc: int, thing_class_ids):
     stub._unpad_and_resize_mask_logits = lambda ml, osz: (
         LibreEoMT._unpad_and_resize_mask_logits(stub, ml, osz)
     )
+    stub._panoptic_queries = lambda output, osz: LibreEoMT._panoptic_queries(
+        stub, output, osz
+    )
+    stub._fuse_panoptic_queries = lambda scores, labels, mask_probs, osz: (
+        LibreEoMT._fuse_panoptic_queries(stub, scores, labels, mask_probs, osz)
+    )
+    stub.PANOPTIC_TTA_DEDUP_IOU = LibreEoMT.PANOPTIC_TTA_DEDUP_IOU
+    stub._dedup_panoptic_queries = lambda scores, labels, mask_probs: (
+        LibreEoMT._dedup_panoptic_queries(stub, scores, labels, mask_probs)
+    )
     return stub
 
 
@@ -1242,6 +1252,219 @@ def test_panoptic_merge_empty_when_all_queries_are_null():
     out = LibreEoMT._postprocess_panoptic(stub, output, 0.5, (4, 4))
     assert out["segments_info"] == []
     assert int(out["panoptic"].sum()) == 0
+
+
+def _single_query_panoptic_output(nc, quadrant, cls):
+    """A single high-confidence query occupying one quadrant of a 4x4 canvas."""
+    class_logits = torch.full((1, 1, nc + 1), -10.0)
+    class_logits[0, 0, cls] = 5.0
+    mask_logits = torch.full((1, 1, 4, 4), -4.0)
+    rows, cols = quadrant
+    mask_logits[0, 0, rows, cols] = 4.0
+    return {"class_queries_logits": class_logits, "masks_queries_logits": mask_logits}
+
+
+def _panoptic_tta_stub(nc: int, thing_class_ids, forward_outputs: list):
+    """_panoptic_stub extended with the predict-path hooks _predict_augment_panoptic
+    needs: device, names, _preprocess, _forward (returns forward_outputs[call_idx])."""
+    stub = _panoptic_stub(nc=nc, thing_class_ids=thing_class_ids)
+    stub.device = torch.device("cpu")
+    stub.names = {i: str(i) for i in range(nc)}
+    calls = {"n": 0}
+
+    def _preprocess(image, color_format="auto", input_size=None):
+        return torch.zeros(1, 3, 4, 4), image, (4, 4), 1.0
+
+    def _forward(tensor):
+        out = forward_outputs[calls["n"]]
+        calls["n"] += 1
+        return out
+
+    stub._preprocess = _preprocess
+    stub._forward = _forward
+    return stub
+
+
+TOP_LEFT = (slice(0, 2), slice(0, 2))
+BOTTOM_LEFT = (slice(2, 4), slice(0, 2))
+BOTTOM_RIGHT = (slice(2, 4), slice(2, 4))
+
+
+def test_dedup_panoptic_queries_merges_same_class_overlapping_masks():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.85])
+    labels = torch.tensor([0, 0])
+    mask_probs = torch.full((2, 4, 4), 0.02)
+    mask_probs[0, 0:2, 0:2] = 0.9
+    mask_probs[1, 0:2, 0:2] = 0.9  # identical quadrant -> IoU 1.0
+
+    out_scores, out_labels, out_masks = LibreEoMT._dedup_panoptic_queries(
+        stub, scores, labels, mask_probs
+    )
+
+    assert out_scores.shape == (1,)
+    assert out_labels.tolist() == [0]
+    assert out_scores.item() == pytest.approx((0.9 + 0.85) / 2)
+    assert torch.allclose(out_masks[0], mask_probs.mean(dim=0))
+
+
+def test_dedup_panoptic_queries_keeps_different_classes_separate():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.85])
+    labels = torch.tensor([0, 1])  # different classes, identical masks
+    mask_probs = torch.full((2, 4, 4), 0.02)
+    mask_probs[:, 0:2, 0:2] = 0.9
+
+    out_scores, out_labels, _ = LibreEoMT._dedup_panoptic_queries(
+        stub, scores, labels, mask_probs
+    )
+
+    assert out_scores.shape == (2,)
+    assert sorted(out_labels.tolist()) == [0, 1]
+
+
+def test_dedup_panoptic_queries_keeps_non_overlapping_same_class_separate():
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.85])
+    labels = torch.tensor([0, 0])
+    mask_probs = torch.full((2, 4, 4), 0.02)
+    mask_probs[0, 0:2, 0:2] = 0.9  # top-left
+    mask_probs[1, 2:4, 2:4] = 0.9  # bottom-right, disjoint -> IoU 0
+
+    out_scores, _, _ = LibreEoMT._dedup_panoptic_queries(stub, scores, labels, mask_probs)
+
+    assert out_scores.shape == (2,)
+
+
+def test_dedup_prevents_two_agreeing_views_from_losing_to_each_other():
+    """Regression for the exact failure mode measured on a real image: two
+    same-class queries whose masks mostly-but-not-perfectly agree split the
+    per-pixel winner-take-all between them, so *each* one's own overlap
+    ratio can fall below PANOPTIC_OVERLAP_THRESHOLD and get dropped —
+    losing an object both views correctly detected. The canvas here is
+    exactly the 2-pixel competing region (no other "background" pixels):
+    _fuse_panoptic_queries's winner is an argmax with ties resolved to the
+    lowest query index, so any padding pixels where two queries are exactly
+    tied would spuriously hand one of them a free, unbounded won_area and
+    mask the effect under test.
+    """
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.9])
+    labels = torch.tensor([0, 0])
+    # A 2x1 canvas: query A confident on row 0, only-just-over-threshold on
+    # row 1; query B is the mirror image. Both "own" both pixels, but each
+    # only wins the pixel where it's more confident.
+    mask_probs = torch.tensor([[[0.95], [0.62]], [[0.62], [0.95]]])
+
+    undeduped = LibreEoMT._fuse_panoptic_queries(stub, scores, labels, mask_probs, (1, 2))
+    assert undeduped["segments_info"] == []  # both queries lose to each other
+
+    d_scores, d_labels, d_masks = LibreEoMT._dedup_panoptic_queries(
+        stub, scores, labels, mask_probs
+    )
+    deduped = LibreEoMT._fuse_panoptic_queries(stub, d_scores, d_labels, d_masks, (1, 2))
+    assert len(deduped["segments_info"]) == 1
+    assert deduped["segments_info"][0]["category_id"] == 0
+    assert int((deduped["panoptic"] != 0).sum()) == 2
+
+
+def test_predict_augment_panoptic_concatenates_queries_across_views():
+    """The flipped view's bottom-left detection must land at bottom-right
+    after flip-back, and both views' detections must survive into the
+    merged result — the whole point of the concatenate-then-fuse prototype."""
+    from PIL import Image
+
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_tta_stub(
+        nc=4,
+        thing_class_ids=[0, 1],
+        forward_outputs=[
+            _single_query_panoptic_output(nc=4, quadrant=TOP_LEFT, cls=0),
+            _single_query_panoptic_output(nc=4, quadrant=BOTTOM_LEFT, cls=1),
+        ],
+    )
+
+    result = LibreEoMT._predict_augment_panoptic(
+        stub,
+        Image.new("RGB", (4, 4)),
+        image_path=None,
+        original_size=(4, 4),
+        effective_imgsz=4,
+        color_format="auto",
+    )
+
+    seg = result.panoptic.data
+    info = result.panoptic.segments_info
+    assert len(info) == 2
+    assert sorted(e["category_id"] for e in info) == [0, 1]
+
+    top_left_id = next(e["id"] for e in info if e["category_id"] == 0)
+    assert int((seg[0:2, 0:2] == top_left_id).sum()) == 4
+
+    bottom_right_id = next(e["id"] for e in info if e["category_id"] == 1)
+    assert int((seg[2:4, 2:4] == bottom_right_id).sum()) == 4
+    # Nothing survives where the flipped view's raw (pre-flip-back) mask was.
+    assert int((seg[2:4, 0:2] != 0).sum()) == 0
+
+
+def test_predict_augment_panoptic_when_one_view_finds_nothing():
+    """One view surviving 0 queries must not break concatenation with the
+    other view's real detection."""
+    from PIL import Image
+
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    all_null = {
+        "class_queries_logits": torch.full((1, 2, 5), -10.0).index_fill_(
+            -1, torch.tensor([4]), 5.0
+        ),
+        "masks_queries_logits": torch.full((1, 2, 4, 4), 4.0),
+    }
+    stub = _panoptic_tta_stub(
+        nc=4,
+        thing_class_ids=[0, 1],
+        forward_outputs=[
+            all_null,
+            _single_query_panoptic_output(nc=4, quadrant=TOP_LEFT, cls=0),
+        ],
+    )
+
+    result = LibreEoMT._predict_augment_panoptic(
+        stub,
+        Image.new("RGB", (4, 4)),
+        image_path=None,
+        original_size=(4, 4),
+        effective_imgsz=4,
+        color_format="auto",
+    )
+
+    info = result.panoptic.segments_info
+    assert len(info) == 1
+    assert info[0]["category_id"] == 0
+    # The flipped view's top-left query flips back to top-right.
+    seg = result.panoptic.data
+    assert int((seg[0:2, 2:4] == info[0]["id"]).sum()) == 4
+
+
+def test_base_model_predict_augment_panoptic_default_raises():
+    """Families that don't implement panoptic flip-TTA get a clear error,
+    not a silent no-op or an AttributeError."""
+    from types import SimpleNamespace
+
+    from libreyolo.models.base.model import BaseModel
+
+    model = SimpleNamespace(task="panoptic")
+    with pytest.raises(NotImplementedError, match="panoptic flip-TTA"):
+        BaseModel._predict_augment_panoptic(model, None, None, (1, 1), 1, "auto")
 
 
 def test_coco_content_size_matches_upstream_aspect_ratio_rule():
