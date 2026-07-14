@@ -41,6 +41,12 @@ OPTIONAL_MODELS = (
         "openvocab",
         "transformers",
     ),
+    (
+        "libreyolo.models.openvocab.ov_deim",
+        "LibreOVDEIM",
+        "openvocab",
+        "huggingface_hub",
+    ),
 )
 
 
