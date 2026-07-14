@@ -611,6 +611,27 @@ class TestOVDEIM:
             det["boxes"][0], torch.tensor([0.0, 0.0, 640.0, 480.0]), atol=1e-4
         )
 
+    def test_cached_text_feats_follow_the_model_across_devices(self):
+        """predict(device=...) moves the model between calls; a cache hit must
+        not hand back features stranded on the previous device."""
+
+        class _FakeTower:
+            def encode_texts(self, tokens):
+                return torch.zeros(tokens.shape[0], 512, device=tokens.device)
+
+        m = self._bare_ovdeim()
+        m.model = _FakeTower()
+        m.device = torch.device("meta")  # stands in for a second, distinct device
+        m._tokenizer = lambda names: torch.zeros(len(names), 77, dtype=torch.long)
+
+        cached = torch.zeros(2, 512)  # cached on CPU by an earlier call
+        m._text_feats_cache = (("person", "dog"), cached)
+
+        feats = m._class_text_feats()
+        assert feats.device == m.device
+        # The refreshed tensor is written back, so the next hit stays correct.
+        assert m._text_feats_cache[1].device == m.device
+
     def test_set_classes_invalidates_text_cache(self):
         m = self._bare_ovdeim()
         m._text_feats_cache = (("person", "dog"), torch.zeros(2, 512))

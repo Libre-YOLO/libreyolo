@@ -120,10 +120,19 @@ class LibreOVDEIM(LibreOpenVocabDetector):
         return self._tokenizer
 
     def _class_text_feats(self) -> torch.Tensor:
-        """L2-normalized text embeddings for the current vocabulary, cached."""
+        """L2-normalized text embeddings for the current vocabulary, cached.
+
+        ``predict(device=...)`` moves the model between calls, so a cache hit
+        must follow the model onto the current device rather than hand back a
+        tensor stranded on the previous one.
+        """
         names = tuple(str(self.names[i]) for i in range(len(self.names)))
         if self._text_feats_cache is not None and self._text_feats_cache[0] == names:
-            return self._text_feats_cache[1]
+            feats = self._text_feats_cache[1]
+            if feats.device != self.device:
+                feats = feats.to(self.device)
+                self._text_feats_cache = (names, feats)
+            return feats
         tokens = self._get_tokenizer()(list(names)).to(self.device)
         with torch.no_grad():
             feats = self.model.encode_texts(tokens)
