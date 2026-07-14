@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+import torch
 from torch.utils.data import DataLoader
 
 from ..data.panoptic_dataset import (
@@ -117,6 +118,59 @@ class PanopticValidator(BaseValidator):
                 "panoptic task?"
             )
         return detections
+
+    def _run_validation_augmented(self) -> None:
+        """Flip TTA, one image at a time (segment maps have per-image
+        resolutions, same as the non-augmented path).
+
+        Reuses ``BaseModel._predict_augment`` — which dispatches to the
+        family's ``_predict_augment_panoptic`` for ``task == "panoptic"`` —
+        the same way ``DetectionValidator._run_validation_augmented`` reuses
+        it for boxes, rather than duplicating the flip/merge logic here.
+        """
+        import sys
+        import time
+
+        from tqdm import tqdm
+
+        # BaseValidator._run_validation already put the model in eval() before
+        # dispatching here.
+        pbar = tqdm(
+            self.dataloader,
+            desc="Validating (TTA x2)",
+            total=len(self.dataloader),
+            disable=not self.config.verbose or not sys.stderr.isatty(),
+            file=sys.stderr,
+        )
+
+        total_start = time.time()
+
+        with torch.no_grad():
+            for batch in pbar:
+                img_paths, seg_maps, segments_infos, infos = batch
+
+                t1 = time.time()
+                result = self.model._predict_augment(
+                    img_paths[0], imgsz=self.config.imgsz
+                )
+                self.speed["inference"] += time.time() - t1
+
+                if result.panoptic is not None:
+                    detections = {
+                        "panoptic": result.panoptic.data,
+                        "segments_info": result.panoptic.segments_info,
+                    }
+                else:
+                    orig_h, orig_w = result.orig_shape
+                    detections = {
+                        "panoptic": torch.zeros((orig_h, orig_w), dtype=torch.int32),
+                        "segments_info": [],
+                    }
+
+                self._update_metrics(detections, seg_maps, infos, segments_infos)
+                self.seen += 1
+
+        self.speed["total"] = time.time() - total_start
 
     def _update_metrics(
         self, preds: Any, targets: Any, img_info: Any, img_ids: Any = None

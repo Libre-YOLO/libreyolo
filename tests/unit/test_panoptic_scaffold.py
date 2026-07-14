@@ -131,6 +131,83 @@ def test_panoptic_validator_computes_pq():
     assert metrics["fitness"] == 1.0
 
 
+def test_panoptic_validator_augmented_extracts_result_and_scores_pq():
+    """_run_validation_augmented reuses model._predict_augment (the shared
+    BaseModel dispatch, not a bespoke re-implementation) and must correctly
+    unwrap Results.panoptic back into the {"panoptic", "segments_info"} dict
+    _update_metrics expects."""
+    import torch
+    from types import SimpleNamespace
+
+    from libreyolo.utils.results import PanopticSegmentation, Results
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+
+    class _StubModel:
+        task = "panoptic"
+        nb_classes = 1
+
+        def __init__(self):
+            self.model = SimpleNamespace(eval=lambda: None)
+
+        def _predict_augment(self, path, imgsz=None):
+            seg = torch.tensor([[1, 1], [0, 0]], dtype=torch.int32)
+            return Results(
+                boxes=None,
+                orig_shape=(2, 2),
+                names={0: "a"},
+                panoptic=PanopticSegmentation(
+                    seg, [{"id": 1, "category_id": 0}], (2, 2)
+                ),
+            )
+
+    config = ValidationConfig(data="dummy.yaml", device="cpu", imgsz=2, verbose=False)
+    validator = PanopticValidator(model=_StubModel(), config=config)
+    validator._init_metrics()
+
+    gt_map = np.array([[1, 1], [0, 0]], dtype=np.int64)
+    gt_segments = [{"id": 1, "category_id": 0, "iscrowd": 0}]
+    batch = (["img.jpg"], [torch.from_numpy(gt_map)], [gt_segments], [{}])
+    validator.dataloader = [batch]
+
+    validator._run_validation_augmented()
+
+    metrics = validator._compute_metrics()
+    assert metrics["metrics/PQ"] == 1.0
+    assert validator.seen == 1
+
+
+def test_panoptic_validator_augmented_handles_empty_panoptic_result():
+    """A view with no surviving segments (result.panoptic is None) must not
+    crash — it should score as a fully-void prediction."""
+    import torch
+    from types import SimpleNamespace
+
+    from libreyolo.utils.results import Results
+    from libreyolo.validation import PanopticValidator, ValidationConfig
+
+    class _EmptyModel:
+        task = "panoptic"
+        nb_classes = 1
+
+        def __init__(self):
+            self.model = SimpleNamespace(eval=lambda: None)
+
+        def _predict_augment(self, path, imgsz=None):
+            return Results(boxes=None, orig_shape=(2, 2), names={0: "a"})
+
+    config = ValidationConfig(data="dummy.yaml", device="cpu", imgsz=2, verbose=False)
+    validator = PanopticValidator(model=_EmptyModel(), config=config)
+    validator._init_metrics()
+
+    gt_map = np.zeros((2, 2), dtype=np.int64)
+    batch = (["img.jpg"], [torch.from_numpy(gt_map)], [[]], [{}])
+    validator.dataloader = [batch]
+
+    validator._run_validation_augmented()
+
+    assert validator.seen == 1
+
+
 def test_panoptic_postprocess_without_family_support_fails_loudly():
     """A family that does not implement panoptic must not silently score zero."""
     from libreyolo.validation import PanopticValidator, ValidationConfig

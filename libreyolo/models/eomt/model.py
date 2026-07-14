@@ -64,6 +64,12 @@ class LibreEoMT(BaseModel):
     PANOPTIC_MASK_THRESHOLD: ClassVar[float] = 0.5
     PANOPTIC_OVERLAP_THRESHOLD: ClassVar[float] = 0.8
 
+    # Flip-TTA only: mask-IoU threshold above which same-class queries from
+    # the two views are treated as the same real instance and merged before
+    # fusion (see _dedup_panoptic_queries). Matches PQ_IOU_THRESHOLD's
+    # convention for "same instance" matching.
+    PANOPTIC_TTA_DEDUP_IOU: ClassVar[float] = 0.5
+
     WEIGHT_VARIANTS: ClassVar[Tuple[str, ...]] = ("1280",)
 
     semantic_resize_mode: ClassVar[str] = "split"
@@ -524,23 +530,17 @@ class LibreEoMT(BaseModel):
             return set()
         return set(range(self.nb_classes)) - set(int(i) for i in thing_ids)
 
-    def _postprocess_panoptic(
-        self,
-        output: Any,
-        conf_thres: float,
-        original_size: Tuple[int, int],
-    ) -> Dict:
-        """Merge per-query classes and masks into one non-overlapping segment map.
+    def _panoptic_queries(
+        self, output: Any, original_size: Tuple[int, int]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Decode raw panoptic forward output into filtered (score, label,
+        full-resolution mask-probability) queries.
 
-        Implements the standard MaskFormer/Mask2Former panoptic inference recipe:
-        drop no-object and low-confidence queries, assign every pixel to the
-        query with the highest score-weighted mask probability, discard queries
-        whose surviving area falls below ``PANOPTIC_OVERLAP_THRESHOLD`` of their
-        own binarized area, and fuse all stuff segments of the same category.
-
-        Unlike ``_postprocess_segment`` this drops queries whose argmax over the
-        ``C + 1`` logits is the null class, which is what keeps a panoptic map
-        from filling with junk segments.
+        Drops no-object and low-confidence queries (``PANOPTIC_SCORE_THRESHOLD``).
+        Shared by ``_postprocess_panoptic`` (single-view predict/val) and
+        ``LibreEoMT._predict_augment_panoptic`` (flip TTA), which concatenates
+        queries from both views before the shared ``_fuse_panoptic_queries``
+        assignment step. Returns 0-length tensors when nothing survives.
         """
         if not isinstance(output, dict):
             raise ValueError("LibreEoMT panoptic forward must return a dict.")
@@ -558,23 +558,43 @@ class LibreEoMT(BaseModel):
         # The query score threshold is a merge hyperparameter, not a detection
         # confidence, so panoptic ignores predict(conf=...) exactly as semantic
         # does. Tune via PANOPTIC_SCORE_THRESHOLD.
-        score_threshold = self.PANOPTIC_SCORE_THRESHOLD
-
-        empty = {
-            "panoptic": torch.zeros((orig_h, orig_w), dtype=torch.int32),
-            "segments_info": [],
-        }
-
         scores, labels = class_logits[0].softmax(dim=-1).max(-1)  # over C+1
-        keep = (labels != nc) & (scores > score_threshold)
+        keep = (labels != nc) & (scores > self.PANOPTIC_SCORE_THRESHOLD)
         if not keep.any():
-            return empty
+            return scores[keep], labels[keep], mask_logits.new_zeros((0, orig_h, orig_w))
         scores, labels = scores[keep], labels[keep]
 
         # Crop the zero-padded border, resize logits to the image, then sigmoid.
         mask_probs = self._unpad_and_resize_mask_logits(
             mask_logits[0][keep], original_size
         ).sigmoid()
+        return scores, labels, mask_probs
+
+    def _fuse_panoptic_queries(
+        self,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        mask_probs: torch.Tensor,
+        original_size: Tuple[int, int],
+    ) -> Dict:
+        """Merge per-query classes and masks into one non-overlapping segment map.
+
+        Implements the standard MaskFormer/Mask2Former panoptic inference recipe:
+        assign every pixel to the query with the highest score-weighted mask
+        probability, discard queries whose surviving area falls below
+        ``PANOPTIC_OVERLAP_THRESHOLD`` of their own binarized area, and fuse
+        all stuff segments of the same category. ``scores``/``labels``/
+        ``mask_probs`` come from ``_panoptic_queries`` — concatenated across
+        views for flip TTA, so this step is agnostic to how many queries
+        there are or which view(s) they came from.
+        """
+        orig_w, orig_h = original_size
+        empty = {
+            "panoptic": torch.zeros((orig_h, orig_w), dtype=torch.int32),
+            "segments_info": [],
+        }
+        if mask_probs.shape[0] == 0:
+            return empty
 
         # Every pixel goes to the query with the highest score-weighted mask
         # probability; a segment is the intersection of the pixels it won with
@@ -625,6 +645,189 @@ class LibreEoMT(BaseModel):
         if not segments_info:
             return empty
         return {"panoptic": segmentation.cpu(), "segments_info": segments_info}
+
+    def _postprocess_panoptic(
+        self,
+        output: Any,
+        conf_thres: float,
+        original_size: Tuple[int, int],
+    ) -> Dict:
+        """Merge per-query classes and masks into one non-overlapping segment map.
+
+        Drops no-object and low-confidence queries, assigns every pixel to
+        the query with the highest score-weighted mask probability, discards
+        mostly-occluded queries, and fuses same-category stuff segments —
+        see ``_panoptic_queries``/``_fuse_panoptic_queries`` for the two
+        halves of this recipe.
+
+        Unlike ``_postprocess_segment`` this drops queries whose argmax over the
+        ``C + 1`` logits is the null class, which is what keeps a panoptic map
+        from filling with junk segments.
+        """
+        scores, labels, mask_probs = self._panoptic_queries(output, original_size)
+        return self._fuse_panoptic_queries(scores, labels, mask_probs, original_size)
+
+    def _dedup_panoptic_queries(
+        self,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        mask_probs: torch.Tensor,
+        view_ids: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Merge same-class queries from different flip-TTA views that
+        describe the same real instance, before fusion.
+
+        Without this, two views correctly agreeing on the same object each
+        contribute a near-duplicate query. ``_fuse_panoptic_queries``'s
+        per-pixel winner-take-all then splits that object's pixels roughly
+        evenly between the two duplicates, so *each* one's own overlap
+        fraction can fall below ``PANOPTIC_OVERLAP_THRESHOLD`` and get
+        dropped as "mostly occluded" — silently losing an object BOTH views
+        detected correctly (measured empirically: 2 of 7 real segments lost
+        on a real image before this dedup step was added).
+
+        Greedy NMS-style clustering: process queries highest-score first; a
+        lower-score query of the same class with binarized-mask IoU above
+        ``PANOPTIC_TTA_DEDUP_IOU`` against an already-kept query is folded
+        into it (mask probabilities and scores averaged) instead of
+        competing against it separately in the fusion step.
+
+        ``view_ids`` (one int per query, matching ``scores``) restricts each
+        group to at most one query per view. Without it, two genuinely
+        distinct same-class instances the model detected within a single
+        view (e.g. two overlapping people in a crowd) could have high enough
+        mask IoU to be wrongly folded into one segment — a risk this
+        function only exists to dedup cross-view duplicates, not to
+        second-guess a single view's own instance separation. The same cap
+        also stops one broad anchor query from absorbing *two* distinct,
+        correctly-separated queries from the opposite view: greedy
+        clustering otherwise has no limit on how many same-class queries a
+        single anchor can accumulate, so an imprecise mask that happens to
+        overlap two real neighboring instances above the threshold would
+        merge all three into one, silently losing an instance. Pass ``None``
+        (the default) to merge on mask IoU alone, ignoring view origin —
+        including this per-view cap.
+        """
+        n = mask_probs.shape[0]
+        if n <= 1:
+            return scores, labels, mask_probs
+
+        binary_masks = mask_probs >= self.PANOPTIC_MASK_THRESHOLD
+        areas = binary_masks.flatten(1).sum(dim=1).float()
+        order = torch.argsort(scores, descending=True).tolist()
+
+        consumed = [False] * n
+        out_scores: list[torch.Tensor] = []
+        out_labels: list[torch.Tensor] = []
+        out_masks: list[torch.Tensor] = []
+
+        for idx in order:
+            if consumed[idx]:
+                continue
+            consumed[idx] = True
+            group = [idx]
+            group_views = {int(view_ids[idx])} if view_ids is not None else None
+            for jdx in order:
+                if jdx == idx or consumed[jdx] or int(labels[jdx]) != int(labels[idx]):
+                    continue
+                jdx_view = int(view_ids[jdx]) if view_ids is not None else None
+                if group_views is not None and jdx_view in group_views:
+                    # Either the anchor's own view, or a view already
+                    # represented in this group — cap one query per view.
+                    continue
+                inter = (binary_masks[idx] & binary_masks[jdx]).sum().float()
+                union = areas[idx] + areas[jdx] - inter
+                iou = (inter / union) if union > 0 else inter.new_zeros(())
+                if iou > self.PANOPTIC_TTA_DEDUP_IOU:
+                    consumed[jdx] = True
+                    group.append(jdx)
+                    if group_views is not None:
+                        group_views.add(jdx_view)
+
+            group_t = torch.tensor(group, device=mask_probs.device)
+            out_scores.append(scores[group_t].mean())
+            out_labels.append(labels[idx])
+            out_masks.append(mask_probs[group_t].mean(dim=0))
+
+        return torch.stack(out_scores), torch.stack(out_labels), torch.stack(out_masks)
+
+    def _predict_augment_panoptic(
+        self,
+        img_pil,
+        image_path,
+        original_size: Tuple[int, int],
+        effective_imgsz,
+        color_format: str,
+        **kwargs,
+    ) -> Any:
+        """Flip-only TTA for panoptic segmentation.
+
+        Concatenates the original and flipped views' surviving (score,
+        label, mask) queries, merges same-instance duplicates across views
+        (``_dedup_panoptic_queries``), and re-runs the existing per-pixel
+        winner-take-all fusion once over the deduplicated set — the same
+        generalization detection TTA uses (concatenate augmented-view
+        boxes, then run NMS once).
+        """
+        from PIL import Image as PILImage
+
+        from ...utils.results import PanopticSegmentation, Results
+
+        orig_w, orig_h = original_size
+        scores_views = []
+        labels_views = []
+        mask_probs_views = []
+        view_ids_views = []
+        # Each view's preprocess -> forward -> query-decode runs in sequence,
+        # not interleaved: _preprocess stashes per-call instance state
+        # (self._last_eomt_content_size) that _panoptic_queries reads back
+        # via _unpad_and_resize_mask_logits, so a later _preprocess call
+        # must not run before the earlier view's decode has consumed it.
+        for is_flipped in (False, True):
+            src = (
+                img_pil.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT)
+                if is_flipped
+                else img_pil
+            )
+            tensor, _, orig_size, _ = self._preprocess(
+                src, color_format, input_size=effective_imgsz
+            )
+            with torch.no_grad():
+                raw = self._forward(tensor.to(self.device))
+            scores, labels, mask_probs = self._panoptic_queries(raw, orig_size)
+            if is_flipped and mask_probs.shape[0] > 0:
+                mask_probs = mask_probs.flip(-1)
+            scores_views.append(scores)
+            labels_views.append(labels)
+            mask_probs_views.append(mask_probs)
+            # Tags each query with the view it came from, so dedup only ever
+            # merges cross-view duplicates of the same real object — never
+            # two genuinely distinct same-class instances one view detected
+            # on its own (e.g. two overlapping people in a crowd).
+            view_ids_views.append(
+                torch.full((scores.shape[0],), int(is_flipped), dtype=torch.long)
+            )
+
+        scores = torch.cat(scores_views, dim=0)
+        labels = torch.cat(labels_views, dim=0)
+        mask_probs = torch.cat(mask_probs_views, dim=0)
+        view_ids = torch.cat(view_ids_views, dim=0)
+        scores, labels, mask_probs = self._dedup_panoptic_queries(
+            scores, labels, mask_probs, view_ids
+        )
+        detections = self._fuse_panoptic_queries(scores, labels, mask_probs, original_size)
+
+        return Results(
+            boxes=None,
+            orig_shape=(orig_h, orig_w),
+            path=str(image_path) if image_path else None,
+            names=self.names,
+            panoptic=PanopticSegmentation(
+                detections["panoptic"].long(),
+                detections.get("segments_info") or [],
+                (orig_h, orig_w),
+            ),
+        )
 
     def _postprocess_semantic_logits(
         self, output: Any, original_size: Tuple[int, int], **kwargs

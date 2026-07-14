@@ -757,11 +757,6 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
             )
-        if getattr(self, "task", "detect") == "panoptic":
-            raise ValueError(
-                "Test-time augmentation does not support panoptic segmentation yet. "
-                "Use augment=False for panoptic models."
-            )
         if getattr(self, "task", "detect") == "depth":
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
@@ -788,6 +783,16 @@ class BaseModel(ABC):
 
         if getattr(self, "task", "detect") == "semantic":
             return self._predict_augment_semantic(
+                img_pil,
+                image_path,
+                (orig_w, orig_h),
+                effective_imgsz,
+                color_format,
+                **kwargs,
+            )
+
+        if getattr(self, "task", "detect") == "panoptic":
+            return self._predict_augment_panoptic(
                 img_pil,
                 image_path,
                 (orig_w, orig_h),
@@ -897,6 +902,26 @@ class BaseModel(ABC):
             path=str(image_path) if image_path else None,
             names=self.names,
             semantic_mask=SemanticMask(mask.long(), (orig_h, orig_w)),
+        )
+
+    def _predict_augment_panoptic(
+        self,
+        img_pil,
+        image_path,
+        original_size: Tuple[int, int],
+        effective_imgsz,
+        color_format: str,
+        **kwargs,
+    ) -> Results:
+        """Flip-only TTA for panoptic segmentation. Override per family.
+
+        No family-generic implementation exists (unlike semantic's
+        ``_postprocess_semantic_logits`` hook): panoptic decode is
+        query-based (Mask2Former/MaskFormer-style), and the flip-merge
+        strategy for query outputs is architecture-specific.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement panoptic flip-TTA."
         )
 
     def _merge_classify_tta(
@@ -1356,11 +1381,6 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support point-task models yet. "
                 "Use augment=False for point models."
-            )
-        if augment and self.task == "panoptic":
-            raise ValueError(
-                "Augmented validation does not support panoptic segmentation "
-                "yet. Use augment=False for panoptic models."
             )
         if augment and self.task == "depth":
             raise ValueError(
