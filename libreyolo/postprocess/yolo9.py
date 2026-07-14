@@ -9,7 +9,7 @@ import torch
 from torchvision.ops import batched_nms
 from typing import Dict, Tuple, Union
 
-from ..data.obb import xywhr_iou
+from ..utils.box_ops import _aabb_overlap, rotated_iou_pairwise
 
 
 _YOLO9_MAX_NMS_CANDIDATES = 30000
@@ -116,6 +116,13 @@ def _rotated_nms_keep_indices(
     iou_thres: float,
     max_det: int,
 ) -> torch.Tensor:
+    """Class-aware greedy NMS over rotated boxes.
+
+    The suppression order and threshold semantics are the textbook greedy
+    ones, but the geometry is evaluated as a single vectorized IoU matrix on
+    the tensors' own device (:func:`rotated_iou_matrix`) instead of one
+    OpenCV call per candidate pair.
+    """
     if xywhr.numel() == 0:
         return torch.zeros(0, dtype=torch.long, device=xywhr.device)
 
@@ -131,25 +138,40 @@ def _rotated_nms_keep_indices(
         valid_indices = None
 
     order = torch.argsort(scores, descending=True)
-    rects = xywhr.detach().cpu().numpy().astype(np.float32)
-    classes = class_ids.detach().cpu().numpy().astype(np.int64)
-    ordered = order.detach().cpu().numpy().astype(np.int64).tolist()
+    ranked = xywhr[order]
+    ranked_classes = class_ids[order]
+    count = ranked.shape[0]
 
+    # Ranked by score, so a suppressor always precedes its victim: only the
+    # upper triangle can suppress. Same-class and axis-aligned-envelope
+    # overlap are both prerequisites, and both are far cheaper than the
+    # polygon intersection, so they gate which pairs are evaluated at all.
+    candidates = (
+        _aabb_overlap(ranked, ranked)
+        & (ranked_classes[:, None] == ranked_classes[None, :])
+    ).triu(diagonal=1)
+    rows, cols = candidates.nonzero(as_tuple=True)
+
+    suppresses = np.zeros((count, count), dtype=bool)
+    if rows.numel():
+        overlapping = (
+            rotated_iou_pairwise(ranked[rows], ranked[cols]) > iou_thres
+        )
+        suppresses[
+            rows[overlapping].cpu().numpy(), cols[overlapping].cpu().numpy()
+        ] = True
+
+    alive = np.ones(count, dtype=bool)
     keep_local: list[int] = []
-    while ordered and len(keep_local) < max_det:
-        current = ordered.pop(0)
-        keep_local.append(current)
+    for candidate in range(count):
+        if not alive[candidate]:
+            continue
+        keep_local.append(candidate)
+        if len(keep_local) >= max_det:
+            break
+        alive &= ~suppresses[candidate]
 
-        remaining = []
-        for candidate in ordered:
-            if classes[candidate] != classes[current]:
-                remaining.append(candidate)
-                continue
-            if xywhr_iou(rects[current], rects[candidate]) <= iou_thres:
-                remaining.append(candidate)
-        ordered = remaining
-
-    keep = torch.as_tensor(keep_local, dtype=torch.long, device=xywhr.device)
+    keep = order[torch.as_tensor(keep_local, dtype=torch.long, device=xywhr.device)]
     if valid_indices is not None:
         keep = valid_indices[keep]
     return keep

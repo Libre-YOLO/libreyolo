@@ -23,8 +23,8 @@ from libreyolo.data.dataset import COCODataset, YOLODataset
 from libreyolo.data.obb import (
     corners_to_xywhr,
     parse_yolo_obb_label_line,
-    xywhr_iou,
 )
+from libreyolo.utils.box_ops import rotated_iou_matrix
 
 from ..postprocess.slicing import slice_batch_outputs
 from .base import BaseValidator
@@ -77,6 +77,7 @@ class OBBValidator(BaseValidator):
         self._gt_by_class: Dict[int, Dict[int, List[np.ndarray]]] = {}
         self._num_gt_by_class: Dict[int, int] = {}
         self._predictions_by_class: Dict[int, List[dict]] = {}
+        self._iou_rows_by_class: Dict[int, List[np.ndarray | None]] = {}
 
     def _resolve_imgsz(self) -> int:
         if self.config.imgsz is not None:
@@ -308,6 +309,7 @@ class OBBValidator(BaseValidator):
         self._predictions_by_class = {i: [] for i in range(self.nc)}
         self._gt_by_class = {i: {} for i in range(self.nc)}
         self._num_gt_by_class = {i: 0 for i in range(self.nc)}
+        self._iou_rows_by_class = {}
         for img_id, rows in self._gt_by_image.items():
             for cls_id, xywhr in rows:
                 self._gt_by_class.setdefault(cls_id, {}).setdefault(img_id, []).append(xywhr)
@@ -391,6 +393,42 @@ class OBBValidator(BaseValidator):
         ]
         return float(np.mean(values))
 
+    def _class_iou_rows(self, cls_id: int, preds: List[dict]) -> List[np.ndarray | None]:
+        """Rotated IoU of each prediction against its own image's ground truth.
+
+        The geometry does not depend on the matching threshold, so it is
+        computed once per class as a vectorized IoU matrix per image and
+        reused across every mAP threshold.
+        """
+        cache = getattr(self, "_iou_rows_by_class", None)
+        if cache is None:
+            cache = self._iou_rows_by_class = {}
+        cached = cache.get(cls_id)
+        if cached is not None and len(cached) == len(preds):
+            return cached
+
+        gt_by_image = self._gt_by_class.get(cls_id, {})
+        preds_by_image: Dict[int, List[int]] = {}
+        for index, pred in enumerate(preds):
+            preds_by_image.setdefault(pred["image_id"], []).append(index)
+
+        rows: List[np.ndarray | None] = [None] * len(preds)
+        for image_id, pred_indices in preds_by_image.items():
+            gt_rows = gt_by_image.get(image_id, [])
+            if not gt_rows:
+                continue
+            pred_boxes = torch.as_tensor(
+                np.stack([preds[i]["xywhr"] for i in pred_indices]),
+                dtype=torch.float32,
+            )
+            gt_boxes = torch.as_tensor(np.stack(gt_rows), dtype=torch.float32)
+            iou = rotated_iou_matrix(pred_boxes, gt_boxes).numpy()
+            for local, index in enumerate(pred_indices):
+                rows[index] = iou[local]
+
+        cache[cls_id] = rows
+        return rows
+
     def _evaluate_class(self, cls_id: int, iou_threshold: float) -> tuple[float, float, float] | None:
         n_gt = self._num_gt_by_class.get(cls_id, 0)
         if n_gt == 0:
@@ -408,18 +446,16 @@ class OBBValidator(BaseValidator):
         tp = np.zeros(len(preds), dtype=np.float32)
         fp = np.zeros(len(preds), dtype=np.float32)
 
+        iou_rows = self._class_iou_rows(cls_id, preds)
+
         for pred_idx, pred in enumerate(preds):
             image_id = pred["image_id"]
-            gt_rows = self._gt_by_class.get(cls_id, {}).get(image_id, [])
-            if not gt_rows:
+            ious = iou_rows[pred_idx]
+            if ious is None or ious.size == 0:
                 fp[pred_idx] = 1.0
                 continue
 
-            ious = np.asarray(
-                [xywhr_iou(pred["xywhr"], gt) for gt in gt_rows],
-                dtype=np.float32,
-            )
-            best_idx = int(ious.argmax()) if ious.size else -1
+            best_idx = int(ious.argmax())
             if (
                 best_idx >= 0
                 and float(ious[best_idx]) >= iou_threshold

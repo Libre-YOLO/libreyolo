@@ -116,3 +116,173 @@ def compute_iou(
         alpha = v / (v - iou + 1 + EPS)
     ciou = diou - alpha * v
     return ciou.to(dtype)
+
+
+# =============================================================================
+# Oriented (rotated) boxes
+# =============================================================================
+
+
+def rbox_corners(boxes: Tensor) -> Tensor:
+    """Convert ``xywhr`` rotated boxes to their four corners.
+
+    Matches the corner order of :func:`libreyolo.data.obb.xywhr_to_corners`.
+
+    Args:
+        boxes: ``(..., 5)`` as ``(cx, cy, w, h, angle)``, angle in radians.
+
+    Returns:
+        ``(..., 4, 2)`` corners.
+    """
+    cx, cy, w, h, angle = boxes.unbind(-1)
+    cos, sin = angle.cos(), angle.sin()
+    wx, wy = cos * w / 2, sin * w / 2
+    hx, hy = -sin * h / 2, cos * h / 2
+    return torch.stack(
+        (
+            torch.stack((cx - wx - hx, cy - wy - hy), -1),
+            torch.stack((cx + wx - hx, cy + wy - hy), -1),
+            torch.stack((cx + wx + hx, cy + wy + hy), -1),
+            torch.stack((cx - wx + hx, cy - wy + hy), -1),
+        ),
+        dim=-2,
+    )
+
+
+def _convex_quad_intersection_area(
+    poly_a: Tensor, poly_b: Tensor, eps: float = 1e-7
+) -> Tensor:
+    """Exact intersection area of paired convex quadrilaterals.
+
+    The intersection of two convex polygons is the convex hull of: each
+    polygon's vertices that lie inside the other, plus every edge-edge
+    crossing. Both inputs are rectangles, so at most eight of the twenty-four
+    candidate points survive. They are ordered by angle about their centroid
+    and the area follows from the shoelace formula; rejected slots collapse
+    onto the first surviving vertex, where they enclose no area.
+
+    Args:
+        poly_a: ``(K, 4, 2)`` corners.
+        poly_b: ``(K, 4, 2)`` corners.
+
+    Returns:
+        ``(K,)`` intersection areas.
+    """
+
+    def _vertices_inside(points: Tensor, polygon: Tensor) -> Tensor:
+        edge_start = polygon[:, None, :, :]
+        edge_end = polygon.roll(-1, dims=-2)[:, None, :, :]
+        probe = points[:, :, None, :]
+        edge = edge_end - edge_start
+        offset = probe - edge_start
+        cross = edge[..., 0] * offset[..., 1] - edge[..., 1] * offset[..., 0]
+        # Convex and consistently wound: inside means every cross product agrees.
+        return (cross >= -eps).all(-1) | (cross <= eps).all(-1)
+
+    inside_a = _vertices_inside(poly_a, poly_b)
+    inside_b = _vertices_inside(poly_b, poly_a)
+
+    a_start = poly_a[:, :, None, :]
+    a_dir = (poly_a.roll(-1, dims=-2) - poly_a)[:, :, None, :]
+    b_start = poly_b[:, None, :, :]
+    b_dir = (poly_b.roll(-1, dims=-2) - poly_b)[:, None, :, :]
+
+    denom = a_dir[..., 0] * b_dir[..., 1] - a_dir[..., 1] * b_dir[..., 0]
+    parallel = denom.abs() < eps
+    safe = torch.where(parallel, torch.ones_like(denom), denom)
+    delta = b_start - a_start
+    t = (delta[..., 0] * b_dir[..., 1] - delta[..., 1] * b_dir[..., 0]) / safe
+    u = (delta[..., 0] * a_dir[..., 1] - delta[..., 1] * a_dir[..., 0]) / safe
+    hit = ~parallel & (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)
+    crossings = a_start + t[..., None] * a_dir
+
+    points = torch.cat((poly_a, poly_b, crossings.flatten(1, 2)), dim=1)
+    valid = torch.cat((inside_a, inside_b, hit.flatten(1, 2)), dim=1)
+
+    count = valid.sum(-1, keepdim=True)
+    centroid = (points * valid[..., None]).sum(-2, keepdim=True) / count.clamp_min(
+        1
+    ).unsqueeze(-1)
+    offset = points - centroid
+    angle = torch.atan2(offset[..., 1], offset[..., 0]).masked_fill(
+        ~valid, float("inf")
+    )
+
+    order = angle.argsort(-1)
+    points = points.gather(-2, order[..., None].expand_as(points))
+    valid = valid.gather(-1, order)
+    points = torch.where(valid[..., None], points, points[:, 0:1, :])
+
+    following = points.roll(-1, dims=-2)
+    area = 0.5 * (
+        points[..., 0] * following[..., 1] - following[..., 0] * points[..., 1]
+    ).sum(-1).abs()
+    return torch.where(count.squeeze(-1) >= 3, area, torch.zeros_like(area))
+
+
+def rotated_iou_pairwise(boxes1: Tensor, boxes2: Tensor, eps: float = 1e-7) -> Tensor:
+    """Exact IoU of rotated boxes, one pair per row.
+
+    Args:
+        boxes1: ``(K, 5)`` ``xywhr`` boxes.
+        boxes2: ``(K, 5)`` ``xywhr`` boxes.
+
+    Returns:
+        ``(K,)`` IoU values.
+    """
+    if boxes1.numel() == 0:
+        return boxes1.new_zeros((boxes1.shape[0],))
+    intersection = _convex_quad_intersection_area(
+        rbox_corners(boxes1), rbox_corners(boxes2), eps
+    )
+    area1 = (boxes1[:, 2] * boxes1[:, 3]).clamp_min(0)
+    area2 = (boxes2[:, 2] * boxes2[:, 3]).clamp_min(0)
+    union = area1 + area2 - intersection
+    return (intersection / union.clamp_min(eps)).clamp(0.0, 1.0)
+
+
+def _aabb_overlap(boxes1: Tensor, boxes2: Tensor) -> Tensor:
+    """Which ``(i, j)`` pairs have overlapping axis-aligned envelopes.
+
+    Rotated boxes can only intersect when their axis-aligned envelopes do, so
+    this cheap test discards the overwhelming majority of pairs before any
+    polygon work is attempted.
+    """
+    corners1 = rbox_corners(boxes1)
+    corners2 = rbox_corners(boxes2)
+    lo1, hi1 = corners1.amin(-2), corners1.amax(-2)
+    lo2, hi2 = corners2.amin(-2), corners2.amax(-2)
+    return (
+        (lo1[:, None, 0] < hi2[None, :, 0])
+        & (lo2[None, :, 0] < hi1[:, None, 0])
+        & (lo1[:, None, 1] < hi2[None, :, 1])
+        & (lo2[None, :, 1] < hi1[:, None, 1])
+    )
+
+
+def rotated_iou_matrix(boxes1: Tensor, boxes2: Tensor, eps: float = 1e-7) -> Tensor:
+    """Exact pairwise IoU between two sets of rotated boxes.
+
+    Vectorized equivalent of :func:`libreyolo.data.obb.xywhr_iou`, which
+    evaluates a single pair at a time through OpenCV. Pairs whose axis-aligned
+    envelopes miss are known to have zero IoU, so only the surviving pairs
+    reach the polygon intersection; on dense aerial imagery that is a small
+    fraction of the matrix.
+
+    Args:
+        boxes1: ``(N, 5)`` ``xywhr`` boxes.
+        boxes2: ``(M, 5)`` ``xywhr`` boxes.
+
+    Returns:
+        ``(N, M)`` IoU matrix.
+    """
+    n, m = boxes1.shape[0], boxes2.shape[0]
+    iou = boxes1.new_zeros((n, m))
+    if n == 0 or m == 0:
+        return iou
+
+    rows, cols = _aabb_overlap(boxes1, boxes2).nonzero(as_tuple=True)
+    if rows.numel() == 0:
+        return iou
+    iou[rows, cols] = rotated_iou_pairwise(boxes1[rows], boxes2[cols], eps)
+    return iou

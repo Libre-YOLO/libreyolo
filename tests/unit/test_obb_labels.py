@@ -120,3 +120,90 @@ def test_xywhr_iou_is_pi_periodic():
 def test_parse_yolo_obb_label_line_rejects_invalid_rows(line, message):
     with pytest.raises(ValueError, match=message):
         parse_yolo_obb_label_line(line, num_classes=2)
+
+
+def test_rotated_iou_matrix_matches_opencv_reference():
+    """The vectorized IoU must stay exact: it replaces the OpenCV path in
+    rotated NMS and OBB validation, so any drift silently moves mAP."""
+    import torch
+
+    from libreyolo.utils.box_ops import rotated_iou_matrix
+
+    rng = np.random.default_rng(0)
+
+    def sample(n):
+        boxes = np.empty((n, 5), dtype=np.float32)
+        boxes[:, 0:2] = rng.uniform(0, 200, (n, 2))
+        boxes[:, 2:4] = rng.uniform(10, 70, (n, 2))
+        boxes[:, 4] = rng.uniform(-math.pi / 2, math.pi / 2, n)
+        return boxes
+
+    a, b = sample(40), sample(30)
+    actual = rotated_iou_matrix(torch.from_numpy(a), torch.from_numpy(b)).numpy()
+    expected = np.array(
+        [[xywhr_iou(box_a, box_b) for box_b in b] for box_a in a], dtype=np.float32
+    )
+
+    assert (expected > 1e-6).any()  # the sample must actually contain overlaps
+    np.testing.assert_allclose(actual, expected, atol=1e-4)
+
+
+def test_rotated_iou_matrix_edge_cases():
+    import torch
+
+    from libreyolo.utils.box_ops import rotated_iou_matrix
+
+    box = torch.tensor([[50.0, 50.0, 40.0, 20.0, 0.3]])
+    assert float(rotated_iou_matrix(box, box)) == pytest.approx(1.0, abs=1e-5)
+
+    half_turn = box + torch.tensor([[0.0, 0.0, 0.0, 0.0, math.pi]])
+    assert float(rotated_iou_matrix(box, half_turn)) == pytest.approx(1.0, abs=1e-5)
+
+    far_away = torch.tensor([[900.0, 900.0, 40.0, 20.0, 0.3]])
+    assert float(rotated_iou_matrix(box, far_away)) == pytest.approx(0.0, abs=1e-6)
+
+    empty = torch.zeros((0, 5))
+    assert rotated_iou_matrix(empty, box).shape == (0, 1)
+    assert rotated_iou_matrix(box, empty).shape == (1, 0)
+
+
+def test_rotated_nms_is_greedy_and_class_aware():
+    """Greedy semantics: the highest-scoring box suppresses same-class
+    overlaps and never suppresses a different class."""
+    import torch
+
+    from libreyolo.postprocess.yolo9 import _rotated_nms_keep_indices
+
+    boxes = torch.tensor(
+        [
+            [50.0, 50.0, 40.0, 20.0, 0.0],  # best of its class
+            [51.0, 50.0, 40.0, 20.0, 0.0],  # near-duplicate, same class -> dropped
+            [50.0, 50.0, 40.0, 20.0, 0.0],  # same box, different class -> kept
+            [200.0, 200.0, 40.0, 20.0, 0.0],  # far away -> kept
+        ]
+    )
+    scores = torch.tensor([0.9, 0.8, 0.7, 0.6])
+    classes = torch.tensor([0, 0, 1, 0])
+
+    keep = _rotated_nms_keep_indices(boxes, scores, classes, 0.45, 300)
+
+    assert keep.tolist() == [0, 2, 3]
+
+
+def test_rotated_nms_respects_max_det():
+    import torch
+
+    from libreyolo.postprocess.yolo9 import _rotated_nms_keep_indices
+
+    boxes = torch.stack(
+        [
+            torch.tensor([100.0 * i, 100.0 * i, 20.0, 10.0, 0.0])
+            for i in range(1, 8)
+        ]
+    )
+    scores = torch.linspace(0.9, 0.3, 7)
+    classes = torch.zeros(7, dtype=torch.long)
+
+    keep = _rotated_nms_keep_indices(boxes, scores, classes, 0.45, max_det=3)
+
+    assert keep.tolist() == [0, 1, 2]
