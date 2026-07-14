@@ -1,12 +1,82 @@
-# ov_deim (pre-integration audit, family NOT shipped)
+# ov_deim
 
-- **LibreYOLO module:** none. This is a Phase 0 licensing audit for a proposed
-  port; no OV-DEIM code or weights have entered this repository.
-- **Candidate upstream:** https://github.com/wleilei/OV-DEIM (paper: arXiv
-  2603.07022, "OV-DEIM: Real-time DETR-Style Open-Vocabulary Object Detection
-  with GridSynthetic Augmentation").
-- **Verification status:** verified 2026-07-11. Decision: **blocked (option A)**,
-  see verdict below.
+- **LibreYOLO module:** `libreyolo/models/openvocab/ov_deim.py` plus vendored
+  architecture modules in `libreyolo/models/openvocab/ovdeim/`; the DINOv3
+  backbone adapter is reused from `libreyolo/models/deimv2/`.
+- **Upstream:** https://github.com/wleilei/OV-DEIM (paper: arXiv 2603.07022,
+  "OV-DEIM: Real-time DETR-Style Open-Vocabulary Object Detection with
+  GridSynthetic Augmentation"), pinned at commit
+  `dfbf394672407b7f837ec08e7d68e8127548b254` (the commit that added the
+  LICENSE files).
+- **Verification status:** Phase 0 audit verified 2026-07-11 (blocked, no
+  license). **Unblocked 2026-07-14**: upstream added LICENSE (Apache-2.0),
+  MODEL_LICENSE (CC BY-NC 4.0) and THIRD_PARTY.md; ported per option B. See
+  "Resolution" below.
+
+## Resolution (2026-07-14)
+
+The repository owner answered the license request
+(https://github.com/wleilei/OV-DEIM/issues/4#issuecomment-4967463647)
+verbatim:
+
+> Hi, thank you for the thoughtful note and for bringing this licensing issue
+> to our attention.
+>
+> We have now added the following files to the repository:
+>
+> * `LICENSE` — The OV-DEIM code is released under the Apache License 2.0.
+> * `MODEL_LICENSE` — The released S/M/L checkpoints are licensed under
+>   CC BY-NC 4.0. Redistribution and format conversion (e.g., ONNX, TensorRT)
+>   are permitted with attribution for non-commercial use.
+> * `THIRD_PARTY.md` — Documents the relationship and licenses of upstream
+>   projects.
+>
+> To clarify the GPL/AGPL concern: OV-DEIM does not directly redistribute
+> source files copied from YOLO-World (GPL-3.0) or YOLOE (AGPL-3.0). These
+> projects were used as research references and architectural inspiration.
+>
+> The codebase includes components adapted from RT-DETR (Apache-2.0) and
+> DEIMv2 (Apache-2.0). MobileCLIP components and the DINOv3 backbone remain
+> under their respective original license terms, as documented in
+> `THIRD_PARTY.md`.
+>
+> We hope this clarifies the licensing status and makes OV-DEIM easier to
+> adopt and integrate. Thank you again for helping us improve the repository
+> documentation.
+
+Ship decisions taken on that basis:
+
+- **Code (port):** the vendored modules (`ovdeim/encoder.py`,
+  `ovdeim/decoder.py`, the `TextAdapter` in `ovdeim/nn.py`) are taken from
+  OV-DEIM under Apache-2.0, RT-DETR headers preserved. The GPL-derived
+  training dataloader identified in the Phase 0 map is **not** ported
+  (inference-only v1); the vendored `dinov3/` tree is avoided by reusing
+  dev's existing DEIMv2 backbone adapter.
+- **Detector weights:** converted S/M/L checkpoints are rehosted on
+  `LibreYOLO/LibreOVDEIM{s,m,l}` under CC BY-NC 4.0 with attribution, as the
+  MODEL_LICENSE explicitly permits. The family is therefore non-commercial;
+  the license notice is logged at model construction.
+- **Text tower:** the online text encoder is MobileCLIP-B(LT)'s text
+  transformer, weights taken unchanged from Apple's own release
+  (`apple/MobileCLIP-B-LT-OpenCLIP`). The Apple Machine Learning Research
+  Model license **permits redistribution** of the model and derivatives with
+  a copy of the agreement, the attribution notice, and disclosure of
+  modifications, but restricts use to research purposes. The weight repos
+  carry the license text verbatim, the attribution notice, and identify the
+  slice (text tower only, unmodified tensors) as required. This is stricter
+  than CC BY-NC; the combined artifact is research-use.
+- **L backbone:** the fine-tuned DINOv3-S weights inside the L checkpoint
+  remain subject to Meta's DINOv3 License; the weight repo documents this,
+  matching the existing DEIMv2 precedent.
+- **Parity evidence:** detector outputs are bit-exact against upstream for
+  all three sizes on identical inputs; the online text tower reproduces
+  upstream's released embedding caches to 2.4e-7 (fp32 storage); the full
+  predict pipeline matches upstream's evaluation flow on real images with
+  100% label agreement across all 300 queries.
+
+The Phase 0 audit below is retained unchanged for the record.
+
+# Phase 0 audit (2026-07-11, superseded by the resolution above)
 
 ## License status of the upstream repository
 
