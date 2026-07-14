@@ -136,6 +136,7 @@ Training capabilities are documented per family in
 | yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
+| yolo9 | obb | ✓ | ✓ | exp | exp | exp |  |  |
 | yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |

@@ -86,6 +86,13 @@ _add(
     EXPORT_FORMATS,
     reason="YOLO9 segmentation export is not supported; YOLO9 is detection-only in LibreYOLO.",
 )
+_add(
+    "validated",
+    ("yolo9",),
+    ("obb",),
+    ("onnx", "torchscript"),
+    since="1.4",
+)
 _add("validated", ("yolo9_p2",), ("detect",), ("onnx",), since="1.3")
 _add(
     "validated",

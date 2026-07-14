@@ -294,7 +294,7 @@ Detector-factory family support follows:
 | `yolo3`     | `("detect",)` (default)             | detect | YOLOv3 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo4`     | `("detect",)` (default)             | detect | YOLOv4 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo7`     | `("detect",)` (default)             | detect | YOLOv7 (MIT MultimediaTechLab/YOLO); trainable via SimOTA loss |
-| `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
+| `yolo9`     | `("detect", "obb")`                 | detect | OBB via the oriented head (#320, docs/provenance/yolo9_obb.md); other non-detect variants removed in #436 |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
 | `dfine`     | `("detect", "segment")`             | detect | segment uses the D-FINE-seg mask head; same sizes as detect; COCO `-seg` weights on HF (detect-to-segment fine-tune needs an explicit transfer flag) |
@@ -376,6 +376,10 @@ LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
 LibreRFDETRx-pose.pt       # pose (preview; only size x ships)
 LibreRFDETRn-obb.pt        # obb
+
+# yolo9 - detect + obb
+LibreYOLO9t.pt             # detect (default)
+LibreYOLO9t-obb.pt         # obb
 
 # dinov2 — DINOv2 backbone + task head (NOT the RF-DETR detector)
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
