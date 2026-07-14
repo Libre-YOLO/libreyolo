@@ -359,7 +359,11 @@ class YOLONASPoseTrainer(BaseTrainer):
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                batch_size=self.config.batch,
+                # Global batch / world_size, like BaseTrainer._run_validation:
+                # this runs on rank 0 alone, and the global batch is sized for
+                # world_size GPUs. An OOM here is swallowed by the except
+                # below, silently dropping the epoch's keypoint mAP.
+                batch_size=max(1, self.config.batch // max(self.world_size, 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
