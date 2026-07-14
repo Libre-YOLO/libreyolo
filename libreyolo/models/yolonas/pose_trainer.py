@@ -164,7 +164,23 @@ class YOLONASPoseTrainer(BaseTrainer):
             affine_interpolation=self.config.affine_interpolation,
         )
         train_ds = self._build_dataset(train_imgs, train_lbls, train_tf)
-        drop_last = len(train_ds) >= self.config.batch
+        # ``batch`` is the global batch under DDP. Each rank's loader is built
+        # with ``batch // world_size`` over a DistributedSampler shard.
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        train_sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            train_sampler = DistributedSampler(
+                train_ds,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_ds) >= self.world_size,
+            )
+
+        visible_samples = len(train_sampler) if train_sampler is not None else len(train_ds)
+        drop_last = visible_samples >= per_rank_batch
         loader_kwargs = {}
         if self.config.workers > 0:
             loader_kwargs.update(
@@ -174,8 +190,9 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
         self.train_loader = DataLoader(
             train_ds,
-            batch_size=self.config.batch,
-            shuffle=True,
+            batch_size=per_rank_batch,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             num_workers=self.config.workers,
             pin_memory=self.config.pin_memory,
             drop_last=drop_last,
@@ -197,7 +214,7 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
             self.val_loader = DataLoader(
                 val_ds,
-                batch_size=self.config.batch,
+                batch_size=per_rank_batch,
                 shuffle=False,
                 num_workers=self.config.workers,
                 pin_memory=self.config.pin_memory,
@@ -214,7 +231,12 @@ class YOLONASPoseTrainer(BaseTrainer):
             )
 
         logger.info("Training dataset: %d images", len(train_ds))
-        logger.info("Iterations per epoch: %d", len(self.train_loader))
+        logger.info(
+            "Iterations per epoch: %d (batch_per_rank=%d, world_size=%d)",
+            len(self.train_loader),
+            per_rank_batch,
+            self.world_size,
+        )
         return train_ds
 
     def get_loss_components(self, outputs: Dict) -> Dict[str, float]:
