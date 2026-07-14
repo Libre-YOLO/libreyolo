@@ -174,7 +174,7 @@ class TestYOLO9DetectionHead:
         DFL expects input shape (batch, 4*reg_max, anchors).
         """
         reg_max = 16
-        layer = DFL(c1=reg_max)
+        layer = DFL(num_bins=reg_max)
         # Input: (batch, 4*reg_max, anchors)
         x = torch.randn(1, 4 * reg_max, 100)
         out = layer(x)
@@ -481,26 +481,27 @@ class TestYOLO9Utils:
         assert keep.numel() == num_candidates
         torch.testing.assert_close(scores[keep], scores)
 
-    def test_make_anchors(self):
+    def test_anchor_grid(self):
         """Test anchor generation.
 
-        make_anchors returns (anchor_points, stride_tensor) with shapes:
-        - anchor_points: (total_anchors, 2)
-        - stride_tensor: (total_anchors, 1)
+        _anchor_grid returns (anchor_points, stride_scale) with shapes:
+        - anchor_points: (total_anchors, 2) grid-unit cell centers
+        - stride_scale: (total_anchors, 1)
         """
         feature_maps = [
             torch.randn(1, 64, 80, 80),
             torch.randn(1, 128, 40, 40),
             torch.randn(1, 256, 20, 20),
         ]
-        from libreyolo.utils.general import make_anchors
+        head = DDetect(nc=80, ch=(64, 128, 256), reg_max=16, stride=(8, 16, 32))
 
-        anchors, strides = make_anchors(feature_maps, strides=[8, 16, 32])
+        anchors, strides = head._anchor_grid(feature_maps)
         # Total anchors = 80*80 + 40*40 + 20*20 = 8400
-        assert anchors.shape[0] == 8400
-        assert anchors.shape[1] == 2
-        assert strides.shape[0] == 8400
-        assert strides.shape[1] == 1
+        assert anchors.shape == (8400, 2)
+        assert strides.shape == (8400, 1)
+        assert anchors[0].tolist() == [0.5, 0.5]
+        assert strides[0].item() == 8.0
+        assert strides[-1].item() == 32.0
 
 
 def test_yolo9_trainer_uses_explicit_coco_json_paths(tmp_path):

@@ -75,22 +75,7 @@ class YOLO9E2EDetect(DDetect):
         return outputs
 
     def _inference(self, x):
-        shape = x[0].shape
-
-        if self.export or self.dynamic or self.shape != shape:
-            self.anchors, self.strides = (
-                xi.transpose(0, 1) for xi in self._make_anchors(x, self.stride, 0.5)
-            )
-            if not self.export:
-                self.shape = shape
-
-        x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
-        box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
-        dbox = (
-            self._decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
-        )
-        y = torch.cat((dbox, cls.sigmoid()), 1)
-        return y, x
+        return self._decode_inference(x), x
 
     def forward(self, x, targets=None, img_size=None):
         """Run dual-branch training or single one-to-one inference."""

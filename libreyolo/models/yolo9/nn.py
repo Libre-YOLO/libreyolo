@@ -419,17 +419,20 @@ class Concat(nn.Module):
 
 
 class DFL(nn.Module):
-    """
-    Distribution Focal Loss (DFL) module.
-    Converts distribution predictions to coordinate offsets.
+    """Integral over a discrete per-side distance distribution.
+
+    Follows the softmax-projection integral of the in-tree yolonas heads
+    (``proj_conv`` in :mod:`libreyolo.models.yolonas.nn`, ported from
+    Deci-AI/super-gradients, Apache-2.0), which realizes the Distribution
+    Focal Loss expectation from the Generalized Focal Loss paper.
     """
 
-    def __init__(self, c1=16):
+    def __init__(self, num_bins=16):
         super().__init__()
-        self.c1 = c1
+        self.num_bins = num_bins
         self.register_buffer(
             "project",
-            torch.arange(c1, dtype=torch.float32).view(1, 1, c1, 1),
+            torch.arange(num_bins, dtype=torch.float32).view(1, 1, num_bins, 1),
             persistent=False,
         )
 
@@ -455,11 +458,9 @@ class DFL(nn.Module):
         )
 
     def forward(self, x):
-        batch, _, anchors = x.shape
-        logits = x.reshape(batch, 4, self.c1, anchors)
-        weights = logits.softmax(dim=2)
-        project = self.project.to(dtype=x.dtype)
-        return (weights * project).sum(dim=2)
+        batch, _, num_anchors = x.shape
+        dist = x.view(batch, 4, self.num_bins, num_anchors)
+        return F.softmax(dist, dim=2).mul(self.project.to(dtype=x.dtype)).sum(2)
 
 
 class DDetect(nn.Module):
@@ -638,66 +639,61 @@ class DDetect(nn.Module):
                 return loss_fn(preds, targets)
             return preds
 
-        # Inference mode.
-        # In export mode, always regenerate anchors to ensure trace
-        # consistency (JIT trace runs the model twice and checks outputs).
-        shape = preds[0].shape  # BCHW
-        if self.export:
-            anchors, strides = (
-                generated.transpose(0, 1)
-                for generated in self._make_anchors(preds, self.stride, 0.5)
-            )
-        else:
-            if self.dynamic or self.shape != shape:
-                self.anchors, self.strides = (
-                    generated.transpose(0, 1)
-                    for generated in self._make_anchors(preds, self.stride, 0.5)
-                )
-                self.shape = shape
-            anchors, strides = self.anchors, self.strides
+        return self._decode_inference(preds), preds
 
-        # Flatten every scale to (B, no, HW) and concatenate the scales, then
-        # split the channel dim into the 4*reg_max distance distributions and
-        # the class logits.
-        flat = torch.cat([p.view(shape[0], self.no, -1) for p in preds], 2)
-        box_dist, class_logits = flat.split((self.reg_max * 4, self.nc), 1)
+    def _anchor_grid(self, feats):
+        """Grid-cell centers and per-cell stride for the live feature maps.
 
-        # DFL integral -> LTRB distances (grid units) -> xyxy boxes (pixels).
-        boxes = (
-            self._decode_bboxes(self.dfl(box_dist), anchors.unsqueeze(0)) * strides
-        )
-
-        y = torch.cat((boxes, class_logits.sigmoid()), 1)
-
-        return y, preds
-
-    def _make_anchors(self, feats, strides, grid_cell_offset=0.5):
-        """Anchor centers plus per-anchor stride, one row per feature cell.
-
-        Follows MMT ``generate_anchors`` (pixel centers at ``stride/2 +
-        k*stride``), expressed in grid units — cell ``k`` sits at ``k +
-        offset`` and the matching stride scales it back to pixels at decode
-        time. Grid sizes come from the live feature maps rather than the
-        image size so dynamic shapes and tracing work.
+        Adapted from ``generate_anchors_for_grid_cell`` in
+        :mod:`libreyolo.models.yolonas.nn` (ported there from
+        Deci-AI/super-gradients, Apache-2.0), kept in grid units so the
+        matching stride scales boxes back to pixels at decode time.
         """
-        centers_by_level = []
-        stride_by_level = []
-        for feature, stride in zip(feats, strides):
-            dtype, device = feature.dtype, feature.device
-            height, width = feature.shape[-2:]
-            y_coords = torch.arange(height, device=device, dtype=dtype).add(
-                grid_cell_offset
+        anchor_points = []
+        stride_scale = []
+        dtype, device = feats[0].dtype, feats[0].device
+        for feat, stride in zip(feats, self.stride):
+            _, _, h, w = feat.shape
+            shift_x = torch.arange(end=w, device=device, dtype=dtype) + 0.5
+            shift_y = torch.arange(end=h, device=device, dtype=dtype) + 0.5
+            shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing="ij")
+            anchor_points.append(
+                torch.stack([shift_x, shift_y], dim=-1).reshape(-1, 2)
             )
-            x_coords = torch.arange(width, device=device, dtype=dtype).add(
-                grid_cell_offset
+            stride_scale.append(
+                torch.full((h * w, 1), float(stride), dtype=dtype, device=device)
             )
-            grid_y, grid_x = torch.meshgrid(y_coords, x_coords, indexing="ij")
-            centers = torch.stack((grid_x.reshape(-1), grid_y.reshape(-1)), dim=1)
-            stride_value = torch.as_tensor(stride, device=device, dtype=dtype)
-            centers_by_level.append(centers)
-            stride_by_level.append(stride_value.expand(centers.shape[0], 1))
+        return torch.cat(anchor_points), torch.cat(stride_scale)
 
-        return torch.cat(centers_by_level, dim=0), torch.cat(stride_by_level, dim=0)
+    def _grid(self, feats):
+        if self.export:
+            anchor_points, stride_scale = self._anchor_grid(feats)
+            return anchor_points.transpose(0, 1), stride_scale.transpose(0, 1)
+        shape = feats[0].shape
+        cached = not self.dynamic and self.shape == shape
+        if not cached:
+            anchor_points, stride_scale = self._anchor_grid(feats)
+            self.anchors = anchor_points.transpose(0, 1)
+            self.strides = stride_scale.transpose(0, 1)
+            self.shape = shape
+        return self.anchors, self.strides
+
+    def _decode_inference(self, preds):
+        anchor_points, stride_scale = self._grid(preds)
+        box_levels = []
+        score_levels = []
+        for pred in preds:
+            box_level, score_level = pred.flatten(2).split(
+                (4 * self.reg_max, self.nc), 1
+            )
+            box_levels.append(box_level)
+            score_levels.append(score_level)
+        distances = self.dfl(torch.cat(box_levels, 2))
+        boxes = (
+            self._decode_bboxes(distances, anchor_points.unsqueeze(0)) * stride_scale
+        )
+        scores = torch.cat(score_levels, 2).sigmoid()
+        return torch.cat((boxes, scores), 1)
 
     def _decode_bboxes(self, distances, anchor_points):
         """Decode LTRB distances into xyxy boxes, as in MMT ``Vec2Box``: the
