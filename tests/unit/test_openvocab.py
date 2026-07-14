@@ -13,6 +13,7 @@ from libreyolo.models.base.model import BaseModel
 from libreyolo.models.openvocab import LibreOpenVocab
 from libreyolo.models.openvocab.grounding_dino import LibreGroundingDINO
 from libreyolo.models.openvocab.omdet_turbo import LibreOMDetTurbo
+from libreyolo.models.openvocab.ov_deim import LibreOVDEIM
 from libreyolo.models.openvocab.owlv2 import LibreOWLv2
 
 pytestmark = [pytest.mark.unit, pytest.mark.openvocab]
@@ -76,6 +77,8 @@ class TestFactoryAliases:
         assert _ALIASES["omdet-turbo"] == (LibreOMDetTurbo, "t")
         assert _ALIASES["omdet"] == (LibreOMDetTurbo, "t")
         assert _ALIASES["omdet-turbo-swin-tiny"] == (LibreOMDetTurbo, "t")
+        assert _ALIASES["ov-deim"] == (LibreOVDEIM, "s")
+        assert _ALIASES["ovdeim-l"] == (LibreOVDEIM, "l")
 
     def test_unknown_alias_raises_before_loading(self):
         with pytest.raises(ValueError, match="Unknown open-vocabulary detector"):
@@ -547,6 +550,90 @@ class TestOMDetTurboMapping:
         det = m._postprocess(object(), 0.3, 0.45, (20, 20))
         assert det["num_detections"] == 1
         assert det["classes"].tolist() == [1]
+
+
+class TestOVDEIM:
+    def _bare_ovdeim(self, names=("person", "dog")):
+        m = object.__new__(LibreOVDEIM)
+        m.names = {i: n for i, n in enumerate(names)}
+        m.nb_classes = len(names)
+        m._refresh_name_index()
+        m._text_feats_cache = None
+        m._tokenizer = None
+        m.size = "s"
+        return m
+
+    def test_letterbox_params_match_upstream_rounding(self):
+        # 480x640 image into 640: scale 1.0 wide side, rint rounding, centered pad.
+        new_w, new_h, left, top = LibreOVDEIM._letterbox_params(640, 480, 640)
+        assert (new_w, new_h) == (640, 480)
+        assert (left, top) == (0, 80)
+
+        # Non-integer scale: rint, and odd padding splits with rint on top/left.
+        new_w, new_h, left, top = LibreOVDEIM._letterbox_params(500, 375, 640)
+        assert (new_w, new_h) == (640, 480)
+        assert (left, top) == (0, 80)
+
+    def test_postprocess_maps_flat_topk_to_labels_and_queries(self):
+        m = self._bare_ovdeim()
+        logits = torch.full((1, 300, 2), -10.0)
+        boxes = torch.full((1, 300, 4), 0.5)
+        # Query 7 scores high on class 1; centered box covering half the image.
+        logits[0, 7, 1] = 3.0
+        boxes[0, 7] = torch.tensor([0.5, 0.5, 0.5, 0.5])
+        det = m._postprocess(
+            {"pred_logits": logits, "pred_boxes": boxes},
+            conf_thres=0.5,
+            iou_thres=0.45,
+            original_size=(640, 640),
+        )
+        assert det["num_detections"] == 1
+        assert det["classes"].tolist() == [1]
+        assert torch.allclose(
+            det["boxes"][0], torch.tensor([160.0, 160.0, 480.0, 480.0])
+        )
+
+    def test_postprocess_undoes_letterbox_padding(self):
+        m = self._bare_ovdeim()
+        logits = torch.full((1, 300, 2), -10.0)
+        boxes = torch.zeros((1, 300, 4))
+        logits[0, 0, 0] = 3.0
+        # Full-width box in letterbox space for a 640x480 original (80px top pad).
+        boxes[0, 0] = torch.tensor([0.5, 0.5, 1.0, 480.0 / 640.0])
+        det = m._postprocess(
+            {"pred_logits": logits, "pred_boxes": boxes},
+            conf_thres=0.5,
+            iou_thres=0.45,
+            original_size=(640, 480),
+        )
+        assert det["num_detections"] == 1
+        assert torch.allclose(
+            det["boxes"][0], torch.tensor([0.0, 0.0, 640.0, 480.0]), atol=1e-4
+        )
+
+    def test_set_classes_invalidates_text_cache(self):
+        m = self._bare_ovdeim()
+        m._text_feats_cache = (("person", "dog"), torch.zeros(2, 512))
+        m.set_classes(["a red hat"])
+        assert m._text_feats_cache is None
+        assert m.names == {0: "a red hat"}
+
+    def test_no_nms_iou_warns(self):
+        assert LibreOVDEIM.NMS_THRESHOLD is None
+
+    def test_build_inputs_produces_normalized_letterboxed_tensor(self):
+        from PIL import Image
+
+        m = self._bare_ovdeim()
+        img = Image.new("RGB", (320, 240), (114, 114, 114))
+        tensor = m._build_inputs(img)
+        assert tensor.shape == (1, 3, 640, 640)
+        # A uniform 114 image letterboxed with 114 padding stays constant,
+        # so every channel equals (114/255 - mean) / std everywhere.
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        expected = (torch.full((3, 640, 640), 114.0 / 255.0) - mean) / std
+        assert torch.allclose(tensor[0], expected, atol=1e-6)
 
 
 class TestDetectionDict:

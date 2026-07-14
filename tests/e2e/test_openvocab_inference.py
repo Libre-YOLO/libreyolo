@@ -131,6 +131,34 @@ def test_omdet_turbo_replaces_vocabulary_and_can_return_empty(omdet_model):
     assert len(second) == 0
 
 
+def test_ovdeim_small_predict_smoke():
+    pytest.importorskip("huggingface_hub")
+    pytest.importorskip("safetensors")
+    from libreyolo import LibreOpenVocab
+
+    model = LibreOpenVocab("ov-deim-s", device="cpu")
+    model.set_classes(["person", "dog", "skateboard"])
+    result = model.predict(_sample_image(), conf=0.3)
+    _assert_detection_smoke(result, {0: "person", 1: "dog", 2: "skateboard"})
+
+
+def test_ovdeim_replaces_vocabulary_and_can_return_empty():
+    pytest.importorskip("huggingface_hub")
+    pytest.importorskip("safetensors")
+    from libreyolo import LibreOpenVocab
+
+    model = LibreOpenVocab("ov-deim-s", device="cpu")
+    model.set_classes(["person", "building"])
+    first = model.predict(_sample_image(), conf=0.3)
+    assert first.names == {0: "person", 1: "building"}
+    assert len(first) > 0
+
+    model.set_classes(["giraffe"])
+    second = model.predict(_sample_image(), conf=0.5)
+    assert second.names == {0: "giraffe"}
+    assert len(second) == 0
+
+
 def test_openvocab_val_raises_in_v1():
     pytest.importorskip("transformers")
     from libreyolo import LibreOpenVocab
