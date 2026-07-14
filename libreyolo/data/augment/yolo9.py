@@ -541,15 +541,21 @@ class YOLO9MosaicMixupDataset:
                     )
                     mosaic_segments.extend(tile_segments or [[] for _ in labels])
 
+        label_dim = getattr(self.preproc, "output_label_dim", None) or 5
+        is_obb = label_dim == 6
+
         if len(mosaic_labels) > 0:
             mosaic_labels = np.concatenate(mosaic_labels, 0)
-            # Clip to mosaic bounds
-            np.clip(mosaic_labels[:, 0], 0, 2 * input_w, out=mosaic_labels[:, 0])
-            np.clip(mosaic_labels[:, 1], 0, 2 * input_h, out=mosaic_labels[:, 1])
-            np.clip(mosaic_labels[:, 2], 0, 2 * input_w, out=mosaic_labels[:, 2])
-            np.clip(mosaic_labels[:, 3], 0, 2 * input_h, out=mosaic_labels[:, 3])
+            if not is_obb:
+                # Clip to mosaic bounds. Skipped for OBB: there the xyxy columns
+                # are the oriented rectangle's own width and height about its
+                # center, so clipping them would shrink the box rather than
+                # trim it. Out-of-frame OBBs are dropped by center below.
+                np.clip(mosaic_labels[:, 0], 0, 2 * input_w, out=mosaic_labels[:, 0])
+                np.clip(mosaic_labels[:, 1], 0, 2 * input_h, out=mosaic_labels[:, 1])
+                np.clip(mosaic_labels[:, 2], 0, 2 * input_w, out=mosaic_labels[:, 2])
+                np.clip(mosaic_labels[:, 3], 0, 2 * input_h, out=mosaic_labels[:, 3])
         else:
-            label_dim = getattr(self.preproc, "output_label_dim", None) or 5
             mosaic_labels = np.zeros((0, label_dim))
 
         if has_segments:
@@ -578,6 +584,7 @@ class YOLO9MosaicMixupDataset:
                 scales=self.scale,
                 shear=self.shear,
                 perspective=self.perspective,
+                obb=is_obb,
             )
 
         # Filter small boxes
@@ -585,6 +592,17 @@ class YOLO9MosaicMixupDataset:
             w = mosaic_labels[:, 2] - mosaic_labels[:, 0]
             h = mosaic_labels[:, 3] - mosaic_labels[:, 1]
             mask = (w > 2) & (h > 2)
+            if is_obb:
+                # The proxy box does not track where the rectangle actually
+                # sits, so keep the ones whose center still lands in frame.
+                center_x = (mosaic_labels[:, 0] + mosaic_labels[:, 2]) * 0.5
+                center_y = (mosaic_labels[:, 1] + mosaic_labels[:, 3]) * 0.5
+                mask &= (
+                    (center_x >= 0)
+                    & (center_x < input_w)
+                    & (center_y >= 0)
+                    & (center_y < input_h)
+                )
             mosaic_labels = mosaic_labels[mask]
             if has_segments:
                 mosaic_segments = _filter_segments(mosaic_segments, mask)

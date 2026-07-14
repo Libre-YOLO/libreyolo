@@ -702,12 +702,7 @@ class BaseTrainer(ABC):
 
         self.config.num_classes = int(self.num_classes)
 
-        mosaic_enabled = not load_obb
-        if load_obb and is_main_process():
-            logger.info(
-                "Disabling mosaic/mixup for OBB training until corner-aware "
-                "OBB augmentation is implemented."
-            )
+        mosaic_enabled = True
 
         train_dataset.enable_image_cache(getattr(self.config, "cache", False))
 

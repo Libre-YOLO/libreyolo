@@ -160,3 +160,91 @@ def test_obb_rot90_matches_bruteforce_corner_rotation(k):
     assert model_xywhr[0] == pytest.approx(brute_xywhr[0], abs=1e-3)
     assert model_xywhr[1] == pytest.approx(brute_xywhr[1], abs=1e-3)
     assert xywhr_iou(model_xywhr, brute_xywhr) > 0.999
+
+
+def test_apply_affine_to_obb_is_exact_for_similarity_transforms():
+    """A rectangle stays a rectangle under rotation + uniform scale +
+    translation, so the OBB affine must reproduce the result of warping the
+    real corners and refitting -- not merely approximate it."""
+    import cv2
+
+    from libreyolo.data.augment.geometry import apply_affine_to_obb
+
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(100):
+        cx, cy = rng.uniform(100, 400, 2)
+        width, height = rng.uniform(40, 120), rng.uniform(10, 39)
+        angle = rng.uniform(-math.pi / 2, math.pi / 2)
+
+        matrix = cv2.getRotationMatrix2D(
+            (0.0, 0.0), float(rng.uniform(-180, 180)), float(rng.uniform(0.5, 1.5))
+        )
+        matrix[:, 2] += rng.uniform(-50, 50, 2)
+
+        target = np.array(
+            [[cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2, 0, angle]]
+        )
+        warped = apply_affine_to_obb(target, matrix)[0]
+        actual = xywhr_to_corners(
+            np.array(
+                [
+                    (warped[0] + warped[2]) / 2,
+                    (warped[1] + warped[3]) / 2,
+                    warped[2] - warped[0],
+                    warped[3] - warped[1],
+                    warped[5],
+                ],
+                dtype=np.float32,
+            )
+        )
+
+        corners = xywhr_to_corners(
+            np.array([cx, cy, width, height, angle], dtype=np.float32)
+        )
+        expected = xywhr_to_corners(
+            corners_to_xywhr(
+                (corners @ matrix[:, :2].T + matrix[:, 2]).astype(np.float32)
+            )
+        )
+        worst = max(
+            worst, float(np.abs(np.sort(actual, axis=0) - np.sort(expected, axis=0)).max())
+        )
+
+    assert worst < 1e-2
+
+
+def test_apply_affine_to_obb_identity_is_a_no_op():
+    from libreyolo.data.augment.geometry import apply_affine_to_obb
+
+    identity = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    target = np.array([[160.0, 140.0, 240.0, 160.0, 0.0, 0.7]])
+
+    np.testing.assert_allclose(apply_affine_to_obb(target, identity), target, atol=1e-6)
+
+
+def test_random_affine_obb_suppresses_shear_and_updates_angle():
+    """Shear would turn the rectangle into a parallelogram, so the OBB path
+    must disable it; a rotation must reach the angle column."""
+    from libreyolo.data.augment.geometry import random_affine
+
+    image = np.zeros((256, 256, 3), dtype=np.uint8)
+    target = np.array([[100.0, 120.0, 180.0, 140.0, 0.0, 0.0]])
+
+    random.seed(0)
+    _, plain = random_affine(
+        image, target.copy(), target_size=(256, 256), degrees=0.0,
+        translate=0.0, scales=0.0, shear=45.0, perspective=0.0, obb=True,
+    )
+    # Shear suppressed and no rotation drawn: geometry is untouched.
+    np.testing.assert_allclose(plain, target, atol=1e-6)
+
+    random.seed(1)
+    _, rotated = random_affine(
+        image, target.copy(), target_size=(256, 256), degrees=30.0,
+        translate=0.0, scales=0.0, shear=0.0, perspective=0.0, obb=True,
+    )
+    assert abs(float(rotated[0, 5])) > 1e-3  # the angle column moved
+    # Side lengths are intrinsic: a rotation cannot change them.
+    assert float(rotated[0, 2] - rotated[0, 0]) == pytest.approx(80.0, abs=1e-3)
+    assert float(rotated[0, 3] - rotated[0, 1]) == pytest.approx(20.0, abs=1e-3)

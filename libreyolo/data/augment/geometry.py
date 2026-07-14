@@ -146,6 +146,60 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
     return targets
 
 
+def apply_affine_to_obb(targets, M):
+    """Warp oriented boxes through a 2x3 affine matrix.
+
+    ``targets`` rows are ``[x1, y1, x2, y2, class, angle]``. The xyxy columns
+    are the OBB *proxy* box — the oriented rectangle's own width and height,
+    axis-aligned about its center (see
+    :func:`libreyolo.data.obb.xywhr_to_proxy_xyxy`) — so they are an encoding,
+    not a spatial envelope, and warping their corners the way
+    :func:`apply_affine_to_bboxes` does would silently discard the rotation.
+
+    Under rotation, uniform scale and translation a rectangle stays a
+    rectangle, so the transform is exact: the center rides the matrix, and
+    each side direction picks up the rotation and scale. Mapping the side
+    directions through the linear part rather than reading an angle out of
+    the matrix keeps this free of any sign or handedness convention.
+    """
+    linear = M[:, :2]
+    centers = np.stack(
+        (
+            (targets[:, 0] + targets[:, 2]) * 0.5,
+            (targets[:, 1] + targets[:, 3]) * 0.5,
+        ),
+        axis=1,
+    )
+    widths = targets[:, 2] - targets[:, 0]
+    heights = targets[:, 3] - targets[:, 1]
+    angles = targets[:, 5]
+
+    moved = centers @ linear.T + M[:, 2]
+    width_axis = np.stack((np.cos(angles), np.sin(angles)), axis=1) @ linear.T
+    height_axis = np.stack((-np.sin(angles), np.cos(angles)), axis=1) @ linear.T
+
+    new_widths = widths * np.linalg.norm(width_axis, axis=1)
+    new_heights = heights * np.linalg.norm(height_axis, axis=1)
+    new_angles = np.arctan2(width_axis[:, 1], width_axis[:, 0])
+
+    # Canonical form: the long side is the width, angle in [-pi/2, pi/2).
+    swap = new_heights > new_widths
+    new_widths, new_heights = (
+        np.where(swap, new_heights, new_widths),
+        np.where(swap, new_widths, new_heights),
+    )
+    new_angles = np.where(swap, new_angles + np.pi / 2, new_angles)
+    new_angles = (new_angles + np.pi / 2) % np.pi - np.pi / 2
+
+    warped = targets.copy()
+    warped[:, 0] = moved[:, 0] - new_widths / 2
+    warped[:, 1] = moved[:, 1] - new_heights / 2
+    warped[:, 2] = moved[:, 0] + new_widths / 2
+    warped[:, 3] = moved[:, 1] + new_heights / 2
+    warped[:, 5] = new_angles
+    return warped
+
+
 def random_affine(
     img,
     targets=(),
@@ -155,8 +209,19 @@ def random_affine(
     scales=0.1,
     shear=10,
     perspective=0.0,
+    obb=False,
 ):
-    """Random affine (or projective, when ``perspective != 0``) on image + boxes."""
+    """Random affine (or projective, when ``perspective != 0``) on image + boxes.
+
+    With ``obb`` the targets carry an orientation column and shear and
+    perspective are suppressed: both turn a rectangle into a shape an oriented
+    box cannot represent, whereas rotation, scale and translation keep it a
+    rectangle and are applied exactly.
+    """
+    if obb:
+        shear = 0.0
+        perspective = 0.0
+
     M, scale = get_affine_matrix(
         target_size, degrees, translate, scales, shear, perspective
     )
@@ -169,7 +234,10 @@ def random_affine(
         img = cv2.warpAffine(img, M, dsize=target_size, borderValue=(114, 114, 114))
 
     if len(targets) > 0:
-        targets = apply_affine_to_bboxes(targets, target_size, M, scale)
+        if obb:
+            targets = apply_affine_to_obb(targets, M)
+        else:
+            targets = apply_affine_to_bboxes(targets, target_size, M, scale)
 
     return img, targets
 
