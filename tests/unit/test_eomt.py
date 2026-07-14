@@ -1403,6 +1403,37 @@ def test_dedup_panoptic_queries_never_merges_same_view_duplicates():
     assert out_labels.tolist() == [0, 0]
 
 
+def test_dedup_panoptic_queries_caps_one_match_per_view():
+    """A single anchor query must not absorb two distinct queries from the
+    opposite view into the same group. Greedy clustering has no inherent
+    limit on group size, so a broad/imprecise anchor overlapping two
+    correctly-separated same-class queries from the other view (e.g. two
+    people in a crowd) would otherwise merge all three into one, silently
+    losing an instance (reported as a Greptile review finding on this PR).
+
+    Anchor A (view 0, highest score) has identical masks to both B1 and B2
+    (view 1, lower scores) -> IoU 1.0 against each. A must merge with only
+    one of them (the higher-scoring B1), leaving the other as its own group.
+    """
+    from libreyolo.models.eomt.model import LibreEoMT
+
+    stub = _panoptic_stub(nc=4, thing_class_ids=[0, 1])
+    scores = torch.tensor([0.9, 0.8, 0.7])  # A, B1, B2
+    labels = torch.tensor([0, 0, 0])
+    mask_probs = torch.full((3, 4, 4), 0.9)  # identical masks -> IoU 1.0 pairwise
+    view_ids = torch.tensor([0, 1, 1])  # A from view 0; B1, B2 both from view 1
+
+    out_scores, out_labels, _ = LibreEoMT._dedup_panoptic_queries(
+        stub, scores, labels, mask_probs, view_ids
+    )
+
+    assert out_scores.shape == (2,)  # A merges with only one of B1/B2
+    assert out_labels.tolist() == [0, 0]
+    # A (0.9) merges with the higher-scoring B1 (0.8) -> mean 0.85; B2 (0.7)
+    # survives on its own, unmerged.
+    assert sorted(round(s, 4) for s in out_scores.tolist()) == [0.7, 0.85]
+
+
 def test_predict_augment_panoptic_tags_queries_with_their_source_view():
     """Integration check that _predict_augment_panoptic actually wires
     per-query view_ids through to _dedup_panoptic_queries (the unit-level

@@ -692,14 +692,21 @@ class LibreEoMT(BaseModel):
         into it (mask probabilities and scores averaged) instead of
         competing against it separately in the fusion step.
 
-        ``view_ids`` (one int per query, matching ``scores``) restricts
-        merging to pairs from *different* views. Without it, two genuinely
+        ``view_ids`` (one int per query, matching ``scores``) restricts each
+        group to at most one query per view. Without it, two genuinely
         distinct same-class instances the model detected within a single
         view (e.g. two overlapping people in a crowd) could have high enough
         mask IoU to be wrongly folded into one segment — a risk this
         function only exists to dedup cross-view duplicates, not to
-        second-guess a single view's own instance separation. Pass ``None``
-        (the default) to merge on mask IoU alone, ignoring view origin.
+        second-guess a single view's own instance separation. The same cap
+        also stops one broad anchor query from absorbing *two* distinct,
+        correctly-separated queries from the opposite view: greedy
+        clustering otherwise has no limit on how many same-class queries a
+        single anchor can accumulate, so an imprecise mask that happens to
+        overlap two real neighboring instances above the threshold would
+        merge all three into one, silently losing an instance. Pass ``None``
+        (the default) to merge on mask IoU alone, ignoring view origin —
+        including this per-view cap.
         """
         n = mask_probs.shape[0]
         if n <= 1:
@@ -719,10 +726,14 @@ class LibreEoMT(BaseModel):
                 continue
             consumed[idx] = True
             group = [idx]
+            group_views = {int(view_ids[idx])} if view_ids is not None else None
             for jdx in order:
                 if jdx == idx or consumed[jdx] or int(labels[jdx]) != int(labels[idx]):
                     continue
-                if view_ids is not None and int(view_ids[jdx]) == int(view_ids[idx]):
+                jdx_view = int(view_ids[jdx]) if view_ids is not None else None
+                if group_views is not None and jdx_view in group_views:
+                    # Either the anchor's own view, or a view already
+                    # represented in this group — cap one query per view.
                     continue
                 inter = (binary_masks[idx] & binary_masks[jdx]).sum().float()
                 union = areas[idx] + areas[jdx] - inter
@@ -730,6 +741,8 @@ class LibreEoMT(BaseModel):
                 if iou > self.PANOPTIC_TTA_DEDUP_IOU:
                     consumed[jdx] = True
                     group.append(jdx)
+                    if group_views is not None:
+                        group_views.add(jdx_view)
 
             group_t = torch.tensor(group, device=mask_probs.device)
             out_scores.append(scores[group_t].mean())
