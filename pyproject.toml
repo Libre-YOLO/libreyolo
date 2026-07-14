@@ -34,6 +34,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-timeout>=2.3.1",
     "pytest-xdist>=3.6",
     "ruff>=0.14.10",
     "ty>=0.0.1",
@@ -305,6 +306,11 @@ unresolved-import = "ignore"
 [tool.pytest.ini_options]
 addopts = "-m unit"
 testpaths = ["tests"]
+# Only the thread method can interrupt a test wedged inside a native call, such
+# as a stalled Hugging Face download; the signal method cannot fire until
+# control returns to Python. The limit itself comes from PYTEST_TIMEOUT, which
+# the e2e target sets, so unit runs stay unbounded.
+timeout_method = "thread"
 markers = [
     "unit: fast tests that avoid external weights or large files",
     "external_data: tests that require external datasets, weights, or staged large files",

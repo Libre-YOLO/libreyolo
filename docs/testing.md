@@ -126,12 +126,28 @@ and writes runtime, GPU, and estimated GPU cost to the step summary. Exact
 billing remains authoritative in Modal; the GitHub value is a GPU-runtime
 estimate.
 
+Every e2e test also carries a per-test timeout, `E2E_TIMEOUT` (default 900
+seconds, `0` disables), enforced by `pytest-timeout` in thread mode so that a
+test wedged inside a native call, such as a stalled weight download, is killed
+with a stack trace instead of burning the whole nightly budget in silence. The
+suite-level Modal timeout is the last resort, not the first line of defence.
+
+Weight reuse: the Modal volume caches loose weight files, and Hugging Face
+snapshots (open-vocab, SAM, VLM families) as whole directories, since their
+loaders only skip a download when the `.libreyolo_snapshot_complete` marker and
+the config sit beside the weights. Verified snapshots are committed even when
+the suite fails, so a run that dies mid-suite does not leave the next one
+downloading them cold again. Set the `HF_TOKEN` repository secret to lift the
+Modal container off anonymous Hub rate limits; without it the run stays
+anonymous.
+
 Commands:
 
 ```bash
 make test_general_nightly
 make test_flagship_nightly
 make test_nightly
+make test_e2e E2E_TIMEOUT=1800
 ```
 
 V2.1 contract:
