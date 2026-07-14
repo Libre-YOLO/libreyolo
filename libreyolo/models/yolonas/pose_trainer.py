@@ -263,11 +263,23 @@ class YOLONASPoseTrainer(BaseTrainer):
             "pose_reg": log_losses[4],
         }
 
-    def _validate_epoch(self, epoch: int):
-        if getattr(self, "val_loader", None) is None:
+    def _validate_epoch(self, epoch: int, *, save_plots: bool | None = None):
+        from ...training.distributed import barrier, is_main_process, unwrap_model
+
+        # Validation runs on rank 0 only, mirroring BaseTrainer._validate_epoch:
+        # concurrent ranks write predictions.json into the shared save_dir and
+        # corrupt the JSON another rank is reading (issue #484). Non-zero ranks
+        # barrier-wait so the next epoch's set_epoch fires in lockstep.
+        if self.is_distributed and not is_main_process():
+            barrier()
             return None
 
-        model = self.ema_model.ema if self.ema_model else self.model
+        if getattr(self, "val_loader", None) is None:
+            if self.is_distributed:
+                barrier()
+            return None
+
+        model = self.ema_model.ema if self.ema_model else unwrap_model(self.model)
         was_training = model.training
         model.eval()
 
@@ -286,6 +298,8 @@ class YOLONASPoseTrainer(BaseTrainer):
         finally:
             if was_training:
                 model.train()
+            if self.is_distributed:
+                barrier()
 
         avg_loss = total_loss / max(num_batches, 1)
         metrics = {"loss/val": avg_loss}

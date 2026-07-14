@@ -194,6 +194,69 @@ def test_detr_single_process_loader_unchanged(tmp_path, family):
     assert trainer.train_loader.batch_size == 4
 
 
+# ---------------------------------------------------------------------------
+# YOLO-NAS-Pose validation gating
+# ---------------------------------------------------------------------------
+
+
+class _ExplodingLoader:
+    """Iterating this loader means the rank ran validation when it must not."""
+
+    def __iter__(self):
+        raise AssertionError("validation ran on a non-main rank")
+
+
+def test_yolonas_pose_validation_skipped_on_non_main_rank(tmp_path, monkeypatch):
+    """Every rank used to run pose mAP validation, racing on the shared
+    save_dir's predictions.json (issue #484 screenshots). Non-zero ranks must
+    barrier and return without validating.
+    """
+    import libreyolo.training.distributed as dist_mod
+
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml)
+    _fake_two_rank_ddp(trainer, rank=1)
+    trainer.val_loader = _ExplodingLoader()
+
+    barrier_calls = []
+    monkeypatch.setattr(dist_mod, "barrier", lambda: barrier_calls.append(1))
+    monkeypatch.setattr(dist_mod, "is_main_process", lambda: False)
+
+    result = trainer._validate_epoch(0)
+
+    assert result is None
+    assert barrier_calls == [1]
+
+
+def test_yolonas_pose_main_rank_barriers_after_validation(tmp_path, monkeypatch):
+    import libreyolo.training.distributed as dist_mod
+
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml)
+    _fake_two_rank_ddp(trainer, rank=0)
+    trainer.val_loader = None
+
+    barrier_calls = []
+    monkeypatch.setattr(dist_mod, "barrier", lambda: barrier_calls.append(1))
+    monkeypatch.setattr(dist_mod, "is_main_process", lambda: True)
+
+    result = trainer._validate_epoch(0)
+
+    assert result is None
+    assert barrier_calls == [1]
+
+
+def test_yolonas_pose_validate_epoch_accepts_save_plots(tmp_path):
+    """BaseTrainer calls ``_validate_epoch(epoch, save_plots=True)`` on the
+    final epoch when save_plots is set; the override must accept the kwarg.
+    """
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml)
+    trainer.val_loader = None
+
+    assert trainer._validate_epoch(0, save_plots=True) is None
+
+
 class _SpySampler(DistributedSampler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
