@@ -297,20 +297,38 @@ def test_yolonas_pose_validate_epoch_accepts_save_plots(tmp_path):
     assert trainer._validate_epoch(0, save_plots=True) is None
 
 
+def _build_ec_pose_trainer(data_yaml, **overrides):
+    from libreyolo.models.ec.pose_trainer import ECPoseTrainer
+
+    kwargs = dict(
+        model=torch.nn.Identity(),
+        num_keypoints=4,
+        data=str(data_yaml),
+        batch=4,
+        workers=0,
+        device="cpu",
+    )
+    kwargs.update(overrides)
+    return ECPoseTrainer(**kwargs)
+
+
+@pytest.mark.parametrize("family", ["yolonas", "ec"])
 @pytest.mark.parametrize(
     "save_plots,expected",
     [(True, True), (False, False), (None, False)],
 )
-def test_yolonas_pose_save_plots_reaches_validation_config(
-    tmp_path, monkeypatch, save_plots, expected
+def test_pose_save_plots_reaches_validation_config(
+    tmp_path, monkeypatch, family, save_plots, expected
 ):
     """``save_plots`` must flow into ``ValidationConfig`` (None resolves to the
-    config default, final-epoch only), not be accepted and dropped.
+    config default, final-epoch only), not be accepted and dropped. Covers
+    both pose trainers that gate the metric phase to rank 0.
     """
     import libreyolo.validation as validation_mod
 
     data_yaml = _write_pose_dataset(tmp_path)
-    trainer = _build_pose_trainer(data_yaml, epochs=10)
+    builder = {"yolonas": _build_pose_trainer, "ec": _build_ec_pose_trainer}[family]
+    trainer = builder(data_yaml, epochs=10)
     trainer.save_dir = tmp_path
     trainer.wrapper_model = SimpleNamespace(model=None)
 
@@ -409,6 +427,50 @@ def test_setup_accepts_divisible_or_single_process_batch(
     monkeypatch.setattr(trainer, "_setup_data", _sentinel)
     with pytest.raises(_GuardPassed):
         trainer.setup()
+
+
+def test_setup_rejects_zero_batch(tmp_path):
+    """batch=0 is divisible by every world_size; the positive-batch check
+    must catch it before max(1, ...) silently turns it into 1 per rank.
+    """
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml, batch=0)
+
+    with pytest.raises(ValueError, match="positive global"):
+        trainer.setup()
+
+
+def test_setup_rejects_unsharded_train_loader(tmp_path, monkeypatch):
+    """The post-_setup_data invariant: a future trainer that builds a plain
+    DataLoader (the original #484 bug) must fail at startup, not train every
+    rank on the full dataset.
+    """
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml)
+    _fake_two_rank_ddp(trainer)
+
+    def _plain_loader():
+        ds = TensorDataset(torch.zeros(4, 1))
+        trainer.train_loader = DataLoader(ds, batch_size=4, shuffle=True)
+
+    monkeypatch.setattr(trainer, "_setup_data", _plain_loader)
+    with pytest.raises(ValueError, match="does not shard"):
+        trainer.setup()
+
+
+def test_setup_accepts_sharded_train_loader(tmp_path, monkeypatch):
+    """A correctly sharded loader (the real _setup_data) passes the invariant."""
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml)
+    _fake_two_rank_ddp(trainer)
+
+    def _sentinel():
+        raise _GuardPassed
+
+    monkeypatch.setattr(trainer, "_apply_freeze_config", _sentinel)
+    with pytest.raises(_GuardPassed):
+        trainer.setup()
+    assert isinstance(trainer.train_loader.sampler, DistributedSampler)
 
 
 # ---------------------------------------------------------------------------
