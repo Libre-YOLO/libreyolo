@@ -266,3 +266,20 @@ def test_obb_validator_skips_invalid_ground_truth_rows(tmp_path, caplog):
 
     assert metrics["metrics/mAP50"] == pytest.approx(1.0)
     assert "Skipped 1 invalid YOLO OBB label rows" in caplog.text
+
+
+def test_obb_val_preprocessor_survives_pickle_roundtrip():
+    """Windows spawn DataLoader workers pickle the preprocessor; __getattr__
+    must not recurse while __dict__ is still empty during unpickling."""
+    import pickle
+
+    from libreyolo.validation.obb_validator import _OBBValPreprocessor
+
+    preproc = _OBBValPreprocessor(YOLO9ValPreprocessor((32, 32)))
+    restored = pickle.loads(pickle.dumps(preproc))
+
+    assert isinstance(restored.base_preprocessor, YOLO9ValPreprocessor)
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    targets = np.zeros((1, 6), dtype=np.float32)
+    out = restored(img, targets, (32, 32))
+    assert out is not None

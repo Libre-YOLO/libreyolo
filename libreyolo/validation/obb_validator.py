@@ -44,6 +44,11 @@ class _OBBValPreprocessor:
         self.base_preprocessor = base_preprocessor
 
     def __getattr__(self, name):
+        # During unpickling (e.g. Windows spawn DataLoader workers) pickle
+        # probes attributes before __dict__ is restored; delegating then would
+        # recurse through this method forever, so fail fast instead.
+        if name == "base_preprocessor":
+            raise AttributeError(name)
         return getattr(self.base_preprocessor, name)
 
     def __call__(self, img: np.ndarray, targets: np.ndarray, input_size: tuple):
