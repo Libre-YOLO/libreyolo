@@ -371,6 +371,47 @@ def test_detr_train_epoch_sets_sampler_epoch(tmp_path, family, accum):
 
 
 # ---------------------------------------------------------------------------
+# Global-batch divisibility guard (BaseTrainer.setup, covers every family)
+# ---------------------------------------------------------------------------
+
+
+class _GuardPassed(Exception):
+    """Sentinel proving setup() got past the divisibility guard."""
+
+
+@pytest.mark.parametrize("batch", [6, 2])
+def test_setup_rejects_non_divisible_global_batch(tmp_path, monkeypatch, batch):
+    """batch is the global batch; batch=6 or 2 on 4 ranks would silently
+    train at 4. setup() must fail fast instead.
+    """
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml, batch=batch)
+    _fake_two_rank_ddp(trainer)
+    trainer.world_size = 4
+
+    with pytest.raises(ValueError, match="divisible by world_size"):
+        trainer.setup()
+
+
+@pytest.mark.parametrize("distributed,batch", [(True, 8), (False, 7)])
+def test_setup_accepts_divisible_or_single_process_batch(
+    tmp_path, monkeypatch, distributed, batch
+):
+    data_yaml = _write_pose_dataset(tmp_path)
+    trainer = _build_pose_trainer(data_yaml, batch=batch)
+    if distributed:
+        _fake_two_rank_ddp(trainer)
+        trainer.world_size = 4
+
+    def _sentinel():
+        raise _GuardPassed
+
+    monkeypatch.setattr(trainer, "_setup_data", _sentinel)
+    with pytest.raises(_GuardPassed):
+        trainer.setup()
+
+
+# ---------------------------------------------------------------------------
 # Real 2-rank gloo regression: validation collectives must stay aligned
 # ---------------------------------------------------------------------------
 
@@ -392,7 +433,17 @@ def _pose_val_gate_worker(rank, world_size, port, out_dir):
     try:
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(port)
-        dist.init_process_group("gloo", rank=rank, world_size=world_size)
+        # Short op timeout: if the collective mismatch this test guards
+        # against ever returns, fail within a minute instead of hanging the
+        # unit job on PyTorch's long default.
+        from datetime import timedelta
+
+        dist.init_process_group(
+            "gloo",
+            rank=rank,
+            world_size=world_size,
+            timeout=timedelta(seconds=60),
+        )
 
         from libreyolo.data import default_oks_sigmas
         from libreyolo.models.yolonas.loss import YoloNASPoseLoss

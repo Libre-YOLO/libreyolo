@@ -1252,6 +1252,24 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("AutoBatch: resolved global batch size = %d", self.config.batch)
 
+        # ``batch`` is the global batch under DDP: every rank trains at
+        # batch // world_size, so a non-divisible value would silently train
+        # at a different global batch than requested (e.g. batch=6 on 4 GPUs
+        # trains at 4). Fail fast instead of silently changing the batch.
+        # AutoBatch above already returns world_size-divisible values.
+        if self.is_distributed and self.config.batch % self.world_size != 0:
+            lower = (self.config.batch // self.world_size) * self.world_size
+            higher = lower + self.world_size
+            options = (
+                f"batch={higher}" if lower == 0 else f"batch={lower} or batch={higher}"
+            )
+            raise ValueError(
+                f"batch={self.config.batch} is the global batch and must be "
+                f"divisible by world_size={self.world_size}: each rank trains at "
+                f"batch // world_size, so this value would silently train at a "
+                f"different global batch than requested. Use {options}."
+            )
+
         # BN statistics quality under DDP: with SyncBatchNorm off, each rank's
         # BatchNorm tracks only its own per-rank shard (batch // world_size).
         # A small per-rank batch produces noisy running stats and degrades the

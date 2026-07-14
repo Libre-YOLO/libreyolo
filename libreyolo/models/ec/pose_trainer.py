@@ -434,7 +434,9 @@ class ECPoseTrainer(BaseTrainer):
                     num_batches += 1
             # Only rank 0 runs the file-writing pose mAP validator.
             if not self.is_distributed or is_main_process():
-                pose_metrics = self._run_pose_metric_validation(model, epoch)
+                pose_metrics = self._run_pose_metric_validation(
+                    model, epoch, save_plots=save_plots
+                )
         finally:
             if was_training:
                 model.train()
@@ -474,13 +476,21 @@ class ECPoseTrainer(BaseTrainer):
             "metrics": metrics,
         }
 
-    def _run_pose_metric_validation(self, eval_model, epoch: int):
+    def _run_pose_metric_validation(
+        self, eval_model, epoch: int, *, save_plots: bool | None = None
+    ):
         if self.wrapper_model is None:
             logger.warning("Skipping pose mAP validation: wrapper_model is missing")
             return None
         try:
             from libreyolo.validation import PoseValidator, ValidationConfig
 
+            val_save_plots = (
+                bool(save_plots)
+                if save_plots is not None
+                else bool(getattr(self.config, "save_plots", False))
+                and self._is_final_epoch(epoch)
+            )
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
@@ -494,6 +504,7 @@ class ECPoseTrainer(BaseTrainer):
                 num_workers=self.config.workers,
                 allow_download_scripts=self.config.allow_download_scripts,
                 oks_sigmas=self._resolve_oks_sigmas(),
+                save_plots=val_save_plots,
                 save_dir=str(self.save_dir / "val"),
             )
             original_model = self.wrapper_model.model
