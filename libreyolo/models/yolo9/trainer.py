@@ -74,12 +74,15 @@ class YOLO9Trainer(BaseTrainer):
         return groups or super().get_freeze_groups()
 
     def create_transforms(self):
+        task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         preproc = YOLO9TrainTransform(
             max_labels=getattr(self.config, "max_labels", 100),
             flip_prob=self.config.flip_prob,
             vertical_flip_prob=getattr(self.config, "flipud", 0.0),
             hsv_prob=self.config.hsv_prob,
             rot90_prob=getattr(self.config, "rot90", 0.0),
+            # OBB samples carry [class, x1, y1, x2, y2, theta] labels.
+            output_label_dim=6 if task == "obb" else None,
         )
         return preproc, YOLO9MosaicMixupDataset
 
@@ -110,11 +113,14 @@ class YOLO9Trainer(BaseTrainer):
         def _scalar(v):
             return v.item() if isinstance(v, torch.Tensor) else v
 
-        return {
+        components = {
             "box": _scalar(outputs.get("box", 0)),
             "cls": _scalar(outputs.get("cls", 0)),
             "dfl": _scalar(outputs.get("dfl", 0)),
         }
+        if "angle" in outputs:
+            components["angle"] = _scalar(outputs.get("angle", 0))
+        return components
 
     def on_forward(self, imgs: torch.Tensor, targets: torch.Tensor, polygons=None) -> Dict:
         return self.model(imgs, targets=targets)

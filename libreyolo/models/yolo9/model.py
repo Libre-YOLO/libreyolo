@@ -50,9 +50,10 @@ class LibreYOLO9(BaseModel):
     FAMILY = "yolo9"
     FILENAME_PREFIX = "LibreYOLO9"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "c": 640}
-    SUPPORTED_TASKS = ("detect",)
+    SUPPORTED_TASKS = ("detect", "obb")
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
+        "obb": INPUT_SIZES,
     }
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
@@ -140,7 +141,14 @@ class LibreYOLO9(BaseModel):
 
     @classmethod
     def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
-        """Infer YOLO9 task from task-specific head branches."""
+        """Infer YOLO9 task from task-specific head branches.
+
+        The OBB orientation convs live at ``head.ang.*`` (two output
+        channels, see ``OrientedDDetect``); their presence claims the obb
+        task.
+        """
+        if any(re.match(r"head\.ang\.\d+\.weight", key) for key in weights_dict):
+            return "obb"
         return None
 
     # =========================================================================
@@ -173,11 +181,16 @@ class LibreYOLO9(BaseModel):
     # Model lifecycle
     # =========================================================================
 
+    @property
+    def _is_obb(self) -> bool:
+        return self.task == "obb"
+
     def _init_model(self) -> nn.Module:
         return LibreYOLO9Model(
             config=self.size,
             reg_max=self.reg_max,
             nb_classes=self.nb_classes,
+            obb=self._is_obb,
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
@@ -206,6 +219,13 @@ class LibreYOLO9(BaseModel):
         state_dict: dict,
         checkpoint: dict | None = None,
     ) -> None:
+        if self._is_obb:
+            if not any(key.startswith("head.ang.") for key in state_dict):
+                raise RuntimeError(
+                    "YOLO9 OBB checkpoints must include head.ang.* orientation "
+                    "weights. Detect-to-OBB initialization is only supported "
+                    "through explicit training transfer (pretrained=...)."
+                )
         return
 
     def _prepare_state_dict(
@@ -519,7 +539,8 @@ class LibreYOLO9(BaseModel):
             patience: Early stopping patience.
             pretrained: Optional training initialization weights. Use True to
                 load the matching LibreYOLO9 detect checkpoint for transfer
-                learning, or pass a checkpoint path/name.
+                learning, or pass a checkpoint path/name. Detect-to-OBB
+                transfer is allowed here only as explicit initialization.
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a name
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger
