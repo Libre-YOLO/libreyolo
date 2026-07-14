@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [dev, release]
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"
   workflow_run:
     workflows: ["Publish to PyPI"]
     types: [completed]
