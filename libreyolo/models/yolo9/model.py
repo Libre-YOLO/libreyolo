@@ -50,9 +50,10 @@ class LibreYOLO9(BaseModel):
     FAMILY = "yolo9"
     FILENAME_PREFIX = "LibreYOLO9"
     INPUT_SIZES = {"t": 640, "s": 640, "m": 640, "c": 640}
-    SUPPORTED_TASKS = ("detect",)
+    SUPPORTED_TASKS = ("detect", "obb")
     TASK_INPUT_SIZES = {
         "detect": INPUT_SIZES,
+        "obb": INPUT_SIZES,
     }
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
@@ -140,7 +141,23 @@ class LibreYOLO9(BaseModel):
 
     @classmethod
     def detect_checkpoint_task(cls, weights_dict: dict) -> Optional[str]:
-        """Infer YOLO9 task from task-specific head branches."""
+        """Infer YOLO9 task from task-specific head branches.
+
+        The OBB angle towers live at ``head.cv4.*`` with a single output
+        channel; legacy pose checkpoints used the same towers with
+        ``3 * num_keypoints`` channels, so only the 1-channel case claims obb.
+        """
+        angle_head_channels = []
+        for key, tensor in weights_dict.items():
+            if re.match(r"head\.cv4\.\d+\.2\.weight", key):
+                shape = getattr(tensor, "shape", None)
+                if shape is not None and len(shape) > 0:
+                    angle_head_channels.append(int(shape[0]))
+
+        if angle_head_channels and all(
+            channels == 1 for channels in angle_head_channels
+        ):
+            return "obb"
         return None
 
     # =========================================================================
@@ -173,11 +190,16 @@ class LibreYOLO9(BaseModel):
     # Model lifecycle
     # =========================================================================
 
+    @property
+    def _is_obb(self) -> bool:
+        return self.task == "obb"
+
     def _init_model(self) -> nn.Module:
         return LibreYOLO9Model(
             config=self.size,
             reg_max=self.reg_max,
             nb_classes=self.nb_classes,
+            obb=self._is_obb,
         )
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
@@ -206,6 +228,13 @@ class LibreYOLO9(BaseModel):
         state_dict: dict,
         checkpoint: dict | None = None,
     ) -> None:
+        if self._is_obb:
+            if not any(key.startswith("head.cv4.") for key in state_dict):
+                raise RuntimeError(
+                    "YOLO9 OBB checkpoints must include head.cv4.* angle "
+                    "weights. Detect-to-OBB initialization is only supported "
+                    "through explicit training transfer (pretrained=...)."
+                )
         return
 
     def _prepare_state_dict(
@@ -237,6 +266,8 @@ class LibreYOLO9(BaseModel):
 
         detect._init_bias()
         detect._loss_fn = None
+        if hasattr(detect, "_obb_loss_fn"):
+            detect._obb_loss_fn = None
         detect.to(next(self.model.parameters()).device)
 
     def _rebuild_for_checkpoint_classes(self, new_nc: int, state_dict: dict):
@@ -304,6 +335,8 @@ class LibreYOLO9(BaseModel):
         head.no = self.nb_classes + head.reg_max * 4
         head._init_bias()
         head._loss_fn = None
+        if hasattr(head, "_obb_loss_fn"):
+            head._obb_loss_fn = None
         head.to(next(self.model.parameters()).device)
 
     def _load_transfer_weights(self, weights: str | Path) -> dict[str, int]:
@@ -519,7 +552,8 @@ class LibreYOLO9(BaseModel):
             patience: Early stopping patience.
             pretrained: Optional training initialization weights. Use True to
                 load the matching LibreYOLO9 detect checkpoint for transfer
-                learning, or pass a checkpoint path/name.
+                learning, or pass a checkpoint path/name. Detect-to-OBB
+                transfer is allowed here only as explicit initialization.
             callbacks: Optional training callback or iterable of callbacks.
             loggers: Optional built-in experiment loggers: a name
                 ('tensorboard', 'mlflow', 'wandb'), a configured logger
