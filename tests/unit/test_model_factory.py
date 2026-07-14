@@ -300,3 +300,103 @@ def test_factory_routes_onnx_before_native_task_validation(monkeypatch, tmp_path
         "device": "cpu",
         "task": "segment",
     }
+
+
+def test_yolo9_obb_transfer_accepts_same_family_detect_checkpoint(tmp_path):
+    detect_model = LibreYOLO9Model(config="t", nb_classes=80)
+    ckpt_path = tmp_path / "LibreYOLO9t.pt"
+    torch.save(
+        wrap_libreyolo_checkpoint(
+            detect_model.state_dict(),
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=80,
+            imgsz=640,
+        ),
+        ckpt_path,
+    )
+
+    target = LibreYOLO9(None, size="t", task="obb", nb_classes=6, device="cpu")
+    stats = target._load_transfer_weights(ckpt_path)
+
+    assert target.task == "obb"
+    assert target.nb_classes == 6
+    assert target.model.head.cv3[0][0].conv.weight.shape[0] == 80
+    assert hasattr(target.model.head, "cv4")
+    assert stats["loaded"] > 0
+    assert stats["skipped"] > 0
+    torch.testing.assert_close(
+        target.model.state_dict()["backbone.conv0.conv.weight"],
+        detect_model.state_dict()["backbone.conv0.conv.weight"],
+    )
+
+
+def test_yolo9_obb_direct_load_rejects_detect_checkpoint(tmp_path):
+    detect_model = LibreYOLO9Model(config="t", nb_classes=80)
+    ckpt_path = tmp_path / "LibreYOLO9t.pt"
+    torch.save(
+        wrap_libreyolo_checkpoint(
+            detect_model.state_dict(),
+            model_family="yolo9",
+            size="t",
+            task="detect",
+            nc=80,
+            imgsz=640,
+        ),
+        ckpt_path,
+    )
+
+    with pytest.raises(RuntimeError, match="task='detect'"):
+        LibreYOLO9(str(ckpt_path), size="t", task="obb", device="cpu")
+
+
+def test_factory_loads_yolo9_obb_scratch_checkpoint_with_custom_class_width(tmp_path):
+    model = LibreYOLO9Model(config="t", nb_classes=1, obb=True)
+
+    ckpt_path = tmp_path / "LibreYOLO9t-obb.pt"
+    torch.save(
+        wrap_libreyolo_checkpoint(
+            model.state_dict(),
+            model_family="yolo9",
+            size="t",
+            task="obb",
+            nc=1,
+            names={0: "ship"},
+            imgsz=64,
+        ),
+        ckpt_path,
+    )
+
+    loaded = LibreYOLO(str(ckpt_path), device="cpu")
+
+    assert loaded.FAMILY == "yolo9"
+    assert loaded.task == "obb"
+    assert loaded.nb_classes == 1
+    assert loaded.names == {0: "ship"}
+    assert loaded.model.training is False
+    assert loaded.model.head.cv3[0][0].conv.weight.shape[0] == 64
+
+
+def test_factory_resolves_metadata_less_yolo9_obb_from_filename(tmp_path):
+    model = LibreYOLO9Model(config="t", nb_classes=1, obb=True)
+    ckpt_path = tmp_path / "LibreYOLO9t-obb.pt"
+    torch.save(model.state_dict(), ckpt_path)
+
+    loaded = LibreYOLO(str(ckpt_path), device="cpu")
+
+    assert loaded.FAMILY == "yolo9"
+    assert loaded.task == "obb"
+    assert loaded.nb_classes == 1
+
+
+def test_factory_resolves_metadata_less_yolo9_obb_from_angle_head(tmp_path):
+    model = LibreYOLO9Model(config="t", nb_classes=1, obb=True)
+    ckpt_path = tmp_path / "best.pt"
+    torch.save(model.state_dict(), ckpt_path)
+
+    loaded = LibreYOLO(str(ckpt_path), size="t", device="cpu")
+
+    assert loaded.FAMILY == "yolo9"
+    assert loaded.task == "obb"
+    assert loaded.nb_classes == 1

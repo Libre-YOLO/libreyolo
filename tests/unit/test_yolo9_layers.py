@@ -21,10 +21,12 @@ from libreyolo.models.yolo9.nn import (
     Concat,
     DFL,
     DDetect,
+    DDetectOBB,
     Backbone9,
     Neck9,
     LibreYOLO9Model,
 )
+from libreyolo.models.yolo9.loss import YOLO9OBBLoss
 from libreyolo.models.yolo9 import utils as yolo9_utils
 from libreyolo.postprocess import yolo9 as yolo9_postprocess_mod
 from libreyolo.models.yolo9.trainer import YOLO9Trainer
@@ -197,6 +199,51 @@ class TestYOLO9DetectionHead:
         assert decoded.shape[0] == 1
         assert decoded.shape[1] == 4 + 80  # 84 (decoded boxes + class scores)
 
+    def test_ddetect_obb_forward(self):
+        """Test oriented-box DDetect head forward pass."""
+        layer = DDetectOBB(nc=2, ch=(64, 128, 256), reg_max=16, stride=(8, 16, 32))
+        layer.eval()
+        x = [
+            torch.randn(1, 64, 8, 8),
+            torch.randn(1, 128, 4, 4),
+            torch.randn(1, 256, 2, 2),
+        ]
+        decoded, raw, angle_logits = layer(x)
+        assert decoded.shape == (1, 7, 84)
+        assert len(raw) == 3
+        assert len(angle_logits) == 3
+        assert angle_logits[0].shape == (1, 1, 8, 8)
+
+    def test_ddetect_obb_angle_row_is_bounded(self):
+        """The decoded angle row stays inside [-pi/2, pi/2)."""
+        layer = DDetectOBB(nc=2, ch=(64, 128, 256), reg_max=16, stride=(8, 16, 32))
+        layer.eval()
+        x = [
+            torch.randn(1, 64, 8, 8) * 100,
+            torch.randn(1, 128, 4, 4) * 100,
+            torch.randn(1, 256, 2, 2) * 100,
+        ]
+        decoded, _, _ = layer(x)
+        angles = decoded[:, 4]
+        assert torch.all(angles >= -torch.pi / 2)
+        assert torch.all(angles <= torch.pi / 2)
+
+    def test_ddetect_obb_export_forward_returns_prediction_tensor(self):
+        """OBB export mode returns a single traceable prediction tensor."""
+        layer = DDetectOBB(nc=2, ch=(64, 128, 256), reg_max=16, stride=(8, 16, 32))
+        layer.eval()
+        layer.export = True
+        x = [
+            torch.randn(1, 64, 8, 8),
+            torch.randn(1, 128, 4, 4),
+            torch.randn(1, 256, 2, 2),
+        ]
+
+        decoded = layer(x)
+
+        assert isinstance(decoded, torch.Tensor)
+        assert decoded.shape == (1, 7, 84)
+
 class TestYOLO9FullModel:
     """Test full model architecture."""
 
@@ -231,6 +278,86 @@ class TestYOLO9FullModel:
         # In eval mode, returns dict with 'predictions' key
         assert isinstance(out, dict)
         assert "predictions" in out
+
+    def test_obb_model_forward(self):
+        """Test full LibreYOLO9 OBB model forward pass."""
+        model = LibreYOLO9Model(config="t", nb_classes=2, obb=True)
+        model.eval()
+        x = torch.randn(1, 3, 64, 64)
+        out = model(x)
+        assert isinstance(out, dict)
+        assert out["obb"] is True
+        assert out["predictions"].shape == (1, 7, 84)
+
+    def test_obb_training_loss(self):
+        """OBB model computes box, class, DFL, and angle losses."""
+        model = LibreYOLO9Model(config="t", nb_classes=2, obb=True)
+        model.train()
+        targets = torch.zeros(2, 100, 6)
+        targets[:, :, 0] = -1
+        targets[0, 0] = torch.tensor([0, 0.2, 0.2, 0.7, 0.7, 0.25])
+        targets[1, 0] = torch.tensor([1, 0.1, 0.1, 0.6, 0.6, -0.25])
+
+        out = model(torch.randn(2, 3, 64, 64), targets=targets)
+
+        assert out["total_loss"].requires_grad
+        assert out["angle_loss"].requires_grad
+        assert out["angle"] >= 0
+
+    def test_obb_training_loss_rejects_five_column_targets(self):
+        """OBB training requires the 6-column [class, box, angle] labels."""
+        model = LibreYOLO9Model(config="t", nb_classes=2, obb=True)
+        model.train()
+        targets = torch.zeros(1, 10, 5)
+        targets[:, :, 0] = -1
+        with pytest.raises(ValueError, match="6"):
+            model(torch.randn(1, 3, 64, 64), targets=targets)
+
+
+def test_yolo9_obb_transform_vertical_flip_updates_box_and_angle():
+    image = np.zeros((10, 20, 3), dtype=np.uint8)
+    targets = np.array([[2.0, 1.0, 10.0, 4.0, 0.0, 0.25]], dtype=np.float32)
+    transform = YOLO9TrainTransform(
+        max_labels=2,
+        flip_prob=0.0,
+        vertical_flip_prob=1.0,
+        hsv_prob=0.0,
+        output_label_dim=6,
+    )
+
+    _, labels = transform(image, targets, (10, 20))
+
+    np.testing.assert_allclose(labels[0], [0.0, 0.1, 0.6, 0.5, 0.9, -0.25])
+    assert labels[1, 0] == -1
+
+
+def test_yolo9_obb_transform_horizontal_flip_updates_box_and_angle():
+    image = np.zeros((10, 20, 3), dtype=np.uint8)
+    targets = np.array([[2.0, 1.0, 10.0, 4.0, 0.0, 0.25]], dtype=np.float32)
+    transform = YOLO9TrainTransform(
+        max_labels=2,
+        flip_prob=1.0,
+        vertical_flip_prob=0.0,
+        hsv_prob=0.0,
+        output_label_dim=6,
+    )
+
+    _, labels = transform(image, targets, (10, 20))
+
+    np.testing.assert_allclose(labels[0], [0.0, 0.5, 0.1, 0.9, 0.4, -0.25])
+    assert labels[1, 0] == -1
+
+
+def test_yolo9_obb_loss_default_angle_weight_is_one():
+    loss = YOLO9OBBLoss(
+        num_classes=2,
+        reg_max=16,
+        strides=[8, 16, 32],
+        image_size=None,
+        device=torch.device("cpu"),
+    )
+
+    assert loss.angle_weight == 1.0
 
 class TestYOLO9Utils:
     """Test utility functions."""

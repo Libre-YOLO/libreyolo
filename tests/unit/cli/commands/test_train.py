@@ -632,3 +632,72 @@ def test_train_rfdetr_detect_checkpoint_switches_to_obb_architecture(
 
 
 
+
+
+def test_train_dry_run_reports_explicit_yolo9_obb_task():
+    app = _make_app()
+    result = runner.invoke(
+        app,
+        [
+            "data=uav-obb.yaml",
+            "model=yolo9-t",
+            "task=obb",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "yolo9"
+    assert data["resolved_config"]["task"] == "obb"
+    assert data["resolved_config"]["scheduler"] == "linear"
+
+
+@pytest.mark.parametrize(
+    "model_args",
+    [
+        ["model=yolo9-t", "task=obb"],
+        ["model=yolo9-t-obb"],
+    ],
+)
+def test_train_yolo9_obb_uses_task_architecture_without_loading_missing_obb_weights(
+    monkeypatch, tmp_path, model_args
+):
+    app = _make_app()
+    captured = {}
+
+    def fail_load(*_args, **_kwargs):
+        raise AssertionError("OBB training should instantiate the task architecture")
+
+    def fake_train(self, data, **kwargs):
+        captured["task"] = self.task
+        captured["size"] = self.size
+        captured["data"] = data
+        captured["kwargs"] = kwargs
+        return {"output_dir": str(tmp_path / "yolo9_obb_exp")}
+
+    monkeypatch.setattr("libreyolo.cli.commands.train.load_model_or_exit", fail_load)
+    monkeypatch.setattr("libreyolo.models.yolo9.model.LibreYOLO9.train", fake_train)
+
+    result = runner.invoke(
+        app,
+        [
+            "data=uav-obb.yaml",
+            *model_args,
+            "epochs=1",
+            "pretrained=false",
+            f"project={tmp_path}",
+            "exist_ok=true",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["task"] == "obb"
+    assert captured["size"] == "t"
+    assert captured["data"] == "uav-obb.yaml"
+    assert captured["kwargs"]["pretrained"] is False
+    data = json.loads(result.stdout)
+    assert data["model_family"] == "yolo9"
+    assert data["epochs_completed"] == 1
