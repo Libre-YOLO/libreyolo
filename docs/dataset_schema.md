@@ -366,9 +366,12 @@ their own training tensors, but public results should expose OBB detections as
 `xywhr, conf, cls` rows.
 
 YOLO9 OBB currently uses a family-private training adapter that stores targets
-as `class, x1, y1, x2, y2, angle`, where `xyxy` is a horizontal proxy box for
-assignment and DFL, and `angle` is trained with a separate periodic loss. Do
-not treat that proxy tensor as the general OBB contract for other families.
+as `class, x1, y1, x2, y2, angle`. The `xyxy` columns are a *proxy* box: the
+oriented rectangle's own width and height, axis-aligned about its center. They
+are an encoding of the side lengths, not the spatial envelope of the rotated
+box, so they must never be clipped or corner-warped as if they were one.
+Assignment and DFL regress that proxy; the orientation is carried in `angle`.
+Do not treat that proxy tensor as the general OBB contract for other families.
 
 Native COCO JSON OBB loading accepts annotations in this priority order:
 
@@ -378,8 +381,11 @@ Native COCO JSON OBB loading accepts annotations in this priority order:
 - COCO `bbox: [x, y, w, h]`, interpreted as an axis-aligned rectangle and
   canonicalized to LibreYOLO `xywhr`.
 
-Mosaic and mixup are disabled for OBB training until corner-aware OBB
-augmentation is implemented.
+Mosaic and mixup run for OBB. The geometric augmentations are orientation
+aware: flips and quarter turns transform the angle, and the affine applies
+rotation, uniform scale and translation exactly (the center rides the matrix
+and the side directions carry the rotation and scale). Shear and perspective
+are suppressed for OBB because neither maps a rectangle to a rectangle.
 
 ## classify
 

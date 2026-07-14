@@ -50,10 +50,10 @@ divergence checklist in section 9.
 | Task registry: `obb` name, aliases, `-obb` suffix | `libreyolo/tasks.py` | live |
 | YOLO OBB label parsing (9-field rows), canonical `xywhr`, proxy conversion | `libreyolo/data/obb.py` (`parse_yolo_obb_label_line`, `canonicalize_xywhr`, `corners_to_xywhr`, `xywhr_to_proxy_xyxy`, `xywhr_iou`) | live |
 | Dataset loading: `load_obb`, rows emitted as `[x1, y1, x2, y2, cls, theta]` (pixel proxy box + radians) | `libreyolo/data/dataset.py` (~line 448) | live |
-| Train transforms: 6-column labels, angle-aware hflip/vflip/rot90, mosaic disabled for OBB | `libreyolo/data/augment/yolo9.py`, `libreyolo/training/trainer.py:705` | live |
+| Train transforms: 6-column labels, angle-aware hflip/vflip/rot90, mosaic/mixup with the corner-aware affine (`apply_affine_to_obb`; shear and perspective suppressed) | `libreyolo/data/augment/yolo9.py`, `libreyolo/data/augment/geometry.py` | live |
 | Training targets contract: `[class, x1, y1, x2, y2, theta]`, normalized | `docs/dataset_schema.md` (OBB section) | live |
 | Inference postprocess contract: predictions `(B, 4+1+nc, A)` with rows `[proxy xyxy in input pixels, theta, sigmoided class scores]`, dict flag `obb: True`; exact rotated NMS | `libreyolo/postprocess/yolo9.py:176-321` | live |
-| Rotated IoU (exact, OpenCV) | `libreyolo/data/obb.py:xywhr_iou` | live |
+| Rotated IoU: exact, vectorized (axis-aligned envelope gate, then convex-polygon intersection); the OpenCV scalar form remains the reference | `libreyolo/utils/box_ops.py` (`rotated_iou_matrix`, `rotated_iou_pairwise`), `libreyolo/data/obb.py:xywhr_iou` | live |
 | OBB validator (rotated-IoU AP) | `libreyolo/validation/obb_validator.py` | live |
 | Results container `OBB` (xywhr/conf/cls) and drawing | `libreyolo/utils/results.py:846`, `libreyolo/utils/drawing.py:draw_obb` | live |
 | CLI train/val/predict OBB plumbing, backends, export metadata | `libreyolo/cli/commands/*.py`, `libreyolo/backends/base.py`, `libreyolo/export/exporter.py` | live |
@@ -357,9 +357,54 @@ review is treated as a bug.
 | `libreyolo/models/yolo9/loss.py` | Gaussian helpers (`_rbox_gaussian`, `_gaussian_kld`, `_bhattacharyya_score`), `RotatedBoxMatcher`, `YOLO9OrientedLoss` |
 | `libreyolo/models/yolo9/model.py` | task wiring per section 6 |
 | `libreyolo/models/yolo9/trainer.py` | 6-column labels, angle logging |
-| `libreyolo/validation/obb_validator.py` | pickling fix |
+| `libreyolo/validation/obb_validator.py` | pickling fix; per-class cached vectorized IoU |
+| `libreyolo/utils/box_ops.py` | `rotated_iou_pairwise` / `rotated_iou_matrix` (section 11) |
+| `libreyolo/postprocess/yolo9.py` | rotated NMS rebuilt on the vectorized IoU (section 11) |
+| `libreyolo/data/augment/geometry.py` | `apply_affine_to_obb`, `obb` flag on `random_affine` (section 12) |
+| `libreyolo/data/augment/yolo9.py`, `libreyolo/training/trainer.py` | mosaic/mixup enabled for OBB (section 12) |
 | `libreyolo/export/support.py` + generated tables | obb rows |
 | `docs/nomenclature.md` | family table + filename example |
 | `tests/unit/...` | per section 8 |
+
+## 11. Vectorized rotated IoU
+
+Rotated NMS evaluated one OpenCV polygon intersection per candidate pair from
+a Python loop, and the OBB validator repeated the same per-pair calls once per
+mAP threshold. Both now go through an exact vectorized IoU.
+
+Two convex polygons intersect in the convex hull of: each polygon's vertices
+that lie inside the other, plus every edge-edge crossing. For two rectangles
+that is at most eight of twenty-four candidate points; they are ordered by
+angle about their centroid and the area follows from the shoelace formula.
+Pairs are gated first on their axis-aligned envelopes, which cannot miss when
+the rotated boxes overlap, so on dense imagery only a small fraction of the
+matrix reaches the polygon stage.
+
+Greedy suppression order, the threshold comparison and the resulting keep
+indices are unchanged; the tests assert bit-identical output against the
+OpenCV implementation, which remains the reference.
+
+Source: classical computational geometry (convex-polygon intersection,
+shoelace area, axis-aligned rejection). `Source: original` for the
+formulation and for reusing the same primitive in both NMS and validation.
+
+## 12. Orientation-aware mosaic
+
+Mosaic was disabled for OBB because the shared affine warps the corners of the
+xyxy columns and rewrites them as an envelope, which for the OBB proxy box
+(section 3.1) both discards the rotation and corrupts the side lengths.
+
+A rectangle stays a rectangle under rotation, uniform scale and translation,
+so the OBB affine is exact: the center rides the matrix, and the two side
+directions are carried through the matrix's linear part, which yields the new
+orientation and the new side lengths without reading an angle out of the
+matrix (and so without depending on any sign or handedness convention).
+Shear and perspective are suppressed for OBB, as neither maps a rectangle to a
+rectangle. Mosaic tile placement needed no change: uniform scale and
+translation of all four proxy coordinates scale the center and the sides
+consistently and cannot rotate the box.
+
+Source: classical linear algebra. `Source: original` for the proxy-box
+transform and for the decision to suppress shear rather than refit it.
 
 Estimated new code: ~450 lines library, ~400 lines tests.
