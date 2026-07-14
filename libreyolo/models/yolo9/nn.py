@@ -16,6 +16,8 @@ LibreYOLO9 checkpoint format, and :mod:`libreyolo.models.yolo9.convert` maps
 upstream checkpoints onto it.
 """
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -714,6 +716,83 @@ class DDetect(nn.Module):
         )
 
 
+class DDetectOBB(DDetect):
+    """YOLO9 detection head with an oriented-box angle branch.
+
+    Extends the detect head with a per-scale angle tower (``cv4``, same
+    tower shape as the class towers) that emits one logit per anchor. The
+    logit maps to ``[-pi / 2, pi / 2)`` radians via a shifted sigmoid,
+    matching the canonical long-side-width angle range of
+    :mod:`libreyolo.data.obb`. Boxes stay in the detect head's horizontal
+    xyxy encoding and act as the rotated box's width/height proxy; the
+    postprocess recombines them with the angle into ``xywhr``.
+
+    Checkpoint-format contract: the angle towers live at ``head.cv4.*`` with
+    a single output channel — task inference reads that channel count.
+    """
+
+    angle_channels = 1
+
+    def __init__(self, nc=80, ch=(), reg_max=16, stride=(), use_group=True):
+        super().__init__(nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group)
+        self._obb_loss_fn = None
+
+        c4 = max(ch[0] // 4, self.angle_channels)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(
+                Conv(x, c4, 3),
+                Conv(c4, c4, 3),
+                nn.Conv2d(c4, self.angle_channels, 1),
+            )
+            for x in ch
+        )
+
+    def _get_obb_loss_fn(self, device):
+        if self._obb_loss_fn is None:
+            from .loss import YOLO9OBBLoss
+
+            self._obb_loss_fn = YOLO9OBBLoss(
+                num_classes=self.nc,
+                reg_max=self.reg_max,
+                strides=self.stride.tolist(),
+                image_size=None,
+                device=device,
+            )
+        return self._obb_loss_fn
+
+    @staticmethod
+    def _angle_logits_to_radians(angle_logits):
+        return (angle_logits.sigmoid() - 0.5) * math.pi
+
+    def forward(self, x, targets=None, img_size=None):
+        features = list(x)
+        angle_logits = [self.cv4[i](features[i]) for i in range(self.nl)]
+
+        det_outputs = super().forward(features, targets=None, img_size=img_size)
+
+        if self.training:
+            if targets is not None:
+                loss_fn = self._get_obb_loss_fn(angle_logits[0].device)
+                if img_size is not None:
+                    loss_fn.update_anchors(list(img_size))
+                return loss_fn(det_outputs, targets, angle_logits)
+            return det_outputs, angle_logits
+
+        predictions, raw_outputs = det_outputs
+        batch_size = predictions.shape[0]
+        angle = torch.cat(
+            [
+                self._angle_logits_to_radians(a).view(batch_size, 1, -1)
+                for a in angle_logits
+            ],
+            dim=2,
+        )
+        predictions = torch.cat((predictions[:, :4], angle, predictions[:, 4:]), dim=1)
+        if self.export:
+            return predictions
+        return predictions, raw_outputs, angle_logits
+
+
 # =============================================================================
 # Model Architecture Definitions
 # =============================================================================
@@ -1011,6 +1090,7 @@ class LibreYOLO9Model(nn.Module):
         reg_max=16,
         nb_classes=80,
         img_size=640,
+        obb=False,
     ):
         """
         Initialize YOLOv9 model.
@@ -1020,6 +1100,7 @@ class LibreYOLO9Model(nn.Module):
             reg_max: Regression max value for DFL
             nb_classes: Number of classes
             img_size: Input image size
+            obb: Build the oriented-bounding-box head instead of plain detect.
         """
         super().__init__()
 
@@ -1032,6 +1113,7 @@ class LibreYOLO9Model(nn.Module):
         self.nc = nb_classes
         self.reg_max = reg_max
         self.img_size = img_size
+        self.obb = obb
 
         cfg = YOLO9_CONFIGS[config]
 
@@ -1040,7 +1122,8 @@ class LibreYOLO9Model(nn.Module):
 
         # Detection head - use exact channels from config
         head_channels = cfg["head_channels"]
-        self.head = DDetect(
+        head_cls = DDetectOBB if obb else DDetect
+        self.head = head_cls(
             nc=nb_classes,
             ch=head_channels,
             reg_max=reg_max,
@@ -1081,19 +1164,30 @@ class LibreYOLO9Model(nn.Module):
             return output
 
         # Inference mode
-        y, x_list = output
+        if self.obb:
+            # DDetectOBB already folds the angle channel into the prediction
+            # tensor and returns it alone in export mode.
+            if self.head.export:
+                return output
+            y, x_list, angle_logits = output
+        else:
+            y, x_list = output
 
         # Export mode: return only the prediction tensor for ONNX/TorchScript
         if self.head.export:
             return y
 
-        return {
-            "predictions": y,  # (batch, 4+nc, total_anchors)
+        result = {
+            "predictions": y,  # (batch, 4+nc, total_anchors; +1 angle row for OBB)
             "raw_outputs": x_list,
             "x8": {"features": n3},
             "x16": {"features": n4},
             "x32": {"features": n5},
         }
+        if self.obb:
+            result["obb"] = True
+            result["angle_logits"] = angle_logits
+        return result
 
     def fuse(self):
         """Fuse Conv+BN and RepConvN for faster inference."""
