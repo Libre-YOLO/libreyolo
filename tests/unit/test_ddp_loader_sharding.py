@@ -183,7 +183,7 @@ def test_detr_loader_shards_batch_across_ranks(tmp_path, family):
 
 
 @pytest.mark.parametrize("family", ["deim", "dfine"])
-def test_detr_single_process_loader_unchanged(tmp_path, family):
+def test_detr_single_process_batch_and_sampler_unchanged(tmp_path, family):
     trainer_cls = _detr_trainer_classes()[family]
     data_yaml = _write_detect_dataset(tmp_path)
     trainer = _build_detr_trainer(trainer_cls, data_yaml)
@@ -192,6 +192,25 @@ def test_detr_single_process_loader_unchanged(tmp_path, family):
 
     assert not isinstance(trainer.train_loader.sampler, DistributedSampler)
     assert trainer.train_loader.batch_size == 4
+    # 4 samples at batch 4: exactly one full batch survives drop_last.
+    assert len(trainer.train_loader) == 1
+
+
+@pytest.mark.parametrize("family", ["deim", "dfine"])
+def test_detr_dataset_smaller_than_batch_keeps_partial_batch(tmp_path, family):
+    """Deliberate behavior change from unconditional ``drop_last=True``: a
+    dataset smaller than ``batch`` used to yield ZERO training iterations
+    silently. It now keeps the partial batch, matching BaseTrainer's
+    visible-count drop_last policy.
+    """
+    trainer_cls = _detr_trainer_classes()[family]
+    data_yaml = _write_detect_dataset(tmp_path, num_samples=2)
+    trainer = _build_detr_trainer(trainer_cls, data_yaml)
+
+    trainer._setup_data()
+
+    assert trainer.train_loader.drop_last is False
+    assert len(trainer.train_loader) == 1
 
 
 # ---------------------------------------------------------------------------
