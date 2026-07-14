@@ -710,6 +710,87 @@ class DDetect(nn.Module):
         )
 
 
+class OrientedDDetect(DDetect):
+    """Oriented-box (OBB) variant of the detect head.
+
+    Orientation is read from the geometry the box towers already compute: a
+    single 1x1 convolution per scale (``ang``) maps the first box-tower
+    conv's hidden features to a two-channel double-angle vector
+    ``(cos 2*theta, sin 2*theta)``, decoded with ``0.5 * atan2`` at
+    inference. Boxes stay in the detect head's horizontal proxy encoding and
+    the live postprocess recombines them with the angle row into ``xywhr``.
+    Design rationale and sources: ``docs/provenance/yolo9_obb.md``.
+
+    Checkpoint contract: the orientation convs live at ``head.ang.*`` and
+    task inference keys on their presence. ``cv2``/``cv3``/``dfl`` are
+    unchanged, so detect checkpoints transfer into everything but ``ang``.
+    """
+
+    def __init__(self, nc=80, ch=(), reg_max=16, stride=(), use_group=True):
+        super().__init__(
+            nc=nc, ch=ch, reg_max=reg_max, stride=stride, use_group=use_group
+        )
+        self.ang = nn.ModuleList(
+            nn.Conv2d(self._box_hidden_channels, 2, 1) for _ in ch
+        )
+        # Zero bias keeps the initial orientation claim near-neutral: short
+        # vectors mean "no confident orientation" under the norm semantics.
+        for conv in self.ang:
+            nn.init.zeros_(conv.bias)
+
+    def _get_loss_fn(self, device):
+        """Lazily initialize the oriented loss (standard ``_loss_fn`` slot)."""
+        if self._loss_fn is None:
+            from .loss import YOLO9OrientedLoss
+
+            self._loss_fn = YOLO9OrientedLoss(
+                num_classes=self.nc,
+                reg_max=self.reg_max,
+                strides=self.stride.tolist(),
+                image_size=None,
+                device=device,
+            )
+        return self._loss_fn
+
+    def forward(self, x, targets=None, img_size=None):
+        preds = []
+        angles = []
+        for i, feat in enumerate(x):
+            hidden = self.cv2[i][0](feat)
+            box_out = self.cv2[i][2](self.cv2[i][1](hidden))
+            preds.append(torch.cat((box_out, self.cv3[i](feat)), 1))
+            angles.append(self.ang[i](hidden))
+
+        if self.training:
+            if targets is not None:
+                loss_fn = self._get_loss_fn(preds[0].device)
+                if img_size is not None:
+                    loss_fn.update_anchors(list(img_size))
+                return loss_fn(preds, targets, angles)
+            return preds, angles
+
+        return self._decode_oriented(preds, angles), preds
+
+    def _decode_oriented(self, preds, angles):
+        anchor_points, stride_scale = self._grid(preds)
+        box_levels = []
+        score_levels = []
+        for pred in preds:
+            box_level, score_level = pred.flatten(2).split(
+                (4 * self.reg_max, self.nc), 1
+            )
+            box_levels.append(box_level)
+            score_levels.append(score_level)
+        distances = self.dfl(torch.cat(box_levels, 2))
+        boxes = (
+            self._decode_bboxes(distances, anchor_points.unsqueeze(0)) * stride_scale
+        )
+        vec = torch.cat([level.flatten(2) for level in angles], 2)
+        theta = 0.5 * torch.atan2(vec[:, 1:2], vec[:, 0:1])
+        scores = torch.cat(score_levels, 2).sigmoid()
+        return torch.cat((boxes, theta, scores), 1)
+
+
 # =============================================================================
 # Model Architecture Definitions
 # =============================================================================
@@ -1007,6 +1088,7 @@ class LibreYOLO9Model(nn.Module):
         reg_max=16,
         nb_classes=80,
         img_size=640,
+        obb=False,
     ):
         """
         Initialize YOLOv9 model.
@@ -1016,6 +1098,7 @@ class LibreYOLO9Model(nn.Module):
             reg_max: Regression max value for DFL
             nb_classes: Number of classes
             img_size: Input image size
+            obb: Build the oriented-bounding-box head instead of plain detect.
         """
         super().__init__()
 
@@ -1028,6 +1111,7 @@ class LibreYOLO9Model(nn.Module):
         self.nc = nb_classes
         self.reg_max = reg_max
         self.img_size = img_size
+        self.obb = obb
 
         cfg = YOLO9_CONFIGS[config]
 
@@ -1036,7 +1120,8 @@ class LibreYOLO9Model(nn.Module):
 
         # Detection head - use exact channels from config
         head_channels = cfg["head_channels"]
-        self.head = DDetect(
+        head_cls = OrientedDDetect if obb else DDetect
+        self.head = head_cls(
             nc=nb_classes,
             ch=head_channels,
             reg_max=reg_max,
@@ -1083,13 +1168,16 @@ class LibreYOLO9Model(nn.Module):
         if self.head.export:
             return y
 
-        return {
-            "predictions": y,  # (batch, 4+nc, total_anchors)
+        result = {
+            "predictions": y,  # (batch, 4+nc, total_anchors; +1 angle row for OBB)
             "raw_outputs": x_list,
             "x8": {"features": n3},
             "x16": {"features": n4},
             "x32": {"features": n5},
         }
+        if self.obb:
+            result["obb"] = True
+        return result
 
     def fuse(self):
         """Fuse Conv+BN and RepConvN for faster inference."""

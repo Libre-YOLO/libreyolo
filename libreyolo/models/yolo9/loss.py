@@ -497,6 +497,8 @@ class YOLO9Loss:
     - Classification loss (BCE)
     """
 
+    matcher_class = BoxMatcher
+
     def __init__(
         self,
         num_classes: int,
@@ -548,7 +550,7 @@ class YOLO9Loss:
             device=self.device,
         )
         # Initialize matcher with new anchors
-        self.matcher = BoxMatcher(
+        self.matcher = self.matcher_class(
             num_classes=self.num_classes,
             anchor_grid=self.vec2box.anchor_grid,
             scaler=self.vec2box.scaler,
@@ -672,3 +674,341 @@ class YOLO9Loss:
 
         return loss_dict
 
+
+
+# =============================================================================
+# Oriented boxes (OBB): Gaussian geometry helpers and loss
+# =============================================================================
+
+
+def _rbox_covariance(
+    wh: Tensor, cos2t: Tensor, sin2t: Tensor
+) -> Tuple[Tensor, Tensor, Tensor]:
+    """Covariance components of the Gaussian form of a rotated box.
+
+    ``Sigma = R(t) diag(w^2/4, h^2/4) R(t)^T`` expanded with half-angle
+    identities so the components are linear in the double-angle vector:
+    ``a = p + q cos2t``, ``b = p - q cos2t``, ``c = q sin2t`` with
+    ``p = (w^2 + h^2) / 8`` and ``q = (w^2 - h^2) / 8``. Derivation and
+    sources in docs/provenance/yolo9_obb.md.
+    """
+    quarter = wh.square() / 4.0
+    p = (quarter[..., 0] + quarter[..., 1]) / 2.0
+    q = (quarter[..., 0] - quarter[..., 1]) / 2.0
+    return p + q * cos2t, p - q * cos2t, q * sin2t
+
+
+def _gaussian_kld(
+    mu_p: Tensor,
+    cov_p: Tuple[Tensor, Tensor, Tensor],
+    mu_t: Tensor,
+    cov_t: Tuple[Tensor, Tensor, Tensor],
+    eps: float = 1e-7,
+) -> Tensor:
+    """Closed-form ``KL(N_p || N_t)`` between 2D Gaussians.
+
+    Only the exact target covariance is ever inverted, so degenerate
+    predictions cannot destabilize the term. Classical multivariate normal
+    formula written out for 2x2 covariances ``[[a, c], [c, b]]``.
+    """
+    a_p, b_p, c_p = cov_p
+    a_t, b_t, c_t = cov_t
+    det_t = (a_t * b_t - c_t.square()).clamp_min(eps)
+    det_p = (a_p * b_p - c_p.square()).clamp_min(eps)
+    dx = mu_p[..., 0] - mu_t[..., 0]
+    dy = mu_p[..., 1] - mu_t[..., 1]
+    trace = (b_t * a_p - 2.0 * c_t * c_p + a_t * b_p) / det_t
+    maha = (b_t * dx.square() - 2.0 * c_t * dx * dy + a_t * dy.square()) / det_t
+    kld = 0.5 * (trace + maha - 2.0) + 0.5 * (det_t / det_p).log()
+    return kld.clamp_min(0.0)
+
+
+def _bhattacharyya_score(
+    mu_p: Tensor,
+    cov_p: Tuple[Tensor, Tensor, Tensor],
+    mu_t: Tensor,
+    cov_t: Tuple[Tensor, Tensor, Tensor],
+    eps: float = 1e-7,
+) -> Tensor:
+    """IoU-like similarity ``exp(-B_D)`` between rotated-box Gaussians.
+
+    ``B_D`` is the classical Bhattacharyya distance; its use as a rotated-box
+    similarity follows the ProbIoU paper (see docs/provenance/yolo9_obb.md). Returns
+    values in ``(0, 1]`` with 1 at identity.
+    """
+    a_p, b_p, c_p = cov_p
+    a_t, b_t, c_t = cov_t
+    a_m = (a_p + a_t) / 2.0
+    b_m = (b_p + b_t) / 2.0
+    c_m = (c_p + c_t) / 2.0
+    det_m = (a_m * b_m - c_m.square()).clamp_min(eps)
+    det_p = (a_p * b_p - c_p.square()).clamp_min(eps)
+    det_t = (a_t * b_t - c_t.square()).clamp_min(eps)
+    dx = mu_p[..., 0] - mu_t[..., 0]
+    dy = mu_p[..., 1] - mu_t[..., 1]
+    maha = (b_m * dx.square() - 2.0 * c_m * dx * dy + a_m * dy.square()) / det_m
+    distance = 0.125 * maha + 0.5 * (
+        det_m / (det_p * det_t).sqrt().clamp_min(eps)
+    ).log()
+    return distance.clamp(0.0, 50.0).neg().exp()
+
+
+class RotatedBoxMatcher(BoxMatcher):
+    """Task-aligned assignment for oriented boxes.
+
+    Keeps the proxy-box validity gating of :class:`BoxMatcher` (it bounds the
+    LTRB distances the DFL branch must represent) and replaces the CIoU
+    metric with the Bhattacharyya similarity between the Gaussian forms of
+    the rotated boxes, so assignment sees orientation.
+    """
+
+    def get_similarity_matrix(
+        self, predict_rbox: Tensor, target_rbox: Tensor
+    ) -> Tensor:
+        """Similarity in (0, 1] between all targets and all anchors.
+
+        Args:
+            predict_rbox: [B, anchors, 6] as (cx, cy, w, h, cos2t, sin2t)
+            target_rbox: [B, targets, 5] as (cx, cy, w, h, theta)
+        """
+        pred = predict_rbox[:, None]
+        target = target_rbox[:, :, None]
+        two_theta = 2.0 * target[..., 4]
+        target_cov = _rbox_covariance(
+            target[..., 2:4], two_theta.cos(), two_theta.sin()
+        )
+        pred_cov = _rbox_covariance(pred[..., 2:4], pred[..., 4], pred[..., 5])
+        return _bhattacharyya_score(
+            pred[..., :2], pred_cov, target[..., :2], target_cov
+        )
+
+    def __call__(
+        self,
+        target: Tensor,
+        predict: Tuple[Tensor, Tensor],
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        Match 6-column oriented targets to anchors.
+
+        Args:
+            target: Ground truth [B, targets, 6] with
+                [class_id, x1, y1, x2, y2, theta] (proxy box in pixels)
+            predict: Tuple of (pred_cls, pred_rbox)
+                - pred_cls: [B, anchors, num_classes] class logits
+                - pred_rbox: [B, anchors, 6] as (cx, cy, w, h, cos2t, sin2t)
+
+        Returns:
+            anchor_matched_targets: [B, anchors, num_classes + 4 + 1]
+            valid_mask: [B, anchors] boolean mask
+        """
+        predict_cls, predict_rbox = predict
+
+        n_targets = target.shape[1]
+        if n_targets == 0:
+            device = predict_rbox.device
+            align_cls = torch.zeros_like(predict_cls, device=device)
+            align_box = torch.zeros(
+                *predict_rbox.shape[:2], 5, device=device, dtype=predict_rbox.dtype
+            )
+            valid_mask = torch.zeros(predict_cls.shape[:2], dtype=bool, device=device)
+            return torch.cat([align_cls, align_box], dim=-1), valid_mask
+
+        target_cls, target_bbox, target_theta = target.split([1, 4, 1], dim=-1)
+        target_cls = target_cls.long().clamp(0)
+
+        # Valid matrix gates the proxy LTRB distances (unchanged semantics)
+        grid_mask = self.get_valid_matrix(target_bbox)
+
+        centers = (target_bbox[..., :2] + target_bbox[..., 2:]) / 2.0
+        sides = (target_bbox[..., 2:] - target_bbox[..., :2]).clamp_min(0.0)
+        target_rbox = torch.cat([centers, sides, target_theta], dim=-1)
+        iou_mat = self.get_similarity_matrix(predict_rbox, target_rbox)
+
+        cls_mat = self.get_cls_matrix(predict_cls.sigmoid(), target_cls)
+
+        target_matrix = (iou_mat**self.iou_factor) * (cls_mat**self.cls_factor)
+
+        topk_targets, topk_mask = self.filter_topk(
+            target_matrix, grid_mask, topk=self.topk
+        )
+        topk_mask = self.ensure_one_anchor(target_matrix, topk_mask)
+        unique_indices, valid_mask, topk_mask = self.filter_duplicates(
+            iou_mat, topk_mask
+        )
+
+        align_bbox = torch.gather(target_bbox, 1, unique_indices.repeat(1, 1, 4))
+        align_theta = torch.gather(target_theta, 1, unique_indices)
+        align_cls_indices = torch.gather(target_cls, 1, unique_indices)
+        align_cls = torch.zeros_like(align_cls_indices, dtype=torch.bool).repeat(
+            1, 1, self.num_classes
+        )
+        align_cls.scatter_(-1, index=align_cls_indices, src=~align_cls)
+
+        iou_mat *= topk_mask
+        target_matrix *= topk_mask
+        max_target = target_matrix.amax(dim=-1, keepdim=True)
+        max_iou = iou_mat.amax(dim=-1, keepdim=True)
+        normalize_term = (target_matrix / (max_target + 1e-9)) * max_iou
+        normalize_term = normalize_term.permute(0, 2, 1).gather(2, unique_indices)
+        align_cls = align_cls * normalize_term * valid_mask[:, :, None]
+
+        anchor_matched_targets = torch.cat(
+            [align_cls, align_bbox, align_theta], dim=-1
+        )
+        return anchor_matched_targets, valid_mask
+
+
+class YOLO9OrientedLoss(YOLO9Loss):
+    """YOLO9 loss for the obb task.
+
+    Keeps the in-tree DFL and BCE terms on the proxy rectangle and replaces
+    the CIoU box term with a Gaussian Kullback-Leibler loss that couples
+    center, sides, and orientation, plus an aspect-weighted auxiliary loss on
+    the double-angle orientation vector. Derivations, sources, and defaults:
+    docs/provenance/yolo9_obb.md.
+    """
+
+    matcher_class = RotatedBoxMatcher
+
+    def __init__(
+        self,
+        *args,
+        vec_weight: float = 0.5,
+        aspect_full: float = 3.0,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.vec_weight = vec_weight
+        self._log_aspect_full = math.log(aspect_full)
+
+    def __call__(
+        self,
+        predictions: List[Tensor],
+        targets: Tensor,
+        angle_maps: List[Tensor],
+    ) -> Dict[str, float]:
+        if targets.shape[-1] != 6:
+            raise ValueError(
+                "YOLO9 OBB training requires targets shaped "
+                "[B, max_targets, 6]: class, x1, y1, x2, y2, theta."
+            )
+        if self.vec2box is None:
+            raise RuntimeError("Vec2Box not initialized. Call update_anchors() first.")
+
+        preds_cls, preds_anc, preds_box = self.vec2box(predictions)
+
+        vec_levels = []
+        for level in angle_maps:
+            bsz, channels, height, width = level.shape
+            if channels != 2:
+                raise ValueError(
+                    f"OBB orientation branch must emit 2 channels, got {channels}"
+                )
+            vec_levels.append(
+                level.permute(0, 2, 3, 1).reshape(bsz, height * width, 2)
+            )
+        preds_vec = torch.cat(vec_levels, dim=1)
+        preds_unit = preds_vec / preds_vec.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        B = targets.shape[0]
+        W, H = self.vec2box.image_size
+        scale = torch.tensor(
+            [1, W, H, W, H, 1], device=targets.device, dtype=targets.dtype
+        )
+        targets_scaled = targets * scale
+
+        pred_centers = (preds_box[..., :2] + preds_box[..., 2:]) / 2.0
+        pred_sides = (preds_box[..., 2:] - preds_box[..., :2]).clamp_min(0.0)
+        pred_rbox = torch.cat([pred_centers, pred_sides, preds_unit], dim=-1)
+
+        align_targets, valid_masks = self.matcher(
+            targets_scaled, (preds_cls.detach(), pred_rbox.detach())
+        )
+        targets_cls, targets_bbox, targets_theta = torch.split(
+            align_targets, (self.num_classes, 4, 1), dim=-1
+        )
+
+        preds_box_norm = preds_box / self.vec2box.scaler[None, :, None]
+        targets_bbox_norm = targets_bbox / self.vec2box.scaler[None, :, None]
+
+        cls_norm = self._global_cls_norm(targets_cls)
+        box_norm = targets_cls.sum(-1)[valid_masks]
+
+        loss_cls = self.cls_loss(preds_cls, targets_cls, cls_norm)
+        if valid_masks.any():
+            anchors_norm = (self.vec2box.anchor_grid / self.vec2box.scaler[:, None])[
+                None
+            ]
+            loss_dfl = self.dfl_loss(
+                preds_anc,
+                targets_bbox_norm,
+                anchors_norm,
+                valid_masks,
+                box_norm,
+                cls_norm,
+            )
+
+            # Gaussian terms in fp32 under AMP (in-tree precedent).
+            m_pred_mu = pred_centers[valid_masks].float()
+            m_pred_wh = pred_sides[valid_masks].float()
+            m_unit = preds_unit[valid_masks].float()
+            m_t_bbox = targets_bbox[valid_masks].float()
+            m_theta = targets_theta[valid_masks].squeeze(-1).float()
+            m_t_mu = (m_t_bbox[..., :2] + m_t_bbox[..., 2:]) / 2.0
+            m_t_wh = (m_t_bbox[..., 2:] - m_t_bbox[..., :2]).clamp_min(1e-6)
+
+            two_theta = 2.0 * m_theta
+            pred_cov = _rbox_covariance(m_pred_wh, m_unit[..., 0], m_unit[..., 1])
+            target_cov = _rbox_covariance(
+                m_t_wh, two_theta.cos(), two_theta.sin()
+            )
+            kld = _gaussian_kld(m_pred_mu, pred_cov, m_t_mu, target_cov)
+            loss_box = (
+                (1.0 - 1.0 / (1.0 + torch.log1p(kld))) * box_norm
+            ).sum() / cls_norm
+
+            aspect = (m_t_wh[..., 0] / m_t_wh[..., 1].clamp_min(1e-6)).clamp_min(1.0)
+            weight_ar = (aspect.log() / self._log_aspect_full).clamp(0.0, 1.0)
+            target_vec = weight_ar[..., None] * torch.stack(
+                [two_theta.cos(), two_theta.sin()], dim=-1
+            )
+            vec_err = (preds_vec[valid_masks].float() - target_vec).square().sum(-1)
+            loss_vec = (vec_err * box_norm).sum() / cls_norm
+        else:
+            loss_dfl = preds_anc.sum() * 0.0
+            loss_box = preds_box_norm.sum() * 0.0
+            loss_vec = preds_vec.sum() * 0.0
+
+        loss_box_weighted = self.box_weight * loss_box
+        loss_dfl_weighted = self.dfl_weight * loss_dfl
+        loss_cls_weighted = self.cls_weight * loss_cls
+        loss_vec_weighted = self.vec_weight * loss_vec
+
+        total_loss = (
+            loss_box_weighted
+            + loss_dfl_weighted
+            + loss_cls_weighted
+            + loss_vec_weighted
+        )
+
+        loss_dict = {
+            "total_loss": total_loss,
+            "box_loss": loss_box_weighted,
+            "dfl_loss": loss_dfl_weighted,
+            "cls_loss": loss_cls_weighted,
+            "angle_loss": loss_vec_weighted,
+            "box": loss_box_weighted.item()
+            if isinstance(loss_box_weighted, Tensor)
+            else loss_box_weighted,
+            "dfl": loss_dfl_weighted.item()
+            if isinstance(loss_dfl_weighted, Tensor)
+            else loss_dfl_weighted,
+            "cls": loss_cls_weighted.item()
+            if isinstance(loss_cls_weighted, Tensor)
+            else loss_cls_weighted,
+            "angle": loss_vec_weighted.item()
+            if isinstance(loss_vec_weighted, Tensor)
+            else loss_vec_weighted,
+            "num_fg": valid_masks.sum().item() / max(B, 1),
+        }
+        return loss_dict
