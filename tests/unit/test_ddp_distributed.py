@@ -46,10 +46,6 @@ def _setup_pg(rank: int, world_size: int, port: int) -> None:
     os.environ["RANK"] = str(rank)
     os.environ["LOCAL_RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
-    # Each spawned rank otherwise defaults to num_threads == cpu_count, so the
-    # ranks oversubscribe the box. torchrun sets OMP_NUM_THREADS=1 per process
-    # for this reason; mp.spawn does not.
-    torch.set_num_threads(1)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
 
 
@@ -477,6 +473,7 @@ def _spawn_and_check(worker, n_ranks: int, tmp_path) -> dict:
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_yolo9_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for yolo9. Proves: process group init, DDP wrap,
     forward, loss-scale backward, optimizer step, cross-rank parameter
@@ -491,6 +488,7 @@ def test_yolo9_ddp_2_ranks_cpu_gloo(tmp_path):
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_rfdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for rf-detr. Same coverage as the yolo9 test.
 
@@ -507,6 +505,7 @@ def test_rfdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_rtdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for RT-DETR.
 

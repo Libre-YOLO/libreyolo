@@ -127,10 +127,6 @@ def _setup_pg(rank: int, world_size: int, port: int) -> None:
     os.environ["RANK"] = str(rank)
     os.environ["LOCAL_RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
-    # Each spawned rank otherwise defaults to num_threads == cpu_count, so the
-    # ranks oversubscribe the box. torchrun sets OMP_NUM_THREADS=1 per process
-    # for this reason; mp.spawn does not.
-    torch.set_num_threads(1)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
 
 
@@ -173,6 +169,7 @@ def _bn_divergence_worker(rank: int, world_size: int, port: int, out_dir: str) -
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_ddp_batchnorm_running_stats_diverge_per_rank(tmp_path):
     """Plain BatchNorm under 2-rank DDP: each rank's running_mean reflects only
     its own shard, so the buffers differ across ranks. This is the degradation

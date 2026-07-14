@@ -23,8 +23,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10"]
+        include:
+          # The `distributed` (multi-rank gloo) tests run on Linux only. They
+          # cover distributed-training math, which is platform-independent,
+          # and dist.init_process_group(backend="gloo") costs ~105s per test on
+          # the macOS runner: a bare 2-rank scalar all-reduce with no model in
+          # it takes 109s there against 3.9s on Linux. Those 12 tests were 71%
+          # of the whole macOS run. The spawn-plumbing tests stay on every OS.
+          - os: ubuntu-latest
+            python-version: "3.10"
+            markers: "unit and not external_data and not network"
+          - os: macos-latest
+            python-version: "3.10"
+            markers: "unit and not external_data and not network and not distributed"
+          - os: windows-latest
+            python-version: "3.10"
+            markers: "unit and not external_data and not network and not distributed"
 
     steps:
       - uses: actions/checkout@v4
@@ -49,4 +63,4 @@ jobs:
       - name: Run PR gate tests
         env:
           LIBREYOLO_PR_GATE: "1"
-        run: uv run --no-sync pytest tests/unit -m "unit and not external_data and not network"
+        run: uv run --no-sync pytest tests/unit -m "${{ matrix.markers }}" --durations=25
