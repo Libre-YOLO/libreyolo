@@ -584,6 +584,27 @@
     "optional_extra": "openvocab",
     "available": true
   },
+  "ov_deim": {
+    "class": "libreyolo.models.openvocab.ov_deim.LibreOVDEIM",
+    "tasks": [
+      "detect"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "s": 640,
+      "m": 640,
+      "l": 640
+    },
+    "default_imgsz": {
+      "s": 640,
+      "m": 640,
+      "l": 640
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "openvocab",
+    "available": true
+  },
   "owlv2": {
     "class": "libreyolo.models.openvocab.owlv2.LibreOWLv2",
     "tasks": [

@@ -12,6 +12,7 @@ from typing import Dict, Tuple, Type
 from .base import LibreOpenVocabDetector
 from .grounding_dino import LibreGroundingDINO
 from .omdet_turbo import LibreOMDetTurbo
+from .ov_deim import LibreOVDEIM
 from .owlv2 import LibreOWLv2
 
 _ALIASES: Dict[str, Tuple[Type[LibreOpenVocabDetector], str]] = {
@@ -41,6 +42,14 @@ _ALIASES: Dict[str, Tuple[Type[LibreOpenVocabDetector], str]] = {
     "omdet-turbo-tiny": (LibreOMDetTurbo, "t"),
     "omdet-turbo-swin-tiny": (LibreOMDetTurbo, "t"),
     "omdet-turbo-t": (LibreOMDetTurbo, "t"),
+    "ov-deim": (LibreOVDEIM, "s"),
+    "ovdeim": (LibreOVDEIM, "s"),
+    "ov-deim-s": (LibreOVDEIM, "s"),
+    "ovdeim-s": (LibreOVDEIM, "s"),
+    "ov-deim-m": (LibreOVDEIM, "m"),
+    "ovdeim-m": (LibreOVDEIM, "m"),
+    "ov-deim-l": (LibreOVDEIM, "l"),
+    "ovdeim-l": (LibreOVDEIM, "l"),
 }
 
 _DEFAULT_MODEL = "grounding-dino-tiny"
@@ -70,4 +79,5 @@ __all__ = [
     "LibreGroundingDINO",
     "LibreOWLv2",
     "LibreOMDetTurbo",
+    "LibreOVDEIM",
 ]

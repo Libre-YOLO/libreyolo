@@ -177,6 +177,7 @@ Open-vocabulary detector snapshot families use their own size codes:
 | `grounding_dino` | `t` (Swin-T), `b` (Swin-B) |
 | `owlv2` | `b16` (base patch-16 ensemble), `l14` (large patch-14 ensemble) |
 | `omdet_turbo` | `t` (Swin-T, the only released checkpoint) |
+| `ov_deim` | `s`, `m`, `l` (ViT-tiny / ViT-tinyplus / DINOv3-S backbones) |
 
 Notes:
 
@@ -472,6 +473,11 @@ weights/LibreOWLv2l14/
 
 # omdet_turbo - Hugging Face snapshot, no .pt checkpoint filename
 weights/LibreOMDetTurbot/
+
+# ov_deim - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOVDEIMs/
+weights/LibreOVDEIMm/
+weights/LibreOVDEIMl/
 ```
 
 ### Gaze (inference-only)

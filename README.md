@@ -105,6 +105,7 @@ Training capabilities are documented per family in
 | mobilesam | segment |  |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | omdet_turbo | detect |  |  |  |  |  |  |  |
+| ov_deim | detect |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |

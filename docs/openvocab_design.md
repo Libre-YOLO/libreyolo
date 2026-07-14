@@ -20,6 +20,7 @@ labels directly.
 | `grounding-dino`, `grounding-dino-tiny`, `grounding-dino-base` | Grounding DINO | tiny | Apache-2.0 |
 | `owlv2`, `owlv2-base`, `owlv2-large` | OWLv2 | base-patch16 ensemble | Apache-2.0 |
 | `omdet-turbo`, `omdet`, `omdet-turbo-swin-tiny` | OMDet-Turbo | Swin-T | Apache-2.0 |
+| `ov-deim`, `ov-deim-s`, `ov-deim-m`, `ov-deim-l` | OV-DEIM | s | code Apache-2.0, weights CC BY-NC 4.0 |
 
 The authoritative alias table is `_ALIASES` in
 `libreyolo/models/openvocab/__init__.py`.
@@ -34,8 +35,29 @@ Grounding DINO). It does not expose `text_threshold=`.
 including its processor and post-processing; LibreYOLO vendors no OMDet-Turbo
 model source. Because that post-processing takes the suppression threshold as
 an argument, OMDet-Turbo is the one family in the tier that honours `iou=`;
-the other two suppress nothing and warn that `iou=` is ignored. Export stays
-unsupported under ADR 0008.
+the other families suppress nothing and warn that `iou=` is ignored. Export
+stays unsupported under ADR 0008.
+
+OV-DEIM is the fastest member of the tier (upstream reports 161/109/91 FPS
+for S/M/L on a T4 with TensorRT at 640). Unlike the other families it is a
+native port, not a `transformers` wrapper: no `transformers` model class
+exists for it, so LibreYOLO vendors the detector modules
+(`libreyolo/models/openvocab/ovdeim/`, Apache-2.0, RT-DETR/DEIMv2 lineage)
+and reuses the DEIMv2 DINOv3 backbone adapter already in the repo. The
+classification branch is region-text alignment: each decoder query is scored
+by cosine similarity against MobileCLIP-B(LT) text embeddings, which
+LibreYOLO computes online with a bundled CLIP-style text tower (reusing
+LibreCLIP's transformer modules and BPE tokenizer), so arbitrary prompts
+work without upstream's precomputed embedding files. Embeddings are cached
+per vocabulary. One-to-one matching, top-K selection, no NMS. The family
+only needs `huggingface_hub` and `safetensors`, not `transformers`.
+
+Licensing is layered for OV-DEIM: the vendored code is Apache-2.0; the
+detector weights are CC BY-NC 4.0 (non-commercial, redistribution and format
+conversion permitted with attribution); the bundled MobileCLIP-B(LT) text
+tower is under the Apple Machine Learning Research Model license (research
+use only); the L backbone derives from DINOv3 weights under Meta's DINOv3
+License. A license notice is logged once at construction.
 
 Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 
@@ -44,6 +66,9 @@ Weights are loaded from LibreYOLO-owned Hugging Face mirror repositories:
 - `LibreYOLO/LibreOWLv2b16`
 - `LibreYOLO/LibreOWLv2l14`
 - `LibreYOLO/LibreOMDetTurbot`
+- `LibreYOLO/LibreOVDEIMs`
+- `LibreYOLO/LibreOVDEIMm`
+- `LibreYOLO/LibreOVDEIMl`
 
 The model cards in those repos record the original upstream source repos.
 

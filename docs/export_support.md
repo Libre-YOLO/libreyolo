@@ -40,6 +40,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | mobilesam | segment |  |  |  |  |  |  |  |
 | nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
 | omdet_turbo | detect |  |  |  |  |  |  |  |
+| ov_deim | detect |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |
@@ -237,6 +238,13 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `omdet_turbo` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `omdet_turbo` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `openvino`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
+- `ov_deim` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `onnx`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `torchscript`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `tensorrt`: Open-vocabulary runtime export is out of scope for v1.

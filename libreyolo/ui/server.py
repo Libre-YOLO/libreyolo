@@ -201,6 +201,9 @@ def _factory_openvocab_names() -> list[str]:
         "owlv2-b16",
         "owlv2-l14",
         "omdet-turbo",
+        "ov-deim-s",
+        "ov-deim-m",
+        "ov-deim-l",
     ]
 
 
