@@ -46,6 +46,10 @@ def _setup_pg(rank: int, world_size: int, port: int) -> None:
     os.environ["RANK"] = str(rank)
     os.environ["LOCAL_RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
+    # Each spawned rank otherwise defaults to num_threads == cpu_count, so the
+    # ranks oversubscribe the box. torchrun sets OMP_NUM_THREADS=1 per process
+    # for this reason; mp.spawn does not.
+    torch.set_num_threads(1)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
 
 

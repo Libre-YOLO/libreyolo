@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# Supersede in-flight runs for a PR when new commits land, but never cancel a
+# push to dev: each dev commit's result is the signal used to bisect a break.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   unit-tests:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
