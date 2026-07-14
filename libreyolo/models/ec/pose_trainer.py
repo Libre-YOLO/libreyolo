@@ -494,10 +494,11 @@ class ECPoseTrainer(BaseTrainer):
             val_config = ValidationConfig(
                 data=self.config.data,
                 split="val",
-                # Global batch / world_size, like BaseTrainer._run_validation:
-                # this runs on rank 0 alone, and the global batch is sized for
-                # world_size GPUs. An OOM here is swallowed by the except
-                # below, silently dropping the epoch's keypoint mAP.
+                # Rank-local capacity, matching BaseTrainer._run_validation.
+                # No runtime effect today: PoseValidator runs per-image
+                # inference and ignores batch_size. Kept consistent so a
+                # future batched PoseValidator doesn't inherit the global
+                # batch on the single rank that runs it.
                 batch_size=max(1, self.config.batch // max(self.world_size, 1)),
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
