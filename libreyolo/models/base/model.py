@@ -827,8 +827,14 @@ class BaseModel(ABC):
                 )
                 with torch.no_grad():
                     raw = self._forward(tensor.to(self.device))
+                # The views were preprocessed at effective_imgsz; postprocess
+                # must un-scale against that same size, not the model's default
+                # input size (they differ whenever val runs at a non-default
+                # imgsz, e.g. OBB at 1024 vs a 640 default).
+                pp_kwargs = dict(kwargs)
+                pp_kwargs.setdefault("input_size", effective_imgsz)
                 det = self._postprocess(
-                    raw, conf, iou, orig_size, max_det=max_det, ratio=ratio, **kwargs
+                    raw, conf, iou, orig_size, max_det=max_det, ratio=ratio, **pp_kwargs
                 )
                 aug_dets.append((det, orig_size, is_flipped, scale))
 

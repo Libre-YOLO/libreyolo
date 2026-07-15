@@ -392,3 +392,34 @@ def test_merge_tta_obb_rescales_scaled_views():
     row = merged.obb.data[0]
     assert float(row[0]) == pytest.approx(40.0, abs=0.5)   # 50 / 1.25
     assert float(row[2]) == pytest.approx(20.0, abs=0.5)   # 25 / 1.25
+
+
+def test_predict_augment_uses_effective_imgsz_not_model_default():
+    """Regression: TTA postprocess must un-scale against the imgsz the views
+    were preprocessed at, not the model's default input size. When they
+    differ (OBB val at 1024 vs a 640 default) the boxes must still land in
+    the original frame, not be shrunk by default/effective."""
+    from libreyolo.models.yolo9.model import LibreYOLO9
+
+    model = LibreYOLO9(None, size="t", task="obb", nb_classes=3, device="cpu")
+    model.model.eval()
+    default = model._get_input_size()
+
+    rng = np.random.default_rng(0)
+    # An imgsz deliberately different from the model default.
+    imgsz = default * 2
+    img = (rng.random((imgsz, imgsz, 3)) * 255).astype("uint8")
+
+    plain = model(img, conf=0.01, imgsz=imgsz, save=False)
+    plain = plain[0] if isinstance(plain, list) else plain
+    tta = model._predict_augment(img, conf=0.01, iou=0.5, imgsz=imgsz, max_det=300)
+
+    # Both should decode into the same imgsz-sized frame; a wrong input_size
+    # in TTA would scale every box by default/imgsz and misplace them.
+    if plain.obb is not None and len(plain.obb) and tta.obb is not None and len(tta.obb):
+        plain_c = plain.obb.xywhr[:, :2].cpu().numpy()
+        tta_c = tta.obb.xywhr[:, :2].cpu().numpy()
+        dist = np.min(
+            np.linalg.norm(plain_c[:, None] - tta_c[None, :], axis=2), axis=1
+        )
+        assert float(np.median(dist)) < imgsz * 0.05

@@ -21,11 +21,21 @@ def _model():
     return SimpleNamespace(names={0: "a", 1: "b"})
 
 
-def test_obb_rejects_tta_before_axis_aligned_merge():
-    model = SimpleNamespace(task="obb")
+def test_obb_tta_merge_is_rotation_nms_not_axis_aligned():
+    """OBB TTA is supported and routes to the rotated-NMS merge, never the
+    axis-aligned ``_merge_tta`` used by detection."""
+    from libreyolo.models.yolo9.model import LibreYOLO9
 
-    with pytest.raises(ValueError, match="oriented boxes"):
-        BaseModel._predict_augment(model, image=None)
+    model = LibreYOLO9(None, size="t", task="obb", nb_classes=3, device="cpu")
+    # A single 1.0x, unflipped view with one box: it must survive as-is,
+    # proving the merge runs and preserves oriented geometry.
+    box = [30.0, 40.0, 20.0, 10.0, 0.3, 0.9, 1.0]
+    aug_dets = [({"obb": [box], "num_detections": 1}, (100.0, 100.0), False, 1.0)]
+    merged = model._merge_tta_obb(
+        aug_dets, iou_thres=0.5, image_path=None, original_size=(100, 100), max_det=50
+    )
+    assert merged.obb is not None and len(merged.obb) == 1
+    assert abs(float(merged.obb.data[0][4]) - 0.3) < 1e-6  # angle preserved
 
 
 def test_pose_rejects_tta_before_keypoint_merge():
