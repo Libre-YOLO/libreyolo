@@ -275,16 +275,15 @@ class TestImageLoader:
 
     def test_load_url_requires_requests(self, monkeypatch):
         """Test that loading from URL without requests raises ImportError."""
-        # Mock requests as not available
         import sys
 
-        monkeypatch.setitem(sys.modules, "requests", None)
-
-        # Clear the cached import if any
-        import importlib
         import libreyolo.utils.image_loader
 
-        importlib.reload(libreyolo.utils.image_loader)
+        # _from_url imports requests inside the function, so poisoning
+        # sys.modules is enough to make that import fail. Reloading the module
+        # would additionally leave a duplicate copy of it behind for the rest
+        # of the process, which breaks under parallel test workers.
+        monkeypatch.setitem(sys.modules, "requests", None)
 
         # With requests unavailable, resolving a URL source must raise
         # ImportError before any network access is attempted.

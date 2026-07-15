@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.4
+Version: 2.5
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -8,7 +8,7 @@ This is the CI/test contract for LibreYOLO. Times are UTC.
 
 | Layer | Workflow / owner | Runs on | Trigger | Green means |
 | --- | --- | --- | --- | --- |
-| Unit | `.github/workflows/unit-tests.yml` | GitHub Linux, macOS, Windows; Python 3.10 | push to `dev`, PR to `dev`, manual | CPU-safe library and CLI/API behavior works. |
+| Unit | `.github/workflows/unit-tests.yml` | GitHub Linux, macOS, Windows; Python 3.10. Parallel via pytest-xdist; `distributed`-marked gloo tests run in a separate serial Linux-only job. | push to `dev`, PR to `dev`, manual | CPU-safe library and CLI/API behavior works. |
 | Install smoke | `.github/workflows/install-smoke.yml` | GitHub clean VMs; Python 3.10 | push to `dev`, PR to `dev`, manual, daily, publish | A clean user env can install, import, and start LibreYOLO. |
 | GPU e2e nightly | `.github/workflows/e2e-nightly-dev.yml` | GitHub-hosted controller; Modal L4 GPU worker | daily schedule, manual | Selected real-model GPU tests execute and pass on latest `dev`. |
 | GPU e2e manual | `.github/workflows/e2e-nightly-{release,pypi}.yml` | self-hosted `gpu`, `libreyolo-e2e` tower runner | manual | Selected real-model GPU tests execute and pass on `release` or latest PyPI when explicitly requested. |
@@ -28,8 +28,15 @@ Command:
 ```bash
 make test_pr_gate
 
-# Equivalent command used by the cross-platform GitHub workflow:
-LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network"
+# Equivalent commands used by the GitHub workflow. The main cross-platform job
+# runs the suite in parallel, excluding the multi-rank gloo tests:
+LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network and not distributed" -n auto --dist loadfile
+
+# The `distributed`-marked gloo tests run serially, in a separate Linux-only
+# job (each test mp.spawns its own ranks; gloo process-group init costs ~105s
+# per test on the macOS runner, and the gradient-parity tolerances are
+# BLAS-sensitive across platforms):
+LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network and distributed"
 ```
 
 Scope: CPU-safe behavior, config, parsing, errors, serialization, and CLI/API

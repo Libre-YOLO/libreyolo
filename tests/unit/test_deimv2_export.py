@@ -22,6 +22,17 @@ DEIMV2_SIZE_CASES = [
     ("x", 640, 300),
 ]
 
+# The export round-trips below assert a contract (output names, opset, metadata
+# keys, output shapes) produced by a code path that does not branch on size, so
+# exporting all 8 sizes re-proves the same thing 8 times for ~95s per CI run.
+# Per-size architecture coverage is asserted without exporting, at every size,
+# by test_deimv2_export_wrapper_returns_tuple_and_deploy_is_idempotent below and
+# by test_deimv2.py. Keep the smallest case and one 640px/300-query case here.
+DEIMV2_EXPORT_CASES = [
+    ("atto", 320, 100),
+    ("n", 640, 300),
+]
+
 
 def _has_module(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
@@ -51,9 +62,9 @@ def test_deimv2_export_wrapper_returns_tuple_and_deploy_is_idempotent(
     not (_has_module("onnx") and _has_module("onnxruntime")),
     reason="onnx/onnxruntime not installed",
 )
-@pytest.mark.parametrize(("size", "input_size", "queries"), DEIMV2_SIZE_CASES)
-def test_deimv2_onnx_export_roundtrip_all_sizes(tmp_path, size, input_size, queries):
-    """Export every DEIMv2 size to ONNX and run it through ONNX Runtime."""
+@pytest.mark.parametrize(("size", "input_size", "queries"), DEIMV2_EXPORT_CASES)
+def test_deimv2_onnx_export_roundtrip(tmp_path, size, input_size, queries):
+    """Export DEIMv2 to ONNX and run it through ONNX Runtime."""
     import onnx
     import onnxruntime as ort
 
@@ -89,8 +100,8 @@ def test_deimv2_onnx_export_roundtrip_all_sizes(tmp_path, size, input_size, quer
     assert repeat_path.exists()
 
 
-@pytest.mark.parametrize(("size", "input_size", "queries"), DEIMV2_SIZE_CASES)
-def test_deimv2_torchscript_export_roundtrip_all_sizes(
+@pytest.mark.parametrize(("size", "input_size", "queries"), DEIMV2_EXPORT_CASES)
+def test_deimv2_torchscript_export_roundtrip(
     tmp_path, size, input_size, queries
 ):
     """TorchScript export should preserve metadata and tuple output order."""

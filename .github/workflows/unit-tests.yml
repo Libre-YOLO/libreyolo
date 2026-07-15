@@ -10,7 +10,18 @@ on:
 permissions:
   contents: read
 
+# Supersede in-flight runs for a PR when new commits land, but never cancel a
+# push to dev: each dev commit's result is the signal used to bisect a break.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PR_GATE_MARKERS: "unit and not external_data and not network"
+
 jobs:
+  # The bulk of the suite, parallelised across the runner's cores. Excludes the
+  # multi-rank gloo tests, which get their own serial job below.
   unit-tests:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
@@ -43,4 +54,56 @@ jobs:
       - name: Run PR gate tests
         env:
           LIBREYOLO_PR_GATE: "1"
-        run: uv run --no-sync pytest tests/unit -m "unit and not external_data and not network"
+        # Deliberately NOT setting OMP_NUM_THREADS. Pinning torch to one thread
+        # per worker is the obvious way to stop N workers each opening a thread
+        # pool, but the thread count changes the floating-point reduction order,
+        # which moves numerical results. With OMP_NUM_THREADS=1 the strict xfail
+        # at test_detr_cpu_export_matrix.py (the known DEIM ONNX parity gap)
+        # XPASSes: the drift falls back inside tolerance. Speeding up CI must not
+        # change what the numbers are, so the workers keep torch's default thread
+        # count and we accept the oversubscription.
+        #
+        # loadfile keeps a file's tests on one worker, which preserves the
+        # module-scoped model fixtures (they are rebuilt per worker, not per
+        # test) and contains the few file-local stateful tests.
+        run: >
+          uv run --no-sync pytest tests/unit
+          -m "${{ env.PR_GATE_MARKERS }} and not distributed"
+          -n auto --dist loadfile --durations=25
+
+  # Multi-rank gloo tests. Serial, and Linux only.
+  #
+  # Linux only: they cover distributed-training math, which is platform
+  # independent, while dist.init_process_group(backend="gloo") costs ~105s per
+  # test on the macOS runner — a bare 2-rank scalar all-reduce with no model in
+  # it takes 109s there against 3.9s on Linux. Those 12 tests were 71% of the
+  # entire macOS run. They also compare a parent-process reference gradient
+  # against child-process gradients at a BLAS-sensitive tolerance, so running
+  # them on three OSes yields flakes rather than coverage.
+  #
+  # Serial: each test mp.spawns 2 ranks of its own. Fanning them across xdist
+  # workers would put ~10 processes on 4 cores. Wall clock is max(job), not
+  # sum(job), so this job is free as long as it stays shorter than the one above.
+  distributed-tests:
+    name: distributed (gloo, linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Create virtual environment
+        run: uv venv --python 3.10
+
+      - name: Install dependencies
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip]"
+
+      - name: Run distributed tests
+        env:
+          LIBREYOLO_PR_GATE: "1"
+        run: uv run --no-sync pytest tests/unit -m "${{ env.PR_GATE_MARKERS }} and distributed" --durations=25

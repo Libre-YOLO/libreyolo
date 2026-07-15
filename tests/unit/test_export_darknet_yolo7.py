@@ -1,16 +1,15 @@
-"""Export round-trip parity for the Darknet families + YOLOv7.
+"""Export-wrapper output contract for the Darknet families + YOLOv7.
 
 The decode is baked into the export graph (a single ``(B, 4+nc, N)`` tensor), so
-these check that an exported ONNX / TorchScript graph reproduces the native
-export-wrapper output bit-for-bit (within runtime fp tolerance). PR-gate safe:
-random weights, tiny variants, ONNX guarded by importorskip.
+this pins the shape and score range the wrapper must produce.
+
+Parity between an exported ONNX / TorchScript graph and this native wrapper
+output is covered for all four families by ``test_darknet_edge_export_matrix.py``
+(same assertion, at 96px instead of 416/640), so it is not repeated here.
 """
 
 from __future__ import annotations
 
-import os
-
-import numpy as np
 import pytest
 import torch
 
@@ -49,49 +48,3 @@ def test_export_wrapper_output_contract(cls, size, imgsz):
     # scores are probabilities in [0, 1]
     scores = out[:, 4:, :]
     assert float(scores.min()) >= 0.0 and float(scores.max()) <= 1.0
-
-
-@pytest.mark.parametrize("cls,size,imgsz", CASES)
-def test_onnx_graph_matches_native_wrapper(cls, size, imgsz, tmp_path):
-    pytest.importorskip("onnx")
-    ort = pytest.importorskip("onnxruntime")
-
-    model = cls(size=size, device="cpu")
-    model.model.eval()
-    torch.manual_seed(0)
-    x = torch.randn(1, 3, imgsz, imgsz)
-    with torch.no_grad():
-        native = _wrapper(model)(x).numpy()
-
-    onnx_path = model.export(format="onnx")
-    try:
-        sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-        iname = sess.get_inputs()[0].name
-        onnx_out = sess.run(None, {iname: x.numpy()})[0]
-    finally:
-        if os.path.exists(onnx_path):
-            os.remove(onnx_path)
-
-    assert onnx_out.shape == native.shape
-    assert np.abs(native - onnx_out).max() < 1e-3
-
-
-@pytest.mark.parametrize("cls,size,imgsz", [CASES[1], CASES[3]])
-def test_torchscript_graph_matches_native_wrapper(cls, size, imgsz):
-    model = cls(size=size, device="cpu")
-    model.model.eval()
-    torch.manual_seed(0)
-    x = torch.randn(1, 3, imgsz, imgsz)
-    with torch.no_grad():
-        native = _wrapper(model)(x)
-
-    ts_path = model.export(format="torchscript")
-    try:
-        ts = torch.jit.load(ts_path, map_location="cpu").eval()
-        with torch.no_grad():
-            ts_out = ts(x)
-    finally:
-        if os.path.exists(ts_path):
-            os.remove(ts_path)
-
-    assert torch.allclose(native, ts_out, atol=1e-4)

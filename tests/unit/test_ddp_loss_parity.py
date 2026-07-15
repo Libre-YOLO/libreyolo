@@ -227,6 +227,7 @@ def _spawn_and_check(worker, n_ranks: int, tmp_path, extra_args: tuple = ()) -> 
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_yolo9_ddp_gradient_matches_single_gpu(tmp_path):
     """2-rank DDP gradient must match single-GPU gradient on the same global
     batch. Fails with ratio ≈ world_size if the ``× world_size`` loss-scaling
@@ -262,6 +263,7 @@ def test_yolo9_ddp_gradient_matches_single_gpu(tmp_path):
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_yolo9_ddp_gradient_matches_single_gpu_all_background(tmp_path):
     """Same parity check on an all-background global batch (zero positive
     mass). Pins the clamp-BEFORE-divide order in ``all_reduce_avg_scalar``:
@@ -373,6 +375,7 @@ def _yolox_parity_worker(rank: int, world_size: int, port: int, out_dir: str) ->
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_yolox_ddp_gradient_matches_single_gpu(tmp_path):
     """2-rank DDP gradient must match single-GPU on the same global batch.
     Regresses if yolox's ``num_fg`` goes back to a per-rank ``max(num_fg, 1)``:
@@ -566,6 +569,7 @@ def _assert_external_parity(family: str, empty: bool, tmp_path) -> None:
     reason="mp.spawn on Windows needs Python 3.8+",
 )
 @pytest.mark.parametrize("family", ["picodet", "rtmdet"])
+@pytest.mark.distributed
 def test_external_loss_ddp_gradient_matches_single_gpu_sparse(family, tmp_path):
     """Positive-sparse global batch: all positives live on rank 0, rank 1 is
     all background. Checks global-normalizer parity plus DDP used-parameter
@@ -578,6 +582,7 @@ def test_external_loss_ddp_gradient_matches_single_gpu_sparse(family, tmp_path):
     reason="mp.spawn on Windows needs Python 3.8+",
 )
 @pytest.mark.parametrize("family", ["picodet", "rtmdet"])
+@pytest.mark.distributed
 def test_external_loss_ddp_gradient_matches_single_gpu_all_background(family, tmp_path):
     """All-background global batch (global positive mass 0): the per-rank
     normalizer is legitimately 0.5 < 1, which a downstream max(avg_factor, 1)
@@ -624,6 +629,7 @@ def _helper_value_worker(rank: int, world_size: int, port: int, out_dir: str) ->
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_all_reduce_avg_scalar_2_ranks(tmp_path):
     """Distributed values of the reduction helper: global-sum / world_size with
     the clamp applied to the global sum. Covers the python-scalar + ``device=``

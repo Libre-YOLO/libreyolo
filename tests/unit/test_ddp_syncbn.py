@@ -169,6 +169,7 @@ def _bn_divergence_worker(rank: int, world_size: int, port: int, out_dir: str) -
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_ddp_batchnorm_running_stats_diverge_per_rank(tmp_path):
     """Plain BatchNorm under 2-rank DDP: each rank's running_mean reflects only
     its own shard, so the buffers differ across ranks. This is the degradation
