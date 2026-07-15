@@ -4,12 +4,11 @@ Moved verbatim from ``libreyolo/models/yolo9/utils.py``, which re-exports
 everything here for backward compatibility.
 """
 
-import numpy as np
 import torch
 from torchvision.ops import batched_nms
 from typing import Dict, Tuple, Union
 
-from ..utils.box_ops import _aabb_overlap, rotated_iou_pairwise
+from ..utils.box_ops import rotated_nms
 
 
 _YOLO9_MAX_NMS_CANDIDATES = 30000
@@ -116,65 +115,8 @@ def _rotated_nms_keep_indices(
     iou_thres: float,
     max_det: int,
 ) -> torch.Tensor:
-    """Class-aware greedy NMS over rotated boxes.
-
-    The suppression order and threshold semantics are the textbook greedy
-    ones, but the geometry is evaluated as a single vectorized IoU matrix on
-    the tensors' own device (:func:`rotated_iou_matrix`) instead of one
-    OpenCV call per candidate pair.
-    """
-    if xywhr.numel() == 0:
-        return torch.zeros(0, dtype=torch.long, device=xywhr.device)
-
-    finite_mask = torch.isfinite(xywhr).all(dim=1) & torch.isfinite(scores)
-    if not finite_mask.all():
-        valid_indices = torch.where(finite_mask)[0]
-        if len(valid_indices) == 0:
-            return torch.zeros(0, dtype=torch.long, device=xywhr.device)
-        xywhr = xywhr[finite_mask]
-        scores = scores[finite_mask]
-        class_ids = class_ids[finite_mask]
-    else:
-        valid_indices = None
-
-    order = torch.argsort(scores, descending=True)
-    ranked = xywhr[order]
-    ranked_classes = class_ids[order]
-    count = ranked.shape[0]
-
-    # Ranked by score, so a suppressor always precedes its victim: only the
-    # upper triangle can suppress. Same-class and axis-aligned-envelope
-    # overlap are both prerequisites, and both are far cheaper than the
-    # polygon intersection, so they gate which pairs are evaluated at all.
-    candidates = (
-        _aabb_overlap(ranked, ranked)
-        & (ranked_classes[:, None] == ranked_classes[None, :])
-    ).triu(diagonal=1)
-    rows, cols = candidates.nonzero(as_tuple=True)
-
-    suppresses = np.zeros((count, count), dtype=bool)
-    if rows.numel():
-        overlapping = (
-            rotated_iou_pairwise(ranked[rows], ranked[cols]) > iou_thres
-        )
-        suppresses[
-            rows[overlapping].cpu().numpy(), cols[overlapping].cpu().numpy()
-        ] = True
-
-    alive = np.ones(count, dtype=bool)
-    keep_local: list[int] = []
-    for candidate in range(count):
-        if not alive[candidate]:
-            continue
-        keep_local.append(candidate)
-        if len(keep_local) >= max_det:
-            break
-        alive &= ~suppresses[candidate]
-
-    keep = order[torch.as_tensor(keep_local, dtype=torch.long, device=xywhr.device)]
-    if valid_indices is not None:
-        keep = valid_indices[keep]
-    return keep
+    """Class-aware greedy rotated NMS (thin alias over the shared op)."""
+    return rotated_nms(xywhr, scores, class_ids, iou_thres, max_det)
 
 
 def _obb_prefilter_keep_indices(

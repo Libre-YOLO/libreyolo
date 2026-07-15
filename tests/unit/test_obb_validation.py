@@ -139,9 +139,22 @@ def test_obb_validator_metrics_are_perfect_for_exact_prediction():
     assert metrics["metrics/mAP50-95"] == pytest.approx(1.0)
 
 
-def test_obb_validation_rejects_augmented_validation_before_base_tta():
-    with pytest.raises(ValueError, match="oriented boxes"):
-        BaseModel.val(_DummyOBBModel(), data="unused.yaml", imgsz=64, augment=True)
+def test_obb_predict_augment_merges_flipped_views():
+    """OBB TTA is supported: flipped-view boxes must un-transform back onto
+    the plain-view boxes (mirror center x, negate angle) so the rotated-NMS
+    merge combines them rather than duplicating them."""
+    import numpy as np
+
+    from libreyolo.models.yolo9.model import LibreYOLO9
+
+    model = LibreYOLO9(None, size="t", task="obb", nb_classes=3, device="cpu")
+    model.model.eval()
+
+    # A deterministic image so plain and flipped views see the same content.
+    rng = np.random.default_rng(0)
+    img = (rng.random((256, 256, 3)) * 255).astype("uint8")
+    result = model._predict_augment(img, conf=0.001, iou=0.5, imgsz=256, max_det=100)
+    assert result.obb is not None  # returns an OBB container, does not raise
 
 
 def test_pose_validation_rejects_augmented_validation_before_base_tta():

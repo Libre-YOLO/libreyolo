@@ -185,6 +185,9 @@ class OBBValidator(BaseValidator):
         if dataset is None:
             img_files = [Path(p) for p in img_files]
             label_files = [Path(p) for p in (label_files or img2label_paths(img_files))]
+            # img_id == position in img_files (see val_collate_fn / dataset build),
+            # so this list resolves the per-image path for TTA validation.
+            self._val_img_files = img_files
             self.val_preproc = _OBBValPreprocessor(
                 self.model._get_val_preprocessor(img_size=actual_imgsz)
             )
@@ -381,6 +384,64 @@ class OBBValidator(BaseValidator):
                         "xywhr": np.asarray(row[:5], dtype=np.float32),
                     }
                 )
+
+    def _run_validation_augmented(self) -> None:
+        """Test-time augmentation validation for oriented boxes.
+
+        Runs the model's multi-scale + horizontal-flip TTA per image
+        (``_predict_augment`` -> rotated-NMS merge) and feeds the merged
+        oriented boxes through the same metric accumulation as the plain
+        path, so the only difference is inference.
+        """
+        import sys
+        import time
+
+        from tqdm import tqdm
+
+        img_files = getattr(self, "_val_img_files", None)
+        if not img_files:
+            raise RuntimeError(
+                "OBB TTA validation needs a YOLO-format image list; the COCO-JSON "
+                "path is not supported for augment=True."
+            )
+
+        self.model.model.eval()
+        conf_thres = self.config.conf_thres
+
+        pbar = tqdm(
+            self.dataloader,
+            desc="Validating (OBB TTA)",
+            total=len(self.dataloader),
+            disable=not self.config.verbose or not sys.stderr.isatty(),
+            file=sys.stderr,
+        )
+        total_start = time.time()
+
+        with torch.no_grad():
+            for batch in pbar:
+                _images, targets, img_info, img_ids = batch
+                detections = []
+                t0 = time.time()
+                for img_id in img_ids:
+                    idx = int(img_id.item()) if hasattr(img_id, "item") else int(img_id)
+                    result = self.model._predict_augment(
+                        str(img_files[idx]),
+                        conf=conf_thres,
+                        iou=self.config.iou_thres,
+                        imgsz=self._actual_imgsz,
+                        max_det=self.config.max_det,
+                    )
+                    if result.obb is not None and len(result.obb) > 0:
+                        obb = result.obb.data.to(self.device).float()
+                    else:
+                        obb = torch.zeros((0, 7), dtype=torch.float32, device=self.device)
+                    detections.append({"obb": obb})
+
+                self.speed["inference"] += time.time() - t0
+                self._update_metrics(detections, targets, img_info, img_ids)
+                self.seen += len(img_ids)
+
+        self.speed["total"] = time.time() - total_start
 
     @staticmethod
     def _average_precision(recall: np.ndarray, precision: np.ndarray) -> float:

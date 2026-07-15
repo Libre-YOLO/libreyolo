@@ -2,6 +2,7 @@
 
 import math
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -286,3 +287,68 @@ def rotated_iou_matrix(boxes1: Tensor, boxes2: Tensor, eps: float = 1e-7) -> Ten
         return iou
     iou[rows, cols] = rotated_iou_pairwise(boxes1[rows], boxes2[cols], eps)
     return iou
+
+
+def rotated_nms(
+    xywhr: Tensor,
+    scores: Tensor,
+    class_ids: Tensor,
+    iou_thres: float,
+    max_det: int,
+) -> Tensor:
+    """Class-aware greedy NMS over rotated ``xywhr`` boxes.
+
+    The suppression order and threshold semantics are the textbook greedy
+    ones; the geometry is the exact vectorized rotated IoU
+    (:func:`rotated_iou_pairwise`). Ranking by score means a suppressor
+    always precedes its victim, so only the upper triangle can suppress, and
+    same-class plus axis-aligned-envelope overlap gate which pairs reach the
+    polygon intersection at all. Shared by the YOLO9 postprocess and the
+    oriented-box TTA merge so both de-duplicate identically.
+    """
+    if xywhr.numel() == 0:
+        return torch.zeros(0, dtype=torch.long, device=xywhr.device)
+
+    finite_mask = torch.isfinite(xywhr).all(dim=1) & torch.isfinite(scores)
+    if not finite_mask.all():
+        valid_indices = torch.where(finite_mask)[0]
+        if len(valid_indices) == 0:
+            return torch.zeros(0, dtype=torch.long, device=xywhr.device)
+        xywhr = xywhr[finite_mask]
+        scores = scores[finite_mask]
+        class_ids = class_ids[finite_mask]
+    else:
+        valid_indices = None
+
+    order = torch.argsort(scores, descending=True)
+    ranked = xywhr[order]
+    ranked_classes = class_ids[order]
+    count = ranked.shape[0]
+
+    candidates = (
+        _aabb_overlap(ranked, ranked)
+        & (ranked_classes[:, None] == ranked_classes[None, :])
+    ).triu(diagonal=1)
+    rows, cols = candidates.nonzero(as_tuple=True)
+
+    suppresses = np.zeros((count, count), dtype=bool)
+    if rows.numel():
+        overlapping = rotated_iou_pairwise(ranked[rows], ranked[cols]) > iou_thres
+        suppresses[
+            rows[overlapping].cpu().numpy(), cols[overlapping].cpu().numpy()
+        ] = True
+
+    alive = np.ones(count, dtype=bool)
+    keep_local: list[int] = []
+    for candidate in range(count):
+        if not alive[candidate]:
+            continue
+        keep_local.append(candidate)
+        if len(keep_local) >= max_det:
+            break
+        alive &= ~suppresses[candidate]
+
+    keep = order[torch.as_tensor(keep_local, dtype=torch.long, device=xywhr.device)]
+    if valid_indices is not None:
+        keep = valid_indices[keep]
+    return keep

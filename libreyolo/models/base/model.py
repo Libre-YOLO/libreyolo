@@ -145,6 +145,15 @@ class BaseModel(ABC):
     # Ignored when TTA_FIXED_SIZE is True.
     TTA_SCALES: ClassVar[Tuple[float, ...]] = (1.0,)
 
+    def _tta_scales(self) -> Tuple[float, ...]:
+        """TTA scale factors for this instance.
+
+        Defaults to the class-level ``TTA_SCALES``; families whose scale set
+        depends on the loaded task (e.g. multi-scale for OBB but flip-only for
+        detect) override this rather than the class variable.
+        """
+        return self.TTA_SCALES
+
     # Model registry — auto-populated by __init_subclass__
     _registry: ClassVar[List[Type["BaseModel"]]] = []
 
@@ -742,11 +751,6 @@ class BaseModel(ABC):
         Scales are read from TTA_SCALES (class variable); each scale x 2 flips
         = one batch of passes. TTA_FIXED_SIZE models always use flip-only.
         """
-        if getattr(self, "task", "detect") == "obb":
-            raise ValueError(
-                "Test-time augmentation does not support oriented boxes yet. "
-                "Use augment=False for OBB models."
-            )
         if getattr(self, "task", "detect") == "pose":
             raise ValueError(
                 "Test-time augmentation does not support pose keypoints yet. "
@@ -801,7 +805,7 @@ class BaseModel(ABC):
                 **kwargs,
             )
 
-        scales = (1.0,) if self.TTA_FIXED_SIZE else self.TTA_SCALES
+        scales = (1.0,) if self.TTA_FIXED_SIZE else self._tta_scales()
 
         aug_dets = []
         for scale in scales:
@@ -830,6 +834,11 @@ class BaseModel(ABC):
 
         if getattr(self, "task", "detect") == "classify":
             return self._merge_classify_tta(aug_dets, image_path, (orig_w, orig_h))
+
+        if getattr(self, "task", "detect") == "obb":
+            return self._merge_tta_obb(
+                aug_dets, iou, image_path, (orig_w, orig_h), max_det, classes
+            )
 
         return self._merge_tta(aug_dets, iou, image_path, (orig_w, orig_h), classes)
 
@@ -950,6 +959,96 @@ class BaseModel(ABC):
             path=str(image_path) if image_path else None,
             names=self.names,
             probs=Probs(avg_probs),
+        )
+
+    def _merge_tta_obb(
+        self,
+        aug_dets: list,
+        iou_thres: float,
+        image_path,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        classes: Optional[List[int]] = None,
+    ) -> Results:
+        """Merge oriented-box TTA views via class-aware rotated NMS.
+
+        Each view's ``xywhr`` predictions are mapped back to the original
+        frame (a horizontal flip mirrors the center x and negates the angle;
+        a rectangle's orientation is invariant mod pi, so no separate vertical
+        handling is needed), then all views are pooled and de-duplicated with
+        the same exact rotated NMS the single-view postprocess uses.
+        """
+        from ...utils.box_ops import rotated_nms
+        from ...utils.results import OBB, Results
+
+        orig_w, orig_h = original_size
+        orig_shape = (orig_h, orig_w)
+
+        rects: List[torch.Tensor] = []
+        scores: List[torch.Tensor] = []
+        cls_ids: List[torch.Tensor] = []
+        for det, view_size, is_flipped, scale in aug_dets:
+            raw = det.get("obb")
+            if not det.get("num_detections") or raw is None:
+                continue
+            rows = (
+                raw.float().cpu()
+                if isinstance(raw, torch.Tensor)
+                else torch.as_tensor(raw, dtype=torch.float32)
+            )
+            if rows.numel() == 0:
+                continue
+            xywhr = rows[:, :5].clone()
+            if is_flipped:
+                xywhr[:, 0] = view_size[0] - xywhr[:, 0]
+                xywhr[:, 4] = -xywhr[:, 4]
+            if scale != 1.0:
+                xywhr[:, :4] = xywhr[:, :4] / scale
+            rects.append(xywhr)
+            scores.append(rows[:, 5])
+            cls_ids.append(rows[:, 6])
+
+        def _empty() -> Results:
+            return Results(
+                boxes=None,
+                orig_shape=orig_shape,
+                path=str(image_path) if image_path else None,
+                names=self.names,
+                obb=OBB(torch.zeros((0, 7), dtype=torch.float32), orig_shape),
+            )
+
+        if not rects:
+            return _empty()
+
+        xywhr = torch.cat(rects, dim=0)
+        scores_cat = torch.cat(scores, dim=0)
+        cls_cat = torch.cat(cls_ids, dim=0)
+
+        if classes is not None:
+            keep_cls = torch.zeros(cls_cat.shape[0], dtype=torch.bool)
+            for c in classes:
+                keep_cls |= cls_cat == c
+            xywhr, scores_cat, cls_cat = (
+                xywhr[keep_cls],
+                scores_cat[keep_cls],
+                cls_cat[keep_cls],
+            )
+            if xywhr.numel() == 0:
+                return _empty()
+
+        keep = rotated_nms(xywhr, scores_cat, cls_cat.long(), iou_thres, max_det)
+        if len(keep) == 0:
+            return _empty()
+
+        merged = torch.cat(
+            (xywhr[keep], scores_cat[keep, None], cls_cat[keep, None]), dim=1
+        )
+        return Results(
+            boxes=None,
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+            obb=OBB(merged, orig_shape),
         )
 
     def _merge_tta(
@@ -1367,11 +1466,6 @@ class BaseModel(ABC):
             imgsz = self._get_input_size()
         if plots is not None and "save_plots" not in kwargs:
             kwargs["save_plots"] = plots
-        if augment and self.task == "obb":
-            raise ValueError(
-                "Augmented validation does not support oriented boxes yet. "
-                "Use augment=False for OBB models."
-            )
         if augment and self.task == "pose":
             raise ValueError(
                 "Augmented validation does not support pose keypoints yet. "

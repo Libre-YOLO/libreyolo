@@ -345,3 +345,50 @@ def test_obb_val_preprocessor_survives_pickle_roundtrip():
     img = np.zeros((32, 32, 3), dtype=np.uint8)
     targets = np.zeros((1, 6), dtype=np.float32)
     assert restored(img, targets, (32, 32)) is not None
+
+
+def test_merge_tta_obb_unflips_and_dedups():
+    """The OBB TTA merge must map a flipped view's boxes back onto the plain
+    view (mirror center x, negate angle) so rotated NMS de-duplicates them
+    into one box rather than keeping both."""
+    from libreyolo.models.yolo9.model import LibreYOLO9
+
+    model = LibreYOLO9(None, size="t", task="obb", nb_classes=3, device="cpu")
+
+    view_w = 100.0
+    # cx, cy, w, h, angle, score, cls
+    plain_box = [30.0, 40.0, 20.0, 10.0, 0.3, 0.9, 1.0]
+    # Same object seen in the horizontally-flipped view: x mirrored, angle negated.
+    flipped_box = [view_w - 30.0, 40.0, 20.0, 10.0, -0.3, 0.85, 1.0]
+
+    aug_dets = [
+        ({"obb": [plain_box], "num_detections": 1}, (view_w, 100.0), False, 1.0),
+        ({"obb": [flipped_box], "num_detections": 1}, (view_w, 100.0), True, 1.0),
+    ]
+    merged = model._merge_tta_obb(
+        aug_dets, iou_thres=0.5, image_path=None,
+        original_size=(int(view_w), 100), max_det=100,
+    )
+    # The two views describe the same box -> exactly one survives NMS,
+    # sitting at the plain-view location.
+    assert len(merged.obb) == 1
+    row = merged.obb.data[0]
+    assert float(row[0]) == pytest.approx(30.0, abs=1.0)   # center x, not mirrored
+    assert abs(float(row[4]) - 0.3) < 1e-3                  # angle, not negated
+    assert int(row[6]) == 1
+
+
+def test_merge_tta_obb_rescales_scaled_views():
+    """A view rendered at scale s must have its boxes divided by s."""
+    from libreyolo.models.yolo9.model import LibreYOLO9
+
+    model = LibreYOLO9(None, size="t", task="obb", nb_classes=3, device="cpu")
+    # One 1.25x view only; box coords should come back divided by 1.25.
+    scaled = [50.0, 60.0, 25.0, 10.0, 0.2, 0.9, 2.0]
+    aug_dets = [({"obb": [scaled], "num_detections": 1}, (125.0, 125.0), False, 1.25)]
+    merged = model._merge_tta_obb(
+        aug_dets, 0.5, None, original_size=(100, 100), max_det=100
+    )
+    row = merged.obb.data[0]
+    assert float(row[0]) == pytest.approx(40.0, abs=0.5)   # 50 / 1.25
+    assert float(row[2]) == pytest.approx(20.0, abs=0.5)   # 25 / 1.25

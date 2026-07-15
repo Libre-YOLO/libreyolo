@@ -58,6 +58,12 @@ class LibreYOLO9(BaseModel):
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
     val_preprocessor_class = YOLO9ValPreprocessor
+    # Multi-scale TTA for oriented boxes (aerial imagery spans object scales);
+    # detection keeps the flip-only default so its behavior is unchanged.
+    OBB_TTA_SCALES = (0.83, 1.0, 1.2)
+
+    def _tta_scales(self):
+        return self.OBB_TTA_SCALES if self.task == "obb" else self.TTA_SCALES
     # Additional checkpoint model_family values accepted as transfer-learning
     # sources (subclass hook; e.g. yolo9_p2 accepts base yolo9 checkpoints).
     TRANSFER_COMPATIBLE_FAMILIES: tuple = ()
