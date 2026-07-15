@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 import torch
+from scipy.optimize import linear_sum_assignment
 
 pytestmark = pytest.mark.unit
 
@@ -26,15 +25,6 @@ _ONNX_PARITY_GAPS = {
     "LibreRTDETRv4": "7.3% of selected boxes exceed the ONNX tolerance",
 }
 
-# LibreEC ONNX runs deterministically drift past the 0.95 match bar on macOS
-# runners (detect row_match 0.777, segment element_match 0.898) while ubuntu
-# and windows stay above it. Environment-dependent, so not strict.
-_MACOS_LIBREEC_ONNX_DRIFT = pytest.mark.xfail(
-    sys.platform == "darwin",
-    strict=False,
-    reason="macOS onnxruntime drift exceeds the 0.95 match bar for LibreEC",
-)
-
 
 def _export_cases():
     for format in ("onnx", "torchscript"):
@@ -44,8 +34,6 @@ def _export_cases():
                 marks = pytest.mark.xfail(
                     strict=True, reason=_ONNX_PARITY_GAPS[class_name]
                 )
-            elif format == "onnx" and class_name == "LibreEC":
-                marks = _MACOS_LIBREEC_ONNX_DRIFT
             yield pytest.param(
                 class_name,
                 size,
@@ -54,6 +42,29 @@ def _export_cases():
                 marks=marks,
                 id=f"{format}-{class_name}",
             )
+
+
+def _align_query_outputs(actual, expected):
+    """Align unordered DETR queries using their predicted boxes."""
+    box_index = next(
+        (
+            i
+            for i, output in enumerate(expected)
+            if output.ndim == 3 and output.shape[-1] == 4
+        ),
+        None,
+    )
+    assert box_index is not None, "query alignment requires a box output"
+    aligned = [np.empty_like(output) for output in actual]
+    for batch_index, (actual_boxes, expected_boxes) in enumerate(
+        zip(actual[box_index], expected[box_index])
+    ):
+        cost = np.square(actual_boxes[:, None] - expected_boxes[None, :]).sum(axis=-1)
+        actual_indices, expected_indices = linear_sum_assignment(cost)
+        actual_order = actual_indices[np.argsort(expected_indices)]
+        for aligned_output, actual_output in zip(aligned, actual):
+            aligned_output[batch_index] = actual_output[batch_index, actual_order]
+    return tuple(aligned)
 
 
 @pytest.mark.parametrize(
@@ -92,9 +103,11 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
     actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
 
     assert len(actual) == len(native)
+    expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
+    if format == "onnx" and class_name == "LibreEC":
+        actual = _align_query_outputs(actual, expected_outputs)
     rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
-    for actual_output, native_output in zip(actual, native):
-        expected = native_output.detach().cpu().numpy()
+    for actual_output, expected in zip(actual, expected_outputs):
         if format == "onnx" and expected.shape[-1] == 4:
             row_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol).all(
                 axis=-1
@@ -120,27 +133,11 @@ _TASK_HEAD_CASES = (
 )
 
 
-def _task_head_cases():
-    for format in ("onnx", "torchscript"):
-        for class_name, size, task, imgsz in _TASK_HEAD_CASES:
-            marks = ()
-            if format == "onnx" and class_name == "LibreEC" and task == "segment":
-                marks = _MACOS_LIBREEC_ONNX_DRIFT
-            yield pytest.param(
-                class_name,
-                size,
-                task,
-                imgsz,
-                format,
-                marks=marks,
-                id=f"{format}-{class_name}-{size}-{task}-{imgsz}",
-            )
-
-
 @pytest.mark.parametrize(
-    ("class_name", "size", "task", "imgsz", "format"),
-    _task_head_cases(),
+    ("class_name", "size", "task", "imgsz"),
+    _TASK_HEAD_CASES,
 )
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
 def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, format):
     if format == "onnx":
         pytest.importorskip("onnx")
@@ -175,9 +172,11 @@ def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, form
     actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
 
     assert len(actual) == len(native)
+    expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
+    if format == "onnx" and class_name == "LibreEC" and task == "segment":
+        actual = _align_query_outputs(actual, expected_outputs)
     rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
-    for actual_output, native_output in zip(actual, native):
-        expected = native_output.detach().cpu().numpy()
+    for actual_output, expected in zip(actual, expected_outputs):
         if format == "onnx":
             element_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol)
             assert float(element_match.mean()) > 0.95
