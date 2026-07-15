@@ -45,21 +45,18 @@ def _export_cases():
 
 
 def _align_query_outputs(actual, expected):
-    """Align unordered DETR queries using their predicted boxes."""
-    box_index = next(
-        (
-            i
-            for i, output in enumerate(expected)
-            if output.ndim == 3 and output.shape[-1] == 4
-        ),
-        None,
-    )
-    assert box_index is not None, "query alignment requires a box output"
+    """Align unordered DETR queries using their predicted geometry."""
+    assert len(actual) > 1, "query alignment requires a geometric output"
+    assert actual[1].shape == expected[1].shape
     aligned = [np.empty_like(output) for output in actual]
-    for batch_index, (actual_boxes, expected_boxes) in enumerate(
-        zip(actual[box_index], expected[box_index])
+    for batch_index, (actual_geometry, expected_geometry) in enumerate(
+        zip(actual[1], expected[1])
     ):
-        cost = np.square(actual_boxes[:, None] - expected_boxes[None, :]).sum(axis=-1)
+        actual_vectors = actual_geometry.reshape(actual_geometry.shape[0], -1)
+        expected_vectors = expected_geometry.reshape(expected_geometry.shape[0], -1)
+        cost = np.square(actual_vectors[:, None] - expected_vectors[None, :]).sum(
+            axis=-1
+        )
         actual_indices, expected_indices = linear_sum_assignment(cost)
         actual_order = actual_indices[np.argsort(expected_indices)]
         for aligned_output, actual_output in zip(aligned, actual):
@@ -173,7 +170,7 @@ def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, form
 
     assert len(actual) == len(native)
     expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
-    if format == "onnx" and class_name == "LibreEC" and task == "segment":
+    if format == "onnx" and class_name == "LibreEC":
         actual = _align_query_outputs(actual, expected_outputs)
     rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
     for actual_output, expected in zip(actual, expected_outputs):
