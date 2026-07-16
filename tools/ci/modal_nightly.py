@@ -23,9 +23,18 @@ CACHE_VOLUME = os.getenv("LIBREYOLO_MODAL_CACHE_VOLUME", "libreyolo-nightly-cach
 GPU = os.getenv("LIBREYOLO_MODAL_GPU", "L4")
 REPO_URL = "https://github.com/LibreYOLO/libreyolo.git"
 WORKDIR = Path("/workspace/libreyolo")
+CACHE_ROOT = Path("/cache")
+CACHE_WEIGHTS = CACHE_ROOT / "weights"
 
 WEIGHT_SUFFIXES = {".pt", ".pth", ".safetensors"}
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
+# Written by the model loaders once a Hugging Face snapshot is verified complete
+# (see libreyolo/models/openvocab/base.py). Its absence means the loader will
+# download the snapshot again.
+SNAPSHOT_MARKER = ".libreyolo_snapshot_complete"
+# Requests-based hub downloads hang forever by default; xet transfers may not
+# honour this, which is why the e2e per-test timeout is the real backstop.
+HF_DOWNLOAD_TIMEOUT_S = os.getenv("LIBREYOLO_HF_DOWNLOAD_TIMEOUT", "60")
 GPU_USD_PER_S = {
     "T4": 0.000164,
     "L4": 0.000222,
@@ -34,6 +43,20 @@ GPU_USD_PER_S = {
 
 app = modal.App(APP_NAME)
 cache = modal.Volume.from_name(CACHE_VOLUME, create_if_missing=True)
+
+
+def hf_secrets() -> list[modal.Secret]:
+    """Authenticate to the Hugging Face Hub when the workflow supplies a token.
+
+    Anonymous pulls from a shared datacenter egress are the ones the Hub
+    throttles. A missing token keeps the previous anonymous behaviour instead of
+    failing the run, so this stays optional.
+    """
+    token = os.getenv("HF_TOKEN", "").strip()
+    if not token:
+        return []
+    return [modal.Secret.from_dict({"HF_TOKEN": token})]
+
 
 image = (
     modal.Image.debian_slim(python_version="3.10")
@@ -69,7 +92,7 @@ def replace_with_symlink(link: Path, target: Path) -> None:
 
 
 def prepare_home_cache_links() -> None:
-    cache_root = Path("/cache")
+    cache_root = CACHE_ROOT
     cache_root.mkdir(parents=True, exist_ok=True)
     home_cache = Path.home() / ".cache"
     home_cache.mkdir(parents=True, exist_ok=True)
@@ -79,6 +102,7 @@ def prepare_home_cache_links() -> None:
 
     os.environ["HF_HOME"] = str(cache_root / "huggingface")
     os.environ["LIBREYOLO_DATASETS_DIR"] = str(cache_root / "datasets")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", HF_DOWNLOAD_TIMEOUT_S)
 
 
 def is_weight_file(path: Path) -> bool:
@@ -89,9 +113,33 @@ def is_image_file(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
 
 
+def snapshot_dirs(root: Path) -> list[Path]:
+    """Snapshot directories under ``root`` that the loaders consider complete."""
+    if not root.exists():
+        return []
+    return sorted(marker.parent for marker in root.glob(f"*/{SNAPSHOT_MARKER}"))
+
+
+def link_cached_snapshots() -> None:
+    """Restore Hugging Face snapshots (open-vocab, SAM, VLM) as whole directories.
+
+    A loader only skips the download when the marker file and the config sit
+    beside the weights, and neither is a weight file, so file-level caching left
+    every snapshot family re-downloading its full snapshot on every run.
+    """
+    worktree_weights = WORKDIR / "weights"
+    worktree_weights.mkdir(parents=True, exist_ok=True)
+
+    for src in snapshot_dirs(CACHE_WEIGHTS):
+        dest = worktree_weights / src.name
+        if dest.exists() or dest.is_symlink():
+            continue
+        dest.symlink_to(src, target_is_directory=True)
+
+
 def link_cached_weights() -> None:
     """Expose cached weight files without replacing tracked weights/ helpers."""
-    cache_weights = Path("/cache/weights")
+    cache_weights = CACHE_WEIGHTS
     worktree_weights = WORKDIR / "weights"
     cache_weights.mkdir(parents=True, exist_ok=True)
     worktree_weights.mkdir(parents=True, exist_ok=True)
@@ -107,8 +155,31 @@ def link_cached_weights() -> None:
         dest.symlink_to(src)
 
 
+def sync_snapshots_to_cache() -> None:
+    """Persist snapshots that carry the completion marker.
+
+    The marker is only written after the loader verifies the snapshot, so these
+    are safe to keep even when the suite fails. Publishing through a temporary
+    directory keeps a half-copied snapshot from ever being seen as complete.
+    """
+    cache_weights = CACHE_WEIGHTS
+    worktree_weights = WORKDIR / "weights"
+    cache_weights.mkdir(parents=True, exist_ok=True)
+
+    for snapshot in snapshot_dirs(worktree_weights):
+        if snapshot.is_symlink():
+            continue
+        dest = cache_weights / snapshot.name
+        if dest.exists():
+            continue
+        staging = cache_weights / f".{snapshot.name}.partial"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(snapshot, staging)
+        staging.rename(dest)
+
+
 def sync_downloaded_weights_to_cache() -> None:
-    cache_weights = Path("/cache/weights")
+    cache_weights = CACHE_WEIGHTS
     worktree_weights = WORKDIR / "weights"
     if not worktree_weights.exists():
         return
@@ -124,8 +195,9 @@ def sync_downloaded_weights_to_cache() -> None:
 
 
 def prepare_worktree_cache_links() -> None:
+    link_cached_snapshots()
     link_cached_weights()
-    replace_with_symlink(WORKDIR / "downloads", Path("/cache/downloads"))
+    replace_with_symlink(WORKDIR / "downloads", CACHE_ROOT / "downloads")
 
 
 def is_lfs_pointer(path: Path) -> bool:
@@ -199,6 +271,7 @@ def run_test_target(target: str) -> None:
     gpu=GPU,
     timeout=3 * 60 * 60,
     volumes={"/cache": cache},
+    secrets=hf_secrets(),
 )
 def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
     started = time.monotonic()
@@ -272,14 +345,21 @@ def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
         cache_status = "skipped"
         step = time.monotonic()
         try:
-            if status == "passed" and WORKDIR.exists():
+            if not WORKDIR.exists():
+                cache_status = "workdir-missing"
+            elif status == "passed":
+                sync_snapshots_to_cache()
                 sync_downloaded_weights_to_cache()
                 cache.commit()
                 cache_status = "committed"
-            elif status != "passed":
-                cache_status = "skipped-failed-run"
             else:
-                cache_status = "workdir-missing"
+                # Keep verified snapshots even when the suite fails, so a run
+                # that dies mid-suite does not leave the next one downloading
+                # them cold again. Loose weight files stay out: only snapshots
+                # carry a completeness marker, so only they are provably whole.
+                sync_snapshots_to_cache()
+                cache.commit()
+                cache_status = "committed-snapshots-failed-run"
         except Exception as exc:
             cache_error = repr(exc)
             cache_status = "failed"

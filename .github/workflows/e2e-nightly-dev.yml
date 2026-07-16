@@ -79,6 +79,9 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          # Optional: lifts the Modal container off anonymous Hub rate limits.
+          # Unset is fine, the run stays anonymous as before.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -uo pipefail
           uvx modal run tools/ci/modal_nightly.py \
