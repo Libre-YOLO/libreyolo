@@ -85,6 +85,15 @@ openvocab = [
     "transformers>=5.1.0",
     "timm>=1.0.0",
 ]
+sensenova = [
+    # SenseNova-Vision (Bagel-MoT): the vendored architecture loads through
+    # accelerate's big-model dispatch; the tokenizer and activation registry
+    # come from transformers. flash-attn is optional (SDPA fallback built in).
+    "transformers>=5.1.0",
+    "accelerate>=1.7.0",
+    # 4-bit NF4 loading on consumer GPUs; no macOS wheels.
+    "bitsandbytes>=0.45.0; sys_platform != 'darwin'",
+]
 label = [
     # AI-assist for `libreyolo label`: SAM click-to-mask via the LibreSAM tier.
     # The manual labeller and model-assisted box auto-label work without this.
@@ -187,6 +196,7 @@ all = [
     "libreyolo[sam]",
     "libreyolo[label]",
     "libreyolo[openvocab]",
+    "libreyolo[sensenova]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
@@ -350,6 +360,7 @@ markers = [
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "openvocab: tests covering the LibreOpenVocab detector tier",
+    "sensenova: tests covering the LibreSenseNovaVision unified multimodal family",
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
     "siglip2: tests covering the LibreSigLIP2 zero-shot open-vocabulary classifier family",
     "distributed: multi-rank gloo tests that mp.spawn a process group. Linux-only in the PR gate: they exercise distributed-training math, which is platform-independent, while dist.init_process_group(backend='gloo') costs ~105s per test on the macOS runner (a bare 2-rank scalar all-reduce takes 109s there vs 3.9s on Linux). They also compare a parent-process reference gradient against child-process gradients at a BLAS-sensitive tolerance, so running them on every OS yields flakes rather than coverage. The spawn-plumbing tests are deliberately NOT marked: they cover spawn-only failure modes that Linux's fork never hits.",

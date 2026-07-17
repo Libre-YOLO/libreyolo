@@ -127,6 +127,7 @@ def __getattr__(name):
         "LibreFlorence2": (".models.vlm", "LibreFlorence2"),
         "LibreKosmos2": (".models.vlm", "LibreKosmos2"),
         "LibreLocateAnything": (".models.vlm", "LibreLocateAnything"),
+        "LibreSenseNovaVision": (".models.sensenova", "LibreSenseNovaVision"),
         "LibreSAM": (".models.sam", "LibreSAM"),
         "LibreSAM1": (".models.sam", "LibreSAM1"),
         "LibreSAM2": (".models.sam", "LibreSAM2"),
