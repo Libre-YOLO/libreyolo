@@ -311,7 +311,7 @@ def nightly(ref: str, target: str = "test_nightly") -> dict[str, object]:
                 "--group",
                 "dev",
                 "-e",
-                ".[rfdetr,onnx]",
+                ".[rfdetr,onnx,openvocab]",
             ],
             cwd=WORKDIR,
         )
