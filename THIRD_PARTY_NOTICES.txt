@@ -840,3 +840,25 @@ Used for: the Transformers-backed LibreEdgeTAM adapter in
           independently and then checked exactly against it.
 
 The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+SenseNova-Vision / Bagel (SenseTime; ByteDance; Hugging Face; BFL)
+--------------------------------------------------------------------
+Source: https://github.com/OpenSenseNova/SenseNova-Vision
+        (commit 12ccd96e32b32967a11cacb6c5bd5fe3a555fc0c)
+License: Apache License 2.0 (see licenses/Apache-2.0.txt)
+Copyright (c) 2026 SenseTime Group Inc.; (c) 2025 Bytedance Ltd.;
+          (c) 2024 The Qwen Team and The HuggingFace Inc. team;
+          (c) 2024 Black Forest Labs
+Citation: SenseNova-Vision team. "Vision as Unified Multimodal
+          Generation." arXiv:2607.06560, 2026.
+Used for: the LibreSenseNovaVision family (libreyolo/models/sensenova/), an
+inference-only port of the Bagel-MoT unified multimodal architecture, its
+interleaved inferencer, image transforms, task prompts, and structured-output
+parsers. The upstream file modeling/bagel/modeling_utils.py is CC BY-NC 4.0
+(DiT-derived) and is NOT ported; its standard components are re-derived from
+Hugging Face transformers (ViT-MAE sincos table, Apache-2.0) and
+openai/guided-diffusion (timestep embedding, MIT) in modeling/layers.py.
+Model weights (sensenova/SenseNova-Vision-7B-MoT) are CC BY-NC 4.0,
+downloaded at runtime from upstream, and never redistributed by LibreYOLO.
+See libreyolo/models/sensenova/NOTICE for the full provenance chain.
