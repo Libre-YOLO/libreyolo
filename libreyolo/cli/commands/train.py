@@ -25,7 +25,7 @@ from ..output import OutputHandler
 from ...training.freezing import normalize_freeze_selectors, parse_freeze_spec
 
 
-_LORA_TRAIN_FAMILIES = {"rfdetr"}
+_LORA_TRAIN_FAMILIES = {"rfdetr", "dfine", "deim"}
 
 
 def _model_ref_exists(model_path: str) -> bool:
@@ -506,7 +506,7 @@ def train_cmd(
             out,
             "config_unsupported",
             f"LoRA fine-tuning (lora=True) is not supported for {family}.",
-            suggestion="Use an RF-DETR model or remove --lora.",
+            suggestion="Use an RF-DETR, D-FINE, or DEIM model, or remove --lora.",
         )
 
     # RF-DETR: warn and ignore unsupported params
@@ -536,6 +536,8 @@ def train_cmd(
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
+        if params.get("lora"):
+            resolved_config["lora"] = True
         if params.get("distill_model"):
             resolved_config["distill_model"] = params["distill_model"]
             resolved_config["distill_loss_type"] = params["distill_loss_type"]

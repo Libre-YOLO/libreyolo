@@ -64,6 +64,12 @@ logger = logging.getLogger(__name__)
 
 
 class DFINETrainer(BaseTrainer):
+    # D-FINE pairs a CNN (HGNetv2) backbone with a transformer encoder/decoder
+    # whose projections are nn.Linear layers. lora=True freezes the backbone
+    # and the transformer base weights and trains LoRA adapters on the
+    # transformer Linears (see libreyolo/training/lora.py).
+    supports_lora = True
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return DFINEConfig
@@ -73,6 +79,13 @@ class DFINETrainer(BaseTrainer):
 
     def get_model_tag(self) -> str:
         return f"DFINE-{self.config.size}"
+
+    def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
+        if not getattr(self.config, "lora", False):
+            return False
+        from ...training.lora import is_lora_parameter_name
+
+        return is_lora_parameter_name(name)
 
     def _is_segment(self) -> bool:
         return (
@@ -155,6 +168,20 @@ class DFINETrainer(BaseTrainer):
         self._sync_wrapped_model_num_classes(num_classes)
 
     def on_setup(self):
+        if getattr(self.config, "lora", False):
+            if self._is_segment():
+                # The mask head path is untested with adapters; silently
+                # training it fully while config says LoRA would misrepresent
+                # the run.
+                raise ValueError(
+                    "D-FINE segment training does not support lora=True yet. "
+                    "Use freeze='backbone' for parameter-efficient segment "
+                    "fine-tuning."
+                )
+            from ...training.lora import apply_lora_to_detr
+
+            apply_lora_to_detr(self.model)
+
         matcher_weights = {"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0}
         loss_weights = {
             "loss_vfl": 1.0,

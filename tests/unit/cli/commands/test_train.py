@@ -208,6 +208,26 @@ def test_train_dry_run_distill_model_is_visible():
     assert data["resolved_config"]["dis"] == 2.0
 
 
+def test_train_dry_run_accepts_lora_for_dfine_and_deim():
+    app = _make_app()
+    for model_name, family in (("LibreDFINEs.pt", "dfine"), ("LibreDEIMs.pt", "deim")):
+        result = runner.invoke(
+            app,
+            [
+                "data=coco8.yaml",
+                f"model={model_name}",
+                "--lora",
+                "--dry-run",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        data = json.loads(result.stdout)
+        assert data["model_family"] == family
+        assert data["resolved_config"]["lora"] is True
+
+
 def test_train_dry_run_rejects_lora_for_unsupported_family():
     app = _make_app()
     result = runner.invoke(

@@ -58,6 +58,12 @@ from .transforms import (
 
 
 class DEIMTrainer(BaseTrainer):
+    # DEIM shares D-FINE's architecture shape: CNN (HGNetv2) backbone plus a
+    # transformer encoder/decoder with nn.Linear projections. lora=True
+    # freezes the backbone and the transformer base weights and trains LoRA
+    # adapters on the transformer Linears (see libreyolo/training/lora.py).
+    supports_lora = True
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return DEIMConfig
@@ -67,6 +73,13 @@ class DEIMTrainer(BaseTrainer):
 
     def get_model_tag(self) -> str:
         return f"DEIM-{self.config.size}"
+
+    def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
+        if not getattr(self.config, "lora", False):
+            return False
+        from ...training.lora import is_lora_parameter_name
+
+        return is_lora_parameter_name(name)
 
     def create_transforms(self):
         preproc = DEIMTrainTransform(
@@ -132,6 +145,11 @@ class DEIMTrainer(BaseTrainer):
         self._sync_wrapped_model_num_classes(num_classes)
 
     def on_setup(self):
+        if getattr(self.config, "lora", False):
+            from ...training.lora import apply_lora_to_detr
+
+            apply_lora_to_detr(self.model)
+
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,

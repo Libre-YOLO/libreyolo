@@ -125,9 +125,11 @@ class TrainConfig:
     # freezes matching module/parameter names.
     freeze: Optional[Union[int, str, List[Union[int, str]]]] = None
     # Parameter-efficient fine-tuning. ``lora=True`` injects LoRA adapters into
-    # the backbone of supported transformer families (currently RF-DETR) and
-    # trains only the adapters plus the projector/decoder/head, for low-VRAM
-    # fine-tuning on a custom dataset. Requires the optional ``peft`` dependency
+    # the transformer components of supported families (RF-DETR: DINOv2
+    # backbone attention; D-FINE/DEIM: encoder/decoder Linears with the CNN
+    # backbone frozen) and trains only the adapters plus the parts that must
+    # stay dense (heads, projections), for low-VRAM fine-tuning on a custom
+    # dataset. Requires the optional ``peft`` dependency
     # (``pip install "libreyolo[lora]"``). Families that do not support LoRA
     # raise a clear error rather than silently ignoring the flag.
     lora: bool = False
