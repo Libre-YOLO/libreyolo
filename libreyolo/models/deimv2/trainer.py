@@ -41,14 +41,28 @@ class DEIMv2FlatCosineScheduler:
     ):
         self.lr = lr
         self.total_iters = iters_per_epoch * total_epochs
-        self.warmup_iters = int(warmup_iters)
+        # Budget guards for short fine-tune runs. The released DEIMv2 recipes
+        # express warmup in ITERATIONS (e.g. 2000) and flat in EPOCHS (e.g.
+        # 64/132) sized for full COCO training; on a small custom dataset a
+        # 15-epoch run can be shorter than the warmup alone, leaving the
+        # whole run as a quadratic ramp that never reaches the base LR. Caps:
+        # warmup <= 10% of the run, the min-LR tail <= 20%, and the cosine
+        # decay keeps >= 30% of the run. None of them bite when the recipe
+        # fits its budget (COCO-scale runs are unchanged).
+        self.warmup_iters = min(int(warmup_iters), int(0.1 * self.total_iters))
         self.warmup_lr_start = warmup_lr_start
-        self.flat_iters = (
+        self.no_aug_iters = min(
+            int(iters_per_epoch * no_aug_epochs), int(0.2 * self.total_iters)
+        )
+        requested_flat = (
             int(iters_per_epoch * flat_epochs)
             if flat_epochs is not None
             else self.total_iters - int(iters_per_epoch * no_aug_epochs)
         )
-        self.no_aug_iters = int(iters_per_epoch * no_aug_epochs)
+        max_flat = (
+            self.total_iters - self.no_aug_iters - max(1, int(0.3 * self.total_iters))
+        )
+        self.flat_iters = max(self.warmup_iters, min(requested_flat, max_flat))
         self.min_lr = lr * min_lr_ratio
 
     def update_lr(self, iters: int) -> float:

@@ -391,14 +391,20 @@ class DEIMConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
-    lr0: float = 4e-4
+    # Fine-tune defaults, per the class docstring. Upstream's published COCO
+    # recipe uses lr0=4e-4 with min_lr_ratio=0.5 (its lr_gamma) at total batch
+    # 32 over 132 epochs; at practical fine-tune batches (8-16) on small
+    # datasets that keeps the whole run between 4e-4 and 2e-4 and measurably
+    # degrades transfer (aquarium/bccd bench, 2026-07). Pass the recipe values
+    # explicitly to reproduce upstream COCO training.
+    lr0: float = 1e-4
     weight_decay: float = 1e-4
 
     scheduler: str = "flat_cosine"
     warmup_epochs: int = 2
     warmup_lr_start: float = 1e-6
     no_aug_epochs: int = 12
-    min_lr_ratio: float = 0.5  # DEIM's lr_gamma in upstream
+    min_lr_ratio: float = 0.05
 
     mosaic_prob: float = 0.0
     mixup_prob: float = 0.0
