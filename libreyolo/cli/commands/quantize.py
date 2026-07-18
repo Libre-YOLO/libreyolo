@@ -71,6 +71,12 @@ def quantize_cmd(
 
     calib_arg = None if calib is None or calib.lower() == "none" else calib
 
+    if allow_download_scripts and calib_arg is not None:
+        out_handler.warning(
+            "Dataset download scripts are enabled. Embedded Python from the "
+            "dataset YAML may execute locally."
+        )
+
     try:
         loaded_model.quantize(
             recipe=recipe,

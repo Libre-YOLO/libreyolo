@@ -71,6 +71,8 @@ class CalibrationDataLoader:
                 Obtained from ``model._get_preprocess_numpy()``.
             allow_download_scripts: Allow embedded Python in dataset YAML downloads.
         """
+        if batch < 1:
+            raise ValueError(f"batch must be >= 1, got {batch}")
         self.imgsz = imgsz
         self.batch = batch
         self.fraction = max(0.0, min(1.0, fraction))
