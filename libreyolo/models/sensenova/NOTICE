@@ -44,10 +44,17 @@ sources instead:
   * The MLP connector and frozen-buffer wrappers follow the parameter
     names/shapes fixed by the released checkpoint.
 
-Model weights are NOT redistributed by LibreYOLO. The upstream checkpoint
+Model weights are CC BY-NC 4.0 (non-commercial use only) and are mirrored,
+byte-identical and with attribution, at:
 
-    Repository: sensenova/SenseNova-Vision-7B-MoT (Hugging Face)
-    License:    CC BY-NC 4.0 (non-commercial use only)
+    Mirror:     LibreYOLO/SenseNovaVision7b (Hugging Face)
+    Upstream:   sensenova/SenseNova-Vision-7B-MoT
+    Revision:   79548fcc5b954598799b9317f8d3ec5e347d5c0e
+    SHA-256:    ema.safetensors
+                96f29abd98791288c5a24087322e964bb9bcabfc2f185ece71543f827bc2b11e
+                ae.safetensors
+                afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38
 
-is downloaded at runtime from the upstream repository after a one-time
-license notice; users are responsible for complying with its terms.
+Mirroring does not change the license; the loader prints the
+non-commercial notice before every automatic download, and users are
+responsible for complying with the upstream terms.

@@ -45,8 +45,9 @@ not redistributed)
     modeling/bagel/modeling_utils.py is CC BY-NC 4.0 (DiT-derived) and is
     NOT ported; its standard components are re-derived from Apache/MIT
     sources in modeling/layers.py (see the family NOTICE). Model weights
-    are CC BY-NC 4.0 and are downloaded at runtime from the upstream
-    Hugging Face repository, never redistributed by LibreYOLO.
+    are CC BY-NC 4.0, mirrored byte-identically with attribution at
+    huggingface.co/LibreYOLO/SenseNovaVision7b; the loader prints the
+    non-commercial notice before every automatic download.
 
 MobileNetV4 / timm (Apache License 2.0)
     Path:    libreyolo/models/mobilenetv4/

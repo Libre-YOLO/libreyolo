@@ -859,6 +859,7 @@ parsers. The upstream file modeling/bagel/modeling_utils.py is CC BY-NC 4.0
 (DiT-derived) and is NOT ported; its standard components are re-derived from
 Hugging Face transformers (ViT-MAE sincos table, Apache-2.0) and
 openai/guided-diffusion (timestep embedding, MIT) in modeling/layers.py.
-Model weights (sensenova/SenseNova-Vision-7B-MoT) are CC BY-NC 4.0,
-downloaded at runtime from upstream, and never redistributed by LibreYOLO.
-See libreyolo/models/sensenova/NOTICE for the full provenance chain.
+Model weights (sensenova/SenseNova-Vision-7B-MoT, CC BY-NC 4.0,
+non-commercial) are mirrored byte-identically with attribution at
+huggingface.co/LibreYOLO/SenseNovaVision7b; mirroring does not change the
+license. See libreyolo/models/sensenova/NOTICE for the full provenance chain.

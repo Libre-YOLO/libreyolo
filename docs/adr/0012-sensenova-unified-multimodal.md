@@ -60,9 +60,13 @@ already defines, with the same `Results` payloads specialist families return.
    components are re-derived from the original permissive sources
    (transformers ViT-MAE, openai/guided-diffusion) in `modeling/layers.py`.
 
-6. **Weights are never redistributed.** The checkpoint is CC BY-NC 4.0 and
-   downloads at runtime from the upstream repository after a one-time license
-   notice, following the LocateAnything precedent.
+6. **Weights are mirrored under their original license.** The checkpoint is
+   CC BY-NC 4.0 (non-commercial); by maintainer decision (2026-07-18,
+   following the OV-DEIM precedent) LibreYOLO hosts a byte-identical,
+   attribution-carrying mirror at `LibreYOLO/SenseNovaVision7b` with the
+   revision and SHA-256 pins on the card. Mirroring does not change the
+   license, and the loader prints the non-commercial notice before every
+   automatic download.
 
 ## Consequences
 

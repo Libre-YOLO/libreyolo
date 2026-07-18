@@ -18,8 +18,9 @@ decode per dense prediction; it is a capability model, not a real-time one.
 ``dtype="auto"`` picks bf16 on large GPUs and 4-bit NF4 quantization (via
 bitsandbytes) on consumer GPUs.
 
-Weights are downloaded at runtime from the upstream Hugging Face repository
-under its CC BY-NC 4.0 terms; LibreYOLO does not redistribute them.
+Weights are CC BY-NC 4.0 (non-commercial) and download at runtime from the
+byte-identical LibreYOLO mirror of the upstream release, after a one-time
+license notice.
 """
 
 from __future__ import annotations
@@ -202,7 +203,9 @@ class LibreSenseNovaVision(LibreVLMModel):
     FILENAME_PREFIX = "SenseNovaVision"
 
     HF_REPOS: ClassVar[Dict[str, str]] = {
-        "7b": "sensenova/SenseNova-Vision-7B-MoT",
+        # Byte-identical mirror of sensenova/SenseNova-Vision-7B-MoT at
+        # revision 79548fcc (SHA-256 pins in the repo card and family NOTICE).
+        "7b": "LibreYOLO/SenseNovaVision7b",
     }
     # Weight-only repo (no remote code); the pin still keeps downloads
     # reproducible across releases.
@@ -224,11 +227,11 @@ class LibreSenseNovaVision(LibreVLMModel):
         "\n"
         "----------------------------------------------------------------\n"
         "SenseNova-Vision-7B-MoT weights are provided by SenseTime under\n"
-        "CC BY-NC 4.0 (non-commercial use only). LibreYOLO does not\n"
-        "redistribute these weights; they are downloaded from the upstream\n"
-        "Hugging Face repository and you are responsible for complying with\n"
-        "their terms:\n"
-        "  https://huggingface.co/sensenova/SenseNova-Vision-7B-MoT\n"
+        "CC BY-NC 4.0: NON-COMMERCIAL use only. LibreYOLO mirrors the\n"
+        "unmodified weights with attribution; the license is unchanged and\n"
+        "you are responsible for complying with its terms.\n"
+        "  Mirror:   https://huggingface.co/LibreYOLO/SenseNovaVision7b\n"
+        "  Upstream: https://huggingface.co/sensenova/SenseNova-Vision-7B-MoT\n"
         "----------------------------------------------------------------\n"
     )
 

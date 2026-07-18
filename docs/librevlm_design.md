@@ -238,7 +238,8 @@ weights, which matters at 29.6 GB. Two family-specific notes: this is the
 one family whose architecture is vendored rather than loaded through
 transformers (no upstream remote code exists; the port carries per-file
 Apache-2.0 provenance and an SDPA fallback so flash-attn is optional), and
-its weights are CC BY-NC 4.0, downloaded at runtime from upstream under a
+its weights are CC BY-NC 4.0 (non-commercial), auto-downloaded from the
+byte-identical LibreYOLO mirror (`LibreYOLO/SenseNovaVision7b`) under a
 one-time license notice. Capabilities without a canonical LibreYOLO task
 (surface normals, grounded-conversation segmentation, editing, multi-view
 reconstruction) stay behind `chat()`/`generate()`. See
