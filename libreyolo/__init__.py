@@ -116,6 +116,8 @@ def __getattr__(name):
         "DepthValidator": (".validation", "DepthValidator"),
         "ValidationConfig": (".validation", "ValidationConfig"),
         "ByteTracker": (".tracking", "ByteTracker"),
+        "BoTSortTracker": (".tracking", "BoTSortTracker"),
+        "BoTSortConfig": (".tracking", "BoTSortConfig"),
         "TrackConfig": (".tracking", "TrackConfig"),
         "OCSortTracker": (".tracking", "OCSortTracker"),
         "OCSortConfig": (".tracking", "OCSortConfig"),
@@ -243,6 +245,8 @@ __all__ = [
     "SAMPLE_IMAGE",
     # Tracking
     "ByteTracker",
+    "BoTSortTracker",
+    "BoTSortConfig",
     "TrackConfig",
     "OCSortTracker",
     "OCSortConfig",

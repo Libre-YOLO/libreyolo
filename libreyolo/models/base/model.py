@@ -1111,9 +1111,10 @@ class BaseModel(ABC):
         """Track objects across video frames.
 
         Runs detection on each frame and associates detections across time.
-        Three trackers are available via ``tracker``: ByteTrack (default) and
-        OC-SORT are motion-only; Deep OC-SORT adds appearance (ReID)
-        embeddings so identities survive long occlusions and crossing
+        Four trackers are available via ``tracker``: ByteTrack (default) and
+        OC-SORT are motion-only; BoT-SORT adds an improved width/height motion
+        model and camera-motion compensation; Deep OC-SORT adds appearance
+        (ReID) embeddings so identities survive long occlusions and crossing
         targets, at the cost of a small embedding network run per frame (its
         weights are downloaded on first use). Yields one Results per frame
         with ``track_id`` set.
@@ -1121,13 +1122,14 @@ class BaseModel(ABC):
         Args:
             source: Path to a video file.
             track_conf: Confidence threshold for the tracker's first
-                association stage — ``track_high_thresh`` for ByteTrack,
-                ``det_thresh`` for OC-SORT and Deep OC-SORT. For the motion
-                trackers the detector runs at a lower threshold internally so
-                low-confidence detections remain available for recovery. For ByteTrack it must be >=
-                ``track_low_thresh`` (default 0.1). Ignored when *tracker_config*
-                is given, or when the matching key is passed explicitly in
-                ``tracker_kwargs``.
+                association stage — ``track_high_thresh`` for ByteTrack and
+                BoT-SORT, ``det_thresh`` for OC-SORT and Deep OC-SORT. For the
+                motion trackers the detector runs at a lower threshold
+                internally so low-confidence detections remain available for
+                recovery. For ByteTrack and BoT-SORT it must be >=
+                ``track_low_thresh`` (default 0.1). Ignored when
+                *tracker_config* is given, or when the matching key is passed
+                explicitly in ``tracker_kwargs``.
             iou: IoU threshold for NMS during detection.
             imgsz: Override input image size.
             classes: Filter to specific class IDs.
@@ -1137,15 +1139,16 @@ class BaseModel(ABC):
             vid_stride: Process every N-th frame.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4``.
-            tracker: Which tracker to use: ``"bytetrack"``, ``"ocsort"`` or
-                ``"deepocsort"``. Ignored when *tracker_config* is given (the
-                config type selects the tracker).
-            tracker_config: A ``TrackConfig`` (ByteTrack), ``OCSortConfig``
-                (OC-SORT) or ``DeepOCSortConfig`` (Deep OC-SORT) instance, or
-                None to build one from **tracker_kwargs.
+            tracker: Which tracker to use: ``"bytetrack"``, ``"botsort"``,
+                ``"ocsort"`` or ``"deepocsort"``. Ignored when
+                *tracker_config* is given (the config type selects the tracker).
+            tracker_config: A ``TrackConfig`` (ByteTrack), ``BoTSortConfig``
+                (BoT-SORT), ``OCSortConfig`` (OC-SORT), or
+                ``DeepOCSortConfig`` (Deep OC-SORT) instance, or None to build
+                one from **tracker_kwargs.
             **tracker_kwargs: Forwarded to the selected tracker's
-                ``from_kwargs`` (``TrackConfig``, ``OCSortConfig`` or
-                ``DeepOCSortConfig``).
+                ``from_kwargs`` (``TrackConfig``, ``BoTSortConfig``,
+                ``OCSortConfig`` or ``DeepOCSortConfig``).
 
         Yields:
             Results with ``track_id`` attribute set as an (N,) int tensor.
@@ -1190,6 +1193,8 @@ class BaseModel(ABC):
             )
 
         from ...tracking import (
+            BoTSortConfig,
+            BoTSortTracker,
             ByteTracker,
             DeepOCSortConfig,
             DeepOCSortTracker,
@@ -1201,7 +1206,10 @@ class BaseModel(ABC):
         from ...utils.video import run_video_inference
 
         # A provided config picks the tracker; otherwise honour the selector.
-        if isinstance(tracker_config, DeepOCSortConfig):
+        if isinstance(tracker_config, BoTSortConfig):
+            # BoTSortConfig subclasses TrackConfig, so it must be checked first.
+            tracker = "botsort"
+        elif isinstance(tracker_config, DeepOCSortConfig):
             tracker = "deepocsort"
         elif isinstance(tracker_config, OCSortConfig):
             tracker = "ocsort"
@@ -1226,6 +1234,13 @@ class BaseModel(ABC):
             # OC-SORT consumes low-score detections (>0.1) for recovery.
             effective_conf = min(0.1, tracker_config.det_thresh)
             tracker_obj = OCSortTracker(config=tracker_config)
+        elif tracker == "botsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("track_high_thresh", track_conf)
+                tracker_config = BoTSortConfig.from_kwargs(**tracker_kwargs)
+            # BoT-SORT keeps ByteTrack's low-confidence recovery stage.
+            effective_conf = tracker_config.track_low_thresh
+            tracker_obj = BoTSortTracker(config=tracker_config)
         elif tracker == "bytetrack":
             if tracker_config is None:
                 tracker_kwargs.setdefault("track_high_thresh", track_conf)
@@ -1236,7 +1251,7 @@ class BaseModel(ABC):
         else:
             raise ValueError(
                 f"Unknown tracker {tracker!r}; "
-                "choose 'bytetrack', 'ocsort' or 'deepocsort'."
+                "choose 'bytetrack', 'botsort', 'ocsort' or 'deepocsort'."
             )
 
         source = Path(source)
@@ -1255,8 +1270,9 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
-            if isinstance(tracker_obj, DeepOCSortTracker):
-                # Appearance tracking needs the frame pixels for ReID crops.
+            if isinstance(tracker_obj, (BoTSortTracker, DeepOCSortTracker)):
+                # BoT-SORT needs pixels for camera motion; Deep OC-SORT needs
+                # them for ReID crops.
                 return tracker_obj.update(result, pil_img)
             return tracker_obj.update(result)
 

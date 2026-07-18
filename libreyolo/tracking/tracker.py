@@ -54,7 +54,40 @@ class ByteTracker:
         self.lost_stracks.clear()
         self.removed_stracks.clear()
 
-    def update(self, results: Results) -> Results:
+    def _make_track(
+        self,
+        xyxy: np.ndarray,
+        score: float,
+        cls: int,
+        detection_index: int,
+    ) -> STrack:
+        """Create one detection tracklet.
+
+        Subclasses override this to select a different Kalman state
+        representation while reusing ByteTrack's association lifecycle.
+        """
+        return STrack(xyxy, score, cls, detection_index)
+
+    def _after_predict(self, image) -> None:
+        """Hook for subclasses to transform predicted tracks before matching."""
+
+    def _activate_new_track(self, track: STrack) -> None:
+        """Activate a newly spawned track using ByteTrack's ID semantics."""
+        track.activate(self.kalman_filter, self._frame_id, self._next_id())
+        if self.config.minimum_consecutive_frames > 1:
+            track.is_activated = False
+
+    def _after_unconfirmed_match(self, track: STrack) -> None:
+        """Hook called after an unconfirmed track receives a detection."""
+
+    def _should_output(self, track: STrack) -> bool:
+        """Return whether a currently tracked object is mature enough to emit."""
+        return (
+            track.is_activated
+            and track._hits >= self.config.minimum_consecutive_frames
+        )
+
+    def update(self, results: Results, image=None) -> Results:
         """Run one frame of tracking.
 
         Takes detection results and returns new Results with track IDs
@@ -62,6 +95,8 @@ class ByteTracker:
 
         Args:
             results: Detection results from any detector.
+            image: Optional current frame. Ignored by ByteTrack; used by
+                trackers that extend its lifecycle with image-based motion.
 
         Returns:
             New Results with ``track_id`` matching the input box backend.
@@ -89,11 +124,15 @@ class ByteTracker:
         low_mask = ~high_mask
 
         high_dets = [
-            STrack(boxes_np[i], scores_np[i], classes_np[i], int(original_indices[i]))
+            self._make_track(
+                boxes_np[i], scores_np[i], classes_np[i], int(original_indices[i])
+            )
             for i in np.where(high_mask)[0]
         ]
         low_dets = [
-            STrack(boxes_np[i], scores_np[i], classes_np[i], int(original_indices[i]))
+            self._make_track(
+                boxes_np[i], scores_np[i], classes_np[i], int(original_indices[i])
+            )
             for i in np.where(low_mask)[0]
         ]
 
@@ -108,6 +147,7 @@ class ByteTracker:
             t.predict(self.kalman_filter)
         for t in self.lost_stracks:
             t.predict(self.kalman_filter)
+        self._after_predict(image)
 
         # Split tracked into confirmed and unconfirmed.
         unconfirmed = [t for t in self.tracked_stracks if not t.is_activated]
@@ -175,6 +215,7 @@ class ByteTracker:
             track = unconfirmed[m[0]]
             det = remaining_high_dets[m[1]]
             track.update(self.kalman_filter, det, self._frame_id)
+            self._after_unconfirmed_match(track)
 
         # Remove unmatched unconfirmed tracks.
         for i in u_unconf:
@@ -187,10 +228,7 @@ class ByteTracker:
         for i in u_det_final:
             det = remaining_high_dets[i]
             if det.score >= cfg.new_track_thresh:
-                det.activate(self.kalman_filter, self._frame_id, self._next_id())
-                if cfg.minimum_consecutive_frames > 1:
-                    # Start as unconfirmed — needs more consecutive matches.
-                    det.is_activated = False
+                self._activate_new_track(det)
 
         # ------------------------------------------------------------------
         # 7. Handle lost tracks: mark expired as removed
@@ -248,9 +286,7 @@ class ByteTracker:
         # 9. Build output Results
         # ------------------------------------------------------------------
         output_stracks = [
-            t
-            for t in self.tracked_stracks
-            if t.is_activated and t._hits >= cfg.minimum_consecutive_frames
+            t for t in self.tracked_stracks if self._should_output(t)
         ]
 
         if len(output_stracks) == 0:

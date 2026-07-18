@@ -1,4 +1,4 @@
-"""Kalman filter with constant-velocity model for bounding box tracking.
+"""Kalman filters with constant-velocity models for bounding box tracking.
 
 State space: (cx, cy, aspect_ratio, height, v_cx, v_cy, v_a, v_h)
 Measurement: (cx, cy, aspect_ratio, height)
@@ -175,4 +175,113 @@ class KalmanFilterXYAH:
         innovation = measurement - projected_mean
         new_mean = mean + innovation @ kalman_gain.T
         new_covariance = covariance - kalman_gain @ projected_cov @ kalman_gain.T
+        return new_mean, new_covariance
+
+
+class KalmanFilterXYWH(KalmanFilterXYAH):
+    """BoT-SORT Kalman filter using independent width and height states.
+
+    State space: ``(cx, cy, w, h, vx, vy, vw, vh)``. Process,
+    measurement, and initialization noise scale independently with the box
+    width and height. This avoids coupling width changes to an aspect-ratio
+    state as ByteTrack's XYAH filter does.
+    """
+
+    @staticmethod
+    def _scales(measurement: np.ndarray) -> tuple[float, float]:
+        return max(abs(float(measurement[2])), 1e-2), max(
+            abs(float(measurement[3])), 1e-2
+        )
+
+    def initiate(self, measurement: np.ndarray):
+        """Initialize from a ``(cx, cy, width, height)`` measurement."""
+        mean = np.concatenate([measurement, np.zeros_like(measurement)])
+        w, h = self._scales(measurement)
+        sp = self._std_weight_position
+        sv = self._std_weight_velocity
+        std = np.array(
+            [
+                2 * sp * w,
+                2 * sp * h,
+                2 * sp * w,
+                2 * sp * h,
+                10 * sv * w,
+                10 * sv * h,
+                10 * sv * w,
+                10 * sv * h,
+            ],
+            dtype=np.float64,
+        )
+        return mean, np.diag(np.square(std))
+
+    def predict(self, mean: np.ndarray, covariance: np.ndarray):
+        """Run a scale-aware XYWH prediction step."""
+        w, h = self._scales(mean)
+        sp = self._std_weight_position
+        sv = self._std_weight_velocity
+        std = np.array(
+            [sp * w, sp * h, sp * w, sp * h, sv * w, sv * h, sv * w, sv * h],
+            dtype=np.float64,
+        )
+        motion_cov = np.diag(np.square(std))
+        mean = self._motion_mat @ mean
+        covariance = np.clip(covariance, -1e10, 1e10)
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            covariance = self._motion_mat @ covariance @ self._motion_mat.T
+            covariance += motion_cov
+        return mean, covariance
+
+    def multi_predict(self, mean: np.ndarray, covariance: np.ndarray):
+        """Vectorized scale-aware XYWH prediction."""
+        if len(mean) == 0:
+            return mean, covariance
+        w = np.maximum(np.abs(mean[:, 2]), 1e-2)
+        h = np.maximum(np.abs(mean[:, 3]), 1e-2)
+        sp = self._std_weight_position
+        sv = self._std_weight_velocity
+        std = np.column_stack(
+            [sp * w, sp * h, sp * w, sp * h, sv * w, sv * h, sv * w, sv * h]
+        )
+        motion_cov = np.array([np.diag(np.square(row)) for row in std])
+        mean = np.einsum("ij,nj->ni", self._motion_mat, mean)
+        covariance = np.clip(covariance, -1e10, 1e10)
+        with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+            covariance = (
+                np.einsum(
+                    "ij,njk,lk->nil",
+                    self._motion_mat,
+                    covariance,
+                    self._motion_mat,
+                )
+                + motion_cov
+            )
+        return mean, covariance
+
+    def update(self, mean: np.ndarray, covariance: np.ndarray, measurement: np.ndarray):
+        """Correct the state with a ``(cx, cy, width, height)`` measurement."""
+        w, h = self._scales(mean)
+        sp = self._std_weight_position
+        std = np.array([sp * w, sp * h, sp * w, sp * h], dtype=np.float64)
+        innovation_cov = np.diag(np.square(std))
+        projected_mean = self._update_mat @ mean
+        projected_cov = (
+            self._update_mat @ covariance @ self._update_mat.T + innovation_cov
+        )
+        chol_factor, lower = scipy.linalg.cho_factor(
+            projected_cov, lower=True, check_finite=False
+        )
+        kalman_gain = scipy.linalg.cho_solve(
+            (chol_factor, lower),
+            (covariance @ self._update_mat.T).T,
+            check_finite=False,
+        ).T
+        innovation = measurement - projected_mean
+        new_mean = mean + innovation @ kalman_gain.T
+        # Joseph form preserves symmetry and positive semi-definiteness better
+        # over long sequences than the abbreviated P - KSK^T update.
+        identity_minus_gain = np.eye(8) - kalman_gain @ self._update_mat
+        new_covariance = (
+            identity_minus_gain @ covariance @ identity_minus_gain.T
+            + kalman_gain @ innovation_cov @ kalman_gain.T
+        )
         return new_mean, new_covariance

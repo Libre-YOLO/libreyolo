@@ -755,6 +755,22 @@ copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
 
 --------------------------------------------------------------------
+Roboflow Trackers (BoT-SORT)
+--------------------------------------------------------------------
+Source: https://github.com/roboflow/trackers
+Commit: 3b6d910df78a7ab48d5770b5bc86e043476d2e76
+License: Apache License 2.0
+Copyright (c) 2026 Roboflow. All Rights Reserved.
+Used for: the BoT-SORT tracking lifecycle, scale-aware center-width-height
+          Kalman model, and sparse optical-flow camera-motion compensation in
+          libreyolo/tracking/botsort.py and
+          libreyolo/tracking/kalman_filter.py. The implementation is adapted
+          to LibreYOLO's detector-agnostic Results contract and implements the
+          paper's motion-only BoT-SORT variant (not BoT-SORT-ReID).
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
 Torchreid (deep-person-reid)
 --------------------------------------------------------------------
 Source: https://github.com/KaiyangZhou/deep-person-reid
