@@ -53,6 +53,21 @@ design and DoRA's magnitude normalization divides by the weight norm.
 RT-DETRv4 reuses the D-FINE architecture and trainer, so it takes this
 recipe by inheritance.
 
+### EC (EdgeCrafter)
+
+EC is a DETR whose backbone is a ViTAdapter: a plain ViT with fused `qkv`
+attention under `backbone.backbone`, surrounded by a trainable conv projector
+pyramid. The ViT base freezes and its `qkv` Linears get adapters, the
+transformer encoder/decoder blocks take the shared DETR recipe, and the
+projector plus heads keep training. Detection only (seg/pose raise).
+
+### ConvNeXt (classification)
+
+ConvNeXt blocks carry channels-last `nn.Linear` MLPs (`fc1`/`fc2`); those
+take plain LoRA adapters while the depthwise convs, norms, and layer-scale
+parameters freeze. The classification head stays dense-trainable so custom
+class counts keep working.
+
 ### DEIMv2
 
 Same DETR recipe as above (its SwiGLU FFN `w12`/`w3` Linears are targeted
@@ -76,9 +91,10 @@ D-FINE/DEIM models.
 
 ## Scope
 
-- RF-DETR, D-FINE, DEIM, DEIMv2, and RT-DETR v1/v2/v4. Other families raise
-  instead of silently ignoring `lora=True`.
-- Detection tasks only for D-FINE (segment raises); RF-DETR semantic raises.
+- RF-DETR, D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4, EC, and ConvNeXt. Other
+  families raise instead of silently ignoring `lora=True`.
+- Detection tasks only for D-FINE and EC (segment/pose raise); RF-DETR
+  semantic raises.
 - The detection heads always stay trainable (custom class counts need them).
 - Saves optimizer/gradient memory and skips the frozen backbone's backward;
   activation memory is unchanged. For the tightest VRAM, lower `batch` or

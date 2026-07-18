@@ -217,6 +217,7 @@ def test_train_dry_run_accepts_lora_for_dfine_and_deim():
         ("LibreRTDETRr18.pt", "rtdetr"),
         ("LibreRTDETRv2r18.pt", "rtdetrv2"),
         ("LibreRTDETRv4s.pt", "rtdetrv4"),
+        ("LibreECs.pt", "ec"),
     ):
         result = runner.invoke(
             app,

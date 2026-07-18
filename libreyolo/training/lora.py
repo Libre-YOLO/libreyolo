@@ -325,6 +325,97 @@ def apply_lora_to_deimv2(core_model: nn.Module) -> nn.Module:
     )
 
 
+def apply_lora_to_ec(core_model: nn.Module) -> nn.Module:
+    """Inject LoRA adapters into an EC (EdgeCrafter) core model, in place.
+
+    EC is a DETR whose backbone is a ViTAdapter: a plain ViT (fused ``qkv``
+    attention ``Block``s, same layout as DEIMv2's tiny ViT) under
+    ``backbone.backbone``, surrounded by a trainable conv projector pyramid.
+    Recipe: freeze the ViT base and adapt its ``qkv`` Linears, freeze the
+    transformer encoder/decoder block bases and adapt their Linears, keep the
+    ViTAdapter projector, input projections, and heads dense-trainable.
+    """
+    _require_detr_layout(core_model)
+    if module_has_lora(core_model):
+        return core_model
+
+    detr_roots = _discover_block_roots(core_model, DETR_BLOCK_CLASSES)
+    if not detr_roots:
+        raise ValueError(
+            "No transformer encoder/decoder blocks found; expected "
+            f"{DETR_BLOCK_CLASSES} classes in the model."
+        )
+    target_modules = _collect_linear_targets(
+        core_model, detr_roots, DETR_TARGET_LINEAR_NAMES, skip_frozen=True
+    )
+
+    vit = getattr(core_model.backbone, "backbone", None)
+    if vit is None:
+        raise ValueError(
+            "EC model has no backbone.backbone ViT; the ViTAdapter layout "
+            "may have changed."
+        )
+    # Scoped to the ViT subtree: "Block" is too generic a class name to match
+    # across the whole model.
+    vit_roots = [
+        f"backbone.backbone.{name}"
+        for name, module in vit.named_modules()
+        if name and type(module).__name__ in DINOV3_BLOCK_CLASSES
+    ]
+    if not vit_roots:
+        raise ValueError(
+            "backbone.backbone present but no ViT Block modules found; "
+            "the EC backbone vendoring may have changed."
+        )
+    target_modules += _collect_linear_targets(
+        core_model, vit_roots, DINOV3_TARGET_LINEAR_NAMES, skip_frozen=False
+    )
+
+    frozen_prefixes = ("backbone.backbone.",) + tuple(
+        f"{root}." for root in detr_roots + vit_roots
+    )
+    return _inject_lora(
+        core_model, target_modules, frozen_prefixes, label="EC transformer blocks"
+    )
+
+
+# ConvNeXt: a conv classifier whose blocks nonetheless carry channels-last
+# nn.Linear MLPs (timm layout, ``fc1``/``fc2``). Those take the adapters; the
+# depthwise convs, norms, and layer-scale gammas freeze; the classification
+# head stays dense-trainable (custom class counts rebuild it).
+CONVNEXT_BLOCK_CLASSES = ("ConvNeXtBlock",)
+CONVNEXT_TARGET_LINEAR_NAMES = ("fc1", "fc2")
+
+
+def apply_lora_to_convnext(core_model: nn.Module) -> nn.Module:
+    """Inject LoRA adapters into a ConvNeXt classifier core, in place."""
+    for attr in ("stages", "head"):
+        if not hasattr(core_model, attr):
+            raise ValueError(
+                f"Model has no .{attr}; cannot apply the ConvNeXt LoRA recipe."
+            )
+    if module_has_lora(core_model):
+        return core_model
+
+    block_roots = _discover_block_roots(core_model, CONVNEXT_BLOCK_CLASSES)
+    if not block_roots:
+        raise ValueError(
+            "No ConvNeXtBlock modules found; the ConvNeXt vendoring may have "
+            "changed."
+        )
+    target_modules = _collect_linear_targets(
+        core_model, block_roots, CONVNEXT_TARGET_LINEAR_NAMES, skip_frozen=True
+    )
+
+    # Freeze every top-level child except the classification head.
+    frozen_prefixes = tuple(
+        f"{name}." for name, _ in core_model.named_children() if name != "head"
+    )
+    return _inject_lora(
+        core_model, target_modules, frozen_prefixes, label="ConvNeXt block MLPs"
+    )
+
+
 def _require_detr_layout(core_model: nn.Module) -> None:
     for attr in ("backbone", "encoder", "decoder"):
         if not hasattr(core_model, attr):
@@ -475,6 +566,8 @@ __all__ = [
     "apply_lora_to_rfdetr",
     "apply_lora_to_detr",
     "apply_lora_to_deimv2",
+    "apply_lora_to_ec",
+    "apply_lora_to_convnext",
     "merge_lora_adapters",
     "is_peft_available",
     "is_lora_parameter_name",
