@@ -91,6 +91,34 @@ def test_quant_conv_preserves_state_dict_keys():
     assert qconv.weight is conv.weight
 
 
+def test_percentile_observation_rejects_outliers():
+    conv = nn.Conv2d(3, 8, 3, padding=1)
+
+    def calibrate(method):
+        q = QuantConv2d.from_float(conv)
+        q._q_obs_method = method
+        q._q_observing = True
+        torch.manual_seed(0)
+        with torch.no_grad():
+            for _ in range(4):
+                x = torch.randn(2, 3, 16, 16)
+                x[0, 0, 0, 0] = 100.0  # single extreme outlier per batch
+                q(x)
+        q._q_observing = False
+        q.finalize_observation()
+        return float(q._q_act_hi)
+
+    hi_minmax = calibrate("minmax")
+    hi_pct = calibrate("percentile")
+    assert hi_minmax >= 100.0
+    assert hi_pct < 10.0, f"percentile should clip the outlier, got {hi_pct}"
+
+
+def test_invalid_calibration_algorithm_rejected(yolo9t):
+    with pytest.raises(QuantizationError, match="calibration algorithm"):
+        yolo9t.quantize(recipe="int8", calib=None, algorithm="entropy")
+
+
 def test_multi_batch_observation_widens_ranges():
     # Regression: the min/max merge branch only fires from the second
     # calibration batch onwards (coco8's single batch never exercised it).

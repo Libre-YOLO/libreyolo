@@ -57,8 +57,31 @@ class _ActObserverMixin:
     def q_calibrated(self) -> bool:
         return bool(self._q_calibrated.item())
 
+    _Q_PERCENTILE = 0.999
+    _Q_OBS_SAMPLE_CAP = 1_000_000
+
     def _observe(self, x: torch.Tensor):
         with torch.no_grad():
+            if getattr(self, "_q_obs_method", "minmax") == "percentile":
+                # Mean of per-batch (0.1%, 99.9%) quantiles: robust to the
+                # activation outliers that make pure min/max ranges crush
+                # int8 resolution (worst on the smallest models). Strided
+                # subsampling keeps torch.quantile within its size limits.
+                flat = x.detach().reshape(-1).float()
+                if flat.numel() > self._Q_OBS_SAMPLE_CAP:
+                    step = (flat.numel() + self._Q_OBS_SAMPLE_CAP - 1) // self._Q_OBS_SAMPLE_CAP
+                    flat = flat[::step]
+                qs = torch.quantile(
+                    flat,
+                    torch.tensor(
+                        [1.0 - self._Q_PERCENTILE, self._Q_PERCENTILE],
+                        device=flat.device,
+                    ),
+                )
+                self._q_obs_lo_sum = getattr(self, "_q_obs_lo_sum", 0.0) + float(qs[0])
+                self._q_obs_hi_sum = getattr(self, "_q_obs_hi_sum", 0.0) + float(qs[1])
+                self._q_obs_n = getattr(self, "_q_obs_n", 0) + 1
+                return
             lo = x.amin().float().reshape(1).to(self._q_act_lo.device)
             hi = x.amax().float().reshape(1).to(self._q_act_hi.device)
             if self.q_calibrated:
@@ -68,6 +91,18 @@ class _ActObserverMixin:
                 self._q_act_lo.copy_(lo)
                 self._q_act_hi.copy_(hi)
                 self._q_calibrated.fill_(1)
+
+    def finalize_observation(self):
+        """Write percentile statistics into the calibrated range buffers."""
+        n = getattr(self, "_q_obs_n", 0)
+        if n:
+            with torch.no_grad():
+                self._q_act_lo.fill_(self._q_obs_lo_sum / n)
+                self._q_act_hi.fill_(self._q_obs_hi_sum / n)
+                self._q_calibrated.fill_(1)
+        for attr in ("_q_obs_lo_sum", "_q_obs_hi_sum", "_q_obs_n"):
+            if hasattr(self, attr):
+                delattr(self, attr)
 
     def _maybe_quant_input(self, x: torch.Tensor) -> torch.Tensor:
         if self._q_observing:

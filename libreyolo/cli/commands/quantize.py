@@ -21,12 +21,17 @@ def quantize_cmd(
         help="Quantization recipe: fp16, int8, or nvfp4 (transformer families)",
     ),
     calib: Optional[str] = typer.Option(
-        "coco8.yaml",
+        "coco128.yaml",
         help="Calibration images (data.yaml or built-in dataset name); "
         "unlabeled, forward-only. Use 'none' to skip calibration.",
     ),
     samples: int = typer.Option(128, help="Maximum calibration images"),
     batch: int = typer.Option(8, help="Calibration batch size"),
+    algorithm: str = typer.Option(
+        "auto",
+        help="Activation range estimation: auto (minmax), minmax, "
+        "percentile (experimental)",
+    ),
     out: Optional[str] = typer.Option(
         None,
         help="Output checkpoint path (default: <model>-<recipe>.pt)",
@@ -70,6 +75,7 @@ def quantize_cmd(
             calib=calib_arg,
             samples=samples,
             batch=batch,
+            algorithm=algorithm,
             allow_download_scripts=allow_download_scripts,
         )
     except Exception as exc:

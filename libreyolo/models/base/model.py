@@ -1304,9 +1304,10 @@ class BaseModel(ABC):
     def quantize(
         self,
         recipe: str,
-        calib: str | None = "coco8.yaml",
+        calib: str | None = "coco128.yaml",
         samples: int = 128,
         batch: int = 8,
+        algorithm: str = "auto",
         keep_high_precision: tuple | list | None = None,
         allow_download_scripts: bool = False,
         verbose: bool = True,
@@ -1326,6 +1327,11 @@ class BaseModel(ABC):
                 name. Pass None to skip calibration (int8 weights-only).
             samples: Maximum number of calibration images.
             batch: Calibration batch size.
+            algorithm: Activation range estimation: "minmax" (absolute
+                extremes across batches; the measured best default),
+                "percentile" (experimental: mean of per-batch 0.1/99.9
+                percentiles; degrades transformer families), or "auto"
+                (minmax).
             keep_high_precision: Substring patterns of module names kept in
                 float. Defaults to the family policy (first layer + heads).
             allow_download_scripts: Allow embedded Python in dataset YAML
@@ -1351,6 +1357,7 @@ class BaseModel(ABC):
             calib=calib,
             samples=samples,
             batch=batch,
+            algorithm=algorithm,
             keep_high_precision=(
                 tuple(keep_high_precision)
                 if keep_high_precision is not None

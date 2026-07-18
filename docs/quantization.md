@@ -16,7 +16,7 @@ model = LibreYOLO("LibreYOLO9s.pt")
 
 # Step 1: quantize (structure + calibration). calib is a small UNLABELED
 # image set used forward-only to derive activation ranges and scales.
-qmodel = model.quantize(recipe="int8", calib="coco8.yaml", samples=128)
+qmodel = model.quantize(recipe="int8", calib="coco128.yaml", samples=128)
 
 qmodel.val(data="coco8.yaml")            # honest accuracy, same validators
 qmodel.predict("bus.jpg")
@@ -61,8 +61,21 @@ doing.
 ## Calibration data is not training data
 
 - `calib=` (quantize): a few hundred images, no labels read, forward-only.
-  Purpose: activation ranges and scale generation.
+  Purpose: activation ranges and scale generation. Default: `coco128.yaml`
+  (auto-downloaded); multiple batches matter because ranges are estimated
+  across them.
 - `data=` (train/val): the labeled dataset. Purpose: gradients and metrics.
+
+Activation range estimation (`algorithm=`): the default `minmax` keeps the
+absolute extremes seen across calibration batches; `percentile`
+(experimental) uses the mean of per-batch 0.1/99.9 percentiles. Measured on
+coco128, minmax with a multi-batch calibration set wins for every tested
+model, and percentile clipping collapses DETR-family accuracy because
+transformer activation outliers are functionally load-bearing. What
+actually fixes small-model int8 sensitivity is calibrating on enough
+batches (hence the coco128 default: with it, YOLO9-t lands within about one
+mAP point of fp32). The chosen algorithm is recorded in the checkpoint
+manifest.
 
 ## Execution tiers
 

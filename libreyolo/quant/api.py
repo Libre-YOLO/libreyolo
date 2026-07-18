@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 QUANT_SCHEMA_VERSION = "1.0"
 RECIPES = ("fp16", "int8", "nvfp4")
 SUPPORTED_FAMILIES = ("yolo9", "rfdetr")
+CALIB_ALGORITHMS = ("auto", "percentile", "minmax")
 
-DEFAULT_CALIB_DATA = "coco8.yaml"
+DEFAULT_CALIB_DATA = "coco128.yaml"
 
 # Per-family keep-high-precision defaults (substring match on qualified module
 # names). First layers and heads stay in float: standard practice, and the
@@ -170,7 +171,14 @@ def _set_observing(root: nn.Module, flag: bool):
             module._q_observing = flag
 
 
-def _run_calibration(wrapper, calib: str, samples: int, batch: int, allow_download_scripts: bool):
+def _run_calibration(
+    wrapper,
+    calib: str,
+    samples: int,
+    batch: int,
+    allow_download_scripts: bool,
+    algorithm: str = "percentile",
+):
     from ..export.calibration import CalibrationDataLoader
 
     loader = CalibrationDataLoader(
@@ -185,6 +193,8 @@ def _run_calibration(wrapper, calib: str, samples: int, batch: int, allow_downlo
     root = wrapper.model
     was_training = root.training
     root.eval()
+    for _, module in _quant_modules(root):
+        module._q_obs_method = algorithm
     _set_observing(root, True)
     seen = 0
     with torch.no_grad():
@@ -193,6 +203,10 @@ def _run_calibration(wrapper, calib: str, samples: int, batch: int, allow_downlo
             root(x)
             seen += x.shape[0]
     _set_observing(root, False)
+    for _, module in _quant_modules(root):
+        if hasattr(module, "finalize_observation"):
+            module.finalize_observation()
+        module._q_obs_method = "minmax"
     if was_training:
         root.train()
     return seen
@@ -226,6 +240,7 @@ def quantize_model(
     calib: Optional[str] = DEFAULT_CALIB_DATA,
     samples: int = 128,
     batch: int = 8,
+    algorithm: str = "auto",
     keep_high_precision: Optional[Tuple[str, ...]] = None,
     allow_download_scripts: bool = False,
     verbose: bool = True,
@@ -242,6 +257,25 @@ def quantize_model(
     recipe = str(recipe).lower()
     _check_support(family, recipe)
 
+    algorithm = str(algorithm).lower()
+    if algorithm not in CALIB_ALGORITHMS:
+        raise QuantizationError(
+            f"Unknown calibration algorithm '{algorithm}'. "
+            f"Available: {', '.join(CALIB_ALGORITHMS)}"
+        )
+    if algorithm == "auto":
+        # Measured on coco128: multi-batch min/max beats percentile clipping
+        # for every tested model, and percentile collapses transformer
+        # activations (their outliers are load-bearing). minmax is the
+        # default; percentile stays available as an experimental estimator.
+        algorithm = "minmax"
+    if algorithm == "percentile" and family == "rfdetr":
+        logger.warning(
+            "percentile calibration clips transformer activation outliers, "
+            "which measurably degrades DETR-family accuracy; prefer "
+            "algorithm='minmax' for rfdetr."
+        )
+
     keep = (
         tuple(keep_high_precision)
         if keep_high_precision is not None
@@ -256,6 +290,7 @@ def quantize_model(
         "calibrated": False,
         "calib_data": None,
         "calib_samples": 0,
+        "calib_algorithm": None,
         "module_count": 0,
     }
 
@@ -278,11 +313,17 @@ def quantize_model(
         if recipe == "int8":
             if calib is not None:
                 seen = _run_calibration(
-                    wrapper, calib, samples, batch, allow_download_scripts
+                    wrapper,
+                    calib,
+                    samples,
+                    batch,
+                    allow_download_scripts,
+                    algorithm=algorithm,
                 )
                 manifest["calibrated"] = True
                 manifest["calib_data"] = str(calib)
                 manifest["calib_samples"] = int(seen)
+                manifest["calib_algorithm"] = algorithm
             else:
                 logger.warning(
                     "int8 quantization without calibration: activations stay "
