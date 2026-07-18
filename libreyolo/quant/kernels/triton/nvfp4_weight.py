@@ -54,7 +54,7 @@ def _fake_quant_nvfp4_weight_kernel(
     tensor_amax = tl.load(tensor_amax_ptr).to(tl.float32)
     tensor_scale = tl.maximum(tensor_amax / (448.0 * 6.0), 1.0e-12)
     block_amax = tl.max(tl.abs(values), axis=1, keep_dims=True)
-    block_scale = block_amax / (6.0 * tensor_scale)
+    block_scale = libdevice.div_rn(block_amax, 6.0 * tensor_scale)
     block_scale = tl.maximum(tl.minimum(block_scale, 448.0), 1.0e-12)
     block_scale = block_scale.to(tl.float8e4nv).to(tl.float32)
     effective_scale = tl.maximum(block_scale * tensor_scale, 1.0e-12)
