@@ -179,10 +179,30 @@ want graph-embedded NMS should use the first output.
 
 Quantized models add one optional flat key, `quant`: a small manifest dict
 (`schema`, `recipe`, `keep_high_precision`, `execution`, calibration
-provenance, `module_count`). Loaders that see `quant` rebuild the quantized
-module structure before `load_state_dict`, so the extra `_q_*` scale buffers
-in `model` resolve. Readers without quantization support may ignore the key
-and load the fp32 master weights. See `quantization.md`.
+provenance, `module_count`, `state`). Loaders that see `quant` rebuild the
+quantized module structure before `load_state_dict`. See `quantization.md`.
+
+`state` distinguishes the two artifact forms:
+
+- `"prepared"` (default): fp32 master weights plus `_q_*` scale buffers.
+  Trainable (QAT/QAD). Readers without quantization support may ignore the
+  `quant` key and load the masters as a float model.
+- `"finalized"`: crystallized deployment form written by
+  `export(format="pt")`. Masters are stripped; per quantized module the
+  state dict instead carries:
+  - int8: `weight_packed` (int8, original weight shape) and `_q_w_scale`
+    (fp32 per-channel). Dequant: `weight_packed * scale`. Activation range
+    buffers (`_q_act_lo`/`_q_act_hi`/`_q_calibrated`) are retained.
+  - nvfp4: `weight_packed` (uint8, [out, ceil(in/16)*8], two 4-bit codes
+    per byte, low nibble first; code = sign<<3 | E2M1 level index),
+    `weight_block_scale` (float8_e4m3fn, [out, ceil(in/16)]), and
+    `_q_w_amax` (fp32 per-tensor amax). Effective block scale:
+    `block_scale * amax / (448 * 6)`.
+  The manifest records `remainder` (`"fp16"` or `"fp32"`) for the
+  non-quantized tensors. Unpacking reproduces the fake-quant simulation bit
+  for bit, so finalized inference matches prepared inference exactly on the
+  finalizing device. This layout is the stable contract for external
+  exporters and runtimes.
 
 ## Training Checkpoints
 

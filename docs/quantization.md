@@ -91,6 +91,30 @@ and execution tier.
 
 ## Export
 
+### Finalized PyTorch checkpoints (`format="pt"`)
+
+A prepared checkpoint keeps fp32 masters because training needs them. When
+you are done, crystallize:
+
+```python
+qmodel.export(format="pt")   # -> <name>-final.pt, packed low-bit weights
+```
+
+Finalized checkpoints store real packed weights (int8 tensors + per-channel
+scales; nvfp4 as two-codes-per-byte E2M1 payload + E4M3 block scales),
+strip the masters, and cast the non-quantized remainder to fp16
+(`remainder="fp32"` keeps it exact). Measured: YOLO9-s int8 29.5 to 9.6 MB,
+RF-DETR-n nvfp4 122 to 26 MB. The packing invariant: unpacking reproduces
+the simulation bit for bit on the device you finalized on, so the finalized
+file scores exactly what you validated. Loading one gives an
+inference-ready model; `train()` on it re-prepares masters from the packed
+weights automatically (QAT-from-PTQ); ONNX export from it re-prepares
+internally and emits the same QDQ graph. The packed layout is documented in
+`checkpoint_schema.md` as the connection contract for external exporters
+and runtimes.
+
+### ONNX (`format="onnx"`)
+
 int8-quantized models export directly to ONNX with in-graph
 QuantizeLinear/DequantizeLinear pairs carrying the model's own calibrated
 (or QAT-trained) scales:

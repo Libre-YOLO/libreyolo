@@ -1252,6 +1252,10 @@ class BaseTrainer(ABC):
                 "model with amp=True instead, or use recipe='int8'/'nvfp4' "
                 "for quantization-aware training."
             )
+        if quant_manifest and quant_manifest.get("state") == "finalized":
+            from ..quant.api import reprepare_model
+
+            reprepare_model(self.wrapper_model)
 
         if getattr(self.config, "lora", False) and not self.supports_lora:
             family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"

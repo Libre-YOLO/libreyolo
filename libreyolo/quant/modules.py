@@ -24,6 +24,12 @@ from .fake_quant import (
     fake_quant_nvfp4_weight,
     int8_weight_qparams,
 )
+from .packing import (
+    pack_int8_weight,
+    pack_nvfp4_weight,
+    unpack_int8_weight,
+    unpack_nvfp4_weight,
+)
 
 
 class _ActObserverMixin:
@@ -52,6 +58,41 @@ class _ActObserverMixin:
 
     def _weight_scale(self):
         return self._q_w_scale if self._q_export_mode else None
+
+    @property
+    def is_finalized(self) -> bool:
+        return "weight_packed" in self._buffers
+
+    def make_finalized(self):
+        """Crystallize: replace the fp32 master weight with packed int8.
+
+        Unpacking reproduces the simulation's weight values bit for bit, so
+        finalized inference matches prepared inference exactly.
+        """
+        if self.is_finalized:
+            return
+        self.freeze_weight_qparams()
+        with torch.no_grad():
+            packed = pack_int8_weight(self.weight.detach(), self._q_w_scale)
+        del self._parameters["weight"]
+        self.register_buffer("weight_packed", packed)
+        self._q_export_mode = False
+
+    def make_prepared(self):
+        """Reconstruct fp32 masters from packed weights (QAT-from-PTQ)."""
+        if not self.is_finalized:
+            return
+        with torch.no_grad():
+            weight = unpack_int8_weight(self.weight_packed, self._q_w_scale)
+        del self._buffers["weight_packed"]
+        self.weight = nn.Parameter(weight)
+
+    def _effective_weight(self) -> torch.Tensor:
+        if self.is_finalized:
+            return unpack_int8_weight(self.weight_packed, self._q_w_scale)
+        return fake_quant_int8_per_channel(
+            self.weight.float(), scale=self._weight_scale()
+        )
 
     @property
     def q_calibrated(self) -> bool:
@@ -149,9 +190,7 @@ class QuantConv2d(nn.Conv2d, _ActObserverMixin):
         with autocast_off(x.device.type):
             x = x.float()
             x = self._maybe_quant_input(x)
-            weight = fake_quant_int8_per_channel(
-                self.weight.float(), scale=self._weight_scale()
-            )
+            weight = self._effective_weight()
             bias = self.bias.float() if self.bias is not None else None
             out = self._conv_forward(x, weight, bias)
         return out.to(in_dtype) if in_dtype != out.dtype else out
@@ -182,9 +221,7 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
         with autocast_off(x.device.type):
             x = x.float()
             x = self._maybe_quant_input(x)
-            weight = fake_quant_int8_per_channel(
-                self.weight.float(), scale=self._weight_scale()
-            )
+            weight = self._effective_weight()
             bias = self.bias.float() if self.bias is not None else None
             out = F.linear(x, weight, bias)
         return out.to(in_dtype) if in_dtype != out.dtype else out
@@ -222,11 +259,52 @@ class NVFP4Linear(nn.Linear):
     def q_calibrated(self) -> bool:
         return bool((self._q_w_amax > 0).item())
 
+    @property
+    def is_finalized(self) -> bool:
+        return "weight_packed" in self._buffers
+
+    def make_finalized(self):
+        """Crystallize: replace fp32 masters with packed E2M1 + E4M3 scales."""
+        if self.is_finalized:
+            return
+        with torch.no_grad():
+            payload, block_scale = pack_nvfp4_weight(
+                self.weight.detach(), self._q_w_amax
+            )
+        del self._parameters["weight"]
+        self.register_buffer("weight_packed", payload)
+        self.register_buffer("weight_block_scale", block_scale)
+
+    def make_prepared(self):
+        """Reconstruct fp32 masters from packed weights (QAT-from-PTQ)."""
+        if not self.is_finalized:
+            return
+        with torch.no_grad():
+            weight = unpack_nvfp4_weight(
+                self.weight_packed,
+                self.weight_block_scale,
+                self._q_w_amax,
+                self.in_features,
+            )
+        del self._buffers["weight_packed"]
+        del self._buffers["weight_block_scale"]
+        self.weight = nn.Parameter(weight)
+
+    def _effective_weight(self) -> torch.Tensor:
+        if self.is_finalized:
+            return unpack_nvfp4_weight(
+                self.weight_packed,
+                self.weight_block_scale,
+                self._q_w_amax,
+                self.in_features,
+            )
+        return fake_quant_nvfp4_weight(self.weight.float(), self._q_w_amax)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
         with autocast_off(x.device.type):
             x = fake_quant_nvfp4_dynamic(x.float())
-            weight = fake_quant_nvfp4_weight(self.weight.float(), self._q_w_amax)
+            weight = self._effective_weight()
             bias = self.bias.float() if self.bias is not None else None
             out = F.linear(x, weight, bias)
         return out.to(in_dtype) if in_dtype != out.dtype else out

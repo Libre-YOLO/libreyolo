@@ -218,6 +218,7 @@ def quant_info(wrapper) -> Optional[Dict]:
     if not manifest:
         return None
     info = dict(manifest)
+    info.setdefault("state", "prepared")
     counts = {"conv_int8": 0, "linear_int8": 0, "linear_nvfp4": 0}
     calibrated = True
     for _, module in _quant_modules(wrapper.model):
@@ -358,10 +359,108 @@ def quantize_model(
 def _set_export_mode(root: nn.Module, enabled: bool):
     for _, module in _quant_modules(root):
         if isinstance(module, (QuantConv2d, QuantLinear)):
-            if enabled:
+            if enabled and not module.is_finalized:
                 module.freeze_weight_qparams()
             module._q_export_mode = enabled
             module._q_observing = False
+
+
+def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
+    """Write the crystallized quantized checkpoint (deployment artifact).
+
+    Packed low-bit weights + scales + manifest, masters stripped. Unpacking
+    reproduces the simulation bit for bit, so a finalized checkpoint scores
+    exactly what the prepared model scores (with ``remainder="fp32"``;
+    ``"fp16"`` additionally halves every non-quantized float tensor, a
+    near-lossless size win). Loading one yields an inference-ready model;
+    training it re-prepares masters from the packed weights (QAT-from-PTQ).
+    """
+    import copy
+    from pathlib import Path
+
+    from ..utils.serialization import wrap_libreyolo_checkpoint
+
+    manifest = dict(wrapper._quant_manifest)
+    recipe = manifest.get("recipe")
+    remainder = str(remainder).lower()
+    if remainder not in ("fp16", "fp32"):
+        raise QuantizationError(
+            f"remainder must be 'fp16' or 'fp32', got '{remainder}'."
+        )
+
+    # Finalize a deep copy and let the family's own state_dict() produce
+    # the keys (some families re-key their state dicts, so name-based key
+    # surgery would miss them). The live model stays prepared and trainable.
+    # Packing runs on the live device: quantization kernels can round one
+    # code differently across devices, and the invariant we promise is
+    # "finalized scores exactly what you validated on this device".
+    model_copy = copy.deepcopy(wrapper.model)
+    with torch.no_grad():
+        if recipe in ("int8", "nvfp4"):
+            for _, module in _quant_modules(model_copy):
+                if hasattr(module, "make_finalized"):
+                    module.make_finalized()
+        model_copy = model_copy.cpu()
+        new_sd = model_copy.state_dict()
+        if remainder == "fp16" and recipe != "fp16":
+            keep_exact = ("_q_w_scale", "_q_act_lo", "_q_act_hi", "_q_w_amax")
+            new_sd = {
+                key: (
+                    value.half()
+                    if torch.is_tensor(value)
+                    and value.dtype == torch.float32
+                    and not key.endswith(keep_exact)
+                    else value
+                )
+                for key, value in new_sd.items()
+            }
+    del model_copy
+
+    manifest["state"] = "finalized"
+    manifest["remainder"] = remainder if recipe != "fp16" else "fp16"
+
+    checkpoint = wrap_libreyolo_checkpoint(
+        new_sd,
+        model_family=wrapper._get_model_name(),
+        size=wrapper.size,
+        task=wrapper.task,
+        nc=wrapper.nb_classes,
+        names=wrapper.names,
+        imgsz=int(wrapper._get_input_size()),
+    )
+    checkpoint["quant"] = manifest
+
+    if out is None:
+        if wrapper.model_path:
+            src = Path(str(wrapper.model_path))
+            out = src.with_name(f"{src.stem}-final{src.suffix or '.pt'}")
+        else:
+            out = f"{wrapper._get_model_name()}{wrapper.size}-{recipe}-final.pt"
+    out = Path(out)
+    if out.parent != Path("."):
+        out.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, out)
+    logger.info("Finalized %s checkpoint saved to %s", recipe, out)
+    return str(out)
+
+
+def reprepare_model(wrapper):
+    """Reconstruct fp32 masters from a finalized model (QAT-from-PTQ)."""
+    manifest = getattr(wrapper, "_quant_manifest", None)
+    if not manifest or manifest.get("state") != "finalized":
+        return wrapper
+    for _, module in _quant_modules(wrapper.model):
+        if hasattr(module, "make_prepared"):
+            module.make_prepared()
+    manifest = dict(manifest)
+    manifest["state"] = "prepared"
+    wrapper._quant_manifest = manifest
+    wrapper.model.to(wrapper.device)
+    logger.info(
+        "Re-prepared finalized checkpoint: fp32 masters reconstructed from "
+        "packed weights (QAT-from-PTQ)."
+    )
+    return wrapper
 
 
 def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
@@ -376,6 +475,18 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
     manifest = getattr(wrapper, "_quant_manifest", None) or {}
     recipe = manifest.get("recipe")
     fmt = str(format).lower()
+
+    if fmt in ("pt", "pytorch"):
+        out = kwargs.pop("out", None)
+        remainder = kwargs.pop("remainder", "fp16")
+        if kwargs:
+            logger.info("Ignoring export kwargs for format='pt': %s", sorted(kwargs))
+        return export_finalized_pt(wrapper, out=out, remainder=remainder)
+
+    if manifest.get("state") == "finalized" and fmt == "onnx" and recipe == "int8":
+        # QDQ emission traces fake-quant over fp32 masters; reconstruct them
+        # from the packed weights (exact by the packing invariant).
+        reprepare_model(wrapper)
 
     if recipe == "fp16":
         raise QuantizationError(
@@ -447,6 +558,10 @@ def dequantize_model(wrapper):
         root.float()
     else:
         for name, module in list(_quant_modules(root)):
+            finalized = getattr(module, "is_finalized", False)
+            ref = module.bias if module.bias is not None else next(
+                iter(module.buffers())
+            )
             if isinstance(module, QuantConv2d):
                 new = nn.Conv2d(
                     module.in_channels,
@@ -458,20 +573,24 @@ def dequantize_model(wrapper):
                     groups=module.groups,
                     bias=module.bias is not None,
                     padding_mode=module.padding_mode,
-                    device=module.weight.device,
-                    dtype=module.weight.dtype,
+                    device=ref.device,
+                    dtype=torch.float32,
                 )
             elif isinstance(module, (QuantLinear, NVFP4Linear)):
                 new = nn.Linear(
                     module.in_features,
                     module.out_features,
                     bias=module.bias is not None,
-                    device=module.weight.device,
-                    dtype=module.weight.dtype,
+                    device=ref.device,
+                    dtype=torch.float32,
                 )
             else:
                 continue
-            new.weight = module.weight
+            if finalized:
+                with torch.no_grad():
+                    new.weight = nn.Parameter(module._effective_weight())
+            else:
+                new.weight = module.weight
             new.bias = module.bias
             _swap_module(root, name, new)
 
@@ -515,6 +634,12 @@ def apply_quant_structure(wrapper, manifest: Dict):
                 expected,
                 already,
             )
+        if manifest.get("state") == "finalized":
+            # Build the packed-buffer structure so the checkpoint's payload
+            # and scale tensors resolve; load_state_dict fills them next.
+            for _, module in _quant_modules(wrapper.model):
+                if hasattr(module, "make_finalized"):
+                    module.make_finalized()
         if swapped:
             wrapper.model.to(wrapper.device)
 

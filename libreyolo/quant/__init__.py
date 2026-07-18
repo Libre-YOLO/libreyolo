@@ -18,8 +18,10 @@ from .api import (
     apply_quant_structure,
     default_keep_high_precision,
     dequantize_model,
+    export_finalized_pt,
     quant_info,
     quantize_model,
+    reprepare_model,
 )
 from .modules import NVFP4Linear, QuantConv2d, QuantLinear
 
@@ -32,8 +34,10 @@ __all__ = [
     "apply_quant_structure",
     "default_keep_high_precision",
     "dequantize_model",
+    "export_finalized_pt",
     "quant_info",
     "quantize_model",
+    "reprepare_model",
     "NVFP4Linear",
     "QuantConv2d",
     "QuantLinear",

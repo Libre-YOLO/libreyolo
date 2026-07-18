@@ -18,6 +18,13 @@ from libreyolo.quant.fake_quant import (
     fake_quant_int8_affine,
     fake_quant_int8_per_channel,
     fake_quant_nvfp4_weight,
+    int8_weight_qparams,
+)
+from libreyolo.quant.packing import (
+    pack_int8_weight,
+    pack_nvfp4_weight,
+    unpack_int8_weight,
+    unpack_nvfp4_weight,
 )
 
 
@@ -148,6 +155,47 @@ def test_quant_buffers_live_on_weight_device():
         lin = lin.cuda()
     qlin = NVFP4Linear.from_float(lin)
     assert qlin._q_w_amax.device == qlin.weight.device
+
+
+# ---------------------------------------------------------------------------
+# Packing (finalized checkpoints)
+# ---------------------------------------------------------------------------
+
+
+def test_int8_pack_unpack_matches_simulation():
+    torch.manual_seed(0)
+    w = torch.randn(16, 8, 3, 3)
+    scale = int8_weight_qparams(w)
+    packed = pack_int8_weight(w, scale)
+    assert packed.dtype == torch.int8
+    assert torch.equal(unpack_int8_weight(packed, scale), fake_quant_int8_per_channel(w))
+
+
+def test_nvfp4_pack_unpack_matches_simulation():
+    torch.manual_seed(0)
+    for in_features in (48, 20):  # multiple and non-multiple of the 16-block
+        w = torch.randn(8, in_features) * 0.05
+        amax = w.abs().amax().reshape(1)
+        payload, block_scale = pack_nvfp4_weight(w, amax)
+        assert payload.dtype == torch.uint8
+        assert payload.shape == (8, ((in_features + 15) // 16) * 8)
+        out = unpack_nvfp4_weight(payload, block_scale, amax, in_features)
+        assert torch.equal(out, fake_quant_nvfp4_weight(w, amax))
+
+
+def test_nvfp4_linear_finalize_roundtrip():
+    torch.manual_seed(0)
+    lin = nn.Linear(64, 32)
+    q = NVFP4Linear.from_float(lin)
+    x = torch.randn(4, 64)
+    with torch.no_grad():
+        ref = q(x)
+        q.make_finalized()
+        assert q.is_finalized and "weight" not in dict(q.named_parameters())
+        assert torch.equal(q(x), ref)
+        q.make_prepared()
+        assert not q.is_finalized
+        assert torch.equal(q(x), ref)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +337,51 @@ def test_fp16_dequantize_restores_float_dtype(yolo9t):
     while isinstance(leaf, (tuple, list)):
         leaf = leaf[0]
     assert leaf.dtype == torch.float32
+
+
+def _leaf(out):
+    leaf = next(iter(out.values())) if isinstance(out, dict) else out
+    while isinstance(leaf, (tuple, list)):
+        leaf = leaf[0]
+    return leaf
+
+
+def test_finalized_pt_export_roundtrip(tmp_path, yolo9t):
+    from libreyolo.quant import reprepare_model
+
+    yolo9t.quantize(recipe="int8", calib=None, verbose=False)
+    yolo9t.model.eval()
+    x = torch.randn(1, 3, 640, 640)
+    with torch.no_grad():
+        ref = _leaf(yolo9t.model(x))
+
+    prepared = tmp_path / "prep.pt"
+    yolo9t.save(str(prepared))
+    final = yolo9t.export(format="pt", out=str(tmp_path / "final.pt"), remainder="fp32")
+
+    import os
+    assert os.path.getsize(final) < os.path.getsize(prepared)
+
+    ckpt = torch.load(final, map_location="cpu", weights_only=False)
+    sd = ckpt["model"]
+    assert ckpt["quant"]["state"] == "finalized"
+    assert "backbone.conv1.conv.weight_packed" in sd
+    assert "backbone.conv1.conv.weight" not in sd
+    assert sd["backbone.conv1.conv.weight_packed"].dtype == torch.int8
+
+    m2 = LibreYOLO9(final, size="t", device="cpu")
+    assert m2.quant_info()["state"] == "finalized"
+    m2.model.eval()
+    with torch.no_grad():
+        out2 = _leaf(m2.model(x))
+    assert torch.equal(ref, out2)
+
+    reprepare_model(m2)
+    assert m2.quant_info()["state"] == "prepared"
+    m2.model.eval()
+    with torch.no_grad():
+        out3 = _leaf(m2.model(x))
+    assert torch.equal(ref, out3)
 
 
 def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
