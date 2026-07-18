@@ -5,9 +5,88 @@
 # Ported for LibreYOLO from OpenSenseNova/SenseNova-Vision
 # (commit 12ccd96e32b32967a11cacb6c5bd5fe3a555fc0c, Apache-2.0), file
 # data/data_utils.py, trimmed to the helpers the inference path uses.
+# CheckpointTokenizer is a LibreYOLO addition; see its docstring.
+
+import re
 
 import torch
 from PIL import Image
+
+
+class CheckpointTokenizer:
+    """Applies the checkpoint's trained added-token layout over a base BPE.
+
+    The released SenseNova-Vision repo ships two conflicting tokenizer
+    definitions. ``tokenizer.json`` (the fast backend) places the chat/vision
+    specials and ~2k structured tokens (camera-pose tags, coordinate bins)
+    at ids 151644-153675, beyond the checkpoint's 152064-row embedding, so
+    using it as-is trips a CUDA device-side assert on the first embedding
+    lookup. ``tokenizer_config.json``'s ``added_tokens_decoder`` records the
+    layout the model was trained with: the same tokens overriding ids
+    149632-151664 (repurposed rare base-vocab ids), which upstream's legacy
+    slow tokenizer applied. transformers 5.x no longer builds slow
+    tokenizers, so this wrapper reproduces that layout: encode splits text
+    on the override literals before delegating to the base BPE, and decode
+    maps override ids back to their literals.
+    """
+
+    def __init__(self, base, id_to_token):
+        self._base = base
+        self._id_to_token = {int(i): str(t) for i, t in id_to_token.items()}
+        self._token_to_id = {t: i for i, t in self._id_to_token.items()}
+        literals = sorted(self._token_to_id, key=len, reverse=True)
+        self._split_re = re.compile("(" + "|".join(re.escape(t) for t in literals) + ")")
+
+    # -- surface used by add_special_tokens() ------------------------------
+    @property
+    def special_tokens_map(self):
+        return {}
+
+    def add_tokens(self, tokens):
+        missing = [t for t in tokens if t not in self._token_to_id]
+        if missing:
+            raise ValueError(
+                f"Tokens {missing} are not part of the checkpoint layout; "
+                "refusing to add ids beyond the embedding table."
+            )
+        return 0
+
+    def convert_tokens_to_ids(self, token):
+        return self._token_to_id[token]
+
+    def __len__(self):
+        return max(self._id_to_token) + 1
+
+    # -- encode / decode ---------------------------------------------------
+    def encode(self, text):
+        ids = []
+        for part in self._split_re.split(str(text)):
+            if not part:
+                continue
+            override = self._token_to_id.get(part)
+            if override is not None:
+                ids.append(override)
+            else:
+                ids.extend(self._base.encode(part, add_special_tokens=False))
+        return ids
+
+    def decode(self, ids):
+        if hasattr(ids, "tolist"):
+            ids = ids.tolist()
+        pieces, run = [], []
+        for token_id in ids:
+            token_id = int(token_id)
+            literal = self._id_to_token.get(token_id)
+            if literal is None:
+                run.append(token_id)
+                continue
+            if run:
+                pieces.append(self._base.decode(run))
+                run = []
+            pieces.append(literal)
+        if run:
+            pieces.append(self._base.decode(run))
+        return "".join(pieces)
 
 
 def patchify(image, patch_size):

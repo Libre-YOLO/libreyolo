@@ -342,6 +342,63 @@ class TestPostprocess:
         assert seg["num_detections"] == 0
 
 
+class _FakeBaseTokenizer:
+    """Byte-per-char stand-in for the base BPE."""
+
+    def encode(self, text, add_special_tokens=False):
+        return [ord(c) % 1000 for c in text]
+
+    def decode(self, ids):
+        return "".join(chr(i) if 31 < i < 127 else "?" for i in ids)
+
+
+class TestCheckpointTokenizer:
+    def _tok(self):
+        from libreyolo.models.sensenova.data_utils import CheckpointTokenizer
+
+        overrides = {
+            2000: "<|im_start|>",
+            2001: "<|im_end|>",
+            2002: "<|vision_start|>",
+            2003: "<|vision_end|>",
+            2004: "<quat>",
+        }
+        return CheckpointTokenizer(_FakeBaseTokenizer(), overrides)
+
+    def test_override_literals_encode_to_trained_ids(self):
+        tok = self._tok()
+        assert tok.encode("<|im_start|>hi<quat>") == [2000, ord("h"), ord("i"), 2004]
+
+    def test_decode_maps_override_ids_back_to_literals(self):
+        tok = self._tok()
+        text = tok.decode([2000, ord("h"), ord("i"), 2001])
+        assert text == "<|im_start|>hi<|im_end|>"
+        assert text.split("<|im_end|>")[0].split("<|im_start|>")[1] == "hi"
+
+    def test_decode_accepts_tensors(self):
+        import torch
+
+        tok = self._tok()
+        assert tok.decode(torch.tensor([2000, ord("a")])) == "<|im_start|>a"
+
+    def test_add_special_tokens_resolves_trained_ids(self):
+        from libreyolo.models.sensenova.data_utils import add_special_tokens
+
+        tok, ids, n_new = add_special_tokens(self._tok())
+        assert n_new == 0
+        assert ids == {
+            "bos_token_id": 2000,
+            "eos_token_id": 2001,
+            "start_of_image": 2002,
+            "end_of_image": 2003,
+        }
+
+    def test_refuses_unknown_token_registration(self):
+        tok = self._tok()
+        with pytest.raises(ValueError, match="checkpoint layout"):
+            tok.add_tokens(["<|brand-new|>"])
+
+
 class _FakeInferencer:
     """Stands in for InterleaveInferencer, returning canned generations."""
 

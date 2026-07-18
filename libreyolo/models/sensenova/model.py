@@ -363,17 +363,26 @@ class LibreSenseNovaVision(LibreVLMModel):
                 "larger GPU."
             ) from exc
 
-    def _max_memory(self) -> Dict[Any, str]:
+    def _max_memory(self, plan_scale: float = 1.0) -> Dict[Any, Any]:
+        """Per-device budgets for the dispatch planner, in bytes.
+
+        The planner sizes modules at their checkpoint (bf16) width, but a
+        quantized load shrinks them ~3.5x on the GPU, so quantized paths pass
+        ``plan_scale`` > 1 to let the planner place modules that will fit
+        after quantization.
+        """
         if self.device.type != "cuda":
-            return {"cpu": "128GiB"}
-        if self._max_memory_per_gpu is not None:
-            budget = self._max_memory_per_gpu
-            return {i: budget for i in range(torch.cuda.device_count())}
+            return {"cpu": 128 * 1024**3}
         max_memory = {}
         for i in range(torch.cuda.device_count()):
-            total = torch.cuda.get_device_properties(i).total_memory
-            # Leave headroom for activations and the VAE decode.
-            max_memory[i] = f"{int(total * 0.9 / 1024**3)}GiB"
+            if self._max_memory_per_gpu is not None:
+                from accelerate.utils import convert_file_size_to_int
+
+                budget = convert_file_size_to_int(self._max_memory_per_gpu)
+            else:
+                # Leave headroom for activations and the VAE decode.
+                budget = int(torch.cuda.get_device_properties(i).total_memory * 0.9)
+            max_memory[i] = int(budget * plan_scale)
         return max_memory
 
     def _load_pretrained(self, snapshot_dir: str):
@@ -390,11 +399,13 @@ class LibreSenseNovaVision(LibreVLMModel):
 
         import os
 
+        import json
+
         from .modeling.autoencoder import load_ae
         from .modeling.bagel import Bagel, BagelConfig
         from .modeling.qwen2_navit import Qwen2Config, Qwen2ForCausalLM
         from .modeling.siglip_navit import SiglipVisionConfig, SiglipVisionModel
-        from .data_utils import add_special_tokens
+        from .data_utils import CheckpointTokenizer, add_special_tokens
         from .inferencer import InterleaveInferencer
         from .transforms import ImageTransform
 
@@ -413,8 +424,25 @@ class LibreSenseNovaVision(LibreVLMModel):
             local_path=os.path.join(snapshot_dir, "ae.safetensors")
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(snapshot_dir)
+        # The released tokenizer.json disagrees with the trained added-token
+        # layout recorded in tokenizer_config.json; CheckpointTokenizer
+        # overlays the trained layout (see its docstring).
+        base_tokenizer = AutoTokenizer.from_pretrained(snapshot_dir)
+        with open(
+            os.path.join(snapshot_dir, "tokenizer_config.json"), encoding="utf-8"
+        ) as f:
+            added_tokens = json.load(f).get("added_tokens_decoder", {})
+        tokenizer = CheckpointTokenizer(
+            base_tokenizer,
+            {int(i): t["content"] for i, t in added_tokens.items()},
+        )
         tokenizer, new_token_ids, _ = add_special_tokens(tokenizer)
+        if max(new_token_ids.values()) >= llm_config.vocab_size:
+            raise RuntimeError(
+                "Special token ids exceed the checkpoint vocabulary "
+                f"({new_token_ids}); the tokenizer files are inconsistent "
+                "with the model weights."
+            )
 
         bagel_config = BagelConfig(
             visual_gen=True,
@@ -436,9 +464,13 @@ class LibreSenseNovaVision(LibreVLMModel):
                 vit_config, meta=True
             )
 
+        selected_dtype = self._select_dtype()
+        # NF4 stores 4-bit weights plus norms/embeddings in bf16 (~3.5x
+        # smaller than the bf16 checkpoint the planner measures); int8 is ~1.8x.
+        plan_scale = {"nf4": 3.5, "int8": 1.8}.get(selected_dtype, 1.0)
         device_map = infer_auto_device_map(
             model,
-            max_memory=self._max_memory(),
+            max_memory=self._max_memory(plan_scale),
             no_split_module_classes=["Bagel", "Qwen2MoTDecoderLayer"],
         )
         # Keep the shared embedding/connector modules on one device.
@@ -459,7 +491,9 @@ class LibreSenseNovaVision(LibreVLMModel):
             device_map[key] = device_map.get(key, first_device)
 
         checkpoint_path = os.path.join(snapshot_dir, "ema.safetensors")
-        selected_dtype = self._select_dtype()
+        # Last-resort spill target when a small machine cannot hold the model
+        # across GPU and CPU memory.
+        offload_folder = os.path.join(snapshot_dir, "offload")
 
         if selected_dtype in ("nf4", "int8"):
             from accelerate.utils import BnbQuantizationConfig, load_and_quantize_model
@@ -480,7 +514,7 @@ class LibreSenseNovaVision(LibreVLMModel):
                 weights_location=checkpoint_path,
                 bnb_quantization_config=quant_config,
                 device_map=device_map,
-                offload_folder=None,
+                offload_folder=offload_folder,
             ).eval()
         else:
             torch_dtype = {
@@ -500,6 +534,7 @@ class LibreSenseNovaVision(LibreVLMModel):
                 model,
                 checkpoint=checkpoint_path,
                 device_map=device_map,
+                offload_folder=offload_folder,
                 offload_buffers=True,
                 dtype=torch_dtype,
                 force_hooks=True,
