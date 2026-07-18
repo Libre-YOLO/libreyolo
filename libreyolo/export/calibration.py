@@ -52,6 +52,7 @@ class CalibrationDataLoader:
         imgsz: ImageSize = 640,
         batch: int = 8,
         fraction: float = 1.0,
+        samples: int | None = None,
         preprocess_fn=None,
         allow_download_scripts: bool = False,
     ):
@@ -64,6 +65,8 @@ class CalibrationDataLoader:
             batch: Batch size for calibration.
             fraction: Fraction of dataset to use (0.0-1.0). Use smaller values
                      for faster calibration with slight accuracy tradeoff.
+            samples: Optional hard cap on the number of calibration images,
+                applied after ``fraction``.
             preprocess_fn: Callable ``(img_rgb_hwc, input_size) -> (chw_float32, ratio)``.
                 Obtained from ``model._get_preprocess_numpy()``.
             allow_download_scripts: Allow embedded Python in dataset YAML downloads.
@@ -71,6 +74,7 @@ class CalibrationDataLoader:
         self.imgsz = imgsz
         self.batch = batch
         self.fraction = max(0.0, min(1.0, fraction))
+        self.samples = samples
         self._preprocess_fn = preprocess_fn
 
         # Load dataset config (handles resolve, download, path resolution)
@@ -101,6 +105,8 @@ class CalibrationDataLoader:
 
         total = len(self.img_files)
         self.num_samples = max(1, int(total * self.fraction))
+        if self.samples is not None:
+            self.num_samples = max(1, min(self.num_samples, int(self.samples)))
         self.img_files = self.img_files[: self.num_samples]
         self._num_batches = (self.num_samples + self.batch - 1) // self.batch
 

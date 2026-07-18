@@ -952,6 +952,14 @@ class LibreRFDETR(BaseModel):
             ):
                 apply_lora_to_rfdetr(self.model.model)
 
+            quant_manifest = loaded.get("quant")
+            if quant_manifest:
+                # Rebuild the quantized module structure first so the _q_*
+                # scale buffers in the checkpoint resolve to real modules.
+                from ...quant import apply_quant_structure
+
+                apply_quant_structure(self, quant_manifest)
+
             missing, unexpected = self.model.load_state_dict(loaded, strict=False)
             if unexpected:
                 raise RuntimeError(

@@ -175,6 +175,15 @@ LibreYOLO backends so they can apply native original-canvas clipping and runtime
 `predict(conf=..., iou=..., max_det=...)` semantics. Third-party consumers that
 want graph-embedded NMS should use the first output.
 
+## Quantized Checkpoints
+
+Quantized models add one optional flat key, `quant`: a small manifest dict
+(`schema`, `recipe`, `keep_high_precision`, `execution`, calibration
+provenance, `module_count`). Loaders that see `quant` rebuild the quantized
+module structure before `load_state_dict`, so the extra `_q_*` scale buffers
+in `model` resolve. Readers without quantization support may ignore the key
+and load the fp32 master weights. See `quantization.md`.
+
 ## Training Checkpoints
 
 Trainer checkpoints use the same required metadata core and may also contain

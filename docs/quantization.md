@@ -1,0 +1,102 @@
+# PyTorch-Native Quantization
+
+LibreYOLO quantizes models directly in PyTorch. Quantized models keep the
+normal `predict` / `val` / `train` / `save` contract, so accuracy is measured
+with the same validators as float models and accuracy recovery reuses the
+existing training and distillation notation.
+
+## Grammar
+
+Two steps. Step 1 always happens; step 2 is optional accuracy recovery.
+
+```python
+from libreyolo import LibreYOLO
+
+model = LibreYOLO("LibreYOLO9s.pt")
+
+# Step 1: quantize (structure + calibration). calib is a small UNLABELED
+# image set used forward-only to derive activation ranges and scales.
+qmodel = model.quantize(recipe="int8", calib="coco8.yaml", samples=128)
+
+qmodel.val(data="coco8.yaml")            # honest accuracy, same validators
+qmodel.predict("bus.jpg")
+qmodel.save("LibreYOLO9s-int8.pt")       # manifest-carrying checkpoint
+
+# Step 2 (optional): QAT is plain train() on the quantized model.
+qmodel.train(data="coco.yaml", epochs=5)
+
+# QAD: same step plus the existing distillation kwargs.
+qmodel.train(data="coco.yaml", epochs=5, distill_model="LibreYOLO9m.pt")
+```
+
+CLI:
+
+```bash
+libreyolo quantize --model LibreYOLO9s.pt --recipe int8 --calib coco8.yaml
+libreyolo train --model LibreYOLO9s-int8.pt --data coco.yaml --epochs 5
+```
+
+`LibreYOLO("LibreYOLO9s-int8.pt")` restores the quantized structure and
+scales automatically (checkpoints carry a `quant` manifest; see
+`checkpoint_schema.md`). Trainer checkpoints written during QAT/QAD carry the
+manifest too, so `best.pt` from a QAT run is itself a quantized checkpoint.
+
+## Recipes
+
+| Recipe | What it does | Families (v1) | Calibration |
+|---|---|---|---|
+| `fp16` | Casts the model to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr | none |
+| `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations (skipped with `calib=None`, weights-only) |
+| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Activations use dynamic block scaling. | rfdetr | not needed (dynamic) |
+
+`nvfp4` is rejected for conv-heavy families such as yolo9 on purpose: FP4
+acceleration is GEMM-only on current hardware, so convolutions stay in higher
+precision. Transformer families (RF-DETR) are the NVFP4 target.
+
+Per-family `keep_high_precision` defaults protect the first layer and the
+heads (and always the YOLO9 DFL conv). Override with
+`quantize(..., keep_high_precision=("head.",))` if you know what you are
+doing.
+
+## Calibration data is not training data
+
+- `calib=` (quantize): a few hundred images, no labels read, forward-only.
+  Purpose: activation ranges and scale generation.
+- `data=` (train/val): the labeled dataset. Purpose: gradients and metrics.
+
+## Execution tiers
+
+v1 executes quantized arithmetic in **simulation** (fake-quantization with
+straight-through-estimator gradients, computed in fp32 islands even under
+AMP). Simulation is numerics-true: a `val()` score on any device is a real
+claim about the quantized arithmetic. It is not a speed claim; packed
+low-bit kernels are a separate deployment concern. `fp16` is the exception:
+it executes natively.
+
+`model.quant_info()` reports the recipe, module counts, calibration state,
+and execution tier.
+
+## QAT and QAD mechanics
+
+Quantized modules keep fp32 master weights; fake-quantization applies STE so
+gradients flow to the masters. The existing trainers work unchanged: EMA,
+AMP, checkpoint resume, and the `distill_*` kwargs (MGD/CWD) all compose.
+`fp16`-quantized models are inference-only; the trainer rejects them with a
+pointer to `amp=True`.
+
+QAT is a finetune of an already-trained model: use finetune learning rates
+(for example `lr0=1e-4` for yolo9), not the from-scratch defaults, or the
+short run will destroy the pretrained weights regardless of quantization.
+
+QAD availability follows family distillation support: it works wherever the
+family implements `get_distill_config()` (yolo9 today). The grammar itself is
+family-independent, so rfdetr QAD activates as soon as that family gains
+distillation support.
+
+Family notes: RF-DETR calibration exercises the inference path, so modules
+that only run during training (denoising branches) keep their activation
+observers open and stay unquantized on activations until QAT runs;
+`quant_info()["calibrated"]` reports this honestly. The RF-DETR trainer also
+reinitializes the detection head when the dataset class count differs from
+the checkpoint head width (COCO checkpoints have a 91-wide head), which
+applies to quantized finetunes exactly as it does to float ones.
