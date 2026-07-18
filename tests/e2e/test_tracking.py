@@ -2,7 +2,7 @@
 E2E tracking: validate model.track() on a real video with multiple pedestrians.
 
 Downloads a short test video (7.3 MB, 13.6s) from Roboflow's public CDN and
-runs ByteTrack through several LibreYOLO detectors, checking that:
+runs tracking through several LibreYOLO detectors, checking that:
   - track IDs are assigned and consistent across frames
   - the same person keeps the same ID across consecutive frames
   - no duplicate IDs within a single frame
@@ -183,6 +183,21 @@ class TestTrackingYOLOX:
                     stable += 1
         assert stable >= len(frames) // 2, "Deep OC-SORT IDs not stable across frames"
 
+    def test_botsort_tracker_end_to_end(self, model, video_path):
+        """BoT-SORT yields stable IDs while compensating for camera motion."""
+        frames = _run_tracker(model, video_path, n_frames=20, tracker="botsort")
+        assert len(frames) == 20
+        stable = 0
+        for i, frame in enumerate(frames):
+            ids = frame.track_id.tolist() if frame.track_id is not None else []
+            assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+            if i > 0:
+                previous = _ids(frames[i - 1])
+                current = _ids(frame)
+                if previous and current and len(previous & current) / len(previous) >= 0.5:
+                    stable += 1
+        assert stable >= len(frames) // 2, "BoT-SORT IDs not stable across frames"
+
     def test_save_creates_annotated_video(self, model, video_path, tmp_path):
         """save=True should write an annotated video to output_path."""
         import cv2
@@ -248,6 +263,12 @@ class TestTrackingYOLO9:
         for i, f in enumerate(frames):
             ids = f.track_id.tolist() if f.track_id is not None else []
             assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+
+    def test_botsort_produces_results(self, model, video_path):
+        """The BoT-SORT path works with flagship YOLO9 detectors."""
+        frames = _run_tracker(model, video_path, n_frames=5, tracker="botsort")
+        assert len(frames) == 5
+        assert all(frame.track_id is not None and len(frame) > 0 for frame in frames)
 
 
 # ── YOLO-NAS ─────────────────────────────────────────────────────────────────
@@ -336,6 +357,12 @@ class TestTrackingRFDETR:
         for i, f in enumerate(frames):
             ids = f.track_id.tolist() if f.track_id is not None else []
             assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+
+    def test_botsort_produces_results(self, model, video_path):
+        """The BoT-SORT path works with flagship RF-DETR detectors."""
+        frames = _run_tracker(model, video_path, n_frames=5, tracker="botsort")
+        assert len(frames) == 5
+        assert all(frame.track_id is not None and len(frame) > 0 for frame in frames)
 
 
 # ── RF-DETR Segmentation + Tracking ─────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""Tracking configuration for ByteTrack."""
+"""Tracking configuration for LibreYOLO's multi-object trackers."""
 
 import warnings
 from dataclasses import dataclass, fields
@@ -80,6 +80,57 @@ class TrackConfig:
         if unknown:
             warnings.warn(
                 f"Unknown tracking config keys (ignored): {sorted(unknown)}",
+                stacklevel=2,
+            )
+        filtered = {k: v for k, v in kwargs.items() if k in valid}
+        return cls(**filtered)
+
+
+@dataclass(kw_only=True)
+class BoTSortConfig(TrackConfig):
+    """Configuration for the BoT-SORT multi-object tracker.
+
+    BoT-SORT keeps ByteTrack's three-stage association lifecycle, but uses a
+    center-width-height Kalman state and compensates predicted tracks for
+    camera motion before matching. This is the paper's motion-only BoT-SORT
+    variant; it does not run an appearance/ReID model.
+
+    The inherited association defaults intentionally match LibreYOLO's
+    :class:`TrackConfig` so detector confidence behaves consistently when
+    switching trackers.
+
+    Args:
+        enable_cmc: Apply camera-motion compensation before association.
+        cmc_method: Camera-motion estimator. ``"sparseOptFlow"`` is the
+            currently supported method.
+        cmc_downscale: Integer image downscale used by the motion estimator.
+            Larger values reduce compute at the cost of small-motion detail.
+    """
+
+    enable_cmc: bool = True
+    cmc_method: str = "sparseOptFlow"
+    cmc_downscale: int = 2
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.cmc_method != "sparseOptFlow":
+            raise ValueError(
+                "cmc_method must be 'sparseOptFlow'; "
+                f"got {self.cmc_method!r}"
+            )
+        if self.cmc_downscale < 1:
+            raise ValueError(
+                f"cmc_downscale must be >= 1, got {self.cmc_downscale}"
+            )
+
+    @classmethod
+    def from_kwargs(cls, **kwargs) -> "BoTSortConfig":
+        """Construct config, warning on unknown keys."""
+        valid = {f.name for f in fields(cls)}
+        unknown = set(kwargs) - valid
+        if unknown:
+            warnings.warn(
+                f"Unknown BoT-SORT config keys (ignored): {sorted(unknown)}",
                 stacklevel=2,
             )
         filtered = {k: v for k, v in kwargs.items() if k in valid}
