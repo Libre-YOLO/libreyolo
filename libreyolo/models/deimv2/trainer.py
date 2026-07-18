@@ -133,6 +133,13 @@ class DEIMv2Trainer(DEIMTrainer):
         )
 
     def on_setup(self):
+        # DEIMv2 needs its own recipe (SwiGLU FFN names, DINOv3 backbone on
+        # S/M/L/X), so this override must not rely on DEIMTrainer's hook.
+        if getattr(self.config, "lora", False):
+            from ...training.lora import apply_lora_to_deimv2
+
+            apply_lora_to_deimv2(self.model)
+
         decoder_reg_max = getattr(getattr(self.model, "decoder", None), "reg_max", None)
         if decoder_reg_max is not None and int(self.config.reg_max) != int(
             decoder_reg_max

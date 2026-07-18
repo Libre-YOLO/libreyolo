@@ -80,9 +80,29 @@ def convert_targets_for_detr(
 class RTDETRTrainer(BaseTrainer):
     """RT-DETR-specific trainer."""
 
+    # RT-DETR pairs a CNN (PResNet/HGNetv2) backbone with a transformer
+    # encoder/decoder whose projections are nn.Linear layers. lora=True
+    # freezes the backbone and the transformer base weights and trains LoRA
+    # adapters on the transformer Linears (see libreyolo/training/lora.py).
+    supports_lora = True
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return RTDETRConfig
+
+    def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
+        if not getattr(self.config, "lora", False):
+            return False
+        from ...training.lora import is_lora_parameter_name
+
+        return is_lora_parameter_name(name)
+
+    def _maybe_apply_lora(self) -> None:
+        """Inject adapters when lora=True. Called by every on_setup override."""
+        if getattr(self.config, "lora", False):
+            from ...training.lora import apply_lora_to_detr
+
+            apply_lora_to_detr(self.model)
 
     def _ddp_find_unused_parameters(self) -> bool:
         # RT-DETR's denoising_class_embed is skipped when a batch has no GT
@@ -193,6 +213,7 @@ class RTDETRTrainer(BaseTrainer):
 
     def on_setup(self):
         """Initialize the loss criterion."""
+        self._maybe_apply_lora()
         self.criterion = RTDETRLoss(num_classes=self.config.num_classes)
         self.criterion.to(self.device)
 

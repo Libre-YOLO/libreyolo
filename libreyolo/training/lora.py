@@ -204,7 +204,20 @@ DETR_TARGET_LINEAR_NAMES = (
     "attention_weights",
     "value_proj",
     "output_proj",
+    # DEIMv2's decoder swaps the classic linear1/linear2 FFN for SwiGLU:
+    "w12",
+    "w3",
 )
+
+# DEIMv2 S/M/L/X carry a ViT backbone under ``backbone.dinov3``, in one of two
+# vendorings: the DINOv3 ``SelfAttentionBlock`` or the ViT-Tiny ``Block``
+# (vit_tiny.py). Both use one fused ``qkv`` Linear per block; adapting it
+# mirrors the RF-DETR reference recipe, which lists ``qkv`` for exactly this
+# fused layout. The attention output ``proj`` is not adapted (the reference
+# does not adapt output projections either). ``Block`` is generic, so ViT
+# block discovery is scoped to the ``backbone.dinov3`` subtree.
+DINOV3_BLOCK_CLASSES = ("SelfAttentionBlock", "Block")
+DINOV3_TARGET_LINEAR_NAMES = ("qkv",)
 
 
 def apply_lora_to_detr(core_model: nn.Module) -> nn.Module:
@@ -233,51 +246,153 @@ def apply_lora_to_detr(core_model: nn.Module) -> nn.Module:
         ValueError: if the model does not look like a DETR core or no target
             module matched.
     """
+    _require_detr_layout(core_model)
+    if module_has_lora(core_model):
+        return core_model
+
+    block_roots = _discover_block_roots(core_model, DETR_BLOCK_CLASSES)
+    if not block_roots:
+        raise ValueError(
+            "No transformer encoder/decoder blocks found; expected "
+            f"{DETR_BLOCK_CLASSES} classes in the model."
+        )
+    target_modules = _collect_linear_targets(
+        core_model, block_roots, DETR_TARGET_LINEAR_NAMES, skip_frozen=True
+    )
+    frozen_prefixes = ("backbone.",) + tuple(f"{root}." for root in block_roots)
+    return _inject_lora(
+        core_model, target_modules, frozen_prefixes, label="DETR transformer blocks"
+    )
+
+
+def apply_lora_to_deimv2(core_model: nn.Module) -> nn.Module:
+    """Inject LoRA adapters into a DEIMv2 core model, in place.
+
+    Same contract as :func:`apply_lora_to_detr`, with two DEIMv2 additions:
+
+    - The decoder FFN is SwiGLU (``w12``/``w3``), covered by the shared
+      target list.
+    - S/M/L/X sizes carry a DINOv3 ViT backbone under ``backbone.dinov3``.
+      There, the ViT base is frozen and its fused attention ``qkv`` Linears
+      get adapters (as in the RF-DETR reference, which targets ``qkv`` for
+      fused layouts), while the Spatial Tuning Adapter (STA) conv pyramid
+      around it keeps training as the projector analog. The ``qkv`` layers
+      are adapted even when the config shipped the ViT frozen
+      (``finetune=False``): adapting a frozen backbone is the point of LoRA.
+      HGNetv2 sizes fall back to the plain DETR recipe (backbone frozen
+      entirely).
+    """
+    _require_detr_layout(core_model)
+    if module_has_lora(core_model):
+        return core_model
+
+    detr_roots = _discover_block_roots(core_model, DETR_BLOCK_CLASSES)
+    if not detr_roots:
+        raise ValueError(
+            "No transformer encoder/decoder blocks found; expected "
+            f"{DETR_BLOCK_CLASSES} classes in the model."
+        )
+    target_modules = _collect_linear_targets(
+        core_model, detr_roots, DETR_TARGET_LINEAR_NAMES, skip_frozen=True
+    )
+
+    frozen_roots = list(detr_roots)
+    dinov3 = getattr(core_model.backbone, "dinov3", None)
+    if dinov3 is not None:
+        # Scoped to the ViT subtree: "Block" is too generic a class name to
+        # match across the whole model.
+        vit_roots = [
+            f"backbone.dinov3.{name}"
+            for name, module in dinov3.named_modules()
+            if name and type(module).__name__ in DINOV3_BLOCK_CLASSES
+        ]
+        if not vit_roots:
+            raise ValueError(
+                "backbone.dinov3 present but no SelfAttentionBlock modules "
+                "found; the DINOv3 vendoring may have changed."
+            )
+        target_modules += _collect_linear_targets(
+            core_model, vit_roots, DINOV3_TARGET_LINEAR_NAMES, skip_frozen=False
+        )
+        frozen_roots += vit_roots
+        backbone_prefix = "backbone.dinov3."
+    else:
+        backbone_prefix = "backbone."
+
+    frozen_prefixes = (backbone_prefix,) + tuple(f"{root}." for root in frozen_roots)
+    return _inject_lora(
+        core_model, target_modules, frozen_prefixes, label="DEIMv2 transformer blocks"
+    )
+
+
+def _require_detr_layout(core_model: nn.Module) -> None:
     for attr in ("backbone", "encoder", "decoder"):
         if not hasattr(core_model, attr):
             raise ValueError(
                 f"Model has no .{attr}; cannot apply the DETR LoRA recipe."
             )
 
-    if module_has_lora(core_model):
-        return core_model
 
-    try:
-        from peft import LoraConfig, inject_adapter_in_model
-    except ImportError as exc:
-        raise ImportError(_PEFT_INSTALL_HINT) from exc
-
-    block_roots = [
+def _discover_block_roots(
+    core_model: nn.Module, block_classes: tuple[str, ...]
+) -> list[str]:
+    return [
         name
         for name, module in core_model.named_modules()
-        if type(module).__name__ in DETR_BLOCK_CLASSES
+        if type(module).__name__ in block_classes
     ]
-    if not block_roots:
-        raise ValueError(
-            "No transformer encoder/decoder blocks found; expected "
-            f"{DETR_BLOCK_CLASSES} classes in the model."
-        )
 
-    target_modules = []
+
+def _collect_linear_targets(
+    core_model: nn.Module,
+    block_roots: list[str],
+    leaf_names: tuple[str, ...],
+    *,
+    skip_frozen: bool,
+) -> list[str]:
+    """Fully-qualified names of the nn.Linear layers to adapt inside blocks.
+
+    ``skip_frozen=True`` respects layers frozen by design (e.g.
+    ``cross_attn_method="discrete"`` freezes sampling_offsets): no adapter
+    there. ViT backbone passes set it False, because a config-frozen backbone
+    is exactly where adapters belong.
+    """
+    targets = []
     for root in block_roots:
         block = core_model.get_submodule(root)
         for sub_name, sub in block.named_modules():
             if not isinstance(sub, nn.Linear):
                 continue
-            if sub_name.rsplit(".", 1)[-1] not in DETR_TARGET_LINEAR_NAMES:
+            if sub_name.rsplit(".", 1)[-1] not in leaf_names:
                 continue
             params = list(sub.parameters())
-            # Respect layers frozen by design (e.g. ``cross_attn_method=
-            # "discrete"`` freezes sampling_offsets): no adapter there.
-            if params and all(not p.requires_grad for p in params):
+            if skip_frozen and params and all(not p.requires_grad for p in params):
                 continue
-            target_modules.append(f"{root}.{sub_name}")
+            targets.append(f"{root}.{sub_name}")
+    return targets
+
+
+def _inject_lora(
+    core_model: nn.Module,
+    target_modules: list[str],
+    frozen_prefixes: tuple[str, ...],
+    *,
+    label: str,
+) -> nn.Module:
+    """Inject plain LoRA (r16/a16) on *target_modules* and apply the
+    trainability policy: adapters train, *frozen_prefixes* freeze, everything
+    else is restored to its pre-injection state."""
     if not target_modules:
         raise ValueError(
-            "LoRA injection matched zero modules in the DETR transformer "
-            f"blocks. Expected Linear leaf names {DETR_TARGET_LINEAR_NAMES}; "
+            f"LoRA injection matched zero modules in the {label}. "
+            f"Expected Linear leaf names {DETR_TARGET_LINEAR_NAMES}; "
             "the module naming may have changed."
         )
+
+    try:
+        from peft import LoraConfig, inject_adapter_in_model
+    except ImportError as exc:
+        raise ImportError(_PEFT_INSTALL_HINT) from exc
 
     # Snapshot trainability before injection so the policy below can restore
     # everything outside the frozen zones no matter what peft toggled.
@@ -306,7 +421,6 @@ def apply_lora_to_detr(core_model: nn.Module) -> nn.Module:
             f"targets were {target_modules[:5]}..."
         )
 
-    frozen_prefixes = ("backbone.",) + tuple(f"{root}." for root in block_roots)
     for name, p in core_model.named_parameters():
         if "lora_" in name:
             p.requires_grad = True
@@ -317,8 +431,9 @@ def apply_lora_to_detr(core_model: nn.Module) -> nn.Module:
 
     trainable, total = count_trainable_parameters(core_model)
     logger.info(
-        "Applied LoRA to DETR transformer blocks: %d adapted modules, "
+        "Applied LoRA to %s: %d adapted modules, "
         "%d/%d trainable params (%.2f%%).",
+        label,
         n_adapted,
         trainable,
         total,
@@ -359,6 +474,7 @@ def merge_lora_adapters(module: nn.Module) -> int:
 __all__ = [
     "apply_lora_to_rfdetr",
     "apply_lora_to_detr",
+    "apply_lora_to_deimv2",
     "merge_lora_adapters",
     "is_peft_available",
     "is_lora_parameter_name",

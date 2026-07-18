@@ -210,7 +210,14 @@ def test_train_dry_run_distill_model_is_visible():
 
 def test_train_dry_run_accepts_lora_for_dfine_and_deim():
     app = _make_app()
-    for model_name, family in (("LibreDFINEs.pt", "dfine"), ("LibreDEIMs.pt", "deim")):
+    for model_name, family in (
+        ("LibreDFINEs.pt", "dfine"),
+        ("LibreDEIMs.pt", "deim"),
+        ("LibreDEIMv2s.pt", "deimv2"),
+        ("LibreRTDETRr18.pt", "rtdetr"),
+        ("LibreRTDETRv2r18.pt", "rtdetrv2"),
+        ("LibreRTDETRv4s.pt", "rtdetrv4"),
+    ):
         result = runner.invoke(
             app,
             [
