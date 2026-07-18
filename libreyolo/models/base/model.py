@@ -1321,8 +1321,10 @@ class BaseModel(ABC):
         existing ``distill_model`` kwargs (QAD).
 
         Args:
-            recipe: Quantization recipe: "fp16", "int8", or "nvfp4"
-                (nvfp4 targets transformer families such as rfdetr).
+            recipe: Quantization recipe. Casts: "fp16", "bf16". Conv+Linear:
+                "int8", "fp8". Linear-only (transformer families such as
+                rfdetr): "w4a16", "w4a8", "nvfp4", "mxfp4", and the
+                research preview "int2" (QAT required).
             calib: Calibration images: data.yaml path or built-in dataset
                 name. Pass None to skip calibration (int8 weights-only).
             samples: Maximum number of calibration images.

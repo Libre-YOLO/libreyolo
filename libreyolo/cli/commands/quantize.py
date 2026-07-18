@@ -18,7 +18,9 @@ def quantize_cmd(
     model: str = typer.Option(..., help="Model weights (.pt)"),
     recipe: str = typer.Option(
         "int8",
-        help="Quantization recipe: fp16, int8, or nvfp4 (transformer families)",
+        help="Quantization recipe: fp16, bf16, fp8, int8, w4a16, w4a8, "
+        "nvfp4, mxfp4, int2 (research; w4/nvfp4/mxfp4/int2 target "
+        "transformer families)",
     ),
     calib: Optional[str] = typer.Option(
         "coco128.yaml",

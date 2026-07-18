@@ -26,6 +26,7 @@ _E2M1_MIDPOINTS = torch.tensor([0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0])
 E2M1_MAX = 6.0
 E4M3_MAX = 448.0
 NVFP4_BLOCK = 16
+MXFP4_BLOCK = 32
 
 _EPS = 1e-12
 
@@ -122,6 +123,96 @@ def fake_quant_int8_affine(
             x, float(scale.item()), int(zero_point.item()), -128, 127
         )
     return torch.fake_quantize_per_tensor_affine(x, scale, zero_point, -128, 127)
+
+
+def fp8_weight_qparams(weight: torch.Tensor, ch_axis: int = 0) -> torch.Tensor:
+    """Per-channel symmetric FP8 E4M3 scale for a weight tensor."""
+    dims = [d for d in range(weight.dim()) if d != ch_axis]
+    amax = weight.detach().abs()
+    if dims:
+        amax = amax.amax(dim=dims)
+    return (amax / E4M3_MAX).clamp(min=_EPS)
+
+
+def fake_quant_fp8(x: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Symmetric FP8 E4M3 fake-quantization with a broadcastable scale."""
+    scale = scale.clamp(min=_EPS)
+    scaled = (x / scale).clamp(-E4M3_MAX, E4M3_MAX)
+    quant = scaled.to(torch.float8_e4m3fn).to(torch.float32) * scale
+    return _ste(quant, x)
+
+
+def int_group_qparams(
+    weight: torch.Tensor, bits: int, group_size: int
+) -> torch.Tensor:
+    """Per-group symmetric scales for grouped integer weight quantization.
+
+    Returns [out, ngroups] scales with qmax = 2**(bits-1) - 1.
+    """
+    out_features, in_features = weight.shape
+    pad = (-in_features) % group_size
+    w = weight.detach().float()
+    if pad:
+        w = torch.nn.functional.pad(w, (0, pad))
+    groups = w.reshape(out_features, -1, group_size)
+    qmax = float(2 ** (bits - 1) - 1)
+    return (groups.abs().amax(dim=-1) / qmax).clamp(min=_EPS)
+
+
+def fake_quant_int_grouped(
+    weight: torch.Tensor,
+    bits: int,
+    group_size: int,
+    scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Grouped symmetric integer weight fake-quantization (W4/W2 style)."""
+    out_features, in_features = weight.shape
+    if scale is None:
+        scale = int_group_qparams(weight, bits, group_size)
+    pad = (-in_features) % group_size
+    w = weight.float()
+    if pad:
+        w = torch.nn.functional.pad(w, (0, pad))
+    groups = w.reshape(out_features, -1, group_size)
+    qmin = -(2 ** (bits - 1))
+    qmax = 2 ** (bits - 1) - 1
+    s = scale.unsqueeze(-1).clamp(min=_EPS)
+    quant = torch.clamp(torch.round(groups / s), qmin, qmax) * s
+    quant = quant.reshape(out_features, -1)[:, :in_features]
+    return _ste(quant, weight)
+
+
+def _e8m0_scale(amax: torch.Tensor) -> torch.Tensor:
+    """OCP MX power-of-two block scale: 2^(floor(log2(amax)) - emax(E2M1))."""
+    exp = torch.floor(torch.log2(amax.clamp(min=1e-30))) - 2.0
+    return torch.exp2(exp.clamp(-127.0, 127.0))
+
+
+def _blockwise_mxfp4(x: torch.Tensor) -> torch.Tensor:
+    orig_shape = x.shape
+    last = orig_shape[-1]
+    pad = (-last) % MXFP4_BLOCK
+    if pad:
+        x = torch.nn.functional.pad(x, (0, pad))
+    blocks = x.reshape(*x.shape[:-1], x.shape[-1] // MXFP4_BLOCK, MXFP4_BLOCK)
+    block_amax = blocks.abs().amax(dim=-1, keepdim=True).detach()
+    eff = _e8m0_scale(block_amax)
+    quant = fake_quant_e2m1(blocks / eff) * eff
+    quant = quant.reshape(*x.shape)
+    if pad:
+        quant = quant[..., :last]
+    return quant
+
+
+def fake_quant_mxfp4_weight(weight: torch.Tensor) -> torch.Tensor:
+    """OCP MXFP4 weight fake-quantization: E2M1 elements, 32-element blocks,
+    power-of-two (E8M0) block scales, no second-level tensor scale."""
+    return _blockwise_mxfp4(weight)
+
+
+def fake_quant_mxfp4_dynamic(x: torch.Tensor) -> torch.Tensor:
+    """MXFP4 activation fake-quantization with dynamic block scaling."""
+    return _blockwise_mxfp4(x)
 
 
 def _blockwise_nvfp4(x: torch.Tensor, tensor_scale: torch.Tensor) -> torch.Tensor:

@@ -21,14 +21,42 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .modules import NVFP4Linear, QuantConv2d, QuantLinear
+from .modules import (
+    GroupQuantLinear,
+    MXFP4Linear,
+    NVFP4Linear,
+    QUANT_MODULE_TYPES,
+    QuantConv2d,
+    QuantLinear,
+)
 
 logger = logging.getLogger(__name__)
 
 QUANT_SCHEMA_VERSION = "1.0"
-RECIPES = ("fp16", "int8", "nvfp4")
+RECIPES = (
+    "fp16",
+    "bf16",
+    "fp8",
+    "int8",
+    "w4a16",
+    "w4a8",
+    "nvfp4",
+    "mxfp4",
+    "int2",
+)
+# Recipe classes: casts touch dtype only; conv recipes quantize Conv2d and
+# Linear; linear recipes quantize nn.Linear only (transformer families).
+CAST_RECIPES = ("fp16", "bf16")
+CONV_RECIPES = ("int8", "fp8")
+LINEAR_RECIPES = ("w4a16", "w4a8", "nvfp4", "mxfp4", "int2")
+# Recipes whose activations need calibration statistics.
+CALIBRATED_RECIPES = ("int8", "fp8", "w4a8", "int2")
+RESEARCH_RECIPES = ("int2",)
 SUPPORTED_FAMILIES = ("yolo9", "rfdetr")
 CALIB_ALGORITHMS = ("auto", "percentile", "minmax")
+
+GROUP_SIZE = 128  # grouped-int recipes: scale group along in_features
+INT2_GROUP_SIZE = 64
 
 DEFAULT_CALIB_DATA = "coco128.yaml"
 
@@ -69,11 +97,12 @@ def _check_support(family: str, recipe: str):
             f"Quantization is not supported for model family '{family}' yet. "
             f"Supported families: {', '.join(SUPPORTED_FAMILIES)}"
         )
-    if family == "yolo9" and recipe == "nvfp4":
+    if family == "yolo9" and recipe in LINEAR_RECIPES:
         raise QuantizationError(
-            "nvfp4 is not supported for the conv-heavy yolo9 family: FP4 "
-            "acceleration is GEMM-only, so convolutions stay in higher "
-            "precision. Use recipe='int8' for yolo9, or nvfp4 on the "
+            f"'{recipe}' targets nn.Linear layers and is not supported for "
+            "the conv-heavy yolo9 family (sub-8-bit acceleration is "
+            "GEMM-only, so convolutions stay in higher precision). Use "
+            "recipe='int8' or 'fp8' for yolo9, or this recipe on the "
             "transformer-based rfdetr family."
         )
 
@@ -95,10 +124,10 @@ def _select_modules(
     for name, module in root.named_modules():
         if not name or _is_excluded(name, keep):
             continue
-        if recipe == "int8":
+        if recipe in CONV_RECIPES:
             if type(module) is nn.Conv2d or type(module) is nn.Linear:
                 selected[name] = module
-        elif recipe == "nvfp4":
+        elif recipe in LINEAR_RECIPES:
             if type(module) is nn.Linear:
                 selected[name] = module
     return selected
@@ -113,24 +142,53 @@ def _swap_module(root: nn.Module, name: str, new_module: nn.Module):
 
 
 def _swap_selected(root: nn.Module, recipe: str, selected: Dict[str, nn.Module]) -> Dict[str, int]:
-    counts = {"conv_int8": 0, "linear_int8": 0, "linear_nvfp4": 0}
+    counts: Dict[str, int] = {}
+
+    def _count(kind: str):
+        counts[kind] = counts.get(kind, 0) + 1
+
     for name, module in selected.items():
-        if recipe == "int8":
-            if type(module) is nn.Conv2d:
-                _swap_module(root, name, QuantConv2d.from_float(module))
-                counts["conv_int8"] += 1
-            else:
-                _swap_module(root, name, QuantLinear.from_float(module))
-                counts["linear_int8"] += 1
+        if recipe in CONV_RECIPES:
+            is_conv = type(module) is nn.Conv2d
+            new = (
+                QuantConv2d.from_float(module)
+                if is_conv
+                else QuantLinear.from_float(module)
+            )
+            new._q_wformat = recipe  # "int8" | "fp8"
+            new._q_aformat = recipe
+            kind = f"{'conv' if is_conv else 'linear'}_{recipe}"
+            new._q_kind = kind
+            _swap_module(root, name, new)
+            _count(kind)
         elif recipe == "nvfp4":
-            _swap_module(root, name, NVFP4Linear.from_float(module))
-            counts["linear_nvfp4"] += 1
+            new = NVFP4Linear.from_float(module)
+            new._q_kind = "linear_nvfp4"
+            _swap_module(root, name, new)
+            _count("linear_nvfp4")
+        elif recipe == "mxfp4":
+            new = MXFP4Linear.from_float(module)
+            new._q_kind = "linear_mxfp4"
+            _swap_module(root, name, new)
+            _count("linear_mxfp4")
+        elif recipe in ("w4a16", "w4a8", "int2"):
+            bits = 2 if recipe == "int2" else 4
+            group = INT2_GROUP_SIZE if recipe == "int2" else GROUP_SIZE
+            new = GroupQuantLinear.from_float(
+                module,
+                bits=bits,
+                group_size=group,
+                act_int8=recipe in ("w4a8", "int2"),
+            )
+            new._q_kind = f"linear_{recipe}"
+            _swap_module(root, name, new)
+            _count(f"linear_{recipe}")
     return counts
 
 
 def _quant_modules(root: nn.Module):
     for name, module in root.named_modules():
-        if isinstance(module, (QuantConv2d, QuantLinear, NVFP4Linear)):
+        if isinstance(module, QUANT_MODULE_TYPES):
             yield name, module
 
 
@@ -146,23 +204,27 @@ def _cast_tree(obj, dtype):
     return obj
 
 
-def _install_fp16_io_hooks(root: nn.Module):
-    """Half the model and keep the float32 I/O contract at the root."""
+def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
+    """Cast the model to a half-width dtype, keeping float32 I/O at the root."""
 
     def _pre(module, args):
         return tuple(
-            a.half() if torch.is_tensor(a) and a.dtype == torch.float32 else a
+            a.to(dtype) if torch.is_tensor(a) and a.dtype == torch.float32 else a
             for a in args
         )
 
     def _post(module, args, output):
         return _cast_tree(output, torch.float32)
 
-    root.half()
+    root.to(dtype)
     root._q_fp16_hooks = [
         root.register_forward_pre_hook(_pre),
         root.register_forward_hook(_post),
     ]
+
+
+def _cast_dtype(recipe: str) -> torch.dtype:
+    return torch.float16 if recipe == "fp16" else torch.bfloat16
 
 
 def _set_observing(root: nn.Module, flag: bool):
@@ -219,18 +281,18 @@ def quant_info(wrapper) -> Optional[Dict]:
         return None
     info = dict(manifest)
     info.setdefault("state", "prepared")
-    counts = {"conv_int8": 0, "linear_int8": 0, "linear_nvfp4": 0}
+    counts: Dict[str, int] = {}
     calibrated = True
     for _, module in _quant_modules(wrapper.model):
-        if isinstance(module, QuantConv2d):
-            counts["conv_int8"] += 1
-        elif isinstance(module, NVFP4Linear):
-            counts["linear_nvfp4"] += 1
-        elif isinstance(module, QuantLinear):
-            counts["linear_int8"] += 1
-        calibrated = calibrated and module.q_calibrated
+        kind = getattr(module, "_q_kind", type(module).__name__)
+        counts[kind] = counts.get(kind, 0) + 1
+        needs_act_calib = not (
+            isinstance(module, GroupQuantLinear) and not module._q_act_enabled
+        )
+        if needs_act_calib:
+            calibrated = calibrated and module.q_calibrated
     info["module_counts"] = counts
-    if manifest.get("recipe") != "fp16":
+    if manifest.get("recipe") not in CAST_RECIPES:
         info["calibrated"] = calibrated
     return info
 
@@ -295,13 +357,22 @@ def quantize_model(
         "module_count": 0,
     }
 
-    if recipe == "fp16":
+    if recipe in CAST_RECIPES:
         if wrapper.device.type == "cpu":
-            logger.warning("fp16 on CPU is functional but slow; use a GPU device.")
-        _install_fp16_io_hooks(wrapper.model)
+            logger.warning(
+                "%s on CPU is functional but slow; use a GPU device.", recipe
+            )
+        _install_cast_io_hooks(wrapper.model, _cast_dtype(recipe))
         manifest["execution"] = "native"
         manifest["calibrated"] = True
     else:
+        if recipe in RESEARCH_RECIPES:
+            logger.warning(
+                "'%s' is a research preview: PTQ at this bit width is not "
+                "usable on its own. Run train() on the quantized model "
+                "(QAT, or QAD with distill_model=) to recover accuracy.",
+                recipe,
+            )
         selected = _select_modules(wrapper.model, recipe, keep)
         if not selected:
             raise QuantizationError(
@@ -311,7 +382,7 @@ def quantize_model(
         counts = _swap_selected(wrapper.model, recipe, selected)
         manifest["module_count"] = sum(counts.values())
 
-        if recipe == "int8":
+        if recipe in CALIBRATED_RECIPES:
             if calib is not None:
                 seen = _run_calibration(
                     wrapper,
@@ -327,14 +398,17 @@ def quantize_model(
                 manifest["calib_algorithm"] = algorithm
             else:
                 logger.warning(
-                    "int8 quantization without calibration: activations stay "
-                    "in float (W8 simulation only). Pass calib= to calibrate."
+                    "%s quantization without calibration: activations stay "
+                    "in float (weight-only simulation). Pass calib= to "
+                    "calibrate.",
+                    recipe,
                 )
-        elif recipe == "nvfp4":
+        else:
             if calib is not None and calib != DEFAULT_CALIB_DATA:
                 logger.info(
-                    "nvfp4 activations use dynamic block scaling; calibration "
-                    "data is not needed and was ignored."
+                    "'%s' needs no activation calibration (dynamic or "
+                    "weight-only scaling); calibration data was ignored.",
+                    recipe,
                 )
             manifest["calibrated"] = True
 
@@ -396,13 +470,13 @@ def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
     # "finalized scores exactly what you validated on this device".
     model_copy = copy.deepcopy(wrapper.model)
     with torch.no_grad():
-        if recipe in ("int8", "nvfp4"):
+        if recipe not in CAST_RECIPES:
             for _, module in _quant_modules(model_copy):
                 if hasattr(module, "make_finalized"):
                     module.make_finalized()
         model_copy = model_copy.cpu()
         new_sd = model_copy.state_dict()
-        if remainder == "fp16" and recipe != "fp16":
+        if remainder == "fp16" and recipe not in CAST_RECIPES:
             keep_exact = ("_q_w_scale", "_q_act_lo", "_q_act_hi", "_q_w_amax")
             new_sd = {
                 key: (
@@ -417,7 +491,7 @@ def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
     del model_copy
 
     manifest["state"] = "finalized"
-    manifest["remainder"] = remainder if recipe != "fp16" else "fp16"
+    manifest["remainder"] = recipe if recipe in CAST_RECIPES else remainder
 
     checkpoint = wrap_libreyolo_checkpoint(
         new_sd,
@@ -483,27 +557,24 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
             logger.info("Ignoring export kwargs for format='pt': %s", sorted(kwargs))
         return export_finalized_pt(wrapper, out=out, remainder=remainder)
 
-    if manifest.get("state") == "finalized" and fmt == "onnx" and recipe == "int8":
+    if recipe in CAST_RECIPES:
+        raise QuantizationError(
+            f"{recipe}-quantized models do not need a quantized exporter: "
+            "call model.dequantize() and export with the float exporters "
+            "(half=True gives fp16 ONNX), or use format='pt'."
+        )
+    if recipe != "int8":
+        raise QuantizationError(
+            f"'{recipe}' has no deployable ONNX form yet; it executes in "
+            "PyTorch. Use format='pt' for the crystallized checkpoint, or "
+            "dequantize() to use the float exporters."
+        )
+
+    if manifest.get("state") == "finalized" and fmt == "onnx":
         # QDQ emission traces fake-quant over fp32 masters; reconstruct them
         # from the packed weights (exact by the packing invariant).
         reprepare_model(wrapper)
 
-    if recipe == "fp16":
-        raise QuantizationError(
-            "fp16-quantized models do not need a quantized exporter: call "
-            "model.dequantize() and export with half=True, e.g. "
-            "model.export(format='onnx', half=True)."
-        )
-    if recipe == "nvfp4":
-        raise QuantizationError(
-            "nvfp4 has no standard ONNX representation and executes in "
-            "PyTorch. Deploy the PyTorch model directly, or dequantize() and "
-            "use the float exporters."
-        )
-    if recipe != "int8":
-        raise QuantizationError(
-            f"Export is not supported for quantization recipe '{recipe}'."
-        )
     if fmt != "onnx":
         raise QuantizationError(
             "int8-quantized export currently supports format='onnx' (QDQ "
@@ -550,7 +621,7 @@ def dequantize_model(wrapper):
         return wrapper
     root = wrapper.model
 
-    if manifest.get("recipe") == "fp16":
+    if manifest.get("recipe") in CAST_RECIPES:
         for handle in getattr(root, "_q_fp16_hooks", ()):
             handle.remove()
         if hasattr(root, "_q_fp16_hooks"):
@@ -576,7 +647,9 @@ def dequantize_model(wrapper):
                     device=ref.device,
                     dtype=torch.float32,
                 )
-            elif isinstance(module, (QuantLinear, NVFP4Linear)):
+            elif isinstance(
+                module, (QuantLinear, NVFP4Linear, MXFP4Linear, GroupQuantLinear)
+            ):
                 new = nn.Linear(
                     module.in_features,
                     module.out_features,
@@ -612,9 +685,9 @@ def apply_quant_structure(wrapper, manifest: Dict):
         )
     _check_support(wrapper.FAMILY, recipe)
 
-    if recipe == "fp16":
+    if recipe in CAST_RECIPES:
         if not getattr(wrapper, "_quant_manifest", None):
-            _install_fp16_io_hooks(wrapper.model)
+            _install_cast_io_hooks(wrapper.model, _cast_dtype(recipe))
     else:
         keep_raw = manifest.get("keep_high_precision")
         keep = (

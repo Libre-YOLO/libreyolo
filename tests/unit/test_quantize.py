@@ -199,6 +199,119 @@ def test_nvfp4_linear_finalize_roundtrip():
 
 
 # ---------------------------------------------------------------------------
+# New precision recipes: arithmetic + module roundtrips
+# ---------------------------------------------------------------------------
+
+
+def test_fp8_fake_quant_and_packing():
+    from libreyolo.quant.fake_quant import fake_quant_fp8, fp8_weight_qparams
+    from libreyolo.quant.packing import pack_fp8_weight, unpack_fp8_weight
+
+    torch.manual_seed(0)
+    w = torch.randn(16, 8, 3, 3)
+    scale = fp8_weight_qparams(w)
+    view = scale.reshape(-1, 1, 1, 1)
+    fq = fake_quant_fp8(w, view)
+    rel = (w - fq).norm() / w.norm()
+    assert rel < 0.05
+    packed = pack_fp8_weight(w, scale)
+    assert packed.dtype == torch.float8_e4m3fn
+    assert torch.equal(unpack_fp8_weight(packed, scale), fq)
+
+
+def test_grouped_int_fake_quant_and_packing():
+    from libreyolo.quant.fake_quant import fake_quant_int_grouped
+    from libreyolo.quant.packing import (
+        pack_int_grouped_weight,
+        unpack_int_grouped_weight,
+    )
+
+    torch.manual_seed(0)
+    for bits, group, in_features in ((4, 128, 300), (2, 64, 100)):
+        w = torch.randn(8, in_features) * 0.05
+        fq = fake_quant_int_grouped(w, bits, group)
+        payload, scale = pack_int_grouped_weight(w, bits, group)
+        assert payload.dtype == torch.uint8
+        out = unpack_int_grouped_weight(payload, scale, bits, group, in_features)
+        assert torch.equal(out, fq)
+        levels = torch.unique(torch.round(out / scale.unsqueeze(-1).clamp(min=1e-12)
+                                          .expand(-1, -1, group)
+                                          .reshape(8, -1)[:, :in_features]))
+        assert levels.numel() <= 2 ** bits
+
+
+def test_mxfp4_fake_quant_and_packing():
+    from libreyolo.quant.fake_quant import fake_quant_mxfp4_weight
+    from libreyolo.quant.packing import pack_mxfp4_weight, unpack_mxfp4_weight
+
+    torch.manual_seed(0)
+    for in_features in (64, 40):
+        w = torch.randn(8, in_features) * 0.05
+        fq = fake_quant_mxfp4_weight(w)
+        rel = (w - fq).norm() / w.norm()
+        assert rel < 0.2
+        payload, exponents = pack_mxfp4_weight(w)
+        assert exponents.dtype == torch.int8
+        out = unpack_mxfp4_weight(payload, exponents, in_features)
+        assert torch.equal(out, fq)
+
+
+def test_group_and_mxfp4_linear_finalize_roundtrips():
+    from libreyolo.quant import GroupQuantLinear, MXFP4Linear
+
+    torch.manual_seed(0)
+    x = torch.randn(4, 200)
+    for mod in (
+        GroupQuantLinear.from_float(nn.Linear(200, 32), bits=4, group_size=128),
+        GroupQuantLinear.from_float(
+            nn.Linear(200, 32), bits=2, group_size=64, act_int8=True
+        ),
+        MXFP4Linear.from_float(nn.Linear(200, 32)),
+    ):
+        with torch.no_grad():
+            ref = mod(x)
+            mod.make_finalized()
+            assert mod.is_finalized
+            assert torch.equal(mod(x), ref)
+            mod.make_prepared()
+            assert not mod.is_finalized
+            assert torch.equal(mod(x), ref)
+
+
+def test_new_recipe_wiring_on_models(yolo9t):
+    from libreyolo.quant import QuantizationError as QErr
+
+    # Linear-only recipes rejected on the conv-heavy family
+    for recipe in ("w4a16", "w4a8", "mxfp4", "int2"):
+        with pytest.raises(QErr, match="GEMM-only"):
+            LibreYOLO9(None, size="t", device="cpu").quantize(recipe=recipe)
+
+    # fp8 quantizes convs on yolo9 and round-trips through save/load
+    yolo9t.quantize(recipe="fp8", calib=None, verbose=False)
+    info = yolo9t.quant_info()
+    assert info["recipe"] == "fp8"
+    assert info["module_counts"].get("conv_fp8", 0) > 0
+    yolo9t.model.eval()
+    with torch.no_grad():
+        out = yolo9t.model(torch.randn(1, 3, 640, 640))
+    assert torch.isfinite(_leaf(out)).all()
+
+
+def test_bf16_recipe_roundtrip(tmp_path):
+    m = LibreYOLO9(None, size="t", device="cpu")
+    m.quantize(recipe="bf16", verbose=False)
+    m.model.eval()
+    with torch.no_grad():
+        out = m.model(torch.randn(1, 3, 640, 640))
+    assert _leaf(out).dtype == torch.float32
+    path = tmp_path / "LibreYOLO9t-bf16.pt"
+    m.save(str(path))
+    m2 = LibreYOLO9(str(path), size="t", device="cpu")
+    assert m2.quant_info()["recipe"] == "bf16"
+    assert next(m2.model.parameters()).dtype == torch.bfloat16
+
+
+# ---------------------------------------------------------------------------
 # Model-level API (fresh yolo9-t, no downloads)
 # ---------------------------------------------------------------------------
 

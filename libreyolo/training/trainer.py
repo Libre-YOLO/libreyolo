@@ -1246,11 +1246,12 @@ class BaseTrainer(ABC):
             return
 
         quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)
-        if quant_manifest and quant_manifest.get("recipe") == "fp16":
+        if quant_manifest and quant_manifest.get("recipe") in ("fp16", "bf16"):
             raise ValueError(
-                "fp16-quantized models are inference-only. Train the float "
-                "model with amp=True instead, or use recipe='int8'/'nvfp4' "
-                "for quantization-aware training."
+                "Cast-precision quantized models (fp16/bf16) are "
+                "inference-only. Train the float model with amp=True "
+                "instead, or use a quantizing recipe (int8/fp8/w4a8/nvfp4/"
+                "...) for quantization-aware training."
             )
         if quant_manifest and quant_manifest.get("state") == "finalized":
             from ..quant.api import reprepare_model

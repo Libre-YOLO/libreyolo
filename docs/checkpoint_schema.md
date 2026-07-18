@@ -193,11 +193,20 @@ quantized module structure before `load_state_dict`. See `quantization.md`.
   - int8: `weight_packed` (int8, original weight shape) and `_q_w_scale`
     (fp32 per-channel). Dequant: `weight_packed * scale`. Activation range
     buffers (`_q_act_lo`/`_q_act_hi`/`_q_calibrated`) are retained.
+  - fp8: `weight_packed` (float8_e4m3fn, original weight shape) and
+    `_q_w_scale` (fp32 per-channel). Dequant: `weight_packed * scale`.
+  - w4a16 / w4a8: `weight_packed` (uint8, two 4-bit codes per byte, low
+    nibble first; code = q + 8) and `_q_w_gscale` (fp32, [out, ngroups],
+    group 128 along in_features). int2: four 2-bit codes per byte
+    (code = q + 2), group 64.
   - nvfp4: `weight_packed` (uint8, [out, ceil(in/16)*8], two 4-bit codes
     per byte, low nibble first; code = sign<<3 | E2M1 level index),
     `weight_block_scale` (float8_e4m3fn, [out, ceil(in/16)]), and
     `_q_w_amax` (fp32 per-tensor amax). Effective block scale:
     `block_scale * amax / (448 * 6)`.
+  - mxfp4: `weight_packed` as nvfp4 but 32-element blocks, and
+    `weight_block_exp` (int8, [out, ceil(in/32)]) storing the power-of-two
+    block exponent. Effective block scale: `2 ** exponent`.
   The manifest records `remainder` (`"fp16"` or `"fp32"`) for the
   non-quantized tensors. Unpacking reproduces the fake-quant simulation bit
   for bit, so finalized inference matches prepared inference exactly on the

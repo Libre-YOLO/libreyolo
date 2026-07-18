@@ -45,13 +45,20 @@ manifest too, so `best.pt` from a QAT run is itself a quantized checkpoint.
 
 | Recipe | What it does | Families (v1) | Calibration |
 |---|---|---|---|
-| `fp16` | Casts the model to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr | none |
+| `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr | none |
+| `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr | none |
+| `fp8` | E4M3 W+A simulation: per-channel weight scales, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations |
 | `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations (skipped with `calib=None`, weights-only) |
-| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Activations use dynamic block scaling. | rfdetr | not needed (dynamic) |
+| `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr | not needed (weight-only) |
+| `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr | required for activations |
+| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
+| `mxfp4` | OCP MXFP4 on `Linear`: E2M1 elements, 32-element blocks, power-of-two (E8M0) block scales. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
+| `int2` | Research preview: grouped 2-bit weights (group 64) plus INT8 activations, on `Linear`. PTQ alone is unusable; QAT/QAD required. | rfdetr | required for activations |
 
-`nvfp4` is rejected for conv-heavy families such as yolo9 on purpose: FP4
-acceleration is GEMM-only on current hardware, so convolutions stay in higher
-precision. Transformer families (RF-DETR) are the NVFP4 target.
+Linear-only recipes are rejected for conv-heavy families such as yolo9 on
+purpose: sub-8-bit acceleration is GEMM-only on current hardware, so
+convolutions stay in higher precision. Transformer families (RF-DETR) are
+the target; yolo9 uses `int8` or `fp8`.
 
 Per-family `keep_high_precision` defaults protect the first layer and the
 heads (and always the YOLO9 DFL conv). Override with
@@ -129,9 +136,11 @@ coco8 the exported artifact tracks the PyTorch simulation within sub-point
 noise. The CLI equivalent is
 `libreyolo export --model model-int8.pt --format onnx`. Notes:
 
-- `fp16` models: call `dequantize()` and export with `half=True` (the float
-  exporters already own fp16).
-- `nvfp4` has no standard ONNX representation and executes in PyTorch.
+- Cast recipes (`fp16`/`bf16`): call `dequantize()` and use the float
+  exporters (`half=True` gives fp16 ONNX).
+- Sub-8-bit linear recipes (`w4a16`, `w4a8`, `nvfp4`, `mxfp4`, `int2`) and
+  `fp8` have no deployable ONNX form here yet; they execute in PyTorch and
+  crystallize via `format="pt"`.
 - Other deployment formats for int8 are built downstream from the QDQ ONNX;
   direct engine export is planned.
 - `dequantize()` remains available to restore float masters (QAT-trained

@@ -23,7 +23,13 @@ from .api import (
     quantize_model,
     reprepare_model,
 )
-from .modules import NVFP4Linear, QuantConv2d, QuantLinear
+from .modules import (
+    GroupQuantLinear,
+    MXFP4Linear,
+    NVFP4Linear,
+    QuantConv2d,
+    QuantLinear,
+)
 
 __all__ = [
     "DEFAULT_CALIB_DATA",
@@ -38,6 +44,8 @@ __all__ = [
     "quant_info",
     "quantize_model",
     "reprepare_model",
+    "GroupQuantLinear",
+    "MXFP4Linear",
     "NVFP4Linear",
     "QuantConv2d",
     "QuantLinear",
