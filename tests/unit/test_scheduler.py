@@ -180,3 +180,18 @@ def test_deimv2_flat_cosine_leaves_coco_scale_recipes_untouched():
     assert sched.warmup_iters == 2000
     assert sched.flat_iters == 64 * ips
     assert sched.no_aug_iters == 12 * ips
+
+
+def test_aug_stop_epoch_leaves_no_aug_tail_clean_on_short_runs():
+    from libreyolo.data.augment.detr import resolve_aug_stop_epoch
+
+    # Published recipes are unchanged (equality for DEIM/DEIMv2, earlier for
+    # D-FINE's independent 0.85 ratio).
+    assert resolve_aug_stop_epoch(132, 0.91, 12) == 120
+    assert resolve_aug_stop_epoch(500, 468 / 500, 32) == 468
+    assert resolve_aug_stop_epoch(72, 0.85, 4) == 61
+    # Short fine-tunes stop strong augs before the no-aug LR tail begins.
+    assert resolve_aug_stop_epoch(15, 0.91, 12) == 3
+    assert resolve_aug_stop_epoch(8, 0.91, 12) == 1
+    # No tail configured: pure ratio semantics.
+    assert resolve_aug_stop_epoch(100, 0.85, 0) == 85

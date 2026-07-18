@@ -472,10 +472,14 @@ class DFINETrainer(BaseTrainer):
         )
 
         # Wire stop_epoch on the dataset wrapper so set_epoch can disable
-        # strong augs at the right moment.
-        stop_epoch = int(
-            self.config.epochs
-            * float(getattr(self.config, "aug_stop_epoch_ratio", 1.0))
+        # strong augs at the right moment (never later than the start of the
+        # no-aug LR tail; see resolve_aug_stop_epoch).
+        from ...data.augment.detr import resolve_aug_stop_epoch
+
+        stop_epoch = resolve_aug_stop_epoch(
+            self.config.epochs,
+            getattr(self.config, "aug_stop_epoch_ratio", 1.0),
+            getattr(self.config, "no_aug_epochs", 0),
         )
         if hasattr(train_dataset, "set_stop_epoch"):
             train_dataset.set_stop_epoch(stop_epoch)
