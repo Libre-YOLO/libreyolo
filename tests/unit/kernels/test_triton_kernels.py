@@ -12,6 +12,8 @@ import importlib.util
 import pytest
 import torch
 
+from libreyolo.quant import kernels
+
 from .harness import check_parity, load_shapes
 
 
@@ -22,7 +24,13 @@ HAS_TRITON_CUDA = (
 )
 
 # (registry slot, module, public implementation)
-LANDED_KERNELS: tuple[tuple[str, str, str], ...] = ()
+LANDED_KERNELS: tuple[tuple[str, str, str], ...] = (
+    (
+        "fake_quant_nvfp4_weight",
+        "libreyolo.quant.kernels.triton.nvfp4_weight",
+        "fake_quant_nvfp4_weight",
+    ),
+)
 
 
 @pytest.mark.skipif(not HAS_TRITON_CUDA, reason="requires CUDA and Triton")
@@ -36,3 +44,25 @@ def test_triton_kernel_parity(
     module = importlib.import_module(module_name)
     implementation = getattr(module, implementation_name)
     check_parity(op, implementation, load_shapes())
+
+
+@pytest.mark.skipif(not HAS_TRITON_CUDA, reason="requires CUDA and Triton")
+@pytest.mark.parametrize(
+    ("op", "module_name", "implementation_name"),
+    LANDED_KERNELS,
+)
+def test_triton_kernel_registration_and_escape_hatch(
+    op: str,
+    module_name: str,
+    implementation_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module(module_name)
+    implementation = getattr(module, implementation_name)
+    monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
+    kernels.clear_cache()
+    assert kernels.resolve(op) is implementation
+
+    monkeypatch.setenv("LIBREYOLO_QUANT_KERNELS", "off")
+    kernels.clear_cache()
+    assert kernels.resolve(op) is not implementation
