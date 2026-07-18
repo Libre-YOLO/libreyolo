@@ -199,6 +199,77 @@ def test_nvfp4_linear_finalize_roundtrip():
 
 
 # ---------------------------------------------------------------------------
+# Kernel registry
+# ---------------------------------------------------------------------------
+
+
+def test_kernel_registry_defaults_to_reference():
+    from libreyolo.quant import fake_quant, kernels
+
+    for op in kernels.REFERENCE_OPS:
+        assert kernels.resolve(op) is getattr(fake_quant, op)
+    assert kernels.active()["fake_quant_int8_per_channel"] == "reference"
+
+
+def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
+    from libreyolo.quant import fake_quant, kernels
+
+    calls = {}
+
+    def custom(weight, ch_axis=0, scale=None):
+        calls["hit"] = True
+        return fake_quant.fake_quant_int8_per_channel(weight, ch_axis, scale)
+
+    kernels.register(
+        "fake_quant_int8_per_channel", custom, name="testkern",
+        predicate=lambda: True,
+    )
+    try:
+        kernels.clear_cache()
+        assert kernels.resolve("fake_quant_int8_per_channel") is custom
+        out = kernels.fake_quant_int8_per_channel(torch.randn(4, 8))
+        assert calls.get("hit") and out.shape == (4, 8)
+        assert kernels.active()["fake_quant_int8_per_channel"] == "testkern"
+
+        # A quantized module transparently uses the registered kernel.
+        calls.clear()
+        conv = QuantConv2d.from_float(nn.Conv2d(3, 8, 3, padding=1))
+        with torch.no_grad():
+            conv(torch.randn(1, 3, 8, 8))
+        assert calls.get("hit")
+
+        # Env override forces the reference implementation.
+        monkeypatch.setenv("LIBREYOLO_QUANT_KERNELS", "off")
+        kernels.clear_cache()
+        assert (
+            kernels.resolve("fake_quant_int8_per_channel")
+            is fake_quant.fake_quant_int8_per_channel
+        )
+    finally:
+        monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
+        kernels.unregister("fake_quant_int8_per_channel", "testkern")
+        kernels.clear_cache()
+
+
+def test_kernel_registry_predicate_gates_selection():
+    from libreyolo.quant import fake_quant, kernels
+
+    kernels.register(
+        "fake_quant_int8_per_channel", lambda *a, **k: None, name="never",
+        predicate=lambda: False,
+    )
+    try:
+        kernels.clear_cache()
+        assert (
+            kernels.resolve("fake_quant_int8_per_channel")
+            is fake_quant.fake_quant_int8_per_channel
+        )
+    finally:
+        kernels.unregister("fake_quant_int8_per_channel", "never")
+        kernels.clear_cache()
+
+
+# ---------------------------------------------------------------------------
 # New precision recipes: arithmetic + module roundtrips
 # ---------------------------------------------------------------------------
 

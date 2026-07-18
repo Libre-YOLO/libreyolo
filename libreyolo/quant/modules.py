@@ -16,17 +16,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from . import kernels as K
 from .fake_quant import (
     E4M3_MAX,
     autocast_off,
-    fake_quant_fp8,
-    fake_quant_int8_affine,
-    fake_quant_int8_per_channel,
-    fake_quant_int_grouped,
-    fake_quant_mxfp4_dynamic,
-    fake_quant_mxfp4_weight,
-    fake_quant_nvfp4_dynamic,
-    fake_quant_nvfp4_weight,
     fp8_weight_qparams,
     int8_weight_qparams,
     int_group_qparams,
@@ -116,13 +109,13 @@ class _ActObserverMixin:
                 return unpack_fp8_weight(self.weight_packed, self._q_w_scale)
             return unpack_int8_weight(self.weight_packed, self._q_w_scale)
         if fp8:
-            return fake_quant_fp8(
+            return K.fake_quant_fp8(
                 self.weight.float(),
                 fp8_weight_qparams(self.weight.float()).reshape(
                     -1, *([1] * (self.weight.dim() - 1))
                 ),
             )
-        return fake_quant_int8_per_channel(
+        return K.fake_quant_int8_per_channel(
             self.weight.float(), scale=self._weight_scale()
         )
 
@@ -185,8 +178,8 @@ class _ActObserverMixin:
             return x
         if getattr(self, "_q_aformat", "int8") == "fp8":
             amax = torch.maximum(self._q_act_lo.abs(), self._q_act_hi.abs())
-            return fake_quant_fp8(x, (amax / E4M3_MAX).reshape(1))
-        return fake_quant_int8_affine(
+            return K.fake_quant_fp8(x, (amax / E4M3_MAX).reshape(1))
+        return K.fake_quant_int8_affine(
             x,
             self._q_act_lo,
             self._q_act_hi,
@@ -333,12 +326,12 @@ class NVFP4Linear(nn.Linear):
                 self._q_w_amax,
                 self.in_features,
             )
-        return fake_quant_nvfp4_weight(self.weight.float(), self._q_w_amax)
+        return K.fake_quant_nvfp4_weight(self.weight.float(), self._q_w_amax)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
         with autocast_off(x.device.type):
-            x = fake_quant_nvfp4_dynamic(x.float())
+            x = K.fake_quant_nvfp4_dynamic(x.float())
             weight = self._effective_weight()
             bias = self.bias.float() if self.bias is not None else None
             out = F.linear(x, weight, bias)
@@ -430,7 +423,7 @@ class GroupQuantLinear(nn.Linear, _ActObserverMixin):
                 self._q_group,
                 self.in_features,
             )
-        return fake_quant_int_grouped(
+        return K.fake_quant_int_grouped(
             self.weight.float(), self._q_bits, self._q_group
         )
 
@@ -500,12 +493,12 @@ class MXFP4Linear(nn.Linear):
             return unpack_mxfp4_weight(
                 self.weight_packed, self.weight_block_exp, self.in_features
             )
-        return fake_quant_mxfp4_weight(self.weight.float())
+        return K.fake_quant_mxfp4_weight(self.weight.float())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
         with autocast_off(x.device.type):
-            x = fake_quant_mxfp4_dynamic(x.float())
+            x = K.fake_quant_mxfp4_dynamic(x.float())
             weight = self._effective_weight()
             bias = self.bias.float() if self.bias is not None else None
             out = F.linear(x, weight, bias)
