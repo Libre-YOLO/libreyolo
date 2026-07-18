@@ -91,6 +91,37 @@ def test_quant_conv_preserves_state_dict_keys():
     assert qconv.weight is conv.weight
 
 
+def test_multi_batch_observation_widens_ranges():
+    # Regression: the min/max merge branch only fires from the second
+    # calibration batch onwards (coco8's single batch never exercised it).
+    conv = nn.Conv2d(3, 8, 3, padding=1)
+    qconv = QuantConv2d.from_float(conv)
+    qconv._q_observing = True
+    with torch.no_grad():
+        qconv(torch.full((1, 3, 8, 8), 0.5))
+        qconv(torch.full((1, 3, 8, 8), -2.0))
+        qconv(torch.full((1, 3, 8, 8), 3.0))
+    qconv._q_observing = False
+    assert qconv.q_calibrated
+    assert qconv._q_act_lo.item() <= -2.0
+    assert qconv._q_act_hi.item() >= 3.0
+
+
+def test_quant_buffers_live_on_weight_device():
+    # Regression: CPU-born buffers crashed multi-batch GPU calibration.
+    conv = nn.Conv2d(3, 8, 3, padding=1)
+    if torch.cuda.is_available():
+        conv = conv.cuda()
+    qconv = QuantConv2d.from_float(conv)
+    assert qconv._q_act_lo.device == qconv.weight.device
+    assert qconv._q_w_scale.device == qconv.weight.device
+    lin = nn.Linear(8, 4)
+    if torch.cuda.is_available():
+        lin = lin.cuda()
+    qlin = NVFP4Linear.from_float(lin)
+    assert qlin._q_w_amax.device == qlin.weight.device
+
+
 # ---------------------------------------------------------------------------
 # Model-level API (fresh yolo9-t, no downloads)
 # ---------------------------------------------------------------------------

@@ -30,10 +30,17 @@ class _ActObserverMixin:
     """Shared INT8 activation observer / fake-quant state."""
 
     def _init_act_state(self, out_channels: int):
-        self.register_buffer("_q_act_lo", torch.zeros(1))
-        self.register_buffer("_q_act_hi", torch.zeros(1))
-        self.register_buffer("_q_calibrated", torch.zeros(1, dtype=torch.uint8))
-        self.register_buffer("_q_w_scale", torch.zeros(out_channels))
+        # Buffers must live on the weight's device from the start: modules are
+        # built with device=weight.device by from_float, and a CPU-born buffer
+        # would survive until the post-quantize .to() call, crashing
+        # multi-batch calibration on GPU.
+        device = self.weight.device
+        self.register_buffer("_q_act_lo", torch.zeros(1, device=device))
+        self.register_buffer("_q_act_hi", torch.zeros(1, device=device))
+        self.register_buffer(
+            "_q_calibrated", torch.zeros(1, dtype=torch.uint8, device=device)
+        )
+        self.register_buffer("_q_w_scale", torch.zeros(out_channels, device=device))
         self._q_observing = False
         self._q_export_mode = False
 
@@ -52,8 +59,8 @@ class _ActObserverMixin:
 
     def _observe(self, x: torch.Tensor):
         with torch.no_grad():
-            lo = x.amin().float().reshape(1)
-            hi = x.amax().float().reshape(1)
+            lo = x.amin().float().reshape(1).to(self._q_act_lo.device)
+            hi = x.amax().float().reshape(1).to(self._q_act_hi.device)
             if self.q_calibrated:
                 torch.minimum(self._q_act_lo, lo, out=self._q_act_lo)
                 torch.maximum(self._q_act_hi, hi, out=self._q_act_hi)
@@ -158,7 +165,7 @@ class NVFP4Linear(nn.Linear):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.register_buffer("_q_w_amax", torch.zeros(1))
+        self.register_buffer("_q_w_amax", torch.zeros(1, device=self.weight.device))
         self._q_observing = False  # accepted for API symmetry; unused
 
     @classmethod
