@@ -1366,6 +1366,18 @@ class BaseModel(ABC):
 
         return quant_info(self)
 
+    def dequantize(self):
+        """Restore float modules in place, keeping the master weights.
+
+        After QAT/QAD the masters are quantization-trained, so this is the
+        bridge to the deployment exporters: ``model.dequantize()`` then
+        ``model.export(format="onnx", int8=True, data=...)`` produces a real
+        QDQ INT8 artifact from QAT-trained weights.
+        """
+        from libreyolo.quant import dequantize_model
+
+        return dequantize_model(self)
+
     def save(self, path: str) -> str:
         """Save the current model as a LibreYOLO checkpoint.
 
@@ -1408,6 +1420,19 @@ class BaseModel(ABC):
         Returns:
             Path to the exported model file.
         """
+        if getattr(self, "_quant_manifest", None):
+            from libreyolo.quant import QuantizationError
+
+            recipe = self._quant_manifest.get("recipe")
+            raise QuantizationError(
+                f"Export of quantized models is not supported yet "
+                f"(recipe='{recipe}'): tracing would bake simulation "
+                "arithmetic into the graph instead of producing a deployable "
+                "quantized artifact. Call model.dequantize() first (QAT-"
+                "trained master weights are kept), then export, e.g. "
+                "model.export(format='onnx', int8=True, data='coco8.yaml')."
+            )
+
         from libreyolo.export import BaseExporter
 
         return BaseExporter.create(format, self)(**kwargs)

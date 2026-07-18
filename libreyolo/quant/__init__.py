@@ -17,6 +17,7 @@ from .api import (
     SUPPORTED_FAMILIES,
     apply_quant_structure,
     default_keep_high_precision,
+    dequantize_model,
     quant_info,
     quantize_model,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "SUPPORTED_FAMILIES",
     "apply_quant_structure",
     "default_keep_high_precision",
+    "dequantize_model",
     "quant_info",
     "quantize_model",
     "NVFP4Linear",

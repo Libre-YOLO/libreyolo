@@ -158,8 +158,10 @@ def _install_fp16_io_hooks(root: nn.Module):
         return _cast_tree(output, torch.float32)
 
     root.half()
-    root.register_forward_pre_hook(_pre)
-    root.register_forward_hook(_post)
+    root._q_fp16_hooks = [
+        root.register_forward_pre_hook(_pre),
+        root.register_forward_hook(_post),
+    ]
 
 
 def _set_observing(root: nn.Module, flag: bool):
@@ -309,6 +311,62 @@ def quantize_model(
             info.get("execution"),
             info.get("calibrated"),
         )
+    return wrapper
+
+
+def dequantize_model(wrapper):
+    """Restore float modules in place, keeping the master weights.
+
+    After QAT/QAD the fp32 masters are quantization-trained, so the restored
+    float model is the correct input for deployment exporters (for example
+    ``export(format="onnx", int8=True, data=...)``, which re-derives QDQ
+    scales through the existing calibrated exporter). For the ``fp16`` recipe
+    this restores dtype and removes the I/O cast hooks; the mantissa bits
+    lost by the earlier half-cast are not recoverable.
+    """
+    manifest = getattr(wrapper, "_quant_manifest", None)
+    if not manifest:
+        return wrapper
+    root = wrapper.model
+
+    if manifest.get("recipe") == "fp16":
+        for handle in getattr(root, "_q_fp16_hooks", ()):
+            handle.remove()
+        if hasattr(root, "_q_fp16_hooks"):
+            del root._q_fp16_hooks
+        root.float()
+    else:
+        for name, module in list(_quant_modules(root)):
+            if isinstance(module, QuantConv2d):
+                new = nn.Conv2d(
+                    module.in_channels,
+                    module.out_channels,
+                    module.kernel_size,
+                    stride=module.stride,
+                    padding=module.padding,
+                    dilation=module.dilation,
+                    groups=module.groups,
+                    bias=module.bias is not None,
+                    padding_mode=module.padding_mode,
+                    device=module.weight.device,
+                    dtype=module.weight.dtype,
+                )
+            elif isinstance(module, (QuantLinear, NVFP4Linear)):
+                new = nn.Linear(
+                    module.in_features,
+                    module.out_features,
+                    bias=module.bias is not None,
+                    device=module.weight.device,
+                    dtype=module.weight.dtype,
+                )
+            else:
+                continue
+            new.weight = module.weight
+            new.bias = module.bias
+            _swap_module(root, name, new)
+
+    wrapper._quant_manifest = None
+    logger.info("Restored float modules (recipe '%s' removed).", manifest.get("recipe"))
     return wrapper
 
 

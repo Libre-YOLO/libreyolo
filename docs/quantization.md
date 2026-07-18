@@ -76,6 +76,25 @@ it executes natively.
 `model.quant_info()` reports the recipe, module counts, calibration state,
 and execution tier.
 
+## Export
+
+Direct export of a quantized model is intentionally rejected: tracing the
+simulation would bake fake-quant arithmetic into the graph, producing an
+artifact that looks fp32 to every runtime and runs slower than the float
+model. The supported bridge to deployment formats today:
+
+```python
+qmodel = LibreYOLO("runs/train/qat-run/weights/best.pt")  # QAT/QAD result
+qmodel.dequantize()   # restore float modules; QAT-trained masters are kept
+qmodel.export(format="onnx", int8=True, data="coco8.yaml")  # real QDQ INT8
+```
+
+The QAT benefit lives mostly in the trained master weights, which this path
+preserves; activation scales are re-derived by the existing calibrated
+exporter. Scale-exact QDQ export (emitting QuantizeLinear/DequantizeLinear
+directly from the model's own calibrated scales) is the planned follow-up.
+`nvfp4` has no standard ONNX representation and stays PyTorch-executed.
+
 ## QAT and QAD mechanics
 
 Quantized modules keep fp32 master weights; fake-quantization applies STE so

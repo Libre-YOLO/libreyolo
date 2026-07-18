@@ -165,6 +165,7 @@ def get_calibration_dataloader(
     fraction: float = 1.0,
     preprocess_fn=None,
     allow_download_scripts: bool = False,
+    samples: int | None = None,
 ) -> CalibrationDataLoader:
     """
     Factory function for calibration data loader.
@@ -175,15 +176,18 @@ def get_calibration_dataloader(
         batch: Batch size for calibration.
         fraction: Fraction of dataset to use.
         preprocess_fn: Callable ``(img_rgb_hwc, input_size) -> (chw_float32, ratio)``.
+        allow_download_scripts: Allow embedded Python in dataset YAML downloads.
+        samples: Optional hard cap on the number of calibration images.
 
     Returns:
         CalibrationDataLoader instance.
     """
     return CalibrationDataLoader(
         data,
-        imgsz,
-        batch,
-        fraction,
-        preprocess_fn,
-        allow_download_scripts,
+        imgsz=imgsz,
+        batch=batch,
+        fraction=fraction,
+        samples=samples,
+        preprocess_fn=preprocess_fn,
+        allow_download_scripts=allow_download_scripts,
     )

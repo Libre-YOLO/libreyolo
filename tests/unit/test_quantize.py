@@ -167,6 +167,47 @@ def test_save_load_roundtrip(tmp_path, yolo9t):
         assert torch.equal(src[key].cpu(), dst[key].cpu()), key
 
 
+def test_export_rejected_on_quantized_model(yolo9t):
+    yolo9t.quantize(recipe="int8", calib=None, verbose=False)
+    with pytest.raises(QuantizationError, match="dequantize"):
+        yolo9t.export(format="onnx")
+
+
+def test_dequantize_restores_exact_float_forward(yolo9t):
+    yolo9t.model.eval()
+    x = torch.randn(1, 3, 640, 640)
+    with torch.no_grad():
+        ref = yolo9t.model(x)
+    yolo9t.quantize(recipe="int8", calib=None, verbose=False)
+    yolo9t.dequantize()
+    assert yolo9t.quant_info() is None
+    assert not any(
+        isinstance(m, QuantConv2d) for m in yolo9t.model.modules()
+    )
+    yolo9t.model.eval()
+    with torch.no_grad():
+        out = yolo9t.model(x)
+    ref_leaf = next(iter(ref.values())) if isinstance(ref, dict) else ref
+    out_leaf = next(iter(out.values())) if isinstance(out, dict) else out
+    while isinstance(ref_leaf, (tuple, list)):
+        ref_leaf, out_leaf = ref_leaf[0], out_leaf[0]
+    assert torch.equal(ref_leaf, out_leaf)
+
+
+def test_fp16_dequantize_restores_float_dtype(yolo9t):
+    yolo9t.quantize(recipe="fp16", verbose=False)
+    yolo9t.dequantize()
+    assert yolo9t.quant_info() is None
+    assert next(yolo9t.model.parameters()).dtype == torch.float32
+    yolo9t.model.eval()
+    with torch.no_grad():
+        out = yolo9t.model(torch.randn(1, 3, 640, 640))
+    leaf = next(iter(out.values())) if isinstance(out, dict) else out
+    while isinstance(leaf, (tuple, list)):
+        leaf = leaf[0]
+    assert leaf.dtype == torch.float32
+
+
 def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     yolo9t.quantize(recipe="fp16", verbose=False)
     yolo9t.model.eval()
