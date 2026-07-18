@@ -30,8 +30,10 @@ def _bare(task="detect", names=None, user_vocab=False):
     m.names = {i: name for i, name in enumerate(names)}
     m.nb_classes = len(m.names)
     m._name_to_id = {name.lower(): i for i, name in m.names.items()}
+    m._vocab = dict(m.names)
     m.task = task
     m._custom_prompt = None
+    m._custom_prompt_task = None
     m._user_vocab = user_vocab
     m.noise_seed = 42
     return m
@@ -136,6 +138,26 @@ class TestGeneratedImageParsing:
         # Bottom-right quadrant stayed black -> void id 0.
         assert (id_map[10:, 10:] == 0).all()
 
+    def test_panoptic_black_survives_when_declared_as_instance_color(self):
+        # Regression (Greptile #618): black is the trained void convention,
+        # but a caption that explicitly assigns (0,0,0) to an instance keeps
+        # that segment.
+        img = Image.new("RGB", (4, 4), (0, 0, 0))
+        caption = "<p>cat<color>(0,0,0)</color></p>"
+        id_map, segments, _ = parsing.panoptic_from_mask_and_caption(
+            img, caption, {0: "cat"}, (4, 4)
+        )
+        assert len(segments) == 1
+        assert (id_map == segments[0]["id"]).all()
+
+    def test_panoptic_black_stays_void_when_undeclared(self):
+        img = Image.new("RGB", (4, 4), (0, 0, 0))
+        caption = "<p>cat<color>(255,0,0)</color></p>"
+        id_map, segments, _ = parsing.panoptic_from_mask_and_caption(
+            img, caption, {0: "cat"}, (4, 4)
+        )
+        assert segments == [] and (id_map == 0).all()
+
     def test_panoptic_repeated_phrase_gets_new_instance_ids(self):
         img = Image.new("RGB", (4, 4), (255, 0, 0))
         for x in range(2):
@@ -226,10 +248,20 @@ class TestPrompts:
             assert task in _TASK_TO_MODE
             assert _TASK_TO_MODE[task] in BASE_PARAMS
 
-    def test_custom_prompt_wins(self):
+    def test_custom_prompt_wins_for_its_own_task(self):
         model = _bare("detect")
         model._custom_prompt = "my prompt"
+        model._custom_prompt_task = "detect"
         assert model._task_prompt() == "my prompt"
+
+    def test_custom_prompt_does_not_leak_into_other_tasks(self):
+        from libreyolo.models.sensenova.prompts import DEPTH_PROMPT
+
+        model = _bare("detect")
+        model._custom_prompt = "my detect prompt"
+        model._custom_prompt_task = "detect"
+        model.set_task("depth")
+        assert model._task_prompt() == DEPTH_PROMPT
 
 
 class TestPostprocess:
@@ -477,6 +509,25 @@ class TestPredictEndToEnd:
         result = model.predict(Image.new("RGB", (100, 100)))
         assert result.ocr is not None
         assert result.ocr.texts == ["EXIT"]
+
+    def test_panoptic_does_not_poison_later_detect(self):
+        # Regression (Greptile #618): the panoptic label-table rewrite must
+        # not leak into the vocabulary used by later tasks on the same model.
+        model = _loaded(
+            "panoptic",
+            ["bird"],
+            ["<p>sky<color>(255,0,0)</color></p>", Image.new("RGB", (10, 10), (255, 0, 0))],
+        )
+        result = model.predict(Image.new("RGB", (10, 10)))
+        assert "sky" in result.names.values()
+
+        model.set_task("detect")
+        model.inferencer = _FakeInferencer(["<p>bird</p><bbox>[0.1,0.1,0.5,0.5]</bbox>"])
+        result = model.predict(Image.new("RGB", (10, 10)))
+        assert result.names == {0: "bird"}
+        assert result.names[int(result.boxes.cls[0])] == "bird"
+        prompt_sent = [i for i in model.inferencer.calls[0][0] if isinstance(i, str)][0]
+        assert "<p>bird</p>" in prompt_sent and "sky" not in prompt_sent
 
 
 class TestFamilySurface:

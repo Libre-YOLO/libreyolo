@@ -248,10 +248,20 @@ class LibreSenseNovaVision(LibreVLMModel):
         self._max_memory_per_gpu = max_memory_per_gpu
         self.noise_seed = noise_seed
         self._user_vocab = False
+        # The configured vocabulary, kept separate from ``self.names`` because
+        # a panoptic prediction rewrites ``names`` with its (possibly
+        # open-vocabulary-extended) label table for Results naming; prompts
+        # must keep building from what the caller configured.
+        self._vocab: Optional[Dict[int, str]] = None
         # Filled by _init_model.
         self.inferencer = None
         self.tokenizer = None
         super().__init__(size=size, **kwargs)
+        if self._vocab is None:
+            self._vocab = dict(self.names)
+        # A prompt= override is written against the task active at
+        # construction; it must not leak into other tasks after set_task().
+        self._custom_prompt_task = self.task if self._custom_prompt else None
 
     # =========================================================================
     # Task and vocabulary surface
@@ -259,21 +269,26 @@ class LibreSenseNovaVision(LibreVLMModel):
 
     def set_classes(self, classes: list) -> "LibreSenseNovaVision":
         self._user_vocab = True
-        return super().set_classes(classes)
+        result = super().set_classes(classes)
+        self._vocab = dict(self.names)
+        return result
 
     def _task_names(self) -> Dict[int, str]:
         """The effective vocabulary for the active task.
 
-        Unless the user set one, panoptic falls back to the COCO panoptic
-        categories the model was tuned on, and pose falls back to ``person``.
+        Reads the configured vocabulary (``_vocab``), never ``self.names``,
+        so a panoptic prediction's label-table rewrite cannot leak into later
+        prompts. Unless the user set a vocabulary, panoptic falls back to the
+        COCO panoptic categories the model was tuned on, and pose falls back
+        to ``person``.
         """
         if self._user_vocab:
-            return self.names
+            return dict(self._vocab)
         if self.task == "panoptic":
             return {i: name for i, name in enumerate(COCO_PANOPTIC_NAMES)}
         if self.task == "pose":
             return {0: "person"}
-        return self.names
+        return dict(self._vocab)
 
     def _require_user_vocab(self) -> None:
         if not self._user_vocab:
@@ -306,7 +321,7 @@ class LibreSenseNovaVision(LibreVLMModel):
 
     def _task_prompt(self) -> str:
         """Build the exact instruction the checkpoint expects for the task."""
-        if self._custom_prompt:
+        if self._custom_prompt and self.task == self._custom_prompt_task:
             return self._custom_prompt
         names = self._task_names()
         if self.task == "detect":
@@ -675,6 +690,11 @@ class LibreSenseNovaVision(LibreVLMModel):
         mode = _TASK_TO_MODE[self.task]
         params = dict(BASE_PARAMS[mode])
         inputs = _SenseNovaInputs(img, self._task_prompt(), mode, params)
+        # Re-derive the Results label table from the active task's vocabulary
+        # so a previous panoptic prediction's rewrite does not mislabel this
+        # prediction's class ids.
+        self.names = dict(self._task_names())
+        self.nb_classes = len(self.names)
         return inputs, img, img.size, 1.0
 
     def _forward(self, inputs: _SenseNovaInputs) -> Dict[str, Any]:

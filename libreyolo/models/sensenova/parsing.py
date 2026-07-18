@@ -251,11 +251,17 @@ def extract_caption_instances(caption: str) -> List[Tuple[str, Tuple[int, int, i
     return instances
 
 
-def nearest_color_class_mask(image: Image.Image, class_colors: np.ndarray) -> np.ndarray:
+def nearest_color_class_mask(
+    image: Image.Image,
+    class_colors: np.ndarray,
+    black_is_background: bool = True,
+) -> np.ndarray:
     """Convert an RGB mask to a class-index mask by nearest prompt color.
 
-    Black pixels are always assigned to the background index
-    ``len(class_colors)``.
+    Black pixels are assigned to the background index ``len(class_colors)``
+    (the model's trained void convention) unless ``black_is_background`` is
+    False, which callers pass when the caption explicitly declared black as
+    an instance color.
     """
     img_np = np.array(image.convert("RGB"), dtype=np.float32)
     class_colors = np.asarray(class_colors, dtype=np.float32)
@@ -275,7 +281,8 @@ def nearest_color_class_mask(image: Image.Image, class_colors: np.ndarray) -> np
         pred_class[start:end] = np.argmin(dist, axis=1)
 
     mask = pred_class.reshape(h, w)
-    mask[mask_black] = len(class_colors)
+    if black_is_background:
+        mask[mask_black] = len(class_colors)
     return mask.astype(np.int32, copy=False)
 
 
@@ -307,7 +314,10 @@ def panoptic_from_mask_and_caption(
         class_colors = np.array([rgb for _, rgb in instances], dtype=np.float32)
     else:
         class_colors = np.array([(255, 255, 255)], dtype=np.float32)
-    class_mask = nearest_color_class_mask(mask_image, class_colors)
+    black_declared = any(rgb == (0, 0, 0) for _, rgb in instances)
+    class_mask = nearest_color_class_mask(
+        mask_image, class_colors, black_is_background=not black_declared
+    )
 
     names = dict(names)
     name_to_id = {normalize_category(v): int(k) for k, v in names.items()}
