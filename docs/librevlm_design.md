@@ -36,6 +36,7 @@ size marked with `*`. The authoritative list is `_ALIASES` in
 | `kosmos-2`*                                   | Kosmos-2  | MIT                 | 2023 grounder; loads clean, coarse boxes |
 | `smolvlm2`, `-2.2b`*, `-500m`                | SmolVLM2  | Apache-2.0          | tiny; weak detector, zero-code family    |
 | `locate-anything`, `-3b`*                     | LocateAnything | NVIDIA non-commercial | remote-code grounder; boxes and points |
+| `sensenova-vision`, `-7b`*                    | SenseNova-Vision | Apache-2.0 code, CC BY-NC 4.0 weights | unified multimodal; 7 tasks, vendored port, heavy |
 
 Florence-2 and Kosmos-2 do not use a chat template: they are driven by task /
 grounding prompts and decode boxes via the processor's `post_process_generation`,
@@ -211,6 +212,38 @@ downloads do not execute mutable upstream code.
 LibreYOLO contributes only adapter code. It does not redistribute VLM weights or
 remote-code model repositories; those are downloaded at runtime under the
 upstream model repository's terms when a user chooses that model.
+
+## Multi-task families: SenseNova-Vision
+
+The tier's "VLM as detector" framing was v1 scoping, not a ceiling. The
+LocateAnything family already served two tasks (`detect`, `point`); the
+SenseNova-Vision family extends the same mechanics to seven: `detect`,
+`point`, `pose`, `ocr`, `depth`, `segment` (referring segmentation with
+free-text queries), and `panoptic`. Symbolic tasks come back as tagged text
+the family parses; dense tasks come back as generated images a frozen VAE
+decodes. Every task returns the same `Results` payload the specialist
+families return, so the generalist and the specialists are interchangeable
+call sites.
+
+```python
+model = LibreVLM("sensenova-vision", task="depth")
+result = model.predict("image.jpg")            # Results.depth_map
+model.set_task("segment").set_classes(["person furthest to the right"])
+result = model.predict("image.jpg")            # Results.masks, one referred mask
+model.set_task("panoptic")                      # COCO-panoptic vocabulary default
+```
+
+`set_task()` (on the tier base) switches the active task without reloading
+weights, which matters at 29.6 GB. Two family-specific notes: this is the
+one family whose architecture is vendored rather than loaded through
+transformers (no upstream remote code exists; the port carries per-file
+Apache-2.0 provenance and an SDPA fallback so flash-attn is optional), and
+its weights are CC BY-NC 4.0 (non-commercial), auto-downloaded from the
+byte-identical LibreYOLO mirror (`LibreYOLO/SenseNovaVision7b`) under a
+one-time license notice. Capabilities without a canonical LibreYOLO task
+(surface normals, grounded-conversation segmentation, editing, multi-view
+reconstruction) stay behind `chat()`/`generate()`. See
+[`adr/0012-sensenova-unified-multimodal.md`](adr/0012-sensenova-unified-multimodal.md).
 
 ## Known limitations (v1)
 

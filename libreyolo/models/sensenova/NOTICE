@@ -1,0 +1,60 @@
+LibreSenseNovaVision - third-party attribution
+==============================================
+
+The SenseNova-Vision family vendors an inference-only port of the upstream
+model implementation. All ported files retain their upstream copyright
+headers and per-file provenance notes.
+
+    Project:  SenseNova-Vision
+    Upstream: https://github.com/OpenSenseNova/SenseNova-Vision
+    Commit:   12ccd96e32b32967a11cacb6c5bd5fe3a555fc0c
+    License:  Apache License 2.0 (repository code)
+    Copyright (c) 2026 SenseTime Group Inc. and/or its affiliates
+
+The upstream implementation itself derives from Apache-2.0 projects, and the
+ported files keep those lineage headers:
+
+  * Bagel (Qwen2-NaViT MoT decoder, SigLIP-NaViT tower, inferencer):
+    Copyright (c) 2025 Bytedance Ltd., Apache-2.0
+    https://github.com/ByteDance-Seed/Bagel
+  * Qwen2 / SigLIP leaf modules and configurations:
+    Copyright (c) 2024 The Qwen Team and The HuggingFace Inc. team, Apache-2.0
+    https://github.com/huggingface/transformers
+  * FLUX autoencoder (modeling/autoencoder.py):
+    Copyright (c) 2024 Black Forest Labs, Apache-2.0
+    https://github.com/black-forest-labs/flux
+
+LibreYOLO adaptations (documented in each file header): the training-only
+forward paths are removed, flash-attn is optional behind a numerically
+equivalent SDPA fallback, einops rearranges are rewritten as plain torch ops,
+and imports are made relative.
+
+NOT ported: upstream modeling/bagel/modeling_utils.py is marked
+CC BY-NC 4.0 (it derives from facebookresearch/DiT) and is incompatible with
+LibreYOLO. The small standard components it provided are re-derived in
+libreyolo/models/sensenova/modeling/layers.py from the original permissive
+sources instead:
+
+  * 2D sine-cosine position table: Hugging Face transformers
+    (models/vit_mae/modeling_vit_mae.py, Apache-2.0, Meta copyright under
+    Apache in that file), which predates DiT's non-commercial fork of the
+    same routine.
+  * Sinusoidal timestep embedding: openai/guided-diffusion
+    (guided_diffusion/nn.py, MIT), the source DiT itself credits.
+  * The MLP connector and frozen-buffer wrappers follow the parameter
+    names/shapes fixed by the released checkpoint.
+
+Model weights are CC BY-NC 4.0 (non-commercial use only) and are mirrored,
+byte-identical and with attribution, at:
+
+    Mirror:     LibreYOLO/SenseNovaVision7b (Hugging Face)
+    Upstream:   sensenova/SenseNova-Vision-7B-MoT
+    Revision:   79548fcc5b954598799b9317f8d3ec5e347d5c0e
+    SHA-256:    ema.safetensors
+                96f29abd98791288c5a24087322e964bb9bcabfc2f185ece71543f827bc2b11e
+                ae.safetensors
+                afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38
+
+Mirroring does not change the license; the loader prints the
+non-commercial notice before every automatic download, and users are
+responsible for complying with the upstream terms.

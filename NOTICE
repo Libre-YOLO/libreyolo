@@ -32,6 +32,23 @@ DINOv3 (Meta DINOv3 License Agreement)
     These terms apply only to the DINOv3 subtree listed above. The
     rest of LibreYOLO remains under the MIT License.
 
+SenseNova-Vision / Bagel (Apache License 2.0 code; CC BY-NC 4.0 weights,
+not redistributed)
+    Path:    libreyolo/models/sensenova/
+    License: libreyolo/models/sensenova/NOTICE  (Apache-2.0 code sources)
+    Source:  https://github.com/OpenSenseNova/SenseNova-Vision
+
+    The SenseNova-Vision family vendors an inference-only port of the
+    upstream Apache-2.0 implementation (SenseTime 2026, building on
+    ByteDance's Bagel, Hugging Face transformers, and the Black Forest
+    Labs FLUX autoencoder, all Apache-2.0). The upstream file
+    modeling/bagel/modeling_utils.py is CC BY-NC 4.0 (DiT-derived) and is
+    NOT ported; its standard components are re-derived from Apache/MIT
+    sources in modeling/layers.py (see the family NOTICE). Model weights
+    are CC BY-NC 4.0, mirrored byte-identically with attribution at
+    huggingface.co/LibreYOLO/SenseNovaVision7b; the loader prints the
+    non-commercial notice before every automatic download.
+
 MobileNetV4 / timm (Apache License 2.0)
     Path:    libreyolo/models/mobilenetv4/
     License: libreyolo/models/mobilenetv4/NOTICE  (Apache-2.0)
