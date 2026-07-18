@@ -1421,17 +1421,9 @@ class BaseModel(ABC):
             Path to the exported model file.
         """
         if getattr(self, "_quant_manifest", None):
-            from libreyolo.quant import QuantizationError
+            from libreyolo.quant.api import quantized_export
 
-            recipe = self._quant_manifest.get("recipe")
-            raise QuantizationError(
-                f"Export of quantized models is not supported yet "
-                f"(recipe='{recipe}'): tracing would bake simulation "
-                "arithmetic into the graph instead of producing a deployable "
-                "quantized artifact. Call model.dequantize() first (QAT-"
-                "trained master weights are kept), then export, e.g. "
-                "model.export(format='onnx', int8=True, data='coco8.yaml')."
-            )
+            return quantized_export(self, format=format, **kwargs)
 
         from libreyolo.export import BaseExporter
 

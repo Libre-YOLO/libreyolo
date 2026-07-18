@@ -78,22 +78,27 @@ and execution tier.
 
 ## Export
 
-Direct export of a quantized model is intentionally rejected: tracing the
-simulation would bake fake-quant arithmetic into the graph, producing an
-artifact that looks fp32 to every runtime and runs slower than the float
-model. The supported bridge to deployment formats today:
+int8-quantized models export directly to ONNX with in-graph
+QuantizeLinear/DequantizeLinear pairs carrying the model's own calibrated
+(or QAT-trained) scales:
 
 ```python
-qmodel = LibreYOLO("runs/train/qat-run/weights/best.pt")  # QAT/QAD result
-qmodel.dequantize()   # restore float modules; QAT-trained masters are kept
-qmodel.export(format="onnx", int8=True, data="coco8.yaml")  # real QDQ INT8
+qmodel = LibreYOLO("LibreYOLO9s-int8.pt")   # PTQ or QAT/QAD checkpoint
+qmodel.export(format="onnx")                # scale-exact QDQ INT8 ONNX
 ```
 
-The QAT benefit lives mostly in the trained master weights, which this path
-preserves; activation scales are re-derived by the existing calibrated
-exporter. Scale-exact QDQ export (emitting QuantizeLinear/DequantizeLinear
-directly from the model's own calibrated scales) is the planned follow-up.
-`nvfp4` has no standard ONNX representation and stays PyTorch-executed.
+ONNX Runtime and TensorRT consume the QDQ graph with real INT8 kernels; on
+coco8 the exported artifact tracks the PyTorch simulation within sub-point
+noise. The CLI equivalent is
+`libreyolo export --model model-int8.pt --format onnx`. Notes:
+
+- `fp16` models: call `dequantize()` and export with `half=True` (the float
+  exporters already own fp16).
+- `nvfp4` has no standard ONNX representation and executes in PyTorch.
+- Other deployment formats for int8 are built downstream from the QDQ ONNX;
+  direct engine export is planned.
+- `dequantize()` remains available to restore float masters (QAT-trained
+  weights are kept) and use any float exporter.
 
 ## QAT and QAD mechanics
 
@@ -108,9 +113,9 @@ QAT is a finetune of an already-trained model: use finetune learning rates
 short run will destroy the pretrained weights regardless of quantization.
 
 QAD availability follows family distillation support: it works wherever the
-family implements `get_distill_config()` (yolo9 today). The grammar itself is
-family-independent, so rfdetr QAD activates as soon as that family gains
-distillation support.
+family implements `get_distill_config()` (yolo9 and rfdetr today; the
+RF-DETR tap point is the stride-16 backbone projector output, probed from
+the live model so future sizes stay correct).
 
 Family notes: RF-DETR calibration exercises the inference path, so modules
 that only run during training (denoising branches) keep their activation

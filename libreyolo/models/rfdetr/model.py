@@ -615,6 +615,54 @@ class LibreRFDETR(BaseModel):
         """Rebuild the detector head for a new class count."""
         super()._rebuild_for_new_classes(new_nc)
 
+    def get_distill_config(self) -> Dict:
+        """Return distillation config derived from this model's architecture.
+
+        The tap point is the backbone projector output: the single stride-16
+        feature map every RF-DETR size feeds its transformer. All current
+        sizes share the same projector width, so detector-teacher
+        distillation aligns teacher and student without channel adapters.
+        The shape is measured with a one-time probe forward so the config
+        stays correct if a future size changes the projector width.
+        """
+        tap = "model.backbone.0.projector.stages.0"
+        module = self.model
+        for part in tap.split("."):
+            module = module[int(part)] if part.isdigit() else getattr(module, part)
+
+        captured: Dict[str, Tuple[int, ...]] = {}
+
+        def _hook(_mod, _args, out):
+            if torch.is_tensor(out) and out.dim() == 4:
+                captured["shape"] = tuple(out.shape)
+
+        handle = module.register_forward_hook(_hook)
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                device = next(self.model.parameters()).device
+                dummy = torch.zeros(
+                    1, 3, self.input_size, self.input_size, device=device
+                )
+                self.model(dummy)
+        finally:
+            handle.remove()
+            if was_training:
+                self.model.train()
+
+        shape = captured.get("shape")
+        if shape is None:
+            raise NotImplementedError(
+                "Could not probe the RF-DETR projector output for "
+                "distillation; the projector structure is unexpected."
+            )
+        return {
+            "tap_points": [tap],
+            "channels": [int(shape[1])],
+            "strides": [int(self.input_size // shape[2])],
+        }
+
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         layers = {}
         if hasattr(self.model, "model"):

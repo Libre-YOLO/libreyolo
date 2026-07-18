@@ -167,10 +167,34 @@ def test_save_load_roundtrip(tmp_path, yolo9t):
         assert torch.equal(src[key].cpu(), dst[key].cpu()), key
 
 
-def test_export_rejected_on_quantized_model(yolo9t):
+def test_export_rejected_for_fp16_and_wrong_formats(yolo9t):
     yolo9t.quantize(recipe="int8", calib=None, verbose=False)
-    with pytest.raises(QuantizationError, match="dequantize"):
-        yolo9t.export(format="onnx")
+    with pytest.raises(QuantizationError, match="format='onnx'"):
+        yolo9t.export(format="torchscript")
+
+
+def test_export_rejected_for_fp16_recipe():
+    m = LibreYOLO9(None, size="t", device="cpu")
+    m.quantize(recipe="fp16", verbose=False)
+    with pytest.raises(QuantizationError, match="half=True"):
+        m.export(format="onnx")
+
+
+def test_quantized_onnx_export_emits_qdq(tmp_path, yolo9t):
+    onnx = pytest.importorskip("onnx")
+    yolo9t.quantize(recipe="int8", calib=None, verbose=False)
+    ckpt = tmp_path / "LibreYOLO9t-int8.pt"
+    yolo9t.save(str(ckpt))
+    reloaded = LibreYOLO9(str(ckpt), size="t", device="cpu")
+    path = reloaded.export(format="onnx", simplify=False)
+    graph = onnx.load(path).graph
+    n_q = sum(1 for n in graph.node if n.op_type == "QuantizeLinear")
+    n_dq = sum(1 for n in graph.node if n.op_type == "DequantizeLinear")
+    assert n_q > 100, f"expected weight QDQ pairs, got {n_q}"
+    assert n_dq >= n_q
+    # Export mode must be reset afterwards.
+    q_modules = [m for m in reloaded.model.modules() if isinstance(m, QuantConv2d)]
+    assert q_modules and all(not m._q_export_mode for m in q_modules)
 
 
 def test_dequantize_restores_exact_float_forward(yolo9t):

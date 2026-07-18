@@ -61,28 +61,67 @@ def fake_quant_e2m1(x: torch.Tensor) -> torch.Tensor:
     return _ste(quant, x)
 
 
-def fake_quant_int8_per_channel(weight: torch.Tensor, ch_axis: int = 0) -> torch.Tensor:
-    """Symmetric per-channel INT8 fake-quantization of a weight tensor."""
+def int8_weight_qparams(weight: torch.Tensor, ch_axis: int = 0) -> torch.Tensor:
+    """Per-channel symmetric INT8 scale for a weight tensor."""
     dims = [d for d in range(weight.dim()) if d != ch_axis]
-    amax = weight.abs().amax(dim=dims, keepdim=True).detach()
-    scale = (amax / 127.0).clamp(min=_EPS)
-    quant = torch.clamp(torch.round(weight / scale), -127, 127) * scale
-    return _ste(quant, weight)
+    amax = weight.detach().abs()
+    if dims:
+        amax = amax.amax(dim=dims)
+    return (amax / 127.0).clamp(min=_EPS)
+
+
+def fake_quant_int8_per_channel(
+    weight: torch.Tensor,
+    ch_axis: int = 0,
+    scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Symmetric per-channel INT8 fake-quantization of a weight tensor.
+
+    Uses ``torch.fake_quantize_per_channel_affine`` so ``torch.onnx.export``
+    emits QuantizeLinear/DequantizeLinear pairs carrying these exact scales.
+    The (-128, 127) range is required by the ONNX symbolic; with symmetric
+    ``amax/127`` scales the -128 code is unreachable, so results match the
+    (-127, 127) convention bit for bit.
+    """
+    if scale is None:
+        scale = int8_weight_qparams(weight, ch_axis)
+    scale = scale.to(device=weight.device, dtype=torch.float32)
+    zero_point = torch.zeros(scale.shape, dtype=torch.int32, device=weight.device)
+    return torch.fake_quantize_per_channel_affine(
+        weight, scale, zero_point, ch_axis, -128, 127
+    )
+
+
+def int8_act_qparams(lo: torch.Tensor, hi: torch.Tensor):
+    """Per-tensor affine INT8 (scale, zero_point) from calibrated [lo, hi]."""
+    lo = torch.minimum(lo, torch.zeros_like(lo))
+    hi = torch.maximum(hi, torch.zeros_like(hi))
+    scale = ((hi - lo) / 255.0).clamp(min=_EPS).reshape(1)
+    zero_point = (
+        torch.clamp(torch.round(-128.0 - lo / scale), -128, 127)
+        .to(torch.int32)
+        .reshape(1)
+    )
+    return scale, zero_point
 
 
 def fake_quant_int8_affine(
     x: torch.Tensor,
     lo: torch.Tensor,
     hi: torch.Tensor,
+    scalars: bool = False,
 ) -> torch.Tensor:
-    """Per-tensor affine INT8 fake-quantization with calibrated [lo, hi]."""
-    lo = torch.minimum(lo, torch.zeros_like(lo))
-    hi = torch.maximum(hi, torch.zeros_like(hi))
-    scale = ((hi - lo) / 255.0).clamp(min=_EPS)
-    zero_point = torch.round(-128.0 - lo / scale)
-    quant = torch.clamp(torch.round(x / scale) + zero_point, -128, 127)
-    quant = (quant - zero_point) * scale
-    return _ste(quant, x)
+    """Per-tensor affine INT8 fake-quantization with calibrated [lo, hi].
+
+    With ``scalars=True`` the qparams are passed as python scalars so ONNX
+    tracing bakes them as constants (export mode).
+    """
+    scale, zero_point = int8_act_qparams(lo, hi)
+    if scalars:
+        return torch.fake_quantize_per_tensor_affine(
+            x, float(scale.item()), int(zero_point.item()), -128, 127
+        )
+    return torch.fake_quantize_per_tensor_affine(x, scale, zero_point, -128, 127)
 
 
 def _blockwise_nvfp4(x: torch.Tensor, tensor_scale: torch.Tensor) -> torch.Tensor:

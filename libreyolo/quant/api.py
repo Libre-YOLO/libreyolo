@@ -314,6 +314,75 @@ def quantize_model(
     return wrapper
 
 
+def _set_export_mode(root: nn.Module, enabled: bool):
+    for _, module in _quant_modules(root):
+        if isinstance(module, (QuantConv2d, QuantLinear)):
+            if enabled:
+                module.freeze_weight_qparams()
+            module._q_export_mode = enabled
+            module._q_observing = False
+
+
+def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
+    """Export a quantized model.
+
+    int8 models export to ONNX with in-graph QuantizeLinear/DequantizeLinear
+    pairs carrying the model's own calibrated (or QAT-trained) scales, so
+    ONNX Runtime and TensorRT run real INT8 kernels with exactly the
+    arithmetic that was validated in PyTorch. Other recipes are rejected
+    with instructions.
+    """
+    manifest = getattr(wrapper, "_quant_manifest", None) or {}
+    recipe = manifest.get("recipe")
+    fmt = str(format).lower()
+
+    if recipe == "fp16":
+        raise QuantizationError(
+            "fp16-quantized models do not need a quantized exporter: call "
+            "model.dequantize() and export with half=True, e.g. "
+            "model.export(format='onnx', half=True)."
+        )
+    if recipe == "nvfp4":
+        raise QuantizationError(
+            "nvfp4 has no standard ONNX representation and executes in "
+            "PyTorch. Deploy the PyTorch model directly, or dequantize() and "
+            "use the float exporters."
+        )
+    if recipe != "int8":
+        raise QuantizationError(
+            f"Export is not supported for quantization recipe '{recipe}'."
+        )
+    if fmt != "onnx":
+        raise QuantizationError(
+            "int8-quantized export currently supports format='onnx' (QDQ "
+            "graph, consumable by ONNX Runtime and TensorRT). Requested: "
+            f"'{fmt}'. Export to ONNX and build downstream engines from it, "
+            "or dequantize() and use the float exporters."
+        )
+
+    if kwargs.pop("int8", False):
+        logger.info(
+            "Model is already int8-quantized; the int8 export flag is "
+            "ignored (Q/DQ scales come from the model itself)."
+        )
+    if kwargs.pop("half", False):
+        logger.warning("half=True is ignored for int8-quantized export.")
+    if not manifest.get("calibrated"):
+        logger.warning(
+            "Exporting an int8 model whose activations were never "
+            "calibrated: the graph carries weight Q/DQ only. Pass calib= to "
+            "quantize() for full W8A8 deployment."
+        )
+
+    from ..export import BaseExporter
+
+    _set_export_mode(wrapper.model, True)
+    try:
+        return BaseExporter.create("onnx", wrapper)(**kwargs)
+    finally:
+        _set_export_mode(wrapper.model, False)
+
+
 def dequantize_model(wrapper):
     """Restore float modules in place, keeping the master weights.
 

@@ -22,17 +22,29 @@ from .fake_quant import (
     fake_quant_int8_per_channel,
     fake_quant_nvfp4_dynamic,
     fake_quant_nvfp4_weight,
+    int8_weight_qparams,
 )
 
 
 class _ActObserverMixin:
     """Shared INT8 activation observer / fake-quant state."""
 
-    def _init_act_state(self):
+    def _init_act_state(self, out_channels: int):
         self.register_buffer("_q_act_lo", torch.zeros(1))
         self.register_buffer("_q_act_hi", torch.zeros(1))
         self.register_buffer("_q_calibrated", torch.zeros(1, dtype=torch.uint8))
+        self.register_buffer("_q_w_scale", torch.zeros(out_channels))
         self._q_observing = False
+        self._q_export_mode = False
+
+    def freeze_weight_qparams(self):
+        """Bake the current per-channel weight scales into a buffer so ONNX
+        tracing emits them as constants (export mode)."""
+        with torch.no_grad():
+            self._q_w_scale.copy_(int8_weight_qparams(self.weight.float()))
+
+    def _weight_scale(self):
+        return self._q_w_scale if self._q_export_mode else None
 
     @property
     def q_calibrated(self) -> bool:
@@ -55,7 +67,12 @@ class _ActObserverMixin:
             self._observe(x)
             return x
         if self.q_calibrated:
-            return fake_quant_int8_affine(x, self._q_act_lo, self._q_act_hi)
+            return fake_quant_int8_affine(
+                x,
+                self._q_act_lo,
+                self._q_act_hi,
+                scalars=getattr(self, "_q_export_mode", False),
+            )
         return x
 
 
@@ -64,7 +81,7 @@ class QuantConv2d(nn.Conv2d, _ActObserverMixin):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._init_act_state()
+        self._init_act_state(self.out_channels)
 
     @classmethod
     def from_float(cls, conv: nn.Conv2d) -> "QuantConv2d":
@@ -90,7 +107,9 @@ class QuantConv2d(nn.Conv2d, _ActObserverMixin):
         with autocast_off(x.device.type):
             x = x.float()
             x = self._maybe_quant_input(x)
-            weight = fake_quant_int8_per_channel(self.weight.float())
+            weight = fake_quant_int8_per_channel(
+                self.weight.float(), scale=self._weight_scale()
+            )
             bias = self.bias.float() if self.bias is not None else None
             out = self._conv_forward(x, weight, bias)
         return out.to(in_dtype) if in_dtype != out.dtype else out
@@ -101,7 +120,7 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._init_act_state()
+        self._init_act_state(self.out_features)
 
     @classmethod
     def from_float(cls, linear: nn.Linear) -> "QuantLinear":
@@ -121,7 +140,9 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
         with autocast_off(x.device.type):
             x = x.float()
             x = self._maybe_quant_input(x)
-            weight = fake_quant_int8_per_channel(self.weight.float())
+            weight = fake_quant_int8_per_channel(
+                self.weight.float(), scale=self._weight_scale()
+            )
             bias = self.bias.float() if self.bias is not None else None
             out = F.linear(x, weight, bias)
         return out.to(in_dtype) if in_dtype != out.dtype else out
