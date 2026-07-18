@@ -516,11 +516,12 @@ class TestFamilySurface:
         for task in LibreSenseNovaVision.SUPPORTED_TASKS:
             assert task in TASKS
 
-    def test_notice_names_the_license_and_upstream(self):
+    def test_notice_names_the_license_mirror_and_upstream(self):
         notice = LibreSenseNovaVision._LICENSE_NOTICE
         assert "CC BY-NC 4.0" in notice
+        assert "NON-COMMERCIAL" in notice
+        assert "huggingface.co/LibreYOLO/SenseNovaVision7b" in notice
         assert "huggingface.co/sensenova/SenseNova-Vision-7B-MoT" in notice
-        assert "does not\nredistribute" in notice or "does not redistribute" in notice
 
     def test_default_score_below_conf_threshold_drops_everything(self):
         det = _bare("detect")._postprocess(
