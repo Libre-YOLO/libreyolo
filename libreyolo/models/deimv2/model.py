@@ -443,6 +443,19 @@ class LibreDEIMv2(BaseModel):
                 if ckpt_names is not None:
                     self.names = self._sanitize_names(ckpt_names, effective_nc)
 
+            # Replay LoRA injection for adapter checkpoints. A model trained
+            # with lora=True saves its transformer Linears under peft keys
+            # (``.base_layer.``/``lora_A``/``lora_B``); rebuild the adapted
+            # graph before loading so those keys line up.
+            from ...training.lora import (
+                apply_lora_to_deimv2,
+                module_has_lora,
+                state_dict_has_lora,
+            )
+
+            if state_dict_has_lora(state_dict) and not module_has_lora(self.model):
+                apply_lora_to_deimv2(self.model)
+
             self._load_state_dict_checked(state_dict)
         except RuntimeError:
             raise

@@ -25,6 +25,11 @@ class ConvNeXtTrainer(BaseTrainer):
     # Non-detect task: select the best checkpoint by top-1 accuracy.
     best_metric_key = "metrics/accuracy_top1"
 
+    # ConvNeXt blocks carry channels-last nn.Linear MLPs (fc1/fc2), so LoRA
+    # adapts those while the convs/norms freeze and the head keeps training
+    # (see libreyolo/training/lora.py).
+    supports_lora = True
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return ConvNeXtConfig
@@ -34,6 +39,19 @@ class ConvNeXtTrainer(BaseTrainer):
 
     def get_model_tag(self) -> str:
         return f"ConvNeXt-{self.config.size}"
+
+    def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
+        if not getattr(self.config, "lora", False):
+            return False
+        from ...training.lora import is_lora_parameter_name
+
+        return is_lora_parameter_name(name)
+
+    def on_setup(self):
+        if getattr(self.config, "lora", False):
+            from ...training.lora import apply_lora_to_convnext
+
+            apply_lora_to_convnext(self.model)
 
     def create_transforms(self):
         # Classification uses the ImageFolder pipeline in ``_setup_classify_data``,

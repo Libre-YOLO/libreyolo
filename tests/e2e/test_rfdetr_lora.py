@@ -361,14 +361,14 @@ def test_lora_checkpoint_continue_train_does_not_reapply_adapters():
 
 def test_lora_rejected_on_unsupported_family():
     """A pure-CNN family must hard-error on lora=True rather than silently ignore it."""
-    from libreyolo import LibreDFINE
-    from libreyolo.models.dfine.trainer import DFINETrainer
+    from libreyolo import LibreYOLO9
+    from libreyolo.models.yolo9.trainer import YOLO9Trainer
 
-    wrapper = LibreDFINE(None, size="n", device="cpu")
-    trainer = DFINETrainer(
+    wrapper = LibreYOLO9(None, size="t", device="cpu")
+    trainer = YOLO9Trainer(
         model=wrapper.model,
         wrapper_model=wrapper,
-        size="n",
+        size="t",
         num_classes=80,
         data=None,
         epochs=1,
@@ -380,6 +380,6 @@ def test_lora_rejected_on_unsupported_family():
         eval_interval=-1,
         lora=True,
     )
-    assert DFINETrainer.supports_lora is False
+    assert YOLO9Trainer.supports_lora is False
     with pytest.raises(ValueError, match="LoRA fine-tuning"):
         trainer.setup()

@@ -1262,7 +1262,8 @@ class BaseTrainer(ABC):
             family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"
             raise ValueError(
                 f"LoRA fine-tuning (lora=True) is not supported for {family}. "
-                "LoRA targets transformer backbones with nn.Linear layers (e.g. RF-DETR)."
+                "LoRA targets transformer components with nn.Linear layers "
+                "(e.g. RF-DETR, D-FINE, DEIM)."
             )
 
         if is_main_process():

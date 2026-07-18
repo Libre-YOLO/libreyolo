@@ -681,6 +681,7 @@ class BaseModel(ABC):
 
                 apply_quant_structure(self, quant_manifest)
 
+            self._prepare_model_for_state_dict(state_dict)
             self.model.load_state_dict(state_dict, strict=self._strict_loading())
             self.model.to(self.device).eval()
         except Exception as e:
@@ -691,6 +692,16 @@ class BaseModel(ABC):
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
         return False
+
+    def _prepare_model_for_state_dict(self, state_dict: dict) -> None:
+        """Family hook: adapt the live module graph to an incoming state dict.
+
+        Runs after any class-count rebuild and right before
+        ``load_state_dict``. Families that support ``lora=True`` and rely on
+        the base loader override this to replay adapter injection when the
+        checkpoint carries LoRA keys; the default is a no-op.
+        """
+        return None
 
     # =========================================================================
     # Public API

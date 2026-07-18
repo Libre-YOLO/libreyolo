@@ -163,7 +163,13 @@ class FlatCosineScheduler(BaseScheduler):
         super().__init__(lr, iters_per_epoch, total_epochs)
         self.warmup_iters = iters_per_epoch * warmup_epochs
         self.warmup_lr_start = _clamp_warmup_lr_start(lr, warmup_lr_start)
-        self.cosine_iters = iters_per_epoch * no_aug_epochs
+        # Budget guard: on runs shorter than the configured tail, the cosine
+        # window must not extend back into warmup. Recipes that fit their
+        # budget are unaffected.
+        self.cosine_iters = min(
+            iters_per_epoch * no_aug_epochs,
+            max(0, self.total_iters - self.warmup_iters),
+        )
         self.min_lr = lr * min_lr_ratio
 
     def update_lr(self, iters: int) -> float:
