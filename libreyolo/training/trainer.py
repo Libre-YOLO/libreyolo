@@ -1245,6 +1245,19 @@ class BaseTrainer(ABC):
         if self._is_setup:
             return
 
+        quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)
+        if quant_manifest and quant_manifest.get("recipe") in ("fp16", "bf16"):
+            raise ValueError(
+                "Cast-precision quantized models (fp16/bf16) are "
+                "inference-only. Train the float model with amp=True "
+                "instead, or use a quantizing recipe (int8/fp8/w4a8/nvfp4/"
+                "...) for quantization-aware training."
+            )
+        if quant_manifest and quant_manifest.get("state") == "finalized":
+            from ..quant.api import reprepare_model
+
+            reprepare_model(self.wrapper_model)
+
         if getattr(self.config, "lora", False) and not self.supports_lora:
             family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"
             raise ValueError(
@@ -2736,6 +2749,11 @@ class BaseTrainer(ABC):
             is_ema_weights=self.ema_model is not None,
         )
         checkpoint.update(self._checkpoint_extra_metadata())
+        quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)
+        if quant_manifest:
+            # QAT/QAD checkpoints must be self-describing so LibreYOLO(path)
+            # rebuilds the quantized structure before loading scales.
+            checkpoint["quant"] = dict(quant_manifest)
         checkpoint["best_metric"] = self.best_mAP50_95
         checkpoint["best_metric_name"] = checkpoint["best_metric_key"]
         if self.ema_model is not None:

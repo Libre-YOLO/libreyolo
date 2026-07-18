@@ -673,6 +673,14 @@ class BaseModel(ABC):
             else:
                 state_dict = self._prepare_state_dict(loaded)
 
+            quant_manifest = (
+                loaded.get("quant") if isinstance(loaded, dict) else None
+            )
+            if quant_manifest:
+                from ...quant import apply_quant_structure
+
+                apply_quant_structure(self, quant_manifest)
+
             self.model.load_state_dict(state_dict, strict=self._strict_loading())
             self.model.to(self.device).eval()
         except Exception as e:
@@ -1293,6 +1301,122 @@ class BaseModel(ABC):
             annotate_fn=annotate_tracked,
         )
 
+    def quantize(
+        self,
+        recipe: str,
+        calib: str | None = "coco128.yaml",
+        samples: int = 128,
+        batch: int = 8,
+        algorithm: str = "auto",
+        keep_high_precision: tuple | list | None = None,
+        allow_download_scripts: bool = False,
+        verbose: bool = True,
+    ):
+        """Quantize the loaded model in place (PyTorch execution) and return it.
+
+        Calibration data is separate from training data: it is a small set of
+        images used forward-only to derive activation ranges and scales.
+        Labels are never read. To recover accuracy afterwards, run the normal
+        training step on the returned model (QAT), optionally with the
+        existing ``distill_model`` kwargs (QAD).
+
+        Args:
+            recipe: Quantization recipe. Casts: "fp16", "bf16". Conv+Linear:
+                "int8", "fp8". Linear-only (transformer families such as
+                rfdetr): "w4a16", "w4a8", "nvfp4", "mxfp4", and the
+                research preview "int2" (QAT required).
+            calib: Calibration images: data.yaml path or built-in dataset
+                name. Pass None to skip calibration (int8 weights-only).
+            samples: Maximum number of calibration images.
+            batch: Calibration batch size.
+            algorithm: Activation range estimation: "minmax" (absolute
+                extremes across batches; the measured best default),
+                "percentile" (experimental: mean of per-batch 0.1/99.9
+                percentiles; degrades transformer families), or "auto"
+                (minmax).
+            keep_high_precision: Substring patterns of module names kept in
+                float. Defaults to the family policy (first layer + heads).
+            allow_download_scripts: Allow embedded Python in dataset YAML
+                download blocks.
+            verbose: Log a quantization summary.
+
+        Returns:
+            This model, quantized in place.
+
+        Example::
+
+            >>> model = LibreYOLO("LibreYOLO9s.pt")
+            >>> qmodel = model.quantize(recipe="int8", calib="coco8.yaml")
+            >>> qmodel.val(data="coco8.yaml")
+            >>> qmodel.train(data="coco8.yaml", epochs=5)  # QAT
+            >>> qmodel.save("LibreYOLO9s-int8.pt")
+        """
+        from libreyolo.quant import quantize_model
+
+        return quantize_model(
+            self,
+            recipe=recipe,
+            calib=calib,
+            samples=samples,
+            batch=batch,
+            algorithm=algorithm,
+            keep_high_precision=(
+                tuple(keep_high_precision)
+                if keep_high_precision is not None
+                else None
+            ),
+            allow_download_scripts=allow_download_scripts,
+            verbose=verbose,
+        )
+
+    def quant_info(self) -> Optional[Dict[str, Any]]:
+        """Return the quantization state summary, or None for float models."""
+        from libreyolo.quant import quant_info
+
+        return quant_info(self)
+
+    def dequantize(self):
+        """Restore float modules in place, keeping the master weights.
+
+        After QAT/QAD the masters are quantization-trained, so this is the
+        bridge to the deployment exporters: ``model.dequantize()`` then
+        ``model.export(format="onnx", int8=True, data=...)`` produces a real
+        QDQ INT8 artifact from QAT-trained weights.
+        """
+        from libreyolo.quant import dequantize_model
+
+        return dequantize_model(self)
+
+    def save(self, path: str) -> str:
+        """Save the current model as a LibreYOLO checkpoint.
+
+        Writes schema v1.0 metadata; quantized models additionally carry the
+        ``quant`` manifest so ``LibreYOLO(path)`` restores the quantized
+        structure and scales.
+        """
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        checkpoint = wrap_libreyolo_checkpoint(
+            state_dict,
+            model_family=self._get_model_name(),
+            size=self.size,
+            task=self.task,
+            nc=self.nb_classes,
+            names=self.names,
+            imgsz=int(self._get_input_size()),
+        )
+        quant_manifest = getattr(self, "_quant_manifest", None)
+        if quant_manifest:
+            checkpoint["quant"] = dict(quant_manifest)
+
+        out = Path(path)
+        if out.parent != Path("."):
+            out.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(checkpoint, out)
+        logger.info("Saved checkpoint to %s", out)
+        return str(out)
+
     def export(self, format: str = "onnx", **kwargs) -> str:
         """Export model to deployment format.
 
@@ -1305,6 +1429,11 @@ class BaseModel(ABC):
         Returns:
             Path to the exported model file.
         """
+        if getattr(self, "_quant_manifest", None):
+            from libreyolo.quant.api import quantized_export
+
+            return quantized_export(self, format=format, **kwargs)
+
         from libreyolo.export import BaseExporter
 
         return BaseExporter.create(format, self)(**kwargs)

@@ -521,7 +521,14 @@ def LibreYOLO(
             "checkpoint with Cityscapes semantic metadata."
         )
 
-    # Auto-detect size
+    # Auto-detect size. Schema v1.0 metadata is authoritative when present;
+    # shape sniffing stays as the legacy fallback (and is required for raw
+    # upstream state dicts). Finalized quantized checkpoints replace some
+    # weight keys with packed payloads, so sniffing alone cannot cover them.
+    if size is None:
+        meta_size = loaded.get("size") if isinstance(loaded, dict) else None
+        if isinstance(meta_size, str) and meta_size:
+            size = meta_size
     if size is None:
         if matched_cls.FAMILY == "rfdetr":
             # RF-DETR needs the full checkpoint for args-based detection
