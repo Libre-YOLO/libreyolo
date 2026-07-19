@@ -101,6 +101,20 @@ class ECTrainer(DFINETrainer):
         }
 
     def on_setup(self):
+        # This override does not call super().on_setup(), so the LoRA hook
+        # inherited from DFINETrainer must be replayed here with EC's own
+        # recipe (ViTAdapter backbone: frozen ViT + qkv adapters).
+        if getattr(self.config, "lora", False):
+            task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            if task != "detect":
+                raise ValueError(
+                    f"EC {task} training does not support lora=True yet. "
+                    "Use freeze='backbone' for parameter-efficient fine-tuning."
+                )
+            from ...training.lora import apply_lora_to_ec
+
+            apply_lora_to_ec(self.model)
+
         matcher = HungarianMatcher(
             weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
             use_focal_loss=True,

@@ -127,6 +127,19 @@ class LibreConvNeXt(BaseModel):
         self.model.reset_classifier(new_nb_classes)
         self.model.to(self.device)
 
+    def _prepare_model_for_state_dict(self, state_dict: dict) -> None:
+        """Replay LoRA injection for adapter checkpoints (lora=True training
+        saves block MLPs under peft keys; rebuild the adapted graph so the
+        keys line up before the strict load)."""
+        from ...training.lora import (
+            apply_lora_to_convnext,
+            module_has_lora,
+            state_dict_has_lora,
+        )
+
+        if state_dict_has_lora(state_dict) and not module_has_lora(self.model):
+            apply_lora_to_convnext(self.model)
+
     # ---- inference -------------------------------------------------------
 
     def _get_preprocess_numpy(self):

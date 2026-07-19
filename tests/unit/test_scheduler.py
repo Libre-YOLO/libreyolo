@@ -129,3 +129,72 @@ def test_warmup_start_is_clamped_to_target_lr_for_low_lr_finetunes(
 
     assert max(warmup_lrs) <= 1e-5 + 1e-12
     assert sched.update_lr(0) == pytest.approx(1e-5)
+
+
+def test_flat_cosine_tail_cannot_extend_into_warmup_on_short_runs():
+    """A run shorter than the configured no-aug tail must still warm up
+    first and end at min lr, not cosine-decay from iteration zero."""
+    sched = FlatCosineScheduler(
+        lr=1e-4, iters_per_epoch=10, total_epochs=8,
+        warmup_epochs=2, no_aug_epochs=12, min_lr_ratio=0.05,
+    )
+    # cosine window is clamped to the post-warmup budget
+    assert sched.cosine_iters == 8 * 10 - 2 * 10
+    # end of run sits at the floor
+    assert sched.update_lr(80) == pytest.approx(1e-4 * 0.05, rel=1e-6)
+    # warmup still ramps up from the start value
+    assert sched.update_lr(1) < 1e-4
+
+
+def test_deimv2_flat_cosine_clamps_recipe_phases_to_short_budgets():
+    """DEIMv2 recipes use iteration-based warmup (2000) and epoch-based flat
+    (64) sized for COCO; a 15-epoch small-dataset run must not spend its
+    whole budget warming up."""
+    from libreyolo.models.deimv2.trainer import DEIMv2FlatCosineScheduler
+
+    ips, total = 56, 15
+    sched = DEIMv2FlatCosineScheduler(
+        lr=5e-4, iters_per_epoch=ips, total_epochs=total,
+        warmup_iters=2000, flat_epochs=64, no_aug_epochs=12, min_lr_ratio=0.5,
+    )
+    budget = ips * total
+    assert sched.warmup_iters <= int(0.1 * budget)
+    assert sched.no_aug_iters <= int(0.2 * budget)
+    assert sched.flat_iters < budget - sched.no_aug_iters
+    # base LR is actually reached during the flat phase
+    mid_flat = (sched.warmup_iters + sched.flat_iters) // 2
+    assert sched.update_lr(mid_flat) == pytest.approx(5e-4, rel=1e-6)
+    # and the run ends at the floor
+    assert sched.update_lr(budget) == pytest.approx(5e-4 * 0.5, rel=1e-6)
+
+
+def test_deimv2_flat_cosine_leaves_coco_scale_recipes_untouched():
+    """None of the budget guards may alter a recipe that fits its budget."""
+    from libreyolo.models.deimv2.trainer import DEIMv2FlatCosineScheduler
+
+    ips, total = 3600, 132
+    sched = DEIMv2FlatCosineScheduler(
+        lr=5e-4, iters_per_epoch=ips, total_epochs=total,
+        warmup_iters=2000, flat_epochs=64, no_aug_epochs=12, min_lr_ratio=0.5,
+    )
+    assert sched.warmup_iters == 2000
+    assert sched.flat_iters == 64 * ips
+    assert sched.no_aug_iters == 12 * ips
+
+
+def test_aug_stop_epoch_leaves_no_aug_tail_clean_on_short_runs():
+    from libreyolo.data.augment.detr import resolve_aug_stop_epoch
+
+    # Published recipes are unchanged (equality for DEIM/DEIMv2, earlier for
+    # D-FINE's independent 0.85 ratio).
+    assert resolve_aug_stop_epoch(132, 0.91, 12) == 120
+    assert resolve_aug_stop_epoch(500, 468 / 500, 32) == 468
+    assert resolve_aug_stop_epoch(72, 0.85, 4) == 61
+    # Short fine-tunes stop strong augs before the no-aug LR tail begins.
+    assert resolve_aug_stop_epoch(15, 0.91, 12) == 3
+    assert resolve_aug_stop_epoch(8, 0.91, 12) == 1
+    # No tail configured: pure ratio semantics.
+    assert resolve_aug_stop_epoch(100, 0.85, 0) == 85
+    # ratio=None (a config whose size recipe did not set it) must not crash;
+    # treated as 1.0, then clamped by the no-aug tail.
+    assert resolve_aug_stop_epoch(60, None, 12) == 48

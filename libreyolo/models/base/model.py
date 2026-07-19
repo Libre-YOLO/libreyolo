@@ -681,6 +681,7 @@ class BaseModel(ABC):
 
                 apply_quant_structure(self, quant_manifest)
 
+            self._prepare_model_for_state_dict(state_dict)
             self.model.load_state_dict(state_dict, strict=self._strict_loading())
             self.model.to(self.device).eval()
         except Exception as e:
@@ -691,6 +692,16 @@ class BaseModel(ABC):
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
         return False
+
+    def _prepare_model_for_state_dict(self, state_dict: dict) -> None:
+        """Family hook: adapt the live module graph to an incoming state dict.
+
+        Runs after any class-count rebuild and right before
+        ``load_state_dict``. Families that support ``lora=True`` and rely on
+        the base loader override this to replay adapter injection when the
+        checkpoint carries LoRA keys; the default is a no-op.
+        """
+        return None
 
     # =========================================================================
     # Public API
@@ -1445,6 +1456,16 @@ class BaseModel(ABC):
         Returns:
             Path to the exported model file.
         """
+        # A model fine-tuned with lora=True carries live PEFT adapter layers.
+        # Fold them into dense weights before export so the traced graph is a
+        # plain model with no peft dependency. RF-DETR merges via its own
+        # export override; this covers the other lora-capable families
+        # (D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4, EC, ConvNeXt).
+        from libreyolo.training.lora import merge_lora_adapters, module_has_lora
+
+        if module_has_lora(self.model):
+            merge_lora_adapters(self.model)
+
         if getattr(self, "_quant_manifest", None):
             from libreyolo.quant.api import quantized_export
 

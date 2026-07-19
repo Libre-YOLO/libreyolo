@@ -125,9 +125,11 @@ class TrainConfig:
     # freezes matching module/parameter names.
     freeze: Optional[Union[int, str, List[Union[int, str]]]] = None
     # Parameter-efficient fine-tuning. ``lora=True`` injects LoRA adapters into
-    # the backbone of supported transformer families (currently RF-DETR) and
-    # trains only the adapters plus the projector/decoder/head, for low-VRAM
-    # fine-tuning on a custom dataset. Requires the optional ``peft`` dependency
+    # the transformer components of supported families (RF-DETR: DINOv2
+    # backbone attention; D-FINE/DEIM: encoder/decoder Linears with the CNN
+    # backbone frozen) and trains only the adapters plus the parts that must
+    # stay dense (heads, projections), for low-VRAM fine-tuning on a custom
+    # dataset. Requires the optional ``peft`` dependency
     # (``pip install "libreyolo[lora]"``). Families that do not support LoRA
     # raise a clear error rather than silently ignoring the flag.
     lora: bool = False
@@ -389,14 +391,20 @@ class DEIMConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
-    lr0: float = 4e-4
+    # Fine-tune defaults, per the class docstring. Upstream's published COCO
+    # recipe uses lr0=4e-4 with min_lr_ratio=0.5 (its lr_gamma) at total batch
+    # 32 over 132 epochs; at practical fine-tune batches (8-16) on small
+    # datasets that keeps the whole run between 4e-4 and 2e-4 and measurably
+    # degrades transfer (aquarium/bccd bench, 2026-07). Pass the recipe values
+    # explicitly to reproduce upstream COCO training.
+    lr0: float = 1e-4
     weight_decay: float = 1e-4
 
     scheduler: str = "flat_cosine"
     warmup_epochs: int = 2
     warmup_lr_start: float = 1e-6
     no_aug_epochs: int = 12
-    min_lr_ratio: float = 0.5  # DEIM's lr_gamma in upstream
+    min_lr_ratio: float = 0.05
 
     mosaic_prob: float = 0.0
     mixup_prob: float = 0.0
@@ -503,7 +511,9 @@ DEIMV2_SIZE_DEFAULTS = {
         "lr0": 8e-4,
         "weight_decay": 1e-4,
         "warmup_iters": 2000,
-        "flat_epochs": 7800,
+        # Epoch-scale, like every other size (flat ~= 0.49*epochs). The prior
+        # 7800 was the iteration count (160 epochs * ~49 it/ep) mis-placed here.
+        "flat_epochs": 78,
         "no_aug_epochs": 12,
         "min_lr_ratio": 1.0,
         "backbone_lr_mult": 0.5,

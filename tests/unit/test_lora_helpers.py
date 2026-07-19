@@ -32,6 +32,19 @@ def test_module_has_lora_detects_wrapped_or_adapter_modules():
     assert not lora_helpers.module_has_lora(plain)
 
 
+def test_apply_lora_to_detr_rejects_non_detr_models():
+    # Raises before any peft import, so this stays inside the PR gate.
+    with pytest.raises(ValueError, match=r"no \.backbone"):
+        lora_helpers.apply_lora_to_detr(torch.nn.Linear(4, 4))
+
+
+def test_detr_recipe_constants_are_exported():
+    assert lora_helpers.DETR_LORA_RANK == 16
+    assert lora_helpers.DETR_LORA_ALPHA == 16
+    assert "linear1" in lora_helpers.DETR_TARGET_LINEAR_NAMES
+    assert "TransformerDecoderLayer" in lora_helpers.DETR_BLOCK_CLASSES
+
+
 def test_missing_peft_error_mentions_lora_extra(monkeypatch):
     real_import = builtins.__import__
 
