@@ -28,7 +28,10 @@ change that caused them.
 - Branches are `dev` and `release`. There is **no `main`**.
 - `pyproject.toml` `version` is the source of truth. `dev` carries a
   `X.Y.Z.dev0` marker; `release` carries the clean `X.Y.Z`. The bump commit
-  lives on the release side.
+  lives on the release side. It is the **only** file that carries the
+  version: `CITATION.cff` and `.zenodo.json` are intentionally version-less
+  and frozen so all academic citations cluster on one Scholar/Zenodo record.
+  Never bump, date, or retitle them, even if they look stale.
 - **The version label is the human's call, not yours.** Do not infer the
   number from the size of the diff. The `.dev0` marker on `dev` is a hint,
   not a decision: the team may ship a large feature range under a patch
@@ -416,6 +419,9 @@ the user to post by hand.
   broken install have coexisted before in other projects; verify the
   artifact users actually get).
 - Fixing a missing license notice yourself instead of surfacing it.
+- "Helpfully" bumping the version or date in `CITATION.cff` / `.zenodo.json`.
+  They are frozen on purpose; a version there fragments the citation record.
+  This exact mistake has already been made and reverted once.
 
 ## Related
 
