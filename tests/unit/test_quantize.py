@@ -590,6 +590,70 @@ def test_finalized_pt_export_roundtrip(tmp_path, yolo9t):
     assert torch.equal(ref, out3)
 
 
+def test_finalized_w4a16_fp16_remainder_preserves_quant_dtypes(tmp_path):
+    from libreyolo.quant import (
+        GroupQuantLinear,
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+        reprepare_model,
+    )
+
+    class TinyWrapper:
+        FAMILY = "rfdetr"
+
+        def __init__(self):
+            self.model = nn.Sequential(nn.Linear(130, 7), nn.LayerNorm(7))
+            self.device = torch.device("cpu")
+            self.size = "n"
+            self.task = "detect"
+            self.nb_classes = 1
+            self.names = {0: "class_0"}
+
+        def _get_model_name(self):
+            return "rfdetr"
+
+        def _get_input_size(self):
+            return 640
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe="w4a16",
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / "tiny-w4a16.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model"]
+    assert state["0._q_w_gscale"].dtype == torch.float32
+    assert state["0.weight_packed"].dtype == torch.uint8
+    assert state["0.bias"].dtype == torch.float16
+    assert state["1.weight"].dtype == torch.float16
+
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(state)
+    quant_linear = loaded.model[0]
+    assert isinstance(quant_linear, GroupQuantLinear)
+    assert quant_linear.is_finalized
+    assert quant_linear._q_w_gscale.dtype == torch.float32
+    assert quant_linear.weight_packed.dtype == torch.uint8
+    assert quant_linear.bias.dtype == torch.float16
+    assert loaded.model[1].weight.dtype == torch.float16
+
+    reprepare_model(loaded)
+    assert not quant_linear.is_finalized
+    assert quant_linear.weight.dtype == torch.float32
+    assert quant_linear.bias.dtype == torch.float32
+    assert loaded.model[1].weight.dtype == torch.float32
+
+
 def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     yolo9t.quantize(recipe="fp16", verbose=False)
     yolo9t.model.eval()
