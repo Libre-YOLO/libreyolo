@@ -60,6 +60,11 @@ LANDED_KERNELS: tuple[tuple[str, str, str], ...] = (
         "libreyolo.quant.kernels.triton.mxfp4",
         "fake_quant_mxfp4_dynamic",
     ),
+    (
+        "unpack_int_grouped",
+        "libreyolo.quant.kernels.triton.unpack_int_grouped",
+        "unpack_int_grouped",
+    ),
 )
 
 
