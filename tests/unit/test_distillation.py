@@ -676,7 +676,7 @@ class TestModelDistillConfig:
         # BaseModel can't be instantiated directly (ABC), so test via the
         # get_distill_config convenience function with an unknown family
         with pytest.raises(ValueError, match="not yet configured"):
-            get_distill_config("rfdetr", "n")
+            get_distill_config("picodet", "n")
 
     def test_model_config_matches_convenience_function(self):
         """Model wrapper and convenience function should return identical configs."""
