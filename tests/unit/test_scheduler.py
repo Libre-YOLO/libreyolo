@@ -195,3 +195,6 @@ def test_aug_stop_epoch_leaves_no_aug_tail_clean_on_short_runs():
     assert resolve_aug_stop_epoch(8, 0.91, 12) == 1
     # No tail configured: pure ratio semantics.
     assert resolve_aug_stop_epoch(100, 0.85, 0) == 85
+    # ratio=None (a config whose size recipe did not set it) must not crash;
+    # treated as 1.0, then clamped by the no-aug tail.
+    assert resolve_aug_stop_epoch(60, None, 12) == 48

@@ -559,6 +559,15 @@ def merge_lora_adapters(module: nn.Module) -> int:
         )
         setattr(parent, name.rsplit(".", 1)[-1], sub.get_base_layer())
         merged += 1
+
+    # inject_adapter_in_model stamps ``peft_config`` on the model; drop it once
+    # every tuner layer is folded back so ``module_has_lora`` reflects the now
+    # fully-dense graph (and a second export is a no-op).
+    if merged and hasattr(module, "peft_config"):
+        try:
+            del module.peft_config
+        except AttributeError:
+            pass
     return merged
 
 

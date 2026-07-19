@@ -511,7 +511,9 @@ DEIMV2_SIZE_DEFAULTS = {
         "lr0": 8e-4,
         "weight_decay": 1e-4,
         "warmup_iters": 2000,
-        "flat_epochs": 7800,
+        # Epoch-scale, like every other size (flat ~= 0.49*epochs). The prior
+        # 7800 was the iteration count (160 epochs * ~49 it/ep) mis-placed here.
+        "flat_epochs": 78,
         "no_aug_epochs": 12,
         "min_lr_ratio": 1.0,
         "backbone_lr_mult": 0.5,

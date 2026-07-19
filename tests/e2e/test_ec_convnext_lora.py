@@ -258,6 +258,34 @@ def test_convnext_lora_checkpoint_reloads_into_fresh_model(tmp_path):
     assert module_has_lora(w2.model)
 
 
+def test_export_merges_lora_adapters_for_new_families(monkeypatch):
+    """export() must fold live PEFT adapters into dense weights before tracing,
+    so the exported graph carries no adapter modules / peft dependency."""
+    import libreyolo.export as export_mod
+
+    wrapper = LibreConvNeXt(None, size="t", device="cpu")
+    apply_lora_to_convnext(wrapper.model)
+    assert module_has_lora(wrapper.model)
+
+    # Stub the actual exporter: we only assert the pre-export merge ran.
+    captured = {}
+
+    class _StubExporter:
+        @staticmethod
+        def create(fmt, model):
+            captured["had_lora_at_export"] = module_has_lora(model.model)
+            return lambda **kw: "stub.onnx"
+
+    monkeypatch.setattr(export_mod, "BaseExporter", _StubExporter)
+
+    out = wrapper.export(format="onnx")
+    assert out == "stub.onnx"
+    # merged before the exporter saw the model, and no adapters remain
+    assert captured["had_lora_at_export"] is False
+    assert not module_has_lora(wrapper.model)
+    assert not any(".base_layer." in n for n, _ in wrapper.model.named_parameters())
+
+
 @pytest.mark.parametrize("family", ["ec", "convnext"])
 def test_lora_apply_is_idempotent(family):
     if family == "ec":

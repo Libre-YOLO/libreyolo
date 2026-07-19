@@ -72,7 +72,8 @@ def resolve_aug_stop_epoch(epochs: int, ratio: float, no_aug_epochs: int) -> int
     run.
     """
     epochs = int(epochs)
-    stop_epoch = int(epochs * float(ratio))
+    # ratio may be None on a config whose size recipe did not set it.
+    stop_epoch = int(epochs * float(ratio if ratio is not None else 1.0))
     no_aug = int(no_aug_epochs or 0)
     if no_aug > 0:
         stop_epoch = min(stop_epoch, max(1, epochs - no_aug))
