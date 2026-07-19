@@ -192,6 +192,27 @@ def _quant_modules(root: nn.Module):
             yield name, module
 
 
+def _cast_finalized_remainder(root: nn.Module, dtype: torch.dtype):
+    """Cast deployment parameters without changing quantized buffer formats."""
+    exact_buffers = {
+        id(buffer)
+        for _, module in _quant_modules(root)
+        for buffer in module.buffers(recurse=False)
+    }
+    with torch.no_grad():
+        for parameter in root.parameters():
+            if parameter.is_floating_point() and parameter.dtype != dtype:
+                parameter.data = parameter.data.to(dtype)
+        for module in root.modules():
+            for buffer in module.buffers(recurse=False):
+                if (
+                    id(buffer) not in exact_buffers
+                    and buffer.is_floating_point()
+                    and buffer.dtype != dtype
+                ):
+                    buffer.data = buffer.data.to(dtype)
+
+
 def _cast_tree(obj, dtype):
     if torch.is_tensor(obj) and obj.is_floating_point():
         return obj.to(dtype)
@@ -477,13 +498,26 @@ def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
         model_copy = model_copy.cpu()
         new_sd = model_copy.state_dict()
         if remainder == "fp16" and recipe not in CAST_RECIPES:
-            keep_exact = ("_q_w_scale", "_q_act_lo", "_q_act_hi", "_q_w_amax")
+            # Quant buffers keep their contract dtypes (packed payloads,
+            # scales, exponents, observer state); only the non-quantized
+            # remainder is cast. Collect the buffer names from the
+            # finalized modules themselves so recipes that register new
+            # buffers stay protected without maintaining a name list here.
+            keep_exact = tuple(
+                sorted(
+                    {
+                        "." + name
+                        for _, module in _quant_modules(model_copy)
+                        for name, _ in module.named_buffers(recurse=False)
+                    }
+                )
+            )
             new_sd = {
                 key: (
                     value.half()
                     if torch.is_tensor(value)
                     and value.dtype == torch.float32
-                    and not key.endswith(keep_exact)
+                    and not (keep_exact and key.endswith(keep_exact))
                     else value
                 )
                 for key, value in new_sd.items()
@@ -529,6 +563,8 @@ def reprepare_model(wrapper):
     manifest = dict(manifest)
     manifest["state"] = "prepared"
     wrapper._quant_manifest = manifest
+    if manifest.get("recipe") not in CAST_RECIPES:
+        wrapper.model.float()
     wrapper.model.to(wrapper.device)
     logger.info(
         "Re-prepared finalized checkpoint: fp32 masters reconstructed from "
@@ -666,6 +702,7 @@ def dequantize_model(wrapper):
                 new.weight = module.weight
             new.bias = module.bias
             _swap_module(root, name, new)
+        root.float()
 
     wrapper._quant_manifest = None
     logger.info("Restored float modules (recipe '%s' removed).", manifest.get("recipe"))
@@ -713,6 +750,14 @@ def apply_quant_structure(wrapper, manifest: Dict):
             for _, module in _quant_modules(wrapper.model):
                 if hasattr(module, "make_finalized"):
                     module.make_finalized()
+            remainder = manifest.get("remainder", "fp32")
+            if remainder == "fp16":
+                _cast_finalized_remainder(wrapper.model, torch.float16)
+            elif remainder != "fp32":
+                raise QuantizationError(
+                    "Finalized checkpoint has unsupported remainder dtype "
+                    f"'{remainder}'."
+                )
         if swapped:
             wrapper.model.to(wrapper.device)
 
