@@ -320,7 +320,9 @@ class NVFP4Linear(nn.Linear):
 
     def _effective_weight(self) -> torch.Tensor:
         if self.is_finalized:
-            return unpack_nvfp4_weight(
+            # Registry slot: accelerated unpack when available, packing
+            # reference otherwise (identical values either way).
+            return K.unpack_nvfp4(
                 self.weight_packed,
                 self.weight_block_scale,
                 self._q_w_amax,
@@ -416,7 +418,9 @@ class GroupQuantLinear(nn.Linear, _ActObserverMixin):
 
     def _effective_weight(self) -> torch.Tensor:
         if self.is_finalized:
-            return unpack_int_grouped_weight(
+            # Registry slot: accelerated unpack when available, packing
+            # reference otherwise (identical values either way).
+            return K.unpack_int_grouped(
                 self.weight_packed,
                 self._q_w_gscale,
                 self._q_bits,

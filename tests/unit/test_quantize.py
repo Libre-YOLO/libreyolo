@@ -203,12 +203,20 @@ def test_nvfp4_linear_finalize_roundtrip():
 # ---------------------------------------------------------------------------
 
 
-def test_kernel_registry_defaults_to_reference():
+def test_kernel_registry_reference_forced_by_env(monkeypatch):
+    # Order-independent: accelerated kernels may already be registered by
+    # other test modules; forcing the env must always yield the reference.
     from libreyolo.quant import fake_quant, kernels
 
-    for op in kernels.REFERENCE_OPS:
-        assert kernels.resolve(op) is getattr(fake_quant, op)
-    assert kernels.active()["fake_quant_int8_per_channel"] == "reference"
+    monkeypatch.setenv("LIBREYOLO_QUANT_KERNELS", "reference")
+    kernels.clear_cache()
+    try:
+        for op in kernels.REFERENCE_OPS:
+            assert kernels.resolve(op) is getattr(fake_quant, op)
+        assert kernels.active()["fake_quant_int8_per_channel"] == "reference"
+    finally:
+        monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
+        kernels.clear_cache()
 
 
 def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
@@ -252,21 +260,35 @@ def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
 
 
 def test_kernel_registry_predicate_gates_selection():
-    from libreyolo.quant import fake_quant, kernels
+    # Order-independent: a failing predicate must never win the slot,
+    # whichever other implementations happen to be registered.
+    from libreyolo.quant import kernels
 
+    never_impl = lambda *a, **k: None  # noqa: E731
     kernels.register(
-        "fake_quant_int8_per_channel", lambda *a, **k: None, name="never",
+        "fake_quant_int8_per_channel", never_impl, name="never",
         predicate=lambda: False,
     )
     try:
         kernels.clear_cache()
-        assert (
-            kernels.resolve("fake_quant_int8_per_channel")
-            is fake_quant.fake_quant_int8_per_channel
-        )
+        assert kernels.resolve("fake_quant_int8_per_channel") is not never_impl
     finally:
         kernels.unregister("fake_quant_int8_per_channel", "never")
         kernels.clear_cache()
+
+
+def test_intree_triton_kernels_activate():
+    # On machines with triton + CUDA the in-tree kernels must self-activate
+    # lazily on first resolution (no explicit import required).
+    import importlib.util
+
+    if importlib.util.find_spec("triton") is None or not torch.cuda.is_available():
+        pytest.skip("triton + CUDA required")
+    from libreyolo.quant import kernels
+
+    kernels.clear_cache()
+    assert kernels.active()["fake_quant_nvfp4_weight"] == "triton"
+    assert kernels.active()["unpack_nvfp4"] == "triton"
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +588,130 @@ def test_finalized_pt_export_roundtrip(tmp_path, yolo9t):
     with torch.no_grad():
         out3 = _leaf(m2.model(x))
     assert torch.equal(ref, out3)
+
+
+def test_finalized_w4a16_fp16_remainder_preserves_quant_dtypes(tmp_path):
+    from libreyolo.quant import (
+        GroupQuantLinear,
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+        reprepare_model,
+    )
+
+    class TinyWrapper:
+        FAMILY = "rfdetr"
+
+        def __init__(self):
+            self.model = nn.Sequential(nn.Linear(130, 7), nn.LayerNorm(7))
+            self.device = torch.device("cpu")
+            self.size = "n"
+            self.task = "detect"
+            self.nb_classes = 1
+            self.names = {0: "class_0"}
+
+        def _get_model_name(self):
+            return "rfdetr"
+
+        def _get_input_size(self):
+            return 640
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe="w4a16",
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / "tiny-w4a16.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model"]
+    assert state["0._q_w_gscale"].dtype == torch.float32
+    assert state["0.weight_packed"].dtype == torch.uint8
+    assert state["0.bias"].dtype == torch.float16
+    assert state["1.weight"].dtype == torch.float16
+
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(state)
+    quant_linear = loaded.model[0]
+    assert isinstance(quant_linear, GroupQuantLinear)
+    assert quant_linear.is_finalized
+    assert quant_linear._q_w_gscale.dtype == torch.float32
+    assert quant_linear.weight_packed.dtype == torch.uint8
+    assert quant_linear.bias.dtype == torch.float16
+    assert loaded.model[1].weight.dtype == torch.float16
+
+    reprepare_model(loaded)
+    assert not quant_linear.is_finalized
+    assert quant_linear.weight.dtype == torch.float32
+    assert quant_linear.bias.dtype == torch.float32
+    assert loaded.model[1].weight.dtype == torch.float32
+
+
+@pytest.mark.parametrize(
+    "recipe,scale_buffer,scale_dtype",
+    [
+        ("nvfp4", "weight_block_scale", torch.float8_e4m3fn),
+        ("mxfp4", "weight_block_exp", torch.int8),
+    ],
+)
+def test_finalized_block_recipes_fp16_remainder_preserves_scale_dtypes(
+    tmp_path, recipe, scale_buffer, scale_dtype
+):
+    from libreyolo.quant import (
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+    )
+
+    class TinyWrapper:
+        FAMILY = "rfdetr"
+
+        def __init__(self):
+            self.model = nn.Sequential(nn.Linear(130, 7), nn.LayerNorm(7))
+            self.device = torch.device("cpu")
+            self.size = "n"
+            self.task = "detect"
+            self.nb_classes = 1
+            self.names = {0: "class_0"}
+
+        def _get_model_name(self):
+            return "rfdetr"
+
+        def _get_input_size(self):
+            return 640
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe=recipe,
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / f"tiny-{recipe}.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model"]
+    assert state[f"0.{scale_buffer}"].dtype == scale_dtype
+    assert state["0.weight_packed"].dtype == torch.uint8
+    assert state["1.weight"].dtype == torch.float16
+
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(state)
+    assert loaded.model[0].is_finalized
+    assert getattr(loaded.model[0], scale_buffer).dtype == scale_dtype
+    assert loaded.model[0].weight_packed.dtype == torch.uint8
 
 
 def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):

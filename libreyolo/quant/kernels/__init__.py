@@ -77,8 +77,29 @@ def _forced() -> str:
     return os.environ.get("LIBREYOLO_QUANT_KERNELS", "").strip().lower()
 
 
+_INTREE_ATTEMPTED = False
+
+
+def _ensure_intree_loaded():
+    """Lazily import the in-tree Triton kernels on first resolution.
+
+    Lazy so `import libreyolo` never pays the triton import cost, and
+    skipped entirely when the env forces the reference implementations.
+    Absence of triton (e.g. Windows) is the normal fallback case.
+    """
+    global _INTREE_ATTEMPTED
+    if _INTREE_ATTEMPTED or _forced() in ("off", "reference"):
+        return
+    _INTREE_ATTEMPTED = True
+    try:
+        from . import triton  # noqa: F401  (self-registers on import)
+    except Exception as exc:
+        logger.debug("In-tree Triton kernels unavailable: %s", exc)
+
+
 def resolve(op: str) -> Optional[Callable]:
     """Return the active implementation for an op, or None if none eligible."""
+    _ensure_intree_loaded()
     forced = _forced()
     cache_key = f"{op}|{forced}"
     if cache_key in _RESOLVED:
@@ -132,6 +153,17 @@ def _make_proxy(op: str) -> Callable:
 # (always the fallback) and are selectable via the "reference" name.
 for _op in REFERENCE_OPS:
     register(_op, getattr(_reference, _op), name="reference")
+    globals()[_op] = _make_proxy(_op)
+
+# Unpack slots (finalized-checkpoint dequantization): the packing module is
+# the contract and provides the reference implementations; accelerated
+# variants register on top exactly like the fake-quant slots.
+from .. import packing as _packing  # noqa: E402
+
+UNPACK_OPS = ("unpack_int_grouped", "unpack_nvfp4")
+register("unpack_int_grouped", _packing.unpack_int_grouped_weight, name="reference")
+register("unpack_nvfp4", _packing.unpack_nvfp4_weight, name="reference")
+for _op in UNPACK_OPS:
     globals()[_op] = _make_proxy(_op)
 
 
