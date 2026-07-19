@@ -65,6 +65,11 @@ LANDED_KERNELS: tuple[tuple[str, str, str], ...] = (
         "libreyolo.quant.kernels.triton.unpack_int_grouped",
         "unpack_int_grouped",
     ),
+    (
+        "unpack_nvfp4",
+        "libreyolo.quant.kernels.triton.unpack_nvfp4",
+        "unpack_nvfp4",
+    ),
 )
 
 

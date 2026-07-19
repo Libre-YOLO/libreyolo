@@ -7,6 +7,7 @@ from .mxfp4 import fake_quant_mxfp4_dynamic, fake_quant_mxfp4_weight
 from .nvfp4_dynamic import fake_quant_nvfp4_dynamic
 from .nvfp4_weight import fake_quant_nvfp4_weight
 from .unpack_int_grouped import unpack_int_grouped
+from .unpack_nvfp4 import unpack_nvfp4
 
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "fake_quant_nvfp4_dynamic",
     "fake_quant_nvfp4_weight",
     "unpack_int_grouped",
+    "unpack_nvfp4",
 ]
