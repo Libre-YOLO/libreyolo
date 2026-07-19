@@ -203,12 +203,20 @@ def test_nvfp4_linear_finalize_roundtrip():
 # ---------------------------------------------------------------------------
 
 
-def test_kernel_registry_defaults_to_reference():
+def test_kernel_registry_reference_forced_by_env(monkeypatch):
+    # Order-independent: accelerated kernels may already be registered by
+    # other test modules; forcing the env must always yield the reference.
     from libreyolo.quant import fake_quant, kernels
 
-    for op in kernels.REFERENCE_OPS:
-        assert kernels.resolve(op) is getattr(fake_quant, op)
-    assert kernels.active()["fake_quant_int8_per_channel"] == "reference"
+    monkeypatch.setenv("LIBREYOLO_QUANT_KERNELS", "reference")
+    kernels.clear_cache()
+    try:
+        for op in kernels.REFERENCE_OPS:
+            assert kernels.resolve(op) is getattr(fake_quant, op)
+        assert kernels.active()["fake_quant_int8_per_channel"] == "reference"
+    finally:
+        monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
+        kernels.clear_cache()
 
 
 def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
@@ -252,21 +260,35 @@ def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
 
 
 def test_kernel_registry_predicate_gates_selection():
-    from libreyolo.quant import fake_quant, kernels
+    # Order-independent: a failing predicate must never win the slot,
+    # whichever other implementations happen to be registered.
+    from libreyolo.quant import kernels
 
+    never_impl = lambda *a, **k: None  # noqa: E731
     kernels.register(
-        "fake_quant_int8_per_channel", lambda *a, **k: None, name="never",
+        "fake_quant_int8_per_channel", never_impl, name="never",
         predicate=lambda: False,
     )
     try:
         kernels.clear_cache()
-        assert (
-            kernels.resolve("fake_quant_int8_per_channel")
-            is fake_quant.fake_quant_int8_per_channel
-        )
+        assert kernels.resolve("fake_quant_int8_per_channel") is not never_impl
     finally:
         kernels.unregister("fake_quant_int8_per_channel", "never")
         kernels.clear_cache()
+
+
+def test_intree_triton_kernels_activate():
+    # On machines with triton + CUDA the in-tree kernels must self-activate
+    # lazily on first resolution (no explicit import required).
+    import importlib.util
+
+    if importlib.util.find_spec("triton") is None or not torch.cuda.is_available():
+        pytest.skip("triton + CUDA required")
+    from libreyolo.quant import kernels
+
+    kernels.clear_cache()
+    assert kernels.active()["fake_quant_nvfp4_weight"] == "triton"
+    assert kernels.active()["unpack_nvfp4"] == "triton"
 
 
 # ---------------------------------------------------------------------------
