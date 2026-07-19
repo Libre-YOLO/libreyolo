@@ -1,0 +1,7 @@
+{
+  "title": "LibreYOLO",
+  "creators": [{ "name": "Ceccon, Xuban" }],
+  "license": "MIT",
+  "upload_type": "software",
+  "description": "LibreYOLO: MIT-licensed unified vision models. https://github.com/LibreYOLO/libreyolo"
+}
