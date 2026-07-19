@@ -40,6 +40,11 @@ LANDED_KERNELS: tuple[tuple[str, str, str], ...] = (
         "libreyolo.quant.kernels.triton.int8_per_channel",
         "fake_quant_int8_per_channel",
     ),
+    (
+        "fake_quant_int_grouped",
+        "libreyolo.quant.kernels.triton.int_grouped",
+        "fake_quant_int_grouped",
+    ),
 )
 
 
