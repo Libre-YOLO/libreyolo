@@ -498,19 +498,26 @@ def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
         model_copy = model_copy.cpu()
         new_sd = model_copy.state_dict()
         if remainder == "fp16" and recipe not in CAST_RECIPES:
-            keep_exact = (
-                "_q_w_scale",
-                "_q_w_gscale",
-                "_q_act_lo",
-                "_q_act_hi",
-                "_q_w_amax",
+            # Quant buffers keep their contract dtypes (packed payloads,
+            # scales, exponents, observer state); only the non-quantized
+            # remainder is cast. Collect the buffer names from the
+            # finalized modules themselves so recipes that register new
+            # buffers stay protected without maintaining a name list here.
+            keep_exact = tuple(
+                sorted(
+                    {
+                        "." + name
+                        for _, module in _quant_modules(model_copy)
+                        for name, _ in module.named_buffers(recurse=False)
+                    }
+                )
             )
             new_sd = {
                 key: (
                     value.half()
                     if torch.is_tensor(value)
                     and value.dtype == torch.float32
-                    and not key.endswith(keep_exact)
+                    and not (keep_exact and key.endswith(keep_exact))
                     else value
                 )
                 for key, value in new_sd.items()

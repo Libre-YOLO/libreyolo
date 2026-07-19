@@ -654,6 +654,66 @@ def test_finalized_w4a16_fp16_remainder_preserves_quant_dtypes(tmp_path):
     assert loaded.model[1].weight.dtype == torch.float32
 
 
+@pytest.mark.parametrize(
+    "recipe,scale_buffer,scale_dtype",
+    [
+        ("nvfp4", "weight_block_scale", torch.float8_e4m3fn),
+        ("mxfp4", "weight_block_exp", torch.int8),
+    ],
+)
+def test_finalized_block_recipes_fp16_remainder_preserves_scale_dtypes(
+    tmp_path, recipe, scale_buffer, scale_dtype
+):
+    from libreyolo.quant import (
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+    )
+
+    class TinyWrapper:
+        FAMILY = "rfdetr"
+
+        def __init__(self):
+            self.model = nn.Sequential(nn.Linear(130, 7), nn.LayerNorm(7))
+            self.device = torch.device("cpu")
+            self.size = "n"
+            self.task = "detect"
+            self.nb_classes = 1
+            self.names = {0: "class_0"}
+
+        def _get_model_name(self):
+            return "rfdetr"
+
+        def _get_input_size(self):
+            return 640
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe=recipe,
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / f"tiny-{recipe}.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model"]
+    assert state[f"0.{scale_buffer}"].dtype == scale_dtype
+    assert state["0.weight_packed"].dtype == torch.uint8
+    assert state["1.weight"].dtype == torch.float16
+
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(state)
+    assert loaded.model[0].is_finalized
+    assert getattr(loaded.model[0], scale_buffer).dtype == scale_dtype
+    assert loaded.model[0].weight_packed.dtype == torch.uint8
+
+
 def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     yolo9t.quantize(recipe="fp16", verbose=False)
     yolo9t.model.eval()
