@@ -23,7 +23,7 @@ def get_distill_config(family: str, size: str) -> Dict:
     have a model instance, call ``model.get_distill_config()`` directly.
 
     Args:
-        family: Model family string (e.g., "yolo9", "yolox").
+        family: Model family string (e.g., "yolo9", "yolox", "rfdetr").
         size: Model size string (e.g., "t", "s", "m", "c", "l", "x").
 
     Returns:
@@ -47,6 +47,12 @@ def get_distill_config(family: str, size: str) -> Dict:
         model = LibreYOLOX(model_path=None, size=size)
         return model.get_distill_config()
 
+    elif family == "rfdetr":
+        from ..models.rfdetr.model import LibreRFDETR
+
+        model = LibreRFDETR(model_path=None, size=size)
+        return model.get_distill_config()
+
     else:
         raise ValueError(
             f"Distillation not yet configured for family '{family}'. "
@@ -57,4 +63,4 @@ def get_distill_config(family: str, size: str) -> Dict:
 
 def list_supported() -> List[str]:
     """Return list of model families with distillation support."""
-    return ["yolo9", "yolox"]
+    return ["yolo9", "yolox", "rfdetr"]

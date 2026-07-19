@@ -90,8 +90,8 @@ v1 executes quantized arithmetic in **simulation** (fake-quantization with
 straight-through-estimator gradients, computed in fp32 islands even under
 AMP). Simulation is numerics-true: a `val()` score on any device is a real
 claim about the quantized arithmetic. It is not a speed claim; packed
-low-bit kernels are a separate deployment concern. `fp16` is the exception:
-it executes natively.
+low-bit kernels are a separate deployment concern. The `fp16` and `bf16`
+casts are the exception: they execute natively.
 
 `model.quant_info()` reports the recipe, module counts, calibration state,
 and execution tier.
