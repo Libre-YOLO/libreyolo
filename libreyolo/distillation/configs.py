@@ -24,7 +24,10 @@ def get_distill_config(family: str, size: str) -> Dict:
 
     Args:
         family: Model family string (e.g., "yolo9", "yolox", "rfdetr").
-        size: Model size string (e.g., "t", "s", "m", "c", "l", "x").
+        size: Model size string (e.g., "t", "s", "m", "c", "l", "x"). Sizes
+            are validated against the family's detect task; for sizes that
+            only exist for another task, instantiate the model with that
+            task and call ``model.get_distill_config()`` directly.
 
     Returns:
         Dict with keys:
@@ -50,7 +53,11 @@ def get_distill_config(family: str, size: str) -> Dict:
     elif family == "rfdetr":
         from ..models.rfdetr.model import LibreRFDETR
 
-        model = LibreRFDETR(model_path=None, size=size)
+        # model_path={} is the build-without-weights sentinel: model_path=None
+        # would resolve and download the default pretrained checkpoint, and
+        # this helper must stay lightweight and offline-safe. The probe that
+        # measures tap shapes only needs the architecture, not the weights.
+        model = LibreRFDETR(model_path={}, size=size)
         return model.get_distill_config()
 
     else:

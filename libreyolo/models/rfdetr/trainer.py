@@ -597,15 +597,16 @@ class RFDETRTrainer(BaseTrainer):
                 if task == "pose"
                 else self.config.num_classes + 1
             )
-            logger.warning(
-                "Class count changed (checkpoint head: %d classes, dataset: %d): "
-                "reinitializing the detection head from scratch. The pretrained "
-                "head weights are discarded, so accuracy starts low and short "
-                "fine-tunes underperform the checkpoint; budget enough epochs "
-                "for the new head to converge.",
-                self.model.nb_classes,
-                self.config.num_classes,
-            )
+            if is_main_process():
+                logger.warning(
+                    "Class count changed (checkpoint head: %d classes, dataset: %d): "
+                    "reinitializing the detection head from scratch. The pretrained "
+                    "head weights are discarded, so accuracy starts low and short "
+                    "fine-tunes underperform the checkpoint; budget enough epochs "
+                    "for the new head to converge.",
+                    self.model.nb_classes,
+                    self.config.num_classes,
+                )
             self.model.model.reinitialize_detection_head(head_outputs)
             self.model.nb_classes = self.config.num_classes
             self.model.args.num_classes = (
