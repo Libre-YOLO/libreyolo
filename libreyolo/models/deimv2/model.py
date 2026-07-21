@@ -41,7 +41,7 @@ class LibreDEIMv2(BaseModel):
     INPUT_SIZES = {size: int(cfg["input_size"]) for size, cfg in SIZE_CONFIGS.items()}
     TRAIN_CONFIG = DEIMv2Config
     val_preprocessor_class = DEIMv2ValPreprocessor
-    TTA_FIXED_SIZE = True  # fixed decoder anchors require a fixed size; multi-scale TTA is invalid
+    TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -163,11 +163,6 @@ class LibreDEIMv2(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Any, Tuple[int, int], float]:
         effective_size = input_size if input_size is not None else self.input_size
-        if effective_size != self.input_size:
-            raise ValueError(
-                "DEIMv2 uses fixed decoder anchors; input_size must match "
-                f"the native size {self.input_size}, got {effective_size}."
-            )
         return preprocess_image(
             image,
             input_size=effective_size,

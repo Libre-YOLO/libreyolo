@@ -551,14 +551,6 @@ class BaseExporter(ABC):
             imgsz = (int(imgsz), int(imgsz))
         if imgsz[0] <= 0 or imgsz[1] <= 0:
             raise ValueError(f"imgsz values must be positive, got {imgsz}.")
-        if model_name == "deimv2" and imgsz != (
-            int(native_imgsz),
-            int(native_imgsz),
-        ):
-            raise ValueError(
-                "DEIMv2 export uses fixed decoder anchors; imgsz must match "
-                f"the native size {native_imgsz}, got {imgsz}."
-            )
         if model_name == "nafnet":
             padder_size = int(getattr(self.model.model, "padder_size", 16))
             if imgsz[0] % padder_size or imgsz[1] % padder_size:
