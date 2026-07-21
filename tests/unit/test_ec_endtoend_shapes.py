@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from libreyolo.models.ec.backbone import ViTAdapter
-from libreyolo.models.ec.decoder import ECTransformer
+from libreyolo.models.ec.decoder import ECTransformer, ECPoseTransformer
 from libreyolo.models.ec.encoder import HybridEncoder
 from libreyolo.models.ec.nn import SIZE_CONFIGS
 
@@ -113,3 +113,27 @@ def test_eval_rectangular_size_with_native_token_count_matches_dynamic():
         torch.testing.assert_close(
             out_fixed[key], out_dynamic[key], rtol=1e-4, atol=1e-5
         )
+
+
+def test_pose_anchor_cache_tracks_memory_dtype():
+    """A warmed float cache must not survive a later half-precision cast."""
+    decoder = ECPoseTransformer(
+        hidden_dim=32,
+        nhead=4,
+        num_queries=5,
+        num_decoder_layers=1,
+        dim_feedforward=64,
+        eval_spatial_size=(64, 64),
+    ).eval()
+    spatial_shapes = [[8, 8], [4, 4], [2, 2]]
+    memory = torch.empty(1, 84, 32)
+
+    anchors_float, _ = decoder._get_anchors_for_spatial_shapes(spatial_shapes, memory)
+    decoder.half()
+    anchors_half, _ = decoder._get_anchors_for_spatial_shapes(
+        spatial_shapes, memory.half()
+    )
+
+    assert anchors_float.dtype == torch.float32
+    assert anchors_half.dtype == torch.float16
+    assert anchors_float.data_ptr() != anchors_half.data_ptr()

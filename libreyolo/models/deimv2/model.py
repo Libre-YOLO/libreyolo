@@ -42,6 +42,17 @@ class LibreDEIMv2(BaseModel):
     TRAIN_CONFIG = DEIMv2Config
     val_preprocessor_class = DEIMv2ValPreprocessor
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
+    IMGSZ_DIVISOR = 32
+
+    @classmethod
+    def _validate_imgsz(cls, imgsz: int, *, context: str = "DEIMv2 imgsz") -> int:
+        imgsz = int(imgsz)
+        if imgsz <= 0 or imgsz % cls.IMGSZ_DIVISOR:
+            raise ValueError(
+                f"{context} must be a positive multiple of "
+                f"{cls.IMGSZ_DIVISOR}, got {imgsz}."
+            )
+        return imgsz
 
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
@@ -149,6 +160,7 @@ class LibreDEIMv2(BaseModel):
     def _get_val_preprocessor(self, img_size: int | None = None):
         if img_size is None:
             img_size = self._get_input_size()
+        img_size = self._validate_imgsz(img_size, context="DEIMv2 validation imgsz")
         cls = (
             DEIMv2DINOValPreprocessor
             if self.size in DINO_SIZES
@@ -163,6 +175,9 @@ class LibreDEIMv2(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Any, Tuple[int, int], float]:
         effective_size = input_size if input_size is not None else self.input_size
+        effective_size = self._validate_imgsz(
+            effective_size, context="DEIMv2 prediction imgsz"
+        )
         return preprocess_image(
             image,
             input_size=effective_size,
@@ -243,6 +258,8 @@ class LibreDEIMv2(BaseModel):
         from .trainer import DEIMv2Trainer
 
         kwargs.pop("pretrained", None)
+        if imgsz is not None:
+            imgsz = self._validate_imgsz(imgsz, context="DEIMv2 training imgsz")
 
         try:
             data_config = load_data_config(data, autodownload=True)

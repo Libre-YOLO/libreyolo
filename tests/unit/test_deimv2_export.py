@@ -205,3 +205,18 @@ def test_deimv2_export_accepts_non_native_square_imgsz():
         int8=False,
     )
     assert imgsz == (640, 640)
+
+
+def test_deimv2_export_rejects_unaligned_square_imgsz():
+    from libreyolo import LibreDEIMv2
+    from libreyolo.export.exporter import OnnxExporter
+
+    model = LibreDEIMv2(None, size="atto", device="cpu")
+    with pytest.raises(ValueError, match="divisible by 32"):
+        OnnxExporter(model)._resolve_params(
+            output_path=None,
+            imgsz=513,
+            device="cpu",
+            half=False,
+            int8=False,
+        )

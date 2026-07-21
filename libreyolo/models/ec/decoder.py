@@ -1816,15 +1816,15 @@ class ECPoseTransformer(nn.Module):
 
     def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
         shape_key = self._spatial_shape_key(spatial_shapes)
-        key = (shape_key, memory.device)
+        key = (shape_key, memory.device, memory.dtype)
         cached = self._anchor_cache.get(key)
         if cached is None:
             if shape_key == self._eval_spatial_shape_key and hasattr(self, "anchors"):
-                anchors = self.anchors.to(device=memory.device)
+                anchors = self.anchors.to(device=memory.device, dtype=memory.dtype)
                 valid_mask = self.valid_mask.to(device=memory.device)
             else:
                 anchors, valid_mask = self._generate_anchors(
-                    spatial_shapes, memory.device
+                    spatial_shapes, device=memory.device, dtype=memory.dtype
                 )
             self._cache_anchors(key, anchors, valid_mask)
         else:
@@ -1832,7 +1832,7 @@ class ECPoseTransformer(nn.Module):
             anchors, valid_mask = cached
         return anchors, valid_mask
 
-    def _generate_anchors(self, spatial_shapes=None, device="cpu"):
+    def _generate_anchors(self, spatial_shapes=None, device="cpu", dtype=torch.float32):
         if spatial_shapes is None:
             spatial_shapes = []
             eval_h, eval_w = self.eval_spatial_size
@@ -1841,13 +1841,13 @@ class ECPoseTransformer(nn.Module):
         anchors = []
         for h, w in spatial_shapes:
             grid_y, grid_x = torch.meshgrid(
-                torch.linspace(0, h - 1, h, dtype=torch.float32, device=device),
-                torch.linspace(0, w - 1, w, dtype=torch.float32, device=device),
+                torch.linspace(0, h - 1, h, dtype=dtype, device=device),
+                torch.linspace(0, w - 1, w, dtype=dtype, device=device),
                 indexing="ij",
             )
             grid = torch.stack([grid_x, grid_y], -1)
             grid = (grid.unsqueeze(0) + 0.5) / torch.tensor(
-                [w, h], dtype=torch.float32, device=device
+                [w, h], dtype=dtype, device=device
             )
             anchors.append(grid.view(1, -1, 2))
         anchors = torch.cat(anchors, 1)
@@ -1881,7 +1881,7 @@ class ECPoseTransformer(nn.Module):
 
         if self.training:
             output_proposals, valid_mask = self._generate_anchors(
-                spatial_shapes, memory.device
+                spatial_shapes, device=memory.device, dtype=memory.dtype
             )
             output_memory = memory.masked_fill(valid_mask, 0.0)
             output_proposals = output_proposals.repeat(memory.size(0), 1, 1)
