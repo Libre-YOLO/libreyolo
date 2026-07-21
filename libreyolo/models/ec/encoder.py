@@ -10,12 +10,14 @@ Differs from D-FINE's HybridEncoder in three ways:
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..dfine.encoder import (
+    EVAL_CONSTANT_CACHE_LIMIT,
     ConvNormLayer_fuse,
     SCDown,
     TransformerEncoder,
@@ -121,6 +123,7 @@ class HybridEncoder(nn.Module):
         self.num_encoder_layers = num_encoder_layers
         self.pe_temperature = pe_temperature
         self.eval_spatial_size = eval_spatial_size
+        self._pos_embed_cache = OrderedDict()
         self.out_channels = [hidden_dim] * len(self.in_channels)
         self.out_strides = self.feat_strides
         self.fuse_op = fuse_op
@@ -176,6 +179,49 @@ class HybridEncoder(nn.Module):
                     self.pe_temperature,
                 )
                 setattr(self, f"pos_embed{idx}", pos_embed)
+                self._cache_pos_embed(
+                    (
+                        idx,
+                        self.eval_spatial_size[0] // stride,
+                        self.eval_spatial_size[1] // stride,
+                        pos_embed.device,
+                        pos_embed.dtype,
+                    ),
+                    pos_embed,
+                )
+
+    def _cache_pos_embed(self, key, pos_embed):
+        self._pos_embed_cache[key] = pos_embed
+        self._pos_embed_cache.move_to_end(key)
+        while len(self._pos_embed_cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            self._pos_embed_cache.popitem(last=False)
+
+    def _get_pos_embed(self, enc_ind, h, w, src_flatten):
+        key = (enc_ind, h, w, src_flatten.device, src_flatten.dtype)
+        pos_embed = self._pos_embed_cache.get(key)
+        if pos_embed is None:
+            base = getattr(self, f"pos_embed{enc_ind}", None)
+            # Compare grid shapes, not token counts: a rectangular grid can
+            # match the native token count (e.g. 16x25 vs 20x20, both 400)
+            # while laying positions out on the wrong grid.
+            stride = self.feat_strides[enc_ind]
+            base_hw = (
+                (
+                    self.eval_spatial_size[0] // stride,
+                    self.eval_spatial_size[1] // stride,
+                )
+                if self.eval_spatial_size
+                else None
+            )
+            if base is None or (h, w) != base_hw:
+                base = self.build_2d_sincos_position_embedding(
+                    w, h, self.hidden_dim, self.pe_temperature
+                )
+            pos_embed = base.to(device=src_flatten.device, dtype=src_flatten.dtype)
+            self._cache_pos_embed(key, pos_embed)
+        else:
+            self._pos_embed_cache.move_to_end(key)
+        return pos_embed
 
     @staticmethod
     def build_2d_sincos_position_embedding(w, h, embed_dim=256, temperature=10000.0):
@@ -205,9 +251,7 @@ class HybridEncoder(nn.Module):
                         w, h, self.hidden_dim, self.pe_temperature
                     ).to(src_flatten.device)
                 else:
-                    pos_embed = getattr(self, f"pos_embed{enc_ind}", None).to(
-                        src_flatten.device
-                    )
+                    pos_embed = self._get_pos_embed(enc_ind, h, w, src_flatten)
                 memory = self.encoder[i](src_flatten, pos_embed=pos_embed)
                 proj_feats[enc_ind] = (
                     memory.permute(0, 2, 1)
