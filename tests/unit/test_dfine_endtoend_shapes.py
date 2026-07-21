@@ -93,6 +93,27 @@ def test_eval_forward_accepts_runtime_size_different_from_eval_spatial_size():
     assert out["pred_boxes"].shape == (1, 300, 4)
 
 
+def test_eval_rectangular_size_with_native_token_count_matches_dynamic():
+    """A rect grid can share the native buffer's token count (16x25 == 20x20).
+
+    The pos-embed must be rebuilt from the grid shape, not the token count,
+    or the encoder silently applies a wrong-grid embedding.
+    """
+    fixed = LibreDFINEModel("n", nb_classes=2, eval_spatial_size=(640, 640)).eval()
+    dynamic = LibreDFINEModel("n", nb_classes=2, eval_spatial_size=None).eval()
+    dynamic.load_state_dict(fixed.state_dict(), strict=False)
+
+    for hw in ((512, 800), (320, 1280)):
+        x = torch.randn(1, 3, *hw)
+        with torch.no_grad():
+            out_fixed = fixed(x)
+            out_dynamic = dynamic(x)
+        for key in ("pred_logits", "pred_boxes"):
+            torch.testing.assert_close(
+                out_fixed[key], out_dynamic[key], rtol=1e-4, atol=1e-5
+            )
+
+
 def test_eval_pos_embed_cache_is_bounded_and_reuses_moved_tensor():
     encoder = HybridEncoder(
         in_channels=(16,),

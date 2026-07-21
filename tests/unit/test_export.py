@@ -596,7 +596,7 @@ class TestExporterFormats:
 
     @pytest.mark.parametrize(
         "family",
-        ["dfine", "deim", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"],
+        ["dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"],
     )
     def test_rectangular_imgsz_rejected_for_fixed_square_families(self, family):
         wrapper = _make_wrapper(model_name=family, input_size=32)
@@ -610,17 +610,17 @@ class TestExporterFormats:
                 int8=False,
             )
 
-    def test_deimv2_tuple_imgsz_must_match_native(self):
+    def test_deimv2_accepts_non_native_square_imgsz(self):
         wrapper = _make_wrapper(model_name="deimv2", input_size=320)
 
-        with pytest.raises(ValueError, match="fixed decoder anchors"):
-            OnnxExporter(wrapper)._resolve_params(
-                output_path=None,
-                imgsz=(320, 640),
-                device="cpu",
-                half=False,
-                int8=False,
-            )
+        imgsz, _, _ = OnnxExporter(wrapper)._resolve_params(
+            output_path=None,
+            imgsz=(640, 640),
+            device="cpu",
+            half=False,
+            int8=False,
+        )
+        assert imgsz == (640, 640)
 
     def test_rectangular_onnx_export_writes_shape_metadata_without_onnx(
         self, monkeypatch, tmp_path

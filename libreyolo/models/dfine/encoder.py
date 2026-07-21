@@ -483,7 +483,19 @@ class HybridEncoder(nn.Module):
         pos_embed = self._pos_embed_cache.get(key)
         if pos_embed is None:
             base = getattr(self, f"pos_embed{enc_ind}", None)
-            if base is None or base.shape[1] != h * w:
+            # Compare grid shapes, not token counts: a rectangular grid can
+            # match the native token count (e.g. 16x25 vs 20x20, both 400)
+            # while laying positions out on the wrong grid.
+            stride = self.feat_strides[enc_ind]
+            base_hw = (
+                (
+                    self.eval_spatial_size[0] // stride,
+                    self.eval_spatial_size[1] // stride,
+                )
+                if self.eval_spatial_size
+                else None
+            )
+            if base is None or (h, w) != base_hw:
                 base = self.build_2d_sincos_position_embedding(
                     w, h, self.hidden_dim, self.pe_temperature
                 )
