@@ -41,6 +41,7 @@ LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a q
 - Test-time augmentation for semantic (PIDNet, SegFormer, EoMT, DINOv2) and panoptic (EoMT) segmentation (#601, #608)
 - Multi-class keypoint training for YOLO-NAS pose (#530)
 - Augmentations: classification auto_augment/erasing/mixup/cutmix, copy-paste for segmentation, perspective and flipud, rot90 for OBB, vflip+rot90 for restore, HSV jitter for semantic (#532)
+- Declarative augmentation spec (libreyolo/data/augment/spec.py): a per-family used/mosaic-gated/ignored matrix for every TrainConfig augmentation knob, pinned to the real pipelines by tests; the CLI now warns for every family when an explicitly-set training parameter is ignored (previously RF-DETR only), and training warns when mixup_prob is set with mosaic_prob=0 in the mosaic-gated pipelines (#635)
 - Spawn-path multi-GPU training for ResNet, ConvNeXt, EfficientNetV2, MobileNetV4 and NAFNet (#567)
 - Canonical export-support matrix with validated/experimental/blocked tiers, docs page and ADR 0011 (#578, #587)
 - TFLite inference backend (LibreYOLO("model.tflite") via ai-edge-litert, Python >= 3.12) (#587)
