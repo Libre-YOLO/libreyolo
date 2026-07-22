@@ -139,29 +139,32 @@ _TRAINABLE_WITHOUT_TRAIN_CONFIG = {"dfine", "ec", "yolonas", "segformer"}
 def test_spec_covers_every_trainable_family():
     """Every family the CLI can train must have a spec entry.
 
-    The required set is derived from the model registry (any family whose
-    model class declares TRAIN_CONFIG is trainable by convention), so a newly
-    registered trainable family fails this test until its knobs are classified
-    in the spec. Families that predate the TRAIN_CONFIG convention are listed
-    explicitly in ``_TRAINABLE_WITHOUT_TRAIN_CONFIG``.
+    Families are discovered through the same path the CLI uses
+    (``cli.config._iter_model_classes``: the registry plus the lazy optional
+    families), so anything the CLI can see is enforced here — including a
+    future lazy ``_ensure_*`` family, which must be added to that iterator for
+    the CLI to work and is then automatically required to have a spec entry.
+    The required set is every discovered family whose model class declares
+    TRAIN_CONFIG (the machine-readable trainable flag), plus the explicit
+    ``_TRAINABLE_WITHOUT_TRAIN_CONFIG`` legacy list.
     """
-    import libreyolo.models  # noqa: F401 - populates the registry
-    from libreyolo.models.base.model import BaseModel
+    from libreyolo.cli.config import _iter_model_classes
 
-    registered = {cls.FAMILY for cls in BaseModel._registry if cls.FAMILY}
-    # rfdetr / dinov2 register lazily (optional heavy deps).
+    classes = list(_iter_model_classes())
+    registered = {cls.FAMILY for cls in classes if cls.FAMILY}
+    # rfdetr / dinov2 may be absent when their optional deps are not
+    # installed; tolerate their spec entries in that case (this leniency is
+    # scoped to exactly these known-optional families).
     known = registered | {"rfdetr", "dinov2"}
     unknown = set(FAMILY_AUG_SUPPORT) - known
     assert not unknown, f"Spec families not in the model registry: {sorted(unknown)}"
 
     declared_trainable = {
         cls.FAMILY
-        for cls in BaseModel._registry
+        for cls in classes
         if cls.FAMILY and getattr(cls, "TRAIN_CONFIG", None) is not None
     }
-    required = (
-        declared_trainable | _TRAINABLE_WITHOUT_TRAIN_CONFIG | {"rfdetr", "dinov2"}
-    )
+    required = declared_trainable | _TRAINABLE_WITHOUT_TRAIN_CONFIG
     missing = required - set(FAMILY_AUG_SUPPORT)
     assert not missing, (
         f"Trainable families missing from the augmentation spec: {sorted(missing)}. "
