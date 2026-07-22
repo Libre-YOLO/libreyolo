@@ -129,8 +129,22 @@ def test_extra_knobs_exist_on_family_configs():
         assert not missing, f"{family}: extra knobs not on config: {sorted(missing)}"
 
 
+# Families that are trainable but predate the TRAIN_CONFIG "machine-readable
+# trainable flag" convention (their model classes don't declare it, so they
+# cannot be discovered from the registry). If you set TRAIN_CONFIG on one of
+# these, remove it here — a test below enforces that this list stays minimal.
+_TRAINABLE_WITHOUT_TRAIN_CONFIG = {"dfine", "ec", "yolonas", "segformer"}
+
+
 def test_spec_covers_every_trainable_family():
-    """Every family the CLI can train must have a spec entry."""
+    """Every family the CLI can train must have a spec entry.
+
+    The required set is derived from the model registry (any family whose
+    model class declares TRAIN_CONFIG is trainable by convention), so a newly
+    registered trainable family fails this test until its knobs are classified
+    in the spec. Families that predate the TRAIN_CONFIG convention are listed
+    explicitly in ``_TRAINABLE_WITHOUT_TRAIN_CONFIG``.
+    """
     import libreyolo.models  # noqa: F401 - populates the registry
     from libreyolo.models.base.model import BaseModel
 
@@ -140,15 +154,28 @@ def test_spec_covers_every_trainable_family():
     unknown = set(FAMILY_AUG_SUPPORT) - known
     assert not unknown, f"Spec families not in the model registry: {sorted(unknown)}"
 
-    expected_trainable = {
-        "yolox", "yolo7", "yolo9", "yolo9_e2e", "yolo9_p2", "yolonas",
-        "rtdetr", "rtdetrv2", "rtdetrv4", "dfine", "deim", "deimv2", "ec",
-        "rtmdet", "picodet", "rfdetr", "fomo",
-        "resnet", "convnext", "mobilenetv4", "efficientnetv2",
-        "dinov2", "segformer", "nafnet",
+    declared_trainable = {
+        cls.FAMILY
+        for cls in BaseModel._registry
+        if cls.FAMILY and getattr(cls, "TRAIN_CONFIG", None) is not None
     }
-    missing = expected_trainable - set(FAMILY_AUG_SUPPORT)
-    assert not missing, f"Trainable families missing from the spec: {sorted(missing)}"
+    required = (
+        declared_trainable | _TRAINABLE_WITHOUT_TRAIN_CONFIG | {"rfdetr", "dinov2"}
+    )
+    missing = required - set(FAMILY_AUG_SUPPORT)
+    assert not missing, (
+        f"Trainable families missing from the augmentation spec: {sorted(missing)}. "
+        "Classify their knobs in libreyolo/data/augment/spec.py."
+    )
+
+    # Self-cleaning: entries in the legacy list must actually lack
+    # TRAIN_CONFIG. When a family gains the flag, drop it from the list so
+    # coverage is registry-derived for it too.
+    stale = _TRAINABLE_WITHOUT_TRAIN_CONFIG & declared_trainable
+    assert not stale, (
+        f"{sorted(stale)} now declare TRAIN_CONFIG; remove them from "
+        "_TRAINABLE_WITHOUT_TRAIN_CONFIG."
+    )
 
 
 # =========================================================================
