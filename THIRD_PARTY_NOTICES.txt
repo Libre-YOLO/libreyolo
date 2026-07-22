@@ -374,6 +374,26 @@ Weights: omlab/omdet-turbo-swin-tiny-hf revision
          without learned-parameter changes at LibreYOLO/LibreOMDetTurbot.
 
 --------------------------------------------------------------------
+OV-DEIM (wleilei)
+--------------------------------------------------------------------
+Source: https://github.com/wleilei/OV-DEIM
+License: Apache License 2.0 (code); CC BY-NC 4.0 (released checkpoints,
+         per upstream MODEL_LICENSE)
+Citation: arXiv 2603.07022, "OV-DEIM: Real-time DETR-Style
+          Open-Vocabulary Object Detection with GridSynthetic
+          Augmentation."
+Used for: LibreOVDEIM open-vocabulary detector, a native port vendored
+          at libreyolo/models/openvocab/ovdeim/ under Apache-2.0
+          (RT-DETR / DEIMv2 lineage). Converted S/M/L detector weights
+          are rehosted at LibreYOLO/LibreOVDEIM{s,m,l} under
+          CC BY-NC 4.0 with attribution, as the upstream MODEL_LICENSE
+          permits. The text tower is the MobileCLIP-B(LT) text
+          transformer (apple/MobileCLIP-B-LT-OpenCLIP); its license
+          text and attribution notice ship in the weight repositories.
+          Licensing was confirmed by the upstream author
+          (wleilei/OV-DEIM#4); see docs/provenance/ov_deim.md.
+
+--------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
 --------------------------------------------------------------------
 Source: https://github.com/Atten4Vis/LW-DETR

@@ -89,6 +89,15 @@ project the weights were derived from. Per-family summary:
              parameters were changed. model.safetensors SHA-256:
                439d1575d7e237ad565ed6969ea2a2dfcedf2086155e9ca3ac96cd6180a48cfd
 
+    OV-DEIM  (LibreOVDEIM{s,m,l})                      CC BY-NC 4.0
+             upstream: wleilei/OV-DEIM; converted and rehosted with
+             attribution as the upstream MODEL_LICENSE permits;
+             licensing confirmed by the author (wleilei/OV-DEIM#4).
+             The text tower is apple/MobileCLIP-B-LT-OpenCLIP with
+             tensors unmodified; the Apple license text ships in the
+             weight repositories.
+             Convert with weights/convert_ovdeim_weights.py.
+
     Depth Anything 3 (LibreDepthAnything3l-depth)      Apache-2.0
              upstream: depth-anything/DA3MONO-LARGE
              pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
