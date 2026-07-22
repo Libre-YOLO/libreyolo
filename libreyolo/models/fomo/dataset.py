@@ -347,6 +347,13 @@ def build_fomo_datasets(
         from ...training.augment import MosaicMixupDataset
 
         if is_main_process():
+            from ...data.augment.spec import mixup_gating_warning
+
+            gating_msg = mixup_gating_warning(
+                "fomo", config.mosaic_prob, config.mixup_prob
+            )
+            if gating_msg:
+                logger.warning(gating_msg)
             logger.info("FOMO Training: Data augmentation enabled.")
             logger.info(f"  mosaic_prob: {config.mosaic_prob}")
             logger.info(f"  mixup_prob: {config.mixup_prob}")
