@@ -522,16 +522,20 @@ def train_cmd(
             ),
         )
 
-    # RF-DETR: warn and ignore unsupported params
-    rfdetr_warnings = []
+    # Warn when explicitly-set params are ignored by the selected family
+    # (spec-driven; see libreyolo/data/augment/spec.py).
+    ignored_warnings = []
     unsupported_params = get_unsupported_train_params(family)
     if unsupported_params:
         for param_name in unsupported_params:
             if param_name in user_provided:
-                rfdetr_warnings.append(param_name)
-        if rfdetr_warnings:
+                ignored_warnings.append(param_name)
+        if ignored_warnings:
+            from libreyolo.data.augment.spec import display_name
+
             out.progress(
-                f"Warning: RF-DETR ignores these parameters: {', '.join(sorted(rfdetr_warnings))}"
+                f"Warning: {display_name(family)} ignores these parameters: "
+                f"{', '.join(sorted(ignored_warnings))}"
             )
 
     # Dry run: validate and show resolved config
