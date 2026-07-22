@@ -709,6 +709,20 @@ class BaseTrainer(ABC):
                 "OBB augmentation is implemented."
             )
 
+        # Mosaic-gated mixup: for families whose MixUp only fires on mosaic
+        # samples, mixup_prob > 0 with mosaic_prob == 0 silently does nothing.
+        # Say so instead (spec-driven; see libreyolo/data/augment/spec.py).
+        if mosaic_enabled and is_main_process():
+            from ..data.augment.spec import mixup_gating_warning
+
+            gating_msg = mixup_gating_warning(
+                self.get_model_family(),
+                self.config.mosaic_prob,
+                self.config.mixup_prob,
+            )
+            if gating_msg:
+                logger.warning(gating_msg)
+
         train_dataset.enable_image_cache(getattr(self.config, "cache", False))
 
         dataset_kwargs = dict(
