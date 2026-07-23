@@ -1469,8 +1469,8 @@ class BaseModel(ABC):
         if getattr(self, "_quant_manifest", None):
             from libreyolo.quant.api import quantized_export
 
-            if module_has_lora(self.model):
-                merge_lora_adapters(self.model)
+            # quantized_export merges live adapters itself, after its own
+            # format/recipe validation has accepted the request.
             return quantized_export(self, format=format, **kwargs)
 
         from libreyolo.export import BaseExporter

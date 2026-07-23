@@ -972,6 +972,22 @@ class TestExportLoraOrdering:
             BaseModel.export(stub, format="not-a-format")
         assert merged == []  # adapters untouched by the failed export
 
+    def test_quantized_export_rejection_leaves_lora_untouched(self, monkeypatch):
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.quant import QuantizationError
+
+        merged = []
+        stub, lora_helpers = self._stub(merged)
+        stub._quant_manifest = {"recipe": "int8"}
+        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
+        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", merged.append)
+
+        # int8 recipe only exports to onnx/pt; torchscript must be rejected
+        # before the destructive adapter merge.
+        with pytest.raises(QuantizationError, match="format='onnx'"):
+            BaseModel.export(stub, format="torchscript")
+        assert merged == []
+
     def test_valid_format_merges_after_validation(self, monkeypatch):
         from libreyolo.models.base.model import BaseModel
 

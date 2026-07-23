@@ -573,6 +573,18 @@ def reprepare_model(wrapper):
     return wrapper
 
 
+def _merge_live_lora_adapters(wrapper) -> None:
+    """Fold live LoRA adapters into dense weights before an export mutates.
+
+    Destructive (adapters are folded and removed), so callers must run every
+    validation that can reject the export request *before* calling this.
+    """
+    from ..training.lora import merge_lora_adapters, module_has_lora
+
+    if module_has_lora(wrapper.model):
+        merge_lora_adapters(wrapper.model)
+
+
 def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
     """Export a quantized model.
 
@@ -591,6 +603,7 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
         remainder = kwargs.pop("remainder", "fp16")
         if kwargs:
             logger.info("Ignoring export kwargs for format='pt': %s", sorted(kwargs))
+        _merge_live_lora_adapters(wrapper)
         return export_finalized_pt(wrapper, out=out, remainder=remainder)
 
     if recipe in CAST_RECIPES:
@@ -605,12 +618,6 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
             "PyTorch. Use format='pt' for the crystallized checkpoint, or "
             "dequantize() to use the float exporters."
         )
-
-    if manifest.get("state") == "finalized" and fmt == "onnx":
-        # QDQ emission traces fake-quant over fp32 masters; reconstruct them
-        # from the packed weights (exact by the packing invariant).
-        reprepare_model(wrapper)
-
     if fmt != "onnx":
         raise QuantizationError(
             "int8-quantized export currently supports format='onnx' (QDQ "
@@ -618,6 +625,14 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
             f"'{fmt}'. Export to ONNX and build downstream engines from it, "
             "or dequantize() and use the float exporters."
         )
+
+    # Every rejection above has fired; mutation is safe from here on.
+    _merge_live_lora_adapters(wrapper)
+
+    if manifest.get("state") == "finalized":
+        # QDQ emission traces fake-quant over fp32 masters; reconstruct them
+        # from the packed weights (exact by the packing invariant).
+        reprepare_model(wrapper)
 
     if kwargs.pop("int8", False):
         logger.info(
