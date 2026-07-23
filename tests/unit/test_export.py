@@ -944,72 +944,81 @@ class TestExporterValidation:
 
 
 class TestExportLoraOrdering:
-    """BaseModel.export folds live LoRA adapters into dense weights.
+    """Live LoRA adapters are folded into dense weights for export.
 
-    That merge is destructive, so an invalid format must raise *before* it
-    happens — otherwise a typo'd export silently strips the adapters from a
-    model the user may keep training (v1.4.0 release blocker).
+    That merge is destructive (adapters are folded and removed), so every
+    request rejection — unknown format, quantized recipe/format gates, the
+    exporter's own option preflight — must raise *before* it happens.
+    Otherwise a rejected export silently strips the adapters from a model
+    the user may keep training (v1.4.0 release blocker).
     """
 
     @staticmethod
-    def _stub(order):
-        from types import SimpleNamespace
-
+    def _record_lora_merges(monkeypatch, on_merge):
         from libreyolo.training import lora as lora_helpers
 
-        stub = SimpleNamespace(model=nn.Linear(2, 2))
-        return stub, lora_helpers
+        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
+        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", on_merge)
 
     def test_invalid_format_raises_before_lora_merge(self, monkeypatch):
+        from types import SimpleNamespace
+
         from libreyolo.models.base.model import BaseModel
 
         merged = []
-        stub, lora_helpers = self._stub(merged)
-        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
-        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", merged.append)
+        self._record_lora_merges(monkeypatch, merged.append)
 
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
         with pytest.raises(ValueError, match="Unsupported export format"):
             BaseModel.export(stub, format="not-a-format")
         assert merged == []  # adapters untouched by the failed export
 
+    def test_preflight_rejection_leaves_lora_untouched(self, monkeypatch):
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        # Embedded-NMS ONNX export is YOLO9-only; the preflight rejection
+        # must fire before the destructive adapter merge.
+        wrapper = _make_wrapper()
+        with pytest.raises(NotImplementedError, match="NMS"):
+            OnnxExporter(wrapper)(nms=True)
+        assert merged == []
+
     def test_quantized_export_rejection_leaves_lora_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+
         from libreyolo.models.base.model import BaseModel
         from libreyolo.quant import QuantizationError
 
         merged = []
-        stub, lora_helpers = self._stub(merged)
-        stub._quant_manifest = {"recipe": "int8"}
-        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
-        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", merged.append)
+        self._record_lora_merges(monkeypatch, merged.append)
 
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        stub._quant_manifest = {"recipe": "int8"}
         # int8 recipe only exports to onnx/pt; torchscript must be rejected
         # before the destructive adapter merge.
         with pytest.raises(QuantizationError, match="format='onnx'"):
             BaseModel.export(stub, format="torchscript")
         assert merged == []
 
-    def test_valid_format_merges_after_validation(self, monkeypatch):
-        from libreyolo.models.base.model import BaseModel
+    def test_successful_export_merges_after_preflight(self, monkeypatch, tmp_path):
+        events = []
+        self._record_lora_merges(monkeypatch, lambda m: events.append("merge"))
 
-        order = []
-        stub, lora_helpers = self._stub(order)
-        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
-        monkeypatch.setattr(
-            lora_helpers, "merge_lora_adapters", lambda m: order.append("merge")
+        original_preflight = BaseExporter._preflight
+
+        def spy_preflight(self, **kwargs):
+            events.append("preflight")
+            return original_preflight(self, **kwargs)
+
+        monkeypatch.setattr(BaseExporter, "_preflight", spy_preflight)
+
+        wrapper = _make_wrapper()
+        path = TorchScriptExporter(wrapper)(
+            output_path=str(tmp_path / "model.torchscript")
         )
-
-        class _FakeExporter:
-            def __init__(self, model):
-                order.append("create")
-
-            def __call__(self, **kwargs):
-                order.append("export")
-                return "model.fake"
-
-        monkeypatch.setitem(BaseExporter._registry, "fakefmt", _FakeExporter)
-
-        assert BaseModel.export(stub, format="fakefmt") == "model.fake"
-        assert order == ["create", "merge", "export"]
+        assert Path(path).exists()
+        assert events == ["preflight", "merge"]
 
 
 class TestOutputPathGeneration:

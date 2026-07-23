@@ -626,9 +626,8 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
             "or dequantize() and use the float exporters."
         )
 
-    # Every rejection above has fired; mutation is safe from here on.
-    _merge_live_lora_adapters(wrapper)
-
+    # The ONNX path ends in BaseExporter.__call__, which folds live LoRA
+    # adapters itself after its own preflight; no merge needed here.
     if manifest.get("state") == "finalized":
         # QDQ emission traces fake-quant over fp32 masters; reconstruct them
         # from the packed weights (exact by the packing invariant).

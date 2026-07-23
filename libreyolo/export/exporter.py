@@ -383,6 +383,18 @@ class BaseExporter(ABC):
             int8,
         )
 
+        # A model fine-tuned with lora=True carries live PEFT adapter layers.
+        # Fold them into dense weights so the traced graph is a plain model
+        # with no peft dependency. Deliberately the last step before the
+        # artifact is produced: the merge is destructive (adapters are folded
+        # and removed), so every request rejection above — format support,
+        # precision validation, option preflight, imgsz/path resolution —
+        # must fire while the adapters are still intact and trainable.
+        from ..training.lora import merge_lora_adapters, module_has_lora
+
+        if module_has_lora(self.model.model):
+            merge_lora_adapters(self.model.model)
+
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
         precision = _resolve_precision(half, int8)
