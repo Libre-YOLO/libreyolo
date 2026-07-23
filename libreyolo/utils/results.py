@@ -1044,15 +1044,17 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
-        panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
-        matte: Optional[Matte] = None,
-        ocr: Optional[OCRRegions] = None,
-        restore_scale: int = 1,
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
+        # New parameters go after the complete v1.3 signature so v1.3-era
+        # positional calls keep binding to the same parameters.
+        panoptic: Optional[PanopticSegmentation] = None,
+        matte: Optional[Matte] = None,
+        ocr: Optional[OCRRegions] = None,
+        restore_scale: int = 1,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1164,13 +1166,15 @@ class Results:
         gaze: Optional[Gaze] = None,
         points: Optional[Points] = None,
         semantic_mask: Optional[SemanticMask] = None,
-        panoptic: Optional[PanopticSegmentation] = None,
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
+        track_id: Optional[TensorLike] = None,
+        # New parameters go after the complete v1.3 signature so v1.3-era
+        # positional calls keep binding to the same parameters.
+        panoptic: Optional[PanopticSegmentation] = None,
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
-        track_id: Optional[TensorLike] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)

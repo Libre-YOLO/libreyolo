@@ -1460,20 +1460,25 @@ class BaseModel(ABC):
         # Fold them into dense weights before export so the traced graph is a
         # plain model with no peft dependency. RF-DETR merges via its own
         # export override; this covers the other lora-capable families
-        # (D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4, EC, ConvNeXt).
+        # (D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4, EC, ConvNeXt). The merge is
+        # destructive (adapters are folded and removed), so validate the
+        # requested format first: a typo'd format must raise while the live
+        # adapters are still intact and trainable.
         from libreyolo.training.lora import merge_lora_adapters, module_has_lora
-
-        if module_has_lora(self.model):
-            merge_lora_adapters(self.model)
 
         if getattr(self, "_quant_manifest", None):
             from libreyolo.quant.api import quantized_export
 
+            if module_has_lora(self.model):
+                merge_lora_adapters(self.model)
             return quantized_export(self, format=format, **kwargs)
 
         from libreyolo.export import BaseExporter
 
-        return BaseExporter.create(format, self)(**kwargs)
+        exporter = BaseExporter.create(format, self)
+        if module_has_lora(self.model):
+            merge_lora_adapters(self.model)
+        return exporter(**kwargs)
 
     def val(
         self,

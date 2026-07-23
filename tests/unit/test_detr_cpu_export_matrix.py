@@ -24,6 +24,13 @@ _ONNX_PARITY_GAPS = {
     "LibreRTDETRv2": "9% of selected boxes exceed the ONNX tolerance",
     "LibreRTDETRv4": "7.3% of selected boxes exceed the ONNX tolerance",
 }
+# Families whose ONNX raw outputs are compared after Hungarian query
+# alignment. Their graphs select queries with an in-graph top-k over the
+# near-uniform scores of this test's random-init weights, so tiny host-class
+# float drift (macOS CI vs Linux) reorders a handful of near-tied queries.
+# Alignment removes that ordering sensitivity while keeping the numeric
+# tolerance intact — a genuinely wrong box still fails after alignment.
+_ONNX_QUERY_ALIGNED = {"LibreEC", "LibreDFINE"}
 
 
 def _export_cases():
@@ -101,7 +108,7 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
 
     assert len(actual) == len(native)
     expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
-    if format == "onnx" and class_name == "LibreEC":
+    if format == "onnx" and class_name in _ONNX_QUERY_ALIGNED:
         actual = _align_query_outputs(actual, expected_outputs)
     rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
     for actual_output, expected in zip(actual, expected_outputs):

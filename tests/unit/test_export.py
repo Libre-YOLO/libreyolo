@@ -943,6 +943,59 @@ class TestExporterValidation:
         assert exporter.suffix == ".tflite"
 
 
+class TestExportLoraOrdering:
+    """BaseModel.export folds live LoRA adapters into dense weights.
+
+    That merge is destructive, so an invalid format must raise *before* it
+    happens — otherwise a typo'd export silently strips the adapters from a
+    model the user may keep training (v1.4.0 release blocker).
+    """
+
+    @staticmethod
+    def _stub(order):
+        from types import SimpleNamespace
+
+        from libreyolo.training import lora as lora_helpers
+
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        return stub, lora_helpers
+
+    def test_invalid_format_raises_before_lora_merge(self, monkeypatch):
+        from libreyolo.models.base.model import BaseModel
+
+        merged = []
+        stub, lora_helpers = self._stub(merged)
+        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
+        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", merged.append)
+
+        with pytest.raises(ValueError, match="Unsupported export format"):
+            BaseModel.export(stub, format="not-a-format")
+        assert merged == []  # adapters untouched by the failed export
+
+    def test_valid_format_merges_after_validation(self, monkeypatch):
+        from libreyolo.models.base.model import BaseModel
+
+        order = []
+        stub, lora_helpers = self._stub(order)
+        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
+        monkeypatch.setattr(
+            lora_helpers, "merge_lora_adapters", lambda m: order.append("merge")
+        )
+
+        class _FakeExporter:
+            def __init__(self, model):
+                order.append("create")
+
+            def __call__(self, **kwargs):
+                order.append("export")
+                return "model.fake"
+
+        monkeypatch.setitem(BaseExporter._registry, "fakefmt", _FakeExporter)
+
+        assert BaseModel.export(stub, format="fakefmt") == "model.fake"
+        assert order == ["create", "merge", "export"]
+
+
 class TestOutputPathGeneration:
     def test_auto_path_torchscript(self):
         wrapper = _make_wrapper(model_name="yolo9", size="t")

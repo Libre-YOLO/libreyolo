@@ -273,6 +273,10 @@ class TestLibreFOMORandomInit:
 
         from libreyolo import LibreYOLO
 
+        # Seed the weight draw: parity across export formats is ordering-
+        # sensitive for near-tied point scores, so an ambient-RNG model makes
+        # this test depend on which tests ran (and drew randoms) before it.
+        torch.manual_seed(0)
         model = _make_random_fomo(size="s", nc=2)
         model.model.eval()
         image = np.random.default_rng(11).integers(
