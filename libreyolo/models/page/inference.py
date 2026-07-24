@@ -97,6 +97,19 @@ class PageInferenceRunner:
 
         detector = self._resolve_runtime_detector(head_detector, head_boxes)
 
+        # Fixed head boxes only make sense for a single image; directories and
+        # videos have per-frame geometry, so reject early instead of silently
+        # dropping the boxes (and then failing with "no head source").
+        if head_boxes is not None and (
+            is_video_file(source)
+            or (isinstance(source, (str, Path)) and Path(source).is_dir())
+        ):
+            raise ValueError(
+                "head_boxes= applies to a single image only. For directories "
+                "or videos, pass head_detector=... (or rely on the default) "
+                "so heads are localized per frame."
+            )
+
         if is_video_file(source):
             gen = self._predict_video(
                 source,

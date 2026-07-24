@@ -190,6 +190,21 @@ def test_detect_size_discriminates_gated_towers():
 
 
 # =========================================================================
+# Runner argument validation
+# =========================================================================
+
+
+def test_head_boxes_rejected_for_directory_sources(tmp_path):
+    from types import SimpleNamespace
+
+    from libreyolo.models.page.inference import PageInferenceRunner
+
+    runner = PageInferenceRunner(SimpleNamespace(head_detector=None))
+    with pytest.raises(ValueError, match="single image only"):
+        runner(str(tmp_path), head_boxes=[(10, 10, 50, 50)])
+
+
+# =========================================================================
 # Drawing
 # =========================================================================
 

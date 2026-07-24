@@ -25,11 +25,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# Weight repos pinned to the revisions this port was parity-verified against
+# (2026-07-24). trust_remote_code executes the MIT modeling file referenced by
+# these snapshots (Octopus1/PaGE, reviewed at 7147c67c); pinning the weights
+# revision keeps later upstream pushes from silently changing what runs here.
 SIZE_TO_REPO = {
-    "s": "Octopus1/page-vits",
-    "sp": "Octopus1/page-vitsplus",
-    "b": "Octopus1/page-vitb",
-    "hp": "Octopus1/page-vithplus",
+    "s": ("Octopus1/page-vits", "aa8ddb4e5251b27e63a5365dc479b765c11c7296"),
+    "sp": ("Octopus1/page-vitsplus", "6f4a84a99d7be270bb1c72282e3c87d79cb744b1"),
+    "b": ("Octopus1/page-vitb", "b991d8bcb2890a97db611a2080ca250ecd943952"),
+    "hp": ("Octopus1/page-vithplus", None),  # not yet converted (disk); pin on first run
 }
 
 BBOXES = [(0.30, 0.12, 0.48, 0.40), (0.60, 0.20, 0.75, 0.45)]
@@ -45,8 +49,9 @@ def check_size(size: str) -> None:
     scene = torch.randn(1, 3, 512, 512)
     heads = torch.randn(len(BBOXES), 3, 256, 256)
 
+    repo, revision = SIZE_TO_REPO[size]
     upstream = (
-        AutoModel.from_pretrained(SIZE_TO_REPO[size], trust_remote_code=True)
+        AutoModel.from_pretrained(repo, revision=revision, trust_remote_code=True)
         .eval()
         .cpu()
     )

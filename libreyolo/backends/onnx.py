@@ -81,6 +81,18 @@ class OnnxBackend(BaseBackend):
             )
 
         self.session = ort.InferenceSession(onnx_path, providers=providers)
+        session_input_names = [inp.name for inp in self.session.get_inputs()]
+        if set(session_input_names) == {"scene", "heads", "head_rects"}:
+            # LibrePAGE gaze-target graphs use a 3-input contract (scene image,
+            # head crops, head rects) that the single-image backend pipeline
+            # cannot drive. They are meant for direct onnxruntime consumers;
+            # see libreyolo/models/page/export.py for the contract.
+            raise NotImplementedError(
+                "This ONNX graph is a LibrePAGE gaze-target export with three "
+                "inputs (scene, heads, head_rects); OnnxBackend's detection "
+                "pipeline cannot feed it. Run it directly with onnxruntime, "
+                "preprocessing via libreyolo.models.page.utils."
+            )
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [output.name for output in self.session.get_outputs()]
         try:
