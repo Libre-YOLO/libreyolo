@@ -73,6 +73,7 @@ file = name + ".pt"
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
 | DepthAnything3 | `LibreDepthAnything3` | `LibreDepthAnything3l-depth.pt` (DA3MONO-LARGE; Apache-2.0) |
 | ZipDepth | `LibreZipDepth` | `LibreZipDepthb-depth.pt` (MIT code + weights; `bnpu` is the NPU-decoder checkpoint) |
+| PAGE | `LibrePAGE` | `LibrePAGEs-gazetarget.pt` (gaze-target; MIT decoder + DINOv3-derivative towers — repos carry `DINOv3_LICENSE.md`, card uses `license: other`) |
 | FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
 
 Never-upload families: **L2CS** (Gaze360 terms forbid redistribution) and any
@@ -208,6 +209,9 @@ LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
 LibreDepthAnything3l-depth.pt,
 
 LibreZipDepthb-depth.pt, LibreZipDepthbnpu-depth.pt,
+
+LibrePAGEs-gazetarget.pt, LibrePAGEsp-gazetarget.pt,
+LibrePAGEb-gazetarget.pt, LibrePAGEhp-gazetarget.pt,
 
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
