@@ -743,14 +743,9 @@ class LibrePAGEModel(nn.Module):
         scene_featmap = scene_patch_tokens.reshape(
             num_people, self.scene_featmap_h, self.scene_featmap_w, self.dim
         ).permute(0, 3, 1, 2)
+        # The deconv head emits exactly heatmap_out_size (32x32 grid, 2x
+        # upsample -> 64x64); upstream's trailing resize is an identity no-op.
         heatmap_logits = self.heatmap_head(scene_featmap).squeeze(dim=1)
-        if tuple(heatmap_logits.shape[-2:]) != tuple(self.heatmap_out_size):
-            heatmap_logits = F.interpolate(
-                heatmap_logits.unsqueeze(1),
-                size=self.heatmap_out_size,
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(1)
         return heatmap_logits, inout_logits
 
 
