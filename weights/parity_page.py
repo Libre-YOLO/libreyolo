@@ -33,7 +33,10 @@ SIZE_TO_REPO = {
     "s": ("Octopus1/page-vits", "aa8ddb4e5251b27e63a5365dc479b765c11c7296"),
     "sp": ("Octopus1/page-vitsplus", "6f4a84a99d7be270bb1c72282e3c87d79cb744b1"),
     "b": ("Octopus1/page-vitb", "b991d8bcb2890a97db611a2080ca250ecd943952"),
-    "hp": ("Octopus1/page-vithplus", None),  # not yet converted (disk); pin on first run
+    # hp is not yet converted (needs ~14 GB free disk). Before its first
+    # parity run, review the repo at its current revision and pin the SHA
+    # here — check_size refuses to execute unpinned remote code.
+    "hp": ("Octopus1/page-vithplus", None),
 }
 
 BBOXES = [(0.30, 0.12, 0.48, 0.40), (0.60, 0.20, 0.75, 0.45)]
@@ -50,6 +53,12 @@ def check_size(size: str) -> None:
     heads = torch.randn(len(BBOXES), 3, 256, 256)
 
     repo, revision = SIZE_TO_REPO[size]
+    if revision is None:
+        raise SystemExit(
+            f"size={size}: no pinned revision for {repo}. trust_remote_code "
+            "must never execute an unreviewed mutable revision — review the "
+            "repo, then add its commit SHA to SIZE_TO_REPO."
+        )
     upstream = (
         AutoModel.from_pretrained(repo, revision=revision, trust_remote_code=True)
         .eval()
