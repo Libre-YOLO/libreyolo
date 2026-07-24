@@ -56,7 +56,7 @@ def check_size(size: str) -> None:
     if revision is None:
         raise SystemExit(
             f"size={size}: no pinned revision for {repo}. trust_remote_code "
-            "must never execute an unreviewed mutable revision — review the "
+            "must never execute an unreviewed mutable revision: review the "
             "repo, then add its commit SHA to SIZE_TO_REPO."
         )
     upstream = (
