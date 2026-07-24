@@ -136,6 +136,33 @@ def try_ensure_rfdetr():
     return None
 
 
+def _ensure_page():
+    """Lazily register LibrePAGE if its dependencies are installed."""
+    if any(c.__name__ == "LibrePAGE" for c in BaseModel._registry):
+        return
+    import importlib.util
+
+    # The DINOv3 towers come from transformers' built-in DINOv3ViTModel.
+    if importlib.util.find_spec("transformers") is None:
+        raise ModuleNotFoundError(
+            "LibrePAGE support requires extra dependencies.\n"
+            "Install with: pip install libreyolo[rfdetr]"
+        )
+    from .page.model import LibrePAGE  # noqa: F401  (import triggers registration)
+
+
+def try_ensure_page():
+    """Try to register LibrePAGE. Returns the model class or ``None`` if unavailable."""
+    try:
+        _ensure_page()
+    except (ImportError, ModuleNotFoundError):
+        return None
+    for cls in BaseModel._registry:
+        if cls.__name__ == "LibrePAGE":
+            return cls
+    return None
+
+
 # =============================================================================
 # Internal helpers
 # =============================================================================
@@ -194,6 +221,13 @@ def _needs_rfdetr_registration(weights_dict: dict) -> bool:
         or "enc_out_class_embed" in k
         or "enc_out_bbox_embed" in k
         for k in keys_lower
+    )
+
+
+def _needs_page_registration(weights_dict: dict) -> bool:
+    """Return True when checkpoint keys require lazy LibrePAGE registration."""
+    return "scene_head_interaction_layers.0.cross_attn_scene.attn.q.weight" in weights_dict or any(
+        k.startswith("scene_branch_backbone.") for k in weights_dict
     )
 
 
@@ -332,18 +366,21 @@ def LibreYOLO(
                     size = detected
                     logger.debug("Detected size '%s' from filename", size)
                     break
-            # Try RF-DETR (may not be registered yet — cheap check)
+            # Try RF-DETR / PAGE (may not be registered yet — cheap check)
             if size is None:
-                try:
-                    _ensure_rfdetr()
+                for ensure in (_ensure_rfdetr, _ensure_page):
+                    try:
+                        ensure()
+                    except ModuleNotFoundError:
+                        continue
                     for cls in BaseModel._registry:
                         detected = cls.detect_size_from_filename(Path(model_path).name)
                         if detected is not None:
                             size = detected
                             logger.debug("Detected size '%s' from filename", size)
                             break
-                except ModuleNotFoundError:
-                    pass
+                    if size is not None:
+                        break
             if size is None:
                 raise ValueError(
                     f"Model weights file not found: {model_path}\n"
@@ -460,6 +497,16 @@ def LibreYOLO(
     ):
         try:
             _ensure_rfdetr()
+        except ModuleNotFoundError:
+            raise
+
+    # LibrePAGE (gaze-target) also lazy-registers behind transformers. Its
+    # dual-tower keys are unique, so the trigger cannot steal other families.
+    if metadata_family_for_registration == "page" or _needs_page_registration(
+        weights_dict
+    ):
+        try:
+            _ensure_page()
         except ModuleNotFoundError:
             raise
 
@@ -694,4 +741,5 @@ __all__ = [
     "LibreSigLIP2",
     "LibrePPOCR",
     "try_ensure_rfdetr",
+    "try_ensure_page",
 ]

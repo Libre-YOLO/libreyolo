@@ -54,6 +54,7 @@ from .utils.results import (
     Probs,
     OBB,
     Gaze,
+    GazeTargets,
     SemanticMask,
     PanopticSegmentation,
     DepthMap,
@@ -100,6 +101,7 @@ def __getattr__(name):
     _lazy = {
         "LibreRFDETR": (".models.rfdetr.model", "LibreRFDETR"),
         "LibreDINOv2": (".models.dinov2.model", "LibreDINOv2"),
+        "LibrePAGE": (".models.page.model", "LibrePAGE"),
         "LibreEnsemble": (".ensemble", "LibreEnsemble"),
         "ExternalDetector": (".ensemble", "ExternalDetector"),
         "OnnxBackend": (".backends.onnx", "OnnxBackend"),
@@ -152,6 +154,11 @@ def __getattr__(name):
         from .models import _ensure_rfdetr
 
         _ensure_rfdetr()
+    if name == "LibrePAGE":
+        # PAGE needs transformers too (DINOv3 towers).
+        from .models import _ensure_page
+
+        _ensure_page()
     if name in _lazy:
         import importlib
 
@@ -173,6 +180,7 @@ __all__ = [
     "LibreRTDETRv2",
     "LibreRTDETRv4",
     "LibreRFDETR",
+    "LibrePAGE",
     "LibreDFINE",
     "LibreDEIM",
     "LibreDEIMv2",
@@ -235,6 +243,7 @@ __all__ = [
     "Probs",
     "OBB",
     "Gaze",
+    "GazeTargets",
     "SemanticMask",
     "PanopticSegmentation",
     "DepthMap",
