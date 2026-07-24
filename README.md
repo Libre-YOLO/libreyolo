@@ -18,21 +18,8 @@ MIT-licensed computer vision library with inference and training support for a v
 
 ## Installation & Quick start
 
-`pip install libreyolo` covers most users. It comes with the YOLOv9 flagship
-and the other detection models, plus training and inference. Now and then you'll
-add an extra: for a model family with a heavier dependency (for example RF-DETR,
-which needs the large `transformers` library), or for an export backend when you
-need to export a model:
-
 ```bash
 pip install libreyolo
-
-# Add an extra in brackets when you need one (comma-separate to combine),
-# e.g. pip install "libreyolo[rfdetr,onnx]":
-#   export:    onnx, tensorrt, openvino, ncnn, tflite (alias: litert), coreml
-#   models:    rfdetr, vlm, sam, openvocab, clip, gaze
-#   training:  lora, plots, tensorboard, mlflow, wandb
-#   or all:    pip install "libreyolo[all]"
 ```
 
 ```python
@@ -42,9 +29,28 @@ model = LibreYOLO("LibreYOLO9t.pt")
 result = model(SAMPLE_IMAGE, save=True)
 ```
 
+<details>
+<summary><b>Optional pip extras</b></summary>
+
+<br>
+
+The base install covers YOLOv9 and the other detection models, plus training
+and inference. Add an extra in brackets when you need a heavier model family
+(for example RF-DETR, which needs `transformers`) or an export backend.
+Comma-separate to combine, e.g. `pip install "libreyolo[rfdetr,onnx]"`:
+
+| Group | Extras |
+| --- | --- |
+| Export | `onnx`, `tensorrt`, `openvino`, `ncnn`, `tflite` (alias: `litert`), `coreml` |
+| Models | `rfdetr`, `vlm`, `sam`, `openvocab`, `clip`, `gaze` |
+| Training | `lora`, `plots`, `tensorboard`, `mlflow`, `wandb` |
+| Everything | `pip install "libreyolo[all]"` |
+
 For the full list of extras and per-backend notes, see the [docs](https://www.libreyolo.com/docs#installation).
 
-To install from source in editable mode (for development or to track unreleased changes):
+</details>
+
+To install from source (development, or to track unreleased changes):
 
 ```bash
 git clone https://github.com/LibreYOLO/libreyolo.git
@@ -64,102 +70,75 @@ and receive the heaviest testing:
 - **YOLOv9** for CNN-based YOLO models.
 - **RF-DETR** for transformer-based detection and segmentation.
 
-## Compatibility
+## Detection models
 
-Training capabilities are documented per family in
-[`docs/nomenclature.md`](docs/nomenclature.md).
+LibreYOLO is a YOLO library first. The table below covers the main detection
+families. `✓` supported. Empty cells are not currently supported.
 
-`✓` parity-validated, `exp` experimental. Empty cells are blocked before export.
-<!-- export-support:start -->
-| Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| deim | detect | exp | ✓ | exp | exp |  |  |  |
-| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
-| depth_anything3 | depth |  |  |  |  |  |  |  |
-| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
-| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
-| dinov2 | classify | ✓ |  |  |  |  |  |  |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
-| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
-| edgetam | segment |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
-| eomt | segment |  |  |  |  |  |  |  |
-| eomt | panoptic |  |  |  |  |  |  |  |
-| florence2 | detect |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
-| grounding_dino | detect |  |  |  |  |  |  |  |
-| internvl3 | detect |  |  |  |  |  |  |  |
-| kosmos2 | detect |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ |  |  |  |  |  |  |
-| lfm2vl | detect |  |  |  |  |  |  |  |
-| locateanything | detect |  |  |  |  |  |  |  |
-| locateanything | point |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| mobilesam | segment |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
-| omdet_turbo | detect |  |  |  |  |  |  |  |
-| ov_deim | detect |  |  |  |  |  |  |  |
-| owlv2 | detect |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| picosam3 | segment | ✓ |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| ppocr | ocr |  |  |  |  |  |  |  |
-| qwen3vl | detect |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp |
-| rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
-| rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
-| rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
-| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
-| rtmdet | segment |  |  |  |  |  |  |  |
-| sam | segment |  |  |  |  |  |  |  |
-| sam2 | segment |  |  |  |  |  |  |  |
-| sam3 | segment |  |  |  |  |  |  |  |
-| segformer | semantic |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  |
-| smolvlm2 | detect |  |  |  |  |  |  |  |
-| swinir | restore | exp | exp | exp | exp | exp |  |  |
-| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
-| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
-<!-- export-support:end -->
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2">Model family</th>
+      <th colspan="3">Inference</th>
+      <th rowspan="2">Training</th>
+      <th colspan="6">Export formats</th>
+    </tr>
+    <tr>
+      <th>Detection</th>
+      <th>Segmentation</th>
+      <th>Pose</th>
+      <th>ONNX</th>
+      <th>TorchScript</th>
+      <th>TensorRT</th>
+      <th>OpenVINO</th>
+      <th>NCNN</th>
+      <th>TFLite (LiteRT)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>⭐ YOLOv9</strong></td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td><strong>⭐ RF-DETR</strong></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td></tr>
+    <tr><td>YOLOX</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><td>YOLO-NAS</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td>YOLOv9-E2E</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td>YOLOv9-P2</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td>YOLOv7</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td>D-FINE</td><td>✓</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>DEIM</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>DEIMv2</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>RT-DETR</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>RT-DETRv2</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>RT-DETRv4</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>EC</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>RTMDet</td><td>✓</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>PicoDet</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
+  </tbody>
+</table>
 
-## Depth estimation
+## Beyond detection
 
-Depth Anything 3 mono-large is the recommended quality default for relative
-monocular depth:
+The same three-line API covers a lot more than boxes: the checkpoint name
+selects the task. These families are extras on top of the core library.
 
-```python
-from libreyolo import LibreYOLO
+<details>
+<summary><b>All other tasks and their models</b></summary>
 
-model = LibreYOLO("LibreDepthAnything3l-depth.pt")
-result = model("image.jpg")[0]
-inverse_depth = result.depth_map.data  # (H, W), higher means closer
-```
+<br>
 
-The checkpoint is Apache-2.0 and downloads from the LibreYOLO Hugging Face
-organization. Depth Anything V2 remains available for compatibility, while
-ZipDepth provides the lightweight edge tier.
+- **Instance segmentation (promptable):** SAM, SAM 2, SAM 3, MobileSAM, EdgeTAM, PicoSAM3, EoMT
+- **Semantic segmentation:** SegFormer, PIDNet, EoMT, DINOv2
+- **Panoptic segmentation:** EoMT
+- **Oriented boxes (OBB):** RF-DETR
+- **Classification:** ResNet, ConvNeXt, MobileNetV4, EfficientNetV2, DINOv2, CLIP, SigLIP2
+- **Point detection:** FOMO, LocateAnything
+- **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
+- **Image restoration & super-resolution:** NAFNet, Real-ESRGAN, SwinIR
+- **Background removal (matting):** BiRefNet
+- **OCR:** PP-OCR
+- **Gaze estimation:** L2CS
+- **Open-vocabulary & VLM detection:** Grounding DINO, OWLv2, OmDet-Turbo, OV-DEIM, Florence-2, Kosmos-2, Qwen3-VL, InternVL3, LFM2-VL, SmolVLM2, LocateAnything
+
+</details>
 
 ## License
 
