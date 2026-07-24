@@ -63,6 +63,11 @@ def _summarize_result(result) -> tuple[str, str]:
     if gaze is not None:
         return "gaze", _plural(len(gaze), "face")
 
+    # Gaze-target likewise carries head boxes alongside the target points.
+    gazetarget = getattr(result, "gazetarget", None)
+    if gazetarget is not None:
+        return "gazetarget", _plural(len(gazetarget), "gaze target")
+
     boxes = getattr(result, "boxes", None)
     if boxes is not None:
         n = len(boxes)

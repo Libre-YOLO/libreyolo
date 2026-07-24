@@ -20,6 +20,7 @@ redistribution must carry the license text). The LibreYOLO HF repos ship
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import ClassVar, Dict, Optional
 
 import torch.nn as nn
@@ -77,6 +78,11 @@ class LibrePAGE(BaseModel):
         return 1
 
     @classmethod
+    def format_weight_filename(cls, size_code: str) -> str:
+        # Canonical filenames carry the task suffix (LibreZipDepth precedent).
+        return f"{cls.FILENAME_PREFIX}{size_code}-gazetarget{cls.WEIGHT_EXT}"
+
+    @classmethod
     def detect_size_from_filename(cls, filename: str) -> Optional[str]:
         # "sp"/"hp" contain "s"/"p" prefixes of each other's codes, so match
         # longest-first (the RT-DETR multi-char size-code precedent).
@@ -122,6 +128,11 @@ class LibrePAGE(BaseModel):
         )
         # Inference-only family: keep eval() unconditionally.
         self.model.eval()
+
+        # BaseModel.__init__ only loads dict checkpoints; file paths are the
+        # subclass's job (same as LibreL2CS).
+        if model_path is not None and isinstance(model_path, (str, Path)):
+            self._load_weights(str(model_path))
 
     # =========================================================================
     # BaseModel abstract surface — gaze-target uses its own runner

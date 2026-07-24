@@ -904,6 +904,10 @@ def draw_gaze_targets(
         hm = np.asarray(heatmaps, dtype=np.float32)
         hm = hm.max(axis=0)
         hm = np.clip(hm, 0.0, 1.0)
+        # Keep the overlay focused on the peak: fade out the diffuse tail the
+        # sigmoid heatmap spreads across the whole frame.
+        floor = 0.25 * float(hm.max())
+        hm = np.clip((hm - floor) / max(1e-6, 1.0 - floor), 0.0, 1.0)
         hm_img = Image.fromarray((hm * 255).astype(np.uint8)).resize(
             img_draw.size, Image.BILINEAR
         )

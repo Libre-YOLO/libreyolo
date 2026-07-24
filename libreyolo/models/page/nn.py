@@ -764,7 +764,7 @@ def detect_size_from_state_dict(state_dict: dict) -> Optional[str]:
     if key is None:
         return None
     hidden = int(state_dict[key].shape[0])
-    gated = any("gate_proj" in k or "weights_in" in k for k in state_dict)
+    gated = any("gate_proj" in k for k in state_dict)
     if hidden == 384:
         return "sp" if gated else "s"
     if hidden == 768:

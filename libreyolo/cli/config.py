@@ -91,12 +91,15 @@ def _build_name_map() -> None:
     for cls in BaseModel._registry:
         _register_cli_names_for_class(cls)
 
-    # Also try RF-DETR (lazily registered)
-    from libreyolo.models import try_ensure_rfdetr
+    # Also try RF-DETR and PAGE (lazily registered)
+    from libreyolo.models import try_ensure_page, try_ensure_rfdetr
 
     rfcls = try_ensure_rfdetr()
     if rfcls is not None:
         _register_cli_names_for_class(rfcls)
+    pagecls = try_ensure_page()
+    if pagecls is not None:
+        _register_cli_names_for_class(pagecls)
 
 
 def get_all_cli_names() -> list[str]:
@@ -149,6 +152,12 @@ def _iter_model_classes():
     rfcls = try_ensure_rfdetr()
     if rfcls is not None and rfcls not in seen:
         yield rfcls
+
+    from libreyolo.models import try_ensure_page
+
+    pagecls = try_ensure_page()
+    if pagecls is not None and pagecls not in seen:
+        yield pagecls
 
 
 def detect_family_from_weight_filename(model: str) -> Optional[str]:
