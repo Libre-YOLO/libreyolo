@@ -49,7 +49,7 @@ jobs:
         # skipping in this gate — they importorskip onnx/onnxruntime.
         # The clip extra (ftfy + regex) keeps the LibreCLIP tokenizer tests
         # from erroring on a missing optional tokenizer dependency.
-        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip]"
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip,page]"
 
       - name: Run PR gate tests
         env:
@@ -101,7 +101,7 @@ jobs:
         run: uv venv --python 3.10
 
       - name: Install dependencies
-        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip]"
+        run: uv pip install --no-sources --torch-backend cpu --group dev -e ".[rfdetr,onnx,clip,page]"
 
       - name: Run distributed tests
         env:
