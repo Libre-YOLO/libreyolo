@@ -52,6 +52,12 @@ rfdetr = [
 eomt = [
     "transformers>=5.1.0",
 ]
+page = [
+    # LibrePAGE gaze-target: DINOv3 towers via transformers' built-in
+    # DINOv3ViTModel; decoder blocks build on timm layers.
+    "transformers>=5.3.0",
+    "timm>=1.0.23",
+]
 lora = [
     # LoRA / PEFT fine-tuning (lora=True) for transformer backbones (RF-DETR).
     "libreyolo[rfdetr]",
@@ -184,6 +190,7 @@ all = [
     "libreyolo[onnx]",
     "libreyolo[rfdetr]",
     "libreyolo[eomt]",
+    "libreyolo[page]",
     "libreyolo[lora]",
     "libreyolo[plots]",
     "libreyolo[tensorrt]",

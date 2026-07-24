@@ -142,11 +142,14 @@ def _ensure_page():
         return
     import importlib.util
 
-    # The DINOv3 towers come from transformers' built-in DINOv3ViTModel.
-    if importlib.util.find_spec("transformers") is None:
+    # The DINOv3 towers come from transformers' built-in DINOv3ViTModel and
+    # the decoder blocks build on timm layers.
+    if importlib.util.find_spec("transformers") is None or (
+        importlib.util.find_spec("timm") is None
+    ):
         raise ModuleNotFoundError(
             "LibrePAGE support requires extra dependencies.\n"
-            "Install with: pip install libreyolo[rfdetr]"
+            "Install with: pip install libreyolo[page]"
         )
     from .page.model import LibrePAGE  # noqa: F401  (import triggers registration)
 

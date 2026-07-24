@@ -30,7 +30,7 @@ pip install libreyolo
 # Add an extra in brackets when you need one (comma-separate to combine),
 # e.g. pip install "libreyolo[rfdetr,onnx]":
 #   export:    onnx, tensorrt, openvino, ncnn, tflite (alias: litert), coreml
-#   models:    rfdetr, vlm, sam, openvocab, clip, gaze
+#   models:    rfdetr, vlm, sam, openvocab, clip, gaze, page
 #   training:  lora, plots, tensorboard, mlflow, wandb
 #   or all:    pip install "libreyolo[all]"
 ```

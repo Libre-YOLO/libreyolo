@@ -514,7 +514,7 @@ class PageBackbone(nn.Module):
         except ImportError as e:  # pragma: no cover - guarded by lazy registration
             raise ModuleNotFoundError(
                 "LibrePAGE requires transformers>=4.56 with built-in DINOv3 "
-                "support. Install with: pip install libreyolo[rfdetr]"
+                "support. Install with: pip install libreyolo[page]"
             ) from e
 
         cfg = PAGE_CONFIGS[size]

@@ -7,6 +7,10 @@ import pytest
 import torch
 from PIL import Image
 
+# The page family's decoder blocks build on timm layers, imported at module
+# scope below; slim CI environments (e.g. the distributed job) lack timm.
+pytest.importorskip("timm", reason="LibrePAGE decoder blocks build on timm layers")
+
 from libreyolo.models.page.convert import convert_upstream, is_upstream_state_dict
 from libreyolo.models.page.model import LibrePAGE
 from libreyolo.models.page.utils import (
