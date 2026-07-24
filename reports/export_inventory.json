@@ -624,6 +624,29 @@
     "optional_extra": "openvocab",
     "available": true
   },
+  "page": {
+    "class": "libreyolo.models.page.model.LibrePAGE",
+    "tasks": [
+      "gazetarget"
+    ],
+    "default_task": "gazetarget",
+    "sizes": {
+      "s": 512,
+      "sp": 512,
+      "b": 512,
+      "hp": 512
+    },
+    "default_imgsz": {
+      "s": 512,
+      "sp": 512,
+      "b": 512,
+      "hp": 512
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": "page",
+    "available": true
+  },
   "picodet": {
     "class": "libreyolo.models.picodet.model.LibrePICODET",
     "tasks": [

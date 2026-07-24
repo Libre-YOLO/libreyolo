@@ -86,15 +86,18 @@ def _export_override(cls, base_cls) -> str:
 
 def collect_model_inventory() -> dict[str, dict]:
     """Return eager and lazy family metadata without constructing models."""
-    from libreyolo.models import try_ensure_rfdetr
+    from libreyolo.models import try_ensure_page, try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
 
     optional: dict[str, tuple[str, bool]] = {}
     try_ensure_rfdetr()
+    try_ensure_page()
     classes = list(BaseModel._registry)
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
         optional["rfdetr"] = ("rfdetr", True)
         optional["dinov2"] = ("rfdetr", True)
+    if any(cls.FAMILY == "page" for cls in BaseModel._registry):
+        optional["page"] = ("page", True)
 
     for module_name, class_name, extra, requirement in OPTIONAL_MODELS:
         available = (

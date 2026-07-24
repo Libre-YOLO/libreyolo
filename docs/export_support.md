@@ -253,6 +253,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `owlv2` / `detect` / `ncnn`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
+- `page` / `gazetarget` / `torchscript`: The v1 PAGE gaze-target export contract supports ONNX only.
+- `page` / `gazetarget` / `tensorrt`: The v1 PAGE gaze-target export contract supports ONNX only.
+- `page` / `gazetarget` / `openvino`: The v1 PAGE gaze-target export contract supports ONNX only.
+- `page` / `gazetarget` / `ncnn`: The v1 PAGE gaze-target export contract supports ONNX only.
+- `page` / `gazetarget` / `tflite`: The v1 PAGE gaze-target export contract supports ONNX only.
+- `page` / `gazetarget` / `coreml`: The v1 PAGE gaze-target export contract supports ONNX only.
 - `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `picosam3` / `segment` / `torchscript`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.

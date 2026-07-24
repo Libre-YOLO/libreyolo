@@ -231,6 +231,17 @@ _add(
 )
 _add(
     "validated",
+    ("page",),
+    ("gazetarget",),
+    ("onnx",),
+    since="1.4",
+    constraint=(
+        "three-input contract (scene, heads, head_rects); drive exported "
+        "graphs directly with onnxruntime"
+    ),
+)
+_add(
+    "validated",
     ("nafnet",),
     ("restore",),
     ("onnx", "torchscript", "ncnn"),
@@ -660,6 +671,10 @@ _TASK_BLOCKS = {
         "This family is not wired to the shared two-head logits and backend "
         "expectation-decoding gaze export contract."
     ),
+    "gazetarget": (
+        "This family is not wired to the three-input gaze-target export "
+        "contract (scene, head crops, head rects)."
+    ),
 }
 
 _FAMILY_BLOCKS = {
@@ -669,6 +684,7 @@ _FAMILY_BLOCKS = {
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
     "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
+    "page": "The v1 PAGE gaze-target export contract supports ONNX only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",
