@@ -55,6 +55,17 @@ class TestDepthAnythingMetadata:
         }
         assert not LibreDepthAnythingV2.can_load(unrelated_depth)
 
+    def test_train_error_does_not_offer_unsupported_fine_tuning(self):
+        from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
+
+        model = LibreDepthAnythingV2.__new__(LibreDepthAnythingV2)
+        with pytest.raises(NotImplementedError) as exc_info:
+            model.train(data="x.yaml")
+
+        message = str(exc_info.value)
+        assert "Training and fine-tuning" in message
+        assert "train upstream" not in message
+
     @pytest.mark.parametrize(
         "embed_dim,expected",
         [(384, "s"), (768, "b"), (1024, "l"), (1536, "g")],

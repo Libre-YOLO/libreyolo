@@ -80,8 +80,6 @@ class LibreDepthAnythingV2(BaseModel):
         1536: "g",
     }
 
-    _UPSTREAM_URL = "https://github.com/DepthAnything/Depth-Anything-V2"
-
     # ====================================================================
     # Checkpoint detection
     # ====================================================================
@@ -218,9 +216,9 @@ class LibreDepthAnythingV2(BaseModel):
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(
-            "Training Depth Anything V2 is out of scope for LibreYOLO. To "
-            "fine-tune Depth Anything, train upstream at "
-            f"{self._UPSTREAM_URL} and convert the result with "
+            "Training and fine-tuning Depth Anything V2 are not supported by "
+            "LibreYOLO. Use a pretrained LibreYOLO checkpoint, or convert a "
+            "compatible pretrained upstream checkpoint with "
             "weights/convert_depth_anything_v2_weights.py."
         )
 
