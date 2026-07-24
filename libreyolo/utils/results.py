@@ -1012,6 +1012,100 @@ class Gaze(_TensorPayload):
         )
 
 
+class GazeTargets(_TensorPayload):
+    """Per-person gaze targets: where in the scene each person is looking.
+
+    ``data`` is ``(N, 3)`` in original-image pixel coordinates: columns are
+    target x, target y, and the in-frame probability in ``[0, 1]`` (how
+    likely the gaze target lies inside the image). Aligned row-by-row with
+    the parent ``Results.boxes`` (head boxes). ``heatmaps`` optionally
+    carries the raw ``(N, H, W)`` sigmoid probability grids the targets
+    were decoded from; heatmap cell centers map to the original canvas by
+    plain scaling (``x = (col + 0.5) / W * img_w``), matching upstream PaGE.
+    """
+
+    def __init__(
+        self,
+        data: TensorLike,
+        heatmaps: TensorLike | None = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        if data.ndim == 1:
+            if isinstance(data, torch.Tensor):
+                data = data.unsqueeze(0)
+            else:
+                data = data[None, :]
+        if data.shape[-1] != 3:
+            raise ValueError(
+                f"expected (N, 3) target x/y/in-frame, got shape {tuple(data.shape)}"
+            )
+        super().__init__(data, orig_shape)
+        if heatmaps is not None and int(heatmaps.shape[0]) != int(data.shape[0]):
+            raise ValueError(
+                f"expected {int(data.shape[0])} heatmaps to match targets, "
+                f"got {int(heatmaps.shape[0])}"
+            )
+        self.heatmaps = heatmaps
+
+    def _rebuild(self, data, heatmaps):
+        return self.__class__(data, heatmaps, self.orig_shape)
+
+    def to(self, *args, **kwargs):
+        return self._rebuild(
+            _move(self.data, *args, **kwargs),
+            _move(self.heatmaps, *args, **kwargs) if self.heatmaps is not None else None,
+        )
+
+    def cpu(self):
+        return self._rebuild(
+            _cpu(self.data), _cpu(self.heatmaps) if self.heatmaps is not None else None
+        )
+
+    def cuda(self):
+        return self._rebuild(
+            _cuda(self.data), _cuda(self.heatmaps) if self.heatmaps is not None else None
+        )
+
+    def numpy(self):
+        return self._rebuild(
+            _numpy(self.data), _numpy(self.heatmaps) if self.heatmaps is not None else None
+        )
+
+    def __getitem__(self, idx):
+        return self._rebuild(
+            _slice_first(self.data, idx),
+            _slice_first(self.heatmaps, idx) if self.heatmaps is not None else None,
+        )
+
+    @property
+    def xy(self) -> TensorLike:
+        return self.data[..., :2]
+
+    @property
+    def xyn(self) -> TensorLike:
+        if self.orig_shape is None:
+            raise ValueError("orig_shape is required for normalized gaze targets")
+        h, w = self.orig_shape
+        xy = self.xy
+        if isinstance(xy, torch.Tensor):
+            scale = torch.tensor([w, h], dtype=xy.dtype, device=xy.device)
+        else:
+            scale = np.array([w, h], dtype=xy.dtype)
+        return xy / scale
+
+    @property
+    def inout(self) -> TensorLike:
+        return self.data[..., 2]
+
+    def __repr__(self) -> str:
+        return (
+            f"GazeTargets(n={len(self)}, "
+            f"shape={tuple(self.data.shape)}, "
+            f"heatmaps={None if self.heatmaps is None else tuple(self.heatmaps.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
@@ -1022,6 +1116,7 @@ class Results:
         "keypoints",
         "obb",
         "gaze",
+        "gazetarget",
         "points",
         "semantic_mask",
         "panoptic",
@@ -1055,6 +1150,7 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: int = 1,
+        gazetarget: Optional[GazeTargets] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1070,6 +1166,8 @@ class Results:
             matte = Matte(matte.data, orig_shape)
         if ocr is not None and ocr.orig_shape is None:
             ocr = OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, orig_shape)
+        if gazetarget is not None and gazetarget.orig_shape is None:
+            gazetarget = GazeTargets(gazetarget.data, gazetarget.heatmaps, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -1077,6 +1175,7 @@ class Results:
         self.probs = probs
         self.obb = obb
         self.gaze = gaze
+        self.gazetarget = gazetarget
         self.points = points
         self.semantic_mask = semantic_mask
         self.panoptic = panoptic
@@ -1106,6 +1205,7 @@ class Results:
             "probs": self.probs,
             "obb": self.obb,
             "gaze": self.gaze,
+            "gazetarget": self.gazetarget,
             "points": self.points,
             "semantic_mask": self.semantic_mask,
             "panoptic": self.panoptic,
@@ -1175,6 +1275,7 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
+        gazetarget: Optional[GazeTargets] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1208,6 +1309,12 @@ class Results:
             )
         if restore_scale is not None:
             self.restore_scale = int(restore_scale) if restore_scale else 1
+        if gazetarget is not None:
+            self.gazetarget = (
+                gazetarget
+                if gazetarget.orig_shape is not None
+                else GazeTargets(gazetarget.data, gazetarget.heatmaps, self.orig_shape)
+            )
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -1448,6 +1555,18 @@ class Results:
                     "pitch_deg": round(float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals),
                     "yaw_deg": round(float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals),
                 }
+            if self.gazetarget is not None and i < len(self.gazetarget):
+                gt_np = (
+                    self.gazetarget.numpy()
+                    if isinstance(self.gazetarget.data, torch.Tensor)
+                    else self.gazetarget
+                )
+                xy_gt = gt_np.xyn if normalize else gt_np.xy
+                row["gaze_target"] = {
+                    "x": round(float(xy_gt[i, 0]), decimals),
+                    "y": round(float(xy_gt[i, 1]), decimals),
+                    "in_frame": round(float(gt_np.inout[i]), decimals),
+                }
             if track_ids is not None:
                 row["track_id"] = int(track_ids[i])
             rows.append(row)
@@ -1501,6 +1620,8 @@ class Results:
             parts.append(f"matte={self.matte}")
         if self.ocr is not None:
             parts.append(f"ocr={self.ocr}")
+        if self.gazetarget is not None:
+            parts.append(f"gazetarget={self.gazetarget}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

@@ -869,6 +869,94 @@ def draw_gaze_arrows(
     return img_draw
 
 
+def draw_gaze_targets(
+    img: Image.Image,
+    boxes: Sequence[Sequence[float]],
+    targets: Sequence[Sequence[float]],
+    inout: Sequence[float] | None = None,
+    heatmaps=None,
+    color: Tuple[int, int, int] = (0, 200, 255),
+    target_color: Tuple[int, int, int] = (255, 64, 64),
+    heatmap_alpha: float = 0.35,
+    line_thickness: int | None = None,
+) -> Image.Image:
+    """Draw per-person gaze targets: head box, arrow to target, target marker.
+
+    Args:
+        img: PIL Image (RGB) to draw on.
+        boxes: Iterable of ``(x1, y1, x2, y2)`` head boxes — one per person.
+        targets: Iterable of ``(x, y)`` gaze target points in pixel coords.
+        inout: Optional per-person in-frame probability, rendered as a label.
+        heatmaps: Optional ``(N, H, W)`` array of sigmoid probability grids;
+            their max is blended over the image as a red overlay before the
+            vector annotations are drawn.
+        color: RGB tuple for the head box and arrow.
+        target_color: RGB tuple for the target marker.
+        heatmap_alpha: Peak opacity of the heatmap overlay.
+        line_thickness: Optional override; scales with image size when None.
+
+    Returns:
+        New PIL Image with the gaze-target annotations drawn on top.
+    """
+    img_draw = img.copy().convert("RGB")
+
+    if heatmaps is not None and len(heatmaps) > 0:
+        hm = np.asarray(heatmaps, dtype=np.float32)
+        hm = hm.max(axis=0)
+        hm = np.clip(hm, 0.0, 1.0)
+        hm_img = Image.fromarray((hm * 255).astype(np.uint8)).resize(
+            img_draw.size, Image.BILINEAR
+        )
+        hm_arr = np.asarray(hm_img, dtype=np.float32) / 255.0
+        base = np.asarray(img_draw, dtype=np.float32)
+        overlay = np.zeros_like(base)
+        overlay[..., 0] = 255.0
+        alpha = (hm_arr * heatmap_alpha)[..., None]
+        blended = base * (1.0 - alpha) + overlay * alpha
+        img_draw = Image.fromarray(blended.astype(np.uint8))
+
+    draw = ImageDraw.Draw(img_draw)
+    max_dim = max(img_draw.size)
+    scale = max_dim / 640.0
+    thickness = (
+        line_thickness if line_thickness is not None else max(2, int(3 * scale))
+    )
+    radius = max(4.0, 6.0 * scale)
+
+    for i, (box, target) in enumerate(zip(boxes, targets)):
+        x1, y1, x2, y2 = (float(v) for v in box)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        tx, ty = float(target[0]), float(target[1])
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=thickness)
+        draw.line([(cx, cy), (tx, ty)], fill=color, width=thickness)
+
+        # Arrowhead at the target end, matching draw_gaze_arrows' style.
+        dx, dy = tx - cx, ty - cy
+        head_len = max(6.0, math.hypot(dx, dy) * 0.12)
+        shaft_angle = math.atan2(dy, dx)
+        for side in (1, -1):
+            angle = shaft_angle + side * math.radians(150.0)
+            hx = tx + head_len * math.cos(angle)
+            hy = ty + head_len * math.sin(angle)
+            draw.line([(tx, ty), (hx, hy)], fill=color, width=thickness)
+
+        draw.ellipse(
+            [tx - radius, ty - radius, tx + radius, ty + radius],
+            fill=target_color,
+            outline=(255, 255, 255),
+        )
+
+        if inout is not None and i < len(inout):
+            label = f"in-frame {float(inout[i]):.2f}"
+            draw.text((x1 + 2, max(0.0, y1 - 14 * scale)), label, fill=color)
+
+    return img_draw
+
+
 def draw_tile_grid(
     img: Image.Image,
     tile_coords: List[Tuple[int, int, int, int]],
