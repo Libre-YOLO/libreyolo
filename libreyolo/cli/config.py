@@ -56,6 +56,14 @@ def _weight_filename_for_cli(cls, size_code: str) -> str:
     formatter = getattr(cls, "format_weight_filename", None)
     if callable(formatter):
         return formatter(size_code)
+    # Families whose canonical filenames always carry the task suffix
+    # (REQUIRE_TASK_SUFFIX, e.g. LibreSegformerb0-sem.pt) must resolve the
+    # default-task CLI name to the suffixed file, or the auto-download URL
+    # points at a repo that does not exist.
+    if getattr(cls, "REQUIRE_TASK_SUFFIX", False):
+        suffix = task_to_suffix(getattr(cls, "DEFAULT_TASK", "detect"))
+        if suffix:
+            return f"{cls.FILENAME_PREFIX}{size_code}-{suffix}{cls.WEIGHT_EXT}"
     return f"{cls.FILENAME_PREFIX}{size_code}{cls.WEIGHT_EXT}"
 
 
