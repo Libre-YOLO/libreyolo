@@ -492,6 +492,29 @@
     "optional_extra": "vlm",
     "available": true
   },
+  "lingbotvision": {
+    "class": "libreyolo.models.lingbotvision.model.LibreLingBotVision",
+    "tasks": [
+      "semantic"
+    ],
+    "default_task": "semantic",
+    "sizes": {
+      "s": 512,
+      "b": 512,
+      "l": 512,
+      "g": 512
+    },
+    "default_imgsz": {
+      "s": 512,
+      "b": 512,
+      "l": 512,
+      "g": 512
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
   "locateanything": {
     "class": "libreyolo.models.vlm.locateanything.LibreLocateAnything",
     "tasks": [

@@ -34,6 +34,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | kosmos2 | detect |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |
+| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | locateanything | detect |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
@@ -207,6 +208,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `lfm2vl` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
+- `lingbotvision` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `lingbotvision` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
+- `lingbotvision` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `locateanything` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `locateanything` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
