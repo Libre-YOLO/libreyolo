@@ -64,6 +64,16 @@ def test_normalize_matte_task_aliases():
     assert normalize_task("dis") == "matte"
 
 
+def test_normalize_gazetarget_task_aliases():
+    assert normalize_task("gazetarget") == "gazetarget"
+    assert normalize_task("gaze-target") == "gazetarget"
+    assert normalize_task("gaze_target") == "gazetarget"
+    assert normalize_task("gaze-target-estimation") == "gazetarget"
+    assert normalize_task("gazefollow") == "gazetarget"
+    # The direction task must stay distinct from the target task.
+    assert normalize_task("gaze") == "gaze"
+
+
 def test_task_type_literal_is_public():
     assert set(TaskType.__args__) == {
         "detect",
@@ -73,6 +83,7 @@ def test_task_type_literal_is_public():
         "pose",
         "classify",
         "gaze",
+        "gazetarget",
         "obb",
         "point",
         "depth",
@@ -129,7 +140,16 @@ def test_task_suffix_helpers():
     assert task_to_suffix("restore") == "restore"
     assert task_to_suffix("matte") == "matte"
     assert task_to_suffix("semantic") == "sem"
+    assert suffix_to_task("-gazetarget") == "gazetarget"
+    assert task_to_suffix("gazetarget") == "gazetarget"
     assert suffix_to_task("-unknown") is None
+
+
+def test_gaze_and_gazetarget_suffixes_do_not_collide():
+    pattern = task_suffix_pattern(("gaze", "gazetarget"))
+
+    assert "-gazetarget" in pattern
+    assert suffix_to_task("-gaze") != suffix_to_task("-gazetarget")
 
 
 def test_semantic_and_segment_suffixes_do_not_collide():

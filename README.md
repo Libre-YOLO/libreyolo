@@ -107,6 +107,7 @@ Training capabilities are documented per family in
 | omdet_turbo | detect |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |
+| page | gazetarget | ✓ |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |

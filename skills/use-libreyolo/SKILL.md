@@ -144,7 +144,8 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`. Detection — plus
+`gaze`, `gazetarget`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`.
+Detection — plus
 **RF-DETR segmentation** — is the heavily-tested core; other task/family
 combinations vary in maturity, so check the README compatibility table before
 relying on one. Task outputs land on matching `Results` fields
@@ -172,7 +173,10 @@ as the source of truth. By tier:
   and the classic lineage: YOLO1/2/3/4 (inference-only; YOLO1 is the original
   2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
   recipe).
-- **Specialized:** L2CS (gaze), DepthAnything3 (recommended depth quality
+- **Specialized:** L2CS (gaze), PAGE (gazetarget: where each person is
+  looking — `LibreYOLO("LibrePAGEs-gazetarget.pt")`, `r.gazetarget` has
+  per-head target points, in-frame probabilities and 64x64 heatmaps;
+  `head_boxes=[...]` for BYO boxes), DepthAnything3 (recommended depth quality
   default), DepthAnythingV2 and ZipDepth (depth alternatives), FOMO (point),
   NAFNet (restore: deblur/denoise; denoise ships as
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:

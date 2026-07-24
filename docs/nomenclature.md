@@ -54,6 +54,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
+| `page`      | `LibrePAGE`     | All-caps acronym (`PaGE` gaze-target estimation rendered uppercase) — inference-only |
 | `fomo`      | `LibreFOMO`     | All-caps acronym (Faster Objects, More Objects) |
 | `mobilenetv4` | `LibreMobileNetV4` | CamelCase preserved (MobileNet is not an acronym) — first classify-only family |
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
@@ -200,6 +201,7 @@ From `libreyolo/tasks.py`:
 | `pose`        | `-pose` |
 | `classify`    | `-cls` |
 | `gaze`        | `-gaze` |
+| `gazetarget`  | `-gazetarget` |
 | `obb`         | `-obb` |
 | `point`       | `-point` |
 | `depth`       | `-depth` |
@@ -313,6 +315,7 @@ Detector-factory family support follows:
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
+| `page`      | `("gazetarget",)`                   | gazetarget | PaGE gaze-target estimation (dual DINOv3 towers + cross-attention decoder); sizes `s`/`sp`/`b`/`hp` at scene 512; two-stage (head detector or BYO head boxes); inference-only; weights carry the DINOv3 License alongside MIT |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
 | `depth_anything3` | `("depth",)`                  | depth  | Depth Anything 3 mono (ViT-L + DPT); size `l` at upper-bound 504; recommended quality default; Apache-2.0 code/weights; predict + zero-shot `val`; not trainable in LibreYOLO |
@@ -502,6 +505,22 @@ scratch. See `libreyolo/models/fomo/model.py` for details.
 it carries no suffix in the canonical filename; `-gaze` is accepted but
 redundant. L2CS weights are not hosted by LibreYOLO (the Gaze360 dataset
 license forbids redistribution); see `libreyolo/models/l2cs/model.py`.
+
+### Gaze-target (inference-only)
+
+```text
+LibrePAGEs-gazetarget.pt   # PaGE gaze-target (DINOv3 ViT-S towers, 59M)
+LibrePAGEsp-gazetarget.pt  # PaGE gaze-target (DINOv3 ViT-S+ towers, 73M)
+LibrePAGEb-gazetarget.pt   # PaGE gaze-target (DINOv3 ViT-B towers, 0.2B)
+LibrePAGEhp-gazetarget.pt  # PaGE gaze-target (DINOv3 ViT-H+ towers, 1.7B)
+```
+
+`gazetarget` follows the `point`/`depth` convention and carries its suffix
+in the canonical filename. The size code mirrors the DINOv3 tower
+(`sp` = ViT-S+, `hp` = ViT-H+); size codes are matched longest-first when
+parsing filenames. Weights are auto-downloaded from
+`LibreYOLO/LibrePAGE<size>-gazetarget` and bundle `DINOv3_LICENSE.md` (the
+towers are DINOv3 derivatives; see `libreyolo/models/page/NOTICE`).
 
 ### Classification (classifier-only)
 

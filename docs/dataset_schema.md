@@ -407,6 +407,11 @@ Supported image extensions are defined in
 No LibreYOLO training or validation dataset-file contract is implemented for
 `gaze`.
 
+## gazetarget
+
+No LibreYOLO training or validation dataset-file contract is implemented for
+`gazetarget` (the family is inference-only; see ADR 0013).
+
 ## point
 
 `point` is currently a model-output task, not a canonical dataset-label schema.

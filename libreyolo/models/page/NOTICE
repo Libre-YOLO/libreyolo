@@ -1,0 +1,21 @@
+LibrePAGE family — third-party attribution
+
+Ported from PaGE ("PAGE: Towards Practical Human-level Gaze Target
+Estimation", arXiv:2607.04860):
+
+  Upstream:  https://github.com/OctopusWen/PaGE
+             (commit 4352beaddbd8d2942a6b0152f4d83ac7090f5f5c)
+             and the self-contained HF modeling file
+             https://huggingface.co/Octopus1/PaGE
+  License:   MIT (Copyright (c) 2026 Zhoutong Ye / PaGE Authors)
+
+The DINOv3 towers are instantiated from transformers' built-in
+DINOv3ViTModel (Apache-2.0); no DINOv3 model code is bundled here.
+Decoder blocks build on timm layers (Apache-2.0).
+
+Weights notice: the released PaGE checkpoints bundle DINOv3-derivative
+tower weights. Those weights remain governed by Meta's DINOv3 License
+Agreement (commercial use permitted; redistribution must include the
+license text). Every LibreYOLO/LibrePAGE* Hugging Face repo therefore
+ships DINOv3_LICENSE.md alongside the weights, and the weights cannot be
+relicensed as plain MIT.
