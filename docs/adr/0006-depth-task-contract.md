@@ -11,10 +11,10 @@ Single-image metric depth in meters does not transfer cleanly across cameras:
 focal length, sensor size, and scene scale are entangled. A model that emits
 meters for one camera can silently overclaim on another camera.
 
-RF-DETR's DINOv2 backbone is a good fit for dense relative depth because the
-encoder already provides global image context and multi-scale projected
-features. The depth task should still have a family-agnostic public contract so
-other model families can implement it later.
+LibreYOLO supports dedicated monocular-depth families with different encoders
+and decoder heads. The depth task needs a family-agnostic public contract so
+model families can share dataset, result, validation, and export semantics
+without tying them to a detector architecture.
 
 ## Decision
 
@@ -24,9 +24,8 @@ Values are relative inverse depth, where higher values mean closer to the
 camera. No metric unit is implied.
 
 Training targets are plain depth maps in any dataset-consistent unit. Pixels
-with `0`, negative, NaN, or inf values are invalid. The RF-DETR depth head uses
-a scale-and-shift-invariant objective in inverse-depth space with trimmed
-residuals and multi-scale gradient matching.
+with `0`, negative, NaN, or inf values are invalid. Training support and loss
+design are family-specific and are not defined by this contract.
 
 Validation aligns predictions to ground truth with a per-image positive scale
 and shift in inverse-depth space. Non-positive fitted scales fall back to a
