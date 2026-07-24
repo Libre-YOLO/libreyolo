@@ -206,7 +206,7 @@ _add(
 )
 _add(
     "experimental",
-    ("dinov2", "eomt", "pidnet"),
+    ("dinov2", "eomt", "pidnet", "lingbotvision"),
     ("semantic",),
     ("tensorrt", "openvino"),
     reason=(
@@ -569,6 +569,14 @@ _add(
     constraint="fixed 512x512 input",
 )
 _add(
+    "validated",
+    ("lingbotvision",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    since="1.4",
+    constraint="fixed 512x512 input",
+)
+_add(
     "blocked",
     ("fomo",),
     ("point",),
@@ -625,7 +633,7 @@ _add(
 )
 _add(
     "blocked",
-    ("dinov2", "eomt"),
+    ("dinov2", "eomt", "lingbotvision"),
     ("semantic",),
     ("ncnn", "tflite"),
     reason=(
@@ -635,7 +643,7 @@ _add(
 )
 _add(
     "blocked",
-    ("dinov2", "eomt", "pidnet"),
+    ("dinov2", "eomt", "pidnet", "lingbotvision"),
     ("semantic",),
     ("coreml",),
     reason="The CoreML wrapper does not implement the dense semantic-logits contract.",
