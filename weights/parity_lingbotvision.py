@@ -52,6 +52,10 @@ def main() -> None:
         torch.manual_seed(0)
         x = torch.rand(1, 3, args.res, args.res)
         with torch.no_grad():
+            # is_training=True selects the reference's dict return (CLS +
+            # patch tokens) — it is the only way to read patch tokens from its
+            # forward. It does NOT enable the RoPE coordinate augmentations;
+            # those gate on module.training, and the model is in eval mode.
             ref_out = reference(x, is_training=True)
             our_cls, our_patch = ours(x)
 

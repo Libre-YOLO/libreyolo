@@ -210,6 +210,12 @@ class LibreLingBotVision(BaseModel):
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("predictions"))
+            if logits is None:
+                raise RuntimeError(
+                    "LingBot-Vision forward output carries neither "
+                    "'semantic_logits' nor 'predictions'; got keys "
+                    f"{sorted(output)}"
+                )
         orig_w, orig_h = original_size
         return F.interpolate(logits.float(), size=(orig_h, orig_w), mode="bilinear", align_corners=False)
 
