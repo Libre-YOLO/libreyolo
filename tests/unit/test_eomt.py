@@ -209,6 +209,21 @@ class TestEoMTMetadata:
         with pytest.raises(ValueError, match="not supported"):
             LibreEoMT(model_path=None, size="l", task="detect", device="cpu")
 
+    def test_v13_positional_constructor_order(self, fake_eomt_net):
+        """v1.3 called LibreEoMT(model_path, size, nb_classes, device, task).
+
+        New parameters (num_queries) must stay after the complete v1.3
+        signature so old positional calls keep binding device to device.
+        This was a v1.4.0 release blocker — num_queries was inserted before
+        device, so LibreEoMT(None, "l", 150, "cpu") raised on int("cpu").
+        """
+        from libreyolo.models.eomt.model import LibreEoMT
+
+        model = LibreEoMT(None, "l", 150, "cpu", "semantic")
+        assert str(model.device) == "cpu"
+        assert model.nb_classes == 150
+        assert model.num_queries == 100
+
 
 class TestEoMTPredict:
     def test_preprocess_splits_wide_image_like_hf_processor(

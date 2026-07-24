@@ -31,8 +31,10 @@ SOT_TOKEN = "<start_of_text>"
 EOT_TOKEN = "<end_of_text>"
 
 _CLIP_EXTRA_HINT = (
-    "LibreCLIP's text tokenizer needs 'ftfy' and 'regex'. Install them with:\n"
-    '    pip install "libreyolo[clip]"'
+    "The CLIP text tokenizer needs 'ftfy' and 'regex'. Install the extra for "
+    "your model:\n"
+    '    pip install "libreyolo[clip]"       # LibreCLIP\n'
+    '    pip install "libreyolo[openvocab]"  # LibreOVDEIM'
 )
 
 

@@ -152,9 +152,11 @@ class LibreEoMT(BaseModel):
         model_path=None,
         size: str = "l",
         nb_classes: int = 150,
-        num_queries: int = 100,
         device: str = "auto",
         task: str | None = None,
+        # New parameters go after the complete v1.3 signature so positional
+        # calls like LibreEoMT(None, "l", 150, "cpu") keep working.
+        num_queries: int = 100,
         **kwargs,
     ) -> None:
         if size is None:

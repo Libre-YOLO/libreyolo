@@ -84,6 +84,10 @@ openvocab = [
     # is instantiated through transformers' TimmBackbone.
     "transformers>=5.1.0",
     "timm>=1.0.0",
+    # OV-DEIM embeds text prompts with the vendored CLIP BPE tokenizer, which
+    # needs these at predict time (Unicode \p{L}/\p{N} classes + ftfy fixing).
+    "regex>=2023.0.0",
+    "ftfy>=6.0.0",
 ]
 sensenova = [
     # SenseNova-Vision (Bagel-MoT): the vendored architecture loads through
