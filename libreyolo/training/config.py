@@ -1040,6 +1040,48 @@ class SegformerConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class LingBotVisionConfig(TrainConfig):
+    """LingBot-Vision semantic training defaults — the report's linear probe.
+
+    The backbone stays frozen and only the 1x1 dense head trains (AdamW,
+    cosine decay), matching the upstream evaluation protocol that produced the
+    LibreYOLO-hosted weights. Set ``freeze_backbone=False`` for a full
+    fine-tune (expect to lower ``lr0`` accordingly).
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 1e-3
+    weight_decay: float = 1e-4
+    # Freeze the ViT backbone and train the head only (the linear probe).
+    freeze_backbone: bool = True
+
+    scheduler: str = "cosine"
+    warmup_epochs: int = 1
+    warmup_lr_start: float = 1e-6
+    min_lr_ratio: float = 0.0
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+    # NOTE: photometric jitter is deliberately NOT declared here; the live knob
+    # is LibreLingBotVision.semantic_hsv_prob = 0.0 (see SegformerConfig).
+
+    ema: bool = True
+    ema_decay: float = 0.999
+    amp: bool = True
+
+    imgsz: int = 512
+    epochs: int = 20
+    batch: int = 16
+    eval_interval: int = 1
+
+    name: str = "lingbotvision_exp"
+
+
+@dataclass(kw_only=True)
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 
