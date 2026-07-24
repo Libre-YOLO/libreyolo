@@ -1,0 +1,41 @@
+LibreEdgeTAM - third-party attribution
+======================================
+
+LibreEdgeTAM calls the EdgeTAM implementation provided by the Apache-2.0
+Transformers package. LibreYOLO does not vendor the EdgeTAM model source.
+
+    Project:  EdgeTAM
+    Upstream: https://github.com/facebookresearch/EdgeTAM
+    Commit:   7711e012a30a2402c4eaab637bdb00a521302c91
+    License:  Apache License 2.0
+    Copyright (c) Meta Platforms, Inc. and affiliates
+
+The upstream project explicitly grants both its code and model checkpoints
+under Apache-2.0. The official checkpoint used for the LibreYOLO mirror is:
+
+    Repository: facebook/EdgeTAM
+    Revision:   14d7ecc48c656b94e5184519f698cd5386c5a2bf
+    File:       edgetam.pt
+    SHA-256:    ed2d4850b8792c239689b043c47046ec239b6e808a3d9b6ae676c803fd8780df
+
+``libreyolo/models/sam/edgetam.py`` reproduces the image preprocessing from
+``sam2/utils/transforms.py`` at the pinned EdgeTAM commit: square bilinear
+resize to 1024 followed by ImageNet normalization, plus the upstream
+divide-then-multiply prompt-coordinate scaling. It uses Transformers for the
+model implementation and prompt metadata.
+
+The Transformers conversion mapping used by
+``weights/convert_edgetam_weights.py`` is adapted from the Apache-2.0
+Hugging Face Transformers converter at commit
+bd37c453544e83eb875ed3608980a1660376007a. Conversion performs lossless key
+remapping plus tensor splitting/concatenation; learned numeric values are not
+retrained. The produced state dict is checked tensor-by-tensor against
+``yonigozlan/EdgeTAM-hf`` revision
+c266ce53b3fc00f0f495b583f6a116c4e57f53bb before publication.
+
+The mirror copies ``.gitattributes`` and the four JSON configuration/processor
+files from that same hash-pinned ``yonigozlan/EdgeTAM-hf`` revision. Its model
+card declares Apache-2.0. The learned weights are independently converted from
+the official checkpoint and then checked exactly against the reference.
+
+The Apache License 2.0 text is included at ``licenses/Apache-2.0.txt``.

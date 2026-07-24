@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -36,13 +37,37 @@ from ..utils.general import (
 from ..utils.image_loader import ImageLoader
 from ..utils.model_info import build_model_info, format_model_info
 from ..utils.predict_args import normalize_predict_kwargs
-from ..utils.results import Boxes, Keypoints, Masks, OBB, Probs, Results, RestoredImage
+from ..utils.results import (
+    Boxes,
+    DepthMap,
+    Gaze,
+    Keypoints,
+    Matte,
+    Masks,
+    OBB,
+    Points,
+    Probs,
+    Results,
+    RestoredImage,
+    SemanticMask,
+)
 from ..utils.video import collect_video_results, is_video_file, run_video_inference
 
 logger = logging.getLogger(__name__)
 
 ImageSize = Union[int, Tuple[int, int]]
-_RECTANGULAR_BACKEND_FAMILIES = {"yolo9", "yolo9_e2e", "yolo9_p2", "nafnet"}
+_RECTANGULAR_BACKEND_FAMILIES = {
+    "yolo9",
+    "yolo9_e2e",
+    "yolo9_p2",
+    "nafnet",
+    "realesrgan",
+}
+
+# Real-ESRGAN integer upscale factor per size, used by scale-aware restore decode.
+_REALESRGAN_BACKEND_SCALE = {"x4": 4, "x2": 2, "x4t": 4}
+_SWINIR_BACKEND_SCALE = {"s": 4, "m": 4, "l": 4}
+_REALESRGAN_BACKEND_PAD_MULTIPLE = {"x4": 1, "x2": 2, "x4t": 1}
 
 # Families removed from LibreYOLO. An exported artifact whose metadata still names
 # one of these must fail loudly instead of being silently parsed as YOLO9.
@@ -140,9 +165,7 @@ def _read_pose_metadata(meta: dict) -> dict[str, Any]:
         if isinstance(raw_schema, str):
             raw_schema = json.loads(raw_schema)
         if raw_schema is not None:
-            pose_meta["num_keypoints_per_class"] = [
-                int(count) for count in raw_schema
-            ]
+            pose_meta["num_keypoints_per_class"] = [int(count) for count in raw_schema]
     return pose_meta
 
 
@@ -239,9 +262,8 @@ def _rfdetr_num_select(task: str, model_size: Optional[str]) -> int:
 
 def _logsumexp_np(values: np.ndarray, axis: int) -> np.ndarray:
     max_values = np.max(values, axis=axis, keepdims=True)
-    return (
-        np.squeeze(max_values, axis=axis)
-        + np.log(np.sum(np.exp(values - max_values), axis=axis))
+    return np.squeeze(max_values, axis=axis) + np.log(
+        np.sum(np.exp(values - max_values), axis=axis)
     )
 
 
@@ -291,6 +313,9 @@ class BaseBackend(ABC):
         num_keypoints: int | None = None,
         keypoint_dim: int | None = None,
         num_keypoints_per_class: list[int] | None = None,
+        num_bins: int | None = None,
+        bin_width_deg: float | None = None,
+        offset_deg: float | None = None,
     ):
         self.model_path = model_path
         self.nb_classes = nb_classes
@@ -317,10 +342,10 @@ class BaseBackend(ABC):
             default_task=self.DEFAULT_TASK,
             supported_tasks=self.SUPPORTED_TASKS,
         )
-        if self.task == "point":
+        if self.model_family == "yolo9" and self.task == "segment":
             raise NotImplementedError(
-                "Exported point-task inference is not implemented yet. "
-                "Use native PyTorch point models until a backend point parser is added."
+                "YOLO9 segmentation support was removed. Use a supported "
+                "segmentation family instead of loading YOLO9 segment exports."
             )
         self.names = names
         self.FAMILY = model_family or "export"
@@ -348,6 +373,9 @@ class BaseBackend(ABC):
             self.num_keypoints_per_class = [
                 int(count) for count in num_keypoints_per_class
             ]
+        self.num_bins = int(num_bins if num_bins is not None else 90)
+        self.bin_width_deg = float(bin_width_deg if bin_width_deg is not None else 4.0)
+        self.offset_deg = float(offset_deg if offset_deg is not None else -180.0)
         if not hasattr(self, "model"):
             self.model = _BackendEvalProxy()
 
@@ -377,9 +405,28 @@ class BaseBackend(ABC):
             Tuple of (input_tensor, original_img, original_size, ratio).
         """
         if self.task == "restore" or self.model_family == "nafnet":
+            if self.model_family == "realesrgan":
+                return self._preprocess_restore_native(image, color_format)
             return self._preprocess_restore(image, effective_imgsz, color_format)
+        if self.task == "depth":
+            return self._preprocess_depth(image, effective_imgsz, color_format)
+        if self.task == "matte":
+            return self._preprocess_matte(image, effective_imgsz, color_format)
+        if self.task == "gaze":
+            return self._preprocess_gaze(image, effective_imgsz, color_format)
         if self.task == "classify":
             return self._preprocess_classify(image, effective_imgsz, color_format)
+        if self.task == "point" and self.model_family == "fomo":
+            from ..models.fomo.utils import preprocess_image as fomo_preprocess_image
+
+            h, w = _imgsz_hw(effective_imgsz)
+            if h != w:
+                raise NotImplementedError(
+                    "FOMO exported inference requires square imgsz."
+                )
+            return fomo_preprocess_image(image, h, color_format=color_format)
+        if self.task == "semantic":
+            return self._preprocess_semantic(image, effective_imgsz, color_format)
         if self.model_family == "yolox":
             return yolox_preprocess_image(
                 image, input_size=effective_imgsz, color_format=color_format
@@ -438,12 +485,20 @@ class BaseBackend(ABC):
         elif self.model_family in ("yolo2", "yolo3", "yolo4"):
             from ..models.darknet.preprocess import preprocess_image as _dk_pre
 
-            sz = effective_imgsz if isinstance(effective_imgsz, int) else max(effective_imgsz)
+            sz = (
+                effective_imgsz
+                if isinstance(effective_imgsz, int)
+                else max(effective_imgsz)
+            )
             return _dk_pre(image, input_size=sz, color_format=color_format)
         elif self.model_family == "yolo7":
             from ..models.yolo7.utils import preprocess_image as _y7_pre
 
-            sz = effective_imgsz if isinstance(effective_imgsz, int) else max(effective_imgsz)
+            sz = (
+                effective_imgsz
+                if isinstance(effective_imgsz, int)
+                else max(effective_imgsz)
+            )
             return _y7_pre(image, input_size=sz, color_format=color_format)
         else:
             tensor, img, size = preprocess_image(
@@ -476,6 +531,65 @@ class BaseBackend(ABC):
         img_tensor = transform(img).unsqueeze(0)
         return img_tensor, img, original_size, 1.0
 
+    def _preprocess_semantic(self, image, input_size, color_format):
+        """Dense semantic preprocessing for fixed-canvas exported graphs."""
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img.convert("RGB"))
+        if self.model_family == "pidnet":
+            from ..models.pidnet.model import preprocess_numpy
+
+            chw, ratio = preprocess_numpy(arr, (input_h, input_w))
+        else:
+            resized = cv2.resize(
+                arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR
+            )
+            chw = np.ascontiguousarray(
+                resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+            )
+            ratio = 1.0
+        return (
+            torch.from_numpy(chw).unsqueeze(0).float(),
+            original_img,
+            original_size,
+            ratio,
+        )
+
+    @staticmethod
+    def _preprocess_matte(image, input_size, color_format):
+        """BiRefNet fixed-canvas ImageNet-normalized matte preprocessing."""
+        from ..models.birefnet.utils import preprocess_numpy
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "Matte exported-runtime inference requires square imgsz."
+            )
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        chw, ratio = preprocess_numpy(np.asarray(img.convert("RGB")), input_h)
+        return (
+            torch.from_numpy(chw).unsqueeze(0).float(),
+            img.copy(),
+            original_size,
+            ratio,
+        )
+
+    @staticmethod
+    def _preprocess_gaze(image, input_size, color_format):
+        """Preprocess one already-cropped face for the L2CS gaze head."""
+        from ..models.l2cs.utils import preprocess_face_crops
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if (input_h, input_w) != (448, 448):
+            raise ValueError(
+                "L2CS exported inference requires the fixed 448x448 contract."
+            )
+        img = ImageLoader.load(image, color_format=color_format)
+        return preprocess_face_crops([img]), img.copy(), img.size, 1.0
+
     @staticmethod
     def _preprocess_restore(image, input_size, color_format):
         """Restoration preprocessing for fixed-shape exported runtimes.
@@ -505,13 +619,68 @@ class BaseBackend(ABC):
         if pad_h or pad_w:
             mode = (
                 "reflect"
-                if orig_h > 1
-                and orig_w > 1
-                and pad_h < orig_h
-                and pad_w < orig_w
+                if orig_h > 1 and orig_w > 1 and pad_h < orig_h and pad_w < orig_w
                 else "edge"
             )
             arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
+        img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
+        return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_depth(image, input_size, color_format):
+        """Depth preprocessing for fixed-shape exported runtimes.
+
+        Native depth prediction keeps the aspect ratio (short side to the
+        model's native resolution). Exported runtimes use a fixed graph shape,
+        so backend prediction stretch-resizes to the exported canvas and the
+        depth map is resized back to the original canvas after inference
+        (ADR 0006). Padding is deliberately avoided: padded pixels would leak
+        fake depth context into real pixels through the receptive field.
+        """
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.uint8)
+        resized = cv2.resize(arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
+        chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+        img_tensor = torch.from_numpy(np.ascontiguousarray(chw)).unsqueeze(0)
+        return img_tensor, original_img, original_size, 1.0
+
+    @property
+    def restore_scale(self) -> int:
+        """Integer upscale factor for restore backends (1 unless super-resolution)."""
+
+        if self.model_family == "realesrgan":
+            return _REALESRGAN_BACKEND_SCALE.get(str(self.model_size), 1)
+        if self.model_family == "swinir":
+            return _SWINIR_BACKEND_SCALE.get(str(self.model_size), 1)
+        return 1
+
+    def _preprocess_restore_native(self, image, color_format):
+        """Native-resolution restore preprocessing for dynamic Real-ESRGAN graphs.
+
+        Loads RGB [0, 1], reflect-pads bottom/right to the network divisibility
+        factor (2 for the x2 pixel-unshuffle variant, 1 otherwise). The dynamic
+        ONNX graph accepts any spatial size, so no fixed canvas is imposed.
+        """
+
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        multiple = _REALESRGAN_BACKEND_PAD_MULTIPLE.get(str(self.model_size), 1)
+        if multiple > 1:
+            orig_h, orig_w = arr.shape[:2]
+            pad_h = (multiple - orig_h % multiple) % multiple
+            pad_w = (multiple - orig_w % multiple) % multiple
+            if pad_h or pad_w:
+                mode = (
+                    "reflect"
+                    if orig_h > 1 and orig_w > 1 and pad_h < orig_h and pad_w < orig_w
+                    else "edge"
+                )
+                arr = np.pad(arr, ((0, pad_h), (0, pad_w), (0, 0)), mode=mode)
         img_tensor = torch.from_numpy(np.ascontiguousarray(arr.transpose(2, 0, 1)))
         return img_tensor.unsqueeze(0).float(), original_img, original_size, 1.0
 
@@ -714,6 +883,10 @@ class BaseBackend(ABC):
                 max_det=max_det,
             )
         elif self.model_family in ("dfine", "rtdetrv4"):
+            if self.model_family == "dfine" and self.task == "segment":
+                return self._parse_dfine_segment(
+                    all_outputs, orig_w, orig_h, conf, max_det=max_det
+                )
             boxes, scores, cls = self._parse_dfine(
                 all_outputs, orig_w, orig_h, conf, max_det=max_det
             )
@@ -899,9 +1072,11 @@ class BaseBackend(ABC):
         # dropped secondary-class detections, costing ~0.7 mAP vs native.
         valid = scores > conf
         if not valid.any():
-            return (np.empty((0, 4), dtype=boxes_all.dtype),
-                    np.empty((0,), dtype=scores.dtype),
-                    np.empty((0,), dtype=np.int64))
+            return (
+                np.empty((0, 4), dtype=boxes_all.dtype),
+                np.empty((0,), dtype=scores.dtype),
+                np.empty((0,), dtype=np.int64),
+            )
 
         box_indices, class_ids = np.nonzero(valid)
         max_scores = scores[box_indices, class_ids]
@@ -925,10 +1100,18 @@ class BaseBackend(ABC):
                     idx = idx[np.argpartition(max_scores[idx], -nms_pre)[-nms_pre:]]
                 keep.append(idx)
             keep = np.concatenate(keep) if keep else np.empty(0, dtype=np.int64)
-            box_indices, class_ids, max_scores = box_indices[keep], class_ids[keep], max_scores[keep]
+            box_indices, class_ids, max_scores = (
+                box_indices[keep],
+                class_ids[keep],
+                max_scores[keep],
+            )
         elif max_scores.shape[0] > nms_pre:
             top = np.argpartition(max_scores, -nms_pre)[-nms_pre:]
-            box_indices, class_ids, max_scores = box_indices[top], class_ids[top], max_scores[top]
+            box_indices, class_ids, max_scores = (
+                box_indices[top],
+                class_ids[top],
+                max_scores[top],
+            )
 
         boxes = boxes_all[box_indices].copy()
 
@@ -1038,12 +1221,6 @@ class BaseBackend(ABC):
             boxes_input = boxes_input[keep]
             max_scores = max_scores[keep]
             class_ids = class_ids[keep]
-        elif self.task == "segment":
-            max_scores = np.max(scores, axis=1)
-            class_ids = np.argmax(scores, axis=1)
-            mask = max_scores > conf
-            boxes_input = boxes_input_all[mask]
-            max_scores, class_ids = max_scores[mask], class_ids[mask]
         else:
             anchor_idx, class_ids = np.nonzero(scores > conf)
             boxes_input = boxes_input_all[anchor_idx]
@@ -1063,8 +1240,6 @@ class BaseBackend(ABC):
         boxes = boxes_input.copy()
 
         if len(boxes) == 0:
-            if self.task == "segment":
-                return boxes, max_scores, class_ids, None
             if self.task == "pose" and keypoints_all is not None:
                 return boxes, max_scores, class_ids, None, None, keypoints_all[:0]
             return boxes, max_scores, class_ids
@@ -1081,8 +1256,6 @@ class BaseBackend(ABC):
             keypoints[..., 1] = np.clip(keypoints[..., 1], 0, orig_h)
         valid_boxes = (boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1])
         if not valid_boxes.any():
-            if self.task == "segment":
-                return boxes[:0], max_scores[:0], class_ids[:0], None
             if self.task == "pose" and keypoints is not None:
                 return (
                     boxes[:0],
@@ -1103,25 +1276,6 @@ class BaseBackend(ABC):
 
         if self.task == "pose" and keypoints is not None:
             return boxes, max_scores, class_ids, None, None, keypoints
-
-        if self.task == "segment" and len(all_outputs) >= 3:
-            from ..models.yolo9.utils import _process_masks
-
-            proto = torch.from_numpy(all_outputs[1][0]).float()
-            coeffs_np = all_outputs[2][0].T[mask]
-            if not valid_boxes.all():
-                coeffs_np = coeffs_np[valid_boxes]
-            coeffs = torch.from_numpy(coeffs_np).float()
-            boxes_input_t = torch.from_numpy(boxes_input).float()
-            masks_out = _process_masks(
-                proto,
-                coeffs,
-                boxes_input_t,
-                input_shape=(input_h, input_w),
-                original_size=(orig_w, orig_h),
-                letterbox=True,
-            ).numpy()
-            return boxes, max_scores, class_ids, masks_out
 
         return boxes, max_scores, class_ids
 
@@ -1196,16 +1350,28 @@ class BaseBackend(ABC):
     ):
         """Parse YOLO-NAS pose: boxes, scores, keypoint xy, keypoint confidence."""
         boxes = all_outputs[0][0]
-        scores = all_outputs[1][0].squeeze(-1)
+        scores = all_outputs[1][0]
         keypoints_xy = all_outputs[2][0]
         keypoints_conf = all_outputs[3][0]
+
+        # scores: [A, nc]. Single-class pose keeps the historical squeeze;
+        # multi-class pose takes the top-scoring class per anchor.
+        if scores.ndim > 1 and scores.shape[-1] > 1:
+            class_ids_full = scores.argmax(axis=-1).astype(np.int64)
+            scores = scores.max(axis=-1)
+        else:
+            scores = scores.squeeze(-1)
+            class_ids_full = None
 
         mask = scores >= conf
         boxes = boxes[mask].astype(np.float32, copy=True)
         max_scores = scores[mask].astype(np.float32, copy=False)
         keypoints_xy = keypoints_xy[mask].astype(np.float32, copy=True)
         keypoints_conf = keypoints_conf[mask].astype(np.float32, copy=False)
-        class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
+        if class_ids_full is not None:
+            class_ids = class_ids_full[mask]
+        else:
+            class_ids = np.zeros((max_scores.shape[0],), dtype=np.int64)
 
         if len(boxes) == 0:
             keypoints = np.zeros((0, keypoints_xy.shape[-2], 3), dtype=np.float32)
@@ -1287,6 +1453,70 @@ class BaseBackend(ABC):
 
         mask = scores > conf
         return boxes[mask], scores[mask], class_ids[mask].astype(np.int64)
+
+    def _parse_dfine_segment(
+        self, all_outputs, orig_w, orig_h, conf, max_det: int = 300
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+        """Parse D-FINE-seg raw exports into boxes, classes, and masks."""
+        pred_logits = all_outputs[0][0]
+        pred_boxes = all_outputs[1][0]
+        pred_masks = all_outputs[2][0] if len(all_outputs) >= 3 else None
+
+        _, nc = pred_logits.shape
+        prob = 1.0 / (1.0 + np.exp(-pred_logits.astype(np.float64)))
+        prob = prob.astype(np.float32)
+        flat = prob.reshape(-1)
+        k = min(max_det, flat.size)
+        idx = np.argpartition(-flat, k - 1)[:k]
+        idx = idx[np.argsort(-flat[idx])]
+
+        scores = flat[idx]
+        query_idx = idx // nc
+        class_ids = idx % nc
+
+        boxes = self._scale_cxcywh_boxes(
+            pred_boxes[query_idx],
+            orig_w,
+            orig_h,
+            clip=True,
+        )
+        keep = scores > conf
+        boxes = boxes[keep]
+        scores = scores[keep]
+        query_idx = query_idx[keep]
+        class_ids = class_ids[keep]
+
+        masks_out = None
+        if pred_masks is not None and query_idx.size > 0:
+            masks_t = torch.from_numpy(pred_masks[query_idx]).unsqueeze(1).float()
+            in_h, in_w = _imgsz_hw(self.input_size)
+            masks_t = F.interpolate(
+                masks_t,
+                size=(int(in_h), int(in_w)),
+                mode="bilinear",
+                align_corners=False,
+            )
+            masks_t = F.interpolate(
+                masks_t,
+                size=(int(orig_h), int(orig_w)),
+                mode="bilinear",
+                align_corners=False,
+            )[:, 0].clamp_(0, 1)
+            boxes_t = torch.from_numpy(boxes).to(dtype=masks_t.dtype)
+            if boxes_t.numel() > 0:
+                ys = torch.arange(int(orig_h), dtype=masks_t.dtype)[None, :, None]
+                xs = torch.arange(int(orig_w), dtype=masks_t.dtype)[None, None, :]
+                x1, y1, x2, y2 = boxes_t.T
+                inside = (
+                    (xs >= x1[:, None, None])
+                    & (xs < x2[:, None, None])
+                    & (ys >= y1[:, None, None])
+                    & (ys < y2[:, None, None])
+                )
+                masks_t = masks_t * inside.to(dtype=masks_t.dtype)
+            masks_out = (masks_t >= 0.5).numpy()
+
+        return boxes, scores, class_ids.astype(np.int64), masks_out
 
     def _parse_ec_segment(
         self, all_outputs, orig_w, orig_h, conf, max_det=300
@@ -1421,7 +1651,9 @@ class BaseBackend(ABC):
         if raw.ndim == 2:
             schema = getattr(self, "num_keypoints_per_class", None)
             if schema:
-                schema_counts = np.asarray([int(count) for count in schema], dtype=np.int64)
+                schema_counts = np.asarray(
+                    [int(count) for count in schema], dtype=np.int64
+                )
                 if schema_counts.size != num_classes or schema_counts.max() <= 0:
                     raise ValueError(
                         "Invalid RF-DETR GroupPose num_keypoints_per_class metadata "
@@ -1442,7 +1674,9 @@ class BaseBackend(ABC):
                         "RF-DETR flattened keypoint output cannot be reshaped "
                         f"with keypoint_dim={keypoint_dim}: {raw.shape}"
                     )
-                raw = raw.reshape(raw.shape[0], raw.shape[-1] // keypoint_dim, keypoint_dim)
+                raw = raw.reshape(
+                    raw.shape[0], raw.shape[-1] // keypoint_dim, keypoint_dim
+                )
 
         if raw.ndim != 3:
             raise ValueError(f"Unexpected RF-DETR keypoint output shape: {raw.shape}")
@@ -1527,11 +1761,14 @@ class BaseBackend(ABC):
             schema = getattr(self, "num_keypoints_per_class", None)
             keypoint_counts = None
             if schema:
-                schema_counts = np.asarray([int(count) for count in schema], dtype=np.int64)
+                schema_counts = np.asarray(
+                    [int(count) for count in schema], dtype=np.int64
+                )
                 if (
                     schema_counts.size == num_classes
                     and schema_counts.max() > 0
-                    and keypoints_raw.shape[1] == schema_counts.size * int(schema_counts.max())
+                    and keypoints_raw.shape[1]
+                    == schema_counts.size * int(schema_counts.max())
                 ):
                     keypoint_counts = schema_counts
                     max_num_keypoints = int(schema_counts.max())
@@ -1554,7 +1791,9 @@ class BaseBackend(ABC):
             # and keypoint-bearing classes after it. Public pose labels are
             # contiguous over only the keypoint-bearing classes (person -> 0).
             if keypoint_counts is None:
-                keypoint_counts = np.full(num_classes, max_num_keypoints, dtype=np.int64)
+                keypoint_counts = np.full(
+                    num_classes, max_num_keypoints, dtype=np.int64
+                )
                 if self.nb_classes == num_classes - 1:
                     keypoint_counts[0] = 0
             active_counts = keypoint_counts[class_ids]
@@ -1809,8 +2048,14 @@ class BaseBackend(ABC):
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
-    def _parse_restore_output(all_outputs, original_size: Tuple[int, int]) -> np.ndarray:
-        """Decode backend restoration output to HWC uint8 RGB on original size."""
+    def _parse_restore_output(
+        all_outputs, original_size: Tuple[int, int], scale: int = 1
+    ) -> np.ndarray:
+        """Decode backend restoration output to HWC uint8 RGB.
+
+        For super-resolution the valid canvas is ``scale`` times the input, so
+        the output is cropped to ``scale`` x the original size.
+        """
         restored = np.asarray(all_outputs[0])
         if restored.ndim == 4:
             restored = restored[0]
@@ -1822,7 +2067,7 @@ class BaseBackend(ABC):
                 f"or [H, W, 3], got {tuple(restored.shape)}."
             )
         orig_w, orig_h = original_size
-        restored = restored[:orig_h, :orig_w, :]
+        restored = restored[: orig_h * int(scale), : orig_w * int(scale), :]
         return (np.clip(restored, 0.0, 1.0) * 255.0).round().astype(np.uint8)
 
     def _build_classify_result(
@@ -1840,6 +2085,227 @@ class BaseBackend(ABC):
             names=self.names,
         )
 
+    @staticmethod
+    def _parse_depth_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Decode backend depth output to an (H, W) float map on the original canvas."""
+        depth = np.asarray(all_outputs[0], dtype=np.float32)
+        if depth.ndim == 2:
+            depth = depth[None, None]
+        elif depth.ndim == 3:
+            depth = depth[:, None] if depth.shape[0] == 1 else depth[None]
+        if depth.ndim != 4 or depth.shape[1] != 1:
+            raise ValueError(
+                "Depth backend output must have shape [B, 1, H, W], "
+                f"got {tuple(np.asarray(all_outputs[0]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        depth_t = torch.from_numpy(np.ascontiguousarray(depth))
+        # align_corners=True matches the native depth families' postprocess.
+        depth_t = F.interpolate(
+            depth_t, size=(orig_h, orig_w), mode="bilinear", align_corners=True
+        )
+        return depth_t[0, 0]
+
+    def _build_depth_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        depth = self._parse_depth_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            depth_map=DepthMap(depth, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _parse_semantic_output(
+        self,
+        all_outputs,
+        original_size: Tuple[int, int],
+        effective_imgsz: ImageSize,
+        ratio: float,
+    ) -> torch.Tensor:
+        logits = np.asarray(all_outputs[0], dtype=np.float32)
+        if logits.ndim == 3:
+            logits = logits[None]
+        if logits.ndim != 4:
+            raise ValueError(
+                "Semantic backend output must have shape [B, C, H, W], "
+                f"got {tuple(np.asarray(all_outputs[0]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        logits_t = torch.from_numpy(np.ascontiguousarray(logits))
+        align_corners = False
+        if self.model_family == "pidnet":
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            scale_y = logits_t.shape[-2] / input_h
+            scale_x = logits_t.shape[-1] / input_w
+            valid_h = min(
+                logits_t.shape[-2], max(int(round(orig_h * ratio * scale_y)), 1)
+            )
+            valid_w = min(
+                logits_t.shape[-1], max(int(round(orig_w * ratio * scale_x)), 1)
+            )
+            logits_t = logits_t[..., :valid_h, :valid_w]
+            align_corners = True
+        logits_t = F.interpolate(
+            logits_t,
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=align_corners,
+        )
+        return logits_t.argmax(dim=1)[0]
+
+    def _build_semantic_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        effective_imgsz: ImageSize,
+        ratio: float,
+        image_path,
+    ) -> Results:
+        semantic = self._parse_semantic_output(
+            all_outputs, original_size, effective_imgsz, ratio
+        )
+        return Results(
+            boxes=None,
+            semantic_mask=SemanticMask(semantic, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    @staticmethod
+    def _parse_matte_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Decode matte logits to a soft alpha map on the original canvas."""
+        logits = np.asarray(all_outputs[-1], dtype=np.float32)
+        if logits.ndim == 2:
+            logits = logits[None, None]
+        elif logits.ndim == 3:
+            logits = logits[:, None] if logits.shape[0] == 1 else logits[None]
+        if logits.ndim != 4 or logits.shape[1] != 1:
+            raise ValueError(
+                "Matte backend output must have shape [B, 1, H, W], "
+                f"got {tuple(np.asarray(all_outputs[-1]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        matte = torch.sigmoid(torch.from_numpy(np.ascontiguousarray(logits)))
+        matte = F.interpolate(
+            matte,
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+        return matte[0, 0].clamp(0.0, 1.0)
+
+    def _build_matte_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        matte = self._parse_matte_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            matte=Matte(matte, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _build_gaze_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        """Decode L2CS yaw/pitch logits for a single face-crop input."""
+        if len(all_outputs) != 2:
+            raise ValueError(
+                f"Gaze backend requires yaw and pitch logits, got {len(all_outputs)} outputs."
+            )
+        from ..models.l2cs.utils import bin_logits_to_angles
+
+        yaw = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[0], dtype=np.float32))
+        )
+        pitch = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[1], dtype=np.float32))
+        )
+        angles = bin_logits_to_angles(
+            yaw,
+            pitch,
+            num_bins=self.num_bins,
+            bin_width_deg=self.bin_width_deg,
+            offset_deg=self.offset_deg,
+        )
+        orig_h, orig_w = orig_shape
+        boxes = Boxes(
+            torch.tensor([[0.0, 0.0, float(orig_w), float(orig_h)]]),
+            torch.ones(1),
+            torch.zeros(1),
+            orig_shape=orig_shape,
+        )
+        return Results(
+            boxes=boxes,
+            gaze=Gaze(angles, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _build_point_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        effective_imgsz: ImageSize,
+        conf: float,
+        max_det: int,
+        image_path,
+    ) -> Results:
+        if self.model_family != "fomo":
+            raise NotImplementedError(
+                f"Exported point parsing is not implemented for {self.model_family!r}."
+            )
+        from ..models.fomo.utils import postprocess as postprocess_fomo
+
+        heatmap = torch.from_numpy(
+            np.ascontiguousarray(np.asarray(all_outputs[0], dtype=np.float32))
+        )
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if input_h != input_w:
+            raise NotImplementedError("FOMO exported inference requires square imgsz.")
+        decoded = postprocess_fomo(
+            heatmap,
+            conf_thres=conf,
+            input_size=input_h,
+            original_size=original_size,
+            max_det=max_det,
+        )["points"]
+        return Results(
+            boxes=None,
+            points=Points(decoded, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
     def _build_restore_result(
         self,
         all_outputs,
@@ -1848,11 +2314,14 @@ class BaseBackend(ABC):
         original_size: Tuple[int, int],
         image_path,
     ) -> Results:
-        restored = self._parse_restore_output(all_outputs, original_size)
+        scale = self.restore_scale
+        restored = self._parse_restore_output(all_outputs, original_size, scale)
+        restored_hw = (int(restored.shape[0]), int(restored.shape[1]))
         return Results(
             boxes=None,
-            restored=RestoredImage(torch.from_numpy(restored), orig_shape),
+            restored=RestoredImage(torch.from_numpy(restored), restored_hw),
             orig_shape=orig_shape,
+            restore_scale=scale,
             path=str(image_path) if image_path else None,
             names=self.names,
         )
@@ -1895,10 +2364,7 @@ class BaseBackend(ABC):
                 names=self.names,
             )
 
-        if (
-            obb is None
-            and not _is_nms_free_family(self.model_family)
-        ):
+        if obb is None and not _is_nms_free_family(self.model_family):
             # YOLO9 needs class-aware NMS so multi-label detections
             # on a shared anchor (same box, different class) survive, matching
             # the native batched_nms path. Class-agnostic NMS would drop the
@@ -1993,6 +2459,13 @@ class BaseBackend(ABC):
             pass
         elif result.boxes is None and getattr(result, "restored", None) is not None:
             annotated_img = Image.fromarray(result.restored.array, mode="RGB")
+        elif result.boxes is None and getattr(result, "depth_map", None) is not None:
+            from ..utils.drawing import draw_depth_map
+
+            depth_data = result.depth_map.data
+            if isinstance(depth_data, torch.Tensor):
+                depth_data = depth_data.cpu().numpy()
+            annotated_img = draw_depth_map(original_img, depth_data)
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2187,6 +2660,37 @@ class BaseBackend(ABC):
                 orig_w, orig_h = original_size
                 restored = restored[:, :, :orig_h, :orig_w]
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
+        if self.task == "depth":
+            return {"depth": self._parse_depth_output(outputs, original_size)}
+        if self.task == "matte":
+            return {"matte": self._parse_matte_output(outputs, original_size)}
+        if self.task == "gaze":
+            result = self._build_gaze_result(
+                outputs,
+                orig_shape=(int(original_size[1]), int(original_size[0])),
+                image_path=None,
+            )
+            return {"gaze": result.gaze.data}
+        if self.task == "semantic":
+            return {
+                "semantic": self._parse_semantic_output(
+                    outputs,
+                    original_size,
+                    effective_imgsz,
+                    float(ratio or 1.0),
+                )
+            }
+        if self.task == "point":
+            result = self._build_point_result(
+                outputs,
+                orig_shape=(int(original_size[1]), int(original_size[0])),
+                original_size=original_size,
+                effective_imgsz=effective_imgsz,
+                conf=conf_thres,
+                max_det=max_det,
+                image_path=None,
+            )
+            return {"points": result.points.data}
         parsed = self._parse_outputs(
             outputs,
             effective_imgsz,
@@ -2247,13 +2751,16 @@ class BaseBackend(ABC):
     ) -> Dict:
         from ..validation import (
             ClassifyValidator,
+            DepthValidator,
             DetectionValidator,
             OBBValidator,
             PointValidator,
             PoseValidator,
             RestoreValidator,
+            SemanticValidator,
             SegmentationValidator,
             ValidationConfig,
+            MatteValidator,
         )
 
         if augment:
@@ -2302,6 +2809,16 @@ class BaseBackend(ABC):
             validator_cls = OBBValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
+        elif self.task == "semantic":
+            validator_cls = SemanticValidator
+        elif self.task == "depth":
+            validator_cls = DepthValidator
+        elif self.task == "matte":
+            validator_cls = MatteValidator
+        elif self.task == "gaze":
+            raise NotImplementedError(
+                "Exported gaze validation requires a gaze-labelled dataset contract."
+            )
         else:
             validator_cls = DetectionValidator
         validator = validator_cls(model=self, config=config)
@@ -2361,6 +2878,85 @@ class BaseBackend(ABC):
                 all_outputs,
                 orig_shape=orig_shape,
                 original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "depth":
+            result = self._build_depth_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "matte":
+            result = self._build_matte_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "gaze":
+            result = self._build_gaze_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "semantic":
+            result = self._build_semantic_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                effective_imgsz=effective_imgsz,
+                ratio=float(ratio or 1.0),
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "point":
+            result = self._build_point_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                effective_imgsz=effective_imgsz,
+                conf=conf,
+                max_det=max_det,
                 image_path=image_path,
             )
             if save:
@@ -2584,6 +3180,45 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     image_path=image_path,
                 )
+            elif self.task == "depth":
+                result = self._build_depth_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
+            elif self.task == "matte":
+                result = self._build_matte_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
+            elif self.task == "gaze":
+                result = self._build_gaze_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    image_path=image_path,
+                )
+            elif self.task == "semantic":
+                result = self._build_semantic_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    ratio=float(ratio or 1.0),
+                    image_path=image_path,
+                )
+            elif self.task == "point":
+                result = self._build_point_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    conf=conf,
+                    max_det=max_det,
+                    image_path=image_path,
+                )
             else:
                 parsed = self._parse_outputs(
                     per_image,
@@ -2762,6 +3397,45 @@ class BaseBackend(ABC):
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "depth":
+                return self._build_depth_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "matte":
+                return self._build_matte_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "gaze":
+                return self._build_gaze_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    image_path=str(source),
+                )
+            if self.task == "semantic":
+                return self._build_semantic_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    ratio=float(ratio or 1.0),
+                    image_path=str(source),
+                )
+            if self.task == "point":
+                return self._build_point_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    conf=conf,
+                    max_det=max_det,
                     image_path=str(source),
                 )
             parsed = self._parse_outputs(

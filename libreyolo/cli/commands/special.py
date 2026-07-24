@@ -162,38 +162,36 @@ def models_cmd(
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
 ) -> None:
     """List available model families and sizes."""
-    from libreyolo.models.base.model import BaseModel
+    from libreyolo.models.inventory import collect_model_inventory
+    from libreyolo.tasks import task_to_suffix
 
     families = []
-    for cls in BaseModel._registry:
-        family = cls.FAMILY
-        sizes = list(cls.INPUT_SIZES.keys())
-        cli_names = [f"{family}-{s}" for s in sizes]
+    for family, metadata in collect_model_inventory().items():
+        cli_names = []
+        task_sizes = metadata["task_sizes"] or {
+            metadata["default_task"]: metadata["default_imgsz"]
+        }
+        for task, sizes in task_sizes.items():
+            suffix = task_to_suffix(task)
+            for size in sizes:
+                name = f"{family}-{size}" + (f"-{suffix}" if suffix else "")
+                if name not in cli_names:
+                    cli_names.append(name)
+        extra = metadata["optional_extra"]
         families.append(
             {
                 "name": family,
-                "sizes": sizes,
-                "default_imgsz": cls.INPUT_SIZES,
+                "sizes": list(metadata["sizes"]),
+                "default_imgsz": metadata["default_imgsz"],
+                "task_sizes": metadata["task_sizes"],
+                "tasks": metadata["tasks"],
+                "default_task": metadata["default_task"],
                 "cli_names": cli_names,
+                "available": metadata["available"],
+                "optional_extra": extra,
+                "install_hint": f"pip install libreyolo[{extra}]" if extra else None,
             }
         )
-
-    # Check RF-DETR (lazily registered, may not be in _registry yet)
-    rfdetr_present = any(f["name"] == "rfdetr" for f in families)
-    if not rfdetr_present:
-        from libreyolo.models import try_ensure_rfdetr
-
-        rfcls = try_ensure_rfdetr()
-        if rfcls is not None:
-            sizes = list(rfcls.INPUT_SIZES.keys())
-            families.append(
-                {
-                    "name": rfcls.FAMILY,
-                    "sizes": sizes,
-                    "default_imgsz": rfcls.INPUT_SIZES,
-                    "cli_names": [f"{rfcls.FAMILY}-{s}" for s in sizes],
-                }
-            )
 
     out = _get_output(json_output, quiet)
     data = {"families": families}
@@ -202,10 +200,15 @@ def models_cmd(
         lines = ["Available models:", ""]
         for f in families:
             lines.append(f"  {f['name']}:")
+            lines.append(
+                f"    Tasks: {', '.join(f['tasks'])} (default: {f['default_task']})"
+            )
             lines.append(f"    Sizes: {', '.join(f['sizes'])}")
             lines.append(f"    Names: {', '.join(f['cli_names'])}")
             imgsz_str = ", ".join(f"{s}={v}" for s, v in f["default_imgsz"].items())
             lines.append(f"    Input: {imgsz_str}")
+            if not f["available"] and f["install_hint"]:
+                lines.append(f"    Unavailable: install with {f['install_hint']}")
             lines.append("")
         data["_human_text"] = "\n".join(lines)
 
@@ -218,11 +221,18 @@ def models_cmd(
 
 
 def formats_cmd(
+    family: Optional[str] = typer.Option(
+        None, "--family", "--model", help="Show tiers for one model family"
+    ),
+    task: Optional[str] = typer.Option(None, "--task", help="Canonical model task"),
     json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
 ) -> None:
     """List supported export formats."""
     from libreyolo.export.exporter import BaseExporter
+    from libreyolo.export.support import get_support
+    from libreyolo.models.inventory import collect_model_inventory
+    from libreyolo.tasks import normalize_task
 
     # Trigger registration of optional exporters
     try:
@@ -238,6 +248,18 @@ def formats_cmd(
     except ImportError:
         pass
 
+    selected_task = None
+    if family is not None:
+        inventory = collect_model_inventory()
+        family = family.lower()
+        if family not in inventory:
+            raise typer.BadParameter(f"Unknown model family: {family!r}")
+        selected_task = normalize_task(task, default=inventory[family]["default_task"])
+        if selected_task not in inventory[family]["tasks"]:
+            raise typer.BadParameter(
+                f"{family!r} does not support task {selected_task!r}."
+            )
+
     formats = []
     for name, cls in sorted(BaseExporter._registry.items()):
         info: dict = {
@@ -247,12 +269,22 @@ def formats_cmd(
             "fp16": cls.supports_fp16,
             "requires_onnx": cls.requires_onnx,
         }
-        if name == "tensorrt":
-            info["aliases"] = ["engine"]
+        aliases = sorted(
+            alias
+            for alias, target in BaseExporter._aliases.items()
+            if target == name
+        )
+        if aliases:
+            info["aliases"] = aliases
+        if family is not None and selected_task is not None:
+            support = get_support(family, selected_task, name)
+            info["tier"] = support.tier
+            info["reason"] = support.reason
+            info["constraint"] = support.constraint
         formats.append(info)
 
     out = _get_output(json_output, quiet)
-    data = {"formats": formats}
+    data = {"formats": formats, "family": family, "task": selected_task}
 
     if not json_output:
         lines = ["Supported export formats:", ""]
@@ -262,6 +294,8 @@ def formats_cmd(
             lines.append(
                 f"    Extension: {f['extension']}, FP16: {f['fp16']}, INT8: {f['int8']}"
             )
+            if "tier" in f:
+                lines.append(f"    Tier: {f['tier']} ({f['reason']})")
         data["_human_text"] = "\n".join(lines)
 
     out.result(data)
@@ -318,6 +352,14 @@ def info_cmd(
     else:
         data = build_model_info(loaded, detailed=detailed)
     data["model"] = model
+    family = getattr(loaded, "FAMILY", None)
+    task = getattr(loaded, "task", "detect")
+    if family:
+        from libreyolo.export.support import EXPORT_FORMATS, get_support
+
+        data["export_support"] = {
+            fmt: get_support(family, task, fmt).tier for fmt in EXPORT_FORMATS
+        }
 
     if not json_output:
         data["_human_text"] = format_model_info(data)
@@ -363,7 +405,8 @@ def metadata_cmd(
         metadata = {
             key: (
                 {"type": "dict", "keys": len(value)}
-                if key in {"train_model", "ema", "optimizer"} and isinstance(value, dict)
+                if key in {"train_model", "ema", "optimizer"}
+                and isinstance(value, dict)
                 else _metadata_value_for_cli(value)
             )
             for key, value in loaded.items()

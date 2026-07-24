@@ -23,17 +23,18 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `eomt` and
-`pidnet` are semantic-only; the `mobilenetv4` / `convnext` /
+separate category, covered in the note below). Most are detectors; `pidnet` and `segformer` are semantic-only; `eomt` supports semantic,
+instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
 | Family id (`FAMILY`) | Filename prefix | Casing rule applied |
 |---|---|---|
 | `yolox`     | `LibreYOLOX`    | All-caps acronym |
+| `yolo1`     | `LibreYOLO1`    | All-caps acronym + version digit (YOLOv1 / Darknet, public domain; VOC-20, fixed 448) — inference-only |
 | `yolo2`     | `LibreYOLO2`    | All-caps acronym + version digit (YOLOv2 / Darknet, public domain) — inference-only |
 | `yolo3`     | `LibreYOLO3`    | All-caps acronym + version digit (YOLOv3 / Darknet, public domain) — inference-only |
 | `yolo4`     | `LibreYOLO4`    | All-caps acronym + version digit (YOLOv4 / Darknet, public domain) — inference-only |
-| `yolo7`     | `LibreYOLO7`    | All-caps acronym + version digit (YOLOv7 / MIT MultimediaTechLab/YOLO) — inference-only |
+| `yolo7`     | `LibreYOLO7`    | All-caps acronym + version digit (YOLOv7 / MIT MultimediaTechLab/YOLO) |
 | `yolo9`     | `LibreYOLO9`    | All-caps acronym + version digit |
 | `yolo9_e2e` | `LibreYOLO9E2E` | All-caps acronym + version + variant |
 | `yolo9_p2`  | `LibreYOLO9P2`  | All-caps acronym + version + variant (stride-4 small-object) |
@@ -42,10 +43,14 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `deim`      | `LibreDEIM`     | All-caps acronym |
 | `deimv2`    | `LibreDEIMv2`   | All-caps acronym + lowercase version |
 | `rtdetr`    | `LibreRTDETR`   | All-caps acronym (hyphen dropped from `RT-DETR`) |
+| `rtdetrv2`  | `LibreRTDETRv2` | All-caps acronym + lowercase version |
+| `rtdetrv4`  | `LibreRTDETRv4` | All-caps acronym + lowercase version |
+| `rtmdet`    | `LibreRTMDet`   | Upstream brand casing preserved (`RTMDet`) |
 | `rfdetr`    | `LibreRFDETR`   | All-caps acronym (hyphen dropped from `RF-DETR`) |
 | `dinov2`    | `LibreDINOv2`   | All-caps acronym + lowercase version (DINOv2 backbone) |
-| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic-only transformer family |
+| `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
+| `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family; weights are non-commercial |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -55,7 +60,15 @@ separate category, covered in the note below). Most are detectors; `eomt` and
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
 | `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
+| `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot open-vocab classify); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
+| `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
+| `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
+| `depth_anything` | `LibreDepthAnythingV2` | CamelCase preserved + version (Depth Anything V2), depth-only |
+| `depth_anything3` | `LibreDepthAnything3` | CamelCase preserved + version (Depth Anything 3), depth-only |
+| `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
+| `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
+| `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
 
 Casing rules observed in the table:
 
@@ -74,13 +87,15 @@ Casing rules observed in the table:
    task carried in the `-pose` / `-seg` suffix.
 
 For these checkpoint-emitting detector families the casing rule is uniform:
-**every family prefix is all-caps after `Libre`**, with the only mixed-case
-fragment being the lowercase version suffix `DEIMv2`.
+**every family prefix is all-caps after `Libre`**, with the mixed-case
+exceptions being lowercase version suffixes (`DEIMv2`, `RTDETRv2`,
+`RTDETRv4`) and preserved upstream brand casing (`RTMDet`).
 
 The VLM and promptable SAM tiers are separate categories and do not follow this
 rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
 `LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
-`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreMobileSAM`) are not registered
+`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreSAM3`, `LibreMobileSAM`,
+`LibrePicoSAM3`, `LibreEdgeTAM`) are not registered
 into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
 downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand
@@ -89,7 +104,8 @@ casing (CamelCase) is intentionally preserved. See
 [`adr/0007-libresam-contract.md`](adr/0007-libresam-contract.md).
 
 The open-vocabulary detector tier is also separate from the checkpoint factory.
-Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`) identify
+Its weights-directory prefixes (`LibreGroundingDINO`, `LibreOWLv2`,
+`LibreOMDetTurbo`) identify
 downloaded Hugging Face snapshots, not `Libre<FAMILY><size>.pt` checkpoints.
 These models are discriminative text-conditioned detectors with calibrated
 scores; they are not VLMs. Upstream brand casing is intentionally preserved.
@@ -103,6 +119,7 @@ ships:
 | Family | Size codes |
 |---|---|
 | `yolox`     | `n`, `t`, `s`, `m`, `l`, `x` |
+| `yolo1`     | `t` (tiny-yolov1, 448), `b` (yolov1, 448) (both fixed 448; the FC head forbids dynamic shapes) |
 | `yolo2`     | `t` (yolov2-tiny, 416), `b` (yolov2, 608) |
 | `yolo3`     | `t` (yolov3-tiny, 416), `b` (yolov3, 416), `spp` (yolov3-spp, 608) |
 | `yolo4`     | `t` (yolov4-tiny, 416), `b` (yolov4, 608) |
@@ -115,10 +132,14 @@ ships:
 | `deim`      | `n`, `s`, `m`, `l`, `x` |
 | `deimv2`    | per-cfg (see `SIZE_CONFIGS`) |
 | `rtdetr`    | `r18`, `r34`, `r50`, `r50m`, `r101`, `l`, `x` |
+| `rtdetrv2`  | `r18`, `r34`, `r50`, `r50m`, `r101` |
+| `rtdetrv4`  | `s`, `m`, `l`, `x` |
+| `rtmdet`    | `t`, `s`, `m`, `l`, `x` |
 | `rfdetr`    | `n`, `s`, `m`, `l` |
 | `dinov2`    | `n`, `s`, `m`, `l` (projector width; all sizes share the DINOv2-S encoder) |
-| `eomt`      | `l` (EoMT-L, ADE20K semantic checkpoint at 512) |
+| `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
+| `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers; ADE20K at 512, b5 at 640) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -127,7 +148,16 @@ ships:
 | `convnext`  | `t`, `s`, `b` (V1 Tiny/Small/Base) |
 | `efficientnetv2` | `b0`, `b1`, `b2`, `b3` (EfficientNetV2-base scaling tiers) |
 | `resnet`    | `18`, `34`, `50`, `101` (ResNet depth) |
-| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models) |
+| `nafnet`    | `s`, `l` (small width-32 / large width-64 restoration models). Weight variants select the degradation: `LibreNAFNetl-restore.pt` (GoPro deblur) and `LibreNAFNetl-restore-sidd.pt` (SIDD denoise, the model behind the `denoise` alias) |
+| `realesrgan` | `x4`, `x2`, `x4t` (size code encodes scale + tier: `x4` = RealESRGAN_x4plus RRDBNet 4x quality default, `x2` = RealESRGAN_x2plus RRDBNet 2x, `x4t` = realesr-general-x4v3 SRVGG compact 4x fast/video tier) |
+| `swinir`    | `s`, `m`, `l` (all 4x: lightweight SwinIR-S, real-world SwinIR-M, and real-world SwinIR-L) |
+| `depth_anything` | `s`, `b`, `l`, `g` (ViT-S/B/L/G, all at 518) |
+| `depth_anything3` | `l` (DA3MONO-LARGE ViT-L, native upper-bound 504) |
+| `zipdepth`  | `b` (base, GPU/CPU convex upsampling), `bnpu` (base capacity with the separately trained unfold-free upsampling head for NPU/edge compilers); both at short-side 384 |
+| `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
+| `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
+| `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
+| `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
 
 Promptable SAM tier size aliases:
 
@@ -135,7 +165,10 @@ Promptable SAM tier size aliases:
 |---|---|
 | `sam` | `base`, `large`, `huge` |
 | `sam2` | `tiny`, `small`, `base-plus`, `large` |
+| `edgetam` | `edge` (the default and only shipped size; 1024px input) |
+| `sam3` | `large` (the default and only shipped size) |
 | `mobilesam` | `tiny` (the default and only shipped size) |
+| `picosam3` | `pico` (the default and only shipped size; 96px ROI input) |
 
 Open-vocabulary detector snapshot families use their own size codes:
 
@@ -143,6 +176,8 @@ Open-vocabulary detector snapshot families use their own size codes:
 |---|---|
 | `grounding_dino` | `t` (Swin-T), `b` (Swin-B) |
 | `owlv2` | `b16` (base patch-16 ensemble), `l14` (large patch-14 ensemble) |
+| `omdet_turbo` | `t` (Swin-T, the only released checkpoint) |
+| `ov_deim` | `s`, `m`, `l` (ViT-tiny / ViT-tinyplus / DINOv3-S backbones) |
 
 Notes:
 
@@ -161,6 +196,7 @@ From `libreyolo/tasks.py`:
 | `detect`      | *(none — implicit)* |
 | `segment`     | `-seg` |
 | `semantic`    | `-sem` |
+| `panoptic`    | `-panoptic` |
 | `pose`        | `-pose` |
 | `classify`    | `-cls` |
 | `gaze`        | `-gaze` |
@@ -168,6 +204,8 @@ From `libreyolo/tasks.py`:
 | `point`       | `-point` |
 | `depth`       | `-depth` |
 | `restore`     | `-restore` |
+| `matte`       | `-matte` |
+| `ocr`         | `-ocr` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -184,16 +222,49 @@ instance segmentation (per-object masks). Semantic models expose
 `Results.semantic_mask` and use per-pixel validation metrics (mIoU,
 pixel accuracy) instead of box/mask mAP.
 
+`panoptic` is the task for panoptic segmentation: every pixel gets exactly one
+non-overlapping label, unifying `semantic` "stuff" (amorphous regions) with
+`segment` "things" (countable instances). Panoptic models expose
+`Results.panoptic` (a `(H, W)` segment-id map plus `segments_info`) and are
+scored with Panoptic Quality (PQ = SQ x RQ) rather than mIoU or mask mAP. The
+canonical suffix is the full word `-panoptic` (not an abbreviation), so
+`LibreEoMTs-panoptic.pt` is a first-class panoptic checkpoint, not a `segment`
+checkpoint in disguise. Ground truth follows the COCO-panoptic format
+(`PanopticDataset`) and `model.val()` reports PQ / SQ / RQ split into things and
+stuff. The per-family panoptic postprocess is what a model family provides (a
+family without it raises from `_postprocess`); the `eomt` family implements it
+as a Mask2Former-style non-overlapping thing+stuff merge.
+
 `depth` is the task for dense monocular depth estimation. Models expose
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
 
-`restore` is the task for paired image restoration, including deblurring and
-denoising. Models expose `Results.restored`, a uint8 RGB `(H, W, 3)` image on
-the original image canvas. Canonical restore filenames must carry the
-`-restore` suffix; task aliases such as `deblur`, `denoise`, and `restoration`
-resolve to `restore` at the API boundary.
+`restore` is the task for paired image restoration, including deblurring,
+denoising, and super-resolution. Models expose `Results.restored`, a uint8 RGB
+`(H, W, 3)` image. For deblur/denoise the restored canvas equals the input; for
+super-resolution it is `Results.restore_scale` times larger on each axis
+(`restore_scale` is `1` for deblur/denoise and every non-super-resolution
+result). Canonical restore filenames must carry the `-restore` suffix; task
+aliases such as `deblur`, `denoise`, `restoration`, `sr`, `super-resolution`,
+and `upscale` resolve to `restore` at the API boundary.
+
+`matte` is the task for background removal / dichotomous image segmentation.
+Models expose `Results.matte`, a float `(H, W)` soft alpha map in `[0, 1]` on
+the original image canvas (`1` = foreground, `0` = background), plus
+`results.cutout()` (RGBA) and a transparent-PNG `results.save()`. Canonical
+matte filenames must carry the `-matte` suffix; task aliases such as `matting`,
+`background-removal`, `rembg`, and `dis` resolve to `matte` at the API boundary.
+See ADR 0010 for the full contract.
+
+`ocr` is the task for located text: detection quads plus transcripts. Models
+expose `Results.ocr`, a list of text regions each carrying a 4-point `polygon`
+in original-image coordinates, the recognized `text`, and recognition plus
+detection confidences, in reading order (top to bottom, then left to right).
+Detection quads are genuine polygons (rotated text) and do not populate
+`Results.boxes`. Canonical ocr filenames must carry the `-ocr` suffix; task
+aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
+the API boundary.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
@@ -201,31 +272,56 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 
 ## Per-family task support
 
+The promptable SAM tier is separate from the detector checkpoint factory. Its
+families all expose the promptable `segment` task:
+
+| Family | `SUPPORTED_TASKS` | Default | Notes |
+|---|---|---|---|
+| `sam` | `("segment",)` | segment | SAM-1 image prompting |
+| `sam2` | `("segment",)` | segment | SAM-2 image prompting; video deferred |
+| `edgetam` | `("segment",)` | segment | EdgeTAM image prompting; video deferred |
+| `sam3` | `("segment",)` | segment | SAM 3 visual and concept prompting |
+| `mobilesam` | `("segment",)` | segment | MobileSAM image prompting |
+| `picosam3` | `("segment",)` | segment | PicoSAM3 box prompting |
+
+Detector-factory family support follows:
+
 | Family    | `SUPPORTED_TASKS`                   | Default | Notes |
 |---|---|---|---|
 | `yolox`     | `("detect",)` (default)             | detect | detect-only |
+| `yolo1`     | `("detect",)` (default)             | detect | YOLOv1 (Darknet, public domain); Pascal VOC 20 classes, fixed 448; inference-only in LibreYOLO |
 | `yolo2`     | `("detect",)` (default)             | detect | YOLOv2/YOLO9000 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo3`     | `("detect",)` (default)             | detect | YOLOv3 (Darknet, public domain); inference-only in LibreYOLO |
 | `yolo4`     | `("detect",)` (default)             | detect | YOLOv4 (Darknet, public domain); inference-only in LibreYOLO |
-| `yolo7`     | `("detect",)` (default)             | detect | YOLOv7 (MIT MultimediaTechLab/YOLO); inference-only in LibreYOLO |
+| `yolo7`     | `("detect",)` (default)             | detect | YOLOv7 (MIT MultimediaTechLab/YOLO); trainable via SimOTA loss |
 | `yolo9`     | `("detect",)`                       | detect | detect-only (non-detect flagship variants removed in #436) |
 | `yolo9_e2e` | `("detect",)` (default)             | detect | detect-only |
 | `yolo9_p2`  | `("detect",)`                       | detect | detect-only |
-| `dfine`     | `("detect",)` (default)             | detect | detect-only |
+| `dfine`     | `("detect", "segment")`             | detect | segment uses the D-FINE-seg mask head; same sizes as detect; COCO `-seg` weights on HF (detect-to-segment fine-tune needs an explicit transfer flag) |
 | `deim`      | `("detect",)` (default)             | detect | detect-only |
 | `deimv2`    | `("detect",)` (default)             | detect | detect-only |
 | `rtdetr`    | `("detect",)` (default)             | detect | detect-only |
+| `rtdetrv2`  | `("detect",)` (default)             | detect | detect-only |
+| `rtdetrv4`  | `("detect",)` (default)             | detect | detect-only |
+| `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
 | `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
-| `eomt`      | `("semantic",)`                     | semantic | EoMT-L DINOv2 backbone, ADE20K 150-class semantic checkpoint at 512; DINOv3 variants are excluded |
+| `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
+| `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
 | `fomo`      | `("point",)`                        | point  | point-only localizer model |
 | `depth_anything` | `("depth",)`                   | depth  | Depth Anything V2 (DINOv2 + DPT); sizes `s`/`b`/`l`/`g` all at 518; predict + zero-shot `val`; not trainable in LibreYOLO |
-| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1 |
+| `depth_anything3` | `("depth",)`                  | depth  | Depth Anything 3 mono (ViT-L + DPT); size `l` at upper-bound 504; recommended quality default; Apache-2.0 code/weights; predict + zero-shot `val`; not trainable in LibreYOLO |
+| `zipdepth`  | `("depth",)`                        | depth  | ZipDepth lightweight CNN (RepVGG encoder + FPN decoder, DA2-L distilled); sizes `b`/`bnpu` at short-side 384; predict + zero-shot `val` + fixed-resolution ONNX/TorchScript export; MIT code and weights; not trainable in LibreYOLO |
+| `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
+| `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
+| `ppocr`     | `("ocr",)`                          | ocr    | PP-OCRv5 two-stage text detection + recognition (zh/zh-TW/en/ja/pinyin, one dictionary); sizes `t` (mobile)/`l` (server); one composite checkpoint bundles det.* and rec.* plus the charset; predict + `val` (hmean / e2e F1 / 1-NED); inference-only; export unsupported (two-network pipeline) |
+| `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
+| `swinir`    | `("restore",)`                     | restore | SwinIR transformer super-resolution; sizes `s`/`m`/`l`, all 4x; native predict at original resolution with window padding; optional tiled inference; inference + PSNR/SSIM `val` only (no training); fixed-resolution ONNX |
 | `mobilenetv4` | `("classify",)`                | classify | MobileNetV4-conv image classifier; s/m/l at 224/224/256; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
@@ -234,6 +330,14 @@ only when it appears in that family's `SUPPORTED_TASKS`.
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
 LibreFOMO uses `SUPPORTED_TASKS = ("point",)`. No pretrained weights are auto-downloadable for this family; see `libreyolo/models/fomo/model.py`. Other point-localization families must opt into `SUPPORTED_TASKS = ("point",)` or an equivalent multi-task tuple.
+
+`segformer` weights are auto-downloadable but **non-commercial**. All six sizes
+are converted from NVIDIA's ADE20K checkpoints, whose license permits
+redistribution (with the license attached) but restricts use to research or
+evaluation only. LibreYOLO hosts them and prints that restriction before each
+download, exactly as it does for the VisDrone research-preview weights. They are
+not covered by LibreYOLO's permissive license; train from scratch for
+unrestricted use. See `libreyolo/models/segformer/NOTICE`.
 
 ## Examples by family + task
 
@@ -263,6 +367,10 @@ LibreYOLONASs-pose.pt
 LibreYOLONASm-pose.pt
 LibreYOLONASl-pose.pt
 
+# dfine - detect + segment
+LibreDFINEn.pt            # detect (default)
+LibreDFINEn-seg.pt        # segment
+
 # rfdetr - detect + segment + pose + obb
 LibreRFDETRn.pt            # detect
 LibreRFDETRn-seg.pt        # segment
@@ -273,13 +381,32 @@ LibreRFDETRn-obb.pt        # obb
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
 
-# eomt - EoMT-L semantic segmentation on ADE20K only
-LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone
+# eomt - semantic (ADE20K), instance segmentation (COCO), and panoptic (COCO things+stuff)
+LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone, 512px
+LibreEoMTl-seg.pt          # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 640px
+LibreEoMTl-seg-1280.pt     # EoMT-L, COCO 80-class instance segment, DINOv2 backbone, 1280px
+LibreEoMTs-panoptic.pt     # EoMT-S, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+LibreEoMTb-panoptic.pt     # EoMT-B, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+LibreEoMTl-panoptic.pt     # EoMT-L, COCO 133-class panoptic (80 things + 53 stuff), DINOv2 backbone, 640px
+# NOTE: "-panoptic" is a first-class task suffix (see the task table above), so
+# these load with task="panoptic" and nc=133 (things 0-79, stuff 80-132).
+# Upstream ships no COCO *instance* checkpoint at s/b; those sizes are panoptic
+# only. Slicing a panoptic head down to the 80 things would discard the 53
+# stuff classes, so LibreYOLO does not publish LibreEoMT{s,b}-seg.
 
 # pidnet - real-time semantic segmentation
 LibrePIDNets-sem.pt        # PIDNet-S, Cityscapes 19-class semantic
 LibrePIDNetm-sem.pt        # PIDNet-M, Cityscapes 19-class semantic
 LibrePIDNetl-sem.pt        # PIDNet-L, Cityscapes 19-class semantic
+
+# segformer — MiT-b0..b5 ADE20K semantic segmentation; weights are
+# NON-COMMERCIAL (see the note above)
+LibreSegformerb0-sem.pt
+LibreSegformerb1-sem.pt
+LibreSegformerb2-sem.pt
+LibreSegformerb3-sem.pt
+LibreSegformerb4-sem.pt
+LibreSegformerb5-sem.pt
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)
@@ -292,9 +419,29 @@ LibreDepthAnythingV2b-depth.pt   # ViT-B (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2l-depth.pt   # ViT-L (CC-BY-NC-4.0 weights)
 LibreDepthAnythingV2g-depth.pt   # ViT-G (CC-BY-NC-4.0 weights)
 
+# depth_anything3 — Depth Anything 3 mono (recommended depth quality default)
+LibreDepthAnything3l-depth.pt    # DA3MONO-LARGE ViT-L (Apache-2.0 weights)
+
+# zipdepth — ZipDepth lightweight CNN (depth-only, MIT weights)
+LibreZipDepthb-depth.pt          # base, convex upsampling (GPU/CPU default)
+LibreZipDepthbnpu-depth.pt       # base, unfold-free upsampling (NPU/edge export)
+
 # nafnet — NAFNet restoration (restore-only)
 LibreNAFNets-restore.pt
 LibreNAFNetl-restore.pt
+
+# swinir: SwinIR super-resolution (restore-only, all 4x)
+LibreSwinIRs-restore.pt
+LibreSwinIRm-restore.pt
+LibreSwinIRl-restore.pt
+
+# birefnet — BiRefNet background removal (matte-only)
+LibreBiRefNett-matte.pt          # BiRefNet_lite (Swin-T tier)
+LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
+
+# ppocr — PP-OCRv5 text detection + recognition (ocr-only)
+LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights
+LibrePPOCRl-ocr.pt               # server det + server rec (quality tier), Apache-2.0 weights
 ```
 
 ### Zero-shot / open-vocabulary classify (inference-only)
@@ -305,6 +452,12 @@ LibreNAFNetl-restore.pt
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
 LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
+
+# siglip2: SigLIP 2 zero-shot, open-vocabulary (set_classes); multilingual
+# SentencePiece tokenizer, sigmoid-native scoring with a multi_label option.
+# Size codes bake the native resolution in, like clip's b32/b16/l14.
+LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
+LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 ```
 
 ### Open-vocabulary detection (inference-only snapshot tier)
@@ -317,6 +470,14 @@ weights/LibreGroundingDINOb/
 # owlv2 - Hugging Face snapshot, no .pt checkpoint filename
 weights/LibreOWLv2b16/
 weights/LibreOWLv2l14/
+
+# omdet_turbo - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOMDetTurbot/
+
+# ov_deim - Hugging Face snapshot, no .pt checkpoint filename
+weights/LibreOVDEIMs/
+weights/LibreOVDEIMm/
+weights/LibreOVDEIMl/
 ```
 
 ### Gaze (inference-only)

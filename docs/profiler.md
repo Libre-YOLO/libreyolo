@@ -20,8 +20,16 @@ model.train(data="coco1000", profile=True)
 ```
 
 `profile=True` profiles a short window of real training steps (a few warmup
-steps, then a measured window), prints a report, writes its artifacts, and
-**stops early** — so a profile run takes seconds, not a full training.
+steps, then a measured window), prints a report, writes its artifacts, and then
+**keeps training**: the hooks are dropped once the window closes, so the rest
+of the run pays nothing. It is safe to combine with a real (or resumed)
+training run.
+
+To profile *without* training to the end, pass `profile_then_stop=True`: the
+run stops right after the window, so it takes seconds instead of a full
+training. This is what `libreyolo profile run` uses. A stopped run is
+benchmark-only: the partial epoch is neither validated nor checkpointed, and
+the log says so instead of reporting a completed training.
 
 It is **zero overhead when off** (the default); the hot loop's hooks short
 -circuit to a no-op. Profiling is ignored under distributed (DDP) training.
@@ -62,7 +70,8 @@ step time — not wall-clock hand-waving.
 
 | key | default | meaning |
 |---|---|---|
-| `profile` | `False` | enable the profiler |
+| `profile` | `False` | enable the profiler (training continues after the window) |
+| `profile_then_stop` | `False` | stop the run right after the profile window (benchmark mode; no checkpoint for the partial epoch) |
 | `profile_warmup` | `5` | leading steps discarded |
 | `profile_steps` | `20` | measured steps |
 | `profile_trace` | `True` | emit the Chrome trace + timeline |

@@ -33,6 +33,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Type
 
+import logging
+
 import torch
 from torch.amp import autocast
 from tqdm import tqdm
@@ -51,13 +53,23 @@ from ...training.trainer import BaseTrainer
 from .loss import DFINECriterion
 from .matcher import HungarianMatcher
 from .transforms import (
+    DFINESegPassThroughDataset,
+    DFINESegTransform,
     DFINEMultiScaleCollate,
     DFINEPassThroughDataset,
     DFINETrainTransform,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class DFINETrainer(BaseTrainer):
+    # D-FINE pairs a CNN (HGNetv2) backbone with a transformer encoder/decoder
+    # whose projections are nn.Linear layers. lora=True freezes the backbone
+    # and the transformer base weights and trains LoRA adapters on the
+    # transformer Linears (see libreyolo/training/lora.py).
+    supports_lora = True
+
     @classmethod
     def _config_class(cls) -> Type[TrainConfig]:
         return DFINEConfig
@@ -68,7 +80,29 @@ class DFINETrainer(BaseTrainer):
     def get_model_tag(self) -> str:
         return f"DFINE-{self.config.size}"
 
+    def preserve_freeze_param(self, name: str, param: torch.nn.Parameter) -> bool:
+        if not getattr(self.config, "lora", False):
+            return False
+        from ...training.lora import is_lora_parameter_name
+
+        return is_lora_parameter_name(name)
+
+    def _is_segment(self) -> bool:
+        return (
+            getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            == "segment"
+        )
+
     def create_transforms(self):
+        if self._is_segment():
+            preproc = DFINESegTransform(
+                max_labels=120,
+                flip_prob=self.config.flip_prob,
+                imgsz=self.config.imgsz,
+                crop_resize_prob=getattr(self.config, "crop_resize_prob", 0.0),
+            )
+            return preproc, DFINESegPassThroughDataset
+
         preproc = DFINETrainTransform(
             max_labels=120,
             flip_prob=self.config.flip_prob,
@@ -104,6 +138,8 @@ class DFINETrainer(BaseTrainer):
             "giou": _sum_with_prefix("loss_giou"),
             "fgl": _sum_with_prefix("loss_fgl"),
             "ddf": _sum_with_prefix("loss_ddf"),
+            "mask_bce": _sum_with_prefix("loss_mask_bce"),
+            "mask_dice": _sum_with_prefix("loss_mask_dice"),
         }
 
     def _setup_device(self) -> torch.device:
@@ -132,22 +168,54 @@ class DFINETrainer(BaseTrainer):
         self._sync_wrapped_model_num_classes(num_classes)
 
     def on_setup(self):
+        if getattr(self.config, "lora", False):
+            if self._is_segment():
+                # The mask head path is untested with adapters; silently
+                # training it fully while config says LoRA would misrepresent
+                # the run.
+                raise ValueError(
+                    "D-FINE segment training does not support lora=True yet. "
+                    "Use freeze='backbone' for parameter-efficient segment "
+                    "fine-tuning."
+                )
+            from ...training.lora import apply_lora_to_detr
+
+            apply_lora_to_detr(self.model)
+
+        matcher_weights = {"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0}
+        loss_weights = {
+            "loss_vfl": 1.0,
+            "loss_bbox": 5.0,
+            "loss_giou": 2.0,
+            "loss_fgl": 0.15,
+            "loss_ddf": 1.5,
+        }
+        losses = ["vfl", "boxes", "local"]
+        if self._is_segment():
+            matcher_weights.update(
+                {
+                    "cost_mask": self.config.mask_match_cost,
+                    "cost_mask_dice": self.config.mask_dice_match_cost,
+                }
+            )
+            loss_weights.update(
+                {
+                    "loss_mask_bce": self.config.mask_bce_loss_weight,
+                    "loss_mask_dice": self.config.mask_dice_loss_weight,
+                }
+            )
+            losses.append("masks")
+
         matcher = HungarianMatcher(
-            weight_dict={"cost_class": 2.0, "cost_bbox": 5.0, "cost_giou": 2.0},
+            weight_dict=matcher_weights,
             use_focal_loss=True,
             alpha=0.25,
             gamma=2.0,
         )
         self.criterion = DFINECriterion(
             matcher=matcher,
-            weight_dict={
-                "loss_vfl": 1.0,
-                "loss_bbox": 5.0,
-                "loss_giou": 2.0,
-                "loss_fgl": 0.15,
-                "loss_ddf": 1.5,
-            },
-            losses=["vfl", "boxes", "local"],
+            weight_dict=loss_weights,
+            losses=losses,
             alpha=0.75,
             gamma=2.0,
             num_classes=self.config.num_classes,
@@ -240,6 +308,11 @@ class DFINETrainer(BaseTrainer):
         # ``config.imgsz`` here.
         H, W = imgs.shape[-2], imgs.shape[-1]
         scale = torch.tensor([W, H, W, H], device=targets.device, dtype=targets.dtype)
+        masks_batch = (
+            polygons.to(self.device, non_blocking=True)
+            if isinstance(polygons, torch.Tensor)
+            else None
+        )
 
         target_list = []
         for b in range(B):
@@ -256,13 +329,22 @@ class DFINETrainer(BaseTrainer):
                         ),
                     }
                 )
+                if masks_batch is not None:
+                    mh, mw = masks_batch.shape[-2], masks_batch.shape[-1]
+                    target_list[-1]["masks"] = torch.zeros(
+                        0, mh, mw, dtype=torch.bool, device=self.device
+                    )
             else:
-                target_list.append(
-                    {
-                        "labels": t_valid[:, 0].long(),
-                        "boxes": (t_valid[:, 1:] / scale).clamp(0.0, 1.0),
-                    }
-                )
+                entry = {
+                    "labels": t_valid[:, 0].long(),
+                    "boxes": (t_valid[:, 1:] / scale).clamp(0.0, 1.0),
+                }
+                if masks_batch is not None:
+                    entry["masks"] = masks_batch[b][valid[: masks_batch.shape[1]]].to(
+                        device=self.device,
+                        dtype=torch.bool,
+                    )
+                target_list.append(entry)
 
         outputs = self.model(imgs, targets=target_list)
         losses = self.criterion(outputs, target_list)
@@ -290,6 +372,7 @@ class DFINETrainer(BaseTrainer):
 
         img_size = self.input_size
         preproc, MosaicDatasetClass = self.create_transforms()
+        load_segments = self._is_segment()
 
         if self.config.data:
             data_cfg = load_data_config(self.config.data)
@@ -310,6 +393,7 @@ class DFINETrainer(BaseTrainer):
                     preproc=preproc,
                     num_classes=int(self.num_classes),
                     names=data_cfg.get("names"),
+                    load_segments=load_segments,
                 )
             elif img_files:
                 train_dataset = YOLODataset(
@@ -317,6 +401,7 @@ class DFINETrainer(BaseTrainer):
                     label_files=label_files,
                     img_size=img_size,
                     preproc=preproc,
+                    load_segments=load_segments,
                 )
             elif ann_file.exists():
                 train_dataset = COCODataset(
@@ -327,6 +412,7 @@ class DFINETrainer(BaseTrainer):
                     preproc=preproc,
                     num_classes=int(self.num_classes),
                     names=data_cfg.get("names"),
+                    load_segments=load_segments,
                 )
             else:
                 train_path = data_cfg.get("train", "images/train")
@@ -342,6 +428,7 @@ class DFINETrainer(BaseTrainer):
                     label_files=label_files,
                     img_size=img_size,
                     preproc=preproc,
+                    load_segments=load_segments,
                 )
         elif self.config.data_dir:
             data_dir = self.config.data_dir
@@ -354,6 +441,7 @@ class DFINETrainer(BaseTrainer):
                     img_size=img_size,
                     preproc=preproc,
                     num_classes=int(self.num_classes),
+                    load_segments=load_segments,
                 )
             else:
                 train_dataset = YOLODataset(
@@ -361,6 +449,7 @@ class DFINETrainer(BaseTrainer):
                     split="train",
                     img_size=img_size,
                     preproc=preproc,
+                    load_segments=load_segments,
                 )
         else:
             raise ValueError("Either 'data' or 'data_dir' must be specified")
@@ -383,16 +472,20 @@ class DFINETrainer(BaseTrainer):
         )
 
         # Wire stop_epoch on the dataset wrapper so set_epoch can disable
-        # strong augs at the right moment.
-        stop_epoch = int(
-            self.config.epochs
-            * float(getattr(self.config, "aug_stop_epoch_ratio", 1.0))
+        # strong augs at the right moment (never later than the start of the
+        # no-aug LR tail; see resolve_aug_stop_epoch).
+        from ...data.augment.detr import resolve_aug_stop_epoch
+
+        stop_epoch = resolve_aug_stop_epoch(
+            self.config.epochs,
+            getattr(self.config, "aug_stop_epoch_ratio", 1.0),
+            getattr(self.config, "no_aug_epochs", 0),
         )
         if hasattr(train_dataset, "set_stop_epoch"):
             train_dataset.set_stop_epoch(stop_epoch)
 
         # Multi-scale collate (or default yolox_collate_fn).
-        if getattr(self.config, "multi_scale", False):
+        if getattr(self.config, "multi_scale", False) and not load_segments:
             collate_fn = DFINEMultiScaleCollate(
                 base_size=self.config.imgsz,
                 base_size_repeat=3,
@@ -401,16 +494,45 @@ class DFINETrainer(BaseTrainer):
         else:
             from ...data.dataset import yolox_collate_fn
 
+            if getattr(self.config, "multi_scale", False) and load_segments:
+                logger.info(
+                    "D-FINE multi-scale training is not supported with "
+                    "task='segment'; training at fixed %dpx.",
+                    self.config.imgsz,
+                )
             collate_fn = yolox_collate_fn
 
+        # ``batch`` is the global batch under DDP. Each rank's loader is built
+        # with ``batch // world_size`` over a DistributedSampler shard.
+        per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+        train_sampler = None
+        if self.is_distributed:
+            from torch.utils.data.distributed import DistributedSampler
+
+            train_sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                drop_last=len(train_dataset) >= self.world_size,
+            )
+
+        # Under DDP each rank only sees ``len(sampler)`` samples, so base the
+        # drop_last decision on the per-rank visible count. Otherwise a small
+        # dataset split across ranks could drop every rank's only partial
+        # batch and leave zero iterations.
+        visible_samples = (
+            len(train_sampler) if train_sampler is not None else len(train_dataset)
+        )
         self.train_loader = DataLoader(
             train_dataset,
-            batch_size=self.config.batch,
+            batch_size=per_rank_batch,
             num_workers=self.config.workers,
-            shuffle=True,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             pin_memory=True,
             collate_fn=collate_fn,
-            drop_last=True,
+            drop_last=visible_samples >= per_rank_batch,
         )
 
         return train_dataset
@@ -436,6 +558,11 @@ class DFINETrainer(BaseTrainer):
             return self._train_epoch_accum(epoch)
 
         # 1. Epoch propagation.
+        # DistributedSampler needs its epoch set so shuffling differs per
+        # epoch while staying deterministic for resume.
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)
@@ -538,6 +665,11 @@ class DFINETrainer(BaseTrainer):
         the optimizer step, clipping, EMA and LR update fire once per window.
         """
         # 1. Epoch propagation.
+        # DistributedSampler needs its epoch set so shuffling differs per
+        # epoch while staying deterministic for resume.
+        sampler = getattr(self.train_loader, "sampler", None)
+        if hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         ds = self.train_loader.dataset
         if hasattr(ds, "set_epoch"):
             ds.set_epoch(epoch)

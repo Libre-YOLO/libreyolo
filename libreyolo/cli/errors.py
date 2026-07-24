@@ -35,6 +35,9 @@ EXIT_CODES: dict[str, int] = {
     "export_dep_missing": 5,
     "format_precision_unsupported": 5,
     "nms_unsupported_format": 5,
+    # Quantization errors
+    "quantize_failed": 5,
+    "save_failed": 5,
 }
 
 

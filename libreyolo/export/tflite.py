@@ -1,4 +1,9 @@
-"""TensorFlow Lite export implementation via onnx2tf."""
+"""TensorFlow Lite (LiteRT) export implementation via onnx2tf.
+
+LiteRT is Google's current name for TensorFlow Lite. The output is a standard
+``.tflite`` FlatBuffer that runs on LiteRT's Interpreter and CompiledModel
+APIs (``pip install ai-edge-litert`` on the target device).
+"""
 
 from __future__ import annotations
 
@@ -14,23 +19,15 @@ from typing import Any, Generator, Iterable
 
 import numpy as np
 
+from .support import get_support, iter_entries
+
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_EXPORTS = {
-    ("yolo9", "detect"): "YOLO9 detect",
-    ("rfdetr", "detect"): "RF-DETR detect",
-    ("rfdetr", "segment"): "RF-DETR segmentation",
-    ("rfdetr", "pose"): "RF-DETR pose",
-    # Darknet families + YOLOv7 bake the decode into the export graph, so they
-    # go through the same generic onnx2tf path as YOLO9 detect. Verified
-    # end-to-end on yolo3 (native-vs-tflite max_abs_diff ~3e-4); v2/v4/v7 use
-    # the identical wrapper->ONNX->TFLite pipeline.
-    ("yolo2", "detect"): "YOLOv2 detect",
-    ("yolo3", "detect"): "YOLOv3 detect",
-    ("yolo4", "detect"): "YOLOv4 detect",
-    ("yolo7", "detect"): "YOLOv7 detect",
+    (family, task): f"{family} {task}"
+    for (family, task, fmt), entry in iter_entries()
+    if fmt == "tflite" and entry.tier != "blocked"
 }
-_UNSUPPORTED_FAMILY_REASONS: dict[str, str] = {}
 
 
 def supported_tflite_exports() -> tuple[tuple[str, str], ...]:
@@ -45,17 +42,14 @@ def ensure_tflite_family_supported(
     """Raise a targeted error when a family/task has not been validated."""
     family = (model_family or "").lower()
     task = (task or "detect").lower()
-    if (family, task) in _SUPPORTED_EXPORTS:
+    entry = get_support(family, task, "tflite")
+    if entry.tier != "blocked":
         return
 
     supported = ", ".join(_SUPPORTED_EXPORTS.values())
-    reason = _UNSUPPORTED_FAMILY_REASONS.get(
-        family,
-        "This family/task has not been validated through the ONNX-to-TFLite path yet.",
-    )
     raise NotImplementedError(
         f"TFLite export currently supports: {supported}. "
-        f"Got model family {model_family!r}, task {task!r}. {reason}"
+        f"Got model family {model_family!r}, task {task!r}. {entry.reason}"
     )
 
 
@@ -100,7 +94,7 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     import onnx as _onnx
     import onnx_graphsurgeon as gs
 
-    im = node.inputs[0]    # [N, C, H, W]
+    im = node.inputs[0]  # [N, C, H, W]
     grid = node.inputs[1]  # [N, H_out, W_out, 2]
     out = node.outputs[0]  # [N, C, H_out, W_out]
 
@@ -116,9 +110,13 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
         )
 
     if im.shape is None or len(im.shape) != 4:
-        raise ValueError(f"GridSample TFLite patch requires rank-4 im; got im.shape={im.shape}")
+        raise ValueError(
+            f"GridSample TFLite patch requires rank-4 im; got im.shape={im.shape}"
+        )
     if grid.shape is None or len(grid.shape) != 4:
-        raise ValueError(f"GridSample TFLite patch requires rank-4 grid; got grid.shape={grid.shape}")
+        raise ValueError(
+            f"GridSample TFLite patch requires rank-4 grid; got grid.shape={grid.shape}"
+        )
 
     pfx = f"_gsrepl{index}"
     uid: list[int] = [0]
@@ -133,7 +131,9 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 
     nodes: list[Any] = []
 
-    def op(kind: str, ins: list[Any], outs: list[Any], attrs: dict[str, Any] | None = None) -> None:
+    def op(
+        kind: str, ins: list[Any], outs: list[Any], attrs: dict[str, Any] | None = None
+    ) -> None:
         nodes.append(gs.Node(op=kind, inputs=ins, outputs=outs, attrs=attrs or {}))
 
     i64 = int(_onnx.TensorProto.INT64)
@@ -160,7 +160,12 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 
     def gather_dim(shape_t: Any, axis_idx: int, name: str) -> Any:
         result = v(name, dtype=_np.int64)
-        op("Gather", [shape_t, c(_np.int64(axis_idx), _np.int64, f"i{axis_idx}_{name}")], [result], {"axis": 0})
+        op(
+            "Gather",
+            [shape_t, c(_np.int64(axis_idx), _np.int64, f"i{axis_idx}_{name}")],
+            [result],
+            {"axis": 0},
+        )
         return result
 
     N_t = gather_dim(im_shape_t, 0, "N")  # noqa: N806
@@ -228,12 +233,20 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
 
     # Step 2: Extract gx, gy from grid last dim
     gx_raw = v("gx_raw")
-    op("Slice", [grid, c([0], _np.int64, "s0_gx"), c([1], _np.int64, "e1_gx"), ax3_1d], [gx_raw])
+    op(
+        "Slice",
+        [grid, c([0], _np.int64, "s0_gx"), c([1], _np.int64, "e1_gx"), ax3_1d],
+        [gx_raw],
+    )
     gx = v("gx")
     op("Squeeze", [gx_raw, ax3_1d], [gx])
 
     gy_raw = v("gy_raw")
-    op("Slice", [grid, c([1], _np.int64, "s1_gy"), c([2], _np.int64, "e2_gy"), ax3_1d], [gy_raw])
+    op(
+        "Slice",
+        [grid, c([1], _np.int64, "s1_gy"), c([2], _np.int64, "e2_gy"), ax3_1d],
+        [gy_raw],
+    )
     gy = v("gy")
     op("Squeeze", [gy_raw, ax3_1d], [gy])
 
@@ -382,7 +395,10 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
         logger.debug("No GridSample nodes found; skipping TFLite-safe patch.")
         return onnx_path
 
-    logger.info("Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.", len(gs_nodes))
+    logger.info(
+        "Patching %d GridSample node(s) → TFLite-safe Gather(axis=0) subgraph.",
+        len(gs_nodes),
+    )
     for i, node in enumerate(gs_nodes):
         _replace_single_gridsample(node, graph, index=i)
 
@@ -392,7 +408,9 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
         patched = onnx.shape_inference.infer_shapes(gs.export_onnx(graph))
         onnx.checker.check_model(patched)
     except Exception as exc:
-        raise RuntimeError(f"GridSample ONNX patch produced an invalid graph: {exc}") from exc
+        raise RuntimeError(
+            f"GridSample ONNX patch produced an invalid graph: {exc}"
+        ) from exc
 
     out_path = output_dir / (onnx_path.stem + "_gs_patched.onnx")
     onnx.save(patched, str(out_path))
@@ -441,7 +459,9 @@ def _write_rfdetr_fix_json(output_dir: Path) -> Path:
     return fix_path
 
 
-def _simplify_rfdetr_onnx(onnx_path: Path, c: int, h: int, w: int, output_dir: Path) -> Path:
+def _simplify_rfdetr_onnx(
+    onnx_path: Path, c: int, h: int, w: int, output_dir: Path
+) -> Path:
     """Run onnxsim with a static batch=1 input to propagate concrete shapes for onnx2tf."""
     try:
         import onnx
@@ -552,7 +572,9 @@ def _rfdetr_input_info(onnx_path: Path) -> tuple[str, int, int, int]:
         h, w, c = _RFDETR_CALIB_DEFAULT
         logger.warning(
             "ONNX input has dynamic spatial dimensions; using %dx%dx%d.",
-            h, w, c,
+            h,
+            w,
+            c,
         )
     return inp.name, c, h, w
 
@@ -565,7 +587,9 @@ def _rfdetr_calib_data(c: int, h: int, w: int, output_dir: Path) -> Path:
     return npy_path
 
 
-def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = False) -> str:
+def _export_tflite_rfdetr(
+    onnx_path: str, output_path: str, *, verbose: bool = False
+) -> str:
     """Convert an RF-DETR ONNX model to TFLite via the onnx2tf Python API.
 
     Conversion pipeline:
@@ -622,7 +646,9 @@ def _export_tflite_rfdetr(onnx_path: str, output_path: str, *, verbose: bool = F
             try:
                 convert(**convert_kwargs, tflite_backend="tf_converter")
             except TypeError as exc:
-                if "tflite_backend" not in str(exc) and "unexpected keyword" not in str(exc):
+                if "tflite_backend" not in str(exc) and "unexpected keyword" not in str(
+                    exc
+                ):
                     raise
                 logger.warning(
                     "onnx2tf does not support tflite_backend= — falling back to default "
@@ -663,8 +689,7 @@ def _find_converted_tflite(output_dir: Path, onnx_path: Path) -> Path:
 
     produced = sorted(str(p.relative_to(output_dir)) for p in output_dir.rglob("*"))
     raise RuntimeError(
-        "onnx2tf did not produce a TFLite file. "
-        f"Files found: {produced[:20]}"
+        f"onnx2tf did not produce a TFLite file. Files found: {produced[:20]}"
     )
 
 

@@ -56,6 +56,15 @@ _ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
     "locateanything-3b": (LibreLocateAnything, "3b"),
 }
 
+# SenseNova-Vision lives in ``models/sensenova`` (it vendors its own
+# architecture) and imports this package's base class, so its aliases resolve
+# lazily to avoid a circular import at package-init time.
+_LAZY_ALIASES: Dict[str, str] = {
+    "sensenova-vision": "7b",
+    "sensenova-vision-7b": "7b",
+    "sensenovavision": "7b",
+}
+
 _DEFAULT_MODEL = "qwen3-vl-4b"
 
 
@@ -73,14 +82,26 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
         A ``LibreVLMModel`` instance with the standard predict/track surface.
     """
     key = str(model).strip().lower()
+    if key in _LAZY_ALIASES:
+        from ..sensenova import LibreSenseNovaVision
+
+        return LibreSenseNovaVision(size=_LAZY_ALIASES[key], **kwargs)
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(
             f"Unknown VLM model {model!r}. Known aliases: "
-            f"{', '.join(sorted(_ALIASES))}."
+            f"{', '.join(sorted(set(_ALIASES) | set(_LAZY_ALIASES)))}."
         )
     family_cls, size = match
     return family_cls(size=size, **kwargs)
+
+
+def __getattr__(name: str):
+    if name == "LibreSenseNovaVision":
+        from ..sensenova import LibreSenseNovaVision
+
+        return LibreSenseNovaVision
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -93,4 +114,5 @@ __all__ = [
     "LibreFlorence2",
     "LibreKosmos2",
     "LibreLocateAnything",
+    "LibreSenseNovaVision",
 ]

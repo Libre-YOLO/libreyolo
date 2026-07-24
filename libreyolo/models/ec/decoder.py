@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+from ..dfine.decoder import EVAL_CONSTANT_CACHE_LIMIT
 from ..dfine.denoising import get_contrastive_denoising_training_group
 from .utils import (
     _grid_sample_bilinear_manual,
@@ -622,10 +623,22 @@ class ECTransformer(nn.Module):
             ]
         )
 
+        self._anchor_cache = OrderedDict()
         if self.eval_spatial_size:
             anchors, valid_mask = self._generate_anchors()
             self.register_buffer("anchors", anchors)
             self.register_buffer("valid_mask", valid_mask)
+            self._eval_spatial_shape_key = self._spatial_shape_key(
+                [
+                    [
+                        int(self.eval_spatial_size[0] / s),
+                        int(self.eval_spatial_size[1] / s),
+                    ]
+                    for s in self.feat_strides
+                ]
+            )
+        else:
+            self._eval_spatial_shape_key = None
 
         self._reset_parameters(feat_channels)
 
@@ -756,6 +769,34 @@ class ECTransformer(nn.Module):
         invalid_fill = torch.full_like(anchors, 1e4)
         return torch.where(valid_mask, anchors, invalid_fill), valid_mask
 
+    @staticmethod
+    def _spatial_shape_key(spatial_shapes):
+        return tuple((int(h), int(w)) for h, w in spatial_shapes)
+
+    def _cache_anchors(self, key, anchors, valid_mask):
+        self._anchor_cache[key] = (anchors, valid_mask)
+        self._anchor_cache.move_to_end(key)
+        while len(self._anchor_cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            self._anchor_cache.popitem(last=False)
+
+    def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        shape_key = self._spatial_shape_key(spatial_shapes)
+        key = (shape_key, memory.device, memory.dtype)
+        cached = self._anchor_cache.get(key)
+        if cached is None:
+            if shape_key == self._eval_spatial_shape_key and hasattr(self, "anchors"):
+                anchors = self.anchors.to(device=memory.device, dtype=memory.dtype)
+                valid_mask = self.valid_mask.to(device=memory.device)
+            else:
+                anchors, valid_mask = self._generate_anchors(
+                    spatial_shapes, dtype=memory.dtype, device=memory.device
+                )
+            self._cache_anchors(key, anchors, valid_mask)
+        else:
+            self._anchor_cache.move_to_end(key)
+            anchors, valid_mask = cached
+        return anchors, valid_mask
+
     def _get_decoder_input(
         self, memory, spatial_shapes, denoising_logits=None, denoising_bbox_unact=None
     ):
@@ -764,8 +805,9 @@ class ECTransformer(nn.Module):
                 spatial_shapes, device=memory.device
             )
         else:
-            anchors = self.anchors
-            valid_mask = self.valid_mask
+            anchors, valid_mask = self._get_anchors_for_spatial_shapes(
+                spatial_shapes, memory
+            )
         if memory.shape[0] > 1:
             anchors = anchors.repeat(memory.shape[0], 1, 1)
 
@@ -1737,10 +1779,22 @@ class ECPoseTransformer(nn.Module):
 
         self._reset_parameters()
 
+        self._anchor_cache = OrderedDict()
         if self.eval_spatial_size:
             anchors, valid_mask = self._generate_anchors()
             self.register_buffer("anchors", anchors)
             self.register_buffer("valid_mask", valid_mask)
+            self._eval_spatial_shape_key = self._spatial_shape_key(
+                [
+                    [
+                        int(self.eval_spatial_size[0] / s),
+                        int(self.eval_spatial_size[1] / s),
+                    ]
+                    for s in self.feat_strides
+                ]
+            )
+        else:
+            self._eval_spatial_shape_key = None
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -1750,7 +1804,35 @@ class ECPoseTransformer(nn.Module):
             if isinstance(m, MSDeformAttnPose):
                 m._reset_parameters()
 
-    def _generate_anchors(self, spatial_shapes=None, device="cpu"):
+    @staticmethod
+    def _spatial_shape_key(spatial_shapes):
+        return tuple((int(h), int(w)) for h, w in spatial_shapes)
+
+    def _cache_anchors(self, key, anchors, valid_mask):
+        self._anchor_cache[key] = (anchors, valid_mask)
+        self._anchor_cache.move_to_end(key)
+        while len(self._anchor_cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            self._anchor_cache.popitem(last=False)
+
+    def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        shape_key = self._spatial_shape_key(spatial_shapes)
+        key = (shape_key, memory.device, memory.dtype)
+        cached = self._anchor_cache.get(key)
+        if cached is None:
+            if shape_key == self._eval_spatial_shape_key and hasattr(self, "anchors"):
+                anchors = self.anchors.to(device=memory.device, dtype=memory.dtype)
+                valid_mask = self.valid_mask.to(device=memory.device)
+            else:
+                anchors, valid_mask = self._generate_anchors(
+                    spatial_shapes, device=memory.device, dtype=memory.dtype
+                )
+            self._cache_anchors(key, anchors, valid_mask)
+        else:
+            self._anchor_cache.move_to_end(key)
+            anchors, valid_mask = cached
+        return anchors, valid_mask
+
+    def _generate_anchors(self, spatial_shapes=None, device="cpu", dtype=torch.float32):
         if spatial_shapes is None:
             spatial_shapes = []
             eval_h, eval_w = self.eval_spatial_size
@@ -1759,13 +1841,13 @@ class ECPoseTransformer(nn.Module):
         anchors = []
         for h, w in spatial_shapes:
             grid_y, grid_x = torch.meshgrid(
-                torch.linspace(0, h - 1, h, dtype=torch.float32, device=device),
-                torch.linspace(0, w - 1, w, dtype=torch.float32, device=device),
+                torch.linspace(0, h - 1, h, dtype=dtype, device=device),
+                torch.linspace(0, w - 1, w, dtype=dtype, device=device),
                 indexing="ij",
             )
             grid = torch.stack([grid_x, grid_y], -1)
             grid = (grid.unsqueeze(0) + 0.5) / torch.tensor(
-                [w, h], dtype=torch.float32, device=device
+                [w, h], dtype=dtype, device=device
             )
             anchors.append(grid.view(1, -1, 2))
         anchors = torch.cat(anchors, 1)
@@ -1799,13 +1881,16 @@ class ECPoseTransformer(nn.Module):
 
         if self.training:
             output_proposals, valid_mask = self._generate_anchors(
-                spatial_shapes, memory.device
+                spatial_shapes, device=memory.device, dtype=memory.dtype
             )
             output_memory = memory.masked_fill(valid_mask, 0.0)
             output_proposals = output_proposals.repeat(memory.size(0), 1, 1)
         else:
-            output_proposals = self.anchors.repeat(memory.size(0), 1, 1)
-            output_memory = memory.masked_fill(self.valid_mask, 0.0)
+            anchors, valid_mask = self._get_anchors_for_spatial_shapes(
+                spatial_shapes, memory
+            )
+            output_proposals = anchors.repeat(memory.size(0), 1, 1)
+            output_memory = memory.masked_fill(valid_mask, 0.0)
 
         output_memory = self.enc_output_norm(self.enc_output(output_memory))
 

@@ -180,6 +180,30 @@ def _interp_mode(interpolation) -> InterpolationMode:
     }.get(str(interpolation).lower(), InterpolationMode.BILINEAR)
 
 
+# Valid values for the ``auto_augment`` knob, mapped to their torchvision class.
+_AUTO_AUGMENT_POLICIES = ("randaugment", "autoaugment", "augmix")
+
+
+def _build_auto_augment(name: str, mode: InterpolationMode):
+    """Return the torchvision auto-augment transform for ``name``.
+
+    ``name`` is validated against :data:`_AUTO_AUGMENT_POLICIES`; unknown values
+    raise a ``ValueError`` listing the accepted policies. These transforms
+    operate on PIL / uint8 images, so they are inserted before ``ToTensor``.
+    """
+    key = str(name).lower()
+    if key == "randaugment":
+        return transforms.RandAugment(interpolation=mode)
+    if key == "autoaugment":
+        return transforms.AutoAugment(interpolation=mode)
+    if key == "augmix":
+        return transforms.AugMix(interpolation=mode)
+    raise ValueError(
+        f"Unknown auto_augment {name!r}. Valid values are "
+        f"{', '.join(_AUTO_AUGMENT_POLICIES)} or None."
+    )
+
+
 def build_classify_transforms(
     imgsz: int,
     augment: bool,
@@ -188,6 +212,9 @@ def build_classify_transforms(
     std=IMAGENET_STD,
     crop_pct: float = 0.875,
     interpolation="bilinear",
+    auto_augment: str | None = None,
+    erasing: float = 0.0,
+    square_resize: bool = False,
 ):
     """Build train/val image transforms for classification.
 
@@ -198,16 +225,53 @@ def build_classify_transforms(
     ``model.predict()``. Normalization defaults to ImageNet stats; families with
     their own preprocessing (e.g. CLIP, which uses its own mean/std + bicubic and
     a 1.0 crop ratio) override ``mean``/``std``/``interpolation``/``crop_pct``.
+
+    Two optional training-only knobs strengthen the train pipeline (both default
+    off, so the composition is unchanged unless requested):
+
+    - ``auto_augment``: one of ``"randaugment"``, ``"autoaugment"``,
+      ``"augmix"`` (or ``None``). Inserted after the horizontal flip and before
+      ``ToTensor`` since these transforms act on PIL / uint8 images.
+    - ``erasing``: probability for ``RandomErasing``, appended after
+      ``Normalize`` (tensor space, the standard placement). Must satisfy
+      ``0 <= erasing < 1``.
+
+    Both only affect the ``augment=True`` branch; the val pipeline is untouched.
     """
     import math
 
     mode = _interp_mode(interpolation)
     normalize = transforms.Normalize(mean=mean, std=std)
+    if augment and square_resize:
+        # The square-resize path is a val-only pipeline; combining it with the
+        # random-resized-crop train pipeline is not defined. Fail loudly rather
+        # than silently ignoring square_resize (the augment branch returns first).
+        raise ValueError(
+            "square_resize=True is only supported with augment=False "
+            "(it is a deterministic validation transform)."
+        )
     if augment:
+        ops = [
+            transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
+            transforms.RandomHorizontalFlip(),
+        ]
+        if auto_augment is not None:
+            ops.append(_build_auto_augment(auto_augment, mode))
+        ops.append(transforms.ToTensor())
+        ops.append(normalize)
+        if erasing:
+            if not (0.0 <= erasing < 1.0):
+                raise ValueError(
+                    f"erasing must be in [0, 1), got {erasing}."
+                )
+            ops.append(transforms.RandomErasing(p=erasing, inplace=True))
+        return transforms.Compose(ops)
+    if square_resize:
+        # Squash to a fixed square (no aspect-preserving resize + center crop).
+        # SigLIP's native eval pipeline resizes directly to (imgsz, imgsz).
         return transforms.Compose(
             [
-                transforms.RandomResizedCrop(imgsz, scale=(0.5, 1.0), interpolation=mode),
-                transforms.RandomHorizontalFlip(),
+                transforms.Resize((imgsz, imgsz), interpolation=mode),
                 transforms.ToTensor(),
                 normalize,
             ]
@@ -301,3 +365,58 @@ def classify_collate_fn(batch):
     img_infos = [{} for _ in batch]
     img_ids = list(range(len(batch)))
     return imgs, labels, img_infos, img_ids
+
+
+class _ClassifyBatchMixer:
+    """Batch-level MixUp / CutMix wrapper for the classification collate path.
+
+    Wraps :func:`classify_collate_fn`, then with the configured probability
+    applies torchvision's ``v2.MixUp`` / ``v2.CutMix`` to the stacked batch.
+    These ops need ``num_classes`` and emit soft (class-probability) label
+    tensors of shape ``[B, num_classes]`` whose rows sum to 1, which the
+    cross-entropy criterion consumes directly.
+
+    Probability semantics: at most one op is applied per batch, from a single
+    draw ``r``. MixUp is applied when ``r < mixup``; otherwise CutMix is applied
+    when ``r < mixup + cutmix``. So ``mixup`` is honored exactly as MixUp's
+    per-batch probability and ``cutmix`` as CutMix's (the two are additive and
+    should sum to at most 1). With a single op enabled this reduces to applying
+    that op with its own probability. When neither is enabled the plain collate
+    is used (see :func:`build_classify_collate`), so default behavior is
+    unchanged.
+    """
+
+    def __init__(self, num_classes: int, mixup: float = 0.0, cutmix: float = 0.0):
+        from torchvision.transforms import v2
+
+        self._mixup = v2.MixUp(num_classes=num_classes) if mixup > 0 else None
+        self._cutmix = v2.CutMix(num_classes=num_classes) if cutmix > 0 else None
+        if self._mixup is None and self._cutmix is None:
+            raise ValueError("_ClassifyBatchMixer needs mixup>0 or cutmix>0.")
+        self._mixup_p = float(mixup)
+        self._cutmix_p = float(cutmix)
+
+    def __call__(self, batch):
+        imgs, labels, img_infos, img_ids = classify_collate_fn(batch)
+        r = float(torch.rand(1).item())
+        if self._mixup is not None and r < self._mixup_p:
+            imgs, labels = self._mixup(imgs, labels)
+        elif self._cutmix is not None and r < self._mixup_p + self._cutmix_p:
+            imgs, labels = self._cutmix(imgs, labels)
+        return imgs, labels, img_infos, img_ids
+
+
+def build_classify_collate(num_classes: int, mixup: float = 0.0, cutmix: float = 0.0):
+    """Return the classification collate function for the given mixing knobs.
+
+    With ``mixup == 0`` and ``cutmix == 0`` this returns :func:`classify_collate_fn`
+    unchanged (byte-identical batches, so default training is unaffected).
+    Otherwise it returns a :class:`_ClassifyBatchMixer` that applies MixUp / CutMix
+    at the batch level and produces soft labels.
+    """
+    for name, value in (("mixup", mixup), ("cutmix", cutmix)):
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(f"{name} must be in [0, 1], got {value}.")
+    if mixup == 0 and cutmix == 0:
+        return classify_collate_fn
+    return _ClassifyBatchMixer(num_classes, mixup=mixup, cutmix=cutmix)

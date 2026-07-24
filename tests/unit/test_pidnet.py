@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -89,7 +91,9 @@ class TestPIDNetMetadata:
         from libreyolo.models.pidnet.model import LibrePIDNet
 
         assert LibrePIDNet.detect_size_from_filename("LibrePIDNets-sem.pt") == "s"
-        assert LibrePIDNet.detect_task_from_filename("LibrePIDNets-sem.pt") == "semantic"
+        assert (
+            LibrePIDNet.detect_task_from_filename("LibrePIDNets-sem.pt") == "semantic"
+        )
         assert LibrePIDNet.detect_size_from_filename("LibrePIDNets.pt") is None
 
 
@@ -122,6 +126,21 @@ class TestPIDNetForwardAndPredict:
 
         assert result.boxes is None
         assert result.masks is None
+        assert result.semantic_mask is not None
+        assert tuple(result.semantic_mask.data.shape) == (45, 90)
+
+    def test_predict_augment_returns_semantic_mask(self, tmp_path):
+        from libreyolo.models.pidnet.model import LibrePIDNet
+
+        img_path = tmp_path / "img.jpg"
+        Image.new("RGB", (90, 45), color=(50, 90, 130)).save(img_path)
+
+        model = LibrePIDNet(
+            model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
+        )
+        result = model.predict(str(img_path), imgsz=64, augment=True)
+
+        assert result.boxes is None
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
@@ -165,7 +184,7 @@ class TestPIDNetForwardAndPredict:
         with pytest.raises(ValueError, match="semantic"):
             LibrePIDNet(model_path=None, size="s", task="detect", device="cpu")
 
-    def test_train_and_export_out_of_scope(self):
+    def test_train_out_of_scope(self):
         from libreyolo.models.pidnet.model import LibrePIDNet
 
         model = LibrePIDNet(
@@ -173,8 +192,46 @@ class TestPIDNetForwardAndPredict:
         )
         with pytest.raises(NotImplementedError):
             model.train(data="cityscapes.yaml")
-        with pytest.raises(NotImplementedError):
-            model.export(format="onnx")
+
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn", "tflite"])
+    def test_exported_semantic_parity(self, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+        if format == "tflite" and (
+            importlib.util.find_spec("onnx2tf") is None
+            or importlib.util.find_spec("ai_edge_litert") is None
+        ):
+            pytest.skip("onnx2tf and ai-edge-litert are required")
+        if format == "ncnn" and (
+            importlib.util.find_spec("pnnx") is None
+            or importlib.util.find_spec("ncnn") is None
+        ):
+            pytest.skip("PNNX and NCNN are required")
+
+        from libreyolo import LibreYOLO
+        from libreyolo.models.pidnet.model import LibrePIDNet
+
+        model = LibrePIDNet(
+            model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
+        )
+        model.model.eval()
+        image = np.random.default_rng(7).integers(
+            0, 256, size=(40, 64, 3), dtype=np.uint8
+        )
+        native = model.predict(image, imgsz=64).semantic_mask.data
+        suffix = f".{format}"
+        artifact = tmp_path / f"pidnet{suffix}"
+        model.export(
+            format=format,
+            output_path=str(artifact),
+            imgsz=64,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(str(artifact), device="cpu").predict(image)
+        agreement = (native == exported.semantic_mask.data).float().mean().item()
+        assert agreement > 0.95
 
 
 def test_checkpoint_round_trip_through_factory(tmp_path):

@@ -1,6 +1,6 @@
 [project]
 name = "libreyolo"
-version = "1.3.1"
+version = "1.4.0"
 description = "Libre YOLO - An open source YOLO library with MIT license."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-timeout>=2.3.1",
+    "pytest-xdist>=3.6",
     "ruff>=0.14.10",
     "ty>=0.0.1",
 ]
@@ -70,14 +72,31 @@ vlm = [
     "peft>=0.12.0",
 ]
 sam = [
-    # Promptable-segmentation families (SAM/SAM-2) load through transformers
-    # (SamModel/SamProcessor, Sam2Model/Sam2Processor); huggingface_hub ships with it.
+    # Promptable-segmentation families load through transformers;
+    # EdgeTAM's RepViT backbone uses Transformers' TimmWrapper.
     "transformers>=5.3.0",
+    "timm>=1.0.23",
 ]
 openvocab = [
     # Discriminative open-vocabulary detectors load through transformers
-    # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection).
+    # (GroundingDinoForObjectDetection / Owlv2ForObjectDetection /
+    # OmDetTurboForObjectDetection). OMDet-Turbo's configured Swin backbone
+    # is instantiated through transformers' TimmBackbone.
     "transformers>=5.1.0",
+    "timm>=1.0.0",
+    # OV-DEIM embeds text prompts with the vendored CLIP BPE tokenizer, which
+    # needs these at predict time (Unicode \p{L}/\p{N} classes + ftfy fixing).
+    "regex>=2023.0.0",
+    "ftfy>=6.0.0",
+]
+sensenova = [
+    # SenseNova-Vision (Bagel-MoT): the vendored architecture loads through
+    # accelerate's big-model dispatch; the tokenizer and activation registry
+    # come from transformers. flash-attn is optional (SDPA fallback built in).
+    "transformers>=5.1.0",
+    "accelerate>=1.7.0",
+    # 4-bit NF4 loading on consumer GPUs; no macOS wheels.
+    "bitsandbytes>=0.45.0; sys_platform != 'darwin'",
 ]
 label = [
     # AI-assist for `libreyolo label`: SAM click-to-mask via the LibreSAM tier.
@@ -102,10 +121,17 @@ tflite = [
     # onnx2tf 2.4.3 includes the RF-DETR conversion fixes required by this path.
     # Requires Python 3.12+ (onnx2tf 2.4.x wheel constraint).
     "onnx2tf>=2.4.3; python_version >= '3.12'",
+    # Runtime used by TFLiteBackend to execute exported .tflite artifacts.
+    "ai-edge-litert>=2.1.2; python_version >= '3.12'",
     # Required for the RF-DETR GridSample ONNX graph rewrite (fallback path).
     "onnx-graphsurgeon>=0.3.27",
     # Required for RF-DETR onnxsim preprocessing step.
     "onnx-simplifier>=0.4.36",
+]
+# LiteRT is Google's current name for TensorFlow Lite; same export path,
+# same .tflite output. Separate extra so both names install.
+litert = [
+    "libreyolo[tflite]",
 ]
 # Intentionally empty: all tracking dependencies (e.g. scipy) are core deps,
 # so `libreyolo[tracking]` installs nothing extra. Kept for a stable extra name.
@@ -129,6 +155,18 @@ clip-convert = [
     # checkpoints (weights/convert_clip_weights.py) and run the parity tests.
     "libreyolo[clip]",
     "open_clip_torch>=2.24.0",
+]
+siglip2 = [
+    # LibreSigLIP2 towers are native torch (no transformers at runtime). Only the
+    # multilingual SentencePiece text tokenizer (Gemma vocab) needs this.
+    "sentencepiece>=0.1.99",
+]
+siglip2-convert = [
+    # Convert-/parity-only: re-host Apache-2.0 google/siglip2-* weights as
+    # LibreSigLIP2 checkpoints (weights/convert_siglip2_weights.py) and run the
+    # parity tests against the reference SiglipModel.
+    "libreyolo[siglip2]",
+    "transformers>=5.1.0",
 ]
 coreml = [
     "coremltools>=8.0",
@@ -156,11 +194,13 @@ all = [
     "libreyolo[rtdetr]",
     "libreyolo[gaze]",
     "libreyolo[clip]",
+    "libreyolo[siglip2]",
     "libreyolo[coreml]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
     "libreyolo[label]",
     "libreyolo[openvocab]",
+    "libreyolo[sensenova]",
     "libreyolo[tensorboard]",
     "libreyolo[mlflow]",
     "libreyolo[wandb]",
@@ -184,6 +224,8 @@ libreyolo = [
     "data/*.json",
     "models/clip/*.gz",
     "models/clip/data/*.json",
+    "models/siglip2/*.model",
+    "models/siglip2/data/*.json",
     "models/darknet/cfgs/*.cfg",
     "models/yolo7/*.yaml",
     "models/**/NOTICE",
@@ -241,7 +283,10 @@ requires-dist = []
 [tool.ruff]
 # Vendored from upstream DEIMv2. Keep local lint focused on the LibreYOLO
 # wrapper/integration code instead of rewriting third-party implementation files.
-extend-exclude = ["libreyolo/models/deimv2/engine"]
+extend-exclude = [
+    "libreyolo/models/deimv2/engine",
+    "libreyolo/models/depth_anything3/_vendor",
+]
 
 [tool.ty.rules]
 # Rules that catch real bugs — keep as errors
@@ -275,6 +320,11 @@ unresolved-import = "ignore"
 [tool.pytest.ini_options]
 addopts = "-m unit"
 testpaths = ["tests"]
+# Only the thread method can interrupt a test wedged inside a native call, such
+# as a stalled Hugging Face download; the signal method cannot fire until
+# control returns to Python. The limit itself comes from PYTEST_TIMEOUT, which
+# the e2e target sets, so unit runs stay unbounded.
+timeout_method = "thread"
 markers = [
     "unit: fast tests that avoid external weights or large files",
     "external_data: tests that require external datasets, weights, or staged large files",
@@ -295,6 +345,7 @@ markers = [
     "tflite: tests requiring TensorFlow Lite export",
     "coreml: tests requiring CoreML (macOS only)",
     "yolox: tests covering the YOLOX model family",
+    "yolo7: tests covering the YOLOv7 model family",
     "yolo9: tests covering the YOLO9 model family",
     "yolo9_e2e: tests covering the YOLOv9-E2E model family",
     "yolonas: tests covering the YOLO-NAS model family",
@@ -313,7 +364,10 @@ markers = [
     "vlm: tests covering the LibreVLM (VLM-as-detector) tier",
     "sam: tests covering the LibreSAM (promptable-segmentation) tier",
     "openvocab: tests covering the LibreOpenVocab detector tier",
+    "sensenova: tests covering the LibreSenseNovaVision unified multimodal family",
     "clip: tests covering the LibreCLIP zero-shot open-vocabulary classifier family",
+    "siglip2: tests covering the LibreSigLIP2 zero-shot open-vocabulary classifier family",
+    "distributed: multi-rank gloo tests that mp.spawn a process group. Linux-only in the PR gate: they exercise distributed-training math, which is platform-independent, while dist.init_process_group(backend='gloo') costs ~105s per test on the macOS runner (a bare 2-rank scalar all-reduce takes 109s there vs 3.9s on Linux). They also compare a parent-process reference gradient against child-process gradients at a BLAS-sensitive tolerance, so running them on every OS yields flakes rather than coverage. The spawn-plumbing tests are deliberately NOT marked: they cover spawn-only failure modes that Linux's fork never hits.",
     "rf1: RF1 training tests",
     "rf5: RF5 training benchmark tests",
     "slow: slow tests that may take several minutes",

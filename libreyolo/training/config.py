@@ -62,9 +62,10 @@ class TrainConfig:
     #   - "cpu", "mps", "0", "cuda:0", 0 → single device
     #   - [0, 1] or "0,1" → multi-GPU, requires torchrun launch
     device: Union[str, int, List[int]] = "auto"
-    # SyncBatchNorm across ranks under DDP. Off here; per-family configs
-    # override (yolo9 defaults True per upstream MultimediaTechLab). No-op
-    # when not distributed.
+    # SyncBatchNorm across ranks under DDP. Off here; BatchNorm-heavy CNN
+    # families (e.g. yolo9) override to True so BN statistics are computed
+    # across the global batch instead of each rank's small shard. No-op when
+    # not distributed.
     sync_bn: bool = False
 
     # Optimizer
@@ -91,6 +92,29 @@ class TrainConfig:
     mosaic_scale: Tuple[float, float] = (0.1, 2.0)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 2.0
+    # Projective (perspective) warp magnitude, following the de-facto YOLO
+    # knob. The two projective terms are sampled in [-perspective, +perspective]
+    # (~0.0005 is a typical scale). Default 0.0 keeps the pure-affine warp.
+    perspective: float = 0.0
+    # Vertical-flip probability (top-to-bottom). Off by default; useful for
+    # datasets without a fixed up/down orientation (e.g. aerial imagery).
+    flipud: float = 0.0
+
+    # Classification augmentation pack. These drive the classification
+    # ImageFolder pipeline only (detection families ignore them) and all
+    # default off, so existing training behavior is unchanged unless requested.
+    #   - auto_augment: one of "randaugment", "autoaugment", "augmix" or None.
+    #   - erasing: RandomErasing probability, 0 <= erasing < 1.
+    #   - mixup / cutmix: per-batch probability of applying the MixUp / CutMix
+    #     op (soft labels). At most one op runs per batch: MixUp is applied with
+    #     probability ``mixup``, otherwise CutMix with probability ``cutmix``, so
+    #     the two are additive and should sum to at most 1.
+    # Note: on the CLI, ``--mixup`` is the detection ``mixup_prob`` alias; the
+    # classification ``mixup`` knob is Python-API only (model.train(mixup=...)).
+    auto_augment: Optional[str] = None
+    erasing: float = 0.0
+    mixup: float = 0.0
+    cutmix: float = 0.0
 
     # Training features
     ema: bool = True
@@ -101,9 +125,11 @@ class TrainConfig:
     # freezes matching module/parameter names.
     freeze: Optional[Union[int, str, List[Union[int, str]]]] = None
     # Parameter-efficient fine-tuning. ``lora=True`` injects LoRA adapters into
-    # the backbone of supported transformer families (currently RF-DETR) and
-    # trains only the adapters plus the projector/decoder/head, for low-VRAM
-    # fine-tuning on a custom dataset. Requires the optional ``peft`` dependency
+    # the transformer components of supported families (RF-DETR: DINOv2
+    # backbone attention; D-FINE/DEIM: encoder/decoder Linears with the CNN
+    # backbone frozen) and trains only the adapters plus the parts that must
+    # stay dense (heads, projections), for low-VRAM fine-tuning on a custom
+    # dataset. Requires the optional ``peft`` dependency
     # (``pip install "libreyolo[lora]"``). Families that do not support LoRA
     # raise a clear error rather than silently ignoring the flag.
     lora: bool = False
@@ -114,18 +140,23 @@ class TrainConfig:
     # training is unchanged.
     nbs: Optional[int] = None
 
-    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path;
-    # setting it turns distillation on. ``dis`` is the global distillation loss
-    # weight; left as None it falls back to the selected loss type's published
-    # default (MGD: 2e-5, CWD: 1.0). ``distill_loss_type`` picks the feature
-    # loss ("mgd" or "cwd"); ``distill_mask_ratio`` (MGD) and ``distill_tau``
-    # (CWD) are the per-loss hyper-parameters. Families without a
-    # ``get_distill_config()`` implementation raise a clear error at setup.
+    # Knowledge distillation. ``distill_model`` is a teacher-checkpoint path,
+    # or a foundation-teacher id (e.g. ``"dinov2"``); setting it turns
+    # distillation on. ``dis`` is the global distillation loss weight; left as
+    # None it falls back to the selected loss type's published default (MGD:
+    # 2e-5, CWD: 1.0, feat_mse: 1.0). ``distill_loss_type`` picks the feature
+    # loss ("mgd" or "cwd") for detector teachers; a foundation teacher always
+    # uses "feat_mse" on a single backbone stage. ``distill_mask_ratio`` (MGD)
+    # and ``distill_tau`` (CWD) are the per-loss hyper-parameters;
+    # ``distill_normalize`` L2-normalizes features before the feat_mse loss.
+    # Families without a ``get_distill_config()`` (or, for foundation teachers,
+    # ``get_backbone_distill_config()``) raise a clear error at setup.
     distill_model: Optional[str] = None
     dis: Optional[float] = None
     distill_loss_type: str = "mgd"
     distill_mask_ratio: float = 0.65
     distill_tau: float = 1.0
+    distill_normalize: bool = False
 
     # Checkpointing / output
     project: str = "runs/train"
@@ -150,9 +181,13 @@ class TrainConfig:
     # Profiling. When ``profile`` is True the trainer profiles a short window of
     # real training steps (``profile_warmup`` discarded, then ``profile_steps``
     # measured), prints a per-phase breakdown + GPU-idle verdict, writes a Chrome
-    # trace (open at https://ui.perfetto.dev), then stops early. Zero overhead
-    # when off. Ignored under distributed training.
+    # trace (open at https://ui.perfetto.dev), then drops the hooks and KEEPS
+    # TRAINING. ``profile_then_stop`` instead stops the run right after the
+    # window (benchmark mode, what ``libreyolo profile run`` uses); the partial
+    # epoch is then neither validated nor checkpointed, so it cannot poison a
+    # later resume. Zero overhead when off. Ignored under distributed training.
     profile: bool = False
+    profile_then_stop: bool = False
     profile_warmup: int = 5
     profile_steps: int = 20
     profile_trace: bool = True
@@ -191,6 +226,9 @@ class TrainConfig:
 class YOLOXConfig(TrainConfig):
     """YOLOX-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     momentum: float = 0.9
     warmup_epochs: int = 5
     warmup_lr_start: float = 0.0
@@ -202,6 +240,28 @@ class YOLOXConfig(TrainConfig):
     mixup_prob: float = 1.0
     ema_decay: float = 0.9998
     name: str = "exp"
+
+
+@dataclass(kw_only=True)
+class YOLOv7Config(YOLOXConfig):
+    """YOLOv7 training defaults.
+
+    v7 is anchor-based but trains through the YOLOX-style pipeline (SimOTA
+    assignment + mosaic/mixup), so this subclasses :class:`YOLOXConfig` and
+    overrides only the real differences: v5/v7-lineage momentum, a shorter
+    warmup, and slower EMA. ``sync_bn=True`` is inherited from
+    :class:`YOLOXConfig` (v7 is a BatchNorm-heavy pure CNN, same rationale
+    as :class:`YOLO9Config`, issue #484).
+
+    Note: unlike YOLOX, the final no-aug epochs run without an L1 refinement
+    stage — the v7 SimOTA loss has no raw-offset L1 branch.
+    """
+
+    # v7 ships a single size; TrainConfig's "s" default doesn't exist here.
+    size: str = "b"
+    momentum: float = 0.937
+    warmup_epochs: int = 3
+    ema_decay: float = 0.9999
 
 
 @dataclass(kw_only=True)
@@ -222,11 +282,25 @@ class YOLO9Config(TrainConfig):
     name: str = "yolo9_exp"
     workers: int = 8
     mask_downsample_ratio: int = 4
-    sync_bn: bool = False
+    # YOLO9 is BatchNorm-heavy. Under multi-GPU DDP the per-rank batch is
+    # ``batch // world_size``; without SyncBatchNorm each rank's BN running
+    # statistics track only its own small shard, which measurably degrades the
+    # converged model versus single-GPU (issue #484). Sync BN across ranks.
+    sync_bn: bool = True
     # Per-image ground-truth cap in the train transforms. Dense datasets
     # (e.g. aerial imagery) exceed the historical 100-box default; boxes
     # beyond the cap are silently dropped, so raise it for such data.
     max_labels: int = 100
+    # Copy-paste instance augmentation (segmentation task only). ``copy_paste``
+    # is the per-sample probability (0 disables it); ``copy_paste_mode`` selects
+    # the source: "flip" reuses the same sample mirrored, "mixup" pulls a second
+    # random sample.
+    copy_paste: float = 0.0
+    copy_paste_mode: str = "flip"
+    # Probability of a random k*90-degree rotation for oriented-box (OBB)
+    # training. Off by default; only applied on the OBB path (samples carrying
+    # angle targets) and ignored for axis-aligned detection.
+    rot90: float = 0.0
 
 
 @dataclass(kw_only=True)
@@ -292,6 +366,13 @@ class DFINEConfig(TrainConfig):
     clip_max_norm: float = 0.1  # upstream default; 0 disables clipping
     multi_scale: bool = True  # per-batch random resize via DFINEMultiScaleCollate
     aug_stop_epoch_ratio: float = 0.85  # disable strong augs at epoch * ratio
+    crop_resize_prob: float = 0.0
+
+    # D-FINE-seg mask supervision (only used when task='segment').
+    mask_bce_loss_weight: float = 1.0
+    mask_dice_loss_weight: float = 1.0
+    mask_match_cost: float = 1.0
+    mask_dice_match_cost: float = 1.0
 
     amp: bool = False
     epochs: int = 132
@@ -310,14 +391,20 @@ class DEIMConfig(TrainConfig):
     """
 
     optimizer: str = "adamw"
-    lr0: float = 4e-4
+    # Fine-tune defaults, per the class docstring. Upstream's published COCO
+    # recipe uses lr0=4e-4 with min_lr_ratio=0.5 (its lr_gamma) at total batch
+    # 32 over 132 epochs; at practical fine-tune batches (8-16) on small
+    # datasets that keeps the whole run between 4e-4 and 2e-4 and measurably
+    # degrades transfer (aquarium/bccd bench, 2026-07). Pass the recipe values
+    # explicitly to reproduce upstream COCO training.
+    lr0: float = 1e-4
     weight_decay: float = 1e-4
 
     scheduler: str = "flat_cosine"
     warmup_epochs: int = 2
     warmup_lr_start: float = 1e-6
     no_aug_epochs: int = 12
-    min_lr_ratio: float = 0.5  # DEIM's lr_gamma in upstream
+    min_lr_ratio: float = 0.05
 
     mosaic_prob: float = 0.0
     mixup_prob: float = 0.0
@@ -424,7 +511,9 @@ DEIMV2_SIZE_DEFAULTS = {
         "lr0": 8e-4,
         "weight_decay": 1e-4,
         "warmup_iters": 2000,
-        "flat_epochs": 7800,
+        # Epoch-scale, like every other size (flat ~= 0.49*epochs). The prior
+        # 7800 was the iteration count (160 epochs * ~49 it/ep) mis-placed here.
+        "flat_epochs": 78,
         "no_aug_epochs": 12,
         "min_lr_ratio": 1.0,
         "backbone_lr_mult": 0.5,
@@ -583,11 +672,16 @@ class DEIMv2Config(TrainConfig):
 class ECConfig(TrainConfig):
     """EC-specific training defaults (experimental).
 
-    Fine-tune defaults follow upstream EdgeCrafter's published recipe (S/M):
+    Fine-tune defaults keep the optimizer/scheduler/loss shape from
+    EdgeCrafter's published recipe (S/M):
     AdamW with backbone-LR multiplier 0.05 (≈2.5e-5 vs head 5e-4), no-decay
     on norms/biases, FlatCosine schedule with quadratic warmup, EMA 0.9999,
-    Mosaic+Mixup until ~mid-training, all strong augs disabled past
-    ``stop_epoch``. Loss = MAL + L1 + GIoU + FGL + DDF.
+    Loss = MAL + L1 + GIoU + FGL + DDF.
+
+    The current LibreYOLO detection trainer uses a per-image D-FINE-style
+    pass-through transform with ImageNet normalization. Mosaic/MixUp and the
+    strong color/geometric knobs are disabled here so the public config matches
+    the effective training path.
 
     Training has NOT been validated on a real fine-tune run — ship as
     experimental.
@@ -603,12 +697,12 @@ class ECConfig(TrainConfig):
     no_aug_epochs: int = 4
     min_lr_ratio: float = 0.5  # EC's lr_gamma in upstream
 
-    mosaic_prob: float = 0.75
-    mixup_prob: float = 0.75
-    hsv_prob: float = 0.5
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    hsv_prob: float = 0.0
     flip_prob: float = 0.5
-    degrees: float = 10.0
-    translate: float = 0.1
+    degrees: float = 0.0
+    translate: float = 0.0
     mosaic_scale: Tuple[float, float] = (0.5, 1.5)
     mixup_scale: Tuple[float, float] = (0.5, 1.5)
     shear: float = 0.0
@@ -716,6 +810,9 @@ class ECPoseConfig(ECConfig):
 class YOLONASConfig(TrainConfig):
     """YOLO-NAS-specific training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 5e-4
     momentum: float = 0.9
@@ -804,16 +901,26 @@ class PICODETConfig(TrainConfig):
     LibreYOLO v1 cut: SGD + cosine + hflip + ImageNet normalise. Multi-scale
     resize and PhotoMetricDistortion are deferred to a follow-up commit
     (skill §6: aim for fine-tune parity, not paper parity).
+
+    lr0 note (issue #566): Bo's 0.4 is the total LR at total batch 512
+    (4 GPUs x 128 samples), i.e. ~7.8e-4 per image. Copying 0.1 unscaled at
+    the default batch 16 is ~8x that per image and demonstrably destroys a
+    COCO-pretrained model within a few epochs (coco128 fine-tune: 0.40 ->
+    0.14 mAP at 0.1 vs 0.40 -> 0.49 at 0.01). 0.01 matches the upstream
+    per-image rate at the default batch.
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "sgd"
-    lr0: float = 0.1
+    lr0: float = 0.01
     momentum: float = 0.9
     weight_decay: float = 4e-5
 
     scheduler: str = "cos"
     warmup_epochs: int = 1
-    warmup_lr_start: float = 0.01
+    warmup_lr_start: float = 0.001
     no_aug_epochs: int = 0
     min_lr_ratio: float = 0.0
 
@@ -847,13 +954,16 @@ class RTMDetConfig(TrainConfig):
     - DynamicSoftLabelAssigner (topk=13)
     - QualityFocalLoss (beta=2.0, weight=1.0) + GIoULoss (weight=2.0)
 
-    Status: training is NOT yet implemented in LibreYOLO. This config exists so
-    callers can introspect intended hyperparameters. ``LibreRTMDet.train()``
-    raises ``NotImplementedError`` until the follow-up PR lands the loss,
-    DynamicSoftLabelAssigner, MlvlPointGenerator,
-    and the 2-stage pipeline-switch hook.
+    Status: training is implemented but experimental. ``LibreRTMDet.train()``
+    requires ``allow_experimental=True`` because small-dataset fine-tune
+    convergence, from-scratch paper parity, multi-GPU behavior, cached
+    Mosaic/MixUp throughput, and the strict upstream two-stage pipeline switch
+    are not validated yet.
     """
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adamw"
     lr0: float = 0.004
     momentum: float = 0.9  # unused for adamw; kept for TrainConfig compatibility
@@ -880,9 +990,62 @@ class RTMDetConfig(TrainConfig):
 
 
 @dataclass(kw_only=True)
+class SegformerConfig(TrainConfig):
+    """SegFormer training defaults — the paper / mmsegmentation ADE20K recipe.
+
+    Used both to fine-tune the pretrained (non-commercial) ADE20K checkpoints on
+    a new dataset and to train from scratch for unrestricted use; see the family
+    NOTICE for the weight licensing.
+    Defaults follow SegFormer's ADE20K config: AdamW, backbone base LR 6e-5 with
+    the decode head at 10x (SegformerTrainer applies the lr_mult), LayerNorm and
+    the Mix-FFN positional conv at weight_decay=0, linear (poly-like) decay, and
+    scale-jitter 0.5..2.0 (LibreSegformer.semantic_scale_jitter). Convergence for
+    the larger sizes (b3-b5) is unvalidated — see docs/nomenclature.md.
+    """
+
+    optimizer: str = "adamw"
+    lr0: float = 6e-5
+    weight_decay: float = 0.01
+    # Decode-head LR multiplier over the backbone base LR (mmseg SegFormer uses
+    # 10x). Set to 1.0 for a uniform LR (e.g. to ablate the backbone/head split).
+    head_lr_mult: float = 10.0
+
+    scheduler: str = "linear"
+    warmup_epochs: int = 5
+    warmup_lr_start: float = 1e-6
+    min_lr_ratio: float = 0.0
+
+    mosaic_prob: float = 0.0
+    mixup_prob: float = 0.0
+    flip_prob: float = 0.5
+    degrees: float = 0.0
+    translate: float = 0.0
+    shear: float = 0.0
+    # NOTE: photometric jitter is deliberately NOT declared here. The semantic
+    # pipeline builds SemanticDataset directly and never reads config.hsv_prob,
+    # so a value here would be silently ignored (it was: the recipe said 0.0
+    # while training ran at the dataset's 0.5). The live knob is
+    # LibreSegformer.semantic_hsv_prob = 0.0, per the reference recipe.
+
+    ema: bool = True
+    ema_decay: float = 0.999
+    amp: bool = True
+
+    imgsz: int = 512
+    epochs: int = 160
+    batch: int = 8
+    eval_interval: int = 1
+
+    name: str = "segformer_exp"
+
+
+@dataclass(kw_only=True)
 class FOMOConfig(TrainConfig):
     """FOMO point-localizer training defaults."""
 
+    # BatchNorm-heavy pure CNN: sync BN stats across ranks under DDP (same
+    # rationale as :class:`YOLO9Config`, issue #484). No-op outside DDP.
+    sync_bn: bool = True
     optimizer: str = "adam"
     lr0: float = 3e-4
     weight_decay: float = 0.0

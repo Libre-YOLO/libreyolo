@@ -31,8 +31,9 @@ Required field meanings:
 - `model_family`: registered LibreYOLO family, such as `yolo9`, `rfdetr`,
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
-- `task`: canonical task, one of `detect`, `segment`, `semantic`, `pose`,
-  `classify`, `gaze`, `obb`, `point`, `depth`, or `restore`.
+- `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`, or
+  `ocr`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
@@ -41,6 +42,11 @@ Required field meanings:
 
 Pose checkpoints additionally include:
 
+- `nc` / `names`: pose is usually single-class (`nc: 1`, `person`), but the
+  YOLO-NAS pose head also supports multi-class pose with a single shared
+  keypoint skeleton (one `kpt_shape` for every class); `nc` and `names` then
+  describe the classes as in detection. Runtime pose exports emit `scores` with
+  shape `[batch, anchors, nc]`.
 - `num_keypoints`: positive integer keypoint count used by the pose head.
 - `keypoint_dim`: pose label dimension from the dataset contract, either `2`
   for `x,y` labels or `3` for `x,y,visibility` labels. Model outputs always
@@ -62,8 +68,32 @@ schema compatibility; restoration predictions are dense RGB images, not
 classes. Restoration checkpoints may also include:
 
 - `degradation`: optional short label for the corruption type, such as
-  `deblur` or `denoise`.
-- `dataset`: optional dataset/provenance label, such as `GoPro`.
+  `deblur`, `denoise`, or `super-resolution`.
+- `dataset`: optional dataset/provenance label, such as `GoPro` or `SIDD`.
+- `scale`: optional positive integer output-to-input upscale factor for
+  super-resolution checkpoints (for example `4` for Real-ESRGAN x4). Absent or
+  `1` means the restored image keeps the input resolution (deblur/denoise). The
+  runtime also derives this from the model family and size, so the field is
+  provenance metadata rather than a load-time requirement.
+
+OCR checkpoints use the task string `ocr`, `nc: 1`, and `names: {0: "text"}`.
+The single class-like slot exists only for checkpoint schema compatibility;
+OCR predictions are text quads with transcripts, not classes. The `ppocr`
+family ships one composite checkpoint per tier whose `model` state dict holds
+two submodels under the `det.*` (DB text detector) and `rec.*` (CTC text
+recognizer) key namespaces. OCR checkpoints additionally include:
+
+- `charset`: list of strings, the full CTC alphabet in output-index order
+  (index 0 is the CTC blank, then the recognition dictionary, then the space
+  character). Embedding it makes the `.pt` self-contained; loaders must read
+  the charset from the checkpoint, never from a side file.
+- `pipeline`: dict of pipeline defaults baked at conversion time
+  (`det_limit_side_len`, `det_db_thresh`, `det_db_box_thresh`,
+  `det_db_unclip_ratio`, `rec_image_shape`). Runtime arguments may override
+  them per call.
+- `components`: reserved dict for optional pipeline stages (document
+  orientation classification, image unwarping, textline 0/180 rotation).
+  Empty in v1; adding a component later must not break this schema.
 
 The schema is intentionally flat. Existing LibreYOLO checkpoints and loaders
 already use top-level keys such as `model_family`, `size`, `nc`, `names`, and
@@ -89,7 +119,21 @@ NAFNet restore runtime exports use a fixed-resolution v1 contract. ONNX exports
 emit one dense `restored` output tensor and force `dynamic=false`; backend
 prediction pads images that fit inside the exported canvas without resizing,
 then crops the restored RGB result back to the original image shape. Dynamic
-spatial restore export and tiled exported-runtime inference are deferred.
+spatial restore export and tiled exported-runtime inference are deferred for
+NAFNet.
+
+Real-ESRGAN restore exports support dynamic spatial dims: the generators are
+fully convolutional, so ONNX exports may set dynamic `height`/`width` axes on
+both `images` and `restored`. Backend prediction runs at the native image
+resolution (reflect-padded only to the network divisibility factor) and crops
+the restored output to `scale` times the original image shape. The backend
+derives `scale` from the model family and size (`x4`/`x4t` = 4, `x2` = 2).
+
+SwinIR restore exports use a fixed-resolution v1 contract. ONNX exports emit
+one dense `restored` tensor and force `dynamic=false` because shifted-window
+attention masks are trace-shape-dependent. Backend prediction pads images that
+fit inside the exported canvas, crops the output to four times the original
+image shape, and reports `restore_scale = 4` for sizes `s`, `m`, and `l`.
 
 Embedded-NMS runtime exports may also write these flat metadata keys:
 
@@ -130,6 +174,44 @@ standalone post-NMS tensor using the export-time `nms_conf`, `nms_iou`, and
 LibreYOLO backends so they can apply native original-canvas clipping and runtime
 `predict(conf=..., iou=..., max_det=...)` semantics. Third-party consumers that
 want graph-embedded NMS should use the first output.
+
+## Quantized Checkpoints
+
+Quantized models add one optional flat key, `quant`: a small manifest dict
+(`schema`, `recipe`, `keep_high_precision`, `execution`, calibration
+provenance, `module_count`, `state`). Loaders that see `quant` rebuild the
+quantized module structure before `load_state_dict`. See `quantization.md`.
+
+`state` distinguishes the two artifact forms:
+
+- `"prepared"` (default): fp32 master weights plus `_q_*` scale buffers.
+  Trainable (QAT/QAD). Readers without quantization support may ignore the
+  `quant` key and load the masters as a float model.
+- `"finalized"`: crystallized deployment form written by
+  `export(format="pt")`. Masters are stripped; per quantized module the
+  state dict instead carries:
+  - int8: `weight_packed` (int8, original weight shape) and `_q_w_scale`
+    (fp32 per-channel). Dequant: `weight_packed * scale`. Activation range
+    buffers (`_q_act_lo`/`_q_act_hi`/`_q_calibrated`) are retained.
+  - fp8: `weight_packed` (float8_e4m3fn, original weight shape) and
+    `_q_w_scale` (fp32 per-channel). Dequant: `weight_packed * scale`.
+  - w4a16 / w4a8: `weight_packed` (uint8, two 4-bit codes per byte, low
+    nibble first; code = q + 8) and `_q_w_gscale` (fp32, [out, ngroups],
+    group 128 along in_features). int2: four 2-bit codes per byte
+    (code = q + 2), group 64.
+  - nvfp4: `weight_packed` (uint8, [out, ceil(in/16)*8], two 4-bit codes
+    per byte, low nibble first; code = sign<<3 | E2M1 level index),
+    `weight_block_scale` (float8_e4m3fn, [out, ceil(in/16)]), and
+    `_q_w_amax` (fp32 per-tensor amax). Effective block scale:
+    `block_scale * amax / (448 * 6)`.
+  - mxfp4: `weight_packed` as nvfp4 but 32-element blocks, and
+    `weight_block_exp` (int8, [out, ceil(in/32)]) storing the power-of-two
+    block exponent. Effective block scale: `2 ** exponent`.
+  The manifest records `remainder` (`"fp16"` or `"fp32"`) for the
+  non-quantized tensors. Unpacking reproduces the fake-quant simulation bit
+  for bit, so finalized inference matches prepared inference exactly on the
+  finalizing device. This layout is the stable contract for external
+  exporters and runtimes.
 
 ## Training Checkpoints
 

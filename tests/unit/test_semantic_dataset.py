@@ -1,5 +1,6 @@
 """Unit tests for the semantic-segmentation dataset."""
 
+import random
 from pathlib import Path
 
 import numpy as np
@@ -160,6 +161,80 @@ class TestSemanticDatasetMasks:
             assert mask.shape == (32, 32)
             assert set(torch.unique(mask).tolist()) <= {0, 1, 255}
 
+    def test_hsv_leaves_mask_untouched_and_preserves_image(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        # Stretch mode removes scale jitter and crops, isolating flip + hsv.
+        ref = SemanticDataset(
+            config, split="train", imgsz=16, resize_mode="stretch", augment=False
+        )
+        _, ref_mask, _, _ = ref[0]
+
+        dataset = SemanticDataset(
+            config,
+            split="train",
+            imgsz=16,
+            resize_mode="stretch",
+            augment=True,
+            hsv_prob=1.0,
+        )
+        # Pick a seed whose first random() (the horizontal flip draw) does not
+        # fire, so geometry matches the reference and only hsv touches the image.
+        seed = next(
+            s for s in range(1000) if (random.seed(s) or random.random()) >= 0.5
+        )
+        random.seed(seed)
+        np.random.seed(0)
+        img, mask, _, _ = dataset[0]
+
+        # Class IDs are untouched: hsv only ever sees the image.
+        assert torch.equal(mask, ref_mask)
+        assert set(torch.unique(mask).tolist()) <= {0, 1, 255}
+        # Image dtype/range preserved.
+        assert img.dtype == torch.float32
+        assert float(img.min()) >= 0.0 and float(img.max()) <= 1.0
+        assert img.shape == (3, 16, 16)
+
+    def test_hsv_prob_zero_disables_photometric_jitter(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        ref = SemanticDataset(
+            config, split="train", imgsz=16, resize_mode="stretch", augment=False
+        )
+        _, ref_mask, _, _ = ref[0]
+        ref_img, _, _, _ = ref[0]
+
+        dataset = SemanticDataset(
+            config,
+            split="train",
+            imgsz=16,
+            resize_mode="stretch",
+            augment=True,
+            hsv_prob=0.0,
+        )
+        seed = next(
+            s for s in range(1000) if (random.seed(s) or random.random()) >= 0.5
+        )
+        random.seed(seed)
+        img, mask, _, _ = dataset[0]
+
+        # No flip, no scale, no hsv -> identical to the plain stretched sample.
+        assert torch.equal(img, ref_img)
+        assert torch.equal(mask, ref_mask)
+
+    def test_augment_is_seed_deterministic(self, tmp_path):
+        config = _make_mask_dataset(tmp_path, n_images=1, size=16)
+        dataset = SemanticDataset(
+            config, split="train", imgsz=16, augment=True, hsv_prob=1.0
+        )
+        random.seed(7)
+        np.random.seed(7)
+        img_a, mask_a, _, _ = dataset[0]
+        random.seed(7)
+        np.random.seed(7)
+        img_b, mask_b, _, _ = dataset[0]
+
+        assert torch.equal(img_a, img_b)
+        assert torch.equal(mask_a, mask_b)
+
 
 class TestPolygonFallback:
     def test_polygons_rasterize_with_background(self, tmp_path):
@@ -250,3 +325,51 @@ def test_polygon_out_of_range_class_raises(tmp_path):
 
     with pytest.raises(ValueError, match="outside 0..0"):
         dataset[0]
+
+
+def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, monkeypatch):
+    """Training scale jitter > 1 must resize PAST the canvas (keeping aspect) and
+    let the random crop take the overflow out — not clamp the resize to imgsz.
+
+    Both behaviours yield the same 64x64 padded canvas, so this asserts on
+    CONTENT: a marker band living only in the bottom rows of the source must be
+    cropped AWAY when we force the crop to the top of an oversized resize. If
+    the resize were clamped to imgsz instead, the whole image (band included)
+    would be squashed into the canvas and the band would survive.
+    """
+    from libreyolo.data import semantic_dataset as sd
+
+    imgsz = 64
+    orig_h, orig_w = 100, 50  # portrait, aspect 2.0
+    _write_image(tmp_path / "images" / "train" / "a.jpg", orig_w, orig_h)
+    _write_mask(tmp_path / "masks" / "train" / "a.png", np.zeros((orig_h, orig_w), np.uint8))
+    config = {
+        "path": str(tmp_path),
+        "train": str(tmp_path / "images" / "train"),
+        "masks_dir": "masks",
+        "names": {0: "bg"},
+        "nc": 1,
+    }
+    dataset = SemanticDataset(config, split="train", imgsz=imgsz, resize_mode="letterbox")
+
+    # Marker band in the bottom 10 source rows only.
+    img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
+    img[-10:, :, :] = 255
+    mask = np.zeros((orig_h, orig_w), dtype=np.uint8)
+
+    monkeypatch.setattr(sd.random, "randint", lambda a, b: 0)  # crop from the top
+    scale = 1.5
+    img_out, _, ratio, _ = dataset._resize(img, mask, scale)
+
+    assert ratio == pytest.approx(min(imgsz / orig_h, imgsz / orig_w) * scale)
+    assert round(orig_h * ratio) > imgsz  # there IS overflow, so a crop must happen
+    assert img_out.shape[:2] == (imgsz, imgsz)
+
+    # Content is the aspect-preserving width, padded on the right.
+    content_w = round(orig_w * ratio)
+    assert content_w < imgsz
+
+    # The band lived in the bottom of the source; cropping from the top must
+    # have discarded it. A clamped (squashing) resize would keep it.
+    content = img_out[:, :content_w, :]
+    assert content.max() == 0, "bottom marker band survived: resize squashed instead of cropping"

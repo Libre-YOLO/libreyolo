@@ -99,18 +99,18 @@ def _wrap_for_family(nn_model: nn.Module, model_family: str | None) -> nn.Module
 def _prepare_yolo9_static_eval(nn_model: nn.Module, dummy: torch.Tensor):
     """Bake YOLOv9 head anchors as constants for the fixed CoreML export size.
 
-    The head's ``_make_anchors`` rebuilds per-scale anchor grids from traced
+    The head's ``_anchor_grid`` rebuilds per-scale anchor grids from traced
     feature-map shapes on every forward. Tracing that produces length-1 int
     tensors (``h * w`` products) that coremltools 9+ rejects in its ``int``
     cast op (numpy 2.x stopped accepting ``int(array([n]))``). A warm-up
     forward populates ``head.anchors`` / ``head.strides``; we then swap
-    ``_make_anchors`` for a stub returning those frozen tensors, so the traced
+    ``_anchor_grid`` for a stub returning those frozen tensors, so the traced
     graph carries constants instead of shape arithmetic.
 
-    Returns a callable that restores the original ``_make_anchors``.
+    Returns a callable that restores the original ``_anchor_grid``.
     """
     head = getattr(nn_model, "head", None)
-    if head is None or not hasattr(head, "_make_anchors"):
+    if head is None or not hasattr(head, "_anchor_grid"):
         return lambda: None
 
     # Warm-up forward: input values are irrelevant — anchors depend only on
@@ -121,15 +121,15 @@ def _prepare_yolo9_static_eval(nn_model: nn.Module, dummy: torch.Tensor):
     frozen_anchors = head.anchors.detach().clone()
     frozen_strides = head.strides.detach().clone()
 
-    def _const_make_anchors(feats, strides, grid_cell_offset=0.5):
+    def _const_anchor_grid(feats):
         # The head transposes each returned tensor; pre-transpose so the
         # round-trip reproduces the frozen (post-transpose) values.
         return frozen_anchors.transpose(0, 1), frozen_strides.transpose(0, 1)
 
-    head._make_anchors = _const_make_anchors
+    head._anchor_grid = _const_anchor_grid
 
     def _restore():
-        head.__dict__.pop("_make_anchors", None)
+        head.__dict__.pop("_anchor_grid", None)
 
     return _restore
 

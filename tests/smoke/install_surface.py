@@ -90,15 +90,32 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
             )
 
     # The open-vocabulary detector tier follows the same lazy-import rule.
-    from libreyolo import LibreGroundingDINO, LibreOpenVocab, LibreOWLv2
+    from libreyolo import (
+        LibreGroundingDINO,
+        LibreOMDetTurbo,
+        LibreOpenVocab,
+        LibreOWLv2,
+    )
 
     if not callable(LibreOpenVocab):
         raise AssertionError("LibreOpenVocab import did not resolve to a callable")
-    for family in (LibreGroundingDINO, LibreOWLv2):
+    for family in (LibreGroundingDINO, LibreOWLv2, LibreOMDetTurbo):
         if not isinstance(family, type):
             raise AssertionError(
                 "Open-vocabulary detector export did not resolve to a class: "
                 f"{family!r}"
+            )
+
+    # Promptable-segmentation exports are lazy and importable without installing
+    # the optional model runtime itself.
+    from libreyolo import LibreEdgeTAM, LibreSAM, LibreSAM1, LibreSAM2, LibreSAM3
+
+    if not callable(LibreSAM):
+        raise AssertionError("LibreSAM import did not resolve to a callable")
+    for family in (LibreSAM1, LibreSAM2, LibreEdgeTAM, LibreSAM3):
+        if not isinstance(family, type):
+            raise AssertionError(
+                f"SAM family export did not resolve to a class: {family!r}"
             )
 
     package_version = importlib.metadata.version("libreyolo")

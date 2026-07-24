@@ -32,6 +32,9 @@ cd libreyolo
 pip install -e .
 ```
 
+普通克隆会检出 `release` 分支，即代码与本文档一致的稳定分支。如需获取尚未发布的
+最新开发内容，请使用 `git checkout dev` 切换到集成分支。
+
 ONNX Runtime、OpenVINO、TensorRT、NCNN 和 RF-DETR 等可选运行时与导出依赖，请见[完整文档](https://www.libreyolo.com/docs)。
 
 ```python
@@ -73,7 +76,7 @@ LibreYOLO 推荐以下模型系列，因为它们在性能上达到最佳平衡�
       <th>TensorRT</th>
       <th>OpenVINO</th>
       <th>NCNN</th>
-      <th>TFLite</th>
+      <th>TFLite (LiteRT)</th>
     </tr>
   </thead>
   <tbody>

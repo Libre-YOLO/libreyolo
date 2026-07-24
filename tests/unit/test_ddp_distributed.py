@@ -473,6 +473,7 @@ def _spawn_and_check(worker, n_ranks: int, tmp_path) -> dict:
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_yolo9_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for yolo9. Proves: process group init, DDP wrap,
     forward, loss-scale backward, optimizer step, cross-rank parameter
@@ -487,6 +488,7 @@ def test_yolo9_ddp_2_ranks_cpu_gloo(tmp_path):
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_rfdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for rf-detr. Same coverage as the yolo9 test.
 
@@ -503,6 +505,7 @@ def test_rfdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     sys.platform == "win32" and sys.version_info < (3, 8),
     reason="mp.spawn on Windows needs Python 3.8+",
 )
+@pytest.mark.distributed
 def test_rtdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     """Two-rank DDP smoke for RT-DETR.
 
@@ -518,6 +521,38 @@ def test_rtdetr_ddp_2_ranks_cpu_gloo(tmp_path):
     outputs = _spawn_and_check(_rtdetr_ddp_worker, n_ranks=2, tmp_path=tmp_path)
     for rank, text in outputs.items():
         assert text.startswith("ok "), f"rank {rank} did not finish ok: {text!r}"
+
+
+def test_classify_and_restore_families_expose_auto_spawn_train():
+    """The classifier families and NAFNet must route multi-GPU device specs
+    through the ``ddp_aware`` auto-spawn wrapper like every other trainable
+    family, so ``model.train(device="0,1")`` works from a plain script.
+    The wrapper's code object lives in ddp_spawn.py; a plain undecorated
+    ``train`` would point at the family's own model.py."""
+    from libreyolo.models.convnext.model import LibreConvNeXt
+    from libreyolo.models.efficientnetv2.model import LibreEfficientNetV2
+    from libreyolo.models.mobilenetv4.model import LibreMobileNetV4
+    from libreyolo.models.nafnet.model import LibreNAFNet
+    from libreyolo.models.resnet.model import LibreResNet
+
+    for cls in (
+        LibreConvNeXt,
+        LibreEfficientNetV2,
+        LibreMobileNetV4,
+        LibreNAFNet,
+        LibreResNet,
+    ):
+        # BaseModel.__init_subclass__ wraps train() again (cfg= support), so
+        # walk the functools.wraps chain and look for the ddp_aware layer.
+        fn = cls.train
+        filenames = []
+        while fn is not None:
+            filenames.append(getattr(fn, "__code__", None) and fn.__code__.co_filename.replace("\\", "/"))
+            fn = getattr(fn, "__wrapped__", None)
+        assert any(f and f.endswith("training/ddp_spawn.py") for f in filenames), (
+            f"{cls.__name__}.train is not wrapped by ddp_aware "
+            f"(wrapper chain: {filenames})"
+        )
 
 
 def test_parse_device_arg_and_wants_distributed():

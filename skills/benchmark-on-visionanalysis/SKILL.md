@@ -38,6 +38,12 @@ section (`generate-benchmark-results`). Read that there; this signpost does not
 copy it (so it cannot drift). One thing worth knowing up front: the canonical
 eval set is the HF dataset `LibreYOLO/coco-val2017-mini500`, not full COCO.
 
+Reproducibility: each emitted submission (harness >= 2.1.0) carries a `repro`
+block recording the exact command, harness + libreyolo commits, a verifiable
+image-id fingerprint, and weights hash / export manifest. When someone asks how
+a published number was produced, that block is the answer. See the harness
+skill's **"Reproducing a published result"** section for the step-by-step.
+
 ## Flow
 
 1. Go to `vision-analysis-benchmark`, follow `generate-benchmark-results`. This emits

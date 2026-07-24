@@ -25,7 +25,17 @@ from ..output import OutputHandler
 from ...training.freezing import normalize_freeze_selectors, parse_freeze_spec
 
 
-_LORA_TRAIN_FAMILIES = {"rfdetr"}
+_LORA_TRAIN_FAMILIES = {
+    "rfdetr",
+    "dfine",
+    "deim",
+    "deimv2",
+    "rtdetr",
+    "rtdetrv2",
+    "rtdetrv4",
+    "ec",
+    "convnext",
+}
 
 
 def _model_ref_exists(model_path: str) -> bool:
@@ -49,13 +59,15 @@ def _create_explicit_task_train_model(
     Create the requested architecture first so task-specific heads exist before
     training.
     """
-    if family not in {"yolo9", "rfdetr"} or resume:
+    if family not in {"yolo9", "rfdetr", "dfine"} or resume:
         return None
 
     from libreyolo.tasks import normalize_task
 
     if family == "yolo9":
         from libreyolo.models.yolo9.model import LibreYOLO9 as model_cls
+    elif family == "dfine":
+        from libreyolo.models.dfine.model import LibreDFINE as model_cls
     else:
         from libreyolo.models.rfdetr.model import LibreRFDETR as model_cls
 
@@ -63,12 +75,40 @@ def _create_explicit_task_train_model(
     train_task = normalize_task(task) if task is not None else filename_task
     if train_task is None:
         return None
+    if family == "dfine" and train_task != "segment":
+        return None
     if task is None and filename_task == train_task and _model_ref_exists(model_path):
         return None
 
     size = model_cls.detect_size_from_filename(Path(model_path).name)
     if size is None:
         return None
+    if family == "dfine" and train_task == "segment":
+        if not _model_ref_exists(model_path):
+            # Published weights (LibreDFINEn-seg.pt or a detect checkpoint used
+            # as transfer source) must auto-download here; falling through to
+            # the scratch path would silently train uninitialized.
+            url = model_cls.get_download_url(Path(model_path).name)
+            if url:
+                from libreyolo.utils.download import download_weights
+
+                dl_path = Path(model_path)
+                if dl_path.parent == Path("."):
+                    dl_path = Path("weights") / dl_path.name
+                download_weights(str(dl_path), size)
+                model_path = str(dl_path)
+        if _model_ref_exists(model_path):
+            # Detect checkpoints are legal segment-training starting points,
+            # but only as an explicit transfer (the mask head starts
+            # untrained). Seg checkpoints carry mask keys and load normally;
+            # the flag is inert for them.
+            return model_cls(
+                model_path,
+                size=size,
+                task=train_task,
+                device=device,
+                allow_detect_to_segment_transfer=True,
+            )
     if family == "rfdetr" and train_task == "obb" and _model_ref_exists(model_path):
         return model_cls(
             model_path,
@@ -142,6 +182,30 @@ def _create_rfdetr_pose_from_loaded_detect_model(
     )
 
 
+def _create_dfine_segment_from_loaded_detect_model(
+    loaded_model,
+    *,
+    model_path: str,
+    device: str,
+):
+    """Switch an already-loaded D-FINE detect checkpoint to the segment architecture."""
+    if (
+        get_loaded_model_family(loaded_model) != "dfine"
+        or getattr(loaded_model, "task", "detect") != "detect"
+    ):
+        return None
+
+    from libreyolo.models.dfine.model import LibreDFINE
+
+    return LibreDFINE(
+        model_path,
+        size=getattr(loaded_model, "size", None),
+        task="segment",
+        device=device,
+        allow_detect_to_segment_transfer=True,
+    )
+
+
 def _create_yolo9_task_from_loaded_model(loaded_model, task: str, device: str):
     if get_loaded_model_family(loaded_model) != "yolo9":
         return None
@@ -203,14 +267,17 @@ def train_cmd(
     # Distillation
     distill_model: str = typer.Option(
         "",
-        help="Teacher checkpoint for knowledge distillation",
+        help="Teacher for knowledge distillation: a detector checkpoint, or a "
+        "foundation-teacher id (e.g. 'dinov2') for backbone feature distillation",
     ),
     dis: Optional[float] = typer.Option(
         None,
         help="Distillation loss weight (default: per-loss-type published default)",
     ),
     distill_loss_type: str = typer.Option(
-        "mgd", help="Distillation feature loss: mgd, cwd"
+        "mgd",
+        help="Distillation feature loss for detector teachers: mgd, cwd "
+        "(foundation teachers always use feat_mse)",
     ),
     # Optimizer
     optimizer: str = typer.Option("sgd", help="Optimizer: sgd, adam, adamw"),
@@ -373,6 +440,12 @@ def train_cmd(
                     model_path=model_path,
                     device=device,
                 )
+            if replacement is None and normalized_task == "segment":
+                replacement = _create_dfine_segment_from_loaded_detect_model(
+                    loaded_model,
+                    model_path=model_path,
+                    device=device,
+                )
             if replacement is None:
                 exit_with_error(
                     out,
@@ -443,19 +516,26 @@ def train_cmd(
             out,
             "config_unsupported",
             f"LoRA fine-tuning (lora=True) is not supported for {family}.",
-            suggestion="Use an RF-DETR model or remove --lora.",
+            suggestion=(
+                "Use a supported family (RF-DETR, D-FINE, DEIM, DEIMv2, "
+                "RT-DETR v1/v2/v4, EC, ConvNeXt) or remove --lora."
+            ),
         )
 
-    # RF-DETR: warn and ignore unsupported params
-    rfdetr_warnings = []
+    # Warn when explicitly-set params are ignored by the selected family
+    # (spec-driven; see libreyolo/data/augment/spec.py).
+    ignored_warnings = []
     unsupported_params = get_unsupported_train_params(family)
     if unsupported_params:
         for param_name in unsupported_params:
             if param_name in user_provided:
-                rfdetr_warnings.append(param_name)
-        if rfdetr_warnings:
+                ignored_warnings.append(param_name)
+        if ignored_warnings:
+            from libreyolo.data.augment.spec import display_name
+
             out.progress(
-                f"Warning: RF-DETR ignores these parameters: {', '.join(sorted(rfdetr_warnings))}"
+                f"Warning: {display_name(family)} ignores these parameters: "
+                f"{', '.join(sorted(ignored_warnings))}"
             )
 
     # Dry run: validate and show resolved config
@@ -473,6 +553,8 @@ def train_cmd(
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
+        if params.get("lora"):
+            resolved_config["lora"] = True
         if params.get("distill_model"):
             resolved_config["distill_model"] = params["distill_model"]
             resolved_config["distill_loss_type"] = params["distill_loss_type"]

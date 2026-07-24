@@ -20,6 +20,19 @@ pytestmark = pytest.mark.unit
 CKPT_PATH = Path("weights/LibreECs.pt")
 
 
+def test_ec_detection_config_matches_pass_through_augment_path():
+    """EC detect training currently uses DFINEPassThroughDataset, not mosaic."""
+    from libreyolo.training.config import ECConfig
+
+    cfg = ECConfig()
+    assert cfg.mosaic_prob == 0.0
+    assert cfg.mixup_prob == 0.0
+    assert cfg.hsv_prob == 0.0
+    assert cfg.degrees == 0.0
+    assert cfg.translate == 0.0
+    assert cfg.flip_prob == 0.5
+
+
 def test_imagenet_norm_applied_when_flag_true():
     """DFINETrainTransform(imagenet_norm=True) shifts the image distribution
     to roughly mean 0, std ~1; without the flag it stays in [0, 1]."""

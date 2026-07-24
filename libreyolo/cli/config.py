@@ -13,14 +13,35 @@ from libreyolo.tasks import task_to_suffix
 
 
 def get_unsupported_train_params(family: str | None) -> set[str]:
-    """Return the set of CLI parameters ignored by a model family's trainer."""
+    """Return the set of CLI parameters ignored by a model family's trainer.
+
+    Augmentation knobs come from the declarative spec
+    (``libreyolo.data.augment.spec``), which covers every trainable family.
+    Families may declare additional non-augmentation ignores via an
+    ``UNSUPPORTED_TRAIN_PARAMS`` class attribute (RF-DETR: optimizer/momentum/
+    nesterov/pretrained), which is unioned in.
+    """
+    from libreyolo.data.augment.spec import ignored_aug_params
+
+    from .aliases import TRAIN_ALIASES
+
+    internal_to_cli = {v: k for k, v in TRAIN_ALIASES.items()}
+    unsupported: set[str] = set()
+    for name in ignored_aug_params(family):
+        # Fields whose name collides with a CLI alias key (the classification
+        # ``mixup`` field vs the ``mixup`` -> ``mixup_prob`` alias) have no CLI
+        # spelling of their own; the CLI name belongs to the aliased field.
+        if name in TRAIN_ALIASES:
+            continue
+        unsupported.add(internal_to_cli.get(name, name))
+
     if family == "rfdetr":
         from libreyolo.models import try_ensure_rfdetr
 
         rfcls = try_ensure_rfdetr()
         if rfcls is not None:
-            return getattr(rfcls, "UNSUPPORTED_TRAIN_PARAMS", set())
-    return set()
+            unsupported |= getattr(rfcls, "UNSUPPORTED_TRAIN_PARAMS", set())
+    return unsupported
 
 
 # =========================================================================
@@ -335,6 +356,12 @@ def build_train_kwargs(params: dict[str, Any]) -> dict[str, Any]:
     for f in fields(TrainConfig):
         if f.name in excluded:
             continue
+        # A field whose name is itself a CLI alias key (e.g. the classification
+        # ``mixup`` field vs the ``mixup`` -> ``mixup_prob`` detection alias)
+        # does not own that CLI name; it is API-only, so skip it here rather
+        # than let the detection-flavored CLI value leak into it.
+        if f.name in TRAIN_ALIASES:
+            continue
         cli_name = internal_to_cli.get(f.name, f.name)
         if cli_name in params:
             kwargs[f.name] = params[cli_name]
@@ -495,6 +522,11 @@ def get_cfg_defaults() -> dict[str, Any]:
     train_defaults = {}
     for f in fields(TrainConfig):
         if f.name in train_exclude:
+            continue
+        # Skip fields shadowed by a CLI alias key (e.g. the classification
+        # ``mixup`` field): the CLI name belongs to the aliased detection field
+        # (``mixup_prob``), whose default is the one the CLI actually uses.
+        if f.name in TRAIN_ALIASES:
             continue
         cli_name = train_internal_to_cli.get(f.name, f.name)
         train_defaults[cli_name] = _to_json_safe(getattr(base, f.name))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ import torch
 import torch.nn as nn
 
 from libreyolo.export.exporter import BaseExporter, TFLiteExporter
+from libreyolo.export.support import get_support
 
 pytestmark = pytest.mark.unit
 
@@ -78,11 +80,14 @@ def test_tflite_family_support_scaffold():
     exports = supported_tflite_exports()
     assert ("yolo9", "detect") in exports
     assert ("rfdetr", "detect") in exports
-    assert ("rfdetr", "segment") in exports
-    assert ("rfdetr", "pose") in exports
+    assert ("rfdetr", "segment") not in exports
+    assert ("rfdetr", "pose") not in exports
     ensure_tflite_family_supported("yolo9", "detect")
     ensure_tflite_family_supported("rfdetr", "detect")
-    ensure_tflite_family_supported("rfdetr", "segment")
+    with pytest.raises(NotImplementedError, match="Einsum"):
+        ensure_tflite_family_supported("rfdetr", "segment")
+    with pytest.raises(NotImplementedError, match="timebox"):
+        ensure_tflite_family_supported("rfdetr", "pose")
     with pytest.raises(NotImplementedError, match="task 'segment'"):
         ensure_tflite_family_supported("yolo9", "segment")
 
@@ -108,7 +113,7 @@ def test_tflite_rejects_fp16_export():
         exporter(output_path="unused.tflite", half=True)
 
 
-@pytest.mark.parametrize("family", ["yolox", "yolo9_e2e", "dfine"])
+@pytest.mark.parametrize("family", ["yolo9_e2e", "dfine"])
 def test_tflite_blocks_unvalidated_families_before_onnx_export(family):
     exporter = TFLiteExporter(_make_wrapper(model_name=family))
 
@@ -116,13 +121,54 @@ def test_tflite_blocks_unvalidated_families_before_onnx_export(family):
         exporter(output_path="unused.tflite")
 
 
+def test_tflite_accepts_parity_validated_yolox():
+    assert get_support("yolox", "detect", "tflite").tier == "validated"
+
+
 def test_tflite_blocks_yolo9_segment_before_onnx_export():
     wrapper = _make_wrapper(model_name="yolo9")
     wrapper.task = "segment"
     exporter = TFLiteExporter(wrapper)
 
-    with pytest.raises(NotImplementedError, match="task 'segment'"):
+    with pytest.raises(NotImplementedError, match="YOLO9 segmentation export"):
         exporter(output_path="unused.tflite")
+
+
+def test_yolox_tflite_raw_parity(tmp_path):
+    if (
+        importlib.util.find_spec("onnx2tf") is None
+        or importlib.util.find_spec("ai_edge_litert") is None
+    ):
+        pytest.skip("onnx2tf and ai-edge-litert are required")
+
+    import numpy as np
+
+    from libreyolo import LibreYOLO, LibreYOLOX
+
+    model = LibreYOLOX(None, size="n", nb_classes=3, device="cpu")
+    model.model.eval()
+    image = np.random.default_rng(29).integers(
+        0, 256, size=(80, 100, 3), dtype=np.uint8
+    )
+    tensor, *_ = model._preprocess(image, input_size=96)
+    old_export = model.model.head.export
+    model.model.head.export = True
+    try:
+        with torch.no_grad():
+            native = model.model(tensor).numpy()
+    finally:
+        model.model.head.export = old_export
+
+    artifact = model.export(
+        "tflite",
+        output_path=str(tmp_path / "yolox.tflite"),
+        imgsz=96,
+        dynamic=False,
+        simplify=False,
+    )
+    backend = LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())[0]
+    np.testing.assert_allclose(actual, native, rtol=1e-5, atol=1e-5)
 
 
 def test_tflite_export_copies_float32_output(monkeypatch, tmp_path):
@@ -246,7 +292,9 @@ def test_tflite_exporter_runs_static_onnx_then_helper(monkeypatch, tmp_path):
     assert captured["tflite"]["metadata"]["model_family"] == "yolo9"
     assert captured["tflite"]["metadata"]["imgsz_h"] == 16
     assert captured["tflite"]["metadata"]["imgsz_w"] == 32
-    assert captured["tflite"]["onnx2tf_args"] == ["--flatbuffer_direct_allow_custom_ops"]
+    assert captured["tflite"]["onnx2tf_args"] == [
+        "--flatbuffer_direct_allow_custom_ops"
+    ]
     assert not Path(captured["tflite"]["onnx_path"]).exists()
 
 

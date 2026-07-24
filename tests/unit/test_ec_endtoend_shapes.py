@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from libreyolo.models.ec.backbone import ViTAdapter
-from libreyolo.models.ec.decoder import ECTransformer
+from libreyolo.models.ec.decoder import ECTransformer, ECPoseTransformer
 from libreyolo.models.ec.encoder import HybridEncoder
 from libreyolo.models.ec.nn import SIZE_CONFIGS
 
@@ -58,3 +58,82 @@ def test_full_pipeline_random_weights(size):
     assert set(out.keys()) == {"pred_logits", "pred_boxes"}
     assert out["pred_logits"].shape == (1, 300, 80)
     assert out["pred_boxes"].shape == (1, 300, 4)
+
+
+def _load_twin(fixed, cls, **kwargs):
+    from libreyolo.models.ec import nn as ec_nn
+
+    dynamic = getattr(ec_nn, cls)(config="s", eval_spatial_size=None, **kwargs)
+    dynamic.load_state_dict(fixed.state_dict(), strict=False)
+    return dynamic.eval()
+
+
+@pytest.mark.parametrize(
+    "cls,kwargs",
+    [
+        ("LibreECModel", {"nb_classes": 2}),
+        ("LibreECSegModel", {"nb_classes": 2}),
+        ("LibreECPoseModel", {}),
+    ],
+)
+def test_eval_forward_accepts_runtime_size_different_from_eval_spatial_size(
+    cls, kwargs
+):
+    """Eval must rebuild fixed-size encoder/decoder constants for runtime imgsz."""
+    from libreyolo.models.ec import nn as ec_nn
+
+    model = getattr(ec_nn, cls)(
+        config="s", eval_spatial_size=(640, 640), **kwargs
+    ).eval()
+
+    for hw in ((320, 320), (800, 800)):
+        x = torch.randn(1, 3, *hw)
+        with torch.no_grad():
+            model(x)
+
+
+def test_eval_rectangular_size_with_native_token_count_matches_dynamic():
+    """A rect grid can share the native buffer's token count (16x25 == 20x20).
+
+    Constants must be rebuilt from the grid shape, not the token count, or
+    the encoder/decoder silently apply wrong-grid embeddings and anchors.
+    """
+    from libreyolo.models.ec.nn import LibreECModel
+
+    fixed = LibreECModel(
+        config="s", nb_classes=2, eval_spatial_size=(640, 640)
+    ).eval()
+    dynamic = _load_twin(fixed, "LibreECModel", nb_classes=2)
+
+    x = torch.randn(1, 3, 512, 800)
+    with torch.no_grad():
+        out_fixed = fixed(x)
+        out_dynamic = dynamic(x)
+    for key in ("pred_logits", "pred_boxes"):
+        torch.testing.assert_close(
+            out_fixed[key], out_dynamic[key], rtol=1e-4, atol=1e-5
+        )
+
+
+def test_pose_anchor_cache_tracks_memory_dtype():
+    """A warmed float cache must not survive a later half-precision cast."""
+    decoder = ECPoseTransformer(
+        hidden_dim=32,
+        nhead=4,
+        num_queries=5,
+        num_decoder_layers=1,
+        dim_feedforward=64,
+        eval_spatial_size=(64, 64),
+    ).eval()
+    spatial_shapes = [[8, 8], [4, 4], [2, 2]]
+    memory = torch.empty(1, 84, 32)
+
+    anchors_float, _ = decoder._get_anchors_for_spatial_shapes(spatial_shapes, memory)
+    decoder.half()
+    anchors_half, _ = decoder._get_anchors_for_spatial_shapes(
+        spatial_shapes, memory.half()
+    )
+
+    assert anchors_float.dtype == torch.float32
+    assert anchors_half.dtype == torch.float16
+    assert anchors_float.data_ptr() != anchors_half.data_ptr()

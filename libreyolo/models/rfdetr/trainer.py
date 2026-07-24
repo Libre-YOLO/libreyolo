@@ -28,6 +28,7 @@ from ...training.freezing import FreezeGroup
 from ...training.scheduler import BaseScheduler, CosineAnnealingScheduler, FlatCosineScheduler
 from ...training.trainer import BaseTrainer
 from .config import RFDETRConfig
+from .imgsz import resolve_patch_window, validate_imgsz
 from ..dfine.transforms import DFINEPassThroughDataset
 from .pose_transforms import RFDETRPoseTransform
 from .seg_transforms import (
@@ -246,19 +247,15 @@ class RFDETRTrainer(BaseTrainer):
         return getattr(getattr(self, "wrapper_model", None), "task", "detect") == "segment"
 
     def create_transforms(self):
-        patch_size = int(getattr(self.model, "patch_size", 16))
-        num_windows = int(getattr(self.model, "num_windows", 4))
-        block_size = patch_size * num_windows
+        raw = unwrap_model(self.model)
+        patch_size, num_windows = resolve_patch_window(raw)
         # Validation always uses the literal imgsz, so divisibility is required
         # regardless of multi_scale mode.
-        if self.config.imgsz % block_size != 0:
-            lo = (self.config.imgsz // block_size) * block_size
-            hi = lo + block_size
-            raise ValueError(
-                f"imgsz={self.config.imgsz} is not divisible by {block_size} "
-                f"(patch_size={patch_size} x num_windows={num_windows}). "
-                f"Use {lo} or {hi}."
-            )
+        validate_imgsz(
+            self.config.imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+        )
         task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
         if task == "segment":
             preproc = RFDETRSegTransform(
@@ -272,6 +269,8 @@ class RFDETRTrainer(BaseTrainer):
                 patch_size=patch_size,
                 num_windows=num_windows,
                 crop_resize_prob=self.config.crop_resize_prob,
+                copy_paste=getattr(self.config, "copy_paste", 0.0),
+                copy_paste_mode=getattr(self.config, "copy_paste_mode", "flip"),
             )
             return preproc, RFDETRSegPassThroughDataset
         if task == "pose":
@@ -335,8 +334,7 @@ class RFDETRTrainer(BaseTrainer):
         if not self.config.multi_scale or self.config.do_random_resize_via_padding:
             return []
         raw = unwrap_model(self.model)
-        patch_size = int(getattr(raw, "patch_size", 16))
-        num_windows = int(getattr(raw, "num_windows", 4))
+        patch_size, num_windows = resolve_patch_window(raw)
         return compute_multi_scale_scales(
             self.config.imgsz,
             self.config.expanded_scales,
@@ -388,11 +386,19 @@ class RFDETRTrainer(BaseTrainer):
             keypoints[..., 1] *= scale_y
 
         if isinstance(polygons, torch.Tensor):
-            polygons = F.interpolate(
-                polygons.float(),
-                size=(scale, scale),
-                mode="nearest",
-            )
+            if polygons.shape[1] == 0:
+                # All-background batch: masks are padded to the batch max
+                # instance count (#527), which can be 0. F.interpolate
+                # rejects empty 4D inputs, so resize the shape directly.
+                polygons = polygons.new_zeros(
+                    (*polygons.shape[:2], scale, scale), dtype=torch.float32
+                )
+            else:
+                polygons = F.interpolate(
+                    polygons.float(),
+                    size=(scale, scale),
+                    mode="nearest",
+                )
 
         return imgs, targets, polygons
 
@@ -446,17 +452,13 @@ class RFDETRTrainer(BaseTrainer):
         if not train_imgs:
             raise FileNotFoundError("No training images found for RF-DETR pose training")
 
-        patch_size = int(getattr(self.model, "patch_size", 16))
-        num_windows = int(getattr(self.model, "num_windows", 4))
-        block_size = patch_size * num_windows
-        if self.config.imgsz % block_size != 0:
-            lo = (self.config.imgsz // block_size) * block_size
-            hi = lo + block_size
-            raise ValueError(
-                f"imgsz={self.config.imgsz} is not divisible by {block_size} "
-                f"(patch_size={patch_size} x num_windows={num_windows}). "
-                f"Use {lo} or {hi}."
-            )
+        raw = unwrap_model(self.model)
+        patch_size, num_windows = resolve_patch_window(raw)
+        validate_imgsz(
+            self.config.imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+        )
         train_tf = RFDETRPoseTransform(
             self.config.num_keypoints,
             flip_idx=flip_idx,
@@ -595,6 +597,16 @@ class RFDETRTrainer(BaseTrainer):
                 if task == "pose"
                 else self.config.num_classes + 1
             )
+            if is_main_process():
+                logger.warning(
+                    "Class count changed (checkpoint head: %d classes, dataset: %d): "
+                    "reinitializing the detection head from scratch. The pretrained "
+                    "head weights are discarded, so accuracy starts low and short "
+                    "fine-tunes underperform the checkpoint; budget enough epochs "
+                    "for the new head to converge.",
+                    self.model.nb_classes,
+                    self.config.num_classes,
+                )
             self.model.model.reinitialize_detection_head(head_outputs)
             self.model.nb_classes = self.config.num_classes
             self.model.args.num_classes = (
@@ -816,7 +828,9 @@ class RFDETRTrainer(BaseTrainer):
                 if is_obb:
                     entry["angles"] = t_valid[:, 5].float()
                 if masks_batch is not None:
-                    m = masks_batch[batch_idx][valid]
+                    # masks are padded to the batch max instance count, not
+                    # max_labels (#527); real rows always sit below that cap.
+                    m = masks_batch[batch_idx][valid[: masks_batch.shape[1]]]
                     entry["masks"] = m.to(device=self.device, dtype=torch.bool)
                 if is_pose:
                     keypoints = t_valid[:, 5:].view(-1, self.config.num_keypoints, 3).clone()
@@ -858,9 +872,9 @@ class RFDETRTrainer(BaseTrainer):
         height, width = imgs.shape[-2], imgs.shape[-1]
         is_seg = task == "segment"
         # ``polygons`` here is the collate-stacked output of RFDETRSegTransform:
-        # a [B, max_labels, mask_h, mask_w] float32 tensor whose slot i aligns
-        # with target slot i. Slice by the same ``valid`` box mask to hand the
-        # criterion per-image ``[N_valid, mask_h, mask_w]`` tensors.
+        # a [B, batch_max_instances, mask_h, mask_w] uint8 tensor whose slot i
+        # aligns with target slot i. Slice by the same ``valid`` box mask to
+        # hand the criterion per-image ``[N_valid, mask_h, mask_w]`` tensors.
         masks_batch = (
             polygons.to(self.device, non_blocking=True)
             if is_seg and isinstance(polygons, torch.Tensor)

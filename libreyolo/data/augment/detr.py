@@ -60,6 +60,26 @@ def _labels_at_index_2(inputs):
     return inputs[2]
 
 
+def resolve_aug_stop_epoch(epochs: int, ratio: float, no_aug_epochs: int) -> int:
+    """Epoch at which the strong augs (ZoomOut/IoUCrop/Photometric) shut off.
+
+    Strong augs must stop early enough to leave the no-aug LR tail clean:
+    ``min(ratio-based stop, epochs - no_aug_epochs)``. Published recipes
+    already satisfy this (DEIM 132ep: 120 both ways; DEIMv2 tables encode
+    ``ratio == (epochs - no_aug)/epochs`` exactly; D-FINE's 0.85 stops even
+    earlier), so they are unchanged. Short fine-tune runs stop augmenting in
+    time to consolidate at low LR instead of augmenting through ~90% of the
+    run.
+    """
+    epochs = int(epochs)
+    # ratio may be None on a config whose size recipe did not set it.
+    stop_epoch = int(epochs * float(ratio if ratio is not None else 1.0))
+    no_aug = int(no_aug_epochs or 0)
+    if no_aug > 0:
+        stop_epoch = min(stop_epoch, max(1, epochs - no_aug))
+    return stop_epoch
+
+
 def _generate_scales(base_size: int, base_size_repeat: int) -> List[int]:
     """Mirror of the upstream ports' ``generate_scales``.
 
@@ -236,9 +256,10 @@ class DetrPassThroughDataset:
         enable_mixup=False,
         mosaic_prob=0.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         del mosaic, degrees, translate, mosaic_scale, mixup_scale, shear
-        del enable_mixup, mosaic_prob, mixup_prob
+        del enable_mixup, mosaic_prob, mixup_prob, perspective
         self.dataset = dataset
         self.img_size = img_size
         self.preproc = preproc or self._default_transform_cls()

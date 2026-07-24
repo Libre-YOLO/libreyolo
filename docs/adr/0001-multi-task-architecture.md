@@ -30,7 +30,7 @@ Current pressure points:
 
 This is manageable for wrapped RF-DETR segmentation, but it will not scale to:
 
-- YOLO9 segmentation
+- future clean-room CNN segmentation families
 - native EdgeCrafter detection + segmentation + keypoints
 - future keypoint families beyond EdgeCrafter
 
@@ -713,7 +713,7 @@ Primary files:
 - `libreyolo/models/rfdetr/model.py`
   - replace `segmentation: bool` with `task: TaskType`
 - `libreyolo/models/yolo9/model.py`
-  - future `supported_tasks = ("detect", "segment")`
+  - remains detection-only unless a clean-room segmentation design is accepted
 - `libreyolo/models/edgecrafter/model.py`
   - `LibreYOLOEdgeCrafter`
 

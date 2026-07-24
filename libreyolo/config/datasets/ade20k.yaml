@@ -1,6 +1,9 @@
 # ADE20K Scene Parsing semantic segmentation.
 #
-# Manual download: place ADEChallengeData2016 under <DATASETS_DIR>/.
+# Auto-downloads ADEChallengeData2016.zip (~1GB) from MIT CSAIL on first use;
+# pass allow_download_scripts=True, e.g.:
+#   model.val(data="ade20k.yaml", allow_download_scripts=True)
+# Extracts to <DATASETS_DIR>/ADEChallengeData2016/:
 #   images/training, images/validation
 #   annotations/training, annotations/validation
 #
@@ -314,3 +317,15 @@ label_mapping:
   148: 147
   149: 148
   150: 149
+
+download: |
+  from pathlib import Path
+  from libreyolo.data.utils import download
+
+  # The zip already contains a top-level ADEChallengeData2016/ folder, so
+  # extract one level above yaml["path"] (== <DATASETS_DIR>/ADEChallengeData2016).
+  dir = Path(yaml["path"]).parent
+  download(
+      ["https://data.csail.mit.edu/places/ADEchallenge/ADEChallengeData2016.zip"],
+      dir=dir,
+  )

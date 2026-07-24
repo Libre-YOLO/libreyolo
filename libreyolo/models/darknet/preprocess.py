@@ -58,3 +58,38 @@ def preprocess_image(
     chw, ratio = preprocess_numpy(np.array(img), input_size)
     tensor = torch.from_numpy(chw).unsqueeze(0)
     return tensor, original_img, original_size, ratio
+
+
+def preprocess_numpy_stretch(
+    img_rgb_hwc: np.ndarray,
+    input_size: int = 448,
+) -> Tuple[np.ndarray, float]:
+    """Stretch (non-aspect-preserving) resize to ``input_size`` and normalize.
+
+    YOLOv1's fully-connected head is not translation-invariant and was trained on
+    a plain square resize (Darknet's ``resize_image``, as used by the classic
+    ``yolo.c`` test path), NOT the aspect-preserving ``letterbox_image`` the
+    convolutional v2/v3/v4 detectors use. Letterboxing shifts the image into the
+    top-left of the canvas and the FC head then sees a spatial layout it never
+    trained on, wrecking accuracy. So YOLOv1 stretches the whole image onto the
+    square canvas. The returned ratio is ``1.0`` (unused; the inverse transform
+    is independent x/y scaling done in post-processing, ``letterbox=False``).
+    """
+    img_resized = Image.fromarray(img_rgb_hwc).resize(
+        (input_size, input_size), Image.Resampling.BILINEAR
+    )
+    arr = np.array(img_resized, dtype=np.float32) / 255.0
+    return arr.transpose(2, 0, 1), 1.0
+
+
+def preprocess_image_stretch(
+    image: ImageInput, input_size: int = 448, color_format: str = "auto"
+) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
+    """Preprocess an image for YOLOv1 inference (square stretch resize)."""
+    img = ImageLoader.load(image, color_format=color_format)
+    original_size = img.size  # (width, height)
+    original_img = img.copy()
+
+    chw, ratio = preprocess_numpy_stretch(np.array(img), input_size)
+    tensor = torch.from_numpy(chw).unsqueeze(0)
+    return tensor, original_img, original_size, ratio

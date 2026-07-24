@@ -12,17 +12,21 @@ import numpy as np
 
 from .boxes import adjust_box_anns, xyxy2cxcywh
 from .color import augment_hsv
-from .geometry import mirror, preproc, random_affine
+from .geometry import mirror, mirror_vertical, preproc, random_affine
 from .mosaic import get_mosaic_coordinate
 
 
 class TrainTransform:
     """Transform for training data."""
 
-    def __init__(self, max_labels=50, flip_prob=0.5, hsv_prob=1.0):
+    def __init__(self, max_labels=50, flip_prob=0.5, hsv_prob=1.0, flipud=0.0):
         self.max_labels = max_labels
         self.flip_prob = flip_prob
         self.hsv_prob = hsv_prob
+        # Vertical-flip probability. Off by default; when enabled it mirrors the
+        # image top-to-bottom and reflects the boxes' y coordinates. Guarded so
+        # a disabled knob draws no random numbers.
+        self.flipud = flipud
 
     def __call__(self, image, targets, input_dim):
         boxes = targets[:, :4].copy()
@@ -42,6 +46,8 @@ class TrainTransform:
         if random.random() < self.hsv_prob:
             augment_hsv(image)
         image_t, boxes = mirror(image, boxes, self.flip_prob)
+        if self.flipud > 0:
+            image_t, boxes = mirror_vertical(image_t, boxes, self.flipud)
         height, width, _ = image_t.shape
         image_t, r_ = preproc(image_t, input_dim)
         boxes = xyxy2cxcywh(boxes)  # [xyxy] → [cx,cy,w,h]
@@ -96,6 +102,7 @@ class MosaicMixupDataset:
         enable_mixup=True,
         mosaic_prob=1.0,
         mixup_prob=1.0,
+        perspective=0.0,
     ):
         self.dataset = dataset
         self.img_size = img_size
@@ -104,6 +111,7 @@ class MosaicMixupDataset:
         self.translate = translate
         self.scale = mosaic_scale
         self.shear = shear
+        self.perspective = perspective
         self.mixup_scale = mixup_scale
         self.enable_mosaic = mosaic
         self.enable_mixup = enable_mixup
@@ -180,6 +188,7 @@ class MosaicMixupDataset:
             translate=self.translate,
             scales=self.scale,
             shear=self.shear,
+            perspective=self.perspective,
         )
 
         if (

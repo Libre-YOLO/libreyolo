@@ -1,8 +1,8 @@
 """
 E2E tracking: validate model.track() on a real video with multiple pedestrians.
 
-Downloads a short test video (7.3 MB, 13.6s) from Roboflow's public CDN and
-runs ByteTrack through several LibreYOLO detectors, checking that:
+Downloads official Supervision video assets from Roboflow's public CDN and
+runs tracking through several LibreYOLO detectors, checking that:
   - track IDs are assigned and consistent across frames
   - the same person keeps the same ID across consecutive frames
   - no duplicate IDs within a single frame
@@ -34,8 +34,12 @@ from .conftest import (
 pytestmark = [pytest.mark.e2e, requires_cuda]
 
 VIDEO_URL = "https://media.roboflow.com/supervision/video-examples/people-walking.mp4"
+BOTSORT_VIDEO_URL = (
+    "https://media.roboflow.com/supervision/video-examples/basketball-1.mp4"
+)
 VIDEO_CACHE = Path.home() / ".cache" / "libreyolo" / "tracking"
 VIDEO_PATH = VIDEO_CACHE / "people-walking.mp4"
+BOTSORT_VIDEO_PATH = VIDEO_CACHE / "basketball-1.mp4"
 
 OFFICIAL_YOLONAS_S = Path("downloads/yolonas/yolo_nas_s_coco.pth")
 
@@ -50,6 +54,16 @@ def download_tracking_video():
     print(f"Video cached at {VIDEO_PATH}")
 
 
+def download_botsort_video():
+    """Download the basketball BoT-SORT smoke-test video when not cached."""
+    if BOTSORT_VIDEO_PATH.exists():
+        return
+    print(f"\nDownloading BoT-SORT test video from {BOTSORT_VIDEO_URL} ...")
+    VIDEO_CACHE.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(BOTSORT_VIDEO_URL, str(BOTSORT_VIDEO_PATH))
+    print(f"Video cached at {BOTSORT_VIDEO_PATH}")
+
+
 @pytest.fixture(scope="module")
 def video_path():
     """Download the test video once per module, skip if network unavailable."""
@@ -58,6 +72,16 @@ def video_path():
     except Exception as exc:
         pytest.skip(f"Cannot download test video: {exc}")
     return VIDEO_PATH
+
+
+@pytest.fixture(scope="module")
+def botsort_video_path():
+    """Provide a basketball clip with crossings and similar-looking targets."""
+    try:
+        download_botsort_video()
+    except Exception as exc:
+        pytest.skip(f"Cannot download BoT-SORT test video: {exc}")
+    return BOTSORT_VIDEO_PATH
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -163,6 +187,43 @@ class TestTrackingYOLOX:
                     stable += 1
         assert stable >= len(frames) // 2, "OC-SORT IDs not stable across frames"
 
+    def test_deepocsort_tracker_end_to_end(self, model, video_path):
+        """Deep OC-SORT (appearance ReID) yields stable, unique per-frame IDs.
+
+        The OSNet ReID weights are a published autodownload contract
+        (LibreYOLO/LibreReID-osnet); a failed download is a real failure,
+        not a skip.
+        """
+        frames = _run_tracker(model, video_path, n_frames=20, tracker="deepocsort")
+        assert len(frames) == 20
+        stable = 0
+        for i, f in enumerate(frames):
+            ids = f.track_id.tolist() if f.track_id is not None else []
+            assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+            if i > 0:
+                prev = _ids(frames[i - 1])
+                curr = _ids(frames[i])
+                if prev and curr and len(prev & curr) / len(prev) >= 0.5:
+                    stable += 1
+        assert stable >= len(frames) // 2, "Deep OC-SORT IDs not stable across frames"
+
+    def test_botsort_tracker_end_to_end(self, model, botsort_video_path):
+        """BoT-SORT assigns stable, unique IDs on a real basketball clip."""
+        frames = _run_tracker(
+            model, botsort_video_path, n_frames=120, tracker="botsort"
+        )
+        assert len(frames) == 120
+        stable = 0
+        for i, frame in enumerate(frames):
+            ids = frame.track_id.tolist() if frame.track_id is not None else []
+            assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+            if i > 0:
+                previous = _ids(frames[i - 1])
+                current = _ids(frame)
+                if previous and current and len(previous & current) / len(previous) >= 0.5:
+                    stable += 1
+        assert stable >= len(frames) // 2, "BoT-SORT IDs not stable across frames"
+
     def test_save_creates_annotated_video(self, model, video_path, tmp_path):
         """save=True should write an annotated video to output_path."""
         import cv2
@@ -228,6 +289,12 @@ class TestTrackingYOLO9:
         for i, f in enumerate(frames):
             ids = f.track_id.tolist() if f.track_id is not None else []
             assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+
+    def test_botsort_produces_results(self, model, video_path):
+        """The BoT-SORT path works with flagship YOLO9 detectors."""
+        frames = _run_tracker(model, video_path, n_frames=5, tracker="botsort")
+        assert len(frames) == 5
+        assert all(frame.track_id is not None and len(frame) > 0 for frame in frames)
 
 
 # ── YOLO-NAS ─────────────────────────────────────────────────────────────────
@@ -316,6 +383,12 @@ class TestTrackingRFDETR:
         for i, f in enumerate(frames):
             ids = f.track_id.tolist() if f.track_id is not None else []
             assert len(ids) == len(set(ids)), f"Frame {i}: duplicate IDs: {ids}"
+
+    def test_botsort_produces_results(self, model, video_path):
+        """The BoT-SORT path works with flagship RF-DETR detectors."""
+        frames = _run_tracker(model, video_path, n_frames=5, tracker="botsort")
+        assert len(frames) == 5
+        assert all(frame.track_id is not None and len(frame) > 0 for frame in frames)
 
 
 # ── RF-DETR Segmentation + Tracking ─────────────────────────────────────────

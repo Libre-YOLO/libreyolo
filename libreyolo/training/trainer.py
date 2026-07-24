@@ -4,6 +4,7 @@ Model-specific trainers subclass BaseTrainer and override hooks.
 """
 
 import contextlib
+import inspect
 import logging
 import math
 import sys
@@ -379,15 +380,19 @@ class BaseTrainer(ABC):
 
         lr = self.effective_lr
         opt_name = self.config.optimizer
+        # BN and bias groups carry an explicit weight_decay=0.0: groups without
+        # the key inherit the optimizer's default, which is 0.01 for AdamW --
+        # silently decaying norm gammas and biases that every upstream recipe
+        # (paramwise norm/bias_decay_mult=0) exempts. No-op for SGD/Adam.
         param_groups = []
         if pg0:
-            param_groups.append({"params": pg0, "lr": lr})
+            param_groups.append({"params": pg0, "lr": lr, "weight_decay": 0.0})
         if pg1:
             param_groups.append(
                 {"params": pg1, "lr": lr, "weight_decay": self.config.weight_decay}
             )
         if pg2:
-            param_groups.append({"params": pg2, "lr": lr})
+            param_groups.append({"params": pg2, "lr": lr, "weight_decay": 0.0})
         if not param_groups:
             raise ValueError(
                 "No trainable parameters remain after layer freezing; "
@@ -444,7 +449,7 @@ class BaseTrainer(ABC):
             return
 
         from ..distillation import Distiller
-        from ..models import LibreYOLO
+        from ..distillation.teachers import is_foundation_teacher
 
         if self.wrapper_model is None:
             raise ValueError(
@@ -452,27 +457,57 @@ class BaseTrainer(ABC):
                 "wrapper_model set (the student wrapper provides tap points)."
             )
 
-        # Load teacher via the factory (handles family detection, weight loading)
-        logger.info(f"Loading teacher model: {self.config.distill_model}")
-        teacher_wrapper = LibreYOLO(self.config.distill_model)
-        teacher_nn = teacher_wrapper.model.to(self.device)
+        if is_foundation_teacher(self.config.distill_model):
+            # Foundation teacher (e.g. DINOv2): a frozen semantic ViT supervises
+            # a single student backbone stage via feature-MSE. Features come
+            # through the teacher's extract_features(), not forward hooks, and
+            # the loss handles the teacher/student spatial-grid mismatch.
+            from ..distillation.teachers import DINOv2Teacher
 
-        # Get distillation configs from the models themselves. Families that
-        # don't support distillation raise NotImplementedError here with a
-        # message naming the family.
-        teacher_cfg = teacher_wrapper.get_distill_config()
-        student_cfg = self.wrapper_model.get_distill_config()
+            logger.info(f"Loading foundation teacher: {self.config.distill_model}")
+            teacher = DINOv2Teacher(self.config.distill_model).to(self.device)
 
-        self.distiller = Distiller(
-            teacher_model=teacher_nn,
-            student_model=self.model,
-            teacher_config=teacher_cfg,
-            student_config=student_cfg,
-            loss_type=self.config.distill_loss_type,
-            loss_weight=self.config.dis,
-            mask_ratio=self.config.distill_mask_ratio,
-            tau=self.config.distill_tau,
-        )
+            if not hasattr(self.wrapper_model, "get_backbone_distill_config"):
+                family = getattr(self.wrapper_model, "FAMILY", type(self.wrapper_model).__name__)
+                raise NotImplementedError(
+                    f"Foundation-model distillation into the '{family}' family is "
+                    f"not supported yet (no get_backbone_distill_config())."
+                )
+
+            self.distiller = Distiller(
+                teacher_model=teacher,
+                student_model=self.model,
+                teacher_config=teacher.get_distill_config(),
+                student_config=self.wrapper_model.get_backbone_distill_config(),
+                loss_type="feat_mse",
+                loss_weight=self.config.dis,
+                teacher_feature_fn=teacher.extract_features,
+                normalize=getattr(self.config, "distill_normalize", False),
+            )
+        else:
+            from ..models import LibreYOLO
+
+            # Load teacher via the factory (handles family detection, weight loading)
+            logger.info(f"Loading teacher model: {self.config.distill_model}")
+            teacher_wrapper = LibreYOLO(self.config.distill_model)
+            teacher_nn = teacher_wrapper.model.to(self.device)
+
+            # Get distillation configs from the models themselves. Families that
+            # don't support distillation raise NotImplementedError here with a
+            # message naming the family.
+            teacher_cfg = teacher_wrapper.get_distill_config()
+            student_cfg = self.wrapper_model.get_distill_config()
+
+            self.distiller = Distiller(
+                teacher_model=teacher_nn,
+                student_model=self.model,
+                teacher_config=teacher_cfg,
+                student_config=student_cfg,
+                loss_type=self.config.distill_loss_type,
+                loss_weight=self.config.dis,
+                mask_ratio=self.config.distill_mask_ratio,
+                tau=self.config.distill_tau,
+            )
         self.distiller.to(self.device)
 
         # resume() may run before setup() — apply deferred adapter state now.
@@ -674,9 +709,23 @@ class BaseTrainer(ABC):
                 "OBB augmentation is implemented."
             )
 
+        # Mosaic-gated mixup: for families whose MixUp only fires on mosaic
+        # samples, mixup_prob > 0 with mosaic_prob == 0 silently does nothing.
+        # Say so instead (spec-driven; see libreyolo/data/augment/spec.py).
+        if mosaic_enabled and is_main_process():
+            from ..data.augment.spec import mixup_gating_warning
+
+            gating_msg = mixup_gating_warning(
+                self.get_model_family(),
+                self.config.mosaic_prob,
+                self.config.mixup_prob,
+            )
+            if gating_msg:
+                logger.warning(gating_msg)
+
         train_dataset.enable_image_cache(getattr(self.config, "cache", False))
 
-        train_dataset = MosaicDatasetClass(
+        dataset_kwargs = dict(
             dataset=train_dataset,
             img_size=img_size,
             mosaic=mosaic_enabled,
@@ -686,10 +735,22 @@ class BaseTrainer(ABC):
             mosaic_scale=self.config.mosaic_scale,
             mixup_scale=self.config.mixup_scale,
             shear=self.config.shear,
+            perspective=getattr(self.config, "perspective", 0.0),
             enable_mixup=mosaic_enabled and self.config.mixup_prob > 0,
             mosaic_prob=self.config.mosaic_prob if mosaic_enabled else 0.0,
             mixup_prob=self.config.mixup_prob if mosaic_enabled else 0.0,
         )
+        # Copy-paste is only wired for the mosaic datasets whose constructor
+        # accepts it (segmentation-capable pipelines); pass it through only
+        # there so the shared instantiation stays valid for every family. OBB
+        # has no segments, so leave it off in that case.
+        cp_prob = float(getattr(self.config, "copy_paste", 0.0) or 0.0)
+        if "copy_paste" in inspect.signature(MosaicDatasetClass).parameters:
+            dataset_kwargs["copy_paste"] = 0.0 if load_obb else cp_prob
+            dataset_kwargs["copy_paste_mode"] = getattr(
+                self.config, "copy_paste_mode", "flip"
+            )
+        train_dataset = MosaicDatasetClass(**dataset_kwargs)
 
         # ``batch`` is the global batch under DDP. Each rank's loader is built
         # with ``batch // world_size``.
@@ -743,7 +804,7 @@ class BaseTrainer(ABC):
 
         from ..data.classify_dataset import (
             ClassifyDataset,
-            classify_collate_fn,
+            build_classify_collate,
             get_class_names,
             resolve_classify_data,
         )
@@ -776,7 +837,17 @@ class BaseTrainer(ABC):
             transform_kwargs={
                 "crop_pct": getattr(wrapper, "crop_pct", 0.875),
                 "interpolation": getattr(wrapper, "interpolation", "bilinear"),
+                "auto_augment": getattr(self.config, "auto_augment", None),
+                "erasing": getattr(self.config, "erasing", 0.0),
             },
+        )
+
+        # Batch-level MixUp / CutMix (soft labels) when requested; otherwise this
+        # returns the plain classify collate so default training is unchanged.
+        collate_fn = build_classify_collate(
+            num_classes,
+            mixup=getattr(self.config, "mixup", 0.0),
+            cutmix=getattr(self.config, "cutmix", 0.0),
         )
 
         per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
@@ -815,7 +886,7 @@ class BaseTrainer(ABC):
             sampler=sampler,
             num_workers=self.config.workers,
             pin_memory=self.device.type == "cuda",
-            collate_fn=classify_collate_fn,
+            collate_fn=collate_fn,
             drop_last=visible_samples >= per_rank_batch,
         )
 
@@ -862,12 +933,30 @@ class BaseTrainer(ABC):
                 f"Semantic training imgsz={self.config.imgsz} must be divisible "
                 f"by {int(divisor)} for this model family."
             )
+        # Family-scoped scale-jitter range. Families that do not define this
+        # attribute (default None) keep the SemanticDataset default jitter,
+        # unchanged. Input standardization is family-internal (applied in the
+        # model's forward on the raw [0, 1] tensor), so the dataset stays
+        # /255-only for every family.
+        scale_jitter = getattr(self.wrapper_model, "semantic_scale_jitter", None)
+        semantic_kwargs = {}
+        if scale_jitter is not None:
+            semantic_kwargs["scale_jitter"] = tuple(scale_jitter)
+        # Same deal for photometric jitter: opt in per family, or keep the
+        # SemanticDataset default. Note this deliberately does NOT read
+        # config.hsv_prob -- SemanticDataset has always used its own default for
+        # every semantic family, so honoring the config here would silently
+        # change RF-DETR's and DINOv2's training too.
+        hsv_prob = getattr(self.wrapper_model, "semantic_hsv_prob", None)
+        if hsv_prob is not None:
+            semantic_kwargs["hsv_prob"] = float(hsv_prob)
         train_dataset = SemanticDataset(
             data_config,
             split="train",
             imgsz=self.config.imgsz,
             augment=True,
             resize_mode=resize_mode,
+            **semantic_kwargs,
         )
 
         num_classes = train_dataset.nc
@@ -1135,15 +1224,60 @@ class BaseTrainer(ABC):
     # Setup / train / epoch
     # =========================================================================
 
+    def _check_ddp_train_loader(self) -> None:
+        """Verify the train loader actually shards across DDP ranks.
+
+        Duck-types on ``num_replicas``/``rank`` rather than requiring
+        ``DistributedSampler`` so distributed-aware custom samplers pass.
+        """
+        loader = getattr(self, "train_loader", None)
+        if loader is None:
+            return
+        sampler = getattr(loader, "sampler", None)
+        if (
+            getattr(sampler, "num_replicas", None) != self.world_size
+            or getattr(sampler, "rank", None) != self.rank
+        ):
+            raise ValueError(
+                f"{type(self).__name__} built a train loader that does not "
+                f"shard across DDP ranks (sampler={type(sampler).__name__}): "
+                "every rank would train on the full dataset. Build the loader "
+                "with a DistributedSampler and batch // world_size per rank, "
+                "like BaseTrainer._setup_data."
+            )
+        per_rank_batch = max(1, self.config.batch // self.world_size)
+        loader_batch = getattr(loader, "batch_size", None)
+        if loader_batch is not None and loader_batch != per_rank_batch:
+            raise ValueError(
+                f"{type(self).__name__} built a train loader with "
+                f"batch_size={loader_batch}, but batch={self.config.batch} is "
+                f"the global batch: world_size={self.world_size} requires "
+                f"{per_rank_batch} per rank."
+            )
+
     def setup(self):
         if self._is_setup:
             return
+
+        quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)
+        if quant_manifest and quant_manifest.get("recipe") in ("fp16", "bf16"):
+            raise ValueError(
+                "Cast-precision quantized models (fp16/bf16) are "
+                "inference-only. Train the float model with amp=True "
+                "instead, or use a quantizing recipe (int8/fp8/w4a8/nvfp4/"
+                "...) for quantization-aware training."
+            )
+        if quant_manifest and quant_manifest.get("state") == "finalized":
+            from ..quant.api import reprepare_model
+
+            reprepare_model(self.wrapper_model)
 
         if getattr(self.config, "lora", False) and not self.supports_lora:
             family = self.get_model_family() if hasattr(self, "get_model_family") else "this model"
             raise ValueError(
                 f"LoRA fine-tuning (lora=True) is not supported for {family}. "
-                "LoRA targets transformer backbones with nn.Linear layers (e.g. RF-DETR)."
+                "LoRA targets transformer components with nn.Linear layers "
+                "(e.g. RF-DETR, D-FINE, DEIM)."
             )
 
         if is_main_process():
@@ -1177,7 +1311,62 @@ class BaseTrainer(ABC):
             if is_main_process():
                 logger.info("AutoBatch: resolved global batch size = %d", self.config.batch)
 
+        if int(getattr(self.config, "batch", 16)) < 1:
+            raise ValueError(
+                f"batch={self.config.batch} is invalid: use a positive global "
+                "batch size, or -1 for AutoBatch."
+            )
+
+        # ``batch`` is the global batch under DDP: every rank trains at
+        # batch // world_size, so a non-divisible value would silently train
+        # at a different global batch than requested (e.g. batch=6 on 4 GPUs
+        # trains at 4). Fail fast instead of silently changing the batch.
+        # AutoBatch above already returns world_size-divisible values.
+        if self.is_distributed and self.config.batch % self.world_size != 0:
+            lower = (self.config.batch // self.world_size) * self.world_size
+            higher = lower + self.world_size
+            options = (
+                f"batch={higher}" if lower == 0 else f"batch={lower} or batch={higher}"
+            )
+            raise ValueError(
+                f"batch={self.config.batch} is the global batch and must be "
+                f"divisible by world_size={self.world_size}: each rank trains at "
+                f"batch // world_size, so this value would silently train at a "
+                f"different global batch than requested. Use {options}."
+            )
+
+        # BN statistics quality under DDP: with SyncBatchNorm off, each rank's
+        # BatchNorm tracks only its own per-rank shard (batch // world_size).
+        # A small per-rank batch produces noisy running stats and degrades the
+        # converged model (issue #484). Warn (do not silently change behavior)
+        # so users of BatchNorm families can enable sync_bn.
+        if self.is_distributed and not getattr(self.config, "sync_bn", False):
+            per_rank_batch = max(1, self.config.batch // max(self.world_size, 1))
+            has_batchnorm = any(
+                isinstance(m, nn.modules.batchnorm._BatchNorm)
+                for m in self.model.modules()
+            )
+            if has_batchnorm and per_rank_batch < 16 and is_main_process():
+                logger.warning(
+                    "DDP per-rank batch is %d (global batch %d / world_size %d) "
+                    "and sync_bn is disabled; BatchNorm running statistics are "
+                    "computed per rank on this small shard, which can reduce "
+                    "accuracy versus single-GPU. Consider setting sync_bn=True.",
+                    per_rank_batch,
+                    self.config.batch,
+                    self.world_size,
+                )
+
         self._setup_data()
+
+        # DDP loader invariant: trainers that own their data pipeline must
+        # shard like BaseTrainer._setup_data does (issue #484: three trainers
+        # built plain DataLoaders and every rank trained the full dataset at
+        # the full global batch). Catch that bug class at startup for every
+        # current and future family.
+        if self.is_distributed:
+            self._check_ddp_train_loader()
+
         self._apply_freeze_config()
         self.optimizer = self._setup_optimizer()
         self._setup_distillation()
@@ -1260,7 +1449,8 @@ class BaseTrainer(ABC):
 
         # Optional training-step profiler (opt-in via config.profile). Built on
         # the main process; emits the breakdown + Chrome trace into save_dir.
-        # Disabled under DDP (its early-stop would desync ranks).
+        # Disabled under DDP (rank-0-only syncs, and the profile_then_stop
+        # early stop would desync ranks).
         if getattr(self.config, "profile", False):
             if self.is_distributed:
                 if is_main_process():
@@ -1341,6 +1531,9 @@ class BaseTrainer(ABC):
 
     def train(self) -> Dict:
         start_time = time.time()
+        # May be stale from a previous profile_then_stop run on this instance;
+        # a leftover True would silently truncate this run's first epoch.
+        self._stop_training = False
         try:
             self.setup()
 
@@ -1386,14 +1579,24 @@ class BaseTrainer(ABC):
                 self.final_loss = epoch_loss
                 self.epoch_losses.append(epoch_loss)
 
-                is_best = self._update_best_state(epoch, val_metrics)
+                profile_truncated = bool(getattr(self, "_stop_training", False))
+                is_best = (
+                    False
+                    if profile_truncated
+                    else self._update_best_state(epoch, val_metrics)
+                )
                 # Write ``last.pt`` every epoch so a crash never costs more than
                 # a single epoch. ``best.pt`` (is_best) and periodic
                 # ``epoch_N.pt`` (save_period) stay gated inside
-                # _save_checkpoint, so those are unaffected.
-                self._save_checkpoint(
-                    epoch, epoch_loss, val_metrics, is_best=is_best
-                )
+                # _save_checkpoint, so those are unaffected. A profile-only run
+                # (profile_then_stop) truncated the epoch after the profile
+                # window, so no checkpoint is written for it: stamping the
+                # partial epoch as complete would make a later resume skip the
+                # rest of it.
+                if not profile_truncated:
+                    self._save_checkpoint(
+                        epoch, epoch_loss, val_metrics, is_best=is_best
+                    )
 
                 event = self._build_train_epoch_event(
                     epoch=epoch,
@@ -1453,7 +1656,16 @@ class BaseTrainer(ABC):
 
             total_time = time.time() - start_time
             if is_main_process():
-                logger.info(f"Training complete in {total_time / 3600:.2f} hours")
+                if getattr(self, "_stop_training", False):
+                    logger.info(
+                        "Profile-only run (profile_then_stop=True): training "
+                        f"stopped after the profile window in {total_time:.1f}s; "
+                        "the partial epoch was not validated or checkpointed"
+                    )
+                else:
+                    logger.info(
+                        f"Training complete in {total_time / 3600:.2f} hours"
+                    )
 
             results = self._build_train_results()
             end_event = self._build_train_end_event(total_time, results)
@@ -1911,8 +2123,17 @@ class BaseTrainer(ABC):
             if prof is not None:
                 prof.step()
                 if prof.finished:
-                    self._stop_training = True
-                    break
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -1922,9 +2143,13 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
-        # Validation
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
-        if self._should_validate_epoch(epoch):
+        if not getattr(self, "_stop_training", False) and self._should_validate_epoch(
+            epoch
+        ):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -2080,8 +2305,17 @@ class BaseTrainer(ABC):
             if prof is not None:
                 prof.step()
                 if prof.finished:
-                    self._stop_training = True
-                    break
+                    if getattr(self.config, "profile_then_stop", False):
+                        self._stop_training = True
+                        break
+                    # Window closed: drop the hooks so the rest of the run
+                    # pays nothing, and keep training.
+                    logger.info(
+                        "Profile window complete; training continues "
+                        "(profile_then_stop=True stops here instead)"
+                    )
+                    self._profiler = None
+                    prof = None
 
         avg_loss = total_loss / max(num_batches, 1)
         avg_loss_components = {
@@ -2091,9 +2325,13 @@ class BaseTrainer(ABC):
         if is_main_process():
             logger.info(f"Epoch {epoch + 1} - Average loss: {avg_loss:.4f}")
 
-        # Validation
+        # Validation. A profile-only run (profile_then_stop) truncated the
+        # epoch, so validating the barely-trained weights would waste time and
+        # could poison the best-metric state.
         val_metrics = None
-        if self._should_validate_epoch(epoch):
+        if not getattr(self, "_stop_training", False) and self._should_validate_epoch(
+            epoch
+        ):
             val_metrics = self._validate_epoch(epoch)
 
         return avg_loss, val_metrics, avg_loss_components, self._current_lrs()
@@ -2526,6 +2764,11 @@ class BaseTrainer(ABC):
             is_ema_weights=self.ema_model is not None,
         )
         checkpoint.update(self._checkpoint_extra_metadata())
+        quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)
+        if quant_manifest:
+            # QAT/QAD checkpoints must be self-describing so LibreYOLO(path)
+            # rebuilds the quantized structure before loading scales.
+            checkpoint["quant"] = dict(quant_manifest)
         checkpoint["best_metric"] = self.best_mAP50_95
         checkpoint["best_metric_name"] = checkpoint["best_metric_key"]
         if self.ema_model is not None:

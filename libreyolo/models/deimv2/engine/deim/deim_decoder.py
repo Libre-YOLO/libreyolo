@@ -17,7 +17,11 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from typing import List
 
-from libreyolo.models.deim.decoder import LQE, MSDeformableAttention
+from libreyolo.models.deim.decoder import (
+    EVAL_CONSTANT_CACHE_LIMIT,
+    LQE,
+    MSDeformableAttention,
+)
 from libreyolo.models.deim.denoising import get_contrastive_denoising_training_group
 from libreyolo.models.deim.fdr import Integral, distance2bbox, weighting_function
 from libreyolo.models.deim.ms_deform import bias_init_with_prob, inverse_sigmoid
@@ -439,10 +443,22 @@ class DEIMTransformer(nn.Module):
         )
 
         # init encoder output anchors and valid_mask
+        self._anchor_cache = OrderedDict()
         if self.eval_spatial_size:
             anchors, valid_mask = self._generate_anchors()
             self.register_buffer("anchors", anchors)
             self.register_buffer("valid_mask", valid_mask)
+            self._eval_spatial_shape_key = self._spatial_shape_key(
+                [
+                    [
+                        int(self.eval_spatial_size[0] / s),
+                        int(self.eval_spatial_size[1] / s),
+                    ]
+                    for s in self.feat_strides
+                ]
+            )
+        else:
+            self._eval_spatial_shape_key = None
         # init encoder output anchors and valid_mask
         if self.eval_spatial_size:
             self.anchors, self.valid_mask = self._generate_anchors()
@@ -597,6 +613,34 @@ class DEIMTransformer(nn.Module):
 
         return anchors, valid_mask
 
+    @staticmethod
+    def _spatial_shape_key(spatial_shapes):
+        return tuple((int(h), int(w)) for h, w in spatial_shapes)
+
+    def _cache_anchors(self, key, anchors, valid_mask):
+        self._anchor_cache[key] = (anchors, valid_mask)
+        self._anchor_cache.move_to_end(key)
+        while len(self._anchor_cache) > EVAL_CONSTANT_CACHE_LIMIT:
+            self._anchor_cache.popitem(last=False)
+
+    def _get_anchors_for_spatial_shapes(self, spatial_shapes, memory):
+        shape_key = self._spatial_shape_key(spatial_shapes)
+        key = (shape_key, memory.device, memory.dtype)
+        cached = self._anchor_cache.get(key)
+        if cached is None:
+            if shape_key == self._eval_spatial_shape_key and hasattr(self, "anchors"):
+                anchors = self.anchors.to(device=memory.device, dtype=memory.dtype)
+                valid_mask = self.valid_mask.to(device=memory.device)
+            else:
+                anchors, valid_mask = self._generate_anchors(
+                    spatial_shapes, dtype=memory.dtype, device=memory.device
+                )
+            self._cache_anchors(key, anchors, valid_mask)
+        else:
+            self._anchor_cache.move_to_end(key)
+            anchors, valid_mask = cached
+        return anchors, valid_mask
+
     def _get_decoder_input(
         self,
         memory: torch.Tensor,
@@ -611,8 +655,9 @@ class DEIMTransformer(nn.Module):
                 spatial_shapes, device=memory.device
             )
         else:
-            anchors = self.anchors
-            valid_mask = self.valid_mask
+            anchors, valid_mask = self._get_anchors_for_spatial_shapes(
+                spatial_shapes, memory
+            )
         if memory.shape[0] > 1:
             anchors = anchors.repeat(memory.shape[0], 1, 1)
 

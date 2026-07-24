@@ -42,6 +42,7 @@ file = name + ".pt"
 | Family | Prefix | Example |
 |---|---|---|
 | YOLOX | `LibreYOLOX` | `LibreYOLOXs.pt` |
+| YOLO1 | `LibreYOLO1` | `LibreYOLO1b.pt` (public-domain Darknet, VOC-20; `t` weights lost upstream) |
 | YOLO2 | `LibreYOLO2` | `LibreYOLO2b.pt` (public-domain Darknet) |
 | YOLO3 | `LibreYOLO3` | `LibreYOLO3b.pt`, `LibreYOLO3spp.pt` (public-domain Darknet) |
 | YOLO4 | `LibreYOLO4` | `LibreYOLO4b.pt` (public-domain Darknet) |
@@ -59,11 +60,19 @@ file = name + ".pt"
 | EfficientNetV2 | `LibreEfficientNetV2` | `LibreEfficientNetV2b0-cls.pt` |
 | ResNet | `LibreResNet` | `LibreResNet50-cls.pt` |
 | CLIP | `LibreCLIP` | `LibreCLIPb32-cls.pt` (zero-shot, open-vocab classify) |
-| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only) |
+| SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
+| NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
+| BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
+| RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
+| SwinIR | `LibreSwinIR` | `LibreSwinIRm-restore.pt` (4x super-resolution; sizes `s`/`m`/`l`; Apache-2.0) |
+| PPOCR | `LibrePPOCR` | `LibrePPOCRt-ocr.pt` (PP-OCRv5 text det+rec; sizes `t`/`l`; Apache-2.0) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
-| EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic-only) |
+| SegFormer | `LibreSegformer` | `LibreSegformerb0-sem.pt` (semantic-only; ADE20K. Weights are **non-commercial** — NVIDIA Source Code License, see below) |
+| EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
 | DepthAnythingV2 | `LibreDepthAnythingV2` | `LibreDepthAnythingV2s-depth.pt` (only `s` is Apache; b/l/g are CC-BY-NC, see below) |
+| DepthAnything3 | `LibreDepthAnything3` | `LibreDepthAnything3l-depth.pt` (DA3MONO-LARGE; Apache-2.0) |
+| ZipDepth | `LibreZipDepth` | `LibreZipDepthb-depth.pt` (MIT code + weights; `bnpu` is the NPU-decoder checkpoint) |
 | FOMO | `LibreFOMO` | `LibreFOMOs-point.pt` (no weights hosted yet; license-gate first) |
 
 Never-upload families: **L2CS** (Gaze360 terms forbid redistribution) and any
@@ -87,6 +96,8 @@ Authoritative list of all valid weight filenames (matches the schema enforced by
 LibreYOLOXn.pt, LibreYOLOXt.pt, LibreYOLOXs.pt, LibreYOLOXm.pt,
 LibreYOLOXl.pt, LibreYOLOXx.pt,
 
+LibreYOLO1t.pt, LibreYOLO1b.pt,
+
 LibreYOLO2t.pt, LibreYOLO2b.pt,
 
 LibreYOLO3t.pt, LibreYOLO3b.pt, LibreYOLO3spp.pt,
@@ -109,6 +120,8 @@ LibreYOLONASm-pose.pt, LibreYOLONASl-pose.pt,
 
 LibreDFINEn.pt, LibreDFINEs.pt, LibreDFINEm.pt, LibreDFINEl.pt,
 LibreDFINEx.pt,
+LibreDFINEn-seg.pt, LibreDFINEs-seg.pt, LibreDFINEm-seg.pt,
+LibreDFINEl-seg.pt, LibreDFINEx-seg.pt,
 
 LibreDEIMn.pt, LibreDEIMs.pt, LibreDEIMm.pt, LibreDEIMl.pt,
 LibreDEIMx.pt,
@@ -131,6 +144,8 @@ LibreRTDETRv4x.pt,
 
 LibreRTMDett.pt, LibreRTMDets.pt, LibreRTMDetm.pt,
 LibreRTMDetl.pt, LibreRTMDetx.pt,
+LibreRTMDett-seg.pt, LibreRTMDets-seg.pt, LibreRTMDetm-seg.pt,
+LibreRTMDetl-seg.pt, LibreRTMDetx-seg.pt,
 
 LibreRFDETRn.pt, LibreRFDETRs.pt, LibreRFDETRm.pt,
 LibreRFDETRl.pt, LibreRFDETRn-seg.pt, LibreRFDETRs-seg.pt,
@@ -156,11 +171,32 @@ LibreResNet50-cls.pt, LibreResNet101-cls.pt,
 
 LibreCLIPb32-cls.pt, LibreCLIPb16-cls.pt, LibreCLIPl14-cls.pt,
 
+LibreSigLIP2b16-cls.pt, LibreSigLIP2so400m-cls.pt,
+
 LibreNAFNets-restore.pt, LibreNAFNetl-restore.pt,
+LibreNAFNetl-restore-sidd.pt,
+
+LibreRealESRGANx4-restore.pt, LibreRealESRGANx2-restore.pt,
+LibreRealESRGANx4t-restore.pt,
+
+LibreSwinIRs-restore.pt, LibreSwinIRm-restore.pt,
+LibreSwinIRl-restore.pt,
+
+LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
+
+LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
+LibreSegformerb0-sem.pt, LibreSegformerb1-sem.pt, LibreSegformerb2-sem.pt,
+LibreSegformerb3-sem.pt, LibreSegformerb4-sem.pt, LibreSegformerb5-sem.pt,
+
 LibreEoMTl-sem.pt,
+
+LibreEoMTl-seg.pt, LibreEoMTl-seg-1280.pt,
+
+LibreEoMTs-panoptic.pt, LibreEoMTb-panoptic.pt,
+LibreEoMTl-panoptic.pt,
 
 LibreDINOv2n.pt, LibreDINOv2s.pt, LibreDINOv2m.pt, LibreDINOv2l.pt,
 LibreDINOv2n-cls.pt, LibreDINOv2s-cls.pt, LibreDINOv2m-cls.pt,
@@ -169,14 +205,30 @@ LibreDINOv2l-cls.pt,
 LibreDepthAnythingV2s-depth.pt, LibreDepthAnythingV2b-depth.pt,
 LibreDepthAnythingV2l-depth.pt, LibreDepthAnythingV2g-depth.pt,
 
+LibreDepthAnything3l-depth.pt,
+
+LibreZipDepthb-depth.pt, LibreZipDepthbnpu-depth.pt,
+
 LibreFOMOs-point.pt, LibreFOMOm-point.pt, LibreFOMOl-point.pt
 ```
 
-License caveats inside the list: DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
+License caveats inside the list: BiRefNet `l` (general) weights are MIT-tagged
+and hosted; BiRefNet `t` (lite) weights have no explicit license tag on the
+upstream HF repo (MIT badge in the card body only), so hosting the lite weights
+is a maintainer decision, not a default (`weights/upload_birefnet_hf.py` guards
+it behind `--confirm-lite-license`). DepthAnythingV2 `b`/`l`/`g` are CC-BY-NC
 (maintainer decision to host); `-visdrone` variants are a research preview
 under VisDrone's CC BY-NC-SA (repo `LibreYOLO/LibreYOLO9P2s-visdrone`, with
 the license stated loudly on the card); FOMO weights have no cleared hosting
-license yet. A name being *valid* does not make it *hostable*; run the gate.
+license yet. **LibreSegformer b0-b5 are NON-COMMERCIAL**: they derive from
+NVIDIA's ADE20K checkpoints under the NVIDIA Source Code License, which permits
+redistribution (a verbatim `LICENSE` copy and the attribution notices must
+travel with the weights) but limits *use* to research or evaluation, virally
+through derivative works. Their cards use `license: other` +
+`license_name: nvidia-source-code-license-segformer` + `license_link`, lead with
+a non-commercial banner, and the loader prints the restriction before every
+auto-download. Never tag them `apache-2.0` because the *code* is Apache.
+A name being *valid* does not make it *hostable*; run the gate.
 
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
 `docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in
@@ -191,6 +243,13 @@ LibreCLIP is the zero-shot, open-vocabulary classifier (CLIP). Its HF cards use
 `pipeline_tag: zero-shot-image-classification`, **must document the LAION-2B
 data-provenance note** (see `libreyolo/models/clip/NOTICE.md`), and omit the VA
 Benchmarks section (zero-shot, not a trained-on-COCO detector).
+
+LibreSigLIP2 is the SigLIP 2 zero-shot, open-vocabulary classifier. Its HF cards
+use `pipeline_tag: zero-shot-image-classification`, `license: apache-2.0`
+(weights derive from the Apache-2.0 `google/siglip2-*` release; state the
+upstream repo and commit pin), note the vendored SentencePiece tokenizer, and
+omit the VA Benchmarks section. Conversion is a metadata wrap
+(`weights/convert_siglip2_weights.py`); learned parameters are unchanged.
 
 Common rule violations to reject before upload:
 
@@ -274,8 +333,8 @@ Rules:
 - **Detect repos only.** Vision Analysis tracks detection; omit the Benchmarks
   section from `-seg` / `-pose` / `-cls` / `-obb` and gaze repos.
 - **No slug exists** for `yolo9_e2e`, `yolo9_p2`, `l2cs`, RTMDet, the VLM /
-  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo2`, `yolo3`,
-  `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
+  SAM / open-vocab tiers, or the Darknet-lineage families (`yolo1`, `yolo2`,
+  `yolo3`, `yolo4`) and `yolo7` — omit the Benchmarks section and tell the user.
   Semantic / depth / restore / point repos also omit it (detection only).
 - **The page may lag the upload.** Model pages are generated from
   `website/src/data/metadata/models.json` in
@@ -328,7 +387,10 @@ Add via HF UI or `huggingface_hub.add_collection_item(collection_slug, item_id=<
 4. Validate the `.pt` against the current LibreYOLO checkpoint metadata schema before upload. The source of truth is `docs/checkpoint_schema.md` and the helpers in `libreyolo/utils/serialization.py`; do not duplicate the schema in this skill. A simple load smoke test is not enough.
 5. Create the HF repo (skip if it exists): `huggingface-cli repo create LibreYOLO/<RepoName> --type model`.
 6. Upload: `huggingface-cli upload LibreYOLO/<RepoName> <local-dir> . --commit-message "Initial upload"`.
-7. Smoke test: `YOLO.from_pretrained("LibreYOLO/<RepoName>")` on a fresh machine / cleared cache.
+7. Smoke test the autodownload path on a fresh machine / cleared cache (and no
+   staged copy under `weights/`): `LibreYOLO("<RepoName>.pt")` must download
+   from the new repo and load. There is no `from_pretrained` API; the bare
+   canonical filename is the download trigger.
 8. Add to the matching collection.
 
 One commit per file if iterating — easier to revert than a batch commit.
@@ -345,7 +407,7 @@ One commit per file if iterating — easier to revert than a batch commit.
 
 ## Common traps
 
-- Relying only on `YOLO.from_pretrained(...)`; it can pass even when required checkpoint metadata is missing or stale.
+- Relying only on a load smoke test (`LibreYOLO("<RepoName>.pt")`); it can pass even when required checkpoint metadata is missing or stale. Run `validate_checkpoint_metadata` (step 4) too.
 - Uploading both `.pt` and `.pth` of the same weights (wastes HF storage, no canonical filename).
 - Copying a lowercase filename from an old release — the loader only fetches the `FILENAME_PREFIX`-cased `.pt`.
 - Writing `license: mit` in README YAML for a repo whose weights derive from an Apache-2.0 upstream — MIT re-licensing is not legal without explicit permission.

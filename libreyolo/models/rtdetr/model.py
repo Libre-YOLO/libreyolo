@@ -377,6 +377,22 @@ class LibreRTDETR(BaseModel):
         """RTDETR uses non-strict loading to handle variable layer counts."""
         return False
 
+    def _prepare_model_for_state_dict(self, state_dict: dict) -> None:
+        """Replay LoRA injection for adapter checkpoints.
+
+        RT-DETR loads non-strictly, so without the replay a lora=True
+        checkpoint's adapter tensors would be dropped silently instead of
+        erroring. Rebuild the adapted graph so the peft keys line up.
+        """
+        from ...training.lora import (
+            apply_lora_to_detr,
+            module_has_lora,
+            state_dict_has_lora,
+        )
+
+        if state_dict_has_lora(state_dict) and not module_has_lora(self.model):
+            apply_lora_to_detr(self.model)
+
     @classmethod
     def _get_trainer_class(cls):
         """Hook for sibling families to override; defaults to v1's trainer."""

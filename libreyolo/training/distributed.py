@@ -202,27 +202,6 @@ def unwrap_model(model: nn.Module) -> nn.Module:
 
 
 # =============================================================================
-# EMA buffer broadcast
-# =============================================================================
-
-
-def broadcast_ema_buffers(ema_module: nn.Module, src: int = 0) -> None:
-    """Broadcast all buffers of ``ema_module`` from ``src`` rank to all others.
-
-    Required because EMA is only updated on rank 0. When optimizer steps run
-    per rank, EMA state would diverge if every rank updated it independently.
-    Before validation runs on a non-zero rank, EMA buffers need to be the same
-    as rank 0's.
-    """
-    if not is_distributed():
-        return
-    for buf in ema_module.buffers():
-        dist.broadcast(buf, src=src)
-    for p in ema_module.parameters():
-        dist.broadcast(p.data, src=src)
-
-
-# =============================================================================
 # Loss scaling for DDP
 # =============================================================================
 
@@ -424,7 +403,6 @@ __all__ = [
     "DeviceArg",
     "all_reduce_avg_scalar",
     "barrier",
-    "broadcast_ema_buffers",
     "get_local_rank",
     "get_rank",
     "get_world_size",

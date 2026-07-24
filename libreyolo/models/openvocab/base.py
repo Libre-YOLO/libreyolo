@@ -1,9 +1,9 @@
 """Base class for open-vocabulary detector wrappers.
 
-Grounding DINO and OWLv2 are discriminative Hugging Face detectors: they take
-an image plus a text vocabulary and return real detection scores. They are not
-LibreYOLO checkpoint families, so this tier intentionally does not define
-``can_load`` and stays out of the ``LibreYOLO(...)`` state-dict factory.
+These discriminative Hugging Face detectors take an image plus a text
+vocabulary and return real detection scores. They are not LibreYOLO checkpoint
+families, so this tier intentionally does not define ``can_load`` and stays out
+of the ``LibreYOLO(...)`` state-dict factory.
 """
 
 from __future__ import annotations
@@ -69,6 +69,10 @@ class LibreOpenVocabDetector(BaseModel):
     DEFAULT_CONF: ClassVar[float] = 0.25
     DEFAULT_TEXT_THRESHOLD: ClassVar[float | None] = None
     SUPPORTS_TEXT_THRESHOLD: ClassVar[bool] = False
+    # Families whose processor runs its own NMS set their default threshold
+    # here, and honour iou=. ``None`` means the family suppresses nothing, so
+    # iou= has no meaning and is warned about instead.
+    NMS_THRESHOLD: ClassVar[float | None] = None
 
     TTA_ENABLED: ClassVar[bool] = False
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = False
@@ -105,7 +109,9 @@ class LibreOpenVocabDetector(BaseModel):
         if text_threshold is not None and not self.SUPPORTS_TEXT_THRESHOLD:
             raise TypeError(f"{type(self).__name__} does not support text_threshold.")
         self._text_threshold = (
-            self.DEFAULT_TEXT_THRESHOLD if text_threshold is None else float(text_threshold)
+            self.DEFAULT_TEXT_THRESHOLD
+            if text_threshold is None
+            else float(text_threshold)
         )
         super().__init__(
             model_path=self.HF_REPOS[size],
@@ -148,11 +154,17 @@ class LibreOpenVocabDetector(BaseModel):
                 "test-time augmentation is out of scope for this tier."
             )
         if "iou" in kwargs:
-            warnings.warn(
-                f"{type(self).__name__} does not run LibreYOLO NMS; iou= is "
-                "accepted for API compatibility but ignored.",
-                stacklevel=2,
-            )
+            if self.NMS_THRESHOLD is None:
+                warnings.warn(
+                    f"{type(self).__name__} does not run NMS; iou= is "
+                    "accepted for API compatibility but ignored.",
+                    stacklevel=2,
+                )
+        elif self.NMS_THRESHOLD is not None:
+            # predict() defaults iou=0.45, which is not this family's NMS
+            # default. Inject the family's own, exactly as conf= is injected
+            # above, so an unset iou= keeps the upstream suppression behaviour.
+            kwargs["iou"] = self.NMS_THRESHOLD
         if text_threshold is None:
             return super().__call__(source, conf=conf, **kwargs)
         if not self.SUPPORTS_TEXT_THRESHOLD:
@@ -245,7 +257,9 @@ class LibreOpenVocabDetector(BaseModel):
                 except (ValueError, OSError):
                     return False
                 shards = set(weight_map.values())
-                return bool(shards) and all((local_dir / shard).exists() for shard in shards)
+                return bool(shards) and all(
+                    (local_dir / shard).exists() for shard in shards
+                )
         return any(local_dir.glob("*.safetensors")) or any(local_dir.glob("*.bin"))
 
     @classmethod
@@ -413,6 +427,46 @@ class LibreOpenVocabDetector(BaseModel):
             "classes": torch.zeros((0,), dtype=torch.int64),
             "num_detections": 0,
         }
+
+    # ---------------------------------------------------------------------
+    # Label -> class-id mapping (shared by direct-label families)
+    # ---------------------------------------------------------------------
+
+    def _labels_to_class_ids(self, labels: Any) -> torch.Tensor:
+        """Map a processor's per-detection labels to vocabulary class ids.
+
+        Handles both integer query indices and decoded label strings. Unknown
+        or out-of-range labels map to ``-1`` so the caller can drop them.
+        """
+        if isinstance(labels, torch.Tensor):
+            class_ids = labels.detach().cpu().long().reshape(-1)
+        else:
+            values = list(labels)
+            if not values:
+                return torch.zeros((0,), dtype=torch.int64)
+            if all(isinstance(value, (int, float)) for value in values):
+                class_ids = torch.as_tensor(values, dtype=torch.int64).reshape(-1)
+            else:
+                mapped = [self._text_label_to_class_id(str(value)) for value in values]
+                return torch.as_tensor(
+                    [-1 if class_id is None else class_id for class_id in mapped],
+                    dtype=torch.int64,
+                )
+        valid = (class_ids >= 0) & (class_ids < len(self.names))
+        return torch.where(valid, class_ids, torch.full_like(class_ids, -1))
+
+    def _text_label_to_class_id(self, text: str) -> Optional[int]:
+        phrase = _label_tokens(text)
+        matches = []
+        for class_id, name in self.names.items():
+            label = _label_tokens(name)
+            if phrase == label:
+                return class_id
+            if _contains_subsequence(phrase, label) or _contains_subsequence(
+                label, phrase
+            ):
+                matches.append(class_id)
+        return matches[0] if len(matches) == 1 else None
 
     # ---------------------------------------------------------------------
     # Out of scope for v1

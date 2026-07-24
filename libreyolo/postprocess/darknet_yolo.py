@@ -92,6 +92,115 @@ def decode_head(
     return boxes, scores
 
 
+def decode_detection(
+    output: torch.Tensor,
+    spec,
+    input_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Decode the YOLOv1 ``[detection]`` head (dense FC vector) to boxes/scores.
+
+    Unlike the anchor heads, YOLOv1 emits a flat ``(B, S*S*(C + N*(coords+1)))``
+    vector from a fully-connected layer, laid out (per Darknet ``detection_layer``)
+    as three contiguous blocks: class probabilities ``[S*S*C]``, per-box
+    confidences ``[S*S*N]``, then box coordinates ``[S*S*N*coords]``. The class
+    distribution is shared by the ``N`` boxes of a cell.
+
+    Reproduces Darknet's ``get_detection_boxes``:
+
+    * ``bx = (raw_x + col) / S``, ``by = (raw_y + row) / S`` (image-relative)
+    * ``bw = raw_w**2`` (``sqrt`` head), ``bh = raw_h**2`` (else raw)
+    * ``score[j] = confidence * class_prob[j]``
+
+    Boxes are returned as center-x/center-y/width/height in **letterboxed input
+    pixels** (image-relative ``[0, 1]`` scaled by ``input_size``), matching the
+    anchor decoders so the shared NMS + letterbox-inverse path is reused.
+    """
+    b = output.shape[0]
+    if b != 1:
+        raise ValueError(
+            f"darknet detection decode expects batch size 1, got {b}. "
+            "This head does not support batched inference."
+        )
+    s = spec.side
+    n = spec.boxes_per_cell
+    nc = spec.num_classes
+    coords = spec.coords
+    cells = s * s
+    device, dtype = output.device, output.dtype
+
+    preds = output.view(-1)
+    class_block = preds[: cells * nc].view(cells, nc)  # (cells, C)
+    conf_block = preds[cells * nc : cells * nc + cells * n].view(cells, n)  # (cells, N)
+    box_block = preds[cells * nc + cells * n :].view(cells, n, coords)  # (cells, N, 4)
+
+    if spec.softmax:
+        class_block = torch.softmax(class_block, dim=-1)
+
+    rows = (torch.arange(cells, device=device, dtype=dtype) // s).view(cells, 1)
+    cols = (torch.arange(cells, device=device, dtype=dtype) % s).view(cells, 1)
+
+    raw_x = box_block[..., 0]
+    raw_y = box_block[..., 1]
+    raw_w = box_block[..., 2]
+    raw_h = box_block[..., 3]
+
+    cx = (raw_x + cols) / s * input_size  # (cells, N)
+    cy = (raw_y + rows) / s * input_size
+    if spec.sqrt:
+        bw = raw_w.pow(2) * input_size
+        bh = raw_h.pow(2) * input_size
+    else:
+        bw = raw_w * input_size
+        bh = raw_h * input_size
+
+    boxes = torch.stack([cx, cy, bw, bh], dim=-1).reshape(-1, 4)  # (cells*N, 4)
+    # score[cell, box, cls] = conf[cell, box] * class_prob[cell, cls]
+    scores = (conf_block.unsqueeze(-1) * class_block.unsqueeze(1)).reshape(-1, nc)
+    return boxes, scores
+
+
+def _decode_detection_export(output: torch.Tensor, spec) -> torch.Tensor:
+    """Traceable, batch-general YOLOv1 detection decode to ``(B, S*S*N, 4+nc)``.
+
+    xyxy in input pixels + per-class ``conf * class_prob`` scores, matching the
+    anchor-head export rows so the shared backend decode consumes one tensor.
+    """
+    s = spec.side
+    n = spec.boxes_per_cell
+    nc = spec.num_classes
+    coords = spec.coords
+    cells = s * s
+    input_size = spec.stride * s
+    bsz = output.shape[0]
+
+    class_block = output[:, : cells * nc].view(bsz, cells, nc)
+    conf_block = output[:, cells * nc : cells * nc + cells * n].view(bsz, cells, n)
+    box_block = output[:, cells * nc + cells * n :].view(bsz, cells, n, coords)
+    if spec.softmax:
+        class_block = torch.softmax(class_block, dim=-1)
+
+    grid = output.new_ones(cells).cumsum(0) - 1.0  # 0..cells-1
+    rows_idx = (grid // s).view(1, cells, 1)
+    cols_idx = (grid - (grid // s) * s).view(1, cells, 1)
+
+    cx = (box_block[..., 0] + cols_idx) / s * input_size  # (B, cells, N)
+    cy = (box_block[..., 1] + rows_idx) / s * input_size
+    if spec.sqrt:
+        bw = box_block[..., 2].pow(2) * input_size
+        bh = box_block[..., 3].pow(2) * input_size
+    else:
+        bw = box_block[..., 2] * input_size
+        bh = box_block[..., 3] * input_size
+
+    x1 = (cx - bw / 2).unsqueeze(-1)
+    y1 = (cy - bh / 2).unsqueeze(-1)
+    x2 = (cx + bw / 2).unsqueeze(-1)
+    y2 = (cy + bh / 2).unsqueeze(-1)
+    scores = conf_block.unsqueeze(-1) * class_block.unsqueeze(2)  # (B, cells, N, nc)
+    row = torch.cat([x1, y1, x2, y2, scores], dim=-1)  # (B, cells, N, 4+nc)
+    return row.reshape(bsz, cells * n, 4 + nc)
+
+
 def decode_export(
     outputs: List[torch.Tensor],
     specs: Sequence,
@@ -111,6 +220,9 @@ def decode_export(
     rows = []
     nc = specs[0].num_classes
     for output, spec, anchors in zip(outputs, specs, anchor_tensors):
+        if spec.kind == "detection":  # YOLOv1 dense FC head
+            rows.append(_decode_detection_export(output, spec))
+            continue
         b, c, h, w = output.shape
         a = len(spec.anchors)
         x = output.view(b, a, 5 + nc, h, w).permute(0, 1, 3, 4, 2)  # B,A,H,W,5+nc
@@ -180,7 +292,10 @@ def postprocess(
     all_boxes = []
     all_scores = []
     for output, spec in zip(outputs, specs):
-        boxes, scores = decode_head(output, spec, input_size)
+        if spec.kind == "detection":  # YOLOv1 dense FC head
+            boxes, scores = decode_detection(output, spec, input_size)
+        else:  # anchor heads (v2 region / v3-v4 yolo)
+            boxes, scores = decode_head(output, spec, input_size)
         all_boxes.append(boxes)
         all_scores.append(scores)
 
@@ -196,10 +311,13 @@ def postprocess(
     kept_scores = max_scores[mask]
     kept_classes = class_ids[mask]
 
-    # Boxes are in letterboxed input-space pixels. postprocess_detections with
-    # letterbox=True recomputes r = min(input/orig_h, input/orig_w) — the same
-    # aspect-preserving factor our preprocessing applied — then divides, clamps
-    # to the original bounds, filters degenerate boxes, and runs per-class NMS.
+    # v2/v3/v4 letterbox (aspect-preserving) their input, so the inverse is a
+    # single divide by r = min(input/orig_h, input/orig_w). YOLOv1's FC head is
+    # fed a plain square stretch instead (see preprocess_numpy_stretch), so its
+    # inverse is independent x/y scaling (letterbox=False). Either way
+    # postprocess_detections then clamps to the original bounds, drops degenerate
+    # boxes, and runs per-class NMS.
+    use_letterbox = not any(getattr(s, "kind", None) == "detection" for s in specs)
     return postprocess_detections(
         boxes=boxes_xyxy,
         scores=kept_scores,
@@ -209,5 +327,5 @@ def postprocess(
         input_size=input_size,
         original_size=original_size,
         max_det=max_det,
-        letterbox=True,
+        letterbox=use_letterbox,
     )

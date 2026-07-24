@@ -17,10 +17,6 @@ your job is to ship it. Reference material (architectural patterns, ABC
 contracts, validators) is in the back half; the front half is the path you
 follow to write code.
 
-The legacy detection-only skill is preserved at
-`skills/legacy_libreyolo-add-native-detection-model/SKILL.md` for archaeology.
-Don't follow it.
-
 ## 0. Read this first — orientation
 
 You have an upstream model. Six questions get you pointed at the right
@@ -204,7 +200,9 @@ Compact rows — clone these directly for the newer archetypes:
 | **DINOv2** | ViT | semantic, classify | via `RFDETRConfig` | lazy-registered together with RF-DETR (transformers dep) |
 | **YOLO9-P2** (`models/yolo9_p2/`) | YOLO-grid (child of YOLO9) | detect | production | stride-4 P2 head for small objects; sizes t/s; the `WEIGHT_VARIANTS = ("visdrone",)` precedent for dataset-variant weight suffixes |
 | **Darknet lineage: YOLO2/3/4** (`models/darknet/` + thin `models/yolo{2,3,4}/`) | anchor-grid CNN | detect | inference-only | one shared `DarknetFamily` (cfg parser + blocks + anchor decode) serves all three; public-domain upstream; converter `weights/convert_darknet_weights.py`, parity via `weights/parity_darknet.py` |
-| **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | inference-only | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py` |
+| **Darknet lineage: YOLO1** (`models/darknet/` + thin `models/yolo1/`) | dense FC-head CNN | detect | inference-only | shares the `DarknetFamily` engine but the FC head (`[connected]`/`[local]`/`[detection]`) does NOT fit the anchor decode: v1-specific `decode_detection` (7x7x30, VOC-20, fixed 448, square-stretch preprocess). OpenCV can't oracle it, so faithfulness = byte-exact reader + dog/bicycle/car golden. `b` weights on HF; tiny `t` weights lost upstream (code-ready, BYO `.weights`) |
+| **YOLO7** (`models/yolo7/`) | anchor-grid CNN | detect | experimental training (RF1 skip map) + infer | MIT upstream (same repo as the YOLO9 source); own `v7.yaml` + net; converter `weights/convert_yolo7_weights.py`, parity via `weights/parity_yolo7.py`; training via SimOTA loss (`loss.py`) adapted from Apache-2.0 YOLOX |
+| **BiRefNet** (`models/birefnet/`) | Swin v1 + bilateral-reference decoder | matte | inference-only (v1) | MIT upstream; `matte` task (ADR 0010); `MatteValidator` (MAE + S-measure); **family-local Swin v1** (original lineage, NOT the timm `models/swin/` tower, see NOTICE); ASPP deformable conv exports to ONNX `DeformConv` (opset 19) via a registered symbolic; converter `weights/convert_birefnet_weights.py`, parity via `weights/parity_birefnet.py` (max_abs_diff == 0) |
 
 ### 4.1 Sibling factory tiers (not `BaseModel` families)
 
@@ -213,8 +211,8 @@ They live in sibling factories with their own contracts:
 
 - **`LibreOpenVocab`** (`models/openvocab/`) — text-conditioned open-vocabulary
   detectors returning standard detection `Results`: Grounding DINO
-  (`models/grounding_dino/`) and OWLv2 (`models/owlv2/`) are aliased today;
-  the native OMDet-Turbo port (`models/omdet_turbo/`) is built for this tier.
+  (`models/grounding_dino/`), OWLv2 (`models/owlv2/`), and OMDet-Turbo, which
+  runs through `transformers` with no vendored model source.
   Shared towers live in `models/bert/` (text) and `models/swin/` (vision).
 - **`LibreSAM`** — promptable segmentation: SAM-1 and SAM-2 (`models/sam/`),
   MobileSAM (`models/mobilesam/`).
@@ -338,6 +336,18 @@ inherit existing). Set `uses_letterbox`, `custom_normalization`,
 
 **Verify**: `model.predict("test.jpg")` runs end-to-end. `model.val(data="coco128.yaml")` runs.
 
+**Verify in `libreyolo ui`** (required): the UI dropdown is built from
+`get_all_cli_names()`, so a registered family appears automatically, but the
+result card only works if `save=True` writes an annotated image: the server
+calls `model(img, conf=..., save=True)` and shows the saved file plus a
+task-aware summary from `_summarize_result` in `libreyolo/ui/server.py`.
+Launch `libreyolo ui`, drop a test image, run your smallest size, and confirm:
+(1) inference does not require extra kwargs the UI cannot supply (prompts,
+auxiliary detectors); (2) an annotated image renders, not the unchanged
+source; (3) the summary is task-appropriate, not a fallback "0 objects".
+If the port introduces a new `Results` slot, extend `_summarize_result` (and
+`Results.plot` if the slot has no drawing path) in the same PR.
+
 ### Commit 7 — ONNX export
 
 For YOLO-grid: 1 output `"output"`, opset 13. For DETR: 2 outputs
@@ -403,8 +413,11 @@ Multi-task families: one HF repo per task variant
 (`LibreYOLO/Libre<FAMILY>s` for detect, `LibreYOLO/Libre<FAMILY>s-pose` for
 pose, `LibreYOLO/Libre<FAMILY>s-seg` for segment).
 
-**Verify**: `LibreYOLO.from_pretrained("LibreYOLO/Libre<FAMILY>s")` works
-on a fresh machine / cleared cache.
+**Verify**: on a fresh machine / cleared cache (no `weights/Libre<FAMILY>s.pt`
+staged), `LibreYOLO("Libre<FAMILY>s.pt")` auto-downloads from the new HF repo
+and loads. There is no `from_pretrained` API; the bare canonical filename *is*
+the download trigger (`BaseModel.get_download_url()` builds the
+`huggingface.co/LibreYOLO/<name>/resolve/main/<name>.pt` URL).
 
 ## 6. Paste-ready templates
 
@@ -1256,4 +1269,3 @@ In priority order. Each line: *[which family hit it]* — what to do.
   - Vendored sub-component license: `libreyolo/models/deimv2/engine/backbone/dinov3/`
   - Per-group LR via `lr_ratio` + `_scale_lr` (preferred): `libreyolo/models/rtdetr/trainer.py:185-260`
   - Per-group LR via `_train_epoch` fork (older): `libreyolo/models/dfine/trainer.py:148-212`
-- **Legacy detection-only skill** (do not follow for new ports): `skills/legacy_libreyolo-add-native-detection-model/SKILL.md`.

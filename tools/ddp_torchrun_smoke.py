@@ -20,7 +20,8 @@ What this covers beyond the existing tests:
     - torchrun env path: has_torchrun_env() → init_distributed() (BaseTrainer.__init__ path)
     - NCCL backend when CUDA available (Gloo fallback on CPU or single-GPU)
     - Multiple training steps
-    - EMA buffer broadcast from rank-0 to all ranks (broadcast_ema_buffers)
+    - EMA cross-rank consistency: every rank updates EMA after DDP-synced
+      steps, so EMA must stay identical on all ranks without any broadcast
     - DistributedSampler: each rank gets distinct indices, set_epoch changes them
     - Checkpoint save on rank-0 + load round-trip into a single-process model
 """
@@ -120,60 +121,88 @@ def run_sampler_test(rank: int, world_size: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# EMA broadcast test
+# EMA cross-rank consistency test
 # ---------------------------------------------------------------------------
 
 
-def run_ema_broadcast_test(rank: int, world_size: int, device: torch.device) -> None:
-    """Verify broadcast_ema_buffers syncs rank-0's EMA to all other ranks.
+def run_ema_consistency_test(rank: int, world_size: int, device: torch.device) -> None:
+    """Verify EMA stays identical across ranks under the current DDP design.
 
-    Pattern: all ranks create identical EMA, rank-0 modifies it, all call
-    broadcast, then verify values are identical again.
+    BaseTrainer updates EMA on every rank after each optimizer step. Because
+    DDP all-reduces gradients, every rank applies the same parameter update,
+    so the per-rank EMA parameters must remain consistent with no broadcast.
+    (The old ``broadcast_ema_buffers`` helper existed for a rank-0-only EMA
+    design and was removed.)
+
+    Buffers (BN running stats) are only identical across ranks under
+    SyncBatchNorm — yolo9's DDP default — which needs CUDA; on CUDA we
+    convert and check buffers too, on CPU/Gloo we check parameters only.
+
+    Pattern: identical model on all ranks, DDP-wrapped, a few steps with
+    *different* per-rank data, ``ema.update`` on every rank each step, then
+    an all_reduce equality check over the EMA state.
     """
     from libreyolo import LibreYOLO9
-    from libreyolo.training.distributed import broadcast_ema_buffers
+    from libreyolo.training.distributed import unwrap_model
     from libreyolo.training.ema import ModelEMA
 
     torch.manual_seed(42)
     wrapper = LibreYOLO9(None, size="t", device=str(device))
-    wrapper.model.eval()
+    wrapper.model.train()
+    use_sync_bn = device.type == "cuda" and dist.get_backend() == "nccl"
+    if use_sync_bn:
+        wrapper.model = nn.SyncBatchNorm.convert_sync_batchnorm(wrapper.model)
 
-    ema = ModelEMA(wrapper.model)
+    ddp_kwargs: dict = dict(gradient_as_bucket_view=False, static_graph=True)
+    if device.type == "cuda":
+        ddp_kwargs["device_ids"] = [device.index]
+        ddp_kwargs["output_device"] = device.index
+    ddp_model = nn.parallel.DistributedDataParallel(wrapper.model, **ddp_kwargs)
+    optimizer = torch.optim.SGD(
+        unwrap_model(ddp_model).parameters(), lr=0.01, momentum=0.9
+    )
+    ema = ModelEMA(ddp_model)
 
-    # Only rank 0 updates EMA — simulates N training steps on rank-0 only
-    if rank == 0:
-        with torch.no_grad():
-            for p in ema.ema.parameters():
-                p.data.mul_(1.5).add_(0.3)
+    for step in range(3):
+        # Different data per rank — the point is that DDP's gradient
+        # averaging still keeps the models (and therefore EMA) in lockstep.
+        torch.manual_seed(step * 1000 + rank)
+        imgs = torch.randn(1, 3, 320, 320, device=device)
+        targets = torch.zeros(1, 30, 5, device=device)
+        targets[0, 0] = torch.tensor(
+            [float(rank), 160.0, 120.0, 80.0, 60.0], device=device
+        )
+        out = ddp_model(imgs, targets=targets)
+        optimizer.zero_grad(set_to_none=True)
+        out["total_loss"].backward()
+        optimizer.step()
+        ema.update(ddp_model)
 
-    dist.barrier()
-
-    # Before broadcast: verify params differ across ranks (all_reduce sum != local * world)
-    if world_size > 1:
-        any_param = next(iter(ema.ema.parameters()))
-        local = any_param.detach().clone()
-        summed = any_param.detach().clone()
-        dist.all_reduce(summed, op=dist.ReduceOp.SUM)
-        pre_diverged = not torch.allclose(summed, local * world_size, atol=1e-5)
+    # Every rank must now hold identical EMA parameters: for each tensor,
+    # all_reduce(SUM) == local * world_size. Buffers only when SyncBN is on
+    # (without it, BN running stats track each rank's local batches).
+    if use_sync_bn:
+        tensors = list(ema.ema.state_dict().items())
     else:
-        pre_diverged = True  # trivially: single rank, nothing to diverge
-
-    # All ranks call broadcast (collective: rank-0 sends, others receive)
-    broadcast_ema_buffers(ema.ema, src=0)
-
-    # After broadcast: verify all ranks hold rank-0's EMA values.
-    # EMA params have requires_grad=False so _params_match skips them; use
-    # all_reduce directly on all params (no grad involved).
-    for name, p in ema.ema.named_parameters():
-        local = p.data.detach().clone()
-        summed = p.data.detach().clone()
+        tensors = list(ema.ema.named_parameters())
+    checked = 0
+    for name, t in tensors:
+        t = t.data if hasattr(t, "data") else t
+        if not torch.is_floating_point(t):
+            continue
+        local = t.detach().clone()
+        summed = t.detach().clone()
         dist.all_reduce(summed, op=dist.ReduceOp.SUM)
         expected = local * world_size
         if not torch.allclose(summed, expected, atol=1e-5, rtol=1e-4):
             delta = (summed - expected).abs().max().item()
-            raise RuntimeError(f"EMA broadcast failed for param {name!r}: max_abs={delta:.3e}")
+            raise RuntimeError(
+                f"EMA diverged across ranks for {name!r}: max_abs={delta:.3e}"
+            )
+        checked += 1
 
-    _ok(rank, f"EMA broadcast: {'pre-diverged as expected, ' if pre_diverged else ''}post-broadcast synced")
+    scope = "params+buffers (SyncBN)" if use_sync_bn else "params (no SyncBN on CPU)"
+    _ok(rank, f"EMA consistency: identical on all ranks after 3 DDP steps ({checked} tensors, {scope})")
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +403,13 @@ def main() -> None:
         _log(rank, f"FAIL sampler: {exc}")
         failed.append("sampler")
 
-    # EMA broadcast (uses YOLO9 model, model-agnostic)
+    # EMA cross-rank consistency (uses YOLO9 model, model-agnostic)
     try:
-        run_ema_broadcast_test(rank, world_size, device)
-        passed.append("ema_broadcast")
+        run_ema_consistency_test(rank, world_size, device)
+        passed.append("ema_consistency")
     except Exception as exc:
-        _log(rank, f"FAIL ema_broadcast: {exc}")
-        failed.append("ema_broadcast")
+        _log(rank, f"FAIL ema_consistency: {exc}")
+        failed.append("ema_consistency")
 
     for family in families:
         try:

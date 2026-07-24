@@ -20,6 +20,7 @@ class RTDETRv2Trainer(RTDETRTrainer):
         """
         from .loss import RTDETRv2Loss
 
+        self._maybe_apply_lora()
         self.criterion = RTDETRv2Loss(num_classes=self.config.num_classes)
         self.criterion.to(self.device)
 

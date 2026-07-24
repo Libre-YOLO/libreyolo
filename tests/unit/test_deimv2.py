@@ -148,3 +148,15 @@ def test_deimv2_val_preprocessor_matches_upstream_pil_resize():
     assert targets.shape == (preproc.max_labels, 5)
     assert not issubclass(DFINEValPreprocessor, DEIMv2ValPreprocessor)
     assert not issubclass(DEIMValPreprocessor, DEIMv2ValPreprocessor)
+
+
+def test_deimv2_public_preprocessors_reject_unaligned_imgsz():
+    from libreyolo import LibreDEIMv2
+
+    model = LibreDEIMv2(None, size="atto", device="cpu")
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="positive multiple of 32"):
+        model._preprocess(image, input_size=513)
+    with pytest.raises(ValueError, match="positive multiple of 32"):
+        model._get_val_preprocessor(img_size=513)

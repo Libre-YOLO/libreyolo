@@ -21,6 +21,7 @@ from .nn import (
     RFDETR_SEG_CONFIGS,
 )
 from .config import RFDETRConfig
+from .imgsz import resolve_patch_window, validate_imgsz
 from ...postprocess.rfdetr import postprocess
 from .utils import IMAGENET_MEAN, IMAGENET_STD, preprocess_numpy
 from .trainer import RFDETRTrainer
@@ -614,6 +615,54 @@ class LibreRFDETR(BaseModel):
         """Rebuild the detector head for a new class count."""
         super()._rebuild_for_new_classes(new_nc)
 
+    def get_distill_config(self) -> Dict:
+        """Return distillation config derived from this model's architecture.
+
+        The tap point is the backbone projector output: the single stride-16
+        feature map every RF-DETR size feeds its transformer. All current
+        sizes share the same projector width, so detector-teacher
+        distillation aligns teacher and student without channel adapters.
+        The shape is measured with a one-time probe forward so the config
+        stays correct if a future size changes the projector width.
+        """
+        tap = "model.backbone.0.projector.stages.0"
+        module = self.model
+        for part in tap.split("."):
+            module = module[int(part)] if part.isdigit() else getattr(module, part)
+
+        captured: Dict[str, Tuple[int, ...]] = {}
+
+        def _hook(_mod, _args, out):
+            if torch.is_tensor(out) and out.dim() == 4:
+                captured["shape"] = tuple(out.shape)
+
+        handle = module.register_forward_hook(_hook)
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                device = next(self.model.parameters()).device
+                dummy = torch.zeros(
+                    1, 3, self.input_size, self.input_size, device=device
+                )
+                self.model(dummy)
+        finally:
+            handle.remove()
+            if was_training:
+                self.model.train()
+
+        shape = captured.get("shape")
+        if shape is None:
+            raise NotImplementedError(
+                "Could not probe the RF-DETR projector output for "
+                "distillation; the projector structure is unexpected."
+            )
+        return {
+            "tap_points": [tap],
+            "channels": [int(shape[1])],
+            "strides": [int(self.input_size // shape[2])],
+        }
+
     def _get_available_layers(self) -> Dict[str, nn.Module]:
         layers = {}
         if hasattr(self.model, "model"):
@@ -651,6 +700,28 @@ class LibreRFDETR(BaseModel):
 
         return preprocess_numpy
 
+    def _validate_imgsz(
+        self,
+        imgsz: int | tuple[int, int],
+        *,
+        name: str = "imgsz",
+    ) -> int | tuple[int, int]:
+        patch_size, num_windows = resolve_patch_window(self.model)
+        return validate_imgsz(
+            imgsz,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            name=name,
+        )
+
+    def _get_val_preprocessor(self, img_size: int | None = None):
+        if img_size is not None:
+            img_size = self._validate_imgsz(
+                img_size,
+                name="RF-DETR validation imgsz",
+            )
+        return super()._get_val_preprocessor(img_size=img_size)
+
     def _preprocess(
         self,
         image: ImageInput,
@@ -658,6 +729,14 @@ class LibreRFDETR(BaseModel):
         input_size: Optional[int] = None,
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         """Preprocess: resize + ImageNet normalization (no letterbox)."""
+        # Only user-supplied overrides need checking: the construction-time
+        # self.input_size is always a valid native size, and this runs on the
+        # per-image hot path.
+        if input_size is not None:
+            input_size = self._validate_imgsz(
+                input_size,
+                name="RF-DETR inference imgsz",
+            )
         effective_res = input_size if input_size is not None else self.input_size
 
         img = ImageLoader.load(image, color_format=color_format)
@@ -921,6 +1000,14 @@ class LibreRFDETR(BaseModel):
             ):
                 apply_lora_to_rfdetr(self.model.model)
 
+            quant_manifest = loaded.get("quant")
+            if quant_manifest:
+                # Rebuild the quantized module structure first so the _q_*
+                # scale buffers in the checkpoint resolve to real modules.
+                from ...quant import apply_quant_structure
+
+                apply_quant_structure(self, quant_manifest)
+
             missing, unexpected = self.model.load_state_dict(loaded, strict=False)
             if unexpected:
                 raise RuntimeError(
@@ -1050,10 +1137,20 @@ class LibreRFDETR(BaseModel):
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
         """Export model. RF-DETR requires opset >= 17 for LayerNormalization."""
+        if kwargs.get("imgsz") is not None:
+            kwargs["imgsz"] = self._validate_imgsz(
+                kwargs["imgsz"],
+                name="RF-DETR export imgsz",
+            )
         return super().export(format, opset=opset, **kwargs)
 
     def val(self, *args, workers: int = 0, **kwargs) -> Dict:
-        """Run RF-DETR validation with a Windows-safe worker default."""
+        """Run RF-DETR validation with a Windows-safe worker default.
+
+        No imgsz check here: every validator routes the effective imgsz
+        through ``_get_val_preprocessor``, which validates, and inspecting
+        positional args would hardcode the base signature's parameter order.
+        """
         return super().val(*args, workers=workers, **kwargs)
 
     def _restore_after_training(self, result: dict) -> None:
@@ -1221,6 +1318,11 @@ class LibreRFDETR(BaseModel):
         train_kwargs.update(pose_train_metadata)
         if train_kwargs.get("imgsz") is None:
             train_kwargs["imgsz"] = self.input_size
+        else:
+            train_kwargs["imgsz"] = self._validate_imgsz(
+                train_kwargs["imgsz"],
+                name="RF-DETR train imgsz",
+            )
 
         aliases = {
             "num_workers": "workers",

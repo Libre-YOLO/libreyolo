@@ -355,6 +355,116 @@ def draw_points(
     return img_draw
 
 
+# Fonts that can render CJK glyphs, tried in order for OCR transcripts.
+# The default label fonts (Arial/DejaVu) draw tofu boxes for Chinese and
+# Japanese text, which PP-OCR transcripts routinely contain.
+CJK_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msgothic.ttc",
+    "C:/Windows/Fonts/simsun.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+)
+
+_warned_no_cjk_font = False
+
+
+@lru_cache(maxsize=8)
+def _get_cjk_font(font_size: int) -> ImageFont.FreeTypeFont | None:
+    """Load and cache a CJK-capable font, or ``None`` if the system has none."""
+    for font in CJK_FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(font, font_size)
+        except OSError:
+            continue
+    return None
+
+
+def _text_needs_cjk(text: str) -> bool:
+    return any(
+        "⺀" <= ch <= "鿿"
+        or "぀" <= ch <= "ヿ"
+        or "豈" <= ch <= "﫿"
+        or "＀" <= ch <= "￯"
+        for ch in text
+    )
+
+
+def draw_ocr_regions(
+    img: Image.Image,
+    polygons: Sequence,
+    texts: Sequence[str],
+    scores: Sequence[float],
+) -> Image.Image:
+    """Draw OCR text-region polygons and render each transcript nearby.
+
+    Transcripts containing CJK characters need a CJK-capable font; when the
+    system has none, boxes are still drawn and a single warning is logged.
+    """
+    global _warned_no_cjk_font
+    import logging
+
+    img_draw = img.copy()
+    draw = ImageDraw.Draw(img_draw)
+
+    max_dim = max(img.size)
+    scale = max_dim / 640.0
+    stroke = max(2, int(round(2 * scale)))
+    font_size = max(12, int(14 * scale))
+    plain_font = _get_font(font_size)
+    cjk_font = _get_cjk_font(font_size)
+    label_padding = max(2, int(2 * scale))
+    color = get_class_color(0)
+
+    for polygon, text, score in zip(polygons, texts, scores):
+        pts = [(float(p[0]), float(p[1])) for p in polygon]
+        draw.polygon(pts, outline=color, width=stroke)
+
+        label = f"{text} {float(score):.2f}" if text else f"{float(score):.2f}"
+        font = plain_font
+        if _text_needs_cjk(label):
+            if cjk_font is not None:
+                font = cjk_font
+            else:
+                if not _warned_no_cjk_font:
+                    logging.getLogger(__name__).warning(
+                        "No CJK-capable font found on this system; OCR polygons "
+                        "are drawn but CJK transcripts are omitted from the overlay."
+                    )
+                    _warned_no_cjk_font = True
+                continue
+
+        full_bbox = draw.textbbox((0, 0), label, font=font)
+        text_width = full_bbox[2] - full_bbox[0]
+        text_height = full_bbox[3] - full_bbox[1]
+        top_left_x = min(p[0] for p in pts)
+        top_left_y = min(p[1] for p in pts)
+        label_x = min(max(0, top_left_x), max(0, img.width - text_width - label_padding * 2))
+        label_y = top_left_y - text_height - label_padding * 2
+        if label_y < 0:
+            label_y = top_left_y
+        draw.rectangle(
+            [
+                label_x,
+                label_y,
+                label_x + text_width + label_padding * 2,
+                label_y + text_height + label_padding * 2,
+            ],
+            fill=color,
+        )
+        draw.text(
+            (label_x + label_padding, label_y + label_padding),
+            label,
+            fill="white",
+            font=font,
+        )
+
+    return img_draw
+
+
 def draw_masks(
     img: Image.Image,
     masks: np.ndarray,
@@ -430,6 +540,85 @@ def draw_semantic_mask(
     return result.convert("RGB")
 
 
+def draw_panoptic(
+    img: Image.Image,
+    panoptic_map: np.ndarray,
+    segments_info: List[Dict],
+    class_names: Dict[int, str] | None = None,
+    alpha: float = 0.55,
+    ignore_index: int = 0,
+) -> Image.Image:
+    """
+    Overlay a dense panoptic segment-id map on an image.
+
+    Thing segments are colored per segment id (so touching instances of the
+    same class stay distinguishable); stuff segments are colored per category.
+    Segments covering at least 0.5% of the image get a class-name label at
+    their centroid.
+
+    Args:
+        img: PIL Image to draw on.
+        panoptic_map: (H, W) integer numpy array of per-pixel segment IDs.
+        segments_info: One dict per segment with at least ``id``,
+            ``category_id``, and ``isthing``.
+        class_names: Optional mapping of category ID to class name.
+        alpha: Overlay opacity (0 = transparent, 1 = opaque).
+        ignore_index: Segment ID left unpainted (COCO convention: 0 = void).
+
+    Returns:
+        Annotated PIL Image with the segment-color overlay and labels.
+    """
+    seg_map = np.asarray(panoptic_map)
+    if seg_map.shape[:2] != (img.height, img.width):
+        seg_img = Image.fromarray(seg_map.astype(np.int32), mode="I")
+        seg_img = seg_img.resize((img.width, img.height), Image.NEAREST)
+        seg_map = np.asarray(seg_img)
+
+    img_draw = img.copy().convert("RGBA")
+    overlay = np.zeros((img.height, img.width, 4), dtype=np.uint8)
+    alpha_int = int(alpha * 255)
+    info_by_id = {int(seg["id"]): seg for seg in segments_info}
+
+    labels: List[Tuple[str, Tuple[int, int], Tuple[int, int, int]]] = []
+    min_label_area = 0.005 * seg_map.size
+    for seg_id in np.unique(seg_map):
+        seg_id = int(seg_id)
+        if seg_id == ignore_index:
+            continue
+        seg = info_by_id.get(seg_id)
+        if seg is not None and not seg.get("isthing", True):
+            color = _get_class_color_rgb(int(seg["category_id"]))
+        else:
+            # Things (and unlisted segments) vary by segment id so adjacent
+            # instances of one class do not blend together.
+            color = _get_class_color_rgb(seg_id * 3 + 1)
+        region = seg_map == seg_id
+        overlay[region] = (*color, alpha_int)
+
+        if seg is not None and class_names and region.sum() >= min_label_area:
+            name = class_names.get(int(seg["category_id"]))
+            if name:
+                ys, xs = np.nonzero(region)
+                labels.append((str(name), (int(xs.mean()), int(ys.mean())), color))
+
+    result = Image.alpha_composite(img_draw, Image.fromarray(overlay, mode="RGBA"))
+    result = result.convert("RGB")
+
+    if labels:
+        draw = ImageDraw.Draw(result)
+        font_size = max(12, min(img.width, img.height) // 40)
+        font = _get_font(font_size)
+        for name, (cx, cy), color in labels:
+            bbox = draw.textbbox((0, 0), name, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            x = max(0, min(img.width - tw, cx - tw // 2))
+            y = max(0, min(img.height - th, cy - th // 2))
+            draw.rectangle([x - 3, y - 2, x + tw + 3, y + th + 2], fill=(15, 23, 42))
+            draw.text((x, y), name, fill="white", font=font)
+
+    return result
+
+
 # Anchor colors for the depth colormap, near (warm) to far (cold). Linear
 # interpolation between anchors gives a smooth ramp without a matplotlib
 # dependency.
@@ -486,6 +675,48 @@ def draw_depth_map(
     if alpha < 1.0:
         result = Image.blend(img.convert("RGB"), result, alpha)
     return result
+
+
+def _checkerboard(
+    height: int,
+    width: int,
+    tile: int = 16,
+    light: int = 200,
+    dark: int = 154,
+) -> np.ndarray:
+    """Build an ``(H, W, 3)`` uint8 checkerboard, the standard transparency backdrop."""
+    ys = (np.arange(height) // tile)[:, None]
+    xs = (np.arange(width) // tile)[None, :]
+    board = np.where((ys + xs) % 2 == 0, light, dark).astype(np.uint8)
+    return np.repeat(board[:, :, None], 3, axis=2)
+
+
+def draw_matte(
+    img: Image.Image,
+    matte: np.ndarray,
+    tile: int = 16,
+) -> Image.Image:
+    """Preview a soft alpha matte by compositing the cutout over a checkerboard.
+
+    Args:
+        img: Source PIL image.
+        matte: ``(H, W)`` float alpha in ``[0, 1]`` (foreground opacity).
+        tile: Checkerboard tile size in pixels.
+
+    Returns:
+        RGB PIL image: foreground kept, background replaced by a checkerboard so
+        the transparency (and soft hair/fur edges) is visible at a glance.
+    """
+    rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
+    h, w = rgb.shape[:2]
+    alpha = np.asarray(matte, dtype=np.float32)
+    if alpha.shape[:2] != (h, w):
+        alpha_img = Image.fromarray(alpha, mode="F").resize((w, h), Image.BILINEAR)
+        alpha = np.asarray(alpha_img, dtype=np.float32)
+    alpha = np.clip(alpha, 0.0, 1.0)[:, :, None]
+    board = _checkerboard(h, w, tile=tile).astype(np.float32)
+    composite = rgb * alpha + board * (1.0 - alpha)
+    return Image.fromarray(np.clip(composite, 0, 255).astype(np.uint8), mode="RGB")
 
 
 # COCO 17-keypoint skeleton + colors (matches super-gradients defaults).

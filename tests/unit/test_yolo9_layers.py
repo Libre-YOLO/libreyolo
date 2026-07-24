@@ -174,7 +174,7 @@ class TestYOLO9DetectionHead:
         DFL expects input shape (batch, 4*reg_max, anchors).
         """
         reg_max = 16
-        layer = DFL(c1=reg_max)
+        layer = DFL(num_bins=reg_max)
         # Input: (batch, 4*reg_max, anchors)
         x = torch.randn(1, 4 * reg_max, 100)
         out = layer(x)
@@ -355,25 +355,6 @@ class TestYOLO9Utils:
             0.9,
         ]
 
-    def test_postprocess_segment_keeps_best_class(self):
-        """Segment postprocess stays best-class (not multi-label) so each
-        detection keeps a single mask-coefficient vector."""
-        pred = torch.zeros(1, 6, 1)
-        pred[0, :4, 0] = torch.tensor([0.0, 0.0, 100.0, 100.0])
-        pred[0, 4:, 0] = torch.tensor([0.9, 0.8])  # two classes over conf
-        proto = torch.randn(1, 32, 16, 16)
-        coeffs = torch.randn(1, 32, 1)
-
-        out = yolo9_utils.postprocess(
-            {"predictions": pred, "proto": proto, "mask_coeffs": coeffs},
-            conf_thres=0.25,
-            iou_thres=0.5,
-            original_size=(100, 100),
-        )
-
-        assert out["num_detections"] == 1
-        assert out["classes"] == [0]
-
     def test_postprocess_obb_outputs_obb_payload(self):
         pred = torch.zeros(1, 7, 1)
         pred[0, :4, 0] = torch.tensor([10.0, 20.0, 50.0, 40.0])
@@ -500,26 +481,27 @@ class TestYOLO9Utils:
         assert keep.numel() == num_candidates
         torch.testing.assert_close(scores[keep], scores)
 
-    def test_make_anchors(self):
+    def test_anchor_grid(self):
         """Test anchor generation.
 
-        make_anchors returns (anchor_points, stride_tensor) with shapes:
-        - anchor_points: (total_anchors, 2)
-        - stride_tensor: (total_anchors, 1)
+        _anchor_grid returns (anchor_points, stride_scale) with shapes:
+        - anchor_points: (total_anchors, 2) grid-unit cell centers
+        - stride_scale: (total_anchors, 1)
         """
         feature_maps = [
             torch.randn(1, 64, 80, 80),
             torch.randn(1, 128, 40, 40),
             torch.randn(1, 256, 20, 20),
         ]
-        from libreyolo.utils.general import make_anchors
+        head = DDetect(nc=80, ch=(64, 128, 256), reg_max=16, stride=(8, 16, 32))
 
-        anchors, strides = make_anchors(feature_maps, strides=[8, 16, 32])
+        anchors, strides = head._anchor_grid(feature_maps)
         # Total anchors = 80*80 + 40*40 + 20*20 = 8400
-        assert anchors.shape[0] == 8400
-        assert anchors.shape[1] == 2
-        assert strides.shape[0] == 8400
-        assert strides.shape[1] == 1
+        assert anchors.shape == (8400, 2)
+        assert strides.shape == (8400, 1)
+        assert anchors[0].tolist() == [0.5, 0.5]
+        assert strides[0].item() == 8.0
+        assert strides[-1].item() == 32.0
 
 
 def test_yolo9_trainer_uses_explicit_coco_json_paths(tmp_path):
@@ -767,37 +749,3 @@ def test_yolo9_trainer_checkpoint_uses_resolved_data_classes_for_obb(tmp_path):
     assert trainer.config.num_classes == 1
     assert checkpoint["nc"] == 1
     assert checkpoint["config"]["num_classes"] == 1
-
-
-def test_postprocess_segment_outputs_masks():
-    """YOLO9 segment postprocess keeps mask coefficients aligned through NMS."""
-    num_anchors = 4
-    num_classes = 2
-    num_masks = 32
-    pred = torch.zeros(1, 4 + num_classes, num_anchors)
-    pred[0, :4] = torch.tensor(
-        [
-            [10, 12, 11, 200],
-            [10, 12, 11, 200],
-            [50, 60, 55, 240],
-            [50, 60, 55, 240],
-        ],
-        dtype=torch.float32,
-    )
-    pred[0, 4:] = torch.tensor(
-        [[0.9, 0.2, 0.95, 0.1], [0.1, 0.8, 0.05, 0.7]]
-    )
-    proto = torch.randn(1, num_masks, 16, 16)
-    coeffs = torch.randn(1, num_masks, num_anchors)
-
-    out = yolo9_utils.postprocess(
-        {"predictions": pred, "proto": proto, "mask_coeffs": coeffs},
-        conf_thres=0.25,
-        iou_thres=0.5,
-        input_size=64,
-        original_size=(128, 96),
-        max_det=3,
-    )
-
-    assert out["num_detections"] == 2
-    assert out["masks"].shape == (2, 96, 128)

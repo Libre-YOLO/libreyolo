@@ -56,6 +56,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     border-radius: 9px; padding: 8px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
   }
   select:hover { border-color: var(--libre-500); }
+  input.ctlinput {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border-2);
+    border-radius: 9px; padding: 8px 12px; font-size: 13px; font-family: inherit; width: 220px;
+  }
+  input.ctlinput:hover, input.ctlinput:focus { border-color: var(--libre-500); outline: none; }
 
   .stage { flex: 1; padding: 24px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
 
@@ -188,6 +193,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <label class="ctl">Model</label>
       <select id="model"><option>loading...</option></select>
+      <label class="ctl" id="classesLabel" style="display:none" title="Text vocabulary for open-vocab / zero-shot models">Classes</label>
+      <input class="ctlinput" id="classes" type="text" style="display:none"
+             placeholder="e.g. person, hard hat, forklift">
+      <label class="ctl" id="bboxLabel" style="display:none" title="PicoSAM3 ROI in image pixels">ROI</label>
+      <input class="ctlinput" id="bbox" type="text" style="display:none"
+             placeholder="x1,y1,x2,y2 (full image)">
       <label class="ctl">Conf</label>
       <select id="conf"><option>0.25</option><option>0.40</option><option>0.50</option></select>
     </div>
@@ -196,8 +207,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <section class="stage">
     <div class="toolbar" id="toolbar">
       <span style="font-size:18px">&#128193;</span>
-      <span><b>Drop images or a folder</b>, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, or browse</span>
+      <span><b>Drop images or a folder</b>, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, browse, or try the sample for a quick test</span>
       <span class="spacer"></span>
+      <button class="btn ghost" id="pickSample">Try a sample</button>
       <button class="btn ghost" id="pickFiles">Choose files</button>
       <button class="btn ghost" id="pickFolder">Add folder</button>
       <button class="btn" id="runBtn" disabled>
@@ -212,7 +224,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     <div class="terminal" id="terminal" style="display:none">
       <div class="term-head">
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="ttl">libreyolo &#8212; inference</span>
+        <span class="ttl">libreyolo - inference</span>
         <button class="tbtn" id="termClearBtn" title="Clear scrollback">clear</button>
       </div>
       <div class="term-body" id="termBody">
@@ -237,7 +249,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="M21 15l-5-5L5 21"/>
       </svg>
       <div class="big">No images yet</div>
-      <div>Drop images or a folder, then hit Run inference</div>
+      <div>Drop images or a folder, or use the default image for a quick test.</div>
     </div>
 
     <div class="gallery" id="gallery"></div>
@@ -248,21 +260,42 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <script>
 (function () {
   "use strict";
-  var images = []; // {name, file, srcUrl, w, h, status, renderedUrl, n, error}
+  var images = []; // {name, file, srcUrl, w, h, status, renderedUrl, n, task, label, error}
   var $ = function (id) { return document.getElementById(id); };
 
   $("addr").textContent = location.host;
 
   // ---- populate model dropdown from the real registry ----
+  var openvocab = {};  // model name -> accepts a text vocabulary (classes box)
+  var boxPrompt = {};  // model name -> accepts an ROI box
+  function syncClassesBox() {
+    var show = !!openvocab[$("model").value];
+    $("classesLabel").style.display = show ? "" : "none";
+    $("classes").style.display = show ? "" : "none";
+    var showBox = !!boxPrompt[$("model").value];
+    $("bboxLabel").style.display = showBox ? "" : "none";
+    $("bbox").style.display = showBox ? "" : "none";
+  }
   fetch("/api/models").then(function (r) { return r.json(); }).then(function (j) {
     var sel = $("model");
     sel.innerHTML = "";
+    var unavailable = {};
+    (j.unavailable || []).forEach(function (m) { unavailable[m] = true; });
+    (j.openvocab || []).forEach(function (m) { openvocab[m] = true; });
+    (j.box_prompt || []).forEach(function (m) { boxPrompt[m] = true; });
     (j.models || []).forEach(function (m) {
       var o = document.createElement("option");
-      o.value = m; o.textContent = m;
+      o.value = m;
+      if (unavailable[m]) {
+        o.textContent = m + "  (no weights)";
+        o.disabled = true;  // greyed out, not selectable
+      } else {
+        o.textContent = m;
+      }
       if (m === j.default) o.selected = true;
       sel.appendChild(o);
     });
+    syncClassesBox();
   }).catch(function () { $("model").innerHTML = '<option>yolo9-t</option>'; });
 
   function loadImage(url) {
@@ -274,7 +307,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     if (!files.length) return;
     files.forEach(function (f) {
       var url = URL.createObjectURL(f);
-      var entry = { name: f.name || "pasted.png", file: f, srcUrl: url, w: 0, h: 0, status: "queued", renderedUrl: url, n: 0, error: null };
+      var entry = { name: f.name || "pasted.png", file: f, srcUrl: url, w: 0, h: 0, status: "queued", renderedUrl: url, n: 0, task: null, label: null, error: null };
       images.push(entry);
       loadImage(url).then(function (im) { if (im) { entry.w = im.naturalWidth; entry.h = im.naturalHeight; } renderGallery(); });
     });
@@ -342,6 +375,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
     var model = $("model").value || "yolo9-t";
     var conf = $("conf").value || "0.25";
+    var classes = openvocab[model] ? $("classes").value.trim() : "";
+    var bbox = boxPrompt[model] ? $("bbox").value.trim() : "";
     var outdir = "-";
 
     $("terminal").style.display = "block";
@@ -354,7 +389,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
       await typeCommand("libreyolo predict --model " + model + " --source " + e.name + " --conf " + conf + " --save");
 
       try {
-        var resp = await fetch("/api/infer?model=" + encodeURIComponent(model) + "&conf=" + encodeURIComponent(conf),
+        var resp = await fetch("/api/infer?model=" + encodeURIComponent(model) + "&conf=" + encodeURIComponent(conf) +
+          (classes ? "&classes=" + encodeURIComponent(classes) : "") +
+          (bbox ? "&bbox=" + encodeURIComponent(bbox) : ""),
           { method: "POST", headers: { "X-Filename": e.name }, body: e.file });
         if (!resp.body) throw new Error("streaming not supported");
         var reader = resp.body.getReader(), dec = new TextDecoder(), buf = "";
@@ -374,10 +411,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
         }
         if (errMsg) throw new Error(errMsg);
         if (!result) throw new Error("no result returned");
-        e.renderedUrl = result.rendered; e.n = result.count; e.status = "done"; e.error = null;
+        var label = result.label || (result.count + " object" + (result.count === 1 ? "" : "s"));
+        e.renderedUrl = result.rendered; e.n = result.count; e.task = result.task; e.label = label; e.status = "done"; e.error = null;
         if (result.dir) outdir = result.dir;
-        termLine("✓ " + e.name + ": " + result.count + " object" + (result.count === 1 ? "" : "s") +
-                 "  →  " + (result.dir || ""), "ok");
+        termLine("✓ " + e.name + ": " + label + "  →  " + (result.dir || ""), "ok");
       } catch (err) {
         e.status = "error"; e.error = err.message;
         termLine("✗ " + e.name + ": " + err.message, "err");
@@ -407,10 +444,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     g.innerHTML = "";
     images.forEach(function (e) {
       var card = document.createElement("div"); card.className = "card";
-      var stateHtml, ctHtml;
+      var stateHtml, ctHtml, ctText = null;
       if (e.status === "done") {
         stateHtml = '<span class="state done">rendered</span>';
-        ctHtml = '<b>' + e.n + '</b> obj';
+        ctHtml = "";
+        ctText = e.label || (e.n + " obj");
       } else if (e.status === "busy") {
         stateHtml = '<span class="state busy"><span class="minispin"></span>running</span>';
         ctHtml = '...';
@@ -426,6 +464,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<img src="' + e.renderedUrl + '" alt=""></div>' +
         '<div class="cap"><span class="nm"></span><span class="ct">' + ctHtml + '</span></div>';
       card.querySelector(".nm").textContent = e.name;
+      if (ctText !== null) card.querySelector(".ct").textContent = ctText;
       if (e.error) card.querySelector(".nm").title = e.error;
       g.appendChild(card);
     });
@@ -439,14 +478,25 @@ INDEX_HTML = r"""<!DOCTYPE html>
   }
 
   // ---- controls ----
+  $("pickSample").addEventListener("click", function () {
+    fetch("/api/sample").then(function (response) {
+      if (!response.ok) throw new Error("sample unavailable");
+      return response.blob();
+    }).then(function (blob) {
+      var file = new File([blob], "guggenheim-bilbao.jpg", { type: "image/jpeg" });
+      addFiles([file]);
+    }).catch(function () { toast("Could not load the sample image."); });
+  });
   $("pickFiles").addEventListener("click", function () { $("fileInput").click(); });
   $("pickFolder").addEventListener("click", function () { $("folderInput").click(); });
   $("fileInput").addEventListener("change", function (ev) { addFiles(ev.target.files); ev.target.value = ""; });
   $("folderInput").addEventListener("change", function (ev) { addFiles(ev.target.files); ev.target.value = ""; });
   $("runBtn").addEventListener("click", runInference);
   $("termClearBtn").addEventListener("click", termClear);
-  $("model").addEventListener("change", markStale);
+  $("model").addEventListener("change", function () { syncClassesBox(); markStale(); });
   $("conf").addEventListener("change", markStale);
+  $("bbox").addEventListener("change", markStale);
+  $("classes").addEventListener("change", markStale);
   $("openFolder").addEventListener("click", function () {
     fetch("/api/open-folder", { method: "POST" }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j.ok) toast("Results folder:", j.dir || "");

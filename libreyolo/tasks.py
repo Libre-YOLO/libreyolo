@@ -11,6 +11,7 @@ TaskType = Literal[
     "detect",
     "segment",
     "semantic",
+    "panoptic",
     "pose",
     "classify",
     "gaze",
@@ -18,11 +19,14 @@ TaskType = Literal[
     "point",
     "depth",
     "restore",
+    "matte",
+    "ocr",
 ]
 TASKS = (
     "detect",
     "segment",
     "semantic",
+    "panoptic",
     "pose",
     "classify",
     "gaze",
@@ -30,6 +34,8 @@ TASKS = (
     "point",
     "depth",
     "restore",
+    "matte",
+    "ocr",
 )
 
 TASK_ALIASES = {
@@ -44,6 +50,11 @@ TASK_ALIASES = {
     "semantic_segmentation": "semantic",
     "semseg": "semantic",
     "sem": "semantic",
+    "panoptic": "panoptic",
+    "panoptic-segmentation": "panoptic",
+    "panoptic_segmentation": "panoptic",
+    "panseg": "panoptic",
+    "pano": "panoptic",
     "pose": "pose",
     "keypoint": "pose",
     "keypoints": "pose",
@@ -65,11 +76,27 @@ TASK_ALIASES = {
     "restoration": "restore",
     "deblur": "restore",
     "denoise": "restore",
+    "matte": "matte",
+    "matting": "matte",
+    "background-removal": "matte",
+    "background_removal": "matte",
+    "rembg": "matte",
+    "dis": "matte",
+    "sr": "restore",
+    "super-resolution": "restore",
+    "super_resolution": "restore",
+    "superresolution": "restore",
+    "upscale": "restore",
+    "ocr": "ocr",
+    "text": "ocr",
+    "text-recognition": "ocr",
+    "text_recognition": "ocr",
 }
 
 TASK_TO_SUFFIX = {
     "segment": "seg",
     "semantic": "sem",
+    "panoptic": "panoptic",
     "pose": "pose",
     "classify": "cls",
     "gaze": "gaze",
@@ -77,6 +104,8 @@ TASK_TO_SUFFIX = {
     "point": "point",
     "depth": "depth",
     "restore": "restore",
+    "matte": "matte",
+    "ocr": "ocr",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

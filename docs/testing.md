@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.3
+Version: 2.5
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -8,7 +8,7 @@ This is the CI/test contract for LibreYOLO. Times are UTC.
 
 | Layer | Workflow / owner | Runs on | Trigger | Green means |
 | --- | --- | --- | --- | --- |
-| Unit | `.github/workflows/unit-tests.yml` | GitHub Linux, macOS, Windows; Python 3.10 | push to `dev`, PR to `dev`, manual | CPU-safe library and CLI/API behavior works. |
+| Unit | `.github/workflows/unit-tests.yml` | GitHub Linux, macOS, Windows; Python 3.10. Parallel via pytest-xdist; `distributed`-marked gloo tests run in a separate serial Linux-only job. | push to `dev`, PR to `dev`, manual | CPU-safe library and CLI/API behavior works. |
 | Install smoke | `.github/workflows/install-smoke.yml` | GitHub clean VMs; Python 3.10 | push to `dev`, PR to `dev`, manual, daily, publish | A clean user env can install, import, and start LibreYOLO. |
 | GPU e2e nightly | `.github/workflows/e2e-nightly-dev.yml` | GitHub-hosted controller; Modal L4 GPU worker | daily schedule, manual | Selected real-model GPU tests execute and pass on latest `dev`. |
 | GPU e2e manual | `.github/workflows/e2e-nightly-{release,pypi}.yml` | self-hosted `gpu`, `libreyolo-e2e` tower runner | manual | Selected real-model GPU tests execute and pass on `release` or latest PyPI when explicitly requested. |
@@ -28,8 +28,15 @@ Command:
 ```bash
 make test_pr_gate
 
-# Equivalent command used by the cross-platform GitHub workflow:
-LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network"
+# Equivalent commands used by the GitHub workflow. The main cross-platform job
+# runs the suite in parallel, excluding the multi-rank gloo tests:
+LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network and not distributed" -n auto --dist loadfile
+
+# The `distributed`-marked gloo tests run serially, in a separate Linux-only
+# job (each test mp.spawns its own ranks; gloo process-group init costs ~105s
+# per test on the macOS runner, and the gradient-parity tolerances are
+# BLAS-sensitive across platforms):
+LIBREYOLO_PR_GATE=1 uv run --no-sync pytest tests/unit -m "unit and not external_data and not network and distributed"
 ```
 
 Scope: CPU-safe behavior, config, parsing, errors, serialization, and CLI/API
@@ -75,6 +82,7 @@ Matrix:
 
 Checks: fresh venv, selected install mode, `pip check`, `import libreyolo`,
 `LibreYOLO`, `Results`, `SAMPLE_IMAGE`, bundled sample image exists,
+lazy VLM, promptable-segmentation, and open-vocabulary family exports,
 `libreyolo --help`, `libreyolo version --json --quiet`,
 `libreyolo checks --json --quiet`, and import location check.
 
@@ -118,19 +126,36 @@ and writes runtime, GPU, and estimated GPU cost to the step summary. Exact
 billing remains authoritative in Modal; the GitHub value is a GPU-runtime
 estimate.
 
+Every e2e test also carries a per-test timeout, `E2E_TIMEOUT` (default 900
+seconds, `0` disables), enforced by `pytest-timeout` in thread mode so that a
+test wedged inside a native call, such as a stalled weight download, is killed
+with a stack trace instead of burning the whole nightly budget in silence. The
+suite-level Modal timeout is the last resort, not the first line of defence.
+
+Weight reuse: the Modal volume caches loose weight files, and Hugging Face
+snapshots (open-vocab, SAM, VLM families) as whole directories, since their
+loaders only skip a download when the `.libreyolo_snapshot_complete` marker and
+the config sit beside the weights. Verified snapshots are committed even when
+the suite fails, so a run that dies mid-suite does not leave the next one
+downloading them cold again. Set the `HF_TOKEN` repository secret to lift the
+Modal container off anonymous Hub rate limits; without it the run stays
+anonymous.
+
 Commands:
 
 ```bash
 make test_general_nightly
 make test_flagship_nightly
 make test_nightly
+make test_e2e E2E_TIMEOUT=1800
 ```
 
 V2.1 contract:
 
 - `general_nightly`: one smallest native inference case for every public
   detector family that has a public auto-download route (LibreYOLO HF, or Deci's
-  CDN for YOLO-NAS); currently 15 tests.
+  CDN for YOLO-NAS), plus batched/sequential parity and selected open-vocabulary
+  smoke cases; currently 30 tests.
 - `flagship_nightly`: heavier YOLO9/RF-DETR native validation, video, tracking,
   CLI, and one RF1 training/reload size per flagship family; currently 48 tests
   with `not export_backend`. The full RF1 size matrix remains available under

@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from ...training.distributed import all_reduce_avg_scalar
 from ...utils.general import cxcywh_to_xyxy
 from .nn import batch_distance2bbox
 
@@ -636,7 +637,12 @@ class PPYoloELoss(nn.Module):
             self._forward_batched(predictions, targets)
         )
 
-        assigned_scores_sum = torch.clamp(assigned_scores_sum, min=1.0)
+        # Global (DDP-reduced) score mass, mirroring upstream SuperGradients'
+        # all_reduce of ``assigned_scores_sum``: dividing by the global sum
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``clamp(min=1)`` outside DDP.
+        assigned_scores_sum = all_reduce_avg_scalar(assigned_scores_sum)
         cls_loss = self.classification_loss_weight * cls_loss_sum / assigned_scores_sum
         iou_loss = self.iou_loss_weight * iou_loss_sum / assigned_scores_sum
         dfl_loss = self.dfl_loss_weight * dfl_loss_sum / assigned_scores_sum
@@ -1042,6 +1048,7 @@ class YoloNASPoseLoss(nn.Module):
         bbox_assigned_beta: float = 6.0,
         assigner_multiply_by_pose_oks: bool = True,
         rescale_pose_loss_with_assigned_score: bool = True,
+        num_classes: int = 1,
     ):
         super().__init__()
         self.classification_loss_type = classification_loss_type
@@ -1050,7 +1057,9 @@ class YoloNASPoseLoss(nn.Module):
         self.iou_loss_weight = iou_loss_weight
         self.iou_loss = {"giou": GIoULoss, "ciou": CIoULoss}[regression_iou_loss_type]()
         self.num_keypoints = len(oks_sigmas)
-        self.num_classes = 1  # pose estimation is single-class
+        # Class count for the box/objectness branch. 1 for classic single-class
+        # (person) pose; > 1 for multi-class pose with a shared keypoint skeleton.
+        self.num_classes = num_classes
         self.register_buffer("oks_sigmas", torch.as_tensor(oks_sigmas, dtype=torch.float32))
         self.pose_cls_loss_weight = pose_cls_loss_weight
         self.pose_reg_loss_weight = pose_reg_loss_weight
@@ -1101,7 +1110,16 @@ class YoloNASPoseLoss(nn.Module):
         t = targets[:, :n_max]
         gt_bbox = cxcywh_to_xyxy(t[..., 1:5])
         pad_gt_mask = ((t[..., 3] > 0) & (t[..., 4] > 0)).unsqueeze(-1).float()
-        gt_class = torch.zeros(batch_size, n_max, 1, dtype=torch.long, device=device)
+        if self.num_classes == 1:
+            # Historical single-class pose contract: the label class column is
+            # category-agnostic and every GT trains class 0. Forwarding a raw
+            # non-zero id (e.g. COCO person=1) would collide with the assigner's
+            # background index and silently drop that GT's supervision.
+            gt_class = torch.zeros(batch_size, n_max, 1, dtype=torch.long, device=device)
+        else:
+            # Multi-class pose: real class ids from the targets (column 0),
+            # validated against nc at data-load time (YOLOPoseDataset).
+            gt_class = t[..., 0:1].long()
         gt_poses = t[..., 5:].reshape(batch_size, n_max, self.num_keypoints, 3)
         gt_crowd = torch.zeros(batch_size, n_max, 1, device=device)
         return {
@@ -1156,7 +1174,9 @@ class YoloNASPoseLoss(nn.Module):
                 f"Unknown classification loss type: {self.classification_loss_type}"
             )
 
-        assigned_scores_sum = torch.clip(assigned_scores.sum(), min=1.0)
+        # Global (DDP-reduced) score mass; see the detection loss above
+        # (issue #484). Identical to ``clip(min=1)`` outside DDP.
+        assigned_scores_sum = all_reduce_avg_scalar(assigned_scores.sum())
         loss_cls = loss_cls / assigned_scores_sum
 
         loss_iou, loss_dfl, loss_pose_cls, loss_pose_reg = self._bbox_loss(
@@ -1212,7 +1232,7 @@ class YoloNASPoseLoss(nn.Module):
         area: Tensor,
         sigmas: Tensor,
         assigned_scores: Optional[Tensor] = None,
-        assigned_scores_sum: Optional[Tensor] = None,
+        assigned_scores_sum: Optional[float] = None,
     ) -> Tuple[Tensor, Tensor]:
         sigmas = sigmas.reshape([1, -1, 1])
         area = area.reshape([-1, 1, 1])

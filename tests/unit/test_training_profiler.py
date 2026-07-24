@@ -8,11 +8,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import pytest
 import torch
+from torch import nn
 
 from libreyolo.training.config import TrainConfig
+from libreyolo.training.trainer import BaseTrainer
 from libreyolo.training.profiler import (
     TrainStepProfiler,
     _friendly_kernel,
@@ -152,6 +155,7 @@ def test_analyze_trace_uses_summary(tmp_path):
 def test_profiler_disabled_by_default():
     cfg = TrainConfig()
     assert cfg.profile is False
+    assert cfg.profile_then_stop is False
     assert cfg.profile_open is True
 
 
@@ -203,6 +207,121 @@ def test_analyze_trace_host_overhead_and_schema(tmp_path):
     assert a["host_overhead_ms_per_step"] > 90
     assert a["metrics"]["host_overhead_ms"] == a["host_overhead_ms_per_step"]
     assert a["metrics"]["launches_per_step"] == 5
+
+
+def test_wrap_loader_passes_through_after_finish(tmp_path):
+    """Once the window closes, wrap_loader keeps yielding untouched batches."""
+    prof = TrainStepProfiler(
+        device=torch.device("cpu"), warmup=1, active=1, trace=False,
+        open_report=False, save_dir=tmp_path, meta={"model": "t", "batch": 1},
+    )
+    seen = []
+    for item in prof.wrap_loader(range(10)):
+        seen.append(item)
+        prof.step()
+    assert prof.finished
+    assert seen == list(range(10))
+
+
+# --- trainer integration: profile window vs. the training loop --------------
+
+class _ProfTrainer(BaseTrainer):
+    def get_model_family(self) -> str:
+        return "tiny"
+
+    def get_model_tag(self) -> str:
+        return "tiny"
+
+    def create_transforms(self):
+        raise NotImplementedError
+
+    def create_scheduler(self, iters_per_epoch: int):
+        raise NotImplementedError
+
+    def get_loss_components(self, outputs):
+        return {}
+
+
+class _Loader:
+    def __init__(self, num_batches):
+        self.dataset = SimpleNamespace()
+        self.num_batches = num_batches
+
+    def __iter__(self):
+        for _ in range(self.num_batches):
+            yield torch.zeros(1, 1), torch.zeros(1, 1), (None,), (0,)
+
+    def __len__(self):
+        return self.num_batches
+
+
+def _build_profiled_trainer(tmp_path, *, num_batches, **config_overrides):
+    """Bare-bones trainer (bypasses __init__, like test_trainer_grad_clip) with
+    a live CPU profiler whose window closes after 3 steps (warmup 1 + measured
+    2, since active is clamped to >= 2).
+    """
+    trainer = _ProfTrainer.__new__(_ProfTrainer)
+    trainer.model = nn.Linear(1, 1, bias=False)
+    param = next(trainer.model.parameters())
+    trainer.train_loader = _Loader(num_batches)
+    trainer.config = SimpleNamespace(
+        epochs=1,
+        batch=1,
+        log_interval=999,
+        eval_interval=-1,
+        clip_max_norm=None,
+        **config_overrides,
+    )
+    trainer.device = torch.device("cpu")
+    trainer.optimizer = torch.optim.SGD([param], lr=0.1)
+    trainer.scaler = None
+    trainer.ema_model = None
+    trainer.lr_scheduler = SimpleNamespace(update_lr=lambda _: 0.1)
+    trainer.wrapper_model = SimpleNamespace(task="detect")
+    trainer._stop_training = False
+
+    forwards = []
+
+    def on_forward(imgs, targets, polygons=None):
+        forwards.append(1)
+        return {"total_loss": (param * 0).sum() + 1.0}
+
+    trainer.on_forward = on_forward
+    trainer._profiler = TrainStepProfiler(
+        device=torch.device("cpu"), warmup=1, active=1, trace=False,
+        open_report=False, save_dir=tmp_path, meta={"model": "t", "batch": 1},
+    )
+    return trainer, forwards
+
+
+def test_profile_window_close_keeps_training(tmp_path):
+    """Default profile=True: the window closes and the epoch keeps training."""
+    trainer, forwards = _build_profiled_trainer(tmp_path, num_batches=6)
+
+    _ProfTrainer._train_epoch(trainer, 0)
+
+    assert trainer._profiler is None  # hooks dropped after the window
+    assert trainer._stop_training is False
+    assert len(forwards) == 6  # every batch still trained
+
+
+def test_profile_then_stop_truncates_without_validation(tmp_path):
+    """profile_then_stop=True: stop right after the window; the partial epoch
+    must not be validated (train() skips its checkpoint for the same reason)."""
+    trainer, forwards = _build_profiled_trainer(
+        tmp_path, num_batches=6, profile_then_stop=True
+    )
+    validated = []
+    trainer._should_validate_epoch = lambda epoch: True
+    trainer._validate_epoch = lambda epoch, **kw: validated.append(epoch)
+
+    _, val_metrics, _, _ = _ProfTrainer._train_epoch(trainer, 0)
+
+    assert trainer._stop_training is True
+    # Window only: warmup 1 + measured 2 (active is clamped to >= 2).
+    assert len(forwards) == 3
+    assert validated == []
+    assert val_metrics is None
 
 
 def test_memory_pressure_detected(tmp_path):

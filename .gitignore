@@ -45,6 +45,8 @@ runs/
 /data/
 *.log
 sample_images*/
+# Training-run status blob written to CWD by the trainer; never a source file.
+/status.json
 
 # Model weights & exports
 *.pt
@@ -62,3 +64,7 @@ weights/Libre*/
 
 # OC-SORT parity oracle: vendored MIT reference + dev harness (test-only, not shipped)
 /parity_ref/
+
+# Training-monitor status file written at the repo root when a run fails before
+# its run directory exists (see libreyolo/training/artifacts.py).
+/status.json

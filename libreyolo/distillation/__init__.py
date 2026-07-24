@@ -36,16 +36,20 @@ Available loss types:
 """
 
 from .distiller import Distiller
-from .losses import MGDLoss, CWDLoss, DISTILL_LOSSES
+from .losses import MGDLoss, CWDLoss, FeatureMSELoss, DISTILL_LOSSES
 from .hooks import FeatureHookManager
 from .configs import get_distill_config, list_supported
+from .teachers import DINOv2Teacher, is_foundation_teacher
 
 __all__ = [
     "Distiller",
     "MGDLoss",
     "CWDLoss",
+    "FeatureMSELoss",
     "DISTILL_LOSSES",
     "FeatureHookManager",
     "get_distill_config",
     "list_supported",
+    "DINOv2Teacher",
+    "is_foundation_teacher",
 ]

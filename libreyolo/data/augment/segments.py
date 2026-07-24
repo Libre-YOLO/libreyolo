@@ -74,7 +74,18 @@ def filter_segments(segments, keep_mask):
 
 
 def rasterize_segments(segments, image_shape, mask_shape, max_masks):
-    masks = np.zeros((max_masks, mask_shape[0], mask_shape[1]), dtype=np.float32)
+    """Render polygon instances to a ``(n, mask_h, mask_w)`` uint8 array.
+
+    ``n`` is the number of instances actually present (capped at
+    ``max_masks``), NOT padded to ``max_masks``: dense per-slot padding made
+    the seg label buffer larger than the image batch itself and exhausted
+    host RAM with multiple dataloader workers on large datasets (issue #527).
+    Row ``i`` still aligns with label row ``i``; the collate pads to the
+    batch-wide max instance count. Masks are binary, so uint8 (not float32)
+    carries them at 1/4 the size — consumers cast on the GPU.
+    """
+    n = min(len(segments), max_masks) if segments else 0
+    masks = np.zeros((n, mask_shape[0], mask_shape[1]), dtype=np.uint8)
     if not segments:
         return masks
 

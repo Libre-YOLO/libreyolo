@@ -56,6 +56,10 @@ class STrack:
         a = w / max(h, 1e-6)
         return np.array([cx, cy, a, h], dtype=np.float64)
 
+    def _measurement(self, xyxy: np.ndarray) -> np.ndarray:
+        """Convert an xyxy detection to this track's Kalman measurement."""
+        return self.xyxy_to_xyah(xyxy)
+
     @property
     def xyah(self) -> np.ndarray:
         """Current (cx, cy, aspect_ratio, height) from Kalman state."""
@@ -85,7 +89,7 @@ class STrack:
     def activate(self, kf: KalmanFilterXYAH, frame_id: int, track_id: int):
         """Initialize this track from its first detection."""
         self.track_id = track_id
-        measurement = self.xyxy_to_xyah(self._xyxy)
+        measurement = self._measurement(self._xyxy)
         self.mean, self.covariance = kf.initiate(measurement)
 
         self.state = TrackState.Tracked
@@ -103,7 +107,7 @@ class STrack:
         new_track_id: int = 0,
     ):
         """Re-activate a lost track with a new detection."""
-        measurement = self.xyxy_to_xyah(new_detection._xyxy)
+        measurement = self._measurement(new_detection._xyxy)
         # If covariance has degenerated (NaN/Inf from repeated prediction
         # without updates), reinitialize from the new measurement.
         if np.any(np.isnan(self.covariance)) or np.any(np.isinf(self.covariance)):
@@ -126,7 +130,7 @@ class STrack:
 
     def update(self, kf: KalmanFilterXYAH, new_detection: STrack, frame_id: int):
         """Update a matched track with a new detection."""
-        measurement = self.xyxy_to_xyah(new_detection._xyxy)
+        measurement = self._measurement(new_detection._xyxy)
         self.mean, self.covariance = kf.update(self.mean, self.covariance, measurement)
 
         self.state = TrackState.Tracked

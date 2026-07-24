@@ -6,6 +6,8 @@ Maintainer-only notes for publishing LibreYOLO to PyPI.
 
 - `MANIFEST.in` excludes weights and other large artifacts from the source distribution.
 - `.github/workflows/publish.yml` builds artifacts and publishes to PyPI via Trusted Publishing (OIDC).
+- `CITATION.cff` and `.zenodo.json` are intentionally version-less and frozen so all
+  academic citations cluster on one record. Never bump, date, or retitle them during a release.
 
 ## Publishing a new version
 

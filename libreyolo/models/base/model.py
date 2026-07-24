@@ -673,6 +673,15 @@ class BaseModel(ABC):
             else:
                 state_dict = self._prepare_state_dict(loaded)
 
+            quant_manifest = (
+                loaded.get("quant") if isinstance(loaded, dict) else None
+            )
+            if quant_manifest:
+                from ...quant import apply_quant_structure
+
+                apply_quant_structure(self, quant_manifest)
+
+            self._prepare_model_for_state_dict(state_dict)
             self.model.load_state_dict(state_dict, strict=self._strict_loading())
             self.model.to(self.device).eval()
         except Exception as e:
@@ -683,6 +692,16 @@ class BaseModel(ABC):
     def _allow_checkpoint_task_mismatch(self, checkpoint_task: str) -> bool:
         """Return whether a family permits loading a checkpoint from another task."""
         return False
+
+    def _prepare_model_for_state_dict(self, state_dict: dict) -> None:
+        """Family hook: adapt the live module graph to an incoming state dict.
+
+        Runs after any class-count rebuild and right before
+        ``load_state_dict``. Families that support ``lora=True`` and rely on
+        the base loader override this to replay adapter injection when the
+        checkpoint carries LoRA keys; the default is a no-op.
+        """
+        return None
 
     # =========================================================================
     # Public API
@@ -757,11 +776,6 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
             )
-        if getattr(self, "task", "detect") == "semantic":
-            raise ValueError(
-                "Test-time augmentation does not support semantic segmentation yet. "
-                "Use augment=False for semantic models."
-            )
         if getattr(self, "task", "detect") == "depth":
             raise ValueError(
                 "Test-time augmentation does not support depth estimation yet. "
@@ -772,6 +786,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support restoration models yet. "
                 "Use augment=False for restore models."
             )
+        if getattr(self, "task", "detect") == "ocr":
+            raise ValueError(
+                "Test-time augmentation does not support OCR models yet. "
+                "Use augment=False for OCR models."
+            )
 
         from PIL import Image as PILImage
         from ...utils.image_loader import ImageLoader
@@ -780,6 +799,26 @@ class BaseModel(ABC):
         img_pil = ImageLoader.load(image, color_format=color_format)
         image_path = image if isinstance(image, (str, Path)) else None
         orig_w, orig_h = img_pil.size
+
+        if getattr(self, "task", "detect") == "semantic":
+            return self._predict_augment_semantic(
+                img_pil,
+                image_path,
+                (orig_w, orig_h),
+                effective_imgsz,
+                color_format,
+                **kwargs,
+            )
+
+        if getattr(self, "task", "detect") == "panoptic":
+            return self._predict_augment_panoptic(
+                img_pil,
+                image_path,
+                (orig_w, orig_h),
+                effective_imgsz,
+                color_format,
+                **kwargs,
+            )
 
         scales = (1.0,) if self.TTA_FIXED_SIZE else self.TTA_SCALES
 
@@ -812,6 +851,97 @@ class BaseModel(ABC):
             return self._merge_classify_tta(aug_dets, image_path, (orig_w, orig_h))
 
         return self._merge_tta(aug_dets, iou, image_path, (orig_w, orig_h), classes)
+
+    def _postprocess_semantic_logits(
+        self,
+        output: Any,
+        original_size: Tuple[int, int],
+        **kwargs,
+    ) -> torch.Tensor:
+        """Return raw ``[1, C, H, W]`` semantic logits at ``original_size``.
+
+        Semantic families must implement this: flip TTA merges views before
+        the argmax, so it needs the pre-argmax logits that ``_postprocess``
+        throws away.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _postprocess_semantic_logits(), "
+            "which the semantic task requires (it backs both _postprocess and "
+            "flip TTA)."
+        )
+
+    def _predict_augment_semantic(
+        self,
+        img_pil,
+        image_path,
+        original_size: Tuple[int, int],
+        effective_imgsz,
+        color_format: str,
+        **kwargs,
+    ) -> Results:
+        """Flip-only TTA for semantic segmentation.
+
+        Runs the image and its horizontal flip, flips the flipped view's
+        logits back into alignment, averages softmax probabilities across
+        the two views (not raw logits — see ``_postprocess_semantic_logits``
+        callers), then argmaxes once. Scale variation (``TTA_SCALES``) does
+        not apply to dense per-pixel prediction, so this always runs exactly
+        two forward passes regardless of the family's TTA policy flags.
+        """
+        from PIL import Image as PILImage
+
+        from ...utils.results import Results, SemanticMask
+        from ...utils.tta import average_flip_softmax
+
+        orig_w, orig_h = original_size
+        logits_views = []
+        for is_flipped in (False, True):
+            src = (
+                img_pil.transpose(PILImage.Transpose.FLIP_LEFT_RIGHT)
+                if is_flipped
+                else img_pil
+            )
+            tensor, _, orig_size, ratio = self._preprocess(
+                src, color_format, input_size=effective_imgsz
+            )
+            with torch.no_grad():
+                raw = self._forward(tensor.to(self.device))
+            logits = self._postprocess_semantic_logits(
+                raw, orig_size, ratio=ratio, input_size=effective_imgsz, **kwargs
+            )
+            if is_flipped:
+                logits = logits.flip(-1)
+            logits_views.append(logits)
+
+        avg_probs = average_flip_softmax(logits_views[0], logits_views[1])
+        mask = avg_probs.argmax(dim=1)[0].cpu()
+        return Results(
+            boxes=None,
+            orig_shape=(orig_h, orig_w),
+            path=str(image_path) if image_path else None,
+            names=self.names,
+            semantic_mask=SemanticMask(mask.long(), (orig_h, orig_w)),
+        )
+
+    def _predict_augment_panoptic(
+        self,
+        img_pil,
+        image_path,
+        original_size: Tuple[int, int],
+        effective_imgsz,
+        color_format: str,
+        **kwargs,
+    ) -> Results:
+        """Flip-only TTA for panoptic segmentation. Override per family.
+
+        No family-generic implementation exists (unlike semantic's
+        ``_postprocess_semantic_logits`` hook): panoptic decode is
+        query-based (Mask2Former/MaskFormer-style), and the flip-merge
+        strategy for query outputs is architecture-specific.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement panoptic flip-TTA."
+        )
 
     def _merge_classify_tta(
         self,
@@ -992,20 +1122,25 @@ class BaseModel(ABC):
         """Track objects across video frames.
 
         Runs detection on each frame and associates detections across time.
-        Two motion-based trackers are available via ``tracker``: ByteTrack
-        (default) and OC-SORT, which is more robust to occlusion and
-        non-linear motion. Yields one Results per frame with ``track_id`` set.
+        Four trackers are available via ``tracker``: ByteTrack (default) and
+        OC-SORT are motion-only; BoT-SORT adds an improved width/height motion
+        model and camera-motion compensation; Deep OC-SORT adds appearance
+        (ReID) embeddings so identities survive long occlusions and crossing
+        targets, at the cost of a small embedding network run per frame (its
+        weights are downloaded on first use). Yields one Results per frame
+        with ``track_id`` set.
 
         Args:
             source: Path to a video file.
             track_conf: Confidence threshold for the tracker's first
-                association stage — ``track_high_thresh`` for ByteTrack,
-                ``det_thresh`` for OC-SORT. The detector runs at a lower
-                threshold internally so low-confidence detections remain
-                available for recovery. For ByteTrack it must be >=
-                ``track_low_thresh`` (default 0.1). Ignored when *tracker_config*
-                is given, or when the matching key is passed explicitly in
-                ``tracker_kwargs``.
+                association stage — ``track_high_thresh`` for ByteTrack and
+                BoT-SORT, ``det_thresh`` for OC-SORT and Deep OC-SORT. For the
+                motion trackers the detector runs at a lower threshold
+                internally so low-confidence detections remain available for
+                recovery. For ByteTrack and BoT-SORT it must be >=
+                ``track_low_thresh`` (default 0.1). Ignored when
+                *tracker_config* is given, or when the matching key is passed
+                explicitly in ``tracker_kwargs``.
             iou: IoU threshold for NMS during detection.
             imgsz: Override input image size.
             classes: Filter to specific class IDs.
@@ -1015,13 +1150,16 @@ class BaseModel(ABC):
             vid_stride: Process every N-th frame.
             output_path: Path for saved video. Defaults to
                 ``runs/track/<video_stem>.mp4``.
-            tracker: Which tracker to use: ``"bytetrack"`` or ``"ocsort"``.
-                Ignored when *tracker_config* is given (the config type
-                selects the tracker).
-            tracker_config: A ``TrackConfig`` (ByteTrack) or ``OCSortConfig``
-                (OC-SORT) instance, or None to build one from **tracker_kwargs.
+            tracker: Which tracker to use: ``"bytetrack"``, ``"botsort"``,
+                ``"ocsort"`` or ``"deepocsort"``. Ignored when
+                *tracker_config* is given (the config type selects the tracker).
+            tracker_config: A ``TrackConfig`` (ByteTrack), ``BoTSortConfig``
+                (BoT-SORT), ``OCSortConfig`` (OC-SORT), or
+                ``DeepOCSortConfig`` (Deep OC-SORT) instance, or None to build
+                one from **tracker_kwargs.
             **tracker_kwargs: Forwarded to the selected tracker's
-                ``from_kwargs`` (``TrackConfig`` or ``OCSortConfig``).
+                ``from_kwargs`` (``TrackConfig``, ``BoTSortConfig``,
+                ``OCSortConfig`` or ``DeepOCSortConfig``).
 
         Yields:
             Results with ``track_id`` attribute set as an (N,) int tensor.
@@ -1051,13 +1189,26 @@ class BaseModel(ABC):
                 "Tracking does not support semantic segmentation yet. "
                 "Use predict() for semantic models."
             )
+        if task == "panoptic":
+            raise NotImplementedError(
+                "Tracking does not support panoptic segmentation yet. "
+                "Use predict() for panoptic models."
+            )
         if task == "restore":
             raise NotImplementedError(
                 "Tracking does not support restoration models. Use predict()."
             )
+        if task == "ocr":
+            raise NotImplementedError(
+                "Tracking does not support OCR models yet. Use predict()."
+            )
 
         from ...tracking import (
+            BoTSortConfig,
+            BoTSortTracker,
             ByteTracker,
+            DeepOCSortConfig,
+            DeepOCSortTracker,
             OCSortConfig,
             OCSortTracker,
             TrackConfig,
@@ -1066,19 +1217,41 @@ class BaseModel(ABC):
         from ...utils.video import run_video_inference
 
         # A provided config picks the tracker; otherwise honour the selector.
-        if isinstance(tracker_config, OCSortConfig):
+        if isinstance(tracker_config, BoTSortConfig):
+            # BoTSortConfig subclasses TrackConfig, so it must be checked first.
+            tracker = "botsort"
+        elif isinstance(tracker_config, DeepOCSortConfig):
+            tracker = "deepocsort"
+        elif isinstance(tracker_config, OCSortConfig):
             tracker = "ocsort"
         elif isinstance(tracker_config, TrackConfig):
             tracker = "bytetrack"
         tracker = (tracker or "bytetrack").lower()
 
-        if tracker == "ocsort":
+        if tracker == "deepocsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("det_thresh", track_conf)
+                tracker_config = DeepOCSortConfig.from_kwargs(**tracker_kwargs)
+            # Deep OC-SORT has no low-score recovery band; the detector only
+            # needs to produce boxes down to det_thresh.
+            effective_conf = tracker_config.det_thresh
+            tracker_obj = DeepOCSortTracker(
+                config=tracker_config, device=str(self.device)
+            )
+        elif tracker == "ocsort":
             if tracker_config is None:
                 tracker_kwargs.setdefault("det_thresh", track_conf)
                 tracker_config = OCSortConfig.from_kwargs(**tracker_kwargs)
             # OC-SORT consumes low-score detections (>0.1) for recovery.
             effective_conf = min(0.1, tracker_config.det_thresh)
             tracker_obj = OCSortTracker(config=tracker_config)
+        elif tracker == "botsort":
+            if tracker_config is None:
+                tracker_kwargs.setdefault("track_high_thresh", track_conf)
+                tracker_config = BoTSortConfig.from_kwargs(**tracker_kwargs)
+            # BoT-SORT keeps ByteTrack's low-confidence recovery stage.
+            effective_conf = tracker_config.track_low_thresh
+            tracker_obj = BoTSortTracker(config=tracker_config)
         elif tracker == "bytetrack":
             if tracker_config is None:
                 tracker_kwargs.setdefault("track_high_thresh", track_conf)
@@ -1088,7 +1261,8 @@ class BaseModel(ABC):
             tracker_obj = ByteTracker(config=tracker_config)
         else:
             raise ValueError(
-                f"Unknown tracker {tracker!r}; choose 'bytetrack' or 'ocsort'."
+                f"Unknown tracker {tracker!r}; "
+                "choose 'bytetrack', 'botsort', 'ocsort' or 'deepocsort'."
             )
 
         source = Path(source)
@@ -1107,6 +1281,10 @@ class BaseModel(ABC):
                 max_det=max_det,
                 color_format="rgb",
             )
+            if isinstance(tracker_obj, (BoTSortTracker, DeepOCSortTracker)):
+                # BoT-SORT needs pixels for camera motion; Deep OC-SORT needs
+                # them for ReID crops.
+                return tracker_obj.update(result, pil_img)
             return tracker_obj.update(result)
 
         def annotate_tracked(pil_img, result):
@@ -1150,17 +1328,145 @@ class BaseModel(ABC):
             annotate_fn=annotate_tracked,
         )
 
+    def quantize(
+        self,
+        recipe: str,
+        calib: str | None = "coco128.yaml",
+        samples: int = 128,
+        batch: int = 8,
+        algorithm: str = "auto",
+        keep_high_precision: tuple | list | None = None,
+        allow_download_scripts: bool = False,
+        verbose: bool = True,
+    ):
+        """Quantize the loaded model in place (PyTorch execution) and return it.
+
+        Calibration data is separate from training data: it is a small set of
+        images used forward-only to derive activation ranges and scales.
+        Labels are never read. To recover accuracy afterwards, run the normal
+        training step on the returned model (QAT), optionally with the
+        existing ``distill_model`` kwargs (QAD).
+
+        Args:
+            recipe: Quantization recipe. Casts: "fp16", "bf16". Conv+Linear:
+                "int8", "fp8". Linear-only (transformer families such as
+                rfdetr): "w4a16", "w4a8", "nvfp4", "mxfp4", and the
+                research preview "int2" (QAT required).
+            calib: Calibration images: data.yaml path or built-in dataset
+                name. Pass None to skip calibration (int8 weights-only).
+            samples: Maximum number of calibration images.
+            batch: Calibration batch size.
+            algorithm: Activation range estimation: "minmax" (absolute
+                extremes across batches; the measured best default),
+                "percentile" (experimental: mean of per-batch 0.1/99.9
+                percentiles; degrades transformer families), or "auto"
+                (minmax).
+            keep_high_precision: Substring patterns of module names kept in
+                float. Defaults to the family policy (first layer + heads).
+            allow_download_scripts: Allow embedded Python in dataset YAML
+                download blocks.
+            verbose: Log a quantization summary.
+
+        Returns:
+            This model, quantized in place.
+
+        Example::
+
+            >>> model = LibreYOLO("LibreYOLO9s.pt")
+            >>> qmodel = model.quantize(recipe="int8", calib="coco8.yaml")
+            >>> qmodel.val(data="coco8.yaml")
+            >>> qmodel.train(data="coco8.yaml", epochs=5)  # QAT
+            >>> qmodel.save("LibreYOLO9s-int8.pt")
+        """
+        from libreyolo.quant import quantize_model
+
+        return quantize_model(
+            self,
+            recipe=recipe,
+            calib=calib,
+            samples=samples,
+            batch=batch,
+            algorithm=algorithm,
+            keep_high_precision=(
+                tuple(keep_high_precision)
+                if keep_high_precision is not None
+                else None
+            ),
+            allow_download_scripts=allow_download_scripts,
+            verbose=verbose,
+        )
+
+    def quant_info(self) -> Optional[Dict[str, Any]]:
+        """Return the quantization state summary, or None for float models."""
+        from libreyolo.quant import quant_info
+
+        return quant_info(self)
+
+    def dequantize(self):
+        """Restore float modules in place, keeping the master weights.
+
+        After QAT/QAD the masters are quantization-trained, so this is the
+        bridge to the deployment exporters: ``model.dequantize()`` then
+        ``model.export(format="onnx", int8=True, data=...)`` produces a real
+        QDQ INT8 artifact from QAT-trained weights.
+        """
+        from libreyolo.quant import dequantize_model
+
+        return dequantize_model(self)
+
+    def save(self, path: str) -> str:
+        """Save the current model as a LibreYOLO checkpoint.
+
+        Writes schema v1.0 metadata; quantized models additionally carry the
+        ``quant`` manifest so ``LibreYOLO(path)`` restores the quantized
+        structure and scales.
+        """
+        from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+        state_dict = {k: v.cpu() for k, v in self.model.state_dict().items()}
+        checkpoint = wrap_libreyolo_checkpoint(
+            state_dict,
+            model_family=self._get_model_name(),
+            size=self.size,
+            task=self.task,
+            nc=self.nb_classes,
+            names=self.names,
+            imgsz=int(self._get_input_size()),
+        )
+        quant_manifest = getattr(self, "_quant_manifest", None)
+        if quant_manifest:
+            checkpoint["quant"] = dict(quant_manifest)
+
+        out = Path(path)
+        if out.parent != Path("."):
+            out.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(checkpoint, out)
+        logger.info("Saved checkpoint to %s", out)
+        return str(out)
+
     def export(self, format: str = "onnx", **kwargs) -> str:
         """Export model to deployment format.
 
         Args:
             format: Target format ("onnx", "torchscript", "tensorrt",
-                "openvino", "ncnn", "tflite").
+                "openvino", "ncnn", "tflite"). "litert" is accepted as an
+                alias for "tflite" (LiteRT is TensorFlow Lite's new name).
             **kwargs: Format-specific parameters forwarded to the exporter.
 
         Returns:
             Path to the exported model file.
         """
+        # Live LoRA adapters are folded into dense weights for export. That
+        # merge is destructive, so it happens only after every request
+        # rejection: BaseExporter.__call__ merges after its preflight for the
+        # float formats, and quantized_export merges after its recipe/format
+        # gates for the format="pt" path (its ONNX path goes through
+        # BaseExporter too).
+        if getattr(self, "_quant_manifest", None):
+            from libreyolo.quant.api import quantized_export
+
+            return quantized_export(self, format=format, **kwargs)
+
         from libreyolo.export import BaseExporter
 
         return BaseExporter.create(format, self)(**kwargs)
@@ -1207,7 +1513,10 @@ class BaseModel(ABC):
             ClassifyValidator,
             DepthValidator,
             DetectionValidator,
+            MatteValidator,
             OBBValidator,
+            OCRValidator,
+            PanopticValidator,
             PointValidator,
             PoseValidator,
             RestoreValidator,
@@ -1235,11 +1544,6 @@ class BaseModel(ABC):
                 "Augmented validation does not support point-task models yet. "
                 "Use augment=False for point models."
             )
-        if augment and self.task == "semantic":
-            raise ValueError(
-                "Augmented validation does not support semantic segmentation "
-                "yet. Use augment=False for semantic models."
-            )
         if augment and self.task == "depth":
             raise ValueError(
                 "Augmented validation does not support depth estimation yet. "
@@ -1249,6 +1553,16 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support restoration models yet. "
                 "Use augment=False for restore models."
+            )
+        if augment and self.task == "matte":
+            raise ValueError(
+                "Augmented validation does not support matte models yet. "
+                "Use augment=False for matte models."
+            )
+        if augment and self.task == "ocr":
+            raise ValueError(
+                "Augmented validation does not support OCR models yet. "
+                "Use augment=False for OCR models."
             )
 
         config = ValidationConfig(
@@ -1283,10 +1597,16 @@ class BaseModel(ABC):
             validator_cls = SegmentationValidator
         elif self.task == "semantic":
             validator_cls = SemanticValidator
+        elif self.task == "panoptic":
+            validator_cls = PanopticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
+        elif self.task == "matte":
+            validator_cls = MatteValidator
+        elif self.task == "ocr":
+            validator_cls = OCRValidator
         elif self.task == "classify":
             validator_cls = ClassifyValidator
         elif self.task == "obb":

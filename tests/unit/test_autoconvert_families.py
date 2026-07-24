@@ -82,6 +82,10 @@ def _yolonas_s(pose: bool = False):
         "heads.head1.reg_pred.weight": torch.zeros(68, 64, 1, 1),
     }
     if pose:
+        # Pose fuses the class scores and K per-keypoint visibility logits into
+        # one head: cls_pred out_channels == num_classes + K. Single-class
+        # (person) COCO pose is 1 + 17 = 18, not the 80-class detection width.
+        sd["heads.head1.cls_pred.weight"] = torch.zeros(1 + 17, 64, 1, 1)
         sd["heads.head1.pose_pred.weight"] = torch.zeros(34, 64, 1, 1)
     return sd
 
@@ -102,6 +106,17 @@ def _rtmdet_s_upstream():
         "backbone.stem.0.conv.weight": torch.zeros(16, 3, 3, 3),
         "data_preprocessor.mean": torch.zeros(3),
     }
+
+
+def _rtmdet_ins_s_upstream():
+    sd = _rtmdet_s_upstream()
+    sd.update(
+        {
+            "bbox_head.rtm_kernel.0.weight": torch.zeros(169, 128, 1, 1),
+            "bbox_head.mask_head.projection.weight": torch.zeros(8, 128, 1, 1),
+        }
+    )
+    return sd
 
 
 def _rtdetr_r18_upstream(v2: bool = False):
@@ -184,6 +199,7 @@ CASES = [
     ("yolonas-pose", lambda: _yolonas_s(pose=True), _wrap_ema_net, "yolo_nas_pose_s_coco.pth", "yolonas", "LibreYOLONAS", "s", "pose", 1),
     ("picodet", _picodet_s_upstream, _wrap_state_dict, "picodet_s_320.pth", "picodet", "LibrePICODET", "s", "detect", 80),
     ("rtmdet", _rtmdet_s_upstream, _wrap_ema_state_dict, "rtmdet_s_coco.pth", "rtmdet", "LibreRTMDet", "s", "detect", 80),
+    ("rtmdet-ins", _rtmdet_ins_s_upstream, _wrap_ema_state_dict, "rtmdet-ins_s_coco.pth", "rtmdet", "LibreRTMDet", "s", "segment", 80),
     ("rtdetr-r18", _rtdetr_r18_upstream, _wrap_ema_module, "rtdetr_r18vd_coco.pth", "rtdetr", "LibreRTDETR", "r18", "detect", 80),
     ("rtdetrv2-r18", lambda: _rtdetr_r18_upstream(v2=True), _wrap_ema_module, "rtdetrv2_r18vd_120e_coco.pth", "rtdetrv2", "LibreRTDETRv2", "r18", "detect", 80),
     ("rtdetr-hgnetv2-l", _rtdetr_hgnetv2_l_upstream, _wrap_ema_module, "rtdetrv2_hgnetv2_l_6x_coco.pth", "rtdetr", "LibreRTDETR", "l", "detect", 80),

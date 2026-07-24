@@ -37,7 +37,8 @@ libreyolo checks      # verify install, CUDA/MPS, and optional export backends
 
 The base install is lightweight. Some features need **optional extras** —
 install them as `libreyolo[extra]` (or `libreyolo[all]`). Available extras:
-`onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite`, `coreml`,
+`onnx`, `rfdetr`, `eomt`, `tensorrt`, `openvino`, `ncnn`, `tflite` (alias
+`litert`; LiteRT is TensorFlow Lite's new name), `coreml`,
 `tracking`, `gaze`, `rtdetr`, `vlm`, `sam`, `openvocab`, `clip`, `label`,
 `plots`, `lora`, `tensorboard`, `mlflow`, `wandb`, `all`. `libreyolo checks`
 reports which are present.
@@ -125,8 +126,12 @@ handles every run under the root (`?run=` in the URL selects one).
   model("img.jpg", save=True)        # same predict API as a .pt
   ```
 - **Object tracking** — `model.track(...)` assigns IDs across video frames.
-  Two motion trackers: **ByteTrack** (`tracker="bytetrack"`, default) and
-  **OC-SORT**. IDs come back on `r.boxes.id`. Needs `libreyolo[tracking]`.
+  Four trackers: **ByteTrack** (`tracker="bytetrack"`, default) and
+  **OC-SORT** are motion-only; **BoT-SORT** (`tracker="botsort"`) adds
+  camera-motion compensation and an improved width/height motion model;
+  **Deep OC-SORT** (`tracker="deepocsort"`) adds appearance ReID (OSNet
+  embeddings, auto-downloaded) so IDs survive occlusions and crossings. IDs
+  come back on `r.boxes.id`. Needs `libreyolo[tracking]`.
 - **Tiled inference for large images** — `predict(..., tiling=True,
   overlap_ratio=0.2)` slices high-resolution images so small objects aren't
   lost, then merges detections.
@@ -139,11 +144,21 @@ handles every run under the root (`?run=` in the URL selects one).
 ## Supported tasks
 
 `detect` (suffixless default), `segment`, `semantic`, `pose`, `classify`,
-`gaze`, `obb`, `point`, `depth`, `restore`. Detection — plus **RF-DETR
-segmentation** — is the heavily-tested core; other task/family combinations
-vary in maturity, so check the README compatibility table before relying on
-one. Task outputs land on matching `Results` fields (`r.semantic_mask`,
-`r.depth_map`, `r.restored`, `r.points`, …).
+`gaze`, `obb`, `point`, `depth`, `restore`, `matte`, `ocr`. Detection — plus
+**RF-DETR segmentation** — is the heavily-tested core; other task/family
+combinations vary in maturity, so check the README compatibility table before
+relying on one. Task outputs land on matching `Results` fields
+(`r.semantic_mask`, `r.depth_map`, `r.restored`, `r.points`, `r.matte`, …).
+Matte adds `r.cutout()` (RGBA) and a transparent-PNG `r.save()`.
+
+OCR reads located text (zh/zh-TW/en/ja/pinyin with one model):
+
+```python
+model = LibreYOLO("LibrePPOCRl-ocr.pt")   # t = CPU tier, l = quality tier
+r = model("receipt.jpg")
+for poly, text, conf in zip(r.ocr.polygons, r.ocr.texts, r.ocr.conf):
+    print(text, float(conf))              # regions come in reading order
+```
 
 ## Models
 
@@ -154,17 +169,26 @@ as the source of truth. By tier:
   (RF-DETR also pose + OBB).
 - **Other detectors:** YOLOX, YOLO9-E2E, YOLO9-P2 (stride-4 small-object),
   YOLO-NAS, D-FINE, DEIM, DEIMv2, RT-DETR / v2 / v4, PicoDet, RTMDet, EC,
-  and the inference-only classic lineage YOLO2/3/4/7.
-- **Specialized:** L2CS (gaze), DepthAnythingV2 (depth), FOMO (point),
-  NAFNet (restore: deblur/denoise), EoMT + PIDNet + DINOv2 (semantic).
+  and the classic lineage: YOLO1/2/3/4 (inference-only; YOLO1 is the original
+  2016 VOC model, fixed 448) and YOLO7 (also trainable; experimental SimOTA
+  recipe).
+- **Specialized:** L2CS (gaze), DepthAnything3 (recommended depth quality
+  default), DepthAnythingV2 and ZipDepth (depth alternatives), FOMO (point),
+  NAFNet (restore: deblur/denoise; denoise ships as
+  `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
+  super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the
+  input; big images via `predict(..., tile=512)`), BiRefNet (matte: background
+  removal, sizes t/l, fixed 1024), PPOCR (ocr: text detection + recognition,
+  sizes t/l), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
   EfficientNetV2 (b0–b3), ResNet (18/34/50/101). Names carry the `-cls`
   suffix, e.g. `model = LibreYOLO("LibreResNet50-cls.pt")`. Fine-tune on an
   ImageFolder root (or a known name/`.zip` URL) with `model.train(data=...)`.
-- **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]`
+- **Zero-shot / promptable tiers** (need `[openvocab]` / `[sam]` / `[clip]` / `[siglip2]`
   / `[vlm]`): `LibreOpenVocab` (text-vocabulary detection), `LibreSAM` /
-  `LibreSAM2` / `LibreMobileSAM` (point/box-prompted masks), `LibreCLIP`
+  `LibreSAM2` / `LibreSAM3` / `LibreMobileSAM` (point/box-prompted masks;
+  SAM 3 also accepts concept `text=` prompts), `LibreCLIP` / `LibreSigLIP2`
   (zero-shot classify), and the `LibreVLM` family (vision-language
   detection). For the exact model aliases in each tier, use `libreyolo
   models` and the dedicated guide `skills/use-libreyolo-zero-shot/`.
@@ -217,3 +241,9 @@ describe the loaded model.
 - **Deeper guides** (concepts, dataset format, per-task details) live at
   <https://www.libreyolo.com/docs> — but for exact flags and what the installed
   version supports, the binary above is authoritative.
+- **Hit a bug, crash, missing weights, or plain friction?** If something broke
+  (and you've ruled out user error), or if a task took many turns of trial and
+  error that better docs, errors, or defaults would have prevented, offer to
+  report it upstream with the `libreyolo-report-issue` skill: it drafts an
+  anonymized issue and gives the user a one-click pre-filled GitHub link, so
+  it gets improved for everyone.

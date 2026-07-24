@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Dict, Optional, Tuple
+from typing import Any, ClassVar, Dict, Tuple
 
 import torch
 
-from .base import _INSTALL_HINT, _contains_subsequence, _label_tokens
+from .base import _INSTALL_HINT
 from .base import LibreOpenVocabDetector
 
 
@@ -94,37 +94,6 @@ class LibreOWLv2(LibreOpenVocabDetector):
             max_det=max_det,
             classes=kwargs.get("classes"),
         )
-
-    def _labels_to_class_ids(self, labels: Any) -> torch.Tensor:
-        if isinstance(labels, torch.Tensor):
-            class_ids = labels.detach().cpu().long().reshape(-1)
-        else:
-            values = list(labels)
-            if not values:
-                return torch.zeros((0,), dtype=torch.int64)
-            if all(isinstance(value, (int, float)) for value in values):
-                class_ids = torch.as_tensor(values, dtype=torch.int64).reshape(-1)
-            else:
-                mapped = [self._text_label_to_class_id(str(value)) for value in values]
-                return torch.as_tensor(
-                    [-1 if class_id is None else class_id for class_id in mapped],
-                    dtype=torch.int64,
-                )
-        valid = (class_ids >= 0) & (class_ids < len(self.names))
-        return torch.where(valid, class_ids, torch.full_like(class_ids, -1))
-
-    def _text_label_to_class_id(self, text: str) -> Optional[int]:
-        phrase = _label_tokens(text)
-        matches = []
-        for class_id, name in self.names.items():
-            label = _label_tokens(name)
-            if phrase == label:
-                return class_id
-            if _contains_subsequence(phrase, label) or _contains_subsequence(
-                label, phrase
-            ):
-                matches.append(class_id)
-        return matches[0] if len(matches) == 1 else None
 
 
 __all__ = ["LibreOWLv2"]

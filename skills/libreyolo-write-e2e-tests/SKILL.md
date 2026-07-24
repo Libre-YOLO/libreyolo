@@ -107,9 +107,10 @@ def test_<family>_smallest_inference(sample_image):
     assert r.boxes is not None and len(r) > 0
 ```
 
-Use the conftest fixtures (`sample_image`, `cuda_device`, `temp_export_dir`,
-`run_in_subprocess`) instead of reinventing them; `run_in_subprocess` exists
-precisely because some flows must not share the pytest process's CUDA state.
+Use the conftest fixtures (`sample_image`, `cuda_device`, `temp_export_dir`)
+and the `run_in_subprocess` helper function instead of reinventing them;
+`run_in_subprocess` exists precisely because some flows must not share the
+pytest process's CUDA state.
 
 ## Prove it runs before shipping
 

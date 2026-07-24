@@ -23,8 +23,11 @@ def get_distill_config(family: str, size: str) -> Dict:
     have a model instance, call ``model.get_distill_config()`` directly.
 
     Args:
-        family: Model family string (e.g., "yolo9", "yolox").
-        size: Model size string (e.g., "t", "s", "m", "c", "l", "x").
+        family: Model family string (e.g., "yolo9", "yolox", "rfdetr").
+        size: Model size string (e.g., "t", "s", "m", "c", "l", "x"). Sizes
+            are validated against the family's detect task; for sizes that
+            only exist for another task, instantiate the model with that
+            task and call ``model.get_distill_config()`` directly.
 
     Returns:
         Dict with keys:
@@ -47,6 +50,16 @@ def get_distill_config(family: str, size: str) -> Dict:
         model = LibreYOLOX(model_path=None, size=size)
         return model.get_distill_config()
 
+    elif family == "rfdetr":
+        from ..models.rfdetr.model import LibreRFDETR
+
+        # model_path={} is the build-without-weights sentinel: model_path=None
+        # would resolve and download the default pretrained checkpoint, and
+        # this helper must stay lightweight and offline-safe. The probe that
+        # measures tap shapes only needs the architecture, not the weights.
+        model = LibreRFDETR(model_path={}, size=size)
+        return model.get_distill_config()
+
     else:
         raise ValueError(
             f"Distillation not yet configured for family '{family}'. "
@@ -57,4 +70,4 @@ def get_distill_config(family: str, size: str) -> Dict:
 
 def list_supported() -> List[str]:
     """Return list of model families with distillation support."""
-    return ["yolo9", "yolox"]
+    return ["yolo9", "yolox", "rfdetr"]

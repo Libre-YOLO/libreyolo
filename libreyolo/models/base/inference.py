@@ -22,6 +22,7 @@ from typing import (
     Union,
 )
 
+import numpy as np
 import torch
 from torchvision.ops import batched_nms
 
@@ -32,6 +33,8 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_ocr_regions,
+    draw_panoptic,
     draw_points,
     draw_semantic_mask,
     draw_tile_grid,
@@ -49,7 +52,10 @@ from ...utils.results import (
     DepthMap,
     Keypoints,
     Masks,
+    Matte,
     OBB,
+    OCRRegions,
+    PanopticSegmentation,
     Points,
     Probs,
     Results,
@@ -528,6 +534,19 @@ class InferenceRunner:
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "panoptic", None) is not None:
+            pan_data = result.panoptic.data
+            if isinstance(pan_data, torch.Tensor):
+                pan_data = pan_data.cpu().numpy()
+            annotated_img = draw_panoptic(
+                original_img,
+                pan_data,
+                result.panoptic.segments_info,
+                class_names=result.names,
+            )
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "depth_map", None) is not None:
             depth_data = result.depth_map.data
             if isinstance(depth_data, torch.Tensor):
@@ -538,6 +557,28 @@ class InferenceRunner:
             return
         if result.boxes is None and getattr(result, "restored", None) is not None:
             result.restored.save(save_path)
+            log_saved_result(result, save_path)
+            return
+        if result.boxes is None and getattr(result, "matte", None) is not None:
+            # A matte result saves as a transparent-background RGBA PNG cutout
+            # (source RGB + soft matte alpha), the canonical background-removal
+            # deliverable. Force a .png suffix so the alpha channel survives.
+            png_path = Path(save_path).with_suffix(".png")
+            result.save(png_path, image=original_img)
+            log_saved_result(result, png_path)
+            return
+        if result.boxes is None and getattr(result, "ocr", None) is not None:
+            if len(result.ocr) > 0:
+                ocr_np = result.ocr.numpy()
+                annotated_img = draw_ocr_regions(
+                    original_img,
+                    ocr_np.data,
+                    ocr_np.texts,
+                    ocr_np.conf,
+                )
+            else:
+                annotated_img = original_img.copy()
+            annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
         if result.boxes is None and getattr(result, "points", None) is not None:
@@ -667,6 +708,27 @@ class InferenceRunner:
                 semantic_mask=SemanticMask(semantic_t.long(), (orig_h, orig_w)),
             )
 
+        # Panoptic: a dense non-overlapping segment-id map plus segments_info.
+        panoptic_data = detections.get("panoptic")
+        if panoptic_data is not None:
+            orig_w, orig_h = original_size
+            panoptic_t = (
+                panoptic_data
+                if isinstance(panoptic_data, torch.Tensor)
+                else torch.as_tensor(panoptic_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                panoptic=PanopticSegmentation(
+                    panoptic_t.long(),
+                    detections.get("segments_info") or [],
+                    (orig_h, orig_w),
+                ),
+            )
+
         # Depth: a dense relative inverse-depth map, no boxes.
         depth_data = detections.get("depth")
         if depth_data is not None:
@@ -684,7 +746,9 @@ class InferenceRunner:
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
             )
 
-        # Restore: a dense RGB image, no boxes.
+        # Restore: a dense RGB image, no boxes. For super-resolution the restored
+        # canvas is ``restore_scale`` times the input, so the RestoredImage carries
+        # its own (HR) shape while Results.orig_shape stays the source-image shape.
         restored_data = detections.get("restored")
         if restored_data is not None:
             orig_w, orig_h = original_size
@@ -693,12 +757,58 @@ class InferenceRunner:
                 if isinstance(restored_data, torch.Tensor)
                 else torch.as_tensor(restored_data)
             )
+            restore_scale = int(getattr(self.model, "restore_scale", 1) or 1)
+            restored_hw = (int(restored_t.shape[0]), int(restored_t.shape[1]))
             return Results(
                 boxes=None,
                 orig_shape=(orig_h, orig_w),
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
-                restored=RestoredImage(restored_t.to(torch.uint8), (orig_h, orig_w)),
+                restored=RestoredImage(restored_t.to(torch.uint8), restored_hw),
+                restore_scale=restore_scale,
+            )
+
+        # Matte: a dense soft alpha matte in [0, 1], no boxes.
+        matte_data = detections.get("matte")
+        if matte_data is not None:
+            orig_w, orig_h = original_size
+            matte_t = (
+                matte_data
+                if isinstance(matte_data, torch.Tensor)
+                else torch.as_tensor(matte_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                matte=Matte(matte_t.float(), (orig_h, orig_w)),
+            )
+
+        # OCR: polygons + transcripts, no axis-aligned boxes.
+        ocr_data = detections.get("ocr")
+        if ocr_data is not None:
+            orig_w, orig_h = original_size
+            polygons = ocr_data.get("polygons")
+            polygons_t = (
+                polygons.float()
+                if isinstance(polygons, torch.Tensor)
+                else torch.as_tensor(np.asarray(polygons), dtype=torch.float32)
+                if polygons is not None and len(polygons)
+                else torch.zeros((0, 4, 2), dtype=torch.float32)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                ocr=OCRRegions(
+                    polygons_t,
+                    ocr_data.get("texts"),
+                    ocr_data.get("confidences"),
+                    ocr_data.get("det_confidences"),
+                    (orig_h, orig_w),
+                ),
             )
 
         points_data = detections.get("points")

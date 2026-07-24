@@ -460,6 +460,97 @@ class SemanticMask(_TensorPayload):
         )
 
 
+class PanopticSegmentation(_TensorPayload):
+    """Panoptic segmentation result for a single image.
+
+    Panoptic segmentation assigns every pixel exactly one non-overlapping
+    segment, unifying "stuff" (amorphous background regions) and "things"
+    (countable object instances). ``data`` is a ``(H, W)`` integer segment-id
+    map on the original image canvas; ``segments_info`` describes each segment
+    id that appears in the map.
+
+    ``segments_info`` is a list of dicts, one per segment, each with at least::
+
+        {"id": int, "category_id": int}
+
+    where ``id`` matches a value in the map and ``category_id`` is the class
+    index in the model's ``names``.
+
+    thing-vs-stuff is a *per-category* property of the label set (mirroring the
+    COCO-panoptic GT, where ``isthing`` lives on the ``categories`` list, not on
+    per-segment ``segments_info`` entries), so the category metadata is the
+    source of truth. As a convenience a prediction payload MAY denormalize it
+    onto each segment (``"isthing": bool``, derived from ``category_id``); it is
+    optional and, when present, must agree with the category-level map. This
+    keeps the payload consistent with the GT contract in
+    ``docs/dataset_schema.md`` and puts the derive-from-category responsibility
+    on the producer (a model's ``_postprocess_predictions`` /
+    ``PanopticValidator``), not on downstream consumers.
+
+    ``predict`` populates this slot whenever a model family's ``_postprocess``
+    returns a ``panoptic`` segment-id map plus ``segments_info``; evaluation is
+    ``PanopticValidator`` (Panoptic Quality) over a ``PanopticDataset``.
+    ``predict(save=True)`` renders the map via ``draw_panoptic`` and
+    ``Results.summary`` reports one row per segment.
+    """
+
+    IGNORE_INDEX = 0  # COCO panoptic convention: segment id 0 is unlabeled/void.
+
+    def __init__(
+        self,
+        data: TensorLike,
+        segments_info: Optional[List[dict]] = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) panoptic segment-id map but got shape "
+                f"{tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+        # Plain-Python metadata; carried verbatim across device/array moves.
+        self.segments_info: List[dict] = list(segments_info or [])
+
+    @property
+    def segment_ids(self) -> List[int]:
+        """Sorted segment ids present in the map, excluding the void id."""
+        values = np.unique(_numpy(self.data))
+        return [int(v) for v in values if int(v) != self.IGNORE_INDEX]
+
+    def segment_mask(self, segment_id: int) -> TensorLike:
+        """Boolean ``(H, W)`` mask selecting the pixels of one segment id."""
+        return self.data == segment_id
+
+    # segments_info is not tensor data, so the base _TensorPayload moves (which
+    # rebuild via ``self.__class__(data, orig_shape)``) would drop it. Override
+    # the move/slice methods to carry it through.
+    def to(self, *args, **kwargs):
+        return self.__class__(_move(self.data, *args, **kwargs), self.segments_info, self.orig_shape)
+
+    def cpu(self):
+        return self.__class__(_cpu(self.data), self.segments_info, self.orig_shape)
+
+    def cuda(self):
+        return self.__class__(_cuda(self.data), self.segments_info, self.orig_shape)
+
+    def numpy(self):
+        return self.__class__(_numpy(self.data), self.segments_info, self.orig_shape)
+
+    def __getitem__(self, idx):
+        # A dense panoptic map is whole-image, not per-instance; keep it intact
+        # so shared Results slicing (e.g. ``result[0]``) cannot corrupt the
+        # (H, W) layout. Mirrors SemanticMask/DepthMap.
+        return self.__class__(self.data, self.segments_info, self.orig_shape)
+
+    def __repr__(self) -> str:
+        return (
+            f"PanopticSegmentation(shape={tuple(self.data.shape)}, "
+            f"segments={len(self.segment_ids)}, orig_shape={self.orig_shape})"
+        )
+
+
 class DepthMap(_TensorPayload):
     """Dense relative inverse-depth map for a single image.
 
@@ -564,6 +655,190 @@ class RestoredImage(_TensorPayload):
     def __repr__(self) -> str:
         return (
             f"RestoredImage(shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
+class Matte(_TensorPayload):
+    """Dense soft alpha matte for a single image.
+
+    Data shape is ``(H, W)`` float32 in ``[0, 1]`` on the original image canvas.
+    ``1`` is fully foreground (opaque), ``0`` is fully background (transparent).
+    A soft matte subsumes a hard background-removal mask (threshold at 0.5) and
+    carries the anti-aliased edges (hair, fur) that binary masks discard.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) alpha matte but got shape {tuple(data.shape)}"
+            )
+        if orig_shape is None:
+            orig_shape = (int(data.shape[0]), int(data.shape[1]))
+        super().__init__(data, orig_shape)
+
+    @property
+    def array(self) -> np.ndarray:
+        """Return the raw ``(H, W)`` float32 alpha matte clamped to ``[0, 1]``."""
+        arr = np.asarray(_numpy(self.data), dtype=np.float32)
+        return np.clip(arr, 0.0, 1.0)
+
+    def __getitem__(self, idx):
+        # A dense matte is whole-image, not per-detection; keep it intact so
+        # shared Results slicing paths cannot corrupt the (H, W) layout.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"Matte(shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
+class OCRRegions(_TensorPayload):
+    """Located text regions with transcripts for a single image.
+
+    ``data`` is an ``(N, 4, 2)`` float array of 4-point polygons in
+    original-image pixel coordinates, ordered top-left, top-right,
+    bottom-right, bottom-left per region. Regions are in reading order
+    (top to bottom, then left to right). ``texts`` is the list of N
+    transcripts; ``confidence`` is the per-region recognition score and
+    ``det_confidence`` the detection score, both ``(N,)`` float arrays.
+
+    Detection quads are genuine polygons (rotated text), so they do not
+    populate ``Results.boxes``; use :attr:`xyxy` for axis-aligned hulls.
+    """
+
+    def __init__(
+        self,
+        data: TensorLike,
+        texts: Optional[List[str]] = None,
+        confidence: TensorLike | None = None,
+        det_confidence: TensorLike | None = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        if isinstance(data, np.ndarray):
+            data = torch.as_tensor(data)
+        if data.numel() == 0:
+            data = data.reshape(0, 4, 2)
+        if data.ndim != 3 or data.shape[-2:] != (4, 2):
+            raise ValueError(
+                f"expected (N, 4, 2) OCR polygons but got shape {tuple(data.shape)}"
+            )
+        super().__init__(data, orig_shape)
+        n = int(data.shape[0])
+        self.texts: List[str] = list(texts) if texts is not None else [""] * n
+        if len(self.texts) != n:
+            raise ValueError(
+                f"expected {n} transcripts to match {n} polygons, got {len(self.texts)}"
+            )
+
+        def _as_scores(values):
+            if values is None:
+                if isinstance(data, torch.Tensor):
+                    return torch.zeros(n, dtype=torch.float32)
+                return np.zeros(n, dtype=np.float32)
+            if isinstance(values, torch.Tensor):
+                values = values.reshape(-1).float()
+            else:
+                values = np.asarray(values, dtype=np.float32).reshape(-1)
+            if int(values.shape[0]) != n:
+                raise ValueError(
+                    f"expected {n} scores to match {n} polygons, got {int(values.shape[0])}"
+                )
+            return values
+
+        self._conf = _as_scores(confidence)
+        self._det_conf = _as_scores(det_confidence)
+
+    @property
+    def polygons(self) -> TensorLike:
+        return self.data
+
+    @property
+    def conf(self) -> TensorLike:
+        return self._conf
+
+    @property
+    def det_conf(self) -> TensorLike:
+        return self._det_conf
+
+    @property
+    def xyxy(self) -> TensorLike:
+        """Axis-aligned bounding boxes of the polygons, ``(N, 4)``."""
+        polys = self.data
+        if isinstance(polys, torch.Tensor):
+            if len(self) == 0:
+                return torch.zeros((0, 4), dtype=torch.float32)
+            x = polys[..., 0]
+            y = polys[..., 1]
+            return torch.stack(
+                [
+                    x.min(dim=1).values,
+                    y.min(dim=1).values,
+                    x.max(dim=1).values,
+                    y.max(dim=1).values,
+                ],
+                dim=1,
+            )
+        if len(self) == 0:
+            return np.zeros((0, 4), dtype=np.float32)
+        x = polys[..., 0]
+        y = polys[..., 1]
+        return np.stack(
+            [x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1
+        )
+
+    # texts/scores are extra payload the base _TensorPayload moves (which
+    # rebuild via ``self.__class__(data, orig_shape)``) would drop. Override
+    # the move/slice methods to carry them through, mirroring
+    # PanopticSegmentation.segments_info.
+    def to(self, *args, **kwargs):
+        return self.__class__(
+            _move(self.data, *args, **kwargs),
+            self.texts,
+            _move(self._conf, *args, **kwargs),
+            _move(self._det_conf, *args, **kwargs),
+            self.orig_shape,
+        )
+
+    def cpu(self):
+        return self.__class__(
+            _cpu(self.data), self.texts, _cpu(self._conf), _cpu(self._det_conf), self.orig_shape
+        )
+
+    def cuda(self):
+        return self.__class__(
+            _cuda(self.data), self.texts, _cuda(self._conf), _cuda(self._det_conf), self.orig_shape
+        )
+
+    def numpy(self):
+        return self.__class__(
+            _numpy(self.data), self.texts, _numpy(self._conf), _numpy(self._det_conf), self.orig_shape
+        )
+
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            indices = [idx]
+        elif isinstance(idx, slice):
+            indices = list(range(len(self)))[idx]
+        else:
+            indices = [int(i) for i in np.atleast_1d(np.asarray(idx)).reshape(-1)]
+        return self.__class__(
+            _slice_first(self.data, idx) if isinstance(idx, int) else self.data[idx],
+            [self.texts[i] for i in indices],
+            self._conf[indices],
+            self._det_conf[indices],
+            self.orig_shape,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"OCRRegions(n={len(self)}, "
+            f"shape={tuple(self.data.shape)}, "
             f"orig_shape={self.orig_shape})"
         )
 
@@ -749,8 +1024,11 @@ class Results:
         "gaze",
         "points",
         "semantic_mask",
+        "panoptic",
         "depth_map",
         "restored",
+        "matte",
+        "ocr",
     )
 
     def __init__(
@@ -771,6 +1049,12 @@ class Results:
         speed: Optional[Dict[str, float]] = None,
         track_id: Optional[TensorLike] = None,
         frame_idx: Optional[int] = None,
+        # New parameters go after the complete v1.3 signature so v1.3-era
+        # positional calls keep binding to the same parameters.
+        panoptic: Optional[PanopticSegmentation] = None,
+        matte: Optional[Matte] = None,
+        ocr: Optional[OCRRegions] = None,
+        restore_scale: int = 1,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -782,6 +1066,10 @@ class Results:
             depth_map = DepthMap(depth_map.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
+        if matte is not None and matte.orig_shape is None:
+            matte = Matte(matte.data, orig_shape)
+        if ocr is not None and ocr.orig_shape is None:
+            ocr = OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, orig_shape)
 
         self.boxes = boxes
         self.masks = masks
@@ -791,8 +1079,15 @@ class Results:
         self.gaze = gaze
         self.points = points
         self.semantic_mask = semantic_mask
+        self.panoptic = panoptic
         self.depth_map = depth_map
         self.restored = restored
+        self.matte = matte
+        self.ocr = ocr
+        # Integer upscale factor of a restore/super-resolution result: the
+        # restored canvas is ``restore_scale`` times the input. 1 for
+        # deblur/denoise and every non-restore task.
+        self.restore_scale = int(restore_scale) if restore_scale else 1
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -813,8 +1108,12 @@ class Results:
             "gaze": self.gaze,
             "points": self.points,
             "semantic_mask": self.semantic_mask,
+            "panoptic": self.panoptic,
             "depth_map": self.depth_map,
             "restored": self.restored,
+            "matte": self.matte,
+            "ocr": self.ocr,
+            "restore_scale": self.restore_scale,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -870,6 +1169,12 @@ class Results:
         depth_map: Optional[DepthMap] = None,
         restored: Optional[RestoredImage] = None,
         track_id: Optional[TensorLike] = None,
+        # New parameters go after the complete v1.3 signature so v1.3-era
+        # positional calls keep binding to the same parameters.
+        panoptic: Optional[PanopticSegmentation] = None,
+        matte: Optional[Matte] = None,
+        ocr: Optional[OCRRegions] = None,
+        restore_scale: Optional[int] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -887,18 +1192,110 @@ class Results:
             self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
         if semantic_mask is not None:
             self.semantic_mask = semantic_mask
+        if panoptic is not None:
+            self.panoptic = panoptic
         if depth_map is not None:
             self.depth_map = depth_map
         if restored is not None:
             self.restored = restored
+        if matte is not None:
+            self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+        if ocr is not None:
+            self.ocr = (
+                ocr
+                if ocr.orig_shape is not None
+                else OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape)
+            )
+        if restore_scale is not None:
+            self.restore_scale = int(restore_scale) if restore_scale else 1
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
                 self.boxes = self.boxes.with_id(track_id)
         return self
 
+    def cutout(self, image: Any = None) -> np.ndarray:
+        """Return an RGBA ``(H, W, 4)`` uint8 cutout: source RGB + matte alpha.
+
+        The alpha channel is the soft matte scaled to ``[0, 255]``. The RGB is
+        taken from ``image`` when given (a PIL image or ``HxWx3`` array), else
+        reloaded from ``self.path``. Only valid for matte results.
+        """
+        if self.matte is None:
+            raise ValueError("cutout() is only defined for matte results (Results.matte is None).")
+        alpha = self.matte.array  # (H, W) float32 in [0, 1]
+        h, w = alpha.shape
+        rgb = self._source_rgb(image, (h, w))
+        alpha_u8 = np.rint(alpha * 255.0).astype(np.uint8)
+        return np.dstack([rgb, alpha_u8])
+
+    def _source_rgb(self, image: Any, hw: Tuple[int, int]) -> np.ndarray:
+        """Load the source image as an ``HxWx3`` uint8 RGB array on the matte canvas."""
+        from PIL import Image
+
+        h, w = hw
+        if image is None:
+            if not self.path:
+                raise ValueError(
+                    "cutout()/save() needs the source image but Results.path is unset; "
+                    "pass image=<PIL.Image or HxWx3 array>."
+                )
+            rgb = np.asarray(Image.open(self.path).convert("RGB"))
+        elif isinstance(image, Image.Image):
+            rgb = np.asarray(image.convert("RGB"))
+        else:
+            rgb = np.asarray(image)
+            if rgb.ndim == 2:
+                rgb = np.stack([rgb] * 3, axis=-1)
+            if rgb.shape[-1] == 4:
+                rgb = rgb[..., :3]
+        if rgb.shape[:2] != (h, w):
+            rgb = np.asarray(Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR))
+        return rgb.astype(np.uint8)
+
+    def save(self, path: str, image: Any = None) -> str:
+        """Save a matte result as a transparent-background RGBA PNG cutout.
+
+        Returns the written path. Requires the source image (via ``image`` or
+        ``self.path``).
+        """
+        from PIL import Image
+
+        if self.matte is None:
+            raise NotImplementedError(
+                "Results.save() writes a transparent-PNG cutout and is defined for "
+                "matte results only. Use result.plot()/CLI --save for other tasks."
+            )
+        rgba = self.cutout(image=image)
+        out = Path(path)
+        if out.parent and str(out.parent) not in (".", ""):
+            out.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(rgba, mode="RGBA").save(out)
+        return str(out)
+
     def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
         if self.boxes is None:
+            if self.ocr is not None:
+                ocr_np = self.ocr.numpy()
+                h, w = self.orig_shape
+                rows = []
+                for i in range(len(ocr_np)):
+                    polygon = np.asarray(ocr_np.data[i], dtype=float)
+                    if normalize:
+                        polygon = polygon / np.array([w, h], dtype=float)
+                    rows.append(
+                        {
+                            "name": "text",
+                            "text": ocr_np.texts[i],
+                            "confidence": round(float(ocr_np.conf[i]), decimals),
+                            "det_confidence": round(float(ocr_np.det_conf[i]), decimals),
+                            "polygon": {
+                                "x": [round(float(x), decimals) for x in polygon[:, 0]],
+                                "y": [round(float(y), decimals) for y in polygon[:, 1]],
+                            },
+                        }
+                    )
+                return rows
             if self.points is not None:
                 points_np = self.points.numpy()
                 xy_values = points_np.xyn if normalize else points_np.xy
@@ -916,6 +1313,25 @@ class Results:
                             },
                         }
                     )
+                return rows
+            if self.panoptic is not None:
+                pan_np = _numpy(self.panoptic.data)
+                total = int(pan_np.size)
+                rows = []
+                for seg in self.panoptic.segments_info:
+                    cat_id = int(seg["category_id"])
+                    count = int((pan_np == int(seg["id"])).sum())
+                    row = {
+                        "name": self.names.get(cat_id, str(cat_id)),
+                        "class": cat_id,
+                        "segment_id": int(seg["id"]),
+                        "isthing": bool(seg.get("isthing", True)),
+                        "pixel_count": count,
+                        "pixel_fraction": round(count / total, decimals),
+                    }
+                    if "score" in seg:
+                        row["confidence"] = round(float(seg["score"]), decimals)
+                    rows.append(row)
                 return rows
             if self.semantic_mask is not None:
                 mask_np = _numpy(self.semantic_mask.data)
@@ -947,6 +1363,18 @@ class Results:
                     {
                         "name": "restored",
                         "shape": [int(h), int(w), 3],
+                        "scale": int(self.restore_scale),
+                    }
+                ]
+            if self.matte is not None:
+                matte_np = self.matte.array
+                h, w = matte_np.shape[:2]
+                fg = float((matte_np >= 0.5).mean())
+                return [
+                    {
+                        "name": "matte",
+                        "shape": [int(h), int(w)],
+                        "coverage": round(fg, decimals),
                     }
                 ]
             if self.probs is None:
@@ -1037,10 +1465,16 @@ class Results:
             return 1
         if self.semantic_mask is not None:
             return 1
+        if self.panoptic is not None:
+            return 1
         if self.depth_map is not None:
             return 1
         if self.restored is not None:
             return 1
+        if self.matte is not None:
+            return 1
+        if self.ocr is not None:
+            return len(self.ocr)
         return 0
 
     def __repr__(self) -> str:
@@ -1055,10 +1489,18 @@ class Results:
             parts.append(f"masks={self.masks}")
         if self.semantic_mask is not None:
             parts.append(f"semantic_mask={self.semantic_mask}")
+        if self.panoptic is not None:
+            parts.append(f"panoptic={self.panoptic}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
+            if self.restore_scale != 1:
+                parts.append(f"restore_scale={self.restore_scale}")
+        if self.matte is not None:
+            parts.append(f"matte={self.matte}")
+        if self.ocr is not None:
+            parts.append(f"ocr={self.ocr}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:

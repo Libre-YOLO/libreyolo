@@ -31,6 +31,7 @@ class YOLONASTrainer(BaseTrainer):
             max_labels=100,
             flip_prob=self.config.flip_prob,
             hsv_prob=self.config.hsv_prob,
+            flipud=getattr(self.config, "flipud", 0.0),
         )
         return preproc, YOLONASAffineMixupDataset
 

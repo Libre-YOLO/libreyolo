@@ -23,7 +23,10 @@ from PIL import Image
 
 from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
-from ...utils.serialization import load_untrusted_torch_file, validate_checkpoint_metadata
+from ...utils.serialization import (
+    load_untrusted_torch_file,
+    validate_checkpoint_metadata,
+)
 from ..base.model import BaseModel
 from .nn import SIZE_CONFIGS, LibrePIDNetNet
 
@@ -76,7 +79,9 @@ def _input_size_hw(input_size: int | tuple[int, int]) -> tuple[int, int]:
     if isinstance(input_size, int):
         return input_size, input_size
     if len(input_size) != 2:
-        raise ValueError(f"input_size must be int or (height, width), got {input_size!r}")
+        raise ValueError(
+            f"input_size must be int or (height, width), got {input_size!r}"
+        )
     return int(input_size[0]), int(input_size[1])
 
 
@@ -249,16 +254,19 @@ class LibrePIDNet(BaseModel):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         return self.model(input_tensor)
 
-    def _postprocess(
+    def _postprocess_semantic_logits(
         self,
         output: Any,
-        conf_thres: float,
-        iou_thres: float,
         original_size: Tuple[int, int],
-        max_det: int = 300,
         ratio: float = 1.0,
         **kwargs,
-    ) -> Dict:
+    ) -> torch.Tensor:
+        """Interpolate raw semantic logits to ``original_size``, pre-argmax.
+
+        Shared by ``_postprocess`` (single-view predict/val) and
+        ``BaseModel._predict_augment_semantic`` (flip TTA), which needs the
+        pre-argmax logits to average across augmented views.
+        """
         logits = output
         if isinstance(logits, dict):
             logits = logits.get("semantic_logits", logits.get("predictions"))
@@ -272,12 +280,24 @@ class LibrePIDNet(BaseModel):
         valid_h = min(logits.shape[-2], max(int(round(orig_h * ratio * scale_y)), 1))
         valid_w = min(logits.shape[-1], max(int(round(orig_w * ratio * scale_x)), 1))
         logits = logits[..., :valid_h, :valid_w]
-        logits = F.interpolate(
+        return F.interpolate(
             logits.float(),
             size=(orig_h, orig_w),
             mode="bilinear",
             align_corners=True,
         )
+
+    def _postprocess(
+        self,
+        output: Any,
+        conf_thres: float,
+        iou_thres: float,
+        original_size: Tuple[int, int],
+        max_det: int = 300,
+        ratio: float = 1.0,
+        **kwargs,
+    ) -> Dict:
+        logits = self._postprocess_semantic_logits(output, original_size, ratio=ratio, **kwargs)
         return {"semantic": logits.argmax(dim=1)[0].cpu()}
 
     def _strict_loading(self) -> bool:
@@ -383,7 +403,8 @@ class LibrePIDNet(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError("Export is not implemented for LibrePIDNet yet.")
+        """Export dense logits through the shared semantic runtime contract."""
+        return super().export(format=format, **kwargs)
 
 
 __all__ = ["CITYSCAPES_NAMES", "LibrePIDNet", "preprocess_numpy"]

@@ -72,6 +72,26 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
+SigLIP / SigLIP 2 (Google; Hugging Face Transformers)
+--------------------------------------------------------------------
+Source: https://github.com/google-research/big_vision,
+        https://github.com/huggingface/transformers (models/siglip, models/siglip2)
+License: Apache License 2.0
+Copyright (c) Google LLC; (c) The HuggingFace Inc. team.
+Used for: the LibreSigLIP2 family (libreyolo/models/siglip2/). The image/text
+towers (libreyolo/models/siglip2/nn.py) are a clean-room native torch
+re-implementation of the SigLIP architecture, structured to match the
+transformers reference implementation (no transformers at runtime). The
+multilingual SentencePiece tokenizer model
+(libreyolo/models/siglip2/siglip2_tokenizer.model, Gemma vocabulary) is shipped
+verbatim from the Apache-2.0 google/siglip2-* Hugging Face release.
+
+The shipped LibreSigLIP2 weights are converted from the Apache-2.0
+google/siglip2-base-patch16-256 and google/siglip2-so400m-patch14-384
+checkpoints (state-dict metadata wrap only; learned parameters unchanged). See
+libreyolo/models/siglip2/NOTICE.md.
+
+--------------------------------------------------------------------
 YOLOX (Megvii-BaseDetection)
 --------------------------------------------------------------------
 Source: https://github.com/Megvii-BaseDetection/YOLOX
@@ -79,7 +99,11 @@ License: Apache License 2.0
 Copyright (c) 2021-2022 Megvii Inc. All rights reserved.
 Used for: YOLOX model family (libreyolo/models/yolox/), EMA helper
           (libreyolo/training/ema.py), augmentation pipeline
-          (libreyolo/training/augment.py).
+          (libreyolo/training/augment.py), and the SimOTA training loss
+          adapted for the YOLOv7 family (libreyolo/models/yolo7/loss.py:
+          imports bboxes_iou/IoULoss from the yolox modules and adapts the
+          get_assignments/get_geometry_constraint/simota_matching/get_losses
+          assignment logic to the v7 anchor head).
 
 --------------------------------------------------------------------
 YOLO (MultimediaTechLab/YOLO)
@@ -90,6 +114,11 @@ Copyright (c) 2024 Kin-Yiu Wong and Hao-Tang Tsui
 Used for: YOLO9 model family (libreyolo/models/yolo9/ and
           libreyolo/models/yolo9_e2e/): the architecture blocks and
           detection head in nn.py and the loss port in loss.py.
+          Also the YOLOv7 family (libreyolo/models/yolo7/): the architecture
+          (net.py, blocks.py) and the Anc2Box anchor decode reproduced in
+          postprocess/yolo7.py and mirrored by the training loss (loss.py:
+          _decode). Upstream ships no v7 training loss, so training assignment
+          is adapted from YOLOX (see the YOLOX entry above), not from here.
 
 --------------------------------------------------------------------
 RepVGG (DingXiaoH)
@@ -104,12 +133,34 @@ Used for: RepConv fuse / re-parameterization logic
 mmdetection (OpenMMLab)
 --------------------------------------------------------------------
 Source: https://github.com/open-mmlab/mmdetection
+Commit: cfd5d3a985b0249de009b67d04f37263e11cdf3d
 License: Apache License 2.0
 Copyright (c) OpenMMLab. All rights reserved.
 Used for: RTMDet model family (libreyolo/models/rtmdet/): architecture
-          port in nn.py; QualityFocalLoss, GIoULoss,
+          port in nn.py, including the RTMDet-Ins head and mask decoder;
+          QualityFocalLoss, GIoULoss,
           DynamicSoftLabelAssigner and MlvlPointGenerator in loss.py.
-          Published RTMDet COCO weights were trained with mmdetection.
+          Published RTMDet and RTMDet-Ins COCO weights were trained with
+          mmdetection.
+
+--------------------------------------------------------------------
+mmsegmentation (OpenMMLab)
+--------------------------------------------------------------------
+Source: https://github.com/open-mmlab/mmsegmentation
+        (mmseg/datasets/transforms/transforms.py)
+License: Apache License 2.0
+Copyright (c) OpenMMLab. All rights reserved.
+Used for: the dense random-crop sampling used by semantic training
+          (libreyolo/data/semantic_dataset.py: the optional
+          ``resize_crop`` mode and its ``crop_cat_max_ratio`` retry
+          loop). The recipe -- resize the short side, pad, then re-sample
+          a crop up to 10 times until no single class exceeds
+          ``cat_max_ratio`` of its non-ignored pixels -- is derived from
+          mmsegmentation's ``RandomCrop`` (``cat_max_ratio``), as are the
+          SegFormer ADE20K training hyper-parameters (decode-head LR
+          multiplier, no weight decay on norms and the Mix-FFN positional
+          conv, scale jitter 0.5-2.0). NOT derived from NVIDIA's
+          NVlabs/SegFormer fork of mmseg 0.x, which is non-commercial.
 
 --------------------------------------------------------------------
 PicoDet (PaddleDetection / Picodet_Pytorch)
@@ -151,6 +202,18 @@ Source: https://github.com/EC-codehub/EdgeCrafter
 License: Apache License 2.0
 Used for: EC model family detection, segmentation, and pose architecture
           references (libreyolo/models/ec/).
+
+--------------------------------------------------------------------
+D-FINE-seg (ArgoHA)
+--------------------------------------------------------------------
+Source: https://github.com/ArgoHA/D-FINE-seg
+License: Apache License 2.0
+Copyright (c) 2026 The D-FINE-seg Authors. All Rights Reserved.
+Used for: D-FINE instance-segmentation mask decoder/head, mask matching,
+          mask loss, and postprocess references
+          (libreyolo/models/dfine/, libreyolo/postprocess/dfine.py).
+          The repository maintainer approved reuse with attribution in
+          ArgoHA/D-FINE-seg#70.
 
 --------------------------------------------------------------------
 RT-DETR (lyuwenyu)
@@ -208,14 +271,56 @@ Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
 Citation: Kerssies, T., Cavagnero, N., Hermans, A., Norouzi, N.,
           Averta, G., Leibe, B., Dubbelman, G., and de Geus, D.
           "Your ViT is Secretly an Image Segmentation Model." CVPR 2025.
-Used for: LibreEoMT semantic segmentation family
+Used for: LibreEoMT semantic, instance, and panoptic segmentation family
           (libreyolo/models/eomt/). Runtime execution uses the Apache-2.0
           Hugging Face Transformers EoMT implementation with converted
-          MIT-licensed DINOv2 EoMT-L ADE20K weights.
+          MIT-licensed DINOv2 EoMT weights:
+            - ADE20K 150-class semantic (l, 512px)
+            - COCO 80-class instance segmentation (l, 640px and 1280px)
+            - COCO 133-class panoptic, task="panoptic" (s/b/l, 640px)
 
-NOTE - code vs. weights: LibreYOLO ships only the DINOv2-based ADE20K
-semantic EoMT-L checkpoint. DINOv3 EoMT variants are excluded because
-they depend on gated non-commercial DINOv3 weights.
+NOTE - code vs. weights: LibreYOLO ships only DINOv2-based EoMT checkpoints.
+DINOv3 EoMT variants are excluded because they depend on gated
+non-commercial DINOv3 weights.
+
+--------------------------------------------------------------------
+SegFormer / HuggingFace Transformers
+--------------------------------------------------------------------
+Source: https://github.com/huggingface/transformers
+        (models/segformer/{configuration_segformer.py, modeling_segformer.py})
+License: Apache License 2.0
+Copyright 2021 NVIDIA and The HuggingFace Inc. team. All rights reserved.
+Citation: Xie, E., Wang, W., Yu, Z., Anandkumar, A., Alvarez, J. M., and
+          Luo, P. "SegFormer: Simple and Efficient Design for Semantic
+          Segmentation with Transformers." NeurIPS 2021.
+Used for: LibreSegformer semantic segmentation family
+          (libreyolo/models/segformer/). The MiT encoder (overlap patch
+          embeddings, efficient self-attention with spatial reduction,
+          Mix-FFN) and the all-MLP decode head are a native
+          reimplementation behaviorally derived from HuggingFace
+          Transformers' Apache-2.0 modeling_segformer.py, NOT from
+          NVIDIA's original NVlabs/SegFormer repository (NVIDIA Source
+          Code License, non-commercial/research-only — never read or
+          derived from). LibreSegformer has no runtime dependency on
+          the transformers package.
+
+NOTE - code vs. weights: the CODE above is Apache-2.0, but the pretrained
+WEIGHTS are NOT. LibreSegformer{b0..b5}-sem are converted from NVIDIA's
+ADE20K SegFormer checkpoints (nvidia/segformer-b0..b5-finetuned-ade-*),
+released under the NVIDIA Source Code License:
+
+    https://github.com/NVlabs/SegFormer/blob/master/LICENSE
+
+That license permits redistribution provided a complete copy of the
+license accompanies the weights and attribution notices are retained,
+but it limits USE to non-commercial "research or evaluation purposes
+only", and Section 3.2 carries the limit into every derivative work.
+These weights are therefore NON-COMMERCIAL ONLY and are not covered by
+LibreYOLO's permissive license; the restriction binds end users, not
+just LibreYOLO. A notice is printed before every auto-download.
+Conversion is a key remapping only (weights/convert_segformer_weights.py);
+learned parameters are NVIDIA's, unchanged. Models the user trains from
+scratch carry no such restriction.
 
 --------------------------------------------------------------------
 Grounding DINO (IDEA-Research)
@@ -250,6 +355,43 @@ Used for: LibreOWLv2 open-vocabulary detector. The shipped path
           transformers reference also lives at libreyolo/models/owlv2/.
           Weights are rehosted at LibreYOLO/LibreOWLv2b16 and
           LibreYOLO/LibreOWLv2l14.
+
+--------------------------------------------------------------------
+OMDet-Turbo (Om Research Lab / Hugging Face Transformers)
+--------------------------------------------------------------------
+Architecture: https://github.com/om-ai-lab/OmDet
+Reference implementation: https://github.com/huggingface/transformers
+Path: src/transformers/models/omdet_turbo/
+License: Apache License 2.0
+Copyright 2024 Om Research Lab and The HuggingFace Inc. team.
+Used for: LibreOMDetTurbo open-vocabulary detection. The adapter at
+          libreyolo/models/openvocab/omdet_turbo.py calls the Transformers
+          OmDetTurboForObjectDetection implementation, its processor, and its
+          post-processing. No OMDet-Turbo model source is vendored.
+
+Weights: omlab/omdet-turbo-swin-tiny-hf revision
+         7fe93cecfb770c4d76cf71163956221249cab566, Apache-2.0, mirrored
+         without learned-parameter changes at LibreYOLO/LibreOMDetTurbot.
+
+--------------------------------------------------------------------
+OV-DEIM (wleilei)
+--------------------------------------------------------------------
+Source: https://github.com/wleilei/OV-DEIM
+License: Apache License 2.0 (code); CC BY-NC 4.0 (released checkpoints,
+         per upstream MODEL_LICENSE)
+Citation: arXiv 2603.07022, "OV-DEIM: Real-time DETR-Style
+          Open-Vocabulary Object Detection with GridSynthetic
+          Augmentation."
+Used for: LibreOVDEIM open-vocabulary detector, a native port vendored
+          at libreyolo/models/openvocab/ovdeim/ under Apache-2.0
+          (RT-DETR / DEIMv2 lineage). Converted S/M/L detector weights
+          are rehosted at LibreYOLO/LibreOVDEIM{s,m,l} under
+          CC BY-NC 4.0 with attribution, as the upstream MODEL_LICENSE
+          permits. The text tower is the MobileCLIP-B(LT) text
+          transformer (apple/MobileCLIP-B-LT-OpenCLIP); its license
+          text and attribution notice ship in the weight repositories.
+          Licensing was confirmed by the upstream author
+          (wleilei/OV-DEIM#4); see docs/provenance/ov_deim.md.
 
 --------------------------------------------------------------------
 LW-DETR (Atten4Vis / Baidu)
@@ -342,6 +484,55 @@ Giant) are for non-commercial use only. The offline conversion path
 (weights/convert_depth_anything_v2_weights.py) remains available.
 
 --------------------------------------------------------------------
+Depth Anything 3 (ByteDance Seed)
+--------------------------------------------------------------------
+Source: https://github.com/ByteDance-Seed/Depth-Anything-3
+Pinned commit: 41736238f5bced4debf3f2a12375d2466874866d
+License: Apache License 2.0
+Copyright (c) 2025 ByteDance Ltd. and/or its affiliates.
+Used for: DA3MONO-LARGE model family (ViT-L encoder + DPT depth and sky
+          heads) vendored under libreyolo/models/depth_anything3/_vendor/.
+          The DINOv2 subcomponents retain Meta Platforms Apache-2.0
+          copyright headers. LibreYOLO adaptations remove unused runtime
+          dependencies, add internal ImageNet normalization, reproduce the
+          official sky handling, and convert positive relative depth to the
+          library's relative inverse-depth output contract.
+
+Weight source: https://huggingface.co/depth-anything/DA3MONO-LARGE
+Pinned revision: f465978e618db8cc79c83b8bbf24964857db1875
+Weight license: Apache License 2.0
+Conversion: weights/convert_depth_anything3_weights.py removes only the
+            outer model. prefix and wraps 406 unchanged tensors in the
+            LibreYOLO checkpoint schema. Only DA3MONO-LARGE is hosted.
+            CC-BY-NC-4.0 Large/Giant/Nested weights are excluded.
+
+--------------------------------------------------------------------
+ZipDepth (University of Bologna)
+--------------------------------------------------------------------
+Source: https://github.com/fabiotosi92/ZipDepth
+        (commit 6b96f4d205f8a2e5377e81c1b74cc99a47f6693a)
+License: MIT
+Copyright (c) 2026 Fabio Tosi.
+Citation: Tosi, F., Bartolomei, L., Poggi, M., and Mattoccia, S.
+          "ZipDepth: Bringing Lightweight Zero-Shot Monocular Depth
+          Anywhere, on Any Device." ECCV 2026.
+Used for: ZipDepth depth model family (libreyolo/models/zipdepth/).
+          The architecture (nn.py) is ported from upstream with
+          identical module names; the LibreYOLO wrapper adds the
+          depth-task contract, checkpoint schema, zero-shot val, and
+          fixed-resolution export metadata.
+
+NOTE - weights: The upstream repository publishes the pretrained
+checkpoints (zipdepth_base.pth, zipdepth_base_npu.pth) under the same
+MIT license; LibreYOLO mirrors byte-identical rewraps on its Hugging
+Face org (LibreYOLO/LibreZipDepth{b,bnpu}-depth). Upstream trained
+these weights by distilling pseudo-labels from Depth Anything V2 Large
+(itself CC-BY-NC-4.0) over ~14M images from 17 public datasets; the MIT
+grant on the student weights is upstream's published position, and the
+distillation lineage is documented in
+libreyolo/models/zipdepth/NOTICE.
+
+--------------------------------------------------------------------
 NAFNet (Megvii Research)
 --------------------------------------------------------------------
 Source: https://github.com/megvii-research/NAFNet
@@ -361,7 +552,108 @@ published GoPro-trained NAFNet weights do not carry an explicit
 standalone weights license; convert only weights that you have the
 right to use and redistribute. The GoPro deblurring dataset is separate
 from the NAFNet code and carries its own terms; users are responsible
-for dataset compliance.
+for dataset compliance. The SIDD denoising weights are trained on the
+Smartphone Image Denoising Dataset (SIDD), which is distributed under
+the MIT License.
+
+--------------------------------------------------------------------
+Real-ESRGAN (Xintao Wang)
+--------------------------------------------------------------------
+Source: https://github.com/xinntao/Real-ESRGAN
+License: BSD-3-Clause
+Copyright (c) 2021 Xintao Wang.
+Citation: Wang, X., Xie, L., Dong, C., and Shan, Y. "Real-ESRGAN:
+          Training Real-World Blind Super-Resolution with Pure
+          Synthetic Data." ICCV Workshops 2021.
+Used for: the Real-ESRGAN super-resolution model family
+          (libreyolo/models/realesrgan/). The seam-free tiled forward
+          in utils.py is ported from Real-ESRGAN's inference helper.
+          The released generator weights (RealESRGAN_x4plus,
+          RealESRGAN_x2plus, realesr-general-x4v3) are BSD-3-Clause and
+          are mirrored as converted checkpoints with provenance.
+
+--------------------------------------------------------------------
+BasicSR (XPixelGroup)
+--------------------------------------------------------------------
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License 2.0
+Copyright 2018-2022 BasicSR Authors.
+Used for: the RRDBNet / SRVGGNetCompact / pixel_unshuffle architecture
+          lineage in libreyolo/models/realesrgan/nn.py. Module and
+          parameter names mirror BasicSR so the released Real-ESRGAN
+          state dicts convert with a plain metadata-wrap.
+
+--------------------------------------------------------------------
+SwinIR (Jingyun Liang et al.)
+--------------------------------------------------------------------
+Source: https://github.com/JingyunLiang/SwinIR
+        (commit 6545850fbf8df298df73d81f3e8cba638787c8bd)
+License: Apache License 2.0
+Copyright 2021 SwinIR Authors.
+Citation: Liang, J., Cao, J., Sun, G., Zhang, K., Van Gool, L., and
+          Timofte, R. "SwinIR: Image Restoration Using Swin
+          Transformer." ICCV Workshops 2021.
+Used for: the SwinIR super-resolution generator in
+          libreyolo/models/swinir/nn.py. Module and parameter names
+          mirror upstream so the official released checkpoints load
+          without tensor remapping. The LibreYOLO wrapper adds the
+          restore task, native-resolution preprocessing, tiling,
+          validation, and checkpoint metadata.
+
+NOTE - weights: the official SwinIR-S x4 lightweight and SwinIR-M/L x4
+real-world checkpoints are published with the Apache-2.0 project release.
+LibreYOLO does not bundle checkpoint files in the source distribution.
+
+--------------------------------------------------------------------
+BiRefNet (Peng Zheng et al.)
+--------------------------------------------------------------------
+Source: https://github.com/ZhengPeng7/BiRefNet (commit d83f355)
+License: MIT
+Copyright (c) 2024 ZhengPeng (Peng Zheng).
+Citation: Zheng, P., Gao, D., Fan, D.-P., Liu, L., Laaksonen, J.,
+          Ouyang, W., and Sebe, N. "Bilateral Reference for
+          High-Resolution Dichotomous Image Segmentation." CAAI
+          Artificial Intelligence Research, 2024.
+Used for: BiRefNet background-removal model family
+          (libreyolo/models/birefnet/): the Swin Transformer v1
+          backbone and the bilateral-reference decoder (ASPP with
+          torchvision deformable convolution). The LibreYOLO port covers
+          the inference forward path, adds the matte-task contract
+          (Results.matte, cutout, transparent-PNG save), a paired
+          MAE/S-measure validator, and fixed-resolution ONNX export.
+          Parity verified: our fp32 forward matches the upstream
+          released weights with max_abs_diff == 0.
+
+NOTE - code vs. weights: The BiRefNet source code is MIT. The released
+BiRefNet (general, Swin-L) weights are tagged MIT on Hugging Face and are
+rehosted under the LibreYOLO org. The BiRefNet_lite (Swin-T) Hugging Face
+repo shows an MIT badge in its model card but carries no explicit license
+metadata (no YAML `license:` field, no LICENSE file); LibreYOLO does not
+rehost the lite weights pending an explicit license confirmation. See
+weights/LICENSE_NOTICE.txt.
+
+--------------------------------------------------------------------
+PaddleOCR (PaddlePaddle)
+--------------------------------------------------------------------
+Source: https://github.com/PaddlePaddle/PaddleOCR (commit 211989f)
+License: Apache License 2.0
+Copyright (c) 2020 PaddlePaddle Authors.
+Citation: Cui, C., et al. "PaddleOCR 3.0 Technical Report."
+          arXiv:2507.05595, 2025.
+Used for: the LibrePPOCR text detection + recognition family
+          (libreyolo/models/ppocr/): the PP-LCNetV3 and PP-HGNetV2-B4
+          backbones, RSEFPN/LKPAN necks, DB heads, SVTR sequence
+          encoder, and CTC head are PyTorch ports of the PP-OCRv5
+          Paddle model definitions; the DB quad postprocess and CTC
+          greedy decode in libreyolo/postprocess/ppocr.py and the
+          det/rec preprocessing in libreyolo/models/ppocr/ follow the
+          upstream inference tools. The PP-OCRv5 recognition dictionary
+          (ppocr/utils/dict/ppocrv5_dict.txt) is embedded as charset
+          metadata in the converted checkpoints. Parity verified: on
+          identical input tensors our fp32 forward matches the official
+          PP-OCRv5 inference graphs with max_abs_diff <= 1e-4 (det maps)
+          and <= 6e-5 (rec probabilities, identical argmax) on both
+          tiers.
 
 --------------------------------------------------------------------
 timm / PyTorch Image Models (Hugging Face)
@@ -371,7 +663,8 @@ License: Apache License 2.0
 Copyright (c) Ross Wightman and the timm contributors.
 Used for: the native image-classification model families ported from
           timm architectures — libreyolo/models/{mobilenetv4,convnext,
-          efficientnetv2,resnet}/. Module/attribute names mirror timm so
+          efficientnetv2,resnet}/ — and the shared Swin backbone at
+          libreyolo/models/swin/. Module/attribute names mirror timm so
           its Apache-2.0 ImageNet-1k pretrained weights load unchanged and
           inference is bit-identical. Architecture lineage: ConvNeXt also
           derives from facebookresearch/ConvNeXt (MIT); EfficientNetV2 from
@@ -440,13 +733,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------
-Darknet (YOLOv2 / YOLOv3 / YOLOv4)
+Darknet (YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4)
 --------------------------------------------------------------------
-Source: https://github.com/pjreddie/darknet   (YOLOv2/v3)
+Source: https://github.com/pjreddie/darknet   (YOLOv1/v2/v3)
         https://github.com/AlexeyAB/darknet    (YOLOv4)
 License: Public domain ("YOLO LICENSE")
-Used for: the LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
-          (libreyolo/models/darknet, libreyolo/models/yolo{2,3,4}).
+Used for: the LibreYOLO1 / LibreYOLO2 / LibreYOLO3 / LibreYOLO4 families
+          (libreyolo/models/darknet, libreyolo/models/yolo{1,2,3,4}).
           The public-domain .cfg model definitions are bundled under
           libreyolo/models/darknet/cfgs/; only the .cfg format and the
           numerical behaviour of the Darknet layers are reproduced. No
@@ -480,3 +773,129 @@ of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, subject to the inclusion of the above
 copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+Roboflow Trackers (BoT-SORT)
+--------------------------------------------------------------------
+Source: https://github.com/roboflow/trackers
+Commit: 3b6d910df78a7ab48d5770b5bc86e043476d2e76
+License: Apache License 2.0
+Copyright (c) 2026 Roboflow. All Rights Reserved.
+Used for: the BoT-SORT tracking lifecycle, scale-aware center-width-height
+          Kalman model, and sparse optical-flow camera-motion compensation in
+          libreyolo/tracking/botsort.py and
+          libreyolo/tracking/kalman_filter.py. The implementation is adapted
+          to LibreYOLO's detector-agnostic Results contract and implements the
+          paper's motion-only BoT-SORT variant (not BoT-SORT-ReID).
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+Torchreid (deep-person-reid)
+--------------------------------------------------------------------
+Source: https://github.com/KaiyangZhou/deep-person-reid
+Commit: f8cd150fdf77e8d9e1ed143b7f308c2c609ded50
+License: MIT
+Copyright (c) 2018 Kaiyang Zhou
+Used for: the OSNet-AIN appearance (ReID) embedder used by the Deep
+          OC-SORT tracker (libreyolo/tracking/reid.py). Module names
+          mirror upstream torchreid/models/osnet_ain.py so the released
+          checkpoints load unchanged (bit-exact forward parity, see
+          tests/unit/test_reid.py).
+
+MIT License
+
+Copyright (c) 2018 Kaiyang Zhou
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+Deep OC-SORT
+--------------------------------------------------------------------
+Source: https://github.com/GerardMaggiolino/Deep-OC-SORT
+Commit: 6bb51d027b137233f5c520b6fcc4f2ae387a6ba9
+License: MIT
+Copyright (c) 2023 Gerard Maggiolino
+Used for: the adaptive appearance association (dynamic embedding EMA and
+          adaptive weighting) in the Deep OC-SORT tracker
+          (libreyolo/tracking/deepocsort.py), validated for numeric
+          track-ID parity against upstream
+          (tests/unit/test_deepocsort_parity.py).
+
+MIT License
+
+Copyright (c) 2023 Gerard Maggiolino
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, subject to the inclusion of the above
+copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTY OF ANY KIND.
+--------------------------------------------------------------------
+PicoSAM3
+--------------------------------------------------------------------
+Source: https://github.com/pbonazzi/picosam3
+Commit: 1b03949e43472953bb0021685c7fc3f5fdf48fde
+License: Apache License 2.0
+Used for: the native LibrePicoSAM3 ROI segmentation network in
+          libreyolo/models/picosam3. The port uses the upstream
+          depthwise-separable encoder-decoder, dilated bottleneck, ECA block,
+          ROI preprocessing geometry, and ImageNet normalization. It does not
+          vendor the repository's SAM teacher implementations or cctorch code.
+
+The full Apache License 2.0 text is included at
+libreyolo/models/picosam3/LICENSE.
+
+--------------------------------------------------------------------
+EdgeTAM / Hugging Face Transformers EdgeTAM converter
+--------------------------------------------------------------------
+Model source: https://github.com/facebookresearch/EdgeTAM
+Model commit: 7711e012a30a2402c4eaab637bdb00a521302c91
+Converter source: https://github.com/huggingface/transformers
+Converter commit: bd37c453544e83eb875ed3608980a1660376007a
+Converter file:
+  src/transformers/models/edgetam_video/convert_edgetam_video_to_hf.py
+Payload reference: https://huggingface.co/yonigozlan/EdgeTAM-hf
+Payload revision: c266ce53b3fc00f0f495b583f6a116c4e57f53bb
+License: Apache License 2.0
+Copyright (c) Meta Platforms, Inc. and affiliates
+Copyright 2025 The Hugging Face Inc. team
+Used for: the Transformers-backed LibreEdgeTAM adapter in
+          libreyolo/models/sam/edgetam.py and the lossless checkpoint mapping
+          in weights/convert_edgetam_weights.py. No EdgeTAM architecture source
+          is vendored. The runtime adapter reproduces the pinned square image
+          transform and prompt-coordinate scaling from sam2/utils/transforms.py.
+          The conversion remaps keys and splits/concatenates tensors so the
+          official Apache-2.0 checkpoint can be loaded by Transformers.
+          Hash-pinned configuration and processor files are copied from the
+          Apache-2.0-declared payload reference; learned tensors are converted
+          independently and then checked exactly against it.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
+SenseNova-Vision / Bagel (SenseTime; ByteDance; Hugging Face; BFL)
+--------------------------------------------------------------------
+Source: https://github.com/OpenSenseNova/SenseNova-Vision
+        (commit 12ccd96e32b32967a11cacb6c5bd5fe3a555fc0c)
+License: Apache License 2.0 (see licenses/Apache-2.0.txt)
+Copyright (c) 2026 SenseTime Group Inc.; (c) 2025 Bytedance Ltd.;
+          (c) 2024 The Qwen Team and The HuggingFace Inc. team;
+          (c) 2024 Black Forest Labs
+Citation: SenseNova-Vision team. "Vision as Unified Multimodal
+          Generation." arXiv:2607.06560, 2026.
+Used for: the LibreSenseNovaVision family (libreyolo/models/sensenova/), an
+inference-only port of the Bagel-MoT unified multimodal architecture, its
+interleaved inferencer, image transforms, task prompts, and structured-output
+parsers. The upstream file modeling/bagel/modeling_utils.py is CC BY-NC 4.0
+(DiT-derived) and is NOT ported; its standard components are re-derived from
+Hugging Face transformers (ViT-MAE sincos table, Apache-2.0) and
+openai/guided-diffusion (timestep embedding, MIT) in modeling/layers.py.
+Model weights (sensenova/SenseNova-Vision-7B-MoT, CC BY-NC 4.0,
+non-commercial) are mirrored byte-identically with attribution at
+huggingface.co/LibreYOLO/SenseNovaVision7b; mirroring does not change the
+license. See libreyolo/models/sensenova/NOTICE for the full provenance chain.

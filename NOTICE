@@ -32,6 +32,23 @@ DINOv3 (Meta DINOv3 License Agreement)
     These terms apply only to the DINOv3 subtree listed above. The
     rest of LibreYOLO remains under the MIT License.
 
+SenseNova-Vision / Bagel (Apache License 2.0 code; CC BY-NC 4.0 weights,
+not redistributed)
+    Path:    libreyolo/models/sensenova/
+    License: libreyolo/models/sensenova/NOTICE  (Apache-2.0 code sources)
+    Source:  https://github.com/OpenSenseNova/SenseNova-Vision
+
+    The SenseNova-Vision family vendors an inference-only port of the
+    upstream Apache-2.0 implementation (SenseTime 2026, building on
+    ByteDance's Bagel, Hugging Face transformers, and the Black Forest
+    Labs FLUX autoencoder, all Apache-2.0). The upstream file
+    modeling/bagel/modeling_utils.py is CC BY-NC 4.0 (DiT-derived) and is
+    NOT ported; its standard components are re-derived from Apache/MIT
+    sources in modeling/layers.py (see the family NOTICE). Model weights
+    are CC BY-NC 4.0, mirrored byte-identically with attribution at
+    huggingface.co/LibreYOLO/SenseNovaVision7b; the loader prints the
+    non-commercial notice before every automatic download.
+
 MobileNetV4 / timm (Apache License 2.0)
     Path:    libreyolo/models/mobilenetv4/
     License: libreyolo/models/mobilenetv4/NOTICE  (Apache-2.0)
@@ -79,6 +96,64 @@ ResNet / timm (Apache License 2.0)
     naming mirrors timm/torchvision so weights load unchanged and inference is
     bit-identical.
 
+OMDet-Turbo / Transformers (Apache License 2.0)
+    Path:    libreyolo/models/openvocab/omdet_turbo.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/huggingface/transformers
+    Architecture: https://github.com/om-ai-lab/OmDet
+
+    LibreYOLO ships no OMDet-Turbo model source. The adapter calls the
+    Apache-2.0 Transformers OmDetTurboForObjectDetection implementation, its
+    processor, and its post-processing. Apache-2.0 checkpoint assets are
+    mirrored unchanged from omlab/omdet-turbo-swin-tiny-hf revision
+    7fe93cecfb770c4d76cf71163956221249cab566 at LibreYOLO/LibreOMDetTurbot.
+
+OV-DEIM (Apache License 2.0)
+    Path:    libreyolo/models/openvocab/ov_deim.py,
+             libreyolo/models/openvocab/ovdeim/
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/wleilei/OV-DEIM
+             (pinned at commit dfbf394672407b7f837ec08e7d68e8127548b254)
+
+    The vendored architecture modules are taken from OV-DEIM under
+    Apache-2.0, with the RT-DETR (Apache-2.0, Copyright (c) 2023 lyuwenyu)
+    and DEIMv2 (Apache-2.0) lineage headers preserved. Licensing was
+    confirmed by the upstream author (wleilei/OV-DEIM#4). See
+    docs/provenance/ov_deim.md.
+
+SegFormer / transformers (Apache License 2.0)
+    Path:    libreyolo/models/segformer/
+    License: libreyolo/models/segformer/NOTICE  (Apache-2.0 code source)
+    Source:  https://github.com/huggingface/transformers
+
+    The SegFormer architecture (libreyolo/models/segformer/nn.py) is a
+    PyTorch port derived from (and in parts copied from) HuggingFace
+    Transformers' Apache-2.0 modeling_segformer.py, not from NVIDIA's
+    original non-permissive NVlabs/SegFormer repository (cited for
+    attribution only).
+
+    The semantic training recipe it uses -- the resize_crop /
+    cat_max_ratio sampling in libreyolo/data/semantic_dataset.py and the
+    ADE20K hyper-parameters in SegformerConfig -- is derived from
+    open-mmlab/mmsegmentation (Apache-2.0). See THIRD_PARTY_NOTICES.txt.
+
+    WEIGHTS ARE NON-COMMERCIAL. The pretrained ADE20K checkpoints
+    (LibreSegformer{b0..b5}-sem) are converted from NVIDIA's SegFormer
+    release, whose license permits redistribution but restricts use to
+    research or evaluation only. They are not covered by LibreYOLO's
+    permissive license. See libreyolo/models/segformer/NOTICE.
+
+Depth Anything 3 (Apache License 2.0)
+    Path:    libreyolo/models/depth_anything3/_vendor/
+    License: libreyolo/models/depth_anything3/NOTICE
+    Source:  https://github.com/ByteDance-Seed/Depth-Anything-3
+    Commit:  41736238f5bced4debf3f2a12375d2466874866d
+
+    The DA3MONO-LARGE ViT-L encoder and DPT head are adapted from ByteDance
+    Seed's Apache-2.0 implementation. DINOv2 subcomponents retain Meta
+    Platforms Apache-2.0 headers. Package-relative imports and dependency-free
+    tensor reshapes do not alter learned parameters or monocular outputs.
+
 NAFNet (MIT License)
     Path:    libreyolo/models/nafnet/
     License: libreyolo/models/nafnet/NOTICE  (MIT)
@@ -89,16 +164,59 @@ NAFNet (MIT License)
     (MIT). LibreYOLO does not bundle NAFNet pretrained checkpoint files. Some
     published GoPro-trained NAFNet weights do not carry an explicit standalone
     weights license; convert only weights that you have the right to use and
-    redistribute.
+    redistribute. The SIDD denoising weights are trained on the Smartphone
+    Image Denoising Dataset (SIDD), which is distributed under the MIT License.
 
-Darknet YOLOv2 / YOLOv3 / YOLOv4 (public domain)
-    Path:    libreyolo/models/darknet/, libreyolo/models/yolo2|yolo3|yolo4/
+Real-ESRGAN / BasicSR (BSD-3-Clause / Apache-2.0)
+    Path:    libreyolo/models/realesrgan/, libreyolo/postprocess/realesrgan.py
+    License: libreyolo/models/realesrgan/NOTICE
+    Source:  https://github.com/xinntao/Real-ESRGAN (BSD-3-Clause),
+             https://github.com/XPixelGroup/BasicSR (Apache-2.0)
+
+    The LibreRealESRGAN super-resolution architectures (RRDBNet,
+    SRVGGNetCompact, pixel_unshuffle in libreyolo/models/realesrgan/nn.py) are a
+    native PyTorch implementation whose lineage is BasicSR (Apache-2.0,
+    Copyright 2018-2022 BasicSR Authors). The seam-free tiled forward in
+    libreyolo/models/realesrgan/utils.py is ported from Real-ESRGAN's inference
+    helper (BSD-3-Clause, Copyright (c) 2021 Xintao Wang). The released
+    Real-ESRGAN generator weights (RealESRGAN_x4plus, RealESRGAN_x2plus,
+    realesr-general-x4v3) are distributed under the BSD-3-Clause License;
+    LibreYOLO mirrors converted checkpoints with this provenance stated in the
+    model cards.
+
+PaddleOCR / PP-OCRv5 (Apache-2.0)
+    Path:    libreyolo/models/ppocr/, libreyolo/postprocess/ppocr.py
+    License: libreyolo/models/ppocr/NOTICE
+    Source:  https://github.com/PaddlePaddle/PaddleOCR
+
+    The LibrePPOCR text detection + recognition family is a native PyTorch
+    port of PP-OCRv5 from PaddleOCR (Apache-2.0, Copyright (c) 2020
+    PaddlePaddle Authors): the PP-LCNetV3 and PP-HGNetV2-B4 backbones,
+    RSEFPN/LKPAN necks, DB heads, SVTR sequence encoder, CTC head, DB quad
+    postprocess, and CTC greedy decode. The published LibrePPOCR checkpoints
+    are converted from the official Apache-2.0 PP-OCRv5 training checkpoints
+    and embed the PP-OCRv5 recognition dictionary as charset metadata.
+
+SwinIR (Apache-2.0)
+    Path:    libreyolo/models/swinir/
+    License: libreyolo/models/swinir/NOTICE
+    Source:  https://github.com/JingyunLiang/SwinIR
+             commit 6545850fbf8df298df73d81f3e8cba638787c8bd
+
+    The LibreSwinIR generator is a modified port of the official SwinIR
+    network_swinir.py implementation. Upstream parameter names are preserved
+    for strict loading of the Apache-2.0 released checkpoints. LibreYOLO adds
+    restore-task integration, preprocessing, postprocessing, validation, and
+    checkpoint metadata.
+
+Darknet YOLOv1 / YOLOv2 / YOLOv3 / YOLOv4 (public domain)
+    Path:    libreyolo/models/darknet/, libreyolo/models/yolo1|yolo2|yolo3|yolo4/
     License: libreyolo/models/darknet/cfgs/NOTICE  (public domain)
-    Source:  https://github.com/pjreddie/darknet  (YOLOv2/v3)
+    Source:  https://github.com/pjreddie/darknet  (YOLOv1/v2/v3)
              https://github.com/AlexeyAB/darknet   (YOLOv4)
 
-    The LibreYOLO2/3/4 families reproduce the YOLOv2, YOLOv3, and YOLOv4
-    architectures from the Darknet project, which is public domain (the
+    The LibreYOLO1/2/3/4 families reproduce the YOLOv1, YOLOv2, YOLOv3, and
+    YOLOv4 architectures from the Darknet project, which is public domain (the
     "YOLO LICENSE": "Darknet is public domain. Do whatever you want with
     it."). The model-definition (.cfg) files are bundled under
     libreyolo/models/darknet/cfgs/ and drive both the runtime graph builder
@@ -117,6 +235,37 @@ YOLOv7 / MultimediaTechLab/YOLO (MIT License)
     Module names mirror upstream so the MIT v7.pt weights load unchanged;
     the model-definition v7.yaml is bundled under libreyolo/models/yolo7/.
     MIT is MIT-compatible; these terms add only attribution obligations.
+
+D-FINE-seg (Apache License 2.0)
+    Path:    libreyolo/models/dfine/, libreyolo/postprocess/dfine.py
+    Source:  https://github.com/ArgoHA/D-FINE-seg
+
+    LibreDFINE segment support adapts D-FINE-seg's mask decoder/head,
+    mask matching, mask loss, and mask postprocess references. The
+    D-FINE-seg repository is Apache-2.0; its maintainer approved reuse
+    with attribution in ArgoHA/D-FINE-seg#70.
+
+EdgeTAM runtime preprocessing and Transformers checkpoint converter (Apache License 2.0)
+    Path:    libreyolo/models/sam/edgetam.py,
+             weights/convert_edgetam_weights.py
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/facebookresearch/EdgeTAM
+             commit 7711e012a30a2402c4eaab637bdb00a521302c91
+    Converter: https://github.com/huggingface/transformers
+             commit bd37c453544e83eb875ed3608980a1660376007a
+    Payload reference: https://huggingface.co/yonigozlan/EdgeTAM-hf
+             revision c266ce53b3fc00f0f495b583f6a116c4e57f53bb
+
+    The EdgeTAM checkpoint key mapping is adapted from Hugging Face
+    Transformers' Apache-2.0 converter. LibreYOLO replaces its direct pickle
+    load with the repository's safe untrusted-checkpoint loader, pins and
+    verifies both source and reference artifact digests, and builds a
+    provenance-complete mirror payload. The runtime adapter uses Transformers
+    for the model architecture and reproduces the pinned EdgeTAM square image
+    transform and prompt-coordinate scaling from sam2/utils/transforms.py.
+    The mirror's hash-pinned configuration and processor files are copied from
+    the Apache-2.0-declared payload reference; learned tensors are independently
+    converted from the official checkpoint and checked exactly.
 
 ------------------------------------------------------------------------
 Pretrained model weights

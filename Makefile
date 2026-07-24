@@ -1,5 +1,11 @@
 UV := uv run --no-sync
 
+# Per-test wall clock cap for e2e runs, enforced by pytest-timeout. A single
+# wedged test (a stalled weight download, a deadlocked loader) must not be able
+# to burn the whole nightly budget in silence. Override with E2E_TIMEOUT=<s>,
+# or 0 to disable.
+E2E_TIMEOUT ?= 900
+
 .DEFAULT_GOAL := help
 .PHONY: help setup format lint typecheck test test_pr_gate test_install_smoke test_e2e print_nightly_suite test_general_nightly test_flagship_nightly test_nightly test_rf5 build clean
 
@@ -20,6 +26,7 @@ help:
 	@echo "  test_e2e FROM=<file>          - Resume from a test file (e.g. FROM=test_rf1_training.py or FROM=rf1_training)"
 	@echo "  test_e2e MARKERS='<expr>'     - Run only matching e2e markers (e.g. MARKERS='e2e and not experimental_backend')"
 	@echo "  test_e2e MARKER='<expr>'      - Alias for MARKERS=..., also works with FROM=..."
+	@echo "  test_e2e E2E_TIMEOUT=<secs>   - Per-test timeout, default 900 (0 disables)"
 	@echo "  print_nightly_suite           - Print nightly suite version and contract"
 	@echo "  test_general_nightly          - Run broad native inference nightly checks"
 	@echo "  test_flagship_nightly         - Run heavy YOLO9/RF-DETR nightly checks"
@@ -46,7 +53,8 @@ typecheck:
 test: test_pr_gate
 
 test_pr_gate:
-	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network"
+	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network and not distributed" -n auto --dist loadfile
+	LIBREYOLO_PR_GATE=1 $(UV) pytest tests/unit -m "unit and not external_data and not network and distributed"
 
 test_install_smoke:
 	$(UV) python tests/smoke/run_install_smoke.py --mode $${MODE:-editable}
@@ -96,7 +104,7 @@ test_e2e:
 		echo "────────────────────────────────────────────────────────────"; \
 		echo "  [$$i/$$total] $$name"; \
 		echo "────────────────────────────────────────────────────────────"; \
-		$(UV) pytest "$$f" -m "$$markers" -v; \
+		PYTEST_TIMEOUT=$(E2E_TIMEOUT) $(UV) pytest "$$f" -m "$$markers" -v; \
 		rc=$$?; \
 		if [ $$rc -eq 0 ]; then passed=$$((passed + 1)); \
 		elif [ $$rc -eq 5 ]; then skipped=$$((skipped + 1)); \

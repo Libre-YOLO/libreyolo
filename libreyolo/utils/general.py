@@ -282,39 +282,3 @@ def get_slice_bboxes(
 # =============================================================================
 # Detection Post-processing
 # =============================================================================
-
-
-def make_anchors(
-    feats: List[torch.Tensor], strides: List[int], grid_cell_offset: float = 0.5
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Generate anchor points from feature map sizes.
-
-    Args:
-        feats: List of feature tensors from different scales
-        strides: List of stride values corresponding to each feature map
-        grid_cell_offset: Offset for grid cell centers (default: 0.5)
-
-    Returns:
-        Tuple of (anchor_points, stride_tensor)
-    """
-    centers_by_level = []
-    stride_by_level = []
-
-    for feature, stride in zip(feats, strides):
-        dtype, device = feature.dtype, feature.device
-        height, width = feature.shape[-2:]
-        y_coords = torch.arange(height, device=device, dtype=dtype).add(
-            grid_cell_offset
-        )
-        x_coords = torch.arange(width, device=device, dtype=dtype).add(
-            grid_cell_offset
-        )
-        grid_y, grid_x = torch.meshgrid(y_coords, x_coords, indexing="ij")
-        centers = torch.stack((grid_x.reshape(-1), grid_y.reshape(-1)), dim=1)
-        stride_value = torch.as_tensor(stride, device=device, dtype=dtype)
-
-        centers_by_level.append(centers)
-        stride_by_level.append(stride_value.expand(centers.shape[0], 1))
-
-    return torch.cat(centers_by_level, dim=0), torch.cat(stride_by_level, dim=0)

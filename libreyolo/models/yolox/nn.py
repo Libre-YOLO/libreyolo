@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from libreyolo.training.distributed import all_reduce_avg_scalar
+
 
 # =============================================================================
 # Utility functions
@@ -736,7 +738,11 @@ class YOLOXHead(nn.Module):
         if self.use_l1:
             l1_targets = torch.cat(l1_targets, 0)
 
-        num_fg = max(num_fg, 1)
+        # Global (DDP-reduced) positive count: dividing by the global count
+        # keeps DDP's gradient averaging equivalent to single-GPU training on
+        # the same global batch (issue #484). Identical to the previous
+        # ``max(num_fg, 1)`` outside DDP.
+        num_fg = all_reduce_avg_scalar(num_fg, device=outputs.device)
         loss_iou = (
             self.iou_loss(bbox_preds.view(-1, 4)[fg_masks], reg_targets)
         ).sum() / num_fg
@@ -810,6 +816,27 @@ class YOLOXHead(nn.Module):
         cls_preds_ = cls_preds[batch_idx][fg_mask]
         obj_preds_ = obj_preds[batch_idx][fg_mask]
         num_in_boxes_anchor = bboxes_preds_per_image.shape[0]
+
+        # No anchor centre falls near any GT (e.g. a degenerate/off-grid box
+        # from mosaic clipping or a bad label): nothing to match, so return an
+        # empty assignment instead of letting simota_matching's topk crash on
+        # an empty cost row. fg_mask stays all-False for this image.
+        if num_in_boxes_anchor == 0:
+            gt_matched_classes = gt_classes.new_zeros(0)
+            pred_ious_this_matching = gt_classes.new_zeros(0, dtype=torch.float)
+            matched_gt_inds = gt_classes.new_zeros(0, dtype=torch.long)
+            if mode == "cpu":
+                gt_matched_classes = gt_matched_classes.cuda()
+                fg_mask = fg_mask.cuda()
+                pred_ious_this_matching = pred_ious_this_matching.cuda()
+                matched_gt_inds = matched_gt_inds.cuda()
+            return (
+                gt_matched_classes,
+                fg_mask,
+                pred_ious_this_matching,
+                matched_gt_inds,
+                0,
+            )
 
         if mode == "cpu":
             gt_bboxes_per_image = gt_bboxes_per_image.cpu()

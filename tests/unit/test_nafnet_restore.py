@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import importlib.util
 import random
 from pathlib import Path
 
@@ -37,7 +38,8 @@ def test_restored_image_array_save_and_results_summary(tmp_path):
     assert result.restored.array.dtype == np.uint8
     assert result.restored.array.shape == (4, 5, 3)
     assert len(result) == 1
-    assert result.summary() == [{"name": "restored", "shape": [4, 5, 3]}]
+    assert result.summary() == [{"name": "restored", "shape": [4, 5, 3], "scale": 1}]
+    assert result.restore_scale == 1
     assert np.array_equal(result[0].restored.array, arr)
 
     out = tmp_path / "restored.png"
@@ -99,30 +101,44 @@ def test_exported_backend_restore_preprocess_rejects_images_larger_than_canvas()
         BaseBackend._preprocess_restore(img, input_size=(16, 16), color_format="rgb")
 
 
-def test_nafnet_fixed_onnx_export_roundtrip(tmp_path):
-    pytest.importorskip("onnx")
-    pytest.importorskip("onnxruntime")
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+def test_nafnet_fixed_export_roundtrip(tmp_path, format):
+    if format == "onnx":
+        pytest.importorskip("onnx")
+        pytest.importorskip("onnxruntime")
+    if format == "ncnn" and (
+        importlib.util.find_spec("pnnx") is None
+        or importlib.util.find_spec("ncnn") is None
+    ):
+        pytest.skip("PNNX and NCNN are required")
+    from libreyolo import LibreYOLO
 
-    from libreyolo.backends.onnx import OnnxBackend
-
-    export_path = tmp_path / "nafnet_restore.onnx"
+    export_path = tmp_path / f"nafnet_restore.{format}"
     model = LibreNAFNet(model_path=None, size="s", device="cpu")
     model.model.eval()
 
+    image = Image.fromarray(
+        np.random.default_rng(0).integers(0, 256, (12, 13, 3), dtype=np.uint8),
+        mode="RGB",
+    )
+    native = model(image).restored.array
+
     path = model.export(
-        format="onnx",
+        format=format,
         output_path=str(export_path),
         imgsz=16,
-        dynamic=True,
+        dynamic=False,
         simplify=False,
         opset=13,
     )
-    backend = OnnxBackend(path, device="cpu")
-    result = backend(Image.fromarray(np.zeros((5, 7, 3), dtype=np.uint8), mode="RGB"))
+    result = LibreYOLO(path, device="cpu")(image)
 
     assert result.boxes is None
-    assert result.restored.array.shape == (5, 7, 3)
+    assert result.restored.array.shape == (12, 13, 3)
     assert result.restored.array.dtype == np.uint8
+    assert (
+        int(np.abs(native.astype(int) - result.restored.array.astype(int)).max()) <= 1
+    )
 
 
 def test_restore_task_aliases_and_filename_suffix():
@@ -132,6 +148,80 @@ def test_restore_task_aliases_and_filename_suffix():
     assert LibreNAFNet.detect_size_from_filename("LibreNAFNets-restore.pt") == "s"
     assert LibreNAFNet.detect_task_from_filename("LibreNAFNetl-restore.pt") == "restore"
     assert LibreNAFNet.detect_task_from_filename("LibreNAFNetl.pt") is None
+
+
+def test_nafnet_sidd_variant_filename_and_download_url():
+    fname = "LibreNAFNetl-restore-sidd.pt"
+    assert LibreNAFNet.detect_size_from_filename(fname) == "l"
+    assert LibreNAFNet.detect_task_from_filename(fname) == "restore"
+    assert LibreNAFNet.detect_variant_from_filename(fname) == "sidd"
+    # the default GoPro-style restore name carries no variant
+    assert LibreNAFNet.detect_variant_from_filename("LibreNAFNetl-restore.pt") is None
+    url = LibreNAFNet.get_download_url(fname)
+    assert url.endswith(
+        "LibreYOLO/LibreNAFNetl-restore-sidd/resolve/main/LibreNAFNetl-restore-sidd.pt"
+    )
+
+
+def test_infer_nafnet_config_distinguishes_layouts():
+    from libreyolo.models.nafnet.model import infer_nafnet_config
+    from libreyolo.models.nafnet.nn import NAFNetLocal
+
+    # A SIDD-style layout (multi-block stages) different from the GoPro default.
+    sidd_like = NAFNetLocal(
+        img_channel=3,
+        width=16,
+        middle_blk_num=3,
+        enc_blk_nums=[2, 2],
+        dec_blk_nums=[1, 2],
+        train_size=(1, 3, 64, 64),
+    )
+    cfg = infer_nafnet_config(sidd_like.state_dict())
+    assert cfg == {
+        "width": 16,
+        "middle_blk_num": 3,
+        "enc_blk_nums": [2, 2],
+        "dec_blk_nums": [1, 2],
+    }
+
+
+def test_nafnet_loads_inferred_block_layout_from_checkpoint(tmp_path):
+    from libreyolo.models import LibreYOLO
+    from libreyolo.models.nafnet.nn import NAFNetLocal
+    from libreyolo.utils.serialization import wrap_libreyolo_checkpoint
+
+    # Build a non-GoPro layout, wrap it, and confirm the loader rebuilds the
+    # matching architecture (a fixed size config could not load this).
+    net = NAFNetLocal(
+        img_channel=3,
+        width=64,
+        middle_blk_num=3,
+        enc_blk_nums=[2, 2, 3, 4],
+        dec_blk_nums=[2, 2, 2, 2],
+        train_size=(1, 3, 64, 64),
+    )
+    checkpoint = wrap_libreyolo_checkpoint(
+        net.state_dict(),
+        model_family="nafnet",
+        size="l",
+        task="restore",
+        nc=1,
+        names={0: "image"},
+        imgsz=256,
+        degradation="denoise",
+        dataset="SIDD",
+    )
+    path = tmp_path / "LibreNAFNetl-restore-sidd.pt"
+    torch.save(checkpoint, path)
+
+    loaded = LibreYOLO(str(path), device="cpu")
+    assert isinstance(loaded, LibreNAFNet)
+    # strict load succeeded -> the rebuilt architecture matches the checkpoint
+    assert len(loaded.model.encoders) == 4
+    assert len(loaded.model.middle_blks) == 3
+    with torch.no_grad():
+        out = loaded.model(torch.zeros(1, 3, 64, 64))
+    assert tuple(out.shape) == (1, 3, 64, 64)
 
 
 def test_libreyolo_factory_loads_metadata_wrapped_nafnet_checkpoint(tmp_path):
@@ -259,3 +349,102 @@ def test_restore_dataset_pairs_targets_and_applies_coupled_augmentation(tmp_path
     batch = restore_collate_fn([dataset[0], dataset[0]])
     assert batch[0].shape[0] == 2
     assert batch[1].shape == batch[0].shape
+
+
+def _make_restore_pair(root: Path, imgsz: int):
+    """A square input/target pair where target = 255 - input, all pixels distinct."""
+    input_dir = root / "inputs" / "train"
+    target_dir = root / "targets" / "train"
+    input_dir.mkdir(parents=True)
+    target_dir.mkdir(parents=True)
+    base = (
+        (np.arange(imgsz * imgsz * 3) % 256).astype(np.uint8).reshape(imgsz, imgsz, 3)
+    )
+    target = (255 - base).astype(np.uint8)
+    Image.fromarray(base, mode="RGB").save(input_dir / "sample.png")
+    Image.fromarray(target, mode="RGB").save(target_dir / "sample.png")
+    cfg = {
+        "train": str(input_dir),
+        "input_dir": "inputs",
+        "target_dir": "targets",
+        "nc": 1,
+        "names": {0: "image"},
+    }
+    return cfg, base, target
+
+
+def _restore_expected(base, target, seed, imgsz):
+    """Replay the _augment_pair RNG sequence to predict the coupled transform."""
+    random.seed(seed)
+    top = random.randint(0, max(0, imgsz - imgsz))
+    left = random.randint(0, max(0, imgsz - imgsz))
+    inp = base[top : top + imgsz, left : left + imgsz]
+    tgt = target[top : top + imgsz, left : left + imgsz]
+    if random.random() < 0.5:
+        inp, tgt = inp[:, ::-1], tgt[:, ::-1]
+    did_vflip = random.random() < 0.5
+    if did_vflip:
+        inp, tgt = inp[::-1, :], tgt[::-1, :]
+    k = random.randint(0, 3)
+    if k:
+        inp, tgt = np.rot90(inp, k), np.rot90(tgt, k)
+    return np.ascontiguousarray(inp), np.ascontiguousarray(tgt), did_vflip, k
+
+
+def test_restore_paired_ops_keep_alignment_and_are_seed_deterministic(tmp_path):
+    imgsz = 4
+    cfg, base, target = _make_restore_pair(tmp_path / "restore", imgsz)
+    dataset = RestoreDataset(cfg, split="train", imgsz=imgsz, augment=True)
+
+    # Determinism: same seed -> byte-identical tensors.
+    random.seed(123)
+    inp_a, tgt_a, _, _ = dataset[0]
+    random.seed(123)
+    inp_b, tgt_b, _, _ = dataset[0]
+    assert torch.equal(inp_a, inp_b)
+    assert torch.equal(tgt_a, tgt_b)
+
+    # Alignment: target = 255 - input must survive every coupled op, so the
+    # summed pair stays all-ones regardless of the sampled geometry.
+    for seed in range(20):
+        random.seed(seed)
+        inp, tgt, _, _ = dataset[0]
+        assert inp.shape == tgt.shape == (3, imgsz, imgsz)
+        assert torch.allclose(inp + tgt, torch.ones_like(inp), atol=1 / 255)
+
+
+def test_restore_vflip_and_rot90_actually_occur_and_match_prediction(tmp_path):
+    imgsz = 4
+    cfg, base, target = _make_restore_pair(tmp_path / "restore", imgsz)
+    dataset = RestoreDataset(cfg, split="train", imgsz=imgsz, augment=True)
+
+    # Pick a seed that triggers both a vertical flip and a non-zero rot90.
+    seed = next(
+        s
+        for s in range(1000)
+        if (lambda r: r[2] and r[3] != 0)(_restore_expected(base, target, s, imgsz))
+    )
+    exp_inp, exp_tgt, did_vflip, k = _restore_expected(base, target, seed, imgsz)
+    assert did_vflip and k != 0
+
+    random.seed(seed)
+    inp, tgt, _, _ = dataset[0]
+    assert torch.equal(
+        inp, torch.from_numpy(exp_inp).permute(2, 0, 1).float().div(255.0)
+    )
+    assert torch.equal(
+        tgt, torch.from_numpy(exp_tgt).permute(2, 0, 1).float().div(255.0)
+    )
+
+
+def test_restore_augment_false_is_native_and_untransformed(tmp_path):
+    imgsz = 8
+    cfg, base, target = _make_restore_pair(tmp_path / "restore", imgsz)
+    dataset = RestoreDataset(cfg, split="train", imgsz=4, augment=False)
+
+    inp, tgt, info, _ = dataset[0]
+    # augment=False keeps native resolution and applies no geometry.
+    assert inp.shape == (3, imgsz, imgsz)
+    expected = torch.from_numpy(base).permute(2, 0, 1).float().div(255.0)
+    assert torch.equal(inp, expected)
+    assert info["orig_shape"] == (imgsz, imgsz)

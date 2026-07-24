@@ -180,6 +180,18 @@ class LibreVLMModel(BaseModel):
         self._name_to_id = {v.strip().lower(): k for k, v in self.names.items()}
         return self
 
+    def set_task(self, task: str) -> "LibreVLMModel":
+        """Switch the active task without reloading the model.
+
+        Prompt-driven families serve every task from the same weights, so
+        unlike checkpoint families the task is not fixed at load time. The
+        task is validated against ``SUPPORTED_TASKS`` and, like
+        ``set_classes``, is sticky across later ``predict()``/``track()``
+        calls. Returns ``self`` so calls can chain.
+        """
+        self.task = self._resolve_task(task)
+        return self
+
     def chat(
         self,
         image: ImageInput,

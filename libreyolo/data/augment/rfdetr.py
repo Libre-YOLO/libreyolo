@@ -18,6 +18,7 @@ masks ride along for crop fidelity). They are deliberately NOT merged.
 
 from __future__ import annotations
 
+import logging
 import random
 from typing import Optional, Sequence
 
@@ -27,6 +28,9 @@ import numpy as np
 from ..obb import normalize_obb_angle, scale_xywhr
 from .constants import IMAGENET_MEAN as _IMAGENET_MEAN
 from .constants import IMAGENET_STD as _IMAGENET_STD
+from .copy_paste import copy_paste as _copy_paste_instances
+
+logger = logging.getLogger(__name__)
 
 
 def compute_multi_scale_scales(
@@ -231,12 +235,18 @@ def _filter_segments(segments, keep_mask):
 
 
 def _rasterize_segments(segments, image_shape, mask_shape, max_masks):
-    """Render per-instance polygon rings to a (max_masks, mask_h, mask_w) float32 array.
+    """Render per-instance polygon rings to a (n, mask_h, mask_w) uint8 array.
 
     Polygons are given in pixel coords on ``image_shape``; they are scaled into
-    ``mask_shape`` before being filled into individual mask slots.
+    ``mask_shape`` before being filled into individual mask slots. ``n`` is the
+    real instance count (capped at ``max_masks``), not padded to ``max_masks``,
+    and masks are uint8 rather than float32 — the dense padded float32 buffer
+    exhausted host RAM with multiple dataloader workers on large datasets
+    (issue #527). Row ``i`` aligns with label row ``i``; the collate pads to
+    the batch max.
     """
-    masks = np.zeros((max_masks, mask_shape[0], mask_shape[1]), dtype=np.float32)
+    n = min(len(segments), max_masks) if segments else 0
+    masks = np.zeros((n, mask_shape[0], mask_shape[1]), dtype=np.uint8)
     if not segments:
         return masks
 
@@ -251,7 +261,7 @@ def _rasterize_segments(segments, image_shape, mask_shape, max_masks):
             mask = dense_mask
             if mask.shape != mask_shape:
                 mask = cv2.resize(mask, (mask_w, mask_h), interpolation=cv2.INTER_NEAREST)
-            masks[idx] = (mask > 0).astype(np.float32)
+            masks[idx] = (mask > 0).astype(np.uint8)
             continue
 
         polygons = []
@@ -271,7 +281,8 @@ class RFDETRSegTransform:
     """Per-sample seg transform: square resize + flip + ImageNet norm + polygon rasterization.
 
     Output: ``(img_chw_float_rgb_imagenet, padded_labels [max_labels, 5] cxcywh-pixel,
-    masks [max_labels, mask_h, mask_w] float32)``.
+    masks [n_instances, mask_h, mask_w] uint8)`` — mask row ``i`` aligns with
+    label row ``i``; the collate pads masks to the batch max instance count.
 
     The trainer's ``on_forward`` converts cxcywh-pixel → cxcywh-normalized and slices
     masks to ``[num_valid, H, W]`` per image before passing to the criterion.
@@ -297,11 +308,20 @@ class RFDETRSegTransform:
         crop_min_size: int = 384,
         crop_max_size: int = 600,
         target_dim: int = 5,
+        imagenet_norm: bool = True,
+        copy_paste: float = 0.0,
+        copy_paste_mode: str = "flip",
     ):
         if target_dim not in (5, 6):
             raise ValueError(f"RF-DETR target_dim must be 5 or 6, got {target_dim}")
         self.max_labels = max_labels
         self.flip_prob = flip_prob
+        # Copy-paste instance augmentation (segmentation only). The pass-through
+        # dataset serves one sample at a time, so only the same-sample "flip"
+        # source is available here; a "mixup" request warns once and falls back.
+        self.copy_paste = copy_paste
+        self.copy_paste_mode = copy_paste_mode
+        self._copy_paste_warned = False
         self.imgsz = imgsz
         self.mask_downsample_ratio = mask_downsample_ratio
         self.multi_scale = multi_scale
@@ -314,6 +334,7 @@ class RFDETRSegTransform:
         self.crop_min_size = crop_min_size
         self.crop_max_size = crop_max_size
         self.target_dim = target_dim
+        self.imagenet_norm = bool(imagenet_norm)
         self.target_size = _resolve_training_size(
             imgsz,
             multi_scale=multi_scale,
@@ -338,6 +359,34 @@ class RFDETRSegTransform:
             else np.zeros((len(targets),), dtype=np.float32)
         )
         segments_t = _copy_segments(segments)
+
+        # Copy-paste while segments are still polygons on the original canvas.
+        # Ordered so copy_paste == 0 draws no RNG (fixtures stay pinned).
+        if self.copy_paste > 0.0 and self.target_dim == 5 and segments_t and len(boxes):
+            if self.copy_paste_mode == "mixup" and not self._copy_paste_warned:
+                logger.warning(
+                    "copy_paste_mode='mixup' needs a second sample, which the "
+                    "RF-DETR pass-through pipeline does not provide; using the "
+                    "flipped same-sample source instead."
+                )
+                self._copy_paste_warned = True
+            if random.random() < self.copy_paste:
+                # Same-sample source: force the mirror (flip_prob=1.0) so pasted
+                # instances land at their mirrored position rather than back on
+                # top of themselves.
+                image, boxes, labels, segments_t = _copy_paste_instances(
+                    image,
+                    boxes,
+                    labels,
+                    segments_t,
+                    image,
+                    boxes,
+                    labels,
+                    segments_t,
+                    max_instances=self.max_labels,
+                    flip_prob=1.0,
+                )
+                angles = np.zeros((len(boxes),), dtype=np.float32)
 
         # Optional horizontal flip — applied before resize, on the original canvas.
         if random.random() < self.flip_prob:
@@ -435,7 +484,8 @@ class RFDETRSegTransform:
 
         # CHW float32 in [0, 1], then ImageNet normalize.
         img_out = img_rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
-        img_out = (img_out - _IMAGENET_MEAN) / _IMAGENET_STD
+        if self.imagenet_norm:
+            img_out = (img_out - _IMAGENET_MEAN) / _IMAGENET_STD
         img_out = np.ascontiguousarray(img_out)
 
         mask_shape = (target_h, target_w)
@@ -478,9 +528,10 @@ class RFDETRSegPassThroughDataset:
         enable_mixup=False,
         mosaic_prob=0.0,
         mixup_prob=0.0,
+        perspective=0.0,
     ):
         del mosaic, degrees, translate, mosaic_scale, mixup_scale, shear
-        del enable_mixup, mosaic_prob, mixup_prob
+        del enable_mixup, mosaic_prob, mixup_prob, perspective
         self.dataset = dataset
         self.img_size = img_size
         self.preproc = preproc or RFDETRSegTransform(imgsz=img_size[0])

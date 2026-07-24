@@ -29,6 +29,10 @@ from libreyolo.data.augment.detr import (  # noqa: F401
     _generate_scales,
     _labels_at_index_2,
 )
+from libreyolo.data.augment.rfdetr import (  # noqa: F401
+    RFDETRSegPassThroughDataset,
+    RFDETRSegTransform,
+)
 
 
 class DFINETrainTransform(DetrTrainTransform):
@@ -42,3 +46,14 @@ class DFINEPassThroughDataset(DetrPassThroughDataset):
 
 
 DFINEMultiScaleCollate = DetrMultiScaleCollate
+
+
+class DFINESegTransform(RFDETRSegTransform):
+    """D-FINE segment transform: square resize + masks, without ImageNet norm."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("imagenet_norm", False)
+        super().__init__(*args, **kwargs)
+
+
+DFINESegPassThroughDataset = RFDETRSegPassThroughDataset

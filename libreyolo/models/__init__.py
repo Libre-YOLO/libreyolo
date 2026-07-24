@@ -58,28 +58,49 @@ from .picodet.model import LibrePICODET  # noqa: E402
 from .rtdetr.model import LibreRTDETR  # noqa: E402  (registered before LibreRTDETRv2 so metadata-less ckpts default to v1)
 from .rtdetrv2.model import LibreRTDETRv2  # noqa: E402
 from .rtmdet.model import LibreRTMDet  # noqa: E402
+
 # Darknet-lineage detectors (public domain). Each keys can_load on a unique
-# family prefix (yolo2./yolo3./yolo4.) so registration order is not sensitive.
+# family prefix (yolo1./yolo2./yolo3./yolo4.) so registration order is not sensitive.
 from .yolo3.model import LibreYOLO3  # noqa: E402
 from .yolo4.model import LibreYOLO4  # noqa: E402
 from .yolo2.model import LibreYOLO2  # noqa: E402
+from .yolo1.model import LibreYOLO1  # noqa: E402  (VOC museum; can_load keyed on unique yolo1. FC head)
 from .yolo7.model import LibreYOLO7  # noqa: E402  (can_load keyed on unique implicit_a.implicit)
 from .l2cs.model import LibreL2CS  # noqa: E402,F401  (import registers family)
 from .fomo.model import LibreFOMO  # noqa: E402,F401  (import registers family)
 from .depth_anything.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnythingV2,
 )
+from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
+from .depth_anything3.model import (  # noqa: E402,F401  (import registers family)
+    LibreDepthAnything3,
+)
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
+from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
+from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
+from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
+from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
 from .resnet.model import LibreResNet  # noqa: E402  (classify-only; standalone conv1+fc, rejects backbone embeds)
+
 # Native CLIP zero-shot classifier: pure-torch towers (no open_clip at runtime),
 # so it registers eagerly. can_load is uniquely keyed on logit_scale +
 # text_projection + visual.conv1, so registration order does not matter.
 from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
+
+# Native SigLIP 2 zero-shot classifier: pure-torch towers (no transformers at
+# runtime; the SentencePiece tokenizer is imported lazily behind [siglip2]), so
+# it registers eagerly. can_load is uniquely keyed on logit_bias +
+# vision_model.embeddings.patch_embedding + text_model.head, so order does not
+# matter. NB: SigLIP carries logit_bias, which CLIP lacks.
+from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
+# PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
+# on the composite det.*/rec.* checkpoint layout, so order does not matter.
+from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
 
 
 def _ensure_rfdetr():
@@ -98,6 +119,7 @@ def _ensure_rfdetr():
             "Install with: pip install libreyolo[rfdetr]"
         )
     from .rfdetr.model import LibreRFDETR  # noqa: F401  (import triggers registration)
+
     # LibreDINOv2 shares the same transformers dependency (DINOv2 backbone).
     from .dinov2.model import LibreDINOv2  # noqa: F401  (import triggers registration)
 
@@ -197,11 +219,6 @@ def _has_any_libreyolo_metadata(loaded: object) -> bool:
     return bool(metadata_keys & set(loaded))
 
 
-def _infer_yolo9_head_task(weights_dict: dict) -> str | None:
-    """Infer YOLO9 task from task-specific head branches when metadata is absent."""
-    return LibreYOLO9.detect_checkpoint_task(weights_dict)
-
-
 # =============================================================================
 # LibreYOLO — unified factory function
 # =============================================================================
@@ -227,8 +244,7 @@ def LibreYOLO(
         reg_max: Regression max for DFL (YOLOv9 only, default: 16).
         nb_classes: Number of classes (auto-detected if omitted).
         device: Device for inference ("auto", "cuda", "cpu", "mps").
-        task: Optional explicit task ("detect", "segment", "pose", "classify",
-              "gaze", "obb").
+        task: Optional canonical task name. See ``libreyolo.tasks.TASKS``.
         compute_units: CoreML-only — Apple silicon routing for .mlpackage loads.
                        One of "all", "cpu_only", "cpu_and_gpu", "cpu_and_ne".
                        Ignored for non-CoreML formats.
@@ -251,6 +267,13 @@ def LibreYOLO(
         from ..backends.torchscript import TorchScriptBackend
 
         return TorchScriptBackend(
+            model_path, nb_classes=nb_classes, device=device, task=task
+        )
+
+    if model_path.endswith(".tflite"):
+        from ..backends.tflite import TFLiteBackend
+
+        return TFLiteBackend(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
@@ -427,11 +450,13 @@ def LibreYOLO(
         if isinstance(loaded, dict) and isinstance(loaded.get("model_family"), str)
         else None
     )
-    if metadata_family_for_registration in ("rfdetr", "dinov2") or _needs_rfdetr_registration(
-        weights_dict
-    ) or (
-        "predict.weight" in weights_dict
-        and any(k.startswith("backbone.") for k in weights_dict)
+    if (
+        metadata_family_for_registration in ("rfdetr", "dinov2")
+        or _needs_rfdetr_registration(weights_dict)
+        or (
+            "predict.weight" in weights_dict
+            and any(k.startswith("backbone.") for k in weights_dict)
+        )
     ):
         try:
             _ensure_rfdetr()
@@ -481,7 +506,9 @@ def LibreYOLO(
             matched_cls = matching_classes[0]
 
     if matched_cls is None:
-        registered = sorted({c.FAMILY for c in BaseModel._registry if getattr(c, "FAMILY", "")})
+        registered = sorted(
+            {c.FAMILY for c in BaseModel._registry if getattr(c, "FAMILY", "")}
+        )
         raise ValueError(
             "Could not detect model architecture from state dict keys.\n"
             f"Registered model families: {', '.join(registered)}."
@@ -494,7 +521,14 @@ def LibreYOLO(
             "checkpoint with Cityscapes semantic metadata."
         )
 
-    # Auto-detect size
+    # Auto-detect size. Schema v1.0 metadata is authoritative when present;
+    # shape sniffing stays as the legacy fallback (and is required for raw
+    # upstream state dicts). Finalized quantized checkpoints replace some
+    # weight keys with packed payloads, so sniffing alone cannot cover them.
+    if size is None:
+        meta_size = loaded.get("size") if isinstance(loaded, dict) else None
+        if isinstance(meta_size, str) and meta_size:
+            size = meta_size
     if size is None:
         if matched_cls.FAMILY == "rfdetr":
             # RF-DETR needs the full checkpoint for args-based detection
@@ -547,6 +581,8 @@ def LibreYOLO(
         else None
     )
     filename_task = matched_cls.detect_task_from_filename(Path(model_path).name)
+    if checkpoint_task is None:
+        checkpoint_task = matched_cls.detect_checkpoint_task(weights_dict)
     if checkpoint_task is None and matched_cls.FAMILY == "rfdetr":
         if any(k.startswith("segmentation_head") for k in weights_dict):
             checkpoint_task = "segment"
@@ -564,7 +600,7 @@ def LibreYOLO(
         and filename_task is None
         and matched_cls.FAMILY == "yolo9"
     ):
-        checkpoint_task = _infer_yolo9_head_task(weights_dict)
+        checkpoint_task = matched_cls.detect_checkpoint_task(weights_dict)
     if checkpoint_task is None and matched_cls.FAMILY == "ec":
         if "decoder.keypoint_embedding.weight" in weights_dict:
             checkpoint_task = "pose"
@@ -585,11 +621,6 @@ def LibreYOLO(
         if matched_cls.FAMILY in ("yolo9", "yolo9_e2e", "yolo9_p2")
         else {}
     )
-    if matched_cls.FAMILY == "yolo9" and resolved_task == "pose":
-        detected_keypoints = matched_cls.detect_num_keypoints(weights_dict)
-        if detected_keypoints is not None:
-            family_kwargs["num_keypoints"] = detected_keypoints
-
     if matched_cls.FAMILY in ("rfdetr", "dinov2"):
         # RF-DETR / DINOv2 always need the path (handle their own loading internally)
         model = matched_cls(
@@ -640,19 +671,27 @@ __all__ = [
     "LibreYOLO3",
     "LibreYOLO4",
     "LibreYOLO2",
+    "LibreYOLO1",
     "LibreYOLO7",
     "LibreRTDETR",
     "LibreRTDETRv2",
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreDepthAnything3",
     "LibreNAFNet",
+    "LibreBiRefNet",
+    "LibreRealESRGAN",
+    "LibreSwinIR",
     "LibreEoMT",
     "LibrePIDNet",
+    "LibreSegformer",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",
     "LibreResNet",
     "LibreCLIP",
+    "LibreSigLIP2",
+    "LibrePPOCR",
     "try_ensure_rfdetr",
 ]
