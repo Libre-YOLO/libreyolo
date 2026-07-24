@@ -204,6 +204,37 @@ def test_head_boxes_rejected_for_directory_sources(tmp_path):
         runner(str(tmp_path), head_boxes=[(10, 10, 50, 50)])
 
 
+def test_default_head_detector_prefers_yunet(monkeypatch):
+    import cv2
+
+    import libreyolo.models.page.inference as inf
+
+    class FakeYuNet:  # no network: a benign stand-in for the real detector
+        def __call__(self, img):
+            return []
+
+    monkeypatch.setattr(inf, "YuNetFaceDetector", FakeYuNet)
+    if not hasattr(cv2, "FaceDetectorYN"):
+        monkeypatch.setattr(cv2, "FaceDetectorYN", object, raising=False)
+    assert isinstance(inf._default_head_detector(), FakeYuNet)
+
+
+def test_default_head_detector_falls_back_to_haar(monkeypatch):
+    import cv2
+
+    import libreyolo.models.page.inference as inf
+    from libreyolo.models.l2cs.face import HaarCascadeFaceDetector
+
+    class BoomYuNet:  # simulate offline / missing model download
+        def __call__(self, img):
+            raise RuntimeError("YuNet model unavailable (offline)")
+
+    monkeypatch.setattr(inf, "YuNetFaceDetector", BoomYuNet)
+    if not hasattr(cv2, "FaceDetectorYN"):
+        monkeypatch.setattr(cv2, "FaceDetectorYN", object, raising=False)
+    assert isinstance(inf._default_head_detector(), HaarCascadeFaceDetector)
+
+
 # =========================================================================
 # Drawing
 # =========================================================================

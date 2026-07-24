@@ -34,7 +34,13 @@ None of the existing task contracts can represent that honestly, so
   implementing the shared face-detector protocol
   (`libreyolo/models/l2cs/face.py`). Detector face boxes are expanded by
   `head_expand` (default 1.4) into head boxes, because gaze-target models
-  are trained on full-head crops.
+  are trained on full-head crops. The default fallback detector prefers
+  **YuNet** (OpenCV `FaceDetectorYN`, 4.5.4+; far fewer false positives
+  than Haar) and falls back to the offline Haar cascade when YuNet's API
+  or one-time model download is unavailable. A frontal-face detector
+  cannot localize people who face away from the camera; for those scenes
+  supply `head_boxes=` or a person/head detector via `head_detector=`
+  (a small trained head detector is the intended future default).
 - JSON/summary rows add a `gaze_target: {x, y, in_frame}` entry per box.
 - Launch family: `page` (LibrePAGE, PaGE arXiv:2607.04860), sizes
   s/sp/b/hp mirroring the DINOv3 tower (ViT-S / S+ / B / H+).

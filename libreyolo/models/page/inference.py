@@ -27,7 +27,12 @@ from ...utils.general import log_saved_result, resolve_save_path
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import Boxes, GazeTargets, Results
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
-from ..l2cs.face import FaceDetector, default_face_detector, resolve_face_detector
+from ..l2cs.face import (
+    FaceDetector,
+    HaarCascadeFaceDetector,
+    YuNetFaceDetector,
+    resolve_face_detector,
+)
 from .utils import (
     clamp_pixel_box,
     crop_boxes_from_faces,
@@ -41,6 +46,39 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _default_head_detector() -> FaceDetector:
+    """Pick the best available fallback head detector for gaze-target.
+
+    Unlike L2CS gaze (which defaults to OpenCV's offline Haar cascade), PAGE
+    prefers **YuNet** whenever OpenCV exposes ``FaceDetectorYN`` (4.5.4+): it
+    is a small CNN detector with far fewer false positives than Haar on
+    in-the-wild scenes (empirically, Haar's spurious boxes on chairs/hands do
+    not survive). YuNet needs a one-time ~230 KB MIT model fetch; if that (or
+    the ``FaceDetectorYN`` API) is unavailable — e.g. offline — fall back to
+    the zero-download Haar cascade.
+
+    A frontal-face detector still cannot find people who face away from the
+    camera; for those scenes supply ``head_boxes=`` or a person/head detector
+    via ``head_detector=``.
+    """
+    import cv2
+
+    if hasattr(cv2, "FaceDetectorYN"):
+        try:
+            detector = YuNetFaceDetector()
+            # Force the one-time model resolution now so an offline failure
+            # falls back cleanly here rather than mid-inference.
+            detector(np.zeros((32, 32, 3), dtype=np.uint8))
+            return detector
+        except Exception as exc:  # noqa: BLE001 - any failure -> Haar fallback
+            logger.warning(
+                "YuNet face detector unavailable (%s); falling back to the "
+                "OpenCV Haar cascade.",
+                exc,
+            )
+    return HaarCascadeFaceDetector()
 
 
 class PageInferenceRunner:
@@ -238,11 +276,12 @@ class PageInferenceRunner:
             return resolve_face_detector(explicit)
         if self.model.head_detector is not None:
             return self.model.head_detector
-        detector = default_face_detector()
+        detector = _default_head_detector()
         logger.info(
-            "No head detector provided; using OpenCV %s as a fallback and "
-            "expanding face boxes into head boxes. Pass head_detector=... or "
-            "head_boxes=[...] to control head localization.",
+            "No head detector provided; using %s and expanding face boxes into "
+            "head boxes. Pass head_detector=... or head_boxes=[...] to control "
+            "head localization (a face detector cannot find people facing away "
+            "from the camera).",
             type(detector).__name__,
         )
         self.model.head_detector = detector
