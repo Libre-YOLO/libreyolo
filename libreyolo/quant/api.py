@@ -490,6 +490,14 @@ def export_finalized_pt(wrapper, out=None, remainder: str = "fp16") -> str:
     # code differently across devices, and the invariant we promise is
     # "finalized scores exactly what you validated on this device".
     model_copy = copy.deepcopy(wrapper.model)
+
+    # Live LoRA adapters are folded on the copy so the checkpoint carries
+    # plain dense weights; the live model keeps its adapters trainable.
+    from ..training.lora import merge_lora_adapters, module_has_lora
+
+    if module_has_lora(model_copy):
+        merge_lora_adapters(model_copy)
+
     with torch.no_grad():
         if recipe not in CAST_RECIPES:
             for _, module in _quant_modules(model_copy):
@@ -591,6 +599,8 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
         remainder = kwargs.pop("remainder", "fp16")
         if kwargs:
             logger.info("Ignoring export kwargs for format='pt': %s", sorted(kwargs))
+        # export_finalized_pt works on a deep copy (folding any live LoRA
+        # adapters there); the live model is never mutated on this path.
         return export_finalized_pt(wrapper, out=out, remainder=remainder)
 
     if recipe in CAST_RECIPES:
@@ -605,12 +615,6 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
             "PyTorch. Use format='pt' for the crystallized checkpoint, or "
             "dequantize() to use the float exporters."
         )
-
-    if manifest.get("state") == "finalized" and fmt == "onnx":
-        # QDQ emission traces fake-quant over fp32 masters; reconstruct them
-        # from the packed weights (exact by the packing invariant).
-        reprepare_model(wrapper)
-
     if fmt != "onnx":
         raise QuantizationError(
             "int8-quantized export currently supports format='onnx' (QDQ "
@@ -635,9 +639,21 @@ def quantized_export(wrapper, format: str = "onnx", **kwargs) -> str:
 
     from ..export import BaseExporter
 
-    _set_export_mode(wrapper.model, True)
+    def _pre_trace():
+        # Invoked by BaseExporter.__call__ after every request rejection
+        # (option preflight, imgsz/path resolution): both steps below mutate
+        # the live model, so a rejected export must leave the finalized
+        # packed state untouched.
+        # QDQ emission traces fake-quant over fp32 masters; reconstruct them
+        # from the packed weights (exact by the packing invariant). No-op
+        # unless the manifest state is "finalized".
+        reprepare_model(wrapper)
+        _set_export_mode(wrapper.model, True)
+
     try:
-        return BaseExporter.create("onnx", wrapper)(**kwargs)
+        return BaseExporter.create("onnx", wrapper)(
+            _pre_trace_hook=_pre_trace, **kwargs
+        )
     finally:
         _set_export_mode(wrapper.model, False)
 

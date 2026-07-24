@@ -598,6 +598,120 @@ class TestSemanticMask:
         assert result.semantic_mask is not None
 
 
+class TestResultsV13PositionalCompat:
+    """v1.4 added panoptic/matte/ocr/restore_scale to Results.
+
+    Those parameters must stay after the complete v1.3 signature: v1.3-era
+    positional calls (e.g. passing depth_map at its old slot) must keep
+    binding to the same parameters. This was a v1.4.0 release blocker —
+    panoptic was inserted before depth_map, silently swallowing it.
+    """
+
+    @staticmethod
+    def _v13_payloads():
+        from libreyolo.utils.results import Gaze, RestoredImage
+
+        shape = (48, 64)
+        return {
+            "boxes": Boxes(
+                torch.tensor([[1.0, 2.0, 10.0, 20.0]]),
+                torch.tensor([0.9]),
+                torch.tensor([0.0]),
+            ),
+            "orig_shape": shape,
+            "masks": Masks(torch.zeros(1, *shape), shape),
+            "keypoints": Keypoints(torch.zeros(1, 5, 3), shape),
+            "probs": Probs(torch.tensor([0.1, 0.9])),
+            "obb": OBB(torch.zeros(1, 7), shape),
+            "gaze": Gaze(torch.zeros(1, 2), shape),
+            "points": Points(torch.zeros(1, 4), shape),
+            "semantic_mask": SemanticMask(torch.zeros(shape, dtype=torch.long), shape),
+            "depth_map": DepthMap(torch.zeros(shape), shape),
+            "restored": RestoredImage(torch.zeros(*shape, 3, dtype=torch.uint8), shape),
+        }
+
+    def test_init_v13_positional_order(self):
+        p = self._v13_payloads()
+        speed = {"inference": 1.0}
+        track_id = torch.tensor([7])
+
+        # Exact v1.3.x positional argument order — must keep working verbatim.
+        result = Results(
+            p["boxes"],
+            p["orig_shape"],
+            "img.jpg",
+            {0: "thing"},
+            p["masks"],
+            p["keypoints"],
+            p["probs"],
+            p["obb"],
+            p["gaze"],
+            p["points"],
+            p["semantic_mask"],
+            p["depth_map"],
+            p["restored"],
+            speed,
+            track_id,
+            3,
+        )
+
+        assert result.path == "img.jpg"
+        assert result.names == {0: "thing"}
+        assert result.masks is p["masks"]
+        assert result.keypoints is p["keypoints"]
+        assert result.probs is p["probs"]
+        assert result.obb is p["obb"]
+        assert result.gaze is p["gaze"]
+        assert result.points is p["points"]
+        assert result.semantic_mask is p["semantic_mask"]
+        assert result.depth_map is p["depth_map"]
+        assert result.restored is p["restored"]
+        assert result.speed == speed
+        assert torch.equal(result.track_id, track_id)
+        assert result.frame_idx == 3
+        # v1.4-only slots must stay at their defaults.
+        assert result.panoptic is None
+        assert result.matte is None
+        assert result.ocr is None
+        assert result.restore_scale == 1
+        # summary() was the reported crash when depth_map bound to panoptic.
+        result.summary()
+
+    def test_update_v13_positional_order(self):
+        p = self._v13_payloads()
+        track_id = torch.tensor([7])
+
+        result = Results(boxes=None, orig_shape=p["orig_shape"])
+        # Exact v1.3.x positional argument order for update().
+        result.update(
+            p["boxes"],
+            p["masks"],
+            p["probs"],
+            p["keypoints"],
+            p["obb"],
+            p["gaze"],
+            p["points"],
+            p["semantic_mask"],
+            p["depth_map"],
+            p["restored"],
+            track_id,
+        )
+
+        assert result.masks is p["masks"]
+        assert result.probs is p["probs"]
+        assert result.keypoints is p["keypoints"]
+        assert result.obb is p["obb"]
+        assert result.gaze is p["gaze"]
+        assert result.points is p["points"]
+        assert result.semantic_mask is p["semantic_mask"]
+        assert result.depth_map is p["depth_map"]
+        assert result.restored is p["restored"]
+        assert torch.equal(result.track_id, track_id)
+        assert result.panoptic is None
+        assert result.matte is None
+        assert result.ocr is None
+
+
 def test_draw_semantic_mask_paints_classes_and_skips_ignore():
     img = Image.new("RGB", (10, 8), color=(0, 0, 0))
     mask = np.full((8, 10), 255, dtype=np.uint8)

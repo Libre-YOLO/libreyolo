@@ -306,6 +306,12 @@ class BaseExporter(ABC):
         Returns:
             Path to the exported model file.
         """
+        # Private plumbing (quantized_export): a callable run at the
+        # post-validation mutation point below, so caller-side mutations
+        # (reconstructing fp32 masters, enabling export mode) also wait for
+        # every request rejection.
+        pre_trace_hook = kwargs.pop("_pre_trace_hook", None)
+
         task = getattr(self.model, "task", "detect")
         if task == "depth":
             # Depth export uses the fixed-resolution dense contract: backends
@@ -382,6 +388,23 @@ class BaseExporter(ABC):
             half,
             int8,
         )
+
+        # ---- Post-validation mutation point ------------------------------
+        # Every request rejection above — format support, precision
+        # validation, option preflight, imgsz/path resolution — has fired;
+        # from here on the live model may be mutated.
+        #
+        # A model fine-tuned with lora=True carries live PEFT adapter layers.
+        # Fold them into dense weights so the traced graph is a plain model
+        # with no peft dependency. The merge is destructive (adapters are
+        # folded and removed), so it must not run any earlier.
+        from ..training.lora import merge_lora_adapters, module_has_lora
+
+        if module_has_lora(self.model.model):
+            merge_lora_adapters(self.model.model)
+
+        if pre_trace_hook is not None:
+            pre_trace_hook()
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 

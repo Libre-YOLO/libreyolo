@@ -943,6 +943,134 @@ class TestExporterValidation:
         assert exporter.suffix == ".tflite"
 
 
+class TestExportLoraOrdering:
+    """Live LoRA adapters are folded into dense weights for export.
+
+    That merge is destructive (adapters are folded and removed), so every
+    request rejection — unknown format, quantized recipe/format gates, the
+    exporter's own option preflight — must raise *before* it happens.
+    Otherwise a rejected export silently strips the adapters from a model
+    the user may keep training (v1.4.0 release blocker).
+    """
+
+    @staticmethod
+    def _record_lora_merges(monkeypatch, on_merge):
+        from libreyolo.training import lora as lora_helpers
+
+        monkeypatch.setattr(lora_helpers, "module_has_lora", lambda m: True)
+        monkeypatch.setattr(lora_helpers, "merge_lora_adapters", on_merge)
+
+    def test_invalid_format_raises_before_lora_merge(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from libreyolo.models.base.model import BaseModel
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        with pytest.raises(ValueError, match="Unsupported export format"):
+            BaseModel.export(stub, format="not-a-format")
+        assert merged == []  # adapters untouched by the failed export
+
+    def test_preflight_rejection_leaves_lora_untouched(self, monkeypatch):
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        # Embedded-NMS ONNX export is YOLO9-only; the preflight rejection
+        # must fire before the destructive adapter merge.
+        wrapper = _make_wrapper()
+        with pytest.raises(NotImplementedError, match="NMS"):
+            OnnxExporter(wrapper)(nms=True)
+        assert merged == []
+
+    def test_quantized_export_rejection_leaves_lora_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.quant import QuantizationError
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        stub._quant_manifest = {"recipe": "int8"}
+        # int8 recipe only exports to onnx/pt; torchscript must be rejected
+        # before the destructive adapter merge.
+        with pytest.raises(QuantizationError, match="format='onnx'"):
+            BaseModel.export(stub, format="torchscript")
+        assert merged == []
+
+    def test_pt_remainder_rejection_leaves_lora_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.quant import QuantizationError
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        stub._quant_manifest = {"recipe": "int8"}
+        with pytest.raises(QuantizationError, match="remainder"):
+            BaseModel.export(stub, format="pt", remainder="int4")
+        assert merged == []
+
+    def test_quantized_pt_export_merges_on_a_copy(self, monkeypatch, tmp_path):
+        from libreyolo.models.base.model import BaseModel
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        wrapper = _make_wrapper()
+        wrapper.task = "detect"
+        wrapper.model_path = None
+        wrapper._quant_manifest = {"recipe": "int8", "state": "prepared"}
+        out = BaseModel.export(wrapper, format="pt", out=str(tmp_path / "q.pt"))
+        assert Path(out).exists()
+        # The fold ran exactly once, on the checkpoint's deep copy — the
+        # live model keeps its adapters trainable.
+        assert len(merged) == 1
+        assert merged[0] is not wrapper.model
+
+    def test_quantized_onnx_rejection_keeps_finalized_state(self, monkeypatch):
+        from libreyolo.quant.api import quantized_export
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        wrapper = _make_wrapper()  # not yolo9 -> embedded NMS is rejected
+        wrapper._quant_manifest = {
+            "recipe": "int8",
+            "state": "finalized",
+            "calibrated": True,
+        }
+        with pytest.raises(NotImplementedError, match="NMS"):
+            quantized_export(wrapper, format="onnx", nms=True)
+        # reprepare_model never ran: the packed finalized state is intact.
+        assert wrapper._quant_manifest["state"] == "finalized"
+        assert merged == []
+
+    def test_successful_export_merges_after_preflight(self, monkeypatch, tmp_path):
+        events = []
+        self._record_lora_merges(monkeypatch, lambda m: events.append("merge"))
+
+        original_preflight = BaseExporter._preflight
+
+        def spy_preflight(self, **kwargs):
+            events.append("preflight")
+            return original_preflight(self, **kwargs)
+
+        monkeypatch.setattr(BaseExporter, "_preflight", spy_preflight)
+
+        wrapper = _make_wrapper()
+        path = TorchScriptExporter(wrapper)(
+            output_path=str(tmp_path / "model.torchscript")
+        )
+        assert Path(path).exists()
+        assert events == ["preflight", "merge"]
+
+
 class TestOutputPathGeneration:
     def test_auto_path_torchscript(self):
         wrapper = _make_wrapper(model_name="yolo9", size="t")

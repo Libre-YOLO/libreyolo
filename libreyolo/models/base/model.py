@@ -1456,16 +1456,12 @@ class BaseModel(ABC):
         Returns:
             Path to the exported model file.
         """
-        # A model fine-tuned with lora=True carries live PEFT adapter layers.
-        # Fold them into dense weights before export so the traced graph is a
-        # plain model with no peft dependency. RF-DETR merges via its own
-        # export override; this covers the other lora-capable families
-        # (D-FINE, DEIM, DEIMv2, RT-DETR v1/v2/v4, EC, ConvNeXt).
-        from libreyolo.training.lora import merge_lora_adapters, module_has_lora
-
-        if module_has_lora(self.model):
-            merge_lora_adapters(self.model)
-
+        # Live LoRA adapters are folded into dense weights for export. That
+        # merge is destructive, so it happens only after every request
+        # rejection: BaseExporter.__call__ merges after its preflight for the
+        # float formats, and quantized_export merges after its recipe/format
+        # gates for the format="pt" path (its ONNX path goes through
+        # BaseExporter too).
         if getattr(self, "_quant_manifest", None):
             from libreyolo.quant.api import quantized_export
 
