@@ -89,9 +89,8 @@ class LibreDepthAnythingV2(BaseModel):
     @classmethod
     def can_load(cls, weights_dict: dict) -> bool:
         # DA V2 checkpoints carry the DINOv2 encoder under ``pretrained.*`` and
-        # the DPT head under ``depth_head.*``. RF-DETR's depth head also uses
-        # ``depth_head.*`` but its encoder is ``backbone.*``, so the two never
-        # collide on the encoder prefix.
+        # the DPT head under ``depth_head.*``. Requiring both prefixes prevents
+        # unrelated depth heads from being detected as DA V2 checkpoints.
         has_encoder = any(k.startswith("pretrained.") for k in weights_dict)
         has_head = any(k.startswith("depth_head.") for k in weights_dict)
         return has_encoder and has_head
@@ -219,12 +218,10 @@ class LibreDepthAnythingV2(BaseModel):
 
     def train(self, *args, **kwargs):
         raise NotImplementedError(
-            "Training Depth Anything V2 is out of scope for LibreYOLO. Upstream "
-            "ships no relative-depth training code, and LibreYOLO's depth trainer "
-            "targets the RF-DETR depth head. To train a depth model from scratch, "
-            "use a 'depth'-capable family such as RF-DETR; to fine-tune Depth "
-            f"Anything, train upstream at {self._UPSTREAM_URL} and convert the "
-            "result with weights/convert_depth_anything_v2_weights.py."
+            "Training Depth Anything V2 is out of scope for LibreYOLO. To "
+            "fine-tune Depth Anything, train upstream at "
+            f"{self._UPSTREAM_URL} and convert the result with "
+            "weights/convert_depth_anything_v2_weights.py."
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:

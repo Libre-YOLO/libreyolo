@@ -46,15 +46,14 @@ class TestDepthAnythingMetadata:
         }
         assert LibreDepthAnythingV2.can_load(state)
 
-    def test_can_load_rejects_rfdetr_depth_signature(self):
+    def test_can_load_requires_da_encoder_prefix(self):
         from libreyolo.models.depth_anything.model import LibreDepthAnythingV2
 
-        # RF-DETR depth uses backbone.* (not pretrained.*) for the encoder.
-        rfdetr_depth = {
+        unrelated_depth = {
             "backbone.encoder.proj.weight": torch.zeros(1),
             "depth_head.weight": torch.zeros(1, 8, 1, 1),
         }
-        assert not LibreDepthAnythingV2.can_load(rfdetr_depth)
+        assert not LibreDepthAnythingV2.can_load(unrelated_depth)
 
     @pytest.mark.parametrize(
         "embed_dim,expected",
