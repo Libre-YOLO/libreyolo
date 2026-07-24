@@ -17,6 +17,57 @@ README_PATH = REPO_ROOT / "README.md"
 DOCS_PATH = REPO_ROOT / "docs" / "export_support.md"
 MARKERS = {"validated": "✓", "experimental": "exp", "blocked": ""}
 
+# The table is a shop window, not an index: readers come for the flagship
+# detectors, so those lead, and the remaining families are grouped by how
+# people scan the library (detection first, niche tasks last) instead of
+# alphabetically — which used to open the table with `birefnet` (matting)
+# while yolo9/yolonas/rfdetr sat at the bottom.
+FLAGSHIP_FAMILIES = ("yolo9", "rfdetr")
+TASK_ORDER = (
+    "detect",
+    "segment",
+    "pose",
+    "obb",
+    "point",
+    "classify",
+    "semantic",
+    "panoptic",
+    "depth",
+    "restore",
+    "matte",
+    "ocr",
+    "gaze",
+)
+
+
+def _family_order(inventory: dict) -> list[str]:
+    """Return inventory families in reader-facing order.
+
+    Flagships lead in their documented order. The rest sort by the earliest
+    task tier they serve (per TASK_ORDER), then by parity-validated export
+    count (most validated first, so heavily tested families outrank
+    export-blocked ones), then by name for determinism.
+    """
+    from libreyolo.export.support import EXPORT_FORMATS, get_support
+
+    def key(family: str) -> tuple:
+        if family in FLAGSHIP_FAMILIES:
+            return (0, FLAGSHIP_FAMILIES.index(family), 0, family)
+        metadata = inventory[family]
+        tiers = [
+            TASK_ORDER.index(task) if task in TASK_ORDER else len(TASK_ORDER)
+            for task in metadata["tasks"]
+        ]
+        validated = sum(
+            1
+            for task in metadata["tasks"]
+            for fmt in EXPORT_FORMATS
+            if get_support(family, task, fmt).tier == "validated"
+        )
+        return (1, min(tiers), -validated, family)
+
+    return sorted(inventory, key=key)
+
 
 def _rows() -> tuple[list[str], list[str]]:
     from libreyolo.export.support import EXPORT_FORMATS, get_support
@@ -34,7 +85,8 @@ def _rows() -> tuple[list[str], list[str]]:
         "| " + " | ".join(["---", "---", *(["---:"] * len(EXPORT_FORMATS))]) + " |",
     ]
     blocked = []
-    for family, metadata in inventory.items():
+    for family in _family_order(inventory):
+        metadata = inventory[family]
         for task in metadata["tasks"]:
             entries = [get_support(family, task, fmt) for fmt in EXPORT_FORMATS]
             readme.append(

@@ -73,75 +73,75 @@ Training capabilities are documented per family in
 <!-- export-support:start -->
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| deim | detect | exp | ✓ | exp | exp |  |  |  |
-| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
-| depth_anything3 | depth |  |  |  |  |  |  |  |
-| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
-| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
-| dinov2 | classify | ✓ |  |  |  |  |  |  |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
-| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
-| edgetam | segment |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
-| eomt | segment |  |  |  |  |  |  |  |
-| eomt | panoptic |  |  |  |  |  |  |  |
-| florence2 | detect |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
-| grounding_dino | detect |  |  |  |  |  |  |  |
-| internvl3 | detect |  |  |  |  |  |  |  |
-| kosmos2 | detect |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ |  |  |  |  |  |  |
-| lfm2vl | detect |  |  |  |  |  |  |  |
-| locateanything | detect |  |  |  |  |  |  |  |
-| locateanything | point |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| mobilesam | segment |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
-| omdet_turbo | detect |  |  |  |  |  |  |  |
-| ov_deim | detect |  |  |  |  |  |  |  |
-| owlv2 | detect |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| picosam3 | segment | ✓ |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| ppocr | ocr |  |  |  |  |  |  |  |
-| qwen3vl | detect |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
-| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
-| rtmdet | segment |  |  |  |  |  |  |  |
-| sam | segment |  |  |  |  |  |  |  |
-| sam2 | segment |  |  |  |  |  |  |  |
-| sam3 | segment |  |  |  |  |  |  |  |
-| segformer | semantic |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  |
-| smolvlm2 | detect |  |  |  |  |  |  |  |
-| swinir | restore | exp | exp | exp | exp | exp |  |  |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  |
+| ec | pose | ✓ | ✓ | exp | exp |  |  |  |
+| ec | segment | ✓ | ✓ | exp | exp |  |  |  |
+| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
+| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
+| dfine | detect | ✓ | ✓ | exp | exp |  |  |  |
+| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp |
 | yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |
-| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  |
+| rtmdet | segment |  |  |  |  |  |  |  |
+| deim | detect | exp | ✓ | exp | exp |  |  |  |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  |
+| florence2 | detect |  |  |  |  |  |  |  |
+| grounding_dino | detect |  |  |  |  |  |  |  |
+| internvl3 | detect |  |  |  |  |  |  |  |
+| kosmos2 | detect |  |  |  |  |  |  |  |
+| lfm2vl | detect |  |  |  |  |  |  |  |
+| locateanything | detect |  |  |  |  |  |  |  |
+| locateanything | point |  |  |  |  |  |  |  |
+| omdet_turbo | detect |  |  |  |  |  |  |  |
+| ov_deim | detect |  |  |  |  |  |  |  |
+| owlv2 | detect |  |  |  |  |  |  |  |
+| qwen3vl | detect |  |  |  |  |  |  |  |
+| smolvlm2 | detect |  |  |  |  |  |  |  |
+| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| eomt | segment |  |  |  |  |  |  |  |
+| eomt | panoptic |  |  |  |  |  |  |  |
+| picosam3 | segment | ✓ |  |  |  |  |  |  |
+| edgetam | segment |  |  |  |  |  |  |  |
+| mobilesam | segment |  |  |  |  |  |  |  |
+| sam | segment |  |  |  |  |  |  |  |
+| sam2 | segment |  |  |  |  |  |  |  |
+| sam3 | segment |  |  |  |  |  |  |  |
+| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |
+| dinov2 | classify | ✓ |  |  |  |  |  |  |
+| clip | classify | ✓ |  |  |  |  |  |  |
+| siglip2 | classify | ✓ |  |  |  |  |  |  |
+| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| segformer | semantic |  |  |  |  |  |  |  |
 | zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  |
+| depth_anything3 | depth |  |  |  |  |  |  |  |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  |
+| swinir | restore | exp | exp | exp | exp | exp |  |  |
+| birefnet | matte | exp | ✓ | exp | exp |  |  |  |
+| ppocr | ocr |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ |  |  |  |  |  |  |
 <!-- export-support:end -->
 
 ## Depth estimation
