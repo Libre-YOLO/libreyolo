@@ -129,13 +129,6 @@ def test_fallback_reasons_describe_project_support_not_developer_environment():
     assert "semantic" not in eomt_segment.reason
 
 
-def test_readme_generator_reports_missing_compatibility_anchor():
-    from tools.gen_compat_table import _replace_readme
-
-    with pytest.raises(ValueError, match="neither export-support markers"):
-        _replace_readme("# README without compatibility", "generated")
-
-
 def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeypatch):
     from tools import gen_compat_table
 
@@ -143,7 +136,8 @@ def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeyp
     assert gen_compat_table.INVENTORY_PATH.exists()
     rows, _ = gen_compat_table._rows()
     assert rows
-
+    # The full matrix lives in docs/export_support.md; the README is curated.
+    assert gen_compat_table.render_docs().startswith("# Export support")
 
 def test_dump_inventory_refuses_partial_overwrite(tmp_path):
     from tools.dump_model_inventory import write_inventory
