@@ -5,7 +5,7 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases
 before 1.4.0 are documented in the
 [GitHub Releases](https://github.com/LibreYOLO/libreyolo/releases) only.
 
-## [1.4.0] - 2026-07-22
+## [1.4.0] - 2026-07-24
 
 LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a quantization stack, two new trackers, and a multi-GPU training correctness overhaul.
 
@@ -80,6 +80,9 @@ LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a q
 
 ### Fixed
 
+- libreyolo[openvocab] now installs ftfy and regex, required by OV-DEIM's CLIP prompt tokenizer at predict time; a clean openvocab-only install previously failed on the first prediction (#636)
+- Results and LibreEoMT keep full v1.3 positional-argument compatibility: new v1.4 parameters (panoptic/matte/ocr/restore_scale; num_queries) moved after the complete v1.3 signatures, with compatibility tests (#636)
+- Export never mutates the live model before the request is accepted: LoRA adapters are folded (and finalized int8 models re-prepared) only after format lookup, option preflight, and parameter resolution; quantized format='pt' export folds adapters on the checkpoint copy, leaving the live model trainable (#636)
 - RTMDet fine-tune collapse from missing head init (~196,000x loss shock on re-heading; nc=1 rebuild 0.26 -> 0.709 mAP50-95) (#568)
 - PicoDet/RTMDet AMP training crashes/NaN on CUDA (fp32 loss under AMP, SimOTA BCE outside autocast) (#568, #551)
 - Pose validation under DDP: per-rank file clobbering and collective deadlock (#605)
