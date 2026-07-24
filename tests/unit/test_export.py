@@ -1001,6 +1001,56 @@ class TestExportLoraOrdering:
             BaseModel.export(stub, format="torchscript")
         assert merged == []
 
+    def test_pt_remainder_rejection_leaves_lora_untouched(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from libreyolo.models.base.model import BaseModel
+        from libreyolo.quant import QuantizationError
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        stub = SimpleNamespace(model=nn.Linear(2, 2))
+        stub._quant_manifest = {"recipe": "int8"}
+        with pytest.raises(QuantizationError, match="remainder"):
+            BaseModel.export(stub, format="pt", remainder="int4")
+        assert merged == []
+
+    def test_quantized_pt_export_merges_on_a_copy(self, monkeypatch, tmp_path):
+        from libreyolo.models.base.model import BaseModel
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        wrapper = _make_wrapper()
+        wrapper.task = "detect"
+        wrapper.model_path = None
+        wrapper._quant_manifest = {"recipe": "int8", "state": "prepared"}
+        out = BaseModel.export(wrapper, format="pt", out=str(tmp_path / "q.pt"))
+        assert Path(out).exists()
+        # The fold ran exactly once, on the checkpoint's deep copy — the
+        # live model keeps its adapters trainable.
+        assert len(merged) == 1
+        assert merged[0] is not wrapper.model
+
+    def test_quantized_onnx_rejection_keeps_finalized_state(self, monkeypatch):
+        from libreyolo.quant.api import quantized_export
+
+        merged = []
+        self._record_lora_merges(monkeypatch, merged.append)
+
+        wrapper = _make_wrapper()  # not yolo9 -> embedded NMS is rejected
+        wrapper._quant_manifest = {
+            "recipe": "int8",
+            "state": "finalized",
+            "calibrated": True,
+        }
+        with pytest.raises(NotImplementedError, match="NMS"):
+            quantized_export(wrapper, format="onnx", nms=True)
+        # reprepare_model never ran: the packed finalized state is intact.
+        assert wrapper._quant_manifest["state"] == "finalized"
+        assert merged == []
+
     def test_successful_export_merges_after_preflight(self, monkeypatch, tmp_path):
         events = []
         self._record_lora_merges(monkeypatch, lambda m: events.append("merge"))
