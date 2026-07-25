@@ -290,6 +290,11 @@ class InferenceRunner:
             device_str = f"cuda:{device_str}"
         target = torch.device(device_str)
         if target != self.model.device:
+            # ``.to()`` reallocates parameters, so any captured graph now points
+            # at freed storage. This matters even when moving back to a device
+            # that already has a cache entry: the addresses it recorded are gone.
+            if hasattr(self.model, "_invalidate_cuda_graphs"):
+                self.model._invalidate_cuda_graphs("device change")
             self.model.device = target
             if hasattr(self.model.model, "to"):
                 dtype = None

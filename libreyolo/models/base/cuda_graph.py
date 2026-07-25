@@ -14,6 +14,14 @@ Graphs are keyed on ``(shape, dtype, device)`` because a graph is valid for
 exactly the shape it was captured with. Anything that cannot be captured falls
 back to eager with a single warning; capture never changes numerics, and
 ``tests/unit/test_cuda_graph.py`` gates that as bit-identical output.
+
+Invalidation is a caller contract, not something this module can detect. A graph
+records memory addresses, so replacing modules or tensors (``quantize()``,
+``dequantize()``, a device move, a rebuilt detection head) leaves captured
+kernels pointing at stale or freed storage, and the cache key cannot see it.
+Every such site must call ``BaseModel._invalidate_cuda_graphs()``. Updating
+weights *in place*, as an optimizer step or a state-dict load does, is safe and
+needs nothing: replay reads the new values from the same addresses.
 """
 
 from __future__ import annotations
@@ -180,8 +188,9 @@ class GraphRunner:
                 return self.forward_fn(input_tensor)
             self._graphs[key] = captured
 
-        captured.static_input.copy_(input_tensor)
-        captured.graph.replay()
+        with torch.cuda.device(input_tensor.device):
+            captured.static_input.copy_(input_tensor)
+            captured.graph.replay()
         captured.replays += 1
         return _unflatten(
             captured.skeleton, [tensor.clone() for tensor in captured.static_outputs]
@@ -267,19 +276,23 @@ class GraphRunner:
         static_input = torch.empty_like(input_tensor)
         static_input.copy_(input_tensor)
 
-        stream = torch.cuda.Stream()
-        stream.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(stream):
-            for _ in range(self.warmup_iters):
-                self.forward_fn(static_input)
-        torch.cuda.current_stream().wait_stream(stream)
+        # Stream, pool and graph all bind to the *current* device, which is not
+        # necessarily the model's. Without this, a model on cuda:1 captures
+        # against cuda:0 and the capture fails.
+        with torch.cuda.device(input_tensor.device):
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                for _ in range(self.warmup_iters):
+                    self.forward_fn(static_input)
+            torch.cuda.current_stream().wait_stream(stream)
 
-        if self._pool is None:
-            self._pool = torch.cuda.graph_pool_handle()
+            if self._pool is None:
+                self._pool = torch.cuda.graph_pool_handle()
 
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, pool=self._pool):
-            output = self.forward_fn(static_input)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, pool=self._pool):
+                output = self.forward_fn(static_input)
 
         static_outputs, skeleton = _flatten(output)
         if not static_outputs:

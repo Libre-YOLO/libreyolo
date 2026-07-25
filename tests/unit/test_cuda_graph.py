@@ -383,6 +383,69 @@ def test_no_unused_warning_when_precapture_matches(caplog):
     assert not [r for r in caplog.records if "never used" in r.message]
 
 
+# ---------------------------------------------------------------------------
+# Invalidation: a graph records addresses, so relocating parameters must
+# drop the cache (PR #645 review findings 2 and 3).
+# ---------------------------------------------------------------------------
+
+
+@requires_cuda
+def test_quantize_invalidates_captured_graphs():
+    """quantize() swaps modules, so parameters move and graphs go stale."""
+    model = LibreYOLO9(model_path=None, size="t", device="cuda")
+    model.model.eval()
+    model.capture_graph(imgsz=640, batch=1)
+    assert model.graph_info()["graph_count"] == 1
+
+    model._invalidate_cuda_graphs("quantize")
+    assert model.graph_info()["graph_count"] == 0
+
+
+@requires_cuda
+def test_device_change_invalidates_captured_graphs():
+    """A device move reallocates parameters; the old cache entry is dead.
+
+    Driven through ``_set_device`` rather than ``predict(device=...)`` because
+    a cuda-to-cpu predict switch trips an unrelated pre-existing bug: YOLO9
+    caches ``anchor_points`` as a plain attribute that ``.to()`` does not move.
+    """
+    from libreyolo.models.base.inference import InferenceRunner
+
+    model = LibreYOLO9(model_path=None, size="t", device="cuda")
+    model.model.eval()
+    model.capture_graph(imgsz=640, batch=1)
+    assert model.graph_info()["graph_count"] == 1
+
+    InferenceRunner(model)._set_device("cpu")
+    assert model.graph_info()["graph_count"] == 0, (
+        "moving the model must drop graphs captured on the old device"
+    )
+
+
+def test_invalidate_is_a_noop_without_a_runner():
+    model = LibreYOLO9(model_path=None, size="t", device="cpu")
+    model._invalidate_cuda_graphs("nothing captured yet")
+    assert model.graph_info()["graph_count"] == 0
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 2, reason="needs a second CUDA device"
+)
+def test_capture_binds_to_the_models_device_not_the_current_one():
+    """Capture must target the model's device, not whatever is current."""
+    model = LibreYOLO9(model_path=None, size="t", device="cuda:1")
+    model.model.eval()
+    with torch.cuda.device(0):  # current device deliberately differs
+        model.capture_graph(imgsz=640, batch=1)
+        with torch.no_grad(), model.cuda_graph_scope(True):
+            out = model._forward_graphed(
+                torch.randn(1, 3, 640, 640, device="cuda:1")
+            )
+    assert model.graph_info()["graph_count"] == 1
+    assert model.graph_info()["eager_fallbacks"] == 0
+    assert all(t.device.index == 1 for t in _tensors(out))
+
+
 @requires_cuda
 def test_capture_raises_rather_than_falling_back():
     """Explicit capture() must fail loudly; only run() degrades silently."""

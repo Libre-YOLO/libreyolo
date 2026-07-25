@@ -408,6 +408,21 @@ class BaseModel(ABC):
             self._graph_runner.release()
             self._graph_runner = None
 
+    def _invalidate_cuda_graphs(self, reason: str) -> None:
+        """Drop captured graphs after a change that relocates parameters.
+
+        A graph records memory addresses, not values, so anything that
+        *replaces* modules or tensors (quantize, dequantize, a device move, a
+        rebuilt head) leaves captured kernels pointing at storage that is stale
+        or already freed. In-place weight updates are safe and do not need this;
+        replacement does. Every such call site must invalidate, because the
+        cache key of shape/dtype/device cannot observe the change on its own.
+        """
+        if self._graph_runner is None:
+            return
+        logger.debug("cuda_graph: invalidating captured graphs (%s)", reason)
+        self.release_graphs()
+
     @abstractmethod
     def _postprocess(
         self,
@@ -1497,6 +1512,7 @@ class BaseModel(ABC):
         """
         from libreyolo.quant import quantize_model
 
+        self._invalidate_cuda_graphs("quantize")
         return quantize_model(
             self,
             recipe=recipe,
@@ -1529,6 +1545,7 @@ class BaseModel(ABC):
         """
         from libreyolo.quant import dequantize_model
 
+        self._invalidate_cuda_graphs("dequantize")
         return dequantize_model(self)
 
     def save(self, path: str) -> str:
