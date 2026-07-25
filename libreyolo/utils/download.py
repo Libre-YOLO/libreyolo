@@ -1,9 +1,11 @@
 """Download helpers for LibreYOLO model weights."""
 
+import json
 import logging
 import os
 import re
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -15,6 +17,8 @@ _DOWNLOAD_RETRIES = 3
 _DOWNLOAD_BACKOFF_SECONDS = 1.0
 _DOWNLOAD_TIMEOUT = (10, 60)
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+_DOWNLOAD_LOCK_TIMEOUT = 6 * 60 * 60
+_DOWNLOAD_LOCK_POLL_SECONDS = 0.1
 logger = logging.getLogger(__name__)
 
 
@@ -74,12 +78,116 @@ def _response_total_size(response, offset: int) -> int:
     return content_length
 
 
+def _partial_metadata_path(partial: Path) -> Path:
+    return partial.with_name(partial.name + ".json")
+
+
+def _reset_partial(partial: Path) -> None:
+    partial.unlink(missing_ok=True)
+    _partial_metadata_path(partial).unlink(missing_ok=True)
+
+
+def _response_validator(response) -> str | None:
+    """Return a validator suitable for an If-Range request."""
+    etag = response.headers.get("etag")
+    if etag and not etag.lstrip().lower().startswith("w/"):
+        return etag
+    return response.headers.get("last-modified")
+
+
+def _load_partial_validator(partial: Path, url: str) -> str | None:
+    metadata = _partial_metadata_path(partial)
+    try:
+        state = json.loads(metadata.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        return None
+    if state.get("url") != url:
+        return None
+    validator = state.get("validator")
+    return validator if isinstance(validator, str) and validator else None
+
+
+def _save_partial_validator(partial: Path, url: str, validator: str | None) -> None:
+    metadata = _partial_metadata_path(partial)
+    if validator is None:
+        metadata.unlink(missing_ok=True)
+        return
+    temporary = metadata.with_name(metadata.name + ".tmp")
+    temporary.write_text(
+        json.dumps({"url": url, "validator": validator}),
+        encoding="utf-8",
+    )
+    os.replace(temporary, metadata)
+
+
+def _try_lock_file(lock_file) -> None:
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(lock_file) -> None:
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _download_lock(path: Path):
+    """Serialize downloads targeting the same final weights path."""
+    lock_path = path.with_name(path.name + ".download.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as lock_file:
+        if lock_file.seek(0, os.SEEK_END) == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+
+        deadline = time.monotonic() + _DOWNLOAD_LOCK_TIMEOUT
+        while True:
+            try:
+                _try_lock_file(lock_file)
+                break
+            except OSError as e:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out waiting for download lock: {lock_path}"
+                    ) from e
+                time.sleep(_DOWNLOAD_LOCK_POLL_SECONDS)
+
+        try:
+            yield
+        finally:
+            _unlock_file(lock_file)
+
+
 def _download_once(url: str, partial: Path, headers: dict[str, str]) -> None:
     """Stream one request, resuming a partial file when the server permits it."""
     offset = partial.stat().st_size if partial.exists() else 0
+    validator = _load_partial_validator(partial, url) if offset else None
+    if offset and validator is None:
+        logger.warning(
+            "Partial download has no matching HTTP validator; restarting from byte 0."
+        )
+        _reset_partial(partial)
+        offset = 0
+
     request_headers = dict(headers)
     if offset:
+        assert validator is not None
         request_headers["Range"] = f"bytes={offset}-"
+        request_headers["If-Range"] = validator
 
     response = requests.get(
         url,
@@ -89,31 +197,45 @@ def _download_once(url: str, partial: Path, headers: dict[str, str]) -> None:
     )
     try:
         if response.status_code == 416 and offset:
+            response_validator = _response_validator(response)
             complete_range = re.match(
                 r"bytes\s+\*/(\d+)",
                 response.headers.get("content-range", ""),
                 re.IGNORECASE,
             )
-            if complete_range and int(complete_range.group(1)) == offset:
+            same_object = response_validator == validator
+            if (
+                same_object
+                and complete_range
+                and int(complete_range.group(1)) == offset
+            ):
                 return
 
             # The saved offset is invalid for this object. Remove only this
             # download's temporary file so the retry starts cleanly.
-            partial.unlink(missing_ok=True)
+            _reset_partial(partial)
 
         response.raise_for_status()
 
         append = offset > 0 and response.status_code == 206
+        response_validator = _response_validator(response)
+        if append and response_validator not in {None, validator}:
+            _reset_partial(partial)
+            raise IOError("Download object changed while resuming")
+
         if offset and not append:
             logger.warning(
                 "Download server ignored the resume request; restarting from byte 0."
             )
             offset = 0
+            _reset_partial(partial)
 
         total_size = _response_total_size(response, offset)
         downloaded = offset
         last_logged = -1
         mode = "ab" if append else "wb"
+        if not append:
+            _save_partial_validator(partial, url, response_validator)
         with open(partial, mode) as f:
             for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
                 if chunk:
@@ -142,7 +264,11 @@ def download_weights(model_path: str, size: str):
     """Download weights from Hugging Face if not found locally."""
     path = Path(model_path)
     if path.exists():
-        return
+        # A concurrent downloader may have atomically placed the file but still
+        # be running its family-specific verification hook.
+        with _download_lock(path):
+            if path.exists():
+                return
 
     from libreyolo.models.base.model import BaseModel
 
@@ -199,40 +325,41 @@ def download_weights(model_path: str, size: str):
     # never leave a truncated weight at the final path (loading one fails
     # with an opaque zip error and requires a manual delete).
     partial = path.with_name(path.name + ".part")
-    last_error: Exception | None = None
-    for attempt in range(_DOWNLOAD_RETRIES + 1):
-        try:
-            _download_once(url, partial, headers)
-            os.replace(partial, path)
-            logger.info("Download complete.")
-            break
-        except Exception as e:
-            last_error = e
-            if attempt == _DOWNLOAD_RETRIES:
+    with _download_lock(path):
+        # Another process may have completed the same download while this
+        # process waited for the lock.
+        if path.exists():
+            return
+
+        for attempt in range(_DOWNLOAD_RETRIES + 1):
+            try:
+                _download_once(url, partial, headers)
+                break
+            except Exception as e:
+                if attempt == _DOWNLOAD_RETRIES:
+                    partial_size = partial.stat().st_size if partial.exists() else 0
+                    raise RuntimeError(
+                        f"Failed to download weights from {url} after "
+                        f"{_DOWNLOAD_RETRIES + 1} attempts: {e}. "
+                        f"Partial download kept at {partial} ({partial_size} bytes)."
+                    ) from e
+
                 partial_size = partial.stat().st_size if partial.exists() else 0
-                raise RuntimeError(
-                    f"Failed to download weights from {url} after "
-                    f"{_DOWNLOAD_RETRIES + 1} attempts: {e}. "
-                    f"Partial download kept at {partial} ({partial_size} bytes)."
-                ) from e
+                logger.warning(
+                    "Download interrupted (%s). Retrying %d/%d from byte %d.",
+                    e,
+                    attempt + 1,
+                    _DOWNLOAD_RETRIES,
+                    partial_size,
+                )
+                time.sleep(_DOWNLOAD_BACKOFF_SECONDS * (2**attempt))
 
-            partial_size = partial.stat().st_size if partial.exists() else 0
-            logger.warning(
-                "Download interrupted (%s). Retrying %d/%d from byte %d.",
-                e,
-                attempt + 1,
-                _DOWNLOAD_RETRIES,
-                partial_size,
-            )
-            time.sleep(_DOWNLOAD_BACKOFF_SECONDS * (2**attempt))
-
-    if last_error is not None and not path.exists():
-        # Defensive guard for type checkers and unusual filesystem races.
-        raise RuntimeError(f"Failed to download weights from {url}") from last_error
-
-    # Let the matched family verify the freshly downloaded file before anything
-    # loads it (e.g. checksum-pin a third-party CDN object). This runs for every
-    # download path — the LibreYOLO(...) factory and the per-family loaders all
-    # funnel through here — so the check cannot be bypassed. HF-hosted LibreYOLO
-    # weights use the trusting default and this is a no-op.
-    cls.verify_downloaded_file(str(path), url)
+        # Verify the temporary file before publishing it at the final path.
+        try:
+            cls.verify_downloaded_file(str(partial), url)
+        except Exception:
+            _reset_partial(partial)
+            raise
+        os.replace(partial, path)
+        _partial_metadata_path(partial).unlink(missing_ok=True)
+        logger.info("Download complete.")
