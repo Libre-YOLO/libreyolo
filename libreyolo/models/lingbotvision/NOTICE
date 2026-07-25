@@ -1,0 +1,22 @@
+LibreLingBotVision family
+-------------------------
+
+The LingBot-Vision ViT backbone in this directory is a native port of
+lingbot-vision (https://github.com/robbyant/lingbot-vision, commit
+151e463), released by
+Robbyant (Ant Group) under the Apache License, Version 2.0.
+Copyright (c) 2026 Robbyant.
+Reference: "Vision Pretraining for Dense Spatial Perception",
+Fu et al., 2026, arXiv:2607.05247.
+
+Pretrained backbone weights are distributed by Robbyant under Apache-2.0
+(https://huggingface.co/collections/robbyant/lingbot-vision). LibreYOLO-hosted
+LibreLingBotVision*-sem.pt checkpoints combine those backbone weights with a
+dense head trained by LibreYOLO; see each weight repo's README for the
+training data.
+
+Architectural-lineage note: the upstream release documents its ViT as building
+on DINOv2/DINOv3 (Meta AI). The upstream repository distributes that code
+under Apache-2.0, which is the license this port inherits; the port was made
+from the Robbyant repository only. The architecture family (RoPE, register
+tokens, masked-K bias) is the one published in the DINOv3 report.

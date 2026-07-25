@@ -99,6 +99,7 @@ Training capabilities are documented per family in
 | kosmos2 | detect |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |
+| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | locateanything | detect |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  |

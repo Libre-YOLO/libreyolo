@@ -23,7 +23,7 @@ Libre<FAMILY><size>[-<task>].pt
 ## Family prefixes
 
 The model families registered into the model factory (the VLM tier is a
-separate category, covered in the note below). Most are detectors; `pidnet` and `segformer` are semantic-only; `eomt` supports semantic,
+separate category, covered in the note below). Most are detectors; `pidnet`, `segformer`, and `lingbotvision` are semantic-only; `eomt` supports semantic,
 instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 `efficientnetv2` / `resnet` families are classify-only:
 
@@ -51,6 +51,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `eomt`      | `LibreEoMT`     | Mixed-case upstream brand preserved (`EoMT`) - semantic + instance + panoptic segmentation transformer family |
 | `pidnet`    | `LibrePIDNet`   | All-caps acronym + `Net` brand casing - semantic-only real-time family |
 | `segformer` | `LibreSegformer` | CamelCase preserved (upstream brand casing) — semantic-only transformer family; weights are non-commercial |
+| `lingbotvision` | `LibreLingBotVision` | Upstream brand casing preserved (`LingBot-Vision`, hyphen dropped) — semantic-only ViT family; Apache-2.0 backbone weights |
 | `picodet`   | `LibrePICODET`  | All-caps (`PicoDet` rendered uppercase) |
 | `ec`     | `LibreEC`    | Short form of EdgeCrafter — used as the family alias for the three sibling upstream models `ECDet`, `ECPose`, `ECSeg` |
 | `l2cs`      | `LibreL2CS`     | All-caps acronym (`L2CS` gaze estimation) — inference-only |
@@ -140,6 +141,7 @@ ships:
 | `eomt`      | `s`, `b`, `l` — semantic: ADE20K 150-class at 512 (l only); segment: COCO 80-class at 640 (l only, also 1280); panoptic: COCO 133-class at 640 (s/b/l) |
 | `pidnet`    | `s`, `m`, `l` (PIDNet Small/Medium/Large, Cityscapes checkpoints at 1024) |
 | `segformer` | `b0`, `b1`, `b2`, `b3`, `b4`, `b5` (MiT-b0..b5 encoder depth/width tiers; ADE20K at 512, b5 at 640) |
+| `lingbotvision` | `s`, `b`, `l`, `g` (ViT-S/B/L distilled from the ViT-g teacher; g is the 1.1B teacher, loadable but no hosted weights; all at 512) |
 | `picodet`   | `s`, `m`, `l` (320 / 416 / 640 input) |
 | `ec`     | `s`, `m`, `l`, `x` |
 | `l2cs`      | `r18`, `r34`, `r50`, `r101`, `r152` (ResNet backbone depth) |
@@ -310,6 +312,7 @@ Detector-factory family support follows:
 | `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
+| `lingbotvision` | `("semantic",)`                 | semantic | LingBot-Vision self-supervised ViT (Apache-2.0, arXiv:2607.05247) + 1x1 dense head (the report's linear probe); s/b/l/g at 512; ADE20K 150-class hosted weights for s/b/l; head-only training by default (`freeze_backbone=False` for full fine-tune) |
 | `yolonas`   | `("detect", "pose")`                | detect | pose adds size `n` |
 | `ec`     | `("detect", "pose", "segment")`     | detect | all three tasks |
 | `l2cs`      | `("gaze",)`                         | gaze   | inference-only; two-stage (face detector + gaze head); not trainable in LibreYOLO |
@@ -407,6 +410,12 @@ LibreSegformerb2-sem.pt
 LibreSegformerb3-sem.pt
 LibreSegformerb4-sem.pt
 LibreSegformerb5-sem.pt
+
+# lingbotvision — LingBot-Vision ViT + dense head, ADE20K semantic
+# segmentation (Apache-2.0 backbone; head trained by LibreYOLO)
+LibreLingBotVisions-sem.pt
+LibreLingBotVisionb-sem.pt
+LibreLingBotVisionl-sem.pt
 
 # ec — detect + pose + segment
 LibreECs.pt             # detect (default)

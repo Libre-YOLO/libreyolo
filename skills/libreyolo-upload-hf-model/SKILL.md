@@ -67,6 +67,7 @@ file = name + ".pt"
 | SwinIR | `LibreSwinIR` | `LibreSwinIRm-restore.pt` (4x super-resolution; sizes `s`/`m`/`l`; Apache-2.0) |
 | PPOCR | `LibrePPOCR` | `LibrePPOCRt-ocr.pt` (PP-OCRv5 text det+rec; sizes `t`/`l`; Apache-2.0) |
 | PIDNet | `LibrePIDNet` | `LibrePIDNets-sem.pt` (semantic-only) |
+| LingBotVision | `LibreLingBotVision` | `LibreLingBotVisions-sem.pt` (semantic-only; Apache-2.0 backbone + LibreYOLO-trained ADE20K head) |
 | SegFormer | `LibreSegformer` | `LibreSegformerb0-sem.pt` (semantic-only; ADE20K. Weights are **non-commercial** — NVIDIA Source Code License, see below) |
 | EoMT | `LibreEoMT` | `LibreEoMTl-sem.pt` (semantic), `LibreEoMTl-seg.pt` (COCO instance), `LibreEoMTs-panoptic.pt` (COCO panoptic) |
 | DINOv2 | `LibreDINOv2` | `LibreDINOv2n.pt` (semantic default), `LibreDINOv2n-cls.pt` |
@@ -187,6 +188,9 @@ LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
+
+LibreLingBotVisions-sem.pt, LibreLingBotVisionb-sem.pt,
+LibreLingBotVisionl-sem.pt,
 
 LibreSegformerb0-sem.pt, LibreSegformerb1-sem.pt, LibreSegformerb2-sem.pt,
 LibreSegformerb3-sem.pt, LibreSegformerb4-sem.pt, LibreSegformerb5-sem.pt,
