@@ -57,7 +57,8 @@ def _fake_state(size: str, nc: int = 150) -> dict:
     return {
         "backbone.cls_token": torch.zeros(1, 1, dim),
         "backbone.storage_tokens": torch.zeros(1, 4, dim),
-        "backbone.rope_embed.periods": torch.zeros(dim // 4 // 4),
+        # All sizes use head_dim 64, so the periods buffer is 64 // 4 = 16.
+        "backbone.rope_embed.periods": torch.zeros(16),
         "predict.weight": torch.zeros(nc, dim, 1, 1),
         "predict.bias": torch.zeros(nc),
     }
