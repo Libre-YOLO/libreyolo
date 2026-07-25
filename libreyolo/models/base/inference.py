@@ -63,6 +63,7 @@ from ...utils.results import (
     SemanticMask,
 )
 from ...utils.video import collect_video_results, is_video_file, run_video_inference
+from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class InferenceRunner:
     def __init__(self, model: BaseModel):
         self.model = model
 
+    @with_cuda_graph_scope
     def __call__(
         self,
         source: ImageInput | list[ImageInput] | tuple[ImageInput, ...] | None = None,
@@ -99,6 +101,7 @@ class InferenceRunner:
         tiling: bool = False,
         overlap_ratio: float = 0.2,
         output_file_format: Optional[str] = None,
+        cuda_graph: bool | str = False,
         **kwargs,
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """
@@ -128,6 +131,15 @@ class InferenceRunner:
             tiling: Enable tiled inference for large images.
             overlap_ratio: Tile overlap ratio.
             output_file_format: Output format ("jpg", "png", "webp").
+            cuda_graph: Replay the forward pass from a captured CUDA graph.
+                Small detectors are launch-bound, so collapsing the forward's
+                kernel launches into one replay is a large batch-1 win, and
+                output is bit-identical to eager. ``True`` captures on first
+                use per input shape; ``"auto"`` waits until a shape repeats, so
+                one-shot and shape-varying work never pays capture. Requires
+                CUDA and a family that opts in via ``SUPPORTS_CUDA_GRAPH``.
+                Call ``model.capture_graph()`` to move capture cost off the
+                first request.
             **kwargs: Additional arguments for postprocessing.
 
         Returns:
@@ -486,7 +498,7 @@ class InferenceRunner:
 
         stacked = torch.cat(tensors, dim=0)
         with torch.no_grad():
-            output = self.model._forward(stacked.to(self.model.device))
+            output = forward_maybe_graphed(self.model, stacked.to(self.model.device))
 
         results = []
         for offset, (_, original_img, original_size, ratio, image) in enumerate(
@@ -963,7 +975,9 @@ class InferenceRunner:
 
         # Forward pass
         with torch.no_grad():
-            output = self.model._forward(input_tensor.to(self.model.device))
+            output = forward_maybe_graphed(
+                self.model, input_tensor.to(self.model.device)
+            )
 
         # Postprocess
         detections = self.model._postprocess(
@@ -1018,7 +1032,9 @@ class InferenceRunner:
                 pil_img, "rgb", input_size=effective_imgsz
             )
             with torch.no_grad():
-                output = self.model._forward(input_tensor.to(self.model.device))
+                output = forward_maybe_graphed(
+                    self.model, input_tensor.to(self.model.device)
+                )
             detections = self.model._postprocess(
                 output,
                 conf,

@@ -6,6 +6,7 @@ Provides shared functionality for all YOLO model variants.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import logging
@@ -49,6 +50,12 @@ from ...utils.serialization import (
     validate_checkpoint_metadata,
 )
 from ...validation.preprocessors import StandardValPreprocessor
+from .cuda_graph import (
+    CudaGraphUnavailable,
+    GraphRunner,
+    forward_maybe_graphed,
+    normalize_cuda_graph_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +141,12 @@ class BaseModel(ABC):
     # on). Set False where that does not hold (e.g. generative VLMs).
     SUPPORTS_BATCHED_PREDICT: ClassVar[bool] = True
 
+    # CUDA-graph policy: True once a family's ``_forward`` is verified to
+    # capture and replay bit-identically. Capture forbids host-visible work
+    # mid-forward (``.item()``, ``.cpu()``, writing a Python int into a CUDA
+    # tensor), so families opt in only after a parity test covers them.
+    SUPPORTS_CUDA_GRAPH: ClassVar[bool] = False
+
     # TTA policy — subclasses may override
     TTA_ENABLED: ClassVar[bool] = True
     # True for families that resize to a fixed square regardless of input size
@@ -201,6 +214,10 @@ class BaseModel(ABC):
         self.size = size
         self.nb_classes = nb_classes
         self.input_size = self._get_task_input_sizes()[size]
+        # Built lazily on the first cuda_graph=True call so models that never
+        # ask for capture pay nothing.
+        self._graph_runner: Optional["GraphRunner"] = None
+        self._cuda_graph_mode: Optional[str] = None
 
         if nb_classes == 80:
             self.names: Dict[int, str] = {i: n for i, n in enumerate(COCO_CLASSES)}
@@ -290,6 +307,106 @@ class BaseModel(ABC):
     def _forward(self, input_tensor: torch.Tensor) -> Any:
         """Run model forward pass."""
         pass
+
+    # =========================================================================
+    # CUDA graph capture
+    # =========================================================================
+
+    def _require_cuda_graph_support(self) -> None:
+        if not self.SUPPORTS_CUDA_GRAPH:
+            raise NotImplementedError(
+                f"cuda_graph is not supported for the '{self.family}' family yet. "
+                "Capture requires a forward with no host-visible work, which is "
+                "verified per family. Run without cuda_graph=True, or export to "
+                "ONNX/TensorRT for a fused deployment path."
+            )
+
+    def _get_graph_runner(self) -> "GraphRunner":
+        if self._graph_runner is None:
+            self._graph_runner = GraphRunner(
+                forward_fn=self._forward, family=self.family
+            )
+        return self._graph_runner
+
+    def _forward_graphed(self, input_tensor: torch.Tensor) -> Any:
+        """Run ``_forward``, replaying a captured CUDA graph when in scope."""
+        return forward_maybe_graphed(self, input_tensor)
+
+    @contextlib.contextmanager
+    def cuda_graph_scope(self, mode: Any = True):
+        """Route forwards in this block through captured graphs.
+
+        Predict sets this once per call rather than threading a flag through
+        every internal predict path. Validates support up front so an
+        unsupported family fails loudly instead of silently running eager.
+
+        Args:
+            mode: ``True``/``"on"`` captures on first use, ``"auto"`` waits for
+                a shape to repeat, ``False`` is a no-op.
+        """
+        normalized = normalize_cuda_graph_mode(mode)
+        if normalized is None:
+            yield
+            return
+        self._require_cuda_graph_support()
+        previous = self._cuda_graph_mode
+        self._cuda_graph_mode = normalized
+        try:
+            yield
+        finally:
+            self._cuda_graph_mode = previous
+
+    def capture_graph(
+        self, imgsz: Optional[int] = None, batch: int = 1, dtype: Any = None
+    ) -> None:
+        """Capture a CUDA graph now for the given input shape.
+
+        Warmup and capture cost far more than a replay, so call this up front
+        when a first-request latency spike matters. Later
+        ``predict(..., cuda_graph=True)`` calls at the same shape replay the
+        captured graph.
+
+        Args:
+            imgsz: Input resolution. Defaults to the model's input size.
+            batch: Batch size the graph is captured for. A graph is valid only
+                for the exact shape it captured, so this must match how you
+                call predict.
+            dtype: Input dtype. Defaults to the model's parameter dtype.
+
+        Raises:
+            NotImplementedError: If the family has not opted in.
+            CudaGraphUnavailable: If capture is impossible or fails.
+        """
+        self._require_cuda_graph_support()
+        size = imgsz or self.input_size
+        if dtype is None:
+            dtype = next(self.model.parameters()).dtype
+        dummy = torch.zeros(
+            (batch, 3, size, size), dtype=dtype, device=self.device
+        )
+        with torch.no_grad():
+            self._get_graph_runner().capture(dummy)
+
+    def graph_info(self) -> Dict[str, Any]:
+        """Report captured graphs, replay counts and any eager-fallback reason."""
+        if self._graph_runner is None:
+            return {
+                "family": self.family,
+                "supported": self.SUPPORTS_CUDA_GRAPH,
+                "captured": [],
+                "graph_count": 0,
+                "eager_fallbacks": 0,
+                "fallback_reason": None,
+            }
+        info = self._graph_runner.info()
+        info["supported"] = self.SUPPORTS_CUDA_GRAPH
+        return info
+
+    def release_graphs(self) -> None:
+        """Free every captured graph and its static buffers."""
+        if self._graph_runner is not None:
+            self._graph_runner.release()
+            self._graph_runner = None
 
     @abstractmethod
     def _postprocess(
