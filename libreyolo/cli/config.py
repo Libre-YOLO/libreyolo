@@ -75,8 +75,16 @@ def _task_sizes_for_cli(cls, task: str) -> dict[str, int]:
 def _register_cli_names_for_class(cls) -> None:
     default_task = getattr(cls, "DEFAULT_TASK", "detect")
     for size_code in _task_sizes_for_cli(cls, default_task):
+        weight_name = _weight_filename_for_cli(cls, size_code)
         cli_name = f"{cls.FAMILY}-{size_code}"
-        _CLI_NAME_TO_WEIGHTS[cli_name] = _weight_filename_for_cli(cls, size_code)
+        _CLI_NAME_TO_WEIGHTS[cli_name] = weight_name
+
+        # ``libreyolo models`` prints the explicit task suffix for every
+        # non-detection task. Keep the shorter default-task alias too, but make
+        # the advertised spelling resolve to the same canonical checkpoint.
+        suffix = task_to_suffix(default_task)
+        if suffix:
+            _CLI_NAME_TO_WEIGHTS[f"{cli_name}-{suffix}"] = weight_name
 
     for task in getattr(cls, "SUPPORTED_TASKS", ("detect",)):
         if task == default_task:
@@ -94,17 +102,15 @@ def _build_name_map() -> None:
     """Populate CLI name → weight filename mapping from model registry."""
     if _CLI_NAME_TO_WEIGHTS:
         return
+    from libreyolo.models import try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
 
+    # RF-DETR and DINOv2 register together when their optional dependency is
+    # available. Trigger that registration before walking the registry so both
+    # families receive CLI aliases.
+    try_ensure_rfdetr()
     for cls in BaseModel._registry:
         _register_cli_names_for_class(cls)
-
-    # Also try RF-DETR (lazily registered)
-    from libreyolo.models import try_ensure_rfdetr
-
-    rfcls = try_ensure_rfdetr()
-    if rfcls is not None:
-        _register_cli_names_for_class(rfcls)
 
 
 def get_all_cli_names() -> list[str]:

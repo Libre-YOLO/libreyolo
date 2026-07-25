@@ -104,6 +104,7 @@ class LibreSigLIP2(BaseModel):
     }
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
     DEFAULT_TASK: ClassVar[str] = "classify"
+    REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     TRAIN_CONFIG = None
 
     # Attention pooling + fixed square resize make multi-scale TTA meaningless.
