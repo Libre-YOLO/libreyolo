@@ -51,6 +51,7 @@ class LibreDepthAnythingV2(BaseModel):
     }
     SUPPORTED_TASKS = ("depth",)
     DEFAULT_TASK = "depth"
+    REQUIRE_TASK_SUFFIX = True
 
     # DINOv2 patch grid; the depth dataset and validator enforce divisibility.
     depth_imgsz_divisor = 14

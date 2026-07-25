@@ -59,6 +59,7 @@ class LibreZipDepth(BaseModel):
     }
     SUPPORTED_TASKS = ("depth",)
     DEFAULT_TASK = "depth"
+    REQUIRE_TASK_SUFFIX = True
 
     # Encoder stride; the depth dataset and validator enforce divisibility.
     depth_imgsz_divisor = IMGSZ_DIVISOR
