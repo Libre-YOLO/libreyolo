@@ -325,6 +325,7 @@ def LibreYOLO(
                 break
 
     # Download if missing
+    download_error: Exception | None = None
     if not Path(model_path).exists():
         if size is None:
             for cls in BaseModel._registry:
@@ -355,9 +356,15 @@ def LibreYOLO(
         try:
             download_weights(model_path, size)
         except Exception as e:
+            download_error = e
             logger.warning("Auto-download failed: %s", e)
 
     if not Path(model_path).exists():
+        if download_error is not None:
+            raise FileNotFoundError(
+                f"Model weights file not found: {model_path}\n"
+                f"Auto-download failed: {download_error}"
+            ) from download_error
         raise FileNotFoundError(f"Model weights file not found: {model_path}")
 
     # Load weights once
