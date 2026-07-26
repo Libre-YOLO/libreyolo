@@ -143,31 +143,39 @@ is simply wrong. That is precisely the silent-wrongness this gate exists to
 prevent, so the family stays off.
 
 
-## sensenova: vision tower done, generation loop not
+## sensenova: vision tower graphed, generation eager
 
-The vision tower can be built from a synthetic config with no checkpoint, so
-this half was fixed and verified rather than left as a note:
+Only the vision tower is graphable here. Generation is autoregressive over a
+growing KV cache (`NaiveCache`, `forward_cache_update_text/vae/vit`), so its
+shapes change every decode step and no fixed graph can represent it. Graphing
+that would need a static KV cache with graphs bucketed by length, which is a
+separate feature and is not attempted.
 
-```python
-from libreyolo.models.sensenova.modeling.siglip_navit import (
-    SiglipVisionConfig, SiglipVisionModel)
-```
+The tower is reached through `Bagel.run_vit`, not a `_forward` hook, because
+this family's `_forward` takes a structured inputs object rather than a tensor.
+`LibreSenseNovaVision.cuda_graph_scope` attaches the runner to the Bagel module
+for the duration of a scope and detaches it afterwards, so with graphs off the
+call path is byte-for-byte the original.
 
-It previously failed capture even at a fixed token count, because the
-attention fallback read `cu_seqlens` element by element with `int()`, syncing
-the stream once per segment per layer. Those boundaries are now read on the
-eager warmup and reused during capture (`_segment_bounds`), which is sound
-because a graph is keyed to one shape, so the packing behind it cannot change
-between warmup and replay. The tower now captures and replays bit-identically;
-see `test_sensenova_vision_tower_captures`.
+The tower previously could not be captured at all, even at a fixed token count:
+the attention fallback read `cu_seqlens` element by element with `int()`,
+syncing the stream once per segment per layer. Those boundaries are now read on
+the eager warmup and reused during capture (`_segment_bounds`), which is sound
+because a graph is keyed to one shape, so the packing behind it cannot differ
+between warmup and replay. That fix is verified: see
+`test_sensenova_vision_tower_captures`, which builds the tower from a synthetic
+config and needs no checkpoint.
 
-The family flag stays off, for two reasons that are not this one:
+`capture_graph(imgsz=...)` raises for this family by design. The tower consumes
+packed tokens whose count depends on the image and the patching config, so
+there is no dummy to build from an image size; pass `cuda_graph=True` to
+`predict`, which captures lazily at the packed shape.
 
-* Inference is autoregressive generation over a growing KV cache
-  (`NaiveCache`, `forward_cache_update_text/vae/vit`), so sequence length
-  changes every decode step. Graphing that needs a static KV cache with graphs
-  bucketed by length, which is a separate feature.
-* The model cannot be constructed without its ~15 GB checkpoint, so wiring the
-  tower into `_get_graph_runner` the way SAM does could not be executed here
-  even once. That wiring is small and follows the SAM pattern exactly, but it
-  should be written by someone who can run it.
+**Caveat, stated plainly.** The tower's capture-safety is verified, but the
+dispatch that reaches it has never been executed: it was written on a machine
+that could not hold the ~15 GB checkpoint. Every failure path in `run_vit`
+falls back to the eager call and logs at debug level, so a mistake there
+degrades to the previous behaviour rather than breaking inference. The first
+person to run this family with `cuda_graph=True` should confirm
+`graph_info()["graph_count"]` becomes non-zero and that outputs match an eager
+run; if it silently stays on the eager path, that is the wiring, not the tower.

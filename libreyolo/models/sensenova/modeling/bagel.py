@@ -104,6 +104,59 @@ class Bagel(PreTrainedModel):
         self.config = config
         self._init_weights()
 
+
+    # ------------------------------------------------------------------
+    # Vision tower CUDA graph hook
+    #
+    # The tower is the one part of this model a fixed graph can represent:
+    # it runs once per image at a packed token count that is constant for a
+    # given input shape. Generation is not graphable and stays eager.
+    #
+    # The runner is attached by LibreSenseNovaVision only while a graph scope
+    # is active. When it is absent this is the original call, unchanged.
+    # ------------------------------------------------------------------
+
+    def run_vit(self, tokens, position_ids, cu_seqlens, max_seqlen):
+        """Run the vision tower, replaying a captured graph when one is active."""
+
+        def eager():
+            return self.vit_model(
+                packed_pixel_values=tokens,
+                packed_flattened_position_ids=position_ids,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+            )
+
+        runner = getattr(self, "_vit_graph_runner", None)
+        if runner is None:
+            return eager()
+
+        # The graph bakes in whatever auxiliary tensors capture saw. They are
+        # derived from the same packing as `tokens`, and the runner keys its
+        # cache on that tensor's shape, so a replay only ever reuses aux values
+        # that belong to the same packing.
+        self._vit_graph_aux = (position_ids, cu_seqlens, max_seqlen)
+        try:
+            return runner.run(tokens, auto=bool(getattr(self, "_vit_graph_auto", False)))
+        except Exception:  # noqa: BLE001 - never let capture break inference
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "sensenova: vision tower graph path failed, falling back to eager",
+                exc_info=True,
+            )
+            return eager()
+
+    def vit_forward_for_graph(self, tokens):
+        """Entry point the graph runner captures; reads the aux tensors set above."""
+        position_ids, cu_seqlens, max_seqlen = self._vit_graph_aux
+        return self.vit_model(
+            packed_pixel_values=tokens,
+            packed_flattened_position_ids=position_ids,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
+
     def _init_weights(self):
         if self.config.visual_gen:
             nn.init.constant_(self.llm2vae.weight, 0)
@@ -261,11 +314,8 @@ class Bagel(PreTrainedModel):
         cu_seqlens = torch.nn.functional.pad(torch.cumsum(vit_token_seqlens, dim=0), (1, 0))
         cu_seqlens = cu_seqlens.to(torch.int32)
         max_seqlen = torch.max(vit_token_seqlens).item()
-        packed_vit_token_embed = self.vit_model(
-            packed_pixel_values=packed_vit_tokens, 
-            packed_flattened_position_ids=packed_vit_position_ids,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
+        packed_vit_token_embed = self.run_vit(
+            packed_vit_tokens, packed_vit_position_ids, cu_seqlens, max_seqlen
         )
         packed_vit_token_embed = self.connector(packed_vit_token_embed)
         pos_emb = self.vit_pos_embed(packed_vit_position_ids)
