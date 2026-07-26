@@ -23,6 +23,9 @@ from ..darknet.family import DarknetFamily
 class LibreYOLO2(DarknetFamily):
     FAMILY = "yolo2"
     FILENAME_PREFIX = "LibreYOLO2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"t": 416, "b": 608}
 
     CFG_BY_SIZE = {"t": "yolov2-tiny", "b": "yolov2"}

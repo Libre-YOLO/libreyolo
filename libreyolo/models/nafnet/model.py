@@ -97,6 +97,9 @@ class LibreNAFNet(BaseModel):
     FILENAME_PREFIX = "LibreNAFNet"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"s": 256, "l": 256}
     SUPPORTED_TASKS = ("restore",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "restore"
     REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = NAFNetConfig

@@ -136,6 +136,9 @@ class LibreRTDETR(BaseModel):
     # Class-level metadata
     FAMILY = "rtdetr"
     FILENAME_PREFIX = "LibreRTDETR"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     TTA_FIXED_SIZE = True  # resizes to a fixed square; multi-scale TTA is a no-op
     INPUT_SIZES = {
         "r18": 640,

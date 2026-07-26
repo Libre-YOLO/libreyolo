@@ -248,11 +248,21 @@ class SwinTransformerBlock(nn.Module):
         windows = window_partition(shifted, self.window_size).view(
             -1, self.window_size * self.window_size, channels
         )
-        mask = (
-            self.attn_mask
-            if self.input_resolution == x_size
-            else self.calculate_mask(x_size).to(device=x.device, dtype=x.dtype)
-        )
+        if self.input_resolution == x_size:
+            mask = self.attn_mask
+        else:
+            # calculate_mask builds on the CPU, so moving it here copies
+            # host->device on every call and CUDA graph capture rejects that.
+            # The mask depends only on the resolution, so memoise per
+            # (size, device, dtype): the copy lands on the eager warmup.
+            cache = getattr(self, "_attn_mask_cache", None)
+            if cache is None:
+                cache = self._attn_mask_cache = {}
+            key = (tuple(x_size), x.device, x.dtype)
+            mask = cache.get(key)
+            if mask is None:
+                mask = self.calculate_mask(x_size).to(device=x.device, dtype=x.dtype)
+                cache[key] = mask
         attended = self.attn(windows, mask=mask).view(
             -1, self.window_size, self.window_size, channels
         )
@@ -491,10 +501,16 @@ class SwinIR(nn.Module):
         num_feat = 64
         self.img_range = img_range
         rgb_mean = (0.4488, 0.4371, 0.4040)
-        self.mean = (
+        # Registered (non-persistent, so checkpoint keys are unchanged) rather
+        # than kept as a plain attribute: as an attribute it stays on the CPU and
+        # the forward copies it to the device on every call, which CUDA graph
+        # capture rejects. As a buffer it moves with the module.
+        self.register_buffer(
+            "mean",
             torch.tensor(rgb_mean).view(1, 3, 1, 1)
             if in_chans == 3
-            else torch.zeros(1, 1, 1, 1)
+            else torch.zeros(1, 1, 1, 1),
+            persistent=False,
         )
         self.upscale = upscale
         self.upsampler = upsampler
@@ -622,7 +638,9 @@ class SwinIR(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         height, width = x.shape[2:]
         x = self.check_image_size(x)
-        mean = self.mean.to(device=x.device, dtype=x.dtype)
+        # The buffer already tracks the module's device; only the dtype can
+        # differ, and casting on-device is capture-safe.
+        mean = self.mean if self.mean.dtype == x.dtype else self.mean.to(dtype=x.dtype)
         x = (x - mean) * self.img_range
 
         if self.upsampler in {"pixelshuffle", "pixelshuffledirect", "nearest+conv"}:

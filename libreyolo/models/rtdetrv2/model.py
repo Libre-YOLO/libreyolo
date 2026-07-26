@@ -16,6 +16,9 @@ from .nn import RTDETRv2Model
 class LibreRTDETRv2(LibreRTDETR):
     FAMILY = "rtdetrv2"
     FILENAME_PREFIX = "LibreRTDETRv2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"r18": 640, "r34": 640, "r50": 640, "r50m": 640, "r101": 640}
     val_preprocessor_class = RTDETRv2ValPreprocessor
 

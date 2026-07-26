@@ -40,6 +40,9 @@ class LibreEfficientNetV2(BaseModel):
     # trains at a lower resolution than it evaluates, so these are the test sizes.
     INPUT_SIZES = {"b0": 224, "b1": 240, "b2": 260, "b3": 300}
     SUPPORTED_TASKS = ("classify",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreEfficientNetV2<size>-cls.pt
     TRAIN_CONFIG = EfficientNetV2Config

@@ -42,6 +42,9 @@ class LibreYOLOX(BaseModel):
     # Class-level metadata
     FAMILY = "yolox"
     FILENAME_PREFIX = "LibreYOLOX"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {"n": 416, "t": 416, "s": 640, "m": 640, "l": 640, "x": 640}
     TRAIN_CONFIG = YOLOXConfig
     val_preprocessor_class = YOLOXValPreprocessor

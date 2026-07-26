@@ -38,6 +38,9 @@ class LibreConvNeXt(BaseModel):
     FILENAME_PREFIX = "LibreConvNeXt"
     INPUT_SIZES = {"t": 224, "s": 224, "b": 224}
     SUPPORTED_TASKS = ("classify",)
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     DEFAULT_TASK = "classify"
     REQUIRE_TASK_SUFFIX = True  # canonical weights are LibreConvNeXt<size>-cls.pt
     TRAIN_CONFIG = ConvNeXtConfig

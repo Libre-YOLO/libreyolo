@@ -38,6 +38,9 @@ class LibreDEIMv2(BaseModel):
 
     FAMILY = "deimv2"
     FILENAME_PREFIX = "LibreDEIMv2"
+    # Forward is pure tensor work with no host sync, verified to capture and
+    # replay bit-identically (tests/unit/test_cuda_graph_families.py).
+    SUPPORTS_CUDA_GRAPH = True
     INPUT_SIZES = {size: int(cfg["input_size"]) for size, cfg in SIZE_CONFIGS.items()}
     TRAIN_CONFIG = DEIMv2Config
     val_preprocessor_class = DEIMv2ValPreprocessor
