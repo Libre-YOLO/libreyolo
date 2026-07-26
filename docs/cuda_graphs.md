@@ -60,7 +60,7 @@ Traps that have each produced a wrong answer in practice:
 
 | Family | Reason |
 | --- | --- |
-| `birefnet` | Captures, but replay drifts from eager by ~1.6e-2 across nearly every element. Not stale and it tracks its input, so the signature points at kernel selection under capture. Cause unidentified. |
+| `birefnet` | Its decoder uses `torchvision.ops.deform_conv2d`, which is not capture-safe. Verified in isolation from any model: a bare `deform_conv2d` call replays to a different result (maxdiff ~83 on random inputs), self-consistent across replays but wrong. The kernel is a compiled extension, so unlike the SAM and EoMT cases there is no Python-level fix; it needs a torchvision change or a capture-safe reimplementation of the op. |
 | `l2cs` (gaze) | Out of scope. |
 | `sensenova` | 7B vision-language model; random init needs far more memory than a single consumer card. |
 
@@ -110,7 +110,11 @@ eager past it.
 because constructing it requires real checkpoint weights rather than random
 init; the class-level flag covers it regardless.
 
-For the record on `birefnet`, the divergence is not TF32, not cuDNN
-autotuning, not model state mutated by capture, and not uninitialized memory:
-eager is bit-stable before and after capture and no buffer changes. The cause
-is still unidentified, which is exactly why the family stays off.
+`birefnet` was narrowed by bisecting submodule by submodule: the backbone
+captures bit-identically, `squeeze_module` does not, inside it the deformable
+ASPP branch is the one that drifts, and the op underneath is
+`torchvision.ops.deform_conv2d`. TF32, cuDNN autotuning, model state mutated
+by capture, and uninitialized allocations in our own code were each ruled out
+first. Note the failure mode: replay is deterministic and looks plausible, it
+is simply wrong. That is precisely the silent-wrongness this gate exists to
+prevent, so the family stays off.
