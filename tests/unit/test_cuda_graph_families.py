@@ -152,6 +152,53 @@ def test_family_capture_is_bit_identical(import_path, cls_name, task, size, imgs
 
 
 @requires_cuda
+def test_ppocr_detection_stage_captures():
+    """PPOCR captures its detection stage rather than the _forward hook.
+
+    The two-stage pipeline leaves ``_forward`` unimplemented on purpose, so
+    this family gets its own runner over ``det``. Recognition stays eager
+    because its crops vary in width.
+    """
+    from libreyolo.models.ppocr.model import LibrePPOCR
+
+    model = LibrePPOCR(model_path=None, size="t", device="cuda")
+    model.model.eval()
+    try:
+        x1 = torch.rand(1, 3, 640, 640, device="cuda")
+        x2 = torch.rand(1, 3, 640, 640, device="cuda")
+        with torch.no_grad():
+            eager1 = model.model.det(x1).clone()
+            eager2 = model.model.det(x2).clone()
+            assert not torch.equal(eager1, eager2), "detection ignored its input"
+
+            # With no scope active the wrapper must stay on the eager path.
+            assert torch.equal(model.forward_det(x1), eager1)
+
+            model.capture_graph(imgsz=640, batch=1)
+            with model.cuda_graph_scope(True):
+                graphed1 = model.forward_det(x1).clone()
+                graphed2 = model.forward_det(x2).clone()
+
+        assert torch.equal(eager1, graphed1)
+        assert torch.equal(eager2, graphed2)
+
+        # Detection input size follows the source aspect ratio, so a second
+        # shape must get its own graph without corrupting the first.
+        other = torch.rand(1, 3, 480, 480, device="cuda")
+        with torch.no_grad():
+            eager_other = model.model.det(other).clone()
+            with model.cuda_graph_scope(True):
+                graphed_other = model.forward_det(other).clone()
+                graphed_first_again = model.forward_det(x1).clone()
+
+        assert torch.equal(eager_other, graphed_other)
+        assert torch.equal(eager1, graphed_first_again)
+        assert model.graph_info()["graph_count"] == 2
+    finally:
+        model.release_graphs()
+
+
+@requires_cuda
 def test_unsupported_family_still_refuses():
     """Families that never opted in must raise rather than silently capture."""
     import importlib

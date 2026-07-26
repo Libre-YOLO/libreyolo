@@ -241,7 +241,8 @@ class OCRInferenceRunner:
         resized, _, _ = det_resize(img_bgr, limit_side_len=limit)
         det_input = det_normalize(resized).to(model.device)
         with torch.no_grad():
-            prob = model.model.det(det_input)
+            # Replays a captured graph when one is in scope, otherwise eager.
+            prob = model.forward_det(det_input)
         prob_map = prob[0, 0].detach().float().cpu().numpy()
         quads, det_scores = db_postprocess(
             prob_map,

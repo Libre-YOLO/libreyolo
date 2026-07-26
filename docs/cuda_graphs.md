@@ -63,10 +63,19 @@ Traps that have each produced a wrong answer in practice:
 | `birefnet` | Captures, but replay drifts from eager by ~1.6e-2 across nearly every element. Not stale and it tracks its input, so the signature points at kernel selection under capture. Cause unidentified. |
 | `eomt` | The blocking operation is inside `transformers.models.eomt.modeling_eomt`, an installed third-party package rather than LibreYOLO code, so the fix belongs upstream. |
 | `depth_anything3` | `_apply_mono_sky` branches on tensor values and produces data-dependent shapes. Structural, not a placement issue. |
-| `ppocr` | Two-stage pipeline; `_forward` raises by design. Both stages were tested directly and **do** capture bit-identically, so support is possible: it needs a capture path inside `models/ppocr/inference.py` rather than the detection-shaped hook. Note that `rec` runs on variable-width crops, so a shape-keyed cache would churn; `det` runs at a fixed size and is the better target. |
 | SAM family (`sam`, `mobilesam`, `picosam3`, EdgeTAM) | Promptable; entry point is `set_image()` / `predict(points=, bboxes=)`. The `vision_encoder` was tested directly as the dominant cost and does **not** capture: `transformers/models/sam/modeling_sam.py:759` indexes with `relative_coords.long()` built on the host. Third-party, so the fix belongs upstream or in a memoising wrapper. |
 | `siglip2` | Untested here; its text tokenizer needs the optional `sentencepiece` dependency. |
 | `l2cs` (gaze) | Out of scope. |
+
+`ppocr` is supported through a family-specific path rather than the shared
+one. Its `_forward` hook stays unimplemented by design, so the class overrides
+`_get_graph_runner` to wrap the detection stage and exposes `forward_det`,
+which the pipeline in `models/ppocr/inference.py` calls. Recognition stays
+eager on purpose: it runs on text crops whose width varies per line, so a
+shape-keyed cache would evict constantly and cost more in capture than replay
+returns. Detection input size follows the source aspect ratio, so mixed images
+produce several graphs; the runner's cache cap bounds that and falls back to
+eager past it.
 
 `rfdetr` is verified on `detect`, `segment` and `pose`. Its `obb` task is not,
 because constructing it requires real checkpoint weights rather than random
