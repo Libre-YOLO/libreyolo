@@ -56,7 +56,11 @@ families on that basis.
 Probe with contrasting distributions rather than two uniform draws, which wash
 out through global pooling and can leave a head emitting byte-identical output
 for both. Add the family to
-`tests/unit/test_cuda_graph_families.py` and set `SUPPORTS_CUDA_GRAPH = True`.
+`tests/e2e/test_cuda_graph_families.py` and set `SUPPORTS_CUDA_GRAPH = True`.
+That file lives under `tests/e2e/` because it carries the `general_nightly`
+marker, and the nightly target collects with `find tests/e2e -name 'test_*.py'`.
+A `general_nightly` test placed under `tests/unit/` is collected by no CI tier
+at all: the PR gate filters on `-m unit`, and the nightly never looks there.
 
 Traps that have each produced a wrong answer in practice:
 

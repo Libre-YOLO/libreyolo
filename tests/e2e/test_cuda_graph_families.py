@@ -385,3 +385,72 @@ def test_sensenova_vision_tower_captures():
         graph.replay()
         torch.cuda.synchronize()
         assert torch.equal(eager2, out.clone())
+
+
+@requires_cuda
+def test_sensenova_run_vit_dispatch():
+    """Exercise the dispatch that reaches SenseNova's tower.
+
+    The family cannot be constructed without its ~15 GB checkpoint, so this
+    drives ``Bagel.run_vit`` and ``Bagel.vit_forward_for_graph`` against a stub
+    holding a real tower. That covers the routing and the eager fallback, which
+    is everything in the dispatch except the wrapper's ``cuda_graph_scope``
+    attaching the runner.
+    """
+    from libreyolo.models.base.cuda_graph import GraphRunner
+    from libreyolo.models.sensenova.modeling.bagel import Bagel
+    from libreyolo.models.sensenova.modeling.siglip_navit import (
+        SiglipVisionConfig,
+        SiglipVisionModel,
+    )
+
+    torch.manual_seed(0)
+    config = SiglipVisionConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=64,
+        patch_size=16,
+    )
+    tower = SiglipVisionModel(config)
+    tower.vision_model.embeddings.convert_conv2d_to_linear(config)
+    tower = tower.cuda().eval().to(torch.bfloat16)
+
+    tokens_n = 16
+    patch = config.patch_size
+    tokens = torch.randn(tokens_n, 3 * patch * patch, device="cuda", dtype=torch.bfloat16)
+    position_ids = torch.arange(tokens_n, device="cuda")
+    cu_seqlens = torch.tensor([0, tokens_n], device="cuda", dtype=torch.int32)
+
+    class _Stub:
+        pass
+
+    stub = _Stub()
+    stub.vit_model = tower
+
+    with torch.no_grad():
+        # No runner attached: the original call, untouched.
+        eager = Bagel.run_vit(stub, tokens, position_ids, cu_seqlens, tokens_n).clone()
+
+        stub._vit_graph_runner = GraphRunner(
+            forward_fn=lambda t: Bagel.vit_forward_for_graph(stub, t),
+            family="sensenova",
+        )
+        stub._vit_graph_auto = False
+        graphed = Bagel.run_vit(stub, tokens, position_ids, cu_seqlens, tokens_n).clone()
+
+    assert stub._vit_graph_runner.info()["graph_count"] == 1, (
+        "dispatch did not reach the runner"
+    )
+    assert torch.equal(eager, graphed)
+
+    # A runner that raises must not break inference: run_vit falls back.
+    class _Exploding:
+        def run(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    stub._vit_graph_runner = _Exploding()
+    with torch.no_grad():
+        fallback = Bagel.run_vit(stub, tokens, position_ids, cu_seqlens, tokens_n).clone()
+    assert torch.equal(eager, fallback), "fallback did not return the eager result"
