@@ -142,3 +142,27 @@ first. Note the failure mode: replay is deterministic and looks plausible, it
 is simply wrong. That is precisely the silent-wrongness this gate exists to
 prevent, so the family stays off.
 
+
+## Closing sensenova
+
+Not attempted here because the model cannot be constructed on a machine
+without the checkpoint, and changing a vendored 7B model's forward without
+running it once is not worth the risk. For anyone with the hardware, the route
+is narrower than the general problem:
+
+The vision tower is the tractable half. For a **single image at a fixed
+resolution** the packed token count is statically known, so `cu_seqlens` is
+constant and `max_seqlen` can come from Python ints rather than
+`torch.max(...).item()` (`modeling/bagel.py:263`). Removing that sync makes the
+`vit_model` call fixed-shape, at which point the family-specific runner pattern
+applies exactly as it does for SAM: capture the tower, leave everything else
+eager. A stock `SiglipVisionModel` already captures bit-identically, so the
+class itself is not the obstacle.
+
+The generation loop is the intractable half and should stay eager. Graphing
+autoregressive decode needs a static KV cache with graphs bucketed by sequence
+length, which is a separate feature.
+
+Verify as with any other family: construct, `.eval()`, capture, then replay two
+contrasting inputs and require bit-identical outputs plus relative variation
+above 1e-3.
