@@ -62,6 +62,9 @@ CAPTURABLE = [
     ("libreyolo.models.ec.model", "LibreEC", "segment", "s", 640),
     ("libreyolo.models.ec.model", "LibreEC", "pose", "s", 640),
     ("libreyolo.models.yolonas.model", "LibreYOLONAS", "pose", "s", 640),
+    # rfdetr pose only ships size x, and that backbone needs a shape divisible
+    # by 24, so this case cannot reuse the 640 the other entries use.
+    ("libreyolo.models.rfdetr.model", "LibreRFDETR", "pose", "x", 648),
     ("libreyolo.models.fomo.model", "LibreFOMO", "point", "s", 640),
     # classification
     ("libreyolo.models.resnet.model", "LibreResNet", "classify", "18", 640),

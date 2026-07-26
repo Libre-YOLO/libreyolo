@@ -66,8 +66,13 @@ Traps that have each produced a wrong answer in practice:
 | `ppocr` | Two-stage pipeline; does not use the single-tensor `_forward` hook. |
 | SAM family (`sam`, `mobilesam`, `picosam3`, EdgeTAM) | Promptable; entry point is `set_image()` / `predict(points=, bboxes=)`, not a single-tensor forward. |
 | `siglip2` | Untested here; its text tokenizer needs the optional `sentencepiece` dependency. |
-| `l2cs` (gaze) | Not evaluated. |
+| `l2cs` (gaze) | Out of scope. |
 
-`rfdetr` is enabled on the strength of `detect` and `segment`. Its `pose` and
-`obb` tasks were not verified, because pose only ships size `x` and obb
-requires real checkpoint weights; the class-level flag covers them regardless.
+`rfdetr` is verified on `detect`, `segment` and `pose`. Its `obb` task is not,
+because constructing it requires real checkpoint weights rather than random
+init; the class-level flag covers it regardless.
+
+For the record on `birefnet`, the divergence is not TF32, not cuDNN
+autotuning, not model state mutated by capture, and not uninitialized memory:
+eager is bit-stable before and after capture and no buffer changes. The cause
+is still unidentified, which is exactly why the family stays off.
