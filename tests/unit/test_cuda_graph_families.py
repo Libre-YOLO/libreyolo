@@ -87,34 +87,18 @@ CAPTURABLE = [
     ("libreyolo.models.nafnet.model", "LibreNAFNet", "restore", "s", 640),
     ("libreyolo.models.realesrgan.model", "LibreRealESRGAN", "restore", "x4", 640),
     ("libreyolo.models.swinir.model", "LibreSwinIR", "restore", "s", 640),
+    ("libreyolo.models.yolox.model", "LibreYOLOX", "detect", "n", 640),
+    ("libreyolo.models.yolo7.model", "LibreYOLO7", "detect", "b", 640),
+    ("libreyolo.models.efficientnetv2.model", "LibreEfficientNetV2", "classify", "b0", 640),
     # matte: encoder captured, deformable decoder eager (torchvision's
     # deform_conv2d kernel is not capture-safe).
     ("libreyolo.models.birefnet.model", "LibreBiRefNet", "matte", "t", 640),
 ]
 
 
-# Families whose forward is very nearly input-independent at random init, so
-# comparing replay against eager cannot prove the graph is reading its input:
-# a graph that ignored the input entirely would match just as well. Capture is
-# still exercised for them below, which shows the forward contains no op that
-# capture rejects, but full parity needs real weights and is not claimed here.
-#
-# Measured relative variation between two contrasting inputs, random init:
-#   LibreYOLOX/detect            1.1e-07
-#   LibreEfficientNetV2/classify 2.2e-06
-#   LibreYOLO7/detect            2.3e-05
-# against ~1e-1 to 1e0 for the families in CAPTURABLE.
-WEAK_SIGNAL = [
-    ("libreyolo.models.yolox.model", "LibreYOLOX", "detect", "n", 640),
-    ("libreyolo.models.efficientnetv2.model", "LibreEfficientNetV2", "classify", "b0", 640),
-    ("libreyolo.models.yolo7.model", "LibreYOLO7", "detect", "b", 640),
-]
-
-# Relative to the output's own scale. Uniform noise washes out through global
-# pooling, so the two probes differ in distribution as well as in draw.
-MIN_RELATIVE_VARIATION = 1e-3
-
-
+# Two probes with different distributions. Uniform draws wash out through
+# global pooling, and some heads then produce byte-identical output for both,
+# which leaves nothing for the parity check to bite on.
 def _probe_inputs(imgsz):
     return (
         torch.randn(1, 3, imgsz, imgsz, device="cuda"),
@@ -171,14 +155,21 @@ def test_family_capture_is_bit_identical(import_path, cls_name, task, size, imgs
             eager2 = _flatten(model._forward(x2))
 
             assert eager1, "family produced no output tensors"
-            # Relative, not bitwise. Two outputs can differ only at 1e-9 while
-            # the model is effectively constant, and parity against a constant
-            # proves nothing: a graph ignoring its input would match too.
-            variation = _relative_variation(eager1, eager2)
-            assert variation > MIN_RELATIVE_VARIATION, (
-                f"output barely depends on the input (relative variation "
-                f"{variation:.2e}), so replay parity proves nothing; move this "
-                f"family to WEAK_SIGNAL"
+            # At least one output must differ between the two probes,
+            # otherwise parity proves nothing: a graph that ignored its input
+            # would match just as well. Bitwise is the right test here, not a
+            # magnitude threshold. Several detection heads add a large constant
+            # grid to their predictions, so a real input-dependent signal can
+            # be tiny relative to the output's scale while still being exactly
+            # what a stale replay would get wrong.
+            differing = [
+                i
+                for i, (a, b) in enumerate(zip(eager1, eager2))
+                if a.shape != b.shape or not torch.equal(a, b)
+            ]
+            assert differing, (
+                "every output is byte-identical for both probes, so replay "
+                "parity cannot detect a graph that ignores its input"
             )
 
             model.capture_graph(imgsz=imgsz, batch=1)
@@ -198,6 +189,12 @@ def test_family_capture_is_bit_identical(import_path, cls_name, task, size, imgs
                     f"{tag} replay out[{i}] differs from eager, "
                     f"maxdiff={(a.float() - b.float()).abs().max().item():.3e}"
                 )
+
+        # Guard on the guard: a graph stuck on the first input would return
+        # graphed1 for the second, so those must not agree with eager2.
+        assert any(
+            not torch.equal(a, b) for a, b in zip(graphed1, eager2)
+        ), "a stale graph would be indistinguishable here"
     finally:
         model.release_graphs()
 
@@ -321,38 +318,6 @@ def test_unsupported_family_still_refuses():
 
 
 @requires_cuda
-@pytest.mark.parametrize("import_path,cls_name,task,size,imgsz", WEAK_SIGNAL)
-def test_weak_signal_family_captures(import_path, cls_name, task, size, imgsz):
-    """Capture works for these, but parity is not evidence of correctness.
-
-    Their forward is all but input-independent at random init, so eager and
-    replay agreeing says little. What this does establish is that capture
-    itself succeeds, meaning the forward contains no operation capture
-    rejects, and that replay is stable. Proving parity properly needs real
-    weights; see docs/cuda_graphs.md.
-    """
-    model = _build(import_path, cls_name, task, size)
-    try:
-        x1, _ = _probe_inputs(imgsz)
-        with torch.no_grad():
-            eager = _flatten(model._forward(x1))
-            model.capture_graph(imgsz=imgsz, batch=1)
-            with model.cuda_graph_scope(True):
-                graphed = _flatten(forward_maybe_graphed(model, x1))
-                again = _flatten(forward_maybe_graphed(model, x1))
-
-        assert model.graph_info()["graph_count"] == 1
-        assert len(eager) == len(graphed)
-        for i, (a, b) in enumerate(zip(eager, graphed)):
-            assert a.shape == b.shape
-            assert torch.equal(a, b), f"replay out[{i}] differs from eager"
-        for i, (a, b) in enumerate(zip(graphed, again)):
-            assert torch.equal(a, b), f"repeated replay out[{i}] is unstable"
-    finally:
-        model.release_graphs()
-
-
-@requires_cuda
 def test_sensenova_vision_tower_captures():
     """SenseNova's packed vision tower captures at a fixed token count.
 
@@ -397,8 +362,7 @@ def test_sensenova_vision_tower_captures():
     with torch.no_grad():
         eager1 = model(packed_pixel_values=x1, **kwargs).clone()
         eager2 = model(packed_pixel_values=x2, **kwargs).clone()
-        variation = _relative_variation([eager1], [eager2])
-        assert variation > MIN_RELATIVE_VARIATION, variation
+        assert not torch.equal(eager1, eager2), "tower ignored its input"
 
         static = x1.clone()
         stream = torch.cuda.Stream()

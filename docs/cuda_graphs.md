@@ -40,12 +40,22 @@ model.model.eval()          # see the trap below, this is mandatory
 ```
 
 Capture at a fixed shape, then replay against **two different inputs** and
-require every output tensor to match eager exactly. Check first that the output
-actually moves with the input: measure variation relative to the output's own
-scale and require more than 1e-3. Bitwise inequality is not enough, since two
-outputs can differ by 1e-9 while the model is effectively constant, and parity
-against a constant proves nothing. Probe with contrasting distributions rather
-than two uniform draws, which wash out through global pooling. Add the family to
+require every output tensor to match eager exactly. Check first that at least
+one output differs between the two probes, otherwise parity proves nothing: a
+graph ignoring its input would match just as well. Then assert the converse
+too, that the first replay does *not* match the second probe's eager result,
+which is what a stale graph would produce.
+
+Bitwise is the right test for that, not a magnitude threshold. Several
+detection heads add a large constant grid to their predictions, so a genuine
+input-dependent signal can measure ~1e-7 relative to the output's scale while
+being exactly what a stale replay gets wrong. An earlier version of this file
+required relative variation above 1e-3 and wrongly demoted three healthy
+families on that basis.
+
+Probe with contrasting distributions rather than two uniform draws, which wash
+out through global pooling and can leave a head emitting byte-identical output
+for both. Add the family to
 `tests/unit/test_cuda_graph_families.py` and set `SUPPORTS_CUDA_GRAPH = True`.
 
 Traps that have each produced a wrong answer in practice:
@@ -56,12 +66,10 @@ Traps that have each produced a wrong answer in practice:
 - The first output tensor is an **anchor grid** for several families and does
   not depend on the input, so a replay that ignored its input entirely would
   still match on it. Check input dependence across all outputs.
-- Some families are **nearly input-independent at random init**, so parity
-  against eager cannot show the graph is reading its input. `LibreYOLOX`,
-  `LibreEfficientNetV2` and `LibreYOLO7` measure 1e-7 to 1e-5 relative
-  variation, against 1e-2 to 1e0 for everything else. They live in
-  `WEAK_SIGNAL` in the test file: capture is exercised, parity is not claimed.
-  Confirming them properly needs real weights.
+- Judging input dependence by **relative magnitude is wrong**. `LibreYOLOX`,
+  `LibreEfficientNetV2` and `LibreYOLO7` measure 1e-7 to 1e-5 that way, but
+  their outputs still differ bitwise between probes, which is all a bitwise
+  parity check needs to catch a stale replay. Assert bitwise difference.
 - Seed before constructing. Unseeded draws pass or fail by luck, which is how
   the weak-signal families looked verified for two full runs.
 - A **failed capture can poison the CUDA context** for the rest of the process
