@@ -145,24 +145,29 @@ prevent, so the family stays off.
 
 ## Closing sensenova
 
-Not attempted here because the model cannot be constructed on a machine
-without the checkpoint, and changing a vendored 7B model's forward without
-running it once is not worth the risk. For anyone with the hardware, the route
-is narrower than the general problem:
+The vision tower can be built from a synthetic config without the checkpoint,
+so this half was measured rather than assumed:
 
-The vision tower is the tractable half. For a **single image at a fixed
-resolution** the packed token count is statically known, so `cu_seqlens` is
-constant and `max_seqlen` can come from Python ints rather than
-`torch.max(...).item()` (`modeling/bagel.py:263`). Removing that sync makes the
-`vit_model` call fixed-shape, at which point the family-specific runner pattern
-applies exactly as it does for SAM: capture the tower, leave everything else
-eager. A stock `SiglipVisionModel` already captures bit-identically, so the
-class itself is not the obstacle.
+```python
+from libreyolo.models.sensenova.modeling.siglip_navit import (
+    SiglipVisionConfig, SiglipVisionModel)
+```
 
-The generation loop is the intractable half and should stay eager. Graphing
-autoregressive decode needs a static KV cache with graphs bucketed by sequence
-length, which is a separate feature.
+It does **not** capture, even at a fixed token count. `siglip_navit.py:265`
+runs `start, end = int(cu_seqlens[i]), int(cu_seqlens[i + 1])` inside the
+attention fallback loop, and `int()` on a device tensor syncs the stream, once
+per segment per layer. Dropping the `torch.max(...).item()` at
+`modeling/bagel.py:263` is therefore necessary but nowhere near sufficient.
 
-Verify as with any other family: construct, `.eval()`, capture, then replay two
-contrasting inputs and require bit-identical outputs plus relative variation
-above 1e-3.
+Making the tower capturable needs the segment boundaries to be Python constants
+known before capture, which means a static-packing mode rather than a local
+edit: `cu_seqlens` is a device tensor and reading it at all, by `int()`,
+`.tolist()`, or `.item()`, is a sync.
+
+The generation loop is the other half and is worse: autoregressive decode over
+a growing KV cache needs a static KV cache with graphs bucketed by sequence
+length. Both halves are separate features, not flags.
+
+A stock fixed-shape `SiglipVisionModel` from transformers does capture
+bit-identically, so the architecture family is not the obstacle; the packed
+variable-length formulation is.
