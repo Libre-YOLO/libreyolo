@@ -1344,7 +1344,28 @@ class MSDeformAttnPose(nn.Module):
         reference_points = torch.transpose(reference_points, 2, 3).flatten(1, 2)
 
         if reference_points.shape[-1] == 2:
-            offset_normalizer = torch.tensor(input_spatial_shapes, device=query.device)
+            if (
+                torch.is_tensor(input_spatial_shapes)
+                and input_spatial_shapes.device == query.device
+            ):
+                offset_normalizer = input_spatial_shapes
+            else:
+                # Materialising this from host data copies host->device, which
+                # CUDA graph capture rejects. Memoise per shape and device so the
+                # copy happens on the eager warmup rather than during capture.
+                if torch.is_tensor(input_spatial_shapes):
+                    key = (tuple(input_spatial_shapes.cpu().flatten().tolist()), query.device)
+                else:
+                    key = (tuple(tuple(p) for p in input_spatial_shapes), query.device)
+                cache = getattr(self, "_offset_normalizer_cache", None)
+                if cache is None:
+                    cache = self._offset_normalizer_cache = {}
+                offset_normalizer = cache.get(key)
+                if offset_normalizer is None:
+                    offset_normalizer = torch.tensor(
+                        input_spatial_shapes, device=query.device
+                    )
+                    cache[key] = offset_normalizer
             offset_normalizer = offset_normalizer.flip([1]).reshape(
                 1, 1, 1, self.n_levels, 1, 2
             )
