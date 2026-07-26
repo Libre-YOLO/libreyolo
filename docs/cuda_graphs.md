@@ -74,7 +74,7 @@ Traps that have each produced a wrong answer in practice:
 | Family | Reason |
 | --- | --- |
 | `l2cs` (gaze) | Out of scope. |
-| `sensenova` | 7B vision-language model with no random-init path: the constructor takes no `model_path` and `_ensure_weights()` fetches the full checkpoint, roughly 15 GB. Untestable on a machine that cannot hold it; at fp16 the weights alone are ~14 GB against 15.9 GB of VRAM, before activations or a capture pool. |
+| `sensenova` | Autoregressive vision-language model. Its `_forward` takes a structured inputs object rather than a tensor, and inference is generation over a growing KV cache (`NaiveCache`, `forward_cache_update_text/vae/vit`). Sequence length changes every decode step, so a single fixed graph cannot represent it; supporting it means a static-KV-cache design with one graph per length bucket, which is a separate feature rather than a flag. Separately, it is not constructible here: there is no random-init path and the checkpoint is ~15 GB. |
 
 The SAM family is supported through a family-specific path too. Its entry
 point is `set_image()` / `predict(points=)`, and the image encoder is both the
