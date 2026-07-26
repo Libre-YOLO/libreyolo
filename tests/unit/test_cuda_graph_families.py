@@ -350,3 +350,74 @@ def test_weak_signal_family_captures(import_path, cls_name, task, size, imgsz):
             assert torch.equal(a, b), f"repeated replay out[{i}] is unstable"
     finally:
         model.release_graphs()
+
+
+@requires_cuda
+def test_sensenova_vision_tower_captures():
+    """SenseNova's packed vision tower captures at a fixed token count.
+
+    The tower is built from a synthetic config here, so this needs no
+    checkpoint. It used to fail capture because the attention fallback read
+    ``cu_seqlens`` element by element with ``int()``, syncing the stream once
+    per segment per layer; the boundaries are now read on the eager warmup and
+    reused during capture.
+
+    This covers the vision half only. SenseNova as a family stays disabled: its
+    inference is autoregressive generation over a growing KV cache, which needs
+    a static KV cache with graphs bucketed by length.
+    """
+    from libreyolo.models.sensenova.modeling.siglip_navit import (
+        SiglipVisionConfig,
+        SiglipVisionModel,
+    )
+
+    torch.manual_seed(0)
+    config = SiglipVisionConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=64,
+        patch_size=16,
+    )
+    model = SiglipVisionModel(config)
+    model.vision_model.embeddings.convert_conv2d_to_linear(config)
+    model = model.cuda().eval().to(torch.bfloat16)
+
+    tokens = 16
+    patch = config.patch_size
+    x1 = torch.randn(tokens, 3 * patch * patch, device="cuda", dtype=torch.bfloat16)
+    x2 = torch.randn_like(x1) * 3 + 2
+    kwargs = dict(
+        packed_flattened_position_ids=torch.arange(tokens, device="cuda"),
+        cu_seqlens=torch.tensor([0, tokens], device="cuda", dtype=torch.int32),
+        max_seqlen=tokens,
+    )
+
+    with torch.no_grad():
+        eager1 = model(packed_pixel_values=x1, **kwargs).clone()
+        eager2 = model(packed_pixel_values=x2, **kwargs).clone()
+        variation = _relative_variation([eager1], [eager2])
+        assert variation > MIN_RELATIVE_VARIATION, variation
+
+        static = x1.clone()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            for _ in range(3):
+                model(packed_pixel_values=static, **kwargs)
+        torch.cuda.current_stream().wait_stream(stream)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=torch.cuda.graph_pool_handle()):
+            out = model(packed_pixel_values=static, **kwargs)
+
+        static.copy_(x1)
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(eager1, out.clone())
+
+        static.copy_(x2)
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(eager2, out.clone())

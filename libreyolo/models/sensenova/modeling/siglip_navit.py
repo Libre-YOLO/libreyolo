@@ -214,6 +214,33 @@ class SiglipVisionEmbeddings(nn.Module):
         return embeddings
 
 
+_SEGMENT_BOUNDS_CACHE: "dict[tuple, tuple]" = {}
+
+
+def _segment_bounds(cu_seqlens):
+    """Segment boundaries as Python ints, without syncing during capture.
+
+    ``cu_seqlens`` lives on the device, so reading it is a device-to-host sync
+    and CUDA graph capture rejects that. The packing behind a captured graph is
+    fixed, though: a graph is keyed to one input shape, so the boundaries seen
+    during the eager warmup are the boundaries every replay will use. They are
+    read once outside capture and reused inside it.
+
+    Keyed by device, length and the tensor's storage, which is stable across a
+    capture and its replays. If capture starts without a warmup having filled
+    the cache, this falls back to reading, which fails loudly rather than
+    silently returning boundaries from a different packing.
+    """
+    key = (cu_seqlens.device, int(cu_seqlens.numel()), cu_seqlens.data_ptr())
+    if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
+        cached = _SEGMENT_BOUNDS_CACHE.get(key)
+        if cached is not None:
+            return cached
+    bounds = tuple(int(v) for v in cu_seqlens.tolist())
+    _SEGMENT_BOUNDS_CACHE[key] = bounds
+    return bounds
+
+
 class SiglipFlashAttention2(SiglipAttention):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -261,8 +288,14 @@ class SiglipFlashAttention2(SiglipAttention):
             )
         else:
             outputs = []
-            for i in range(int(cu_seqlens.numel()) - 1):
-                start, end = int(cu_seqlens[i]), int(cu_seqlens[i + 1])
+            # Reading cu_seqlens on the host syncs the stream, and CUDA graph
+            # capture forbids that. The packing is fixed for a given captured
+            # shape, so the boundaries are read once on the eager warmup and
+            # reused during capture. Outside capture this is the same read as
+            # before, just hoisted out of the loop.
+            bounds = _segment_bounds(cu_seqlens)
+            for i in range(len(bounds) - 1):
+                start, end = bounds[i], bounds[i + 1]
                 out = scaled_dot_product_attention(
                     query_states[start:end].to(torch.bfloat16).transpose(0, 1).unsqueeze(0),
                     key_states[start:end].to(torch.bfloat16).transpose(0, 1).unsqueeze(0),

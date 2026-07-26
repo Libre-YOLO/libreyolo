@@ -143,31 +143,31 @@ is simply wrong. That is precisely the silent-wrongness this gate exists to
 prevent, so the family stays off.
 
 
-## Closing sensenova
+## sensenova: vision tower done, generation loop not
 
-The vision tower can be built from a synthetic config without the checkpoint,
-so this half was measured rather than assumed:
+The vision tower can be built from a synthetic config with no checkpoint, so
+this half was fixed and verified rather than left as a note:
 
 ```python
 from libreyolo.models.sensenova.modeling.siglip_navit import (
     SiglipVisionConfig, SiglipVisionModel)
 ```
 
-It does **not** capture, even at a fixed token count. `siglip_navit.py:265`
-runs `start, end = int(cu_seqlens[i]), int(cu_seqlens[i + 1])` inside the
-attention fallback loop, and `int()` on a device tensor syncs the stream, once
-per segment per layer. Dropping the `torch.max(...).item()` at
-`modeling/bagel.py:263` is therefore necessary but nowhere near sufficient.
+It previously failed capture even at a fixed token count, because the
+attention fallback read `cu_seqlens` element by element with `int()`, syncing
+the stream once per segment per layer. Those boundaries are now read on the
+eager warmup and reused during capture (`_segment_bounds`), which is sound
+because a graph is keyed to one shape, so the packing behind it cannot change
+between warmup and replay. The tower now captures and replays bit-identically;
+see `test_sensenova_vision_tower_captures`.
 
-Making the tower capturable needs the segment boundaries to be Python constants
-known before capture, which means a static-packing mode rather than a local
-edit: `cu_seqlens` is a device tensor and reading it at all, by `int()`,
-`.tolist()`, or `.item()`, is a sync.
+The family flag stays off, for two reasons that are not this one:
 
-The generation loop is the other half and is worse: autoregressive decode over
-a growing KV cache needs a static KV cache with graphs bucketed by sequence
-length. Both halves are separate features, not flags.
-
-A stock fixed-shape `SiglipVisionModel` from transformers does capture
-bit-identically, so the architecture family is not the obstacle; the packed
-variable-length formulation is.
+* Inference is autoregressive generation over a growing KV cache
+  (`NaiveCache`, `forward_cache_update_text/vae/vit`), so sequence length
+  changes every decode step. Graphing that needs a static KV cache with graphs
+  bucketed by length, which is a separate feature.
+* The model cannot be constructed without its ~15 GB checkpoint, so wiring the
+  tower into `_get_graph_runner` the way SAM does could not be executed here
+  even once. That wiring is small and follows the SAM pattern exactly, but it
+  should be written by someone who can run it.
