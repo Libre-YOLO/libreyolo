@@ -61,7 +61,7 @@ Traps that have each produced a wrong answer in practice:
 | Family | Reason |
 | --- | --- |
 | `birefnet` | Captures, but replay drifts from eager by ~1.6e-2 across nearly every element. Not stale and it tracks its input, so the signature points at kernel selection under capture. Cause unidentified. |
-| `eomt` | The blocking operation is inside the vendored transformers module rather than LibreYOLO code. |
+| `eomt` | The blocking operation is inside `transformers.models.eomt.modeling_eomt`, an installed third-party package rather than LibreYOLO code, so the fix belongs upstream. |
 | `depth_anything3` | `_apply_mono_sky` branches on tensor values and produces data-dependent shapes. Structural, not a placement issue. |
 | `ppocr` | Two-stage pipeline; does not use the single-tensor `_forward` hook. |
 | SAM family (`sam`, `mobilesam`, `picosam3`, EdgeTAM) | Promptable; entry point is `set_image()` / `predict(points=, bboxes=)`, not a single-tensor forward. |
