@@ -60,9 +60,9 @@ Traps that have each produced a wrong answer in practice:
 
 | Family | Reason |
 | --- | --- |
-| `birefnet` | Its decoder uses `torchvision.ops.deform_conv2d`, which is not capture-safe. Verified in isolation from any model: a bare `deform_conv2d` call replays to a different result (maxdiff ~83 on random inputs), self-consistent across replays but wrong. The kernel is a compiled extension, so unlike the SAM and EoMT cases there is no Python-level fix; it needs a torchvision change or a capture-safe reimplementation of the op. |
+| `birefnet` | Its decoder uses `torchvision.ops.deform_conv2d`, which is not capture-safe. Verified in isolation from any model: a bare `deform_conv2d` call replays to a different result (maxdiff ~83 on random inputs), self-consistent across replays but wrong. Confirmed under the same side-stream warmup and graph pool the runner uses, so it is the op and not the harness. The kernel is a compiled extension, so unlike the SAM and EoMT cases there is no Python-level fix; it needs a torchvision change or a capture-safe reimplementation of the op. |
 | `l2cs` (gaze) | Out of scope. |
-| `sensenova` | 7B vision-language model; random init needs far more memory than a single consumer card. |
+| `sensenova` | 7B vision-language model with no random-init path: the constructor takes no `model_path` and `_ensure_weights()` fetches the full checkpoint, roughly 15 GB. Untestable on a machine that cannot hold it; at fp16 the weights alone are ~14 GB against 15.9 GB of VRAM, before activations or a capture pool. |
 
 The SAM family is supported through a family-specific path too. Its entry
 point is `set_image()` / `predict(points=)`, and the image encoder is both the
@@ -118,3 +118,11 @@ by capture, and uninitialized allocations in our own code were each ruled out
 first. Note the failure mode: replay is deterministic and looks plausible, it
 is simply wrong. That is precisely the silent-wrongness this gate exists to
 prevent, so the family stays off.
+
+## Enabling birefnet would mean changing its output
+
+The only route is replacing `torchvision.ops.deform_conv2d` with a
+capture-safe implementation. A reimplementation will not match the fused CUDA
+kernel bit for bit, so BiRefNet's predictions would shift slightly even in the
+eager path. That is a product decision about a shipped model, not a capture
+detail, so it is deliberately not taken here.
