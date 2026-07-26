@@ -61,9 +61,8 @@ Traps that have each produced a wrong answer in practice:
 | Family | Reason |
 | --- | --- |
 | `birefnet` | Captures, but replay drifts from eager by ~1.6e-2 across nearly every element. Not stale and it tracks its input, so the signature points at kernel selection under capture. Cause unidentified. |
-| `eomt` | The blocking operation is inside `transformers.models.eomt.modeling_eomt`, an installed third-party package rather than LibreYOLO code, so the fix belongs upstream. |
-| `depth_anything3` | `_apply_mono_sky` branches on tensor values and produces data-dependent shapes. Structural, not a placement issue. |
 | `l2cs` (gaze) | Out of scope. |
+| `sensenova` | 7B vision-language model; random init needs far more memory than a single consumer card. |
 
 The SAM family is supported through a family-specific path too. Its entry
 point is `set_image()` / `predict(points=)`, and the image encoder is both the
@@ -79,6 +78,23 @@ device and memoises it per `(q_size, k_size, device)`. Values are identical,
 verified against the upstream computation. The patch installs on import of
 `libreyolo.models.sam` and declines quietly if a future transformers release
 restructures the method, in which case SAM keeps working and stays eager.
+
+`depth_anything3` splits its forward instead. The sky-to-far-depth step
+branches on tensor values and selects a data-dependent number of pixels, so it
+cannot be recorded; the network in front of it can. Capture stops at the raw
+head outputs and the sky step runs eagerly on the replayed result, which leaves
+the numbers identical to the fully eager path. Because that tail lives outside
+the graph, the class sets `GRAPH_DISPATCH_IN_FORWARD`, which tells
+`forward_maybe_graphed` to route through `_forward` rather than calling the
+runner directly. Without that flag the shared helper returns the partial
+network output and silently skips the tail.
+
+`eomt` needed only that its attention-mask schedule stay on the host. Upstream
+tests `attn_mask_probs[i] > 0` and `prob < 1`; both compare a tensor against a
+Python scalar, which syncs the stream on a device tensor whether or not the
+guarded branch runs. `LibreEoMTNet._apply` keeps that buffer on the CPU across
+device moves. It is read only as a scalar, so nothing else changes, and it
+stays a registered buffer so checkpoints are unaffected.
 
 `ppocr` is supported through a family-specific path rather than the shared
 one. Its `_forward` hook stays unimplemented by design, so the class overrides

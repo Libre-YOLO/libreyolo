@@ -368,6 +368,13 @@ def forward_maybe_graphed(model: Any, input_tensor: torch.Tensor) -> Any:
     mode = getattr(model, "_cuda_graph_mode", None)
     if mode is None:
         return model._forward(input_tensor)
+    if getattr(model, "GRAPH_DISPATCH_IN_FORWARD", False):
+        # Some families capture only part of the forward and finish the rest
+        # eagerly, because the tail does data-dependent work that cannot be
+        # recorded. Their ``_forward`` decides when to replay, so calling the
+        # runner here instead would return the partial result and silently skip
+        # the tail.
+        return model._forward(input_tensor)
     return model._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
 
 

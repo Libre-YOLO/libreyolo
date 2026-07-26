@@ -73,6 +73,12 @@ CAPTURABLE = [
     ("libreyolo.models.efficientnetv2.model", "LibreEfficientNetV2", "classify", "b0", 640),
     ("libreyolo.models.clip.model", "LibreCLIP", "classify", "b32", 224),
     ("libreyolo.models.dinov2.model", "LibreDINOv2", "classify", "n", 644),
+    ("libreyolo.models.siglip2.model", "LibreSigLIP2", "classify", "b16", 256),
+    # panoptic/semantic/instance: capturable once the attention-mask schedule
+    # is held on the host (LibreEoMTNet._apply).
+    ("libreyolo.models.eomt.model", "LibreEoMT", "semantic", "s", 512),
+    # depth: the network is captured, the sky step runs eagerly after replay.
+    ("libreyolo.models.depth_anything3.model", "LibreDepthAnything3", "depth", "l", 644),
     # semantic segmentation
     ("libreyolo.models.dinov2.model", "LibreDINOv2", "semantic", "n", 644),
     ("libreyolo.models.segformer.model", "LibreSegformer", "semantic", "b0", 640),
@@ -262,8 +268,8 @@ def test_unsupported_family_still_refuses():
     """Families that never opted in must raise rather than silently capture."""
     import importlib
 
-    cls = getattr(importlib.import_module("libreyolo.models.eomt.model"), "LibreEoMT")
+    cls = getattr(importlib.import_module("libreyolo.models.birefnet.model"), "LibreBiRefNet")
     assert cls.SUPPORTS_CUDA_GRAPH is False
-    model = cls(model_path=None, size="s", device="cuda", task="semantic")
+    model = cls(model_path=None, size="t", device="cuda")
     with pytest.raises(NotImplementedError):
-        model.capture_graph(imgsz=512, batch=1)
+        model.capture_graph(imgsz=640, batch=1)

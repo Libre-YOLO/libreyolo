@@ -153,6 +153,24 @@ class LibreEoMTNet(nn.Module):
         state = normalize_eomt_state_dict(state_dict)
         return self.eomt.load_state_dict(state, strict=strict)
 
+    def _apply(self, *args, **kwargs):
+        """Keep the attention-mask schedule on the host across device moves.
+
+        Upstream's encoder loop tests ``attn_mask_probs[i] > 0`` and passes the
+        same entry as ``prob`` to a ``prob < 1`` check. Both compare a tensor
+        against a Python scalar, and doing that on a device tensor syncs the
+        stream, which CUDA graph capture forbids, whether or not the guarded
+        branch is taken. The schedule is a small constant that is only ever
+        read as a scalar, so holding it on the CPU removes the sync without
+        changing any result. It stays a registered buffer, so checkpoints are
+        unaffected.
+        """
+        result = super()._apply(*args, **kwargs)
+        probs = getattr(self.eomt, "attn_mask_probs", None)
+        if probs is not None and probs.device.type != "cpu":
+            self.eomt.attn_mask_probs = probs.cpu()
+        return result
+
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         _, _, height, width = x.shape
         x = (x - self.pixel_mean) / self.pixel_std
