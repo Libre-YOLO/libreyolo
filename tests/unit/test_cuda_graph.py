@@ -61,7 +61,13 @@ def test_runner_falls_back_to_eager_on_cpu_input():
     torch.testing.assert_close(out, x * 2)
     assert len(calls) == 1
     assert runner.info()["graph_count"] == 0
-    assert "cpu" in runner.info()["fallback_reason"]
+    reason = runner.info()["fallback_reason"]
+    if torch.cuda.is_available():
+        assert "cpu" in reason
+    else:
+        # No CUDA device means the availability guard trips first, so the
+        # reason names that rather than the input device.
+        assert "CUDA is not available" in reason
 
 
 def test_runner_refuses_capture_when_grad_enabled():
