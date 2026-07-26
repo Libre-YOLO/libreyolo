@@ -40,6 +40,9 @@ class LibreBiRefNet(BaseModel):
 
     FAMILY = "birefnet"
     FILENAME_PREFIX = "LibreBiRefNet"
+    # Capture covers the encoder only; the deformable decoder runs eagerly.
+    # See _get_graph_runner below.
+    SUPPORTS_CUDA_GRAPH = True
     WEIGHT_EXT = ".pt"
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 1024, "l": 1024}
     SUPPORTED_TASKS = ("matte",)
@@ -145,8 +148,30 @@ class LibreBiRefNet(BaseModel):
         res = input_size if input_size is not None else self.input_size
         return preprocess_image(image, input_size=res, color_format=color_format)
 
+    # The decoder's deformable ASPP blocks call torchvision's deform_conv2d,
+    # whose CUDA kernel replays to a different result under graph capture (it
+    # is a compiled extension, so there is nothing to shim from here). The
+    # encoder in front of it captures bit-identically and is the bulk of the
+    # work, so capture stops there and the decoder runs eagerly on the replayed
+    # features. Results are identical to the fully eager path.
+    GRAPH_DISPATCH_IN_FORWARD = True
+
+    def _get_graph_runner(self):
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda x: self.model.forward_enc(x),
+                family=self.family,
+            )
+        return self._graph_runner
+
     def _forward(self, input_tensor: torch.Tensor) -> Any:
-        return self.model(input_tensor)
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
+            return self.model(input_tensor)
+        feats = self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
+        return self.model.forward_dec(input_tensor, feats)
 
     def _postprocess(
         self,
