@@ -87,6 +87,9 @@ CAPTURABLE = [
     ("libreyolo.models.nafnet.model", "LibreNAFNet", "restore", "s", 640),
     ("libreyolo.models.realesrgan.model", "LibreRealESRGAN", "restore", "x4", 640),
     ("libreyolo.models.swinir.model", "LibreSwinIR", "restore", "s", 640),
+    # matte: encoder captured, deformable decoder eager (torchvision's
+    # deform_conv2d kernel is not capture-safe).
+    ("libreyolo.models.birefnet.model", "LibreBiRefNet", "matte", "t", 640),
 ]
 
 
@@ -310,11 +313,11 @@ def test_unsupported_family_still_refuses():
     """Families that never opted in must raise rather than silently capture."""
     import importlib
 
-    cls = getattr(importlib.import_module("libreyolo.models.birefnet.model"), "LibreBiRefNet")
+    cls = getattr(importlib.import_module("libreyolo.models.l2cs.model"), "LibreL2CS")
     assert cls.SUPPORTS_CUDA_GRAPH is False
-    model = cls(model_path=None, size="t", device="cuda")
+    model = cls(model_path=None, size="r18", device="cuda")
     with pytest.raises(NotImplementedError):
-        model.capture_graph(imgsz=640, batch=1)
+        model.capture_graph(imgsz=448, batch=1)
 
 
 @requires_cuda
