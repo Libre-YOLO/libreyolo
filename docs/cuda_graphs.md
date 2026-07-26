@@ -74,7 +74,7 @@ Traps that have each produced a wrong answer in practice:
 | Family | Reason |
 | --- | --- |
 | `l2cs` (gaze) | Out of scope. |
-| `sensenova` | Autoregressive vision-language model. Its `_forward` takes a structured inputs object rather than a tensor, and inference is generation over a growing KV cache (`NaiveCache`, `forward_cache_update_text/vae/vit`). Sequence length changes every decode step, so a single fixed graph cannot represent it; supporting it means a static-KV-cache design with one graph per length bucket, which is a separate feature rather than a flag. Separately, it is not constructible here: there is no random-init path and the checkpoint is ~15 GB. |
+| `sensenova` | Outside this mechanism on two independent counts, neither of them hardware. Its `_forward` takes a structured inputs object rather than a tensor, and inference is autoregressive generation over a growing KV cache, so sequence length changes every decode step. Its vision tower is no better: `bagel.py:264` feeds packed variable-length tokens with `cu_seqlens`, and the line above it calls `torch.max(...).item()`, which syncs. A stock fixed-shape `SiglipVisionModel` does capture bit-identically, but that is not the path this model takes. Supporting it means a static-shape design with graphs bucketed by length, which is a separate feature. It is also not constructible here: no random-init path and a ~15 GB checkpoint. |
 
 The SAM family is supported through a family-specific path too. Its entry
 point is `set_image()` / `predict(points=)`, and the image encoder is both the
