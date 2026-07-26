@@ -199,6 +199,65 @@ def test_ppocr_detection_stage_captures():
 
 
 @requires_cuda
+def test_sam_image_encoder_captures():
+    """SAM captures its image encoder rather than the _forward hook.
+
+    Upstream's vision attention builds its relative-position index on the host,
+    which capture rejects; ``sam.transformers_compat`` replaces that with an
+    on-device memoised index. Without the shim this test fails at capture.
+    """
+    from libreyolo.models.sam import transformers_compat
+    from libreyolo.models.sam.model import LibreSAM1
+
+    assert transformers_compat.apply() is True, "compat shim did not install"
+
+    model = LibreSAM1(size="base", device="cuda")
+    model.model.eval()
+    try:
+        x1 = torch.rand(1, 3, 1024, 1024, device="cuda")
+        x2 = torch.rand(1, 3, 1024, 1024, device="cuda")
+        with torch.no_grad():
+            eager1 = model.model.get_image_embeddings(x1).clone()
+            eager2 = model.model.get_image_embeddings(x2).clone()
+            assert not torch.equal(eager1, eager2), "encoder ignored its input"
+
+            # No scope active means the eager path, unchanged.
+            assert torch.equal(model.forward_image_embeddings(x1), eager1)
+
+            model.capture_graph(imgsz=1024, batch=1)
+            with model.cuda_graph_scope(True):
+                graphed1 = model.forward_image_embeddings(x1).clone()
+                graphed2 = model.forward_image_embeddings(x2).clone()
+
+        assert model.graph_info()["graph_count"] == 1
+        assert torch.equal(eager1, graphed1)
+        assert torch.equal(eager2, graphed2)
+    finally:
+        model.release_graphs()
+
+
+def test_sam_compat_shim_matches_upstream():
+    """The on-device index must equal what upstream computes on the host."""
+    from transformers.models.sam import modeling_sam
+
+    from libreyolo.models.sam import transformers_compat
+
+    transformers_compat.apply()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    attention = object.__new__(modeling_sam.SamVisionAttention)
+
+    for q_size, k_size in ((14, 14), (16, 16), (64, 64), (14, 27)):
+        rel_pos = torch.randn(2 * max(q_size, k_size) - 1, 8, device=device)
+        expected_index = (
+            torch.arange(q_size)[:, None] * max(k_size / q_size, 1.0)
+            - torch.arange(k_size)[None, :] * max(q_size / k_size, 1.0)
+            + (k_size - 1) * max(q_size / k_size, 1.0)
+        ).long()
+        got = transformers_compat._relative_index(q_size, k_size, rel_pos.device)
+        assert torch.equal(got.cpu(), expected_index)
+
+
+@requires_cuda
 def test_unsupported_family_still_refuses():
     """Families that never opted in must raise rather than silently capture."""
     import importlib

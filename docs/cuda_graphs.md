@@ -63,9 +63,22 @@ Traps that have each produced a wrong answer in practice:
 | `birefnet` | Captures, but replay drifts from eager by ~1.6e-2 across nearly every element. Not stale and it tracks its input, so the signature points at kernel selection under capture. Cause unidentified. |
 | `eomt` | The blocking operation is inside `transformers.models.eomt.modeling_eomt`, an installed third-party package rather than LibreYOLO code, so the fix belongs upstream. |
 | `depth_anything3` | `_apply_mono_sky` branches on tensor values and produces data-dependent shapes. Structural, not a placement issue. |
-| SAM family (`sam`, `mobilesam`, `picosam3`, EdgeTAM) | Promptable; entry point is `set_image()` / `predict(points=, bboxes=)`. The `vision_encoder` was tested directly as the dominant cost and does **not** capture: `transformers/models/sam/modeling_sam.py:759` indexes with `relative_coords.long()` built on the host. Third-party, so the fix belongs upstream or in a memoising wrapper. |
-| `siglip2` | Untested here; its text tokenizer needs the optional `sentencepiece` dependency. |
 | `l2cs` (gaze) | Out of scope. |
+
+The SAM family is supported through a family-specific path too. Its entry
+point is `set_image()` / `predict(points=)`, and the image encoder is both the
+dominant cost and a single fixed-size tensor in, so that is the unit captured:
+encode once, prompt many times against the cached result. Prompt encoding and
+mask decoding stay eager, being cheap and varying per click.
+
+This one needs a shim. Upstream `SamVisionAttention.get_rel_pos` builds its
+relative-position index with `torch.arange` on the host and then indexes a GPU
+tensor with it, which capture rejects. `models/sam/transformers_compat.py`
+replaces the method with one that builds the same index on the embedding's
+device and memoises it per `(q_size, k_size, device)`. Values are identical,
+verified against the upstream computation. The patch installs on import of
+`libreyolo.models.sam` and declines quietly if a future transformers release
+restructures the method, in which case SAM keeps working and stays eager.
 
 `ppocr` is supported through a family-specific path rather than the shared
 one. Its `_forward` hook stays unimplemented by design, so the class overrides

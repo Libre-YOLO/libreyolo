@@ -71,6 +71,9 @@ class LibreSAMModel(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple] = ("segment",)
     DEFAULT_TASK: ClassVar[str] = "segment"
+    # Capture applies to the image encoder, which is the dominant cost and runs
+    # once per image; prompt decoding stays eager. See forward_image_embeddings.
+    SUPPORTS_CUDA_GRAPH: ClassVar[bool] = True
 
     # The interactive lifecycle is bespoke; the detection pipeline's
     # multi-scale TTA is meaningless here.
@@ -437,10 +440,44 @@ class LibreSAMModel(BaseModel):
             proc_kwargs["input_boxes"] = [boxes]
         return self.processor(images=img, return_tensors="pt", **proc_kwargs)
 
+    # =========================================================================
+    # CUDA graph capture
+    #
+    # SAM has no detection-shaped _forward, so the shared capture path does not
+    # apply. The image encoder is the dominant cost and takes a single tensor
+    # at a fixed processor size, which makes it the right unit to capture:
+    # encode once per image, then prompt many times against the cached result.
+    # Prompt encoding and mask decoding stay eager, since they are cheap and
+    # their inputs vary per click.
+    # =========================================================================
+
+    def _get_graph_runner(self):
+        """Graph runner over the image encoder rather than ``_forward``."""
+        if getattr(self, "_graph_runner", None) is None:
+            from ..base.cuda_graph import GraphRunner
+
+            self._graph_runner = GraphRunner(
+                forward_fn=lambda x: self.model.get_image_embeddings(x),
+                family=self.family,
+            )
+        return self._graph_runner
+
+    def forward_image_embeddings(self, pixel_values):
+        """Encode an image, replaying a captured graph when one is in scope.
+
+        Read through ``getattr`` because the interactive surface is exercised by
+        tests that build a session without going through ``BaseModel.__init__``,
+        so the graph attributes are not guaranteed to exist.
+        """
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
+            return self.model.get_image_embeddings(pixel_values)
+        return self._get_graph_runner().run(pixel_values, auto=(mode == "auto"))
+
     def _image_embeddings_from_encoding(self, enc):
         pixel_values = enc["pixel_values"].to(self.device, dtype=self._model_dtype)
         with torch.no_grad():
-            return self.model.get_image_embeddings(pixel_values)
+            return self.forward_image_embeddings(pixel_values)
 
     def _build_model_inputs(self, enc, cached_emb) -> Dict[str, Any]:
         """Assemble model kwargs, reusing cached embeddings when available."""

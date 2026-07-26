@@ -226,7 +226,7 @@ class LibrePPOCR(BaseModel):
 
     def _get_graph_runner(self):
         """Graph runner over the detection stage rather than ``_forward``."""
-        if self._graph_runner is None:
+        if getattr(self, "_graph_runner", None) is None:
             from ..base.cuda_graph import GraphRunner
 
             self._graph_runner = GraphRunner(
@@ -243,11 +243,10 @@ class LibrePPOCR(BaseModel):
         graph up to the runner's cache cap, and anything past that falls back
         to eager rather than growing without bound.
         """
-        if self._cuda_graph_mode is None:
+        mode = getattr(self, "_cuda_graph_mode", None)
+        if mode is None:
             return self.model.det(input_tensor)
-        return self._get_graph_runner().run(
-            input_tensor, auto=(self._cuda_graph_mode == "auto")
-        )
+        return self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
 
     def _postprocess(self, *args, **kwargs):
         raise NotImplementedError(
