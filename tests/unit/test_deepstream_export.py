@@ -429,3 +429,71 @@ def test_depth_passthrough_keeps_the_map_untouched():
         inner, model_family="zipdepth", imgsz=(384, 384), task="depth"
     )
     assert wrapped is inner
+
+
+@pytest.mark.parametrize(
+    "task,family",
+    [
+        ("pose", "yolonas"),
+        ("restore", "realesrgan"),
+        ("matte", "birefnet"),
+        ("gaze", "l2cs"),
+        ("depth", "zipdepth"),
+    ],
+)
+def test_raw_tensor_tasks_share_one_config_shape(tmp_path, task, family):
+    """Tasks DeepStream cannot post-process all export the same way."""
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / f"{family}_{task}.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, labels_path = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family=family,
+        class_names=[],
+        imgsz=(224, 224),
+        batch=1,
+        dynamic=False,
+        precision="fp32",
+        task=task,
+    )
+    config = Path(config_path).read_text()
+
+    assert "network-type=100" in config
+    assert "output-tensor-meta=1" in config
+    # No parser library, no clustering, no labels: the app decodes.
+    assert "custom-lib-path" not in config
+    assert "cluster-mode" not in config
+    assert labels_path == ""
+
+
+def test_raw_tensor_normalization_is_per_family():
+    """Only families normalizing outside their forward get a graph norm."""
+    from libreyolo.export.deepstream import _GraphNorm, wrap_for_deepstream
+
+    # BiRefNet normalizes in its preprocess transform -> bake it in.
+    matte = wrap_for_deepstream(
+        torch.nn.Identity(), model_family="birefnet", imgsz=(1024, 1024), task="matte"
+    )
+    assert isinstance(matte, _GraphNorm)
+
+    # Real-ESRGAN takes plain [0, 1]; SwinIR subtracts its own mean inside
+    # forward. Neither may be normalized again.
+    for family in ("realesrgan", "swinir"):
+        inner = torch.nn.Identity()
+        assert (
+            wrap_for_deepstream(
+                inner, model_family=family, imgsz=(256, 256), task="restore"
+            )
+            is inner
+        )
+
+
+def test_raw_tensor_tasks_reject_unlisted_families():
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    # picodet is a detector; it has no pose export.
+    with pytest.raises(NotImplementedError, match="not supported"):
+        wrap_for_deepstream(
+            torch.nn.Identity(), model_family="picodet", imgsz=(640, 640), task="pose"
+        )

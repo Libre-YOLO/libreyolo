@@ -88,10 +88,23 @@ checkpoint is published; `s` and `b` semantic weights do not exist.
 DINOv2 classification has no published checkpoint at all, so use it with
 your own fine-tuned weights.
 
-**Depth** (`network-type=100` with `output-tensor-meta=1`, no parser library):
-depth_anything, depth_anything3, zipdepth. DeepStream has no depth
-post-processor, so the dense map passes through untouched and the
-application reads it from the tensor metadata. No labels file is written.
+**Raw-tensor tasks** (`network-type=100` with `output-tensor-meta=1`, no
+parser library): DeepStream has no post-processor for these, so the graph's
+native outputs pass through untouched and the application decodes them from
+the tensor metadata. Multi-output graphs are fine; every output layer
+reaches the metadata. No labels file is written.
+
+| Task | Families |
+|---|---|
+| Depth | depth_anything, depth_anything3, zipdepth |
+| Pose | yolo9, yolonas, rfdetr, ec |
+| Restoration | nafnet, realesrgan, swinir |
+| Matting | birefnet |
+| Gaze | l2cs |
+
+Gaze is a head-only contract: each input is one face crop, so run it as a
+secondary GIE (`process-mode=2` plus `operate-on-gie-id`) behind a face
+detector.
 
 Families whose native preprocessing cannot be expressed by `nvinfer`'s
 scalar `net-scale-factor` (per-channel std: rfdetr, ec, DINO-backboned
