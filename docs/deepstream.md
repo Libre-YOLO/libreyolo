@@ -96,7 +96,7 @@ reaches the metadata. No labels file is written.
 
 | Task | Families |
 |---|---|
-| Depth | depth_anything, depth_anything3, zipdepth |
+| Depth | depth_anything, zipdepth |
 | Pose | yolo9, yolonas, rfdetr, ec |
 | Restoration | nafnet, realesrgan, swinir |
 | Matting | birefnet |
@@ -116,8 +116,8 @@ forward, so their graphs take plain `[0, 1]` RGB and add nothing.
 
 ## Preprocessing approximations
 
-Two known deviations from the native Python pipelines, both small and
-documented here for benchmark accounting:
+Known deviations from the native Python pipelines, documented here for
+benchmark accounting:
 
 - Letterbox families (yolo9, yolox, yolonas, rtmdet, yolo2/3/4/7) pad with
   gray natively; `nvinfer` pads black.

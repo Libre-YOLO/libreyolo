@@ -115,9 +115,11 @@ _INSTANCE_SEG_FAMILIES = {"rfdetr", "dfine", "ec"}
 
 # Depth families exported as a raw-tensor network (``network-type=100``
 # with ``output-tensor-meta=1``): DeepStream has no depth post-processor,
-# so the application reads the dense map from the tensor metadata. All
-# three normalize inside their own forward, so the graph takes [0, 1] RGB.
-_DEPTH_FAMILIES = {"depth_anything", "depth_anything3", "zipdepth"}
+# so the application reads the dense map from the tensor metadata. Both
+# normalize inside their own forward, so the graph takes [0, 1] RGB.
+# ``depth_anything3`` is absent: it has no export implementation at all
+# (out of scope per ADR 0006).
+_DEPTH_FAMILIES = {"depth_anything", "zipdepth"}
 
 # Tasks DeepStream has no post-processor for. They export as raw-tensor
 # networks (``network-type=100`` with ``output-tensor-meta=1``): the graph
