@@ -14,6 +14,7 @@ from ..command_utils import (
     get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -43,7 +44,7 @@ def _build_predict_kwargs(
     user_provided: set[str],
     conf: float,
     iou: float,
-    imgsz: Optional[int],
+    imgsz: Optional[int | tuple[int, int]],
     classes: Optional[list[int]],
     max_det: int,
     save: bool,
@@ -104,7 +105,7 @@ def predict_cmd(
     model: str = typer.Option("yolox-s", help="Model name or path"),
     conf: float = typer.Option(0.25, help="Confidence threshold"),
     iou: float = typer.Option(0.45, help="NMS IoU threshold"),
-    imgsz: Optional[int] = typer.Option(None, help="Input image size"),
+    imgsz: str = typer.Option("640", help="Input image size: 640 (square) or 480x640 (HxW)"),
     classes: Optional[str] = typer.Option(
         None, help="Filter by class IDs, e.g. [0,2,5]"
     ),
@@ -151,6 +152,7 @@ def predict_cmd(
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
     user_provided = get_user_provided_params()
+    imgsz = parse_imgsz_str(imgsz)
 
     # Validate source exists
     source_path = Path(source)

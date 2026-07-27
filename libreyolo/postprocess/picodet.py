@@ -10,9 +10,16 @@ everything here for backward compatibility.
 
 from __future__ import annotations
 
-from typing import List, Sequence, Tuple
+from typing import List, Sequence, Tuple, Union
 
 import torch
+
+
+def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    if isinstance(input_size, (list, tuple)):
+        return int(input_size[0]), int(input_size[1])
+    n = int(input_size)
+    return n, n
 import torch.nn.functional as F
 
 
@@ -149,18 +156,20 @@ def postprocess(
     # Each level keeps the top ``nms_pre`` (anchor, class) pairs above
     # ``conf_thres``. Multi-label per anchor (vs argmax) so anchors with two
     # strong classes emit both candidates.
+    input_size_h, input_size_w = _input_size_hw(input_size)
+
     valid_scores, class_ids, valid_boxes = _per_level_filter_topk(
         cls_scores, bbox_preds, strides=strides, reg_max=reg_max,
         score_thr=conf_thres, nms_pre=1000,
-        canvas_size=(input_size, input_size),
+        canvas_size=(input_size_w, input_size_h),
     )
     if valid_scores.numel() == 0:
         return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}
 
     # Rescale to original image (PICODET uses simple resize, not letterbox)
     if original_size is not None:
-        scale_x = original_size[0] / input_size
-        scale_y = original_size[1] / input_size
+        scale_x = original_size[0] / input_size_w
+        scale_y = original_size[1] / input_size_h
         valid_boxes = valid_boxes.clone()
         valid_boxes[:, [0, 2]] *= scale_x
         valid_boxes[:, [1, 3]] *= scale_y

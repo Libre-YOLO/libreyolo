@@ -211,7 +211,7 @@ def spawn_for_model(
             imgsz = train_kw.get("imgsz") or getattr(model_instance, "input_size", None) or 640
             resolved = resolve_auto_batch(
                 model_instance.model,
-                imgsz=int(imgsz),
+                imgsz=imgsz,
                 amp=bool(train_kw.get("amp", True)),
                 world_size=nprocs,
                 nbs=nbs,

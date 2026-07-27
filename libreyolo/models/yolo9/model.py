@@ -3,7 +3,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -481,7 +481,7 @@ class LibreYOLO9(BaseModel):
         *,
         epochs: int = _TRAIN_DEFAULTS.epochs,
         batch: int = _TRAIN_DEFAULTS.batch,
-        imgsz: int = _TRAIN_DEFAULTS.imgsz,
+        imgsz: Union[int, Tuple[int, int]] = _TRAIN_DEFAULTS.imgsz,
         lr0: float = _TRAIN_DEFAULTS.lr0,
         optimizer: str = _TRAIN_DEFAULTS.optimizer,
         device: str = "",
@@ -505,7 +505,7 @@ class LibreYOLO9(BaseModel):
             data: Path to data.yaml file (required).
             epochs: Number of epochs to train.
             batch: Batch size.
-            imgsz: Input image size.
+            imgsz: Input image size. Accepts an int (square) or (height, width) tuple.
             lr0: Initial learning rate.
             optimizer: Optimizer name ('SGD', 'Adam', 'AdamW').
             device: Device to train on ('' = auto-detect).

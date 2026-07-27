@@ -6,10 +6,17 @@ the YOLOX and RTMDet decode paths. Moved verbatim from
 compatibility).
 """
 
-from typing import Tuple
+from typing import Tuple, Union
 
 import torch
 import torchvision.ops
+
+
+def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    if isinstance(input_size, (list, tuple)):
+        return int(input_size[0]), int(input_size[1])
+    n = int(input_size)
+    return n, n
 
 
 def postprocess_detections(
@@ -18,7 +25,7 @@ def postprocess_detections(
     class_ids: torch.Tensor,
     conf_thres: float = 0.25,
     iou_thres: float = 0.45,
-    input_size: int = 640,
+    input_size: Union[int, Tuple[int, int]] = 640,
     original_size: Tuple[int, int] | None = None,
     max_det: int = 300,
     letterbox: bool = False,
@@ -65,15 +72,16 @@ def postprocess_detections(
 
     # Scale boxes to original image size
     if original_size is not None:
+        input_h, input_w = _input_size_hw(input_size)
         if letterbox:
             # Letterbox inverse: r = min(input/orig_h, input/orig_w)
             orig_w, orig_h = original_size
-            r = min(input_size / orig_h, input_size / orig_w)
+            r = min(input_h / orig_h, input_w / orig_w)
             boxes[:, :4] = boxes[:, :4] / r
         else:
             # Simple resize: independent x/y scaling
-            scale_x = original_size[0] / input_size
-            scale_y = original_size[1] / input_size
+            scale_x = original_size[0] / input_w
+            scale_y = original_size[1] / input_h
             boxes[:, [0, 2]] *= scale_x
             boxes[:, [1, 3]] *= scale_y
 

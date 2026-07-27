@@ -70,14 +70,20 @@ class DetectionValidator(BaseValidator):
     def _coco_api_kwargs(self) -> Dict[str, Any]:
         return {}
 
-    def _resolve_imgsz(self) -> int:
+    def _resolve_imgsz(self) -> int | tuple[int, int]:
         """Return the validation image size, falling back to the model native size."""
-        if self.config.imgsz is not None:
-            return int(self.config.imgsz)
+        imgsz = self.config.imgsz
+        if imgsz is not None:
+            if isinstance(imgsz, (list, tuple)):
+                return (int(imgsz[0]), int(imgsz[1]))
+            return int(imgsz)
 
         get_input_size = getattr(self.model, "_get_input_size", None)
         if callable(get_input_size):
-            return int(get_input_size())
+            raw = get_input_size()
+            if isinstance(raw, (list, tuple)):
+                return (int(raw[0]), int(raw[1]))
+            return int(raw)
 
         return 640
 
@@ -100,7 +106,10 @@ class DetectionValidator(BaseValidator):
         actual_imgsz = self._resolve_imgsz()
         self.config.imgsz = actual_imgsz
         self._actual_imgsz = actual_imgsz
-        img_size = (actual_imgsz, actual_imgsz)
+        if isinstance(actual_imgsz, (list, tuple)):
+            img_size = tuple(actual_imgsz)
+        else:
+            img_size = (actual_imgsz, actual_imgsz)
 
         img_files = None
         label_files = None
@@ -673,8 +682,12 @@ class DetectionValidator(BaseValidator):
                 coords[:, [1, 3]] -= off_y
                 gt_boxes = (coords / r).astype(np.float32)
             else:
-                sx = self._actual_imgsz / orig_w
-                sy = self._actual_imgsz / orig_h
+                if isinstance(self._actual_imgsz, (list, tuple)):
+                    act_w, act_h = self._actual_imgsz[1], self._actual_imgsz[0]
+                else:
+                    act_w = act_h = self._actual_imgsz
+                sx = act_w / orig_w
+                sy = act_h / orig_h
                 gt = vgt_xyxy[:, :4].copy()
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2
@@ -704,8 +717,12 @@ class DetectionValidator(BaseValidator):
                 coords[:, [1, 3]] -= off_y
                 gt_boxes = (coords / r).astype(np.float32)
             else:
-                sx = self._actual_imgsz / orig_w
-                sy = self._actual_imgsz / orig_h
+                if isinstance(self._actual_imgsz, (list, tuple)):
+                    act_w, act_h = self._actual_imgsz[1], self._actual_imgsz[0]
+                else:
+                    act_w = act_h = self._actual_imgsz
+                sx = act_w / orig_w
+                sy = act_h / orig_h
                 gt = vgt[:, :4].copy()
                 gt[:, [0, 2]] /= sx  # x1, x2
                 gt[:, [1, 3]] /= sy  # y1, y2

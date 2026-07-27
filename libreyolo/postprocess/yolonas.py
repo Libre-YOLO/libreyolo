@@ -11,7 +11,14 @@ everything here for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Union
+
+
+def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
+    if isinstance(input_size, (list, tuple)):
+        return int(input_size[0]), int(input_size[1])
+    n = int(input_size)
+    return n, n
 
 import torch
 import torchvision.ops
@@ -73,19 +80,20 @@ def postprocess(
         class_ids = class_ids[topk.indices]
 
     if original_size is not None:
+        input_h, input_w = _input_size_hw(input_size)
         if letterbox:
             orig_w, orig_h = original_size
             r = min(resize_size / orig_h, resize_size / orig_w)
             new_w = int(round(orig_w * r))
             new_h = int(round(orig_h * r))
-            offset_x = (input_size - new_w) // 2
-            offset_y = (input_size - new_h) // 2
+            offset_x = (input_w - new_w) // 2
+            offset_y = (input_h - new_h) // 2
             boxes = boxes.clone()
             boxes[:, 0::2] = (boxes[:, 0::2] - offset_x) / r
             boxes[:, 1::2] = (boxes[:, 1::2] - offset_y) / r
         else:
-            scale_x = original_size[0] / input_size
-            scale_y = original_size[1] / input_size
+            scale_x = original_size[0] / input_w
+            scale_y = original_size[1] / input_h
             boxes = boxes.clone()
             boxes[:, [0, 2]] *= scale_x
             boxes[:, [1, 3]] *= scale_y
@@ -123,11 +131,12 @@ def postprocess(
 
 def _undo_letterbox_xyxy(
     boxes: torch.Tensor,
-    input_size: int,
+    input_size: Union[int, Tuple[int, int]],
     original_size: Tuple[int, int],
     resize_size: int,
     padding_mode: str = "center",
 ) -> torch.Tensor:
+    input_h, input_w = _input_size_hw(input_size)
     orig_w, orig_h = original_size
     r = min(resize_size / orig_h, resize_size / orig_w)
     new_w = int(round(orig_w * r))
@@ -136,8 +145,8 @@ def _undo_letterbox_xyxy(
         offset_x = 0
         offset_y = 0
     else:
-        offset_x = (input_size - new_w) // 2
-        offset_y = (input_size - new_h) // 2
+        offset_x = (input_w - new_w) // 2
+        offset_y = (input_h - new_h) // 2
     boxes = boxes.clone()
     boxes[:, 0::2] = (boxes[:, 0::2] - offset_x) / r
     boxes[:, 1::2] = (boxes[:, 1::2] - offset_y) / r
@@ -146,12 +155,13 @@ def _undo_letterbox_xyxy(
 
 def _undo_letterbox_xy(
     points: torch.Tensor,
-    input_size: int,
+    input_size: Union[int, Tuple[int, int]],
     original_size: Tuple[int, int],
     resize_size: int,
     padding_mode: str = "center",
 ) -> torch.Tensor:
     """Map ``(..., 2)`` points from letterbox space back to original-image pixels."""
+    input_h, input_w = _input_size_hw(input_size)
     orig_w, orig_h = original_size
     r = min(resize_size / orig_h, resize_size / orig_w)
     new_w = int(round(orig_w * r))
@@ -160,8 +170,8 @@ def _undo_letterbox_xy(
         offset_x = 0
         offset_y = 0
     else:
-        offset_x = (input_size - new_w) // 2
-        offset_y = (input_size - new_h) // 2
+        offset_x = (input_w - new_w) // 2
+        offset_y = (input_h - new_h) // 2
     pts = points.clone()
     pts[..., 0] = (pts[..., 0] - offset_x) / r
     pts[..., 1] = (pts[..., 1] - offset_y) / r
@@ -242,6 +252,7 @@ def postprocess_pose(
             class_ids = class_ids[topk.indices]
 
     if original_size is not None:
+        input_h, input_w = _input_size_hw(input_size)
         if letterbox:
             bboxes = _undo_letterbox_xyxy(
                 bboxes, input_size, original_size, resize_size, padding_mode
@@ -250,8 +261,8 @@ def postprocess_pose(
                 pose_xy, input_size, original_size, resize_size, padding_mode
             )
         else:
-            scale_x = original_size[0] / input_size
-            scale_y = original_size[1] / input_size
+            scale_x = original_size[0] / input_w
+            scale_y = original_size[1] / input_h
             bboxes = bboxes.clone()
             bboxes[:, [0, 2]] *= scale_x
             bboxes[:, [1, 3]] *= scale_y

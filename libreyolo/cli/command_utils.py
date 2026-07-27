@@ -80,6 +80,35 @@ def _coerce_input_size(value: Any) -> ImageSize:
     return int(value)
 
 
+def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
+    """Parse an imgsz value from CLI string format.
+
+    Accepts:
+        "640"      -> 640
+        "480x640"  -> (480, 640)
+        "480X640"  -> (480, 640)
+        None       -> None
+        int        -> int (pass-through)
+    """
+    if imgsz is None:
+        return None
+    if isinstance(imgsz, int):
+        return imgsz
+    s = str(imgsz).strip()
+    if not s:
+        return None
+    if "x" in s.lower():
+        parts = s.lower().split("x", 1)
+        try:
+            h, w = int(parts[0]), int(parts[1])
+        except (ValueError, IndexError):
+            raise ValueError(
+                f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
+            )
+        return (h, w)
+    return int(s)
+
+
 def get_loaded_model_input_size(
     loaded_model: Any,
     *,
