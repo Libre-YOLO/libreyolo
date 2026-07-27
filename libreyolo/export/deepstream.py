@@ -376,6 +376,12 @@ def write_deepstream_sidecars(
     network_mode = {"fp32": 0, "int8": 1, "fp16": 2}.get(precision, 0)
     mode_name = {0: "fp32", 1: "int8", 2: "fp16"}[network_mode]
 
+    # DETR-style heads are trained with Hungarian matching and emit one query
+    # per object, so clustering is disabled (cluster-mode=4) and no IoU
+    # threshold applies. Anchor/grid detectors need NMS clustering.
+    is_detr = model_family in _DETR_TUPLE_FAMILIES | _BOXES_FIRST_DETR_FAMILIES
+    cluster_mode = 4 if is_detr else 2
+
     lines = [
         "[property]",
         "gpu-id=0",
@@ -391,18 +397,20 @@ def write_deepstream_sidecars(
         "gie-unique-id=1",
         "process-mode=1",
         "network-type=0",
-        "cluster-mode=2",
+        f"cluster-mode={cluster_mode}",
         f"maintain-aspect-ratio={int(maintain_ar)}",
         f"symmetric-padding={int(symmetric_pad)}",
         f"infer-dims=3;{imgsz[0]};{imgsz[1]}",
         "parse-bbox-func-name=NvDsInferParseYolo",
         "custom-lib-path=nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so",
+        "engine-create-func-name=NvDsInferYoloCudaEngineGet",
         "",
         "[class-attrs-all]",
-        f"nms-iou-threshold={iou}",
         f"pre-cluster-threshold={conf}",
         "topk=300",
     ]
+    if not is_detr:
+        lines.insert(len(lines) - 1, f"nms-iou-threshold={iou}")
     if offsets is not None:
         lines.insert(3, "offsets=" + ";".join(f"{o:.10g}" for o in offsets))
 

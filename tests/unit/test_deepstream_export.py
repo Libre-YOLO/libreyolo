@@ -10,6 +10,7 @@ validate the adapter math against hand-computed values and the generated
 from __future__ import annotations
 
 import importlib.util
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -186,3 +187,30 @@ def test_deepstream_graph_matches_torch_through_onnxruntime(
     assert got.shape == expected.shape
     assert got.shape[-1] == 6
     np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize(
+    "family,expect_cluster,expect_nms",
+    [("yolo9", "cluster-mode=2", True), ("rfdetr", "cluster-mode=4", False)],
+)
+def test_detr_configs_disable_clustering(
+    tmp_path, family, expect_cluster, expect_nms
+):
+    """DETR heads emit one query per object, so DeepStream must not cluster."""
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / f"{family}.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, _ = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family=family,
+        class_names=["a"],
+        imgsz=(640, 640),
+        batch=1,
+        dynamic=False,
+        precision="fp32",
+    )
+    config = Path(config_path).read_text()
+
+    assert expect_cluster in config
+    assert ("nms-iou-threshold" in config) is expect_nms
