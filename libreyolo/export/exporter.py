@@ -1546,7 +1546,7 @@ class OnnxExporter(BaseExporter):
                 return
             from .deepstream import write_deepstream_sidecars
 
-            names = self.model.names
+            names = getattr(self.model, "names", None) or {}
             class_names = [names[k] for k in sorted(names, key=int)]
             write_deepstream_sidecars(
                 onnx_result_path,

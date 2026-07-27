@@ -88,6 +88,11 @@ checkpoint is published; `s` and `b` semantic weights do not exist.
 DINOv2 classification has no published checkpoint at all, so use it with
 your own fine-tuned weights.
 
+**Depth** (`network-type=100` with `output-tensor-meta=1`, no parser library):
+depth_anything, depth_anything3, zipdepth. DeepStream has no depth
+post-processor, so the dense map passes through untouched and the
+application reads it from the tensor metadata. No labels file is written.
+
 Families whose native preprocessing cannot be expressed by `nvinfer`'s
 scalar `net-scale-factor` (per-channel std: rfdetr, ec, DINO-backboned
 deimv2 sizes, rtmdet, picodet, and every classification family) have the
