@@ -66,6 +66,12 @@ probabilities; `nvinfer` applies `segmentation-threshold` and produces the
 class map. `segformer` is excluded because it is not wired to the shared
 semantic export contract and cannot export to ONNX in any format.
 
+EoMT's semantic head already emits probabilities rather than logits, so its
+graph skips the softmax the other families need. Only the `l` semantic
+checkpoint is published; `s` and `b` semantic weights do not exist.
+DINOv2 classification has no published checkpoint at all, so use it with
+your own fine-tuned weights.
+
 Families whose native preprocessing cannot be expressed by `nvinfer`'s
 scalar `net-scale-factor` (per-channel std: rfdetr, ec, DINO-backboned
 deimv2 sizes, rtmdet, picodet, and every classification family) have the
