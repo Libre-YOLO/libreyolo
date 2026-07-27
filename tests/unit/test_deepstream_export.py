@@ -312,3 +312,84 @@ def test_config_network_type_per_task(tmp_path, task, family, expected):
     assert expected in config
     # Only detection needs the third-party bbox parser library.
     assert ("custom-lib-path" in config) is (task == "detect")
+
+
+class _SegModel(torch.nn.Module):
+    def __init__(self, logits, boxes, masks):
+        super().__init__()
+        self.register_buffer("logits", logits)
+        self.register_buffer("boxes", boxes)
+        self.register_buffer("masks", masks)
+
+    def forward(self, x):
+        zero = x.sum() * 0.0
+        return self.logits + zero, self.boxes + zero, self.masks + zero
+
+
+def test_instance_seg_row_is_detection_plus_quarter_canvas_mask():
+    """The seg parser hardcodes mask_width=netW/4, mask_height=netH/4."""
+    from libreyolo.export.deepstream import DeepStreamInstanceSegOutput
+
+    imgsz = (128, 64)  # h, w -> mask 32 x 16
+    logits = torch.tensor([[[0.0, 2.0]]])
+    boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.4]]])
+    masks = torch.zeros(1, 1, 8, 8)
+
+    out = DeepStreamInstanceSegOutput(
+        _SegModel(logits, boxes, masks), imgsz, boxes_first=False
+    )(torch.zeros(1, 3, *imgsz))
+
+    mask_size = (imgsz[0] // 4) * (imgsz[1] // 4)
+    assert out.shape == (1, 1, 6 + mask_size)
+
+    x1, y1, x2, y2, score, label = out[0, 0, :6].tolist()
+    # cx=0.5*64=32, w=0.2*64=12.8 -> x in [25.6, 38.4]
+    # cy=0.5*128=64, h=0.4*128=51.2 -> y in [38.4, 89.6]
+    np.testing.assert_allclose([x1, y1, x2, y2], [25.6, 38.4, 38.4, 89.6], rtol=1e-5)
+    assert label == 1.0
+    assert score == pytest.approx(torch.sigmoid(torch.tensor(2.0)).item(), rel=1e-5)
+
+    # Mask values are probabilities: sigmoid(0) == 0.5 everywhere here.
+    np.testing.assert_allclose(
+        out[0, 0, 6:].numpy(), np.full(mask_size, 0.5, dtype=np.float32), rtol=1e-6
+    )
+
+
+def test_instance_seg_config_uses_mask_parser(tmp_path):
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / "seg.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, _ = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family="dfine",
+        class_names=["a"],
+        imgsz=(640, 640),
+        batch=1,
+        dynamic=False,
+        precision="fp32",
+        task="segment",
+    )
+    config = Path(config_path).read_text()
+
+    assert "network-type=3" in config
+    assert "output-instance-mask=1" in config
+    assert "parse-bbox-instance-mask-func-name=NvDsInferParseYoloSeg" in config
+    # DETR seg heads emit one query per object.
+    assert "cluster-mode=4" in config
+    # Masks need the seg build of the parser, not the detection one.
+    assert "libnvdsinfer_custom_impl_Yolo_seg.so" in config
+
+
+def test_instance_seg_rejects_blocked_families():
+    """RTMDet-Ins and YOLO9 have no seg export path in libreyolo."""
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    for family in ("rtmdet", "yolo9"):
+        with pytest.raises(NotImplementedError, match="not supported"):
+            wrap_for_deepstream(
+                torch.nn.Identity(),
+                model_family=family,
+                imgsz=(640, 640),
+                task="segment",
+            )
