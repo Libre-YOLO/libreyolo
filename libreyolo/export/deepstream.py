@@ -119,6 +119,35 @@ _INSTANCE_SEG_FAMILIES = {"rfdetr", "dfine", "ec"}
 # three normalize inside their own forward, so the graph takes [0, 1] RGB.
 _DEPTH_FAMILIES = {"depth_anything", "depth_anything3", "zipdepth"}
 
+# Tasks DeepStream has no post-processor for. They export as raw-tensor
+# networks (``network-type=100`` with ``output-tensor-meta=1``): the graph
+# passes its native outputs through untouched and the application decodes
+# them from the tensor metadata. Multi-output graphs are fine, every output
+# layer reaches the metadata.
+_POSE_FAMILIES = {"yolo9", "yolonas", "rfdetr", "ec"}
+_RESTORE_FAMILIES = {"nafnet", "realesrgan", "swinir"}
+_MATTE_FAMILIES = {"birefnet"}
+_GAZE_FAMILIES = {"l2cs"}
+
+_RAW_TENSOR_TASKS = {
+    "depth": _DEPTH_FAMILIES,
+    "pose": _POSE_FAMILIES,
+    "restore": _RESTORE_FAMILIES,
+    "matte": _MATTE_FAMILIES,
+    "gaze": _GAZE_FAMILIES,
+}
+
+
+def _raw_tensor_families(task: str) -> set[str]:
+    """Families exportable as a raw-tensor network for ``task``."""
+    return _RAW_TENSOR_TASKS.get(task, set())
+
+# Raw-tensor families that normalize with ImageNet stats *outside* the
+# model, so the DeepStream graph must do it (nvinfer cannot divide per
+# channel). Restoration families take plain [0, 1] and SwinIR subtracts its
+# own mean inside forward, so neither appears here.
+_RAW_TENSOR_IMAGENET_NORM = {"birefnet", "l2cs"}
+
 # EoMT's "semantic_logits" are already per-pixel probabilities
 # (``class.softmax() @ mask.sigmoid()``), so a second softmax would distort
 # the values ``segmentation-threshold`` compares against.
@@ -433,14 +462,20 @@ def wrap_for_deepstream(
         return DeepStreamClassifierOutput(
             _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
         )
-    if task == "depth":
-        if model_family not in _DEPTH_FAMILIES:
+    if task in _RAW_TENSOR_TASKS:
+        allowed = _raw_tensor_families(task)
+        if model_family not in allowed:
             raise NotImplementedError(
-                f"DeepStream depth export is not supported for family "
-                f"{model_family!r}. Supported: {sorted(_DEPTH_FAMILIES)}"
+                f"DeepStream {task} export is not supported for family "
+                f"{model_family!r}. Supported: {sorted(allowed)}"
             )
-        # The dense map passes through untouched: DeepStream does not
-        # interpret it, the application does.
+        # Outputs pass through untouched: DeepStream does not interpret
+        # them, the application does. Only preprocessing the graph must own
+        # is added.
+        if model_family in _RAW_TENSOR_IMAGENET_NORM:
+            return _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
+        if task == "pose" and _uses_imagenet_norm(model_family, model_size):
+            return _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
         return nn_model
     if task == "segment":
         if model_family not in _INSTANCE_SEG_FAMILIES:
@@ -494,8 +529,8 @@ def deepstream_supported_families(task: str = "detect") -> set[str]:
         return set(_SEMANTIC_FAMILIES)
     if task == "segment":
         return set(_INSTANCE_SEG_FAMILIES)
-    if task == "depth":
-        return set(_DEPTH_FAMILIES)
+    if task in _RAW_TENSOR_TASKS:
+        return set(_raw_tensor_families(task))
     if task != "detect":
         return set()
     return (
@@ -569,6 +604,13 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     "depth_anything": {},
     "depth_anything3": {},
     "zipdepth": {},
+    # Raw-tensor tasks. yolonas-pose letterboxes centered on BGR frames;
+    # yolo9-pose letterboxes top-left on RGB; the rest stretch-resize RGB.
+    "nafnet": {},
+    "realesrgan": {},
+    "swinir": {},
+    "birefnet": {},
+    "l2cs": {},
     "eomt": {},
     "lingbotvision": {},
 }
@@ -654,9 +696,9 @@ def write_deepstream_sidecars(
             f"classifier-threshold={conf}",
             "classifier-async-mode=0",
         ]
-    elif task == "depth":
-        # No DeepStream post-processor for depth: hand the raw map to the
-        # application through tensor metadata.
+    elif task in _RAW_TENSOR_TASKS:
+        # No DeepStream post-processor for this task: hand the raw outputs
+        # to the application through tensor metadata.
         lines = common + [
             "process-mode=1",
             "network-type=100",
