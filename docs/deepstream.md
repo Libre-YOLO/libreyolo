@@ -42,17 +42,37 @@ Adjust `custom-lib-path` in the generated config to the built
 the parser applies the confidence threshold and DeepStream's clustering
 stage (`cluster-mode=2`) suppresses using `nms-iou-threshold`.
 
-## Supported families
+## Supported tasks and families
 
-Detection task only. CNN families: yolo9, yolox, yolonas, rtmdet, picodet,
-yolo1, yolo2, yolo3, yolo4, yolo7. DETR families: rfdetr, dfine, deim,
-deimv2, ec, rtdetr, rtdetrv2, rtdetrv4.
+**Detection** (`network-type=0`, needs the parser library above):
+yolo9, yolo9_p2, yolo9_e2e, yolo1, yolo2, yolo3, yolo4, yolo7, yolox,
+yolonas, rtmdet, picodet, rfdetr, dfine, deim, deimv2, ec, rtdetr,
+rtdetrv2, rtdetrv4.
+
+DETR heads and yolo9_e2e's one-to-one head emit at most one prediction per
+object, so their configs set `cluster-mode=4`: DeepStream must not run NMS
+over them or it merges distinct detections. Anchor and grid heads get
+`cluster-mode=2` with `nms-iou-threshold`.
+
+**Classification** (`network-type=1`, no parser library needed):
+mobilenetv4, convnext, efficientnetv2, resnet, dinov2. The graph emits
+softmax probabilities, which is what `classifier-threshold` expects. Set
+`process-mode=2` and `operate-on-gie-id` in the generated config to run one
+as a secondary classifier behind a detector.
+
+**Semantic segmentation** (`network-type=2`, no parser library needed):
+pidnet, eomt, dinov2, lingbotvision. The graph emits `(C, H, W)` per-class
+probabilities; `nvinfer` applies `segmentation-threshold` and produces the
+class map. `segformer` is excluded because it is not wired to the shared
+semantic export contract and cannot export to ONNX in any format.
 
 Families whose native preprocessing cannot be expressed by `nvinfer`'s
 scalar `net-scale-factor` (per-channel std: rfdetr, ec, DINO-backboned
-deimv2 sizes, rtmdet, picodet) have the normalization baked into the
-exported graph; the generated config feeds the graph the matching raw
-input space, so no manual preprocessing configuration is needed.
+deimv2 sizes, rtmdet, picodet, and every classification family) have the
+normalization baked into the exported graph; the generated config feeds the
+graph the matching raw input space, so no manual preprocessing
+configuration is needed. The semantic families normalize inside their own
+forward, so their graphs take plain `[0, 1]` RGB and add nothing.
 
 ## Preprocessing approximations
 
@@ -63,6 +83,14 @@ documented here for benchmark accounting:
   gray natively; `nvinfer` pads black.
 - yolonas natively resizes the longest side to 636 inside its 640 canvas;
   `nvinfer`'s `maintain-aspect-ratio` uses the full 640.
+- Classification natively resizes the shortest side then centre-crops;
+  `nvinfer` stretches the frame or object ROI to the network input. Expect
+  small differences on tightly cropped subjects.
+- EoMT natively runs sliding-window tiles for semantic segmentation; the
+  exported graph is a single stretched canvas, which is faster and less
+  accurate.
+- pidnet emits a class map at 1/8 of the input resolution and
+  lingbotvision at 1/16; DeepStream upsamples the class map for display.
 
 For exact-parity workloads, validate on your data before deploying; all
 other math is parity-tested against each family's native postprocess.

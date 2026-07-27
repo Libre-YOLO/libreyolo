@@ -214,3 +214,101 @@ def test_detr_configs_disable_clustering(
 
     assert expect_cluster in config
     assert ("nms-iou-threshold" in config) is expect_nms
+
+
+class _LogitModel(torch.nn.Module):
+    def __init__(self, out: torch.Tensor):
+        super().__init__()
+        self.register_buffer("out", out)
+
+    def forward(self, x):
+        return self.out + x.sum() * 0.0
+
+
+def test_classifier_adapter_emits_probabilities():
+    from libreyolo.export.deepstream import DeepStreamClassifierOutput
+
+    logits = torch.tensor([[1.0, 2.0, 3.0]])
+    out = DeepStreamClassifierOutput(_LogitModel(logits))(torch.zeros(1, 3, 8, 8))
+
+    np.testing.assert_allclose(
+        out.numpy(), torch.softmax(logits, dim=-1).numpy(), rtol=1e-6
+    )
+    assert out.sum().item() == pytest.approx(1.0)
+
+
+def test_semantic_adapter_softmaxes_over_class_axis():
+    from libreyolo.export.deepstream import DeepStreamSemanticOutput
+
+    logits = torch.randn(1, 4, 5, 6)
+    out = DeepStreamSemanticOutput(_LogitModel(logits))(torch.zeros(1, 3, 8, 8))
+
+    assert out.shape == (1, 4, 5, 6)
+    np.testing.assert_allclose(
+        out.sum(dim=1).numpy(), np.ones((1, 5, 6), dtype=np.float32), rtol=1e-5
+    )
+
+
+def test_semantic_adapter_passthrough_for_probability_heads():
+    """EoMT already emits probabilities; a second softmax would distort them."""
+    from libreyolo.export.deepstream import (
+        DeepStreamSemanticOutput,
+        wrap_for_deepstream,
+        _SEMANTIC_ALREADY_PROBABILITIES,
+    )
+
+    assert "eomt" in _SEMANTIC_ALREADY_PROBABILITIES
+
+    probs = torch.rand(1, 3, 4, 4)
+    out = DeepStreamSemanticOutput(_LogitModel(probs), apply_softmax=False)(
+        torch.zeros(1, 3, 8, 8)
+    )
+    np.testing.assert_allclose(out.numpy(), probs.numpy(), rtol=1e-6)
+
+    wrapped = wrap_for_deepstream(
+        torch.nn.Identity(), model_family="eomt", imgsz=(512, 512), task="semantic"
+    )
+    assert wrapped.apply_softmax is False
+
+
+def test_segformer_rejected_for_semantic_export():
+    """SegFormer has no ONNX export path in this codebase."""
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        wrap_for_deepstream(
+            torch.nn.Identity(),
+            model_family="segformer",
+            imgsz=(512, 512),
+            task="semantic",
+        )
+
+
+@pytest.mark.parametrize(
+    "task,family,expected",
+    [
+        ("classify", "resnet", "network-type=1"),
+        ("semantic", "pidnet", "network-type=2"),
+        ("detect", "yolo9", "network-type=0"),
+    ],
+)
+def test_config_network_type_per_task(tmp_path, task, family, expected):
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / f"{family}_{task}.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, _ = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family=family,
+        class_names=["a", "b"],
+        imgsz=(224, 224),
+        batch=1,
+        dynamic=False,
+        precision="fp32",
+        task=task,
+    )
+    config = Path(config_path).read_text()
+
+    assert expected in config
+    # Only detection needs the third-party bbox parser library.
+    assert ("custom-lib-path" in config) is (task == "detect")

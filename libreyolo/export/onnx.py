@@ -195,9 +195,10 @@ def export_onnx(
         )
 
     if deepstream:
-        # DeepStream contract: one ``(batch, num_detections, 6)`` tensor of
-        # ``[x1, y1, x2, y2, score, class]`` rows in input-pixel coordinates,
-        # consumed by the external parser library. Wrapper applied upstream.
+        # One DeepStream output tensor per task, produced by the adapter
+        # applied upstream: detection emits (batch, N, 6) parser rows,
+        # classification (batch, num_classes) probabilities, and semantic
+        # segmentation (batch, C, H, W) probabilities for the class map.
         input_name = "input" if metadata.get("model_family") == "rfdetr" else "images"
         return _export_onnx_graph(
             nn_model,

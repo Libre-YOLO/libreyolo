@@ -1455,11 +1455,16 @@ class OnnxExporter(BaseExporter):
             if not isinstance(task, str):
                 task = "detect"
             family = self.model._get_model_name()
-            if task != "detect" or family not in deepstream_supported_families():
+            supported = deepstream_supported_families(task)
+            if not supported:
                 raise NotImplementedError(
-                    "DeepStream ONNX export supports detection models of the "
-                    f"families {sorted(deepstream_supported_families())}; "
-                    f"got family {family!r} with task {task!r}."
+                    f"DeepStream export does not support the {task!r} task. "
+                    "Supported tasks: detect, classify, semantic."
+                )
+            if family not in supported:
+                raise NotImplementedError(
+                    f"DeepStream {task} export supports families "
+                    f"{sorted(supported)}; got {family!r}."
                 )
         super()._preflight(half=half, int8=int8, data=data, **kwargs)
 
@@ -1490,11 +1495,15 @@ class OnnxExporter(BaseExporter):
         if deepstream:
             from .deepstream import wrap_for_deepstream
 
+            ds_task = getattr(self.model, "task", "detect")
+            if not isinstance(ds_task, str):
+                ds_task = "detect"
             nn_model = wrap_for_deepstream(
                 nn_model,
                 model_family=self.model._get_model_name(),
                 imgsz=imgsz,
                 model_size=getattr(self.model, "size", None),
+                task=ds_task,
             ).eval()
 
         if nms:
@@ -1549,6 +1558,7 @@ class OnnxExporter(BaseExporter):
                 precision="int8" if int8 else ("fp16" if half else "fp32"),
                 conf=conf,
                 iou=iou,
+                task=ds_task,
             )
 
         if int8:
