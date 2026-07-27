@@ -85,6 +85,33 @@ _DETR_TUPLE_FAMILIES = {
 # Families exporting ``(boxes, logits)`` in RF-DETR order (boxes first).
 _BOXES_FIRST_DETR_FAMILIES = {"rfdetr"}
 
+# Classification backbones exportable as an nvinfer classifier
+# (``network-type=1``). They emit raw logits; the adapter softmaxes.
+_CLASSIFY_FAMILIES = {
+    "mobilenetv4",
+    "convnext",
+    "efficientnetv2",
+    "resnet",
+    "dinov2",
+}
+
+# Semantic segmentation families exportable as an nvinfer segmentation
+# network (``network-type=2``). These normalize inside their own forward,
+# so the DeepStream graph feeds them plain [0, 1] RGB and adds no
+# normalization of its own. ``segformer`` is absent because it is not wired
+# to the shared semantic export contract and cannot export to ONNX at all.
+_SEMANTIC_FAMILIES = {
+    "pidnet",
+    "eomt",
+    "dinov2",
+    "lingbotvision",
+}
+
+# EoMT's "semantic_logits" are already per-pixel probabilities
+# (``class.softmax() @ mask.sigmoid()``), so a second softmax would distort
+# the values ``segmentation-threshold`` compares against.
+_SEMANTIC_ALREADY_PROBABILITIES = {"eomt"}
+
 # ImageNet constants, in [0, 1] units. nvinfer's preprocessing is
 # ``scale * (x - offsets)`` with a scalar scale, which cannot express
 # per-channel std division, so families normalizing with ImageNet stats
@@ -136,6 +163,18 @@ class _GraphNorm(nn.Module):
 
     def forward(self, x: torch.Tensor):
         return self.model((x - self._mean.to(x.dtype)) / self._std.to(x.dtype))
+
+
+def _maybe_normalize(
+    nn_model: nn.Module, model_family: str, model_size: str | None
+) -> nn.Module:
+    """Bake the family's normalization into the graph when nvinfer can't do it."""
+    if model_family in _GRAPH_NORM_0_255:
+        mean, std = _GRAPH_NORM_0_255[model_family]
+        return _GraphNorm(nn_model, mean, std)
+    if _uses_imagenet_norm(model_family, model_size):
+        return _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
+    return nn_model
 
 
 def _rows_from(boxes, scores_all):
@@ -263,19 +302,81 @@ class DeepStreamDETROutput(nn.Module):
         return _rows_from(boxes, scores_all)
 
 
+class DeepStreamClassifierOutput(nn.Module):
+    """Softmax a classifier's logits for ``nvinfer``'s classifier mode.
+
+    DeepStream's built-in classifier parser reads the output tensor as
+    per-class probabilities and applies ``classifier-threshold``, so the
+    softmax must live in the graph. Output stays ``(B, num_classes)``.
+    """
+
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.model(x)
+        if isinstance(logits, (tuple, list)):
+            logits = logits[0]
+        return torch.softmax(logits.float(), dim=-1)
+
+
+class DeepStreamSemanticOutput(nn.Module):
+    """Emit ``(B, C, H, W)`` per-class probabilities for segmentation mode.
+
+    ``nvinfer``'s segmentation post-processing applies
+    ``segmentation-threshold`` to these values and argmaxes into a class
+    map. Argmax is unchanged by softmax; the transform exists so the
+    threshold compares against real probabilities. Families whose head
+    already outputs probabilities pass through unchanged.
+    """
+
+    def __init__(self, model: nn.Module, apply_softmax: bool = True):
+        super().__init__()
+        self.model = model
+        self.apply_softmax = apply_softmax
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.model(x)
+        if isinstance(logits, (tuple, list)):
+            logits = logits[0]
+        logits = logits.float()
+        return torch.softmax(logits, dim=1) if self.apply_softmax else logits
+
+
 def wrap_for_deepstream(
     nn_model: nn.Module,
     *,
     model_family: str,
     imgsz: tuple[int, int],
     model_size: str | None = None,
+    task: str = "detect",
 ) -> nn.Module:
     """Wrap an export-mode model with the DeepStream output adapter."""
-    if model_family in _GRAPH_NORM_0_255:
-        mean, std = _GRAPH_NORM_0_255[model_family]
-        nn_model = _GraphNorm(nn_model, mean, std)
-    elif _uses_imagenet_norm(model_family, model_size):
-        nn_model = _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
+    if task == "classify":
+        if model_family not in _CLASSIFY_FAMILIES:
+            raise NotImplementedError(
+                f"DeepStream classifier export is not supported for family "
+                f"{model_family!r}. Supported: {sorted(_CLASSIFY_FAMILIES)}"
+            )
+        # Classify transforms normalize with ImageNet stats outside the
+        # model, and nvinfer cannot divide per channel: bake it in.
+        return DeepStreamClassifierOutput(
+            _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
+        )
+    if task == "semantic":
+        if model_family not in _SEMANTIC_FAMILIES:
+            raise NotImplementedError(
+                f"DeepStream segmentation export is not supported for family "
+                f"{model_family!r}. Supported: {sorted(_SEMANTIC_FAMILIES)}"
+            )
+        # Semantic nets normalize inside their own forward; adding a graph
+        # normalization here would apply ImageNet stats twice.
+        return DeepStreamSemanticOutput(
+            nn_model,
+            apply_softmax=model_family not in _SEMANTIC_ALREADY_PROBABILITIES,
+        )
+    nn_model = _maybe_normalize(nn_model, model_family, model_size)
 
     if model_family in _RAW_CHANNELS_FIRST_FAMILIES:
         return DeepStreamRawOutput(nn_model, channels_first=True)
@@ -295,8 +396,14 @@ def wrap_for_deepstream(
     )
 
 
-def deepstream_supported_families() -> set[str]:
-    """Families accepted by :func:`wrap_for_deepstream`."""
+def deepstream_supported_families(task: str = "detect") -> set[str]:
+    """Families accepted by :func:`wrap_for_deepstream` for ``task``."""
+    if task == "classify":
+        return set(_CLASSIFY_FAMILIES)
+    if task == "semantic":
+        return set(_SEMANTIC_FAMILIES)
+    if task != "detect":
+        return set()
     return (
         _RAW_CHANNELS_FIRST_FAMILIES
         | _RAW_CHANNELS_LAST_FAMILIES
@@ -352,6 +459,20 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     "rtdetr": {},
     "rtdetrv2": {},
     "rtdetrv4": {},
+    # Classification: ImageNet mean/std baked into the graph, so nvinfer
+    # just scales to [0, 1]. nvinfer stretches the frame/ROI to the network
+    # input; the native transform resizes the shortest side then centre-
+    # crops, so tight-ROI framing differs slightly (documented).
+    "mobilenetv4": {},
+    "convnext": {},
+    "efficientnetv2": {},
+    "resnet": {},
+    "dinov2": {},
+    # Semantic segmentation: nets normalize internally, so [0, 1] RGB only.
+    # pidnet letterboxes natively; the rest stretch.
+    "pidnet": {"maintain_aspect_ratio": 1},
+    "eomt": {},
+    "lingbotvision": {},
 }
 
 
@@ -366,6 +487,7 @@ def write_deepstream_sidecars(
     precision: str,
     conf: float = 0.25,
     iou: float = 0.45,
+    task: str = "detect",
 ) -> tuple[str, str]:
     """Write ``config_infer_primary_<stem>.txt`` and ``<stem>_labels.txt``.
 
@@ -400,7 +522,7 @@ def write_deepstream_sidecars(
     )
     cluster_mode = 4 if nms_free else 2
 
-    lines = [
+    common = [
         "[property]",
         "gpu-id=0",
         f"net-scale-factor={net_scale:.10g}",
@@ -410,25 +532,54 @@ def write_deepstream_sidecars(
         f"labelfile-path={labels_path.name}",
         f"batch-size={batch}",
         f"network-mode={network_mode}",
-        f"num-detected-classes={len(class_names)}",
         "interval=0",
         "gie-unique-id=1",
-        "process-mode=1",
-        "network-type=0",
-        f"cluster-mode={cluster_mode}",
-        f"maintain-aspect-ratio={int(maintain_ar)}",
-        f"symmetric-padding={int(symmetric_pad)}",
         f"infer-dims=3;{imgsz[0]};{imgsz[1]}",
-        "parse-bbox-func-name=NvDsInferParseYolo",
-        "custom-lib-path=nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so",
-        "engine-create-func-name=NvDsInferYoloCudaEngineGet",
-        "",
-        "[class-attrs-all]",
-        f"pre-cluster-threshold={conf}",
-        "topk=300",
     ]
-    if not nms_free:
-        lines.insert(len(lines) - 1, f"nms-iou-threshold={iou}")
+
+    if task == "classify":
+        # Native nvinfer classifier: no custom parser library needed. Set
+        # process-mode=2 and operate-on-gie-id to run it as a secondary
+        # classifier behind a detector.
+        lines = common + [
+            "process-mode=1",
+            "network-type=1",
+            f"num-detected-classes={len(class_names)}",
+            f"classifier-threshold={conf}",
+            "classifier-async-mode=0",
+        ]
+    elif task == "semantic":
+        # Native nvinfer segmentation: consumes (C, H, W) probabilities and
+        # emits a class map in NvDsInferSegmentationMeta.
+        lines = common + [
+            "process-mode=1",
+            "network-type=2",
+            f"num-detected-classes={len(class_names)}",
+            f"segmentation-threshold={conf}",
+            "output-instance-mask=0",
+        ]
+    else:
+        lines = common + [
+            "process-mode=1",
+            "network-type=0",
+            f"num-detected-classes={len(class_names)}",
+            f"cluster-mode={cluster_mode}",
+            f"maintain-aspect-ratio={int(maintain_ar)}",
+            f"symmetric-padding={int(symmetric_pad)}",
+            "parse-bbox-func-name=NvDsInferParseYolo",
+            "custom-lib-path=nvdsinfer_custom_impl_Yolo/"
+            "libnvdsinfer_custom_impl_Yolo.so",
+            "engine-create-func-name=NvDsInferYoloCudaEngineGet",
+            "",
+            "[class-attrs-all]",
+            f"pre-cluster-threshold={conf}",
+            "topk=300",
+        ]
+        if not nms_free:
+            lines.insert(len(lines) - 1, f"nms-iou-threshold={iou}")
+
+    if maintain_ar and task != "detect":
+        lines.append(f"maintain-aspect-ratio={int(maintain_ar)}")
     if offsets is not None:
         lines.insert(3, "offsets=" + ";".join(f"{o:.10g}" for o in offsets))
 
