@@ -497,3 +497,22 @@ def test_raw_tensor_tasks_reject_unlisted_families():
         wrap_for_deepstream(
             torch.nn.Identity(), model_family="picodet", imgsz=(640, 640), task="pose"
         )
+
+
+@pytest.mark.parametrize(
+    "family,task",
+    [
+        # No export implementation at all (ADR 0006).
+        ("depth_anything3", "depth"),
+        # Not wired to the shared semantic export contract.
+        ("segformer", "semantic"),
+    ],
+)
+def test_families_without_an_export_path_are_refused(family, task):
+    """Never generate a config for a model that cannot produce a graph."""
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        wrap_for_deepstream(
+            torch.nn.Identity(), model_family=family, imgsz=(518, 518), task=task
+        )
