@@ -113,6 +113,12 @@ _SEMANTIC_FAMILIES = {
 # export is blocked upstream in libreyolo.export.support.
 _INSTANCE_SEG_FAMILIES = {"rfdetr", "dfine", "ec"}
 
+# Depth families exported as a raw-tensor network (``network-type=100``
+# with ``output-tensor-meta=1``): DeepStream has no depth post-processor,
+# so the application reads the dense map from the tensor metadata. All
+# three normalize inside their own forward, so the graph takes [0, 1] RGB.
+_DEPTH_FAMILIES = {"depth_anything", "depth_anything3", "zipdepth"}
+
 # EoMT's "semantic_logits" are already per-pixel probabilities
 # (``class.softmax() @ mask.sigmoid()``), so a second softmax would distort
 # the values ``segmentation-threshold`` compares against.
@@ -427,6 +433,15 @@ def wrap_for_deepstream(
         return DeepStreamClassifierOutput(
             _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
         )
+    if task == "depth":
+        if model_family not in _DEPTH_FAMILIES:
+            raise NotImplementedError(
+                f"DeepStream depth export is not supported for family "
+                f"{model_family!r}. Supported: {sorted(_DEPTH_FAMILIES)}"
+            )
+        # The dense map passes through untouched: DeepStream does not
+        # interpret it, the application does.
+        return nn_model
     if task == "segment":
         if model_family not in _INSTANCE_SEG_FAMILIES:
             raise NotImplementedError(
@@ -479,6 +494,8 @@ def deepstream_supported_families(task: str = "detect") -> set[str]:
         return set(_SEMANTIC_FAMILIES)
     if task == "segment":
         return set(_INSTANCE_SEG_FAMILIES)
+    if task == "depth":
+        return set(_DEPTH_FAMILIES)
     if task != "detect":
         return set()
     return (
@@ -548,6 +565,10 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     # Semantic segmentation: nets normalize internally, so [0, 1] RGB only.
     # pidnet letterboxes natively; the rest stretch.
     "pidnet": {"maintain_aspect_ratio": 1},
+    # Depth: nets normalize internally, so [0, 1] RGB; all stretch-resize.
+    "depth_anything": {},
+    "depth_anything3": {},
+    "zipdepth": {},
     "eomt": {},
     "lingbotvision": {},
 }
@@ -578,7 +599,11 @@ def write_deepstream_sidecars(
     labels_path = onnx_file.with_name(f"{stem}_labels.txt")
     config_path = onnx_file.with_name(f"config_infer_primary_{stem}.txt")
 
-    labels_path.write_text("\n".join(class_names) + "\n", encoding="utf-8")
+    # Depth has no classes: no labels file, and no labelfile-path key.
+    if class_names:
+        labels_path.write_text("\n".join(class_names) + "\n", encoding="utf-8")
+    else:
+        labels_path = None
 
     profile = _PREPROCESS_PROFILES.get(model_family, {})
     net_scale = profile.get("net_scale_factor", 1.0 / 255.0)
@@ -606,7 +631,11 @@ def write_deepstream_sidecars(
         f"model-color-format={color_format}",
         f"onnx-file={onnx_file.name}",
         f"model-engine-file={onnx_file.name}_b{batch}_gpu0_{mode_name}.engine",
-        f"labelfile-path={labels_path.name}",
+        *(
+            [f"labelfile-path={labels_path.name}"]
+            if labels_path is not None
+            else []
+        ),
         f"batch-size={batch}",
         f"network-mode={network_mode}",
         "interval=0",
@@ -624,6 +653,14 @@ def write_deepstream_sidecars(
             f"num-detected-classes={len(class_names)}",
             f"classifier-threshold={conf}",
             "classifier-async-mode=0",
+        ]
+    elif task == "depth":
+        # No DeepStream post-processor for depth: hand the raw map to the
+        # application through tensor metadata.
+        lines = common + [
+            "process-mode=1",
+            "network-type=100",
+            "output-tensor-meta=1",
         ]
     elif task == "segment":
         # Instance masks come from the DeepStream-Yolo-Seg parser library,
@@ -681,4 +718,4 @@ def write_deepstream_sidecars(
         lines.insert(3, "offsets=" + ";".join(f"{o:.10g}" for o in offsets))
 
     config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return str(config_path), str(labels_path)
+    return str(config_path), (str(labels_path) if labels_path is not None else "")

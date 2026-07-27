@@ -393,3 +393,39 @@ def test_instance_seg_rejects_blocked_families():
                 imgsz=(640, 640),
                 task="segment",
             )
+
+
+def test_depth_config_uses_raw_tensor_meta_and_no_labels(tmp_path):
+    """DeepStream has no depth post-processor: the app reads the tensor."""
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / "depth.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, labels_path = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family="zipdepth",
+        class_names=[],
+        imgsz=(384, 384),
+        batch=1,
+        dynamic=False,
+        precision="fp32",
+        task="depth",
+    )
+    config = Path(config_path).read_text()
+
+    assert "network-type=100" in config
+    assert "output-tensor-meta=1" in config
+    # Depth has no classes, so no labels file and no labelfile-path key.
+    assert labels_path == ""
+    assert "labelfile-path" not in config
+    assert not (tmp_path / "depth_labels.txt").exists()
+
+
+def test_depth_passthrough_keeps_the_map_untouched():
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    inner = torch.nn.Identity()
+    wrapped = wrap_for_deepstream(
+        inner, model_family="zipdepth", imgsz=(384, 384), task="depth"
+    )
+    assert wrapped is inner
