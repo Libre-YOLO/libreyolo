@@ -150,6 +150,7 @@ def export_onnx(
     half: bool,
     metadata: dict,
     nms: bool = False,
+    deepstream: bool = False,
 ) -> str:
     """Export a PyTorch model to ONNX format.
 
@@ -183,6 +184,28 @@ def export_onnx(
         raise ImportError(
             "ONNX export requires the 'onnx' package. "
             "Install with: uv sync --extra onnx  or  pip install onnx"
+        )
+
+    if deepstream:
+        # DeepStream contract: one ``(batch, num_detections, 6)`` tensor of
+        # ``[x1, y1, x2, y2, score, class]`` rows in input-pixel coordinates,
+        # consumed by the external parser library. Wrapper applied upstream.
+        input_name = "input" if metadata.get("model_family") == "rfdetr" else "images"
+        return _export_onnx_graph(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            opset=opset,
+            simplify=simplify,
+            half=half,
+            metadata=metadata,
+            input_names=[input_name],
+            output_names=["output"],
+            dynamic_axes=(
+                {input_name: {0: "batch"}, "output": {0: "batch"}}
+                if dynamic
+                else None
+            ),
         )
 
     if nms:
