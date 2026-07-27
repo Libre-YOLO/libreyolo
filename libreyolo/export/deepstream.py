@@ -43,7 +43,20 @@ import torch.nn as nn
 # Families emitting the shared raw tensor ``(B, 4 + nc, N)``: xyxy boxes in
 # input pixels then per-class scores (yolo9 head export; darknet/yolo7
 # export wrappers bake obj*cls into the class scores).
-_RAW_CHANNELS_FIRST_FAMILIES = {"yolo9", "yolo1", "yolo2", "yolo3", "yolo4", "yolo7"}
+_RAW_CHANNELS_FIRST_FAMILIES = {
+    "yolo9",
+    "yolo9_p2",
+    "yolo9_e2e",
+    "yolo1",
+    "yolo2",
+    "yolo3",
+    "yolo4",
+    "yolo7",
+}
+
+# Heads that emit at most one prediction per object (one-to-one assignment
+# or Hungarian matching). DeepStream must not cluster their output.
+_NMS_FREE_FAMILIES = {"yolo9_e2e"}
 
 # Same semantics but already ``(B, N, 4 + nc)`` (rtmdet/picodet heads).
 _RAW_CHANNELS_LAST_FAMILIES = {"rtmdet", "picodet"}
@@ -305,6 +318,8 @@ def deepstream_supported_families() -> set[str]:
 _PREPROCESS_PROFILES: dict[str, dict] = {
     # Letterbox + /255 RGB (top-left pad natively).
     "yolo9": {"maintain_aspect_ratio": 1},
+    "yolo9_p2": {"maintain_aspect_ratio": 1},
+    "yolo9_e2e": {"maintain_aspect_ratio": 1},
     "yolo7": {"maintain_aspect_ratio": 1},
     "yolo2": {"maintain_aspect_ratio": 1},
     "yolo3": {"maintain_aspect_ratio": 1},
@@ -376,11 +391,14 @@ def write_deepstream_sidecars(
     network_mode = {"fp32": 0, "int8": 1, "fp16": 2}.get(precision, 0)
     mode_name = {0: "fp32", 1: "int8", 2: "fp16"}[network_mode]
 
-    # DETR-style heads are trained with Hungarian matching and emit one query
-    # per object, so clustering is disabled (cluster-mode=4) and no IoU
-    # threshold applies. Anchor/grid detectors need NMS clustering.
-    is_detr = model_family in _DETR_TUPLE_FAMILIES | _BOXES_FIRST_DETR_FAMILIES
-    cluster_mode = 4 if is_detr else 2
+    # Heads emitting one prediction per object (DETR Hungarian matching, or
+    # YOLO9's one-to-one E2E head) must not be clustered: DeepStream's NMS
+    # would merge genuinely distinct detections. Anchor/grid heads need it.
+    nms_free = (
+        model_family
+        in _DETR_TUPLE_FAMILIES | _BOXES_FIRST_DETR_FAMILIES | _NMS_FREE_FAMILIES
+    )
+    cluster_mode = 4 if nms_free else 2
 
     lines = [
         "[property]",
@@ -409,7 +427,7 @@ def write_deepstream_sidecars(
         f"pre-cluster-threshold={conf}",
         "topk=300",
     ]
-    if not is_detr:
+    if not nms_free:
         lines.insert(len(lines) - 1, f"nms-iou-threshold={iou}")
     if offsets is not None:
         lines.insert(3, "offsets=" + ";".join(f"{o:.10g}" for o in offsets))
