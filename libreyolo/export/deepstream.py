@@ -107,6 +107,12 @@ _SEMANTIC_FAMILIES = {
     "lingbotvision",
 }
 
+# Instance segmentation families exportable as an nvinfer instance-mask
+# network (``network-type=3``). All are DETR-style and export per-query
+# masks as a third output. RTMDet-Ins and YOLO9 are absent: their seg
+# export is blocked upstream in libreyolo.export.support.
+_INSTANCE_SEG_FAMILIES = {"rfdetr", "dfine", "ec"}
+
 # EoMT's "semantic_logits" are already per-pixel probabilities
 # (``class.softmax() @ mask.sigmoid()``), so a second softmax would distort
 # the values ``segmentation-threshold`` compares against.
@@ -344,6 +350,63 @@ class DeepStreamSemanticOutput(nn.Module):
         return torch.softmax(logits, dim=1) if self.apply_softmax else logits
 
 
+class DeepStreamInstanceSegOutput(nn.Module):
+    """Adapt DETR-style instance segmentation to the seg parser layout.
+
+    The seg parser (``NvDsInferParseYoloSeg`` from DeepStream-Yolo-Seg, MIT)
+    reads one tensor of ``(B, N, 6 + mask_size)`` rows: the usual
+    ``[x1, y1, x2, y2, score, class]`` followed by that detection's mask
+    flattened at exactly ``(netH / 4, netW / 4)`` — the parser hardcodes
+    that resolution — as probabilities for ``segmentation-threshold``.
+
+    LibreYOLO's seg families export per-query masks directly rather than
+    prototype coefficients, so the adapter resizes them to the quarter
+    canvas and sigmoids, with no RoI pooling or custom TensorRT plugin.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        imgsz: tuple[int, int],
+        boxes_first: bool,
+    ):
+        super().__init__()
+        self.model = model
+        self.boxes_first = boxes_first
+        h, w = imgsz
+        self.mask_h = h // 4
+        self.mask_w = w // 4
+        self.register_buffer(
+            "_scale",
+            torch.tensor([w, h, w, h], dtype=torch.float32),
+            persistent=False,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.model(x)
+        if self.boxes_first:
+            boxes_norm, logits, masks = out[0], out[1], out[2]
+        else:
+            logits, boxes_norm, masks = out[0], out[1], out[2]
+
+        scores_all = logits.float().sigmoid()
+        cxcy = boxes_norm[..., :2].float()
+        half_wh = boxes_norm[..., 2:4].float() * 0.5
+        boxes = torch.cat((cxcy - half_wh, cxcy + half_wh), dim=-1) * self._scale
+        rows = _rows_from(boxes, scores_all)
+
+        # (B, Q, mh, mw) -> quarter-canvas probabilities, flattened per query.
+        masks = masks.float()
+        b, q = masks.shape[0], masks.shape[1]
+        masks = torch.nn.functional.interpolate(
+            masks,
+            size=(self.mask_h, self.mask_w),
+            mode="bilinear",
+            align_corners=False,
+        ).sigmoid()
+        return torch.cat((rows, masks.reshape(b, q, self.mask_h * self.mask_w)), dim=-1)
+
+
 def wrap_for_deepstream(
     nn_model: nn.Module,
     *,
@@ -363,6 +426,18 @@ def wrap_for_deepstream(
         # model, and nvinfer cannot divide per channel: bake it in.
         return DeepStreamClassifierOutput(
             _GraphNorm(nn_model, _IMAGENET_MEAN, _IMAGENET_STD)
+        )
+    if task == "segment":
+        if model_family not in _INSTANCE_SEG_FAMILIES:
+            raise NotImplementedError(
+                f"DeepStream instance segmentation export is not supported for "
+                f"family {model_family!r}. Supported: "
+                f"{sorted(_INSTANCE_SEG_FAMILIES)}"
+            )
+        return DeepStreamInstanceSegOutput(
+            _maybe_normalize(nn_model, model_family, model_size),
+            imgsz,
+            boxes_first=model_family in _BOXES_FIRST_DETR_FAMILIES,
         )
     if task == "semantic":
         if model_family not in _SEMANTIC_FAMILIES:
@@ -402,6 +477,8 @@ def deepstream_supported_families(task: str = "detect") -> set[str]:
         return set(_CLASSIFY_FAMILIES)
     if task == "semantic":
         return set(_SEMANTIC_FAMILIES)
+    if task == "segment":
+        return set(_INSTANCE_SEG_FAMILIES)
     if task != "detect":
         return set()
     return (
@@ -547,6 +624,26 @@ def write_deepstream_sidecars(
             f"num-detected-classes={len(class_names)}",
             f"classifier-threshold={conf}",
             "classifier-async-mode=0",
+        ]
+    elif task == "segment":
+        # Instance masks come from the DeepStream-Yolo-Seg parser library,
+        # which is a separate build from the detection one.
+        lines = common + [
+            "process-mode=1",
+            "network-type=3",
+            f"num-detected-classes={len(class_names)}",
+            # DETR-style seg heads emit one query per object: no clustering.
+            "cluster-mode=4",
+            f"maintain-aspect-ratio={int(maintain_ar)}",
+            f"symmetric-padding={int(symmetric_pad)}",
+            "output-instance-mask=1",
+            f"segmentation-threshold={conf}",
+            "parse-bbox-instance-mask-func-name=NvDsInferParseYoloSeg",
+            "custom-lib-path=nvdsinfer_custom_impl_Yolo_seg/"
+            "libnvdsinfer_custom_impl_Yolo_seg.so",
+            "",
+            "[class-attrs-all]",
+            f"pre-cluster-threshold={conf}",
         ]
     elif task == "semantic":
         # Native nvinfer segmentation: consumes (C, H, W) probabilities and

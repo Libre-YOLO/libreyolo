@@ -60,6 +60,22 @@ softmax probabilities, which is what `classifier-threshold` expects. Set
 `process-mode=2` and `operate-on-gie-id` in the generated config to run one
 as a secondary classifier behind a detector.
 
+**Instance segmentation** (`network-type=3`, needs the *seg* parser build):
+rfdetr, dfine, ec. Rows are the detection row followed by that instance's
+mask, flattened at `(netH / 4, netW / 4)` — the resolution the seg parser
+hardcodes — as probabilities for `segmentation-threshold`. This parser is a
+separate MIT project and a separate build:
+
+```bash
+git clone https://github.com/marcoslucianops/DeepStream-Yolo-Seg
+CUDA_VER=12.8 make -C DeepStream-Yolo-Seg/nvdsinfer_custom_impl_Yolo_seg
+```
+
+LibreYOLO's seg families export per-query masks directly, so the graph only
+resizes and sigmoids them. No RoI pooling and no custom TensorRT plugin are
+involved, unlike prototype-coefficient heads. RTMDet-Ins and YOLO9 are
+excluded because their segmentation export is blocked in LibreYOLO itself.
+
 **Semantic segmentation** (`network-type=2`, no parser library needed):
 pidnet, eomt, dinov2, lingbotvision. The graph emits `(C, H, W)` per-class
 probabilities; `nvinfer` applies `segmentation-threshold` and produces the
