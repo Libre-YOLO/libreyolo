@@ -1,0 +1,188 @@
+"""DeepStream export tests: output adapters and nvinfer sidecar generation.
+
+The DeepStream contract is a single ``(batch, num_detections, 6)`` tensor of
+``[x1, y1, x2, y2, score, class]`` rows in input-pixel coordinates; the
+external parser thresholds and DeepStream clustering suppresses. These tests
+validate the adapter math against hand-computed values and the generated
+``config_infer_primary`` / labels sidecars.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+
+import numpy as np
+import pytest
+import torch
+
+pytestmark = [pytest.mark.unit, pytest.mark.export_backend]
+
+_HAS_ORT = (
+    importlib.util.find_spec("onnx") is not None
+    and importlib.util.find_spec("onnxruntime") is not None
+)
+
+
+class _RawModel(torch.nn.Module):
+    def __init__(self, raw: torch.Tensor):
+        super().__init__()
+        self.register_buffer("raw", raw)
+
+    def forward(self, x):
+        return self.raw + x.sum() * 0.0
+
+
+class _TupleModel(torch.nn.Module):
+    def __init__(self, a: torch.Tensor, b: torch.Tensor):
+        super().__init__()
+        self.register_buffer("a", a)
+        self.register_buffer("b", b)
+
+    def forward(self, x):
+        zero = x.sum() * 0.0
+        return self.a + zero, self.b + zero
+
+
+def test_raw_output_adapter_layout_and_argmax():
+    from libreyolo.export.deepstream import DeepStreamRawOutput
+
+    # (B, 4 + nc, N): two anchors, three classes.
+    raw = torch.zeros(1, 7, 2)
+    raw[0, :4, 0] = torch.tensor([0.0, 10.0, 20.0, 30.0])
+    raw[0, :4, 1] = torch.tensor([5.0, 15.0, 25.0, 35.0])
+    raw[0, 4:, 0] = torch.tensor([0.2, 0.7, 0.1])
+    raw[0, 4:, 1] = torch.tensor([0.9, 0.3, 0.4])
+
+    out = DeepStreamRawOutput(_RawModel(raw))(torch.zeros(1, 3, 64, 64))
+
+    assert out.shape == (1, 2, 6)
+    np.testing.assert_allclose(out[0, 0].numpy(), [0, 10, 20, 30, 0.7, 1.0])
+    np.testing.assert_allclose(
+        out[0, 1].numpy(), [5, 15, 25, 35, 0.9, 0.0], rtol=1e-6
+    )
+
+
+def test_detr_output_adapter_sigmoid_denorm_and_order():
+    from libreyolo.export.deepstream import DeepStreamDETROutput
+
+    # One query, two classes, cxcywh normalized on a 100x200 (h, w) canvas.
+    logits = torch.tensor([[[0.0, 2.0]]])  # sigmoid -> [0.5, 0.8808]
+    boxes = torch.tensor([[[0.5, 0.5, 0.2, 0.4]]])
+
+    model = _TupleModel(logits, boxes)
+    out = DeepStreamDETROutput(model, imgsz=(100, 200), boxes_first=False)(
+        torch.zeros(1, 3, 100, 200)
+    )
+
+    assert out.shape == (1, 1, 6)
+    x1, y1, x2, y2, score, label = out[0, 0].tolist()
+    # cx=0.5*200, w=0.2*200 -> x in [80, 120]; cy=0.5*100, h=0.4*100 -> y in [30, 70]
+    np.testing.assert_allclose([x1, y1, x2, y2], [80.0, 30.0, 120.0, 70.0], rtol=1e-5)
+    assert score == pytest.approx(torch.sigmoid(torch.tensor(2.0)).item(), rel=1e-5)
+    assert label == 1.0
+
+    # boxes_first order flips the tuple interpretation.
+    model_bf = _TupleModel(boxes, logits)
+    out_bf = DeepStreamDETROutput(model_bf, imgsz=(100, 200), boxes_first=True)(
+        torch.zeros(1, 3, 100, 200)
+    )
+    np.testing.assert_allclose(out_bf.numpy(), out.numpy(), rtol=1e-6)
+
+
+def test_sidecar_files_content(tmp_path):
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / "libreyolo9s.onnx"
+    onnx_path.write_bytes(b"stub")
+
+    config_path, labels_path = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family="yolo9",
+        class_names=["person", "car"],
+        imgsz=(640, 640),
+        batch=1,
+        dynamic=True,
+        precision="fp16",
+        conf=0.25,
+        iou=0.45,
+    )
+
+    labels = (tmp_path / "libreyolo9s_labels.txt").read_text().splitlines()
+    assert labels == ["person", "car"]
+
+    config = (tmp_path / "config_infer_primary_libreyolo9s.txt").read_text()
+    assert "onnx-file=libreyolo9s.onnx" in config
+    assert "num-detected-classes=2" in config
+    assert "network-mode=2" in config
+    assert "cluster-mode=2" in config
+    assert "parse-bbox-func-name=NvDsInferParseYolo" in config
+    assert "pre-cluster-threshold=0.25" in config
+    assert "nms-iou-threshold=0.45" in config
+    assert config_path.endswith("config_infer_primary_libreyolo9s.txt")
+    assert labels_path.endswith("libreyolo9s_labels.txt")
+
+
+def test_wrap_rejects_unknown_family():
+    from libreyolo.export.deepstream import wrap_for_deepstream
+
+    with pytest.raises(NotImplementedError, match="not supported"):
+        wrap_for_deepstream(
+            torch.nn.Identity(), model_family="fomo", imgsz=(64, 64)
+        )
+
+
+@pytest.mark.onnx
+@pytest.mark.skipif(not _HAS_ORT, reason="requires onnx and onnxruntime")
+@pytest.mark.parametrize(
+    "adapter_name,make_model,imgsz",
+    [
+        (
+            "raw_channels_first",
+            lambda: _RawModel(torch.rand(1, 7, 5)),
+            (32, 32),
+        ),
+        (
+            "detr_tuple",
+            lambda: _TupleModel(torch.randn(1, 4, 3), torch.rand(1, 4, 4)),
+            (64, 48),
+        ),
+    ],
+)
+def test_deepstream_graph_matches_torch_through_onnxruntime(
+    tmp_path, adapter_name, make_model, imgsz
+):
+    """The exported graph reproduces the torch adapter output in ORT."""
+    import onnxruntime as ort
+
+    from libreyolo.export.deepstream import (
+        DeepStreamDETROutput,
+        DeepStreamRawOutput,
+    )
+
+    inner = make_model()
+    if adapter_name == "raw_channels_first":
+        wrapped = DeepStreamRawOutput(inner, channels_first=True).eval()
+    else:
+        wrapped = DeepStreamDETROutput(inner, imgsz, boxes_first=False).eval()
+
+    dummy = torch.randn(1, 3, *imgsz)
+    path = tmp_path / f"{adapter_name}.onnx"
+    torch.onnx.export(
+        wrapped,
+        dummy,
+        str(path),
+        input_names=["images"],
+        output_names=["output"],
+        opset_version=17,
+        dynamo=False,
+    )
+
+    with torch.no_grad():
+        expected = wrapped(dummy).numpy()
+
+    sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    got = sess.run(None, {"images": dummy.numpy()})[0]
+
+    assert got.shape == expected.shape
+    assert got.shape[-1] == 6
+    np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-5)

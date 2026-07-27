@@ -1443,6 +1443,24 @@ class OnnxExporter(BaseExporter):
                     "Embedded NMS ONNX export currently supports YOLO9 "
                     "detection models only."
                 )
+        if kwargs.get("deepstream"):
+            from .deepstream import deepstream_supported_families
+
+            if kwargs.get("nms"):
+                raise ValueError(
+                    "deepstream=True and nms=True are mutually exclusive: "
+                    "DeepStream runs suppression in its clustering stage."
+                )
+            task = getattr(self.model, "task", "detect")
+            if not isinstance(task, str):
+                task = "detect"
+            family = self.model._get_model_name()
+            if task != "detect" or family not in deepstream_supported_families():
+                raise NotImplementedError(
+                    "DeepStream ONNX export supports detection models of the "
+                    f"families {sorted(deepstream_supported_families())}; "
+                    f"got family {family!r} with task {task!r}."
+                )
         super()._preflight(half=half, int8=int8, data=data, **kwargs)
 
     def _export(
@@ -1459,6 +1477,7 @@ class OnnxExporter(BaseExporter):
         opset,
         simplify,
         nms=False,
+        deepstream=False,
         iou=0.45,
         conf=0.25,
         max_det=300,
@@ -1467,6 +1486,16 @@ class OnnxExporter(BaseExporter):
         **kwargs,
     ):
         imgsz = (dummy.shape[-2], dummy.shape[-1])
+
+        if deepstream:
+            from .deepstream import wrap_for_deepstream
+
+            nn_model = wrap_for_deepstream(
+                nn_model,
+                model_family=self.model._get_model_name(),
+                imgsz=imgsz,
+                model_size=getattr(self.model, "size", None),
+            ).eval()
 
         if nms:
             from .nms import EmbeddedNMSDetector
@@ -1499,7 +1528,28 @@ class OnnxExporter(BaseExporter):
                 meta["nms_iou"] = str(iou)
                 meta["max_det"] = str(max_det)
                 meta["nms_raw_output"] = "true"
+            if deepstream:
+                meta["deepstream"] = "true"
             return meta
+
+        def _write_deepstream_sidecars(onnx_result_path: str) -> None:
+            if not deepstream:
+                return
+            from .deepstream import write_deepstream_sidecars
+
+            names = self.model.names
+            class_names = [names[k] for k in sorted(names, key=int)]
+            write_deepstream_sidecars(
+                onnx_result_path,
+                model_family=self.model._get_model_name(),
+                class_names=class_names,
+                imgsz=imgsz,
+                batch=dummy.shape[0],
+                dynamic=dynamic,
+                precision="int8" if int8 else ("fp16" if half else "fp32"),
+                conf=conf,
+                iou=iou,
+            )
 
         if int8:
             import tempfile
@@ -1522,8 +1572,9 @@ class OnnxExporter(BaseExporter):
                     half=False,
                     metadata=_onnx_metadata(precision_half=False),
                     nms=nms,
+                    deepstream=deepstream,
                 )
-                return quantize_onnx_int8(
+                result = quantize_onnx_int8(
                     fp32_path,
                     output_path,
                     calibration_data=calibration_data,
@@ -1533,8 +1584,10 @@ class OnnxExporter(BaseExporter):
                     nodes_to_exclude=nodes_to_exclude,
                     skip_symbolic_shape=nms,
                 )
+                _write_deepstream_sidecars(result)
+                return result
 
-        return export_onnx(
+        result = export_onnx(
             nn_model,
             dummy,
             output_path=output_path,
@@ -1544,7 +1597,10 @@ class OnnxExporter(BaseExporter):
             half=half,
             metadata=_onnx_metadata(precision_half=half),
             nms=nms,
+            deepstream=deepstream,
         )
+        _write_deepstream_sidecars(result)
+        return result
 
 
 class TorchScriptExporter(BaseExporter):
