@@ -63,6 +63,21 @@ def _summarize_result(result) -> tuple[str, str]:
     if gaze is not None:
         return "gaze", _plural(len(gaze), "face")
 
+    # Embeddings for the same reason: embed results also carry face boxes.
+    embeddings = getattr(result, "embeddings", None)
+    if embeddings is not None:
+        identities = getattr(result, "identities", None)
+        if identities is not None and len(identities) == len(embeddings):
+            known = list(dict.fromkeys(n for n in identities.name if n is not None))
+            unknown = sum(1 for n in identities.name if n is None)
+            if known:
+                label = ", ".join(known)
+                if unknown:
+                    label += f" (+{_plural(unknown, 'unknown face')})"
+                return "embed", label
+            return "embed", _plural(len(identities), "unknown face")
+        return "embed", _plural(len(embeddings), "face")
+
     boxes = getattr(result, "boxes", None)
     if boxes is not None:
         n = len(boxes)
@@ -149,6 +164,14 @@ def _resolve_download_url(name: str) -> str | None:
     from libreyolo.models.base.model import BaseModel
 
     filename = Path(resolve_model_name(name)).name
+
+    # The face-embedding family is ONNX-only and lives outside the model
+    # registry, so it publishes its download URLs directly.
+    from libreyolo.models.facerec.weights import FACEREC_WEIGHT_URLS
+
+    if filename in FACEREC_WEIGHT_URLS:
+        return FACEREC_WEIGHT_URLS[filename]
+
     classes = list(BaseModel._registry)
     rf = try_ensure_rfdetr()
     if rf is not None and rf not in classes:

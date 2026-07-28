@@ -132,6 +132,15 @@ def predict_cmd(
         "--face-detector",
         help="Face detector model (path or CLI name); required for gaze models",
     ),
+    gallery: Optional[str] = typer.Option(
+        None,
+        "--gallery",
+        help="Face gallery (.npz from `libreyolo enroll`) to identify faces "
+        "against; facial-recognition models only",
+    ),
+    gallery_threshold: float = typer.Option(
+        0.4, help="Cosine threshold for a gallery identity match"
+    ),
     project: str = typer.Option("runs/detect", help="Output directory root"),
     name: str = typer.Option("predict", help="Experiment name"),
     exist_ok: bool = typer.Option(False, help="Reuse existing output directory"),
@@ -189,6 +198,39 @@ def predict_cmd(
         from libreyolo.models.l2cs.face import resolve_face_detector
 
         loaded_model.face_detector = resolve_face_detector(fd_model)
+
+    # Face-embedding models: optional --face-detector override (the family
+    # otherwise falls back to its auto-downloaded default detector) and
+    # optional --gallery for 1:N identification.
+    gallery_obj = None
+    if getattr(loaded_model, "task", None) == "embed":
+        if face_detector is not None:
+            from .special import _resolve_embed_face_detector
+
+            loaded_model.face_detector = _resolve_embed_face_detector(
+                out, face_detector, device
+            )
+        if gallery is not None:
+            if not Path(gallery).exists():
+                exit_with_error(
+                    out,
+                    "source_not_found",
+                    f"Gallery not found: {gallery}. Build one with "
+                    "`libreyolo enroll model=... source=people/ gallery=...`.",
+                )
+            from libreyolo.models.facerec import FaceGallery
+
+            try:
+                gallery_obj = FaceGallery.load(gallery, embedder=loaded_model)
+            except ValueError as exc:
+                exit_with_error(out, "config_unsupported", str(exc))
+    elif gallery is not None:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "--gallery is only supported for facial-recognition models "
+            "(e.g. model=facerec-l).",
+        )
 
     # FP16 (half) precision: exported runtimes (ONNX, TensorRT, ...) accept the
     # flag and run in FP16, so forward it there. For native PyTorch inference it
@@ -251,6 +293,9 @@ def predict_cmd(
     )
     if half and is_exported_backend:
         predict_kwargs["half"] = half
+    if gallery_obj is not None:
+        predict_kwargs["gallery"] = gallery_obj
+        predict_kwargs["threshold"] = gallery_threshold
     results = loaded_model(source, **predict_kwargs)
     elapsed = time.time() - t0
 
@@ -418,8 +463,14 @@ def predict_cmd(
                         kp["confidence"] = round(float(kp_conf[i, k]), 4)
                     keypoints.append(kp)
                 det["keypoints"] = keypoints
+            identities = getattr(r, "identities", None)
+            if identities is not None and i < len(identities):
+                det["identity"] = identities.name[i]
+                score = float(identities.score[i])
+                det["identity_score"] = round(score, 4) if score == score else None
             detections.append(det)
-            class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+            count_key = det.get("identity") or cls_name
+            class_counts[count_key] = class_counts.get(count_key, 0) + 1
 
         result_data = {
             "path": r.path or str(source),

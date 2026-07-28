@@ -79,6 +79,7 @@ def test_task_type_literal_is_public():
         "restore",
         "matte",
         "ocr",
+        "embed",
     }
 
 
