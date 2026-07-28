@@ -651,26 +651,36 @@ _add(
 
 
 _add(
-    "experimental",
-    ("yolo1",),
+    "validated",
+    ("yolo1", "yolo2", "yolo3", "yolo4"),
     ("detect",),
     ("coreai",),
-    reason=(
-        "The published trained LibreYOLO1b checkpoint converts and runs, but "
-        "its Core AI output differs from the prepared PyTorch graph by "
-        "3.02e-01 at the native 448 canvas. This is a real numeric failure, "
-        "not a missing checkpoint or a random-weight measurement."
+    since="1.5",
+    constraint=(
+        "fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, "
+        "YOLO4 608); representative published trained checkpoints are covered "
+        "on Apple hardware by direct named-output parity with a 3e-04 "
+        "tolerance and a 100x input-sensitivity margin; Core AI graph "
+        "preparation exactly folds Darknet inference batch normalization into "
+        "the preceding convolutions because Core AI 0.4.1 does not preserve "
+        "Darknet's epsilon-after-square-root formula"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("yolonas",),
     ("detect",),
     ("coreai",),
-    reason=(
-        "Conversion has been measured, but no permissively licensed "
-        "LibreYOLO trained checkpoint is published for a reproducible Core AI "
-        "parity gate."
+    since="1.5",
+    constraint=(
+        "fixed 96x96 export canvas with pre-shaped canonical RGB tensors; a "
+        "deterministic, license-clean synthetic "
+        "YOLO-NAS-S state is covered on Apple hardware by direct named-output "
+        "parity with a 3e-04 tolerance and a 100x input-sensitivity margin; "
+        "the state receives 12 native training steps and a 20x regression-head "
+        "scale to make both exported outputs non-degenerate; this validates "
+        "conversion, not detection accuracy, raw-image preprocessing, or "
+        "native-640 behavior, and does not convert restricted official weights"
     ),
 )
 _add(
@@ -763,13 +773,16 @@ _add(
 # HOW THE Core AI NUMBERS BELOW WERE MEASURED, and why an earlier set of them
 # was withdrawn.
 #
-# Every figure is the worst relative error against a reference graph, using
-# TRAINED weights, with each artifact fed the input ITS OWN contract expects,
-# and reported alongside the reference's own input-sensitivity.
+# Every figure is the worst relative error against a reference graph, with each
+# artifact fed the input ITS OWN contract expects and reported alongside the
+# reference's own input-sensitivity. Published trained weights are used where a
+# permissive checkpoint exists. The FOMO, YOLO-NAS, and YOLO9-P2 entries state
+# their license-clean synthetic or transfer fixture explicitly and make no
+# accuracy claim.
 #
 # All three qualifiers were learned the hard way.
 #
-# Trained weights: a randomly initialised detection head emits nearly the same
+# Non-degenerate weights: a randomly initialised detection head emits nearly the same
 # tensor whatever it is shown, because the constant anchor grid dominates its
 # output. Measured on the ONNX reference between two very different probes,
 # random-init yolox moved by 1.5e-09 and rtmdet by 8.9e-12. Agreement at 1e-08
@@ -814,54 +827,33 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("yolo9_p2",),
     ("detect",),
     ("coreai",),
-    reason=(
-        "The published LibreYOLO9P2s-visdrone checkpoint passes the trained "
-        "Core AI parity gate at 640. It remains experimental because the only "
-        "published checkpoint is a non-commercial VisDrone research preview; "
-        "LibreYOLO's permissive validation gate must not depend on that "
-        "restricted artifact. A permissively licensed trained checkpoint "
-        "would make this promotable."
+    since="1.5",
+    constraint=(
+        "fixed 640x640 export canvas; a deterministic YOLO9-P2-T model "
+        "initialized from the SHA-256-pinned, permissively licensed trained "
+        "LibreYOLO9t checkpoint is covered on Apple hardware by direct "
+        "named-output parity with a 3e-04 tolerance and a 100x "
+        "input-sensitivity margin; this validates conversion, not P2 task "
+        "accuracy, and does not depend on the restricted VisDrone "
+        "research-preview checkpoint"
     ),
 )
 _add(
-    "blocked",
+    "validated",
     ("yolo7",),
     ("detect",),
     ("coreai",),
-    reason=(
-        "WITHDRAWN from validated. This family was recorded at 1.4e-07 on "
-        "random initialisation. With trained weights, where the reference "
-        "actually moves (input-sensitivity 1.3e-01), the same comparison gives "
-        "2.9e-01: the artifact does not reproduce the model. The earlier "
-        "number was two near-constant tensors agreeing, not a correct "
-        "conversion. "
-        "yolo7 is the one family where the trained-weight re-measurement "
-        "turned a pass into a failure rather than confirming it, so whatever "
-        "it does differently from yolo9 and yolox, which pass the identical "
-        "check at 1.9e-06 and 2.4e-06, is the place to look. Only the b size "
-        "exists, so a second size cannot be used to narrow it."
-    ),
-)
-_add(
-    "experimental",
-    ("yolo2", "yolo3", "yolo4"),
-    ("detect",),
-    ("coreai",),
-    reason=(
-        "Not close. Random initialisation put these at 2.4e-04 and the note "
-        "here said to re-measure with real weights before reading anything "
-        "into it. Done: with trained weights they are 1.5e-01 (yolo2), "
-        "1.1e-01 (yolo3) and 1.6e-01 (yolo4) against reference "
-        "input-sensitivities of 0.18 to 0.37. The residual is structural, not "
-        "numeric drift, and it is shared with yolo7, which fails the same way "
-        "at 2.9e-01. All four are darknet-lineage models sharing "
-        "models/darknet, so one cause probably explains all four. The "
-        "published trained YOLO1-B checkpoint now fails the same direct gate "
-        "at 3.0e-01, strengthening the shared-lineage diagnosis."
+    since="1.5",
+    constraint=(
+        "fixed 640x640 export canvas; trained LibreYOLO7b weights are covered on "
+        "Apple hardware by direct named-output parity with a 3e-04 tolerance "
+        "and a 100x input-sensitivity margin; the export decoder uses direct "
+        "arange grids because Core AI 0.4.1 mislowers the equivalent "
+        "cumulative-sum expression"
     ),
 )
 _add(
@@ -929,23 +921,17 @@ _add(
 )
 
 _add(
-    "experimental",
+    "validated",
     ("pidnet", "lingbotvision"),
     ("semantic",),
     ("coreai",),
-    reason=(
-        "The conversion is correct and measured: against the eager contract "
-        "graph, pidnet is 6.7e-05 and lingbotvision 7.8e-07, both inside the "
-        "1e-04 gate. Eager rather than ONNX because ONNX is itself blocked "
-        "for the semantic task, so there is no ONNX artifact to compare with; "
-        "an earlier 2.3e-04 for pidnet came from comparing two gate-forced "
-        "exports and is superseded. "
-        "Held at experimental rather than promoted, because _TASK_BLOCKS "
-        "refuses semantic for EVERY format: the shared dense-logits and "
-        "backend argmax decode contract does not exist yet. The artifact "
-        "carries raw logits and nothing downstream knows how to read them. "
-        "What stands between these two and validated is that cross-format "
-        "task contract, not anything about Core AI."
+    since="1.5",
+    constraint=(
+        "fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained "
+        "LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered "
+        "on Apple hardware by direct named-output parity with a 3e-04 "
+        "tolerance and a 100x input-sensitivity margin; exported backends "
+        "already implement the shared dense-logit resize and argmax contract"
     ),
 )
 _add(
@@ -976,18 +962,17 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("fomo",),
     ("point",),
     ("coreai",),
-    reason=(
-        "Converts and matches the eager contract graph at 4.3e-07, measured "
-        "at the family's native 96 canvas. An earlier attempt at 640 said "
-        "nothing useful: 96 is the size this model is built for. "
-        "Held at experimental for the same reason as the semantic families: "
-        "_TASK_BLOCKS refuses point for every format because the shared "
-        "heatmap and backend peak-decoding contract does not exist, so the "
-        "artifact emits a raw heatmap that nothing downstream can decode."
+    since="1.5",
+    constraint=(
+        "native 96 canvas; a deterministic model state trained from scratch "
+        "for eight steps on synthetic tensors is covered on Apple hardware "
+        "by direct named-output parity with a 3e-04 tolerance and a 100x "
+        "input-sensitivity margin; this validates conversion and the existing "
+        "heatmap contract, not point-localization accuracy"
     ),
 )
 _add(

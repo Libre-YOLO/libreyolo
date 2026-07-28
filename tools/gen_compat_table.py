@@ -20,7 +20,7 @@ DOCS_PATH = REPO_ROOT / "docs" / "export_support.md"
 MARKERS = {"validated": "✓", "experimental": "exp", "blocked": ""}
 
 
-def _rows() -> tuple[list[str], list[str]]:
+def _rows() -> tuple[list[str], list[str], list[str]]:
     from libreyolo.export.support import EXPORT_FORMATS, get_support
 
     if not INVENTORY_PATH.exists():
@@ -35,6 +35,7 @@ def _rows() -> tuple[list[str], list[str]]:
         "| " + " | ".join(header) + " |",
         "| " + " | ".join(["---", "---", *(["---:"] * len(EXPORT_FORMATS))]) + " |",
     ]
+    validated_constraints = []
     blocked = []
     for family, metadata in inventory.items():
         for task in metadata["tasks"]:
@@ -47,13 +48,17 @@ def _rows() -> tuple[list[str], list[str]]:
                 + " |"
             )
             for fmt, entry in zip(EXPORT_FORMATS, entries):
+                if entry.tier == "validated" and entry.constraint:
+                    validated_constraints.append(
+                        f"- `{family}` / `{task}` / `{fmt}`: {entry.constraint}"
+                    )
                 if entry.tier == "blocked":
                     blocked.append(f"- `{family}` / `{task}` / `{fmt}`: {entry.reason}")
-    return rows, blocked
+    return rows, validated_constraints, blocked
 
 
 def render_docs() -> str:
-    rows, blocked = _rows()
+    rows, validated_constraints, blocked = _rows()
     return "\n".join(
         [
             "# Export support",
@@ -74,6 +79,12 @@ def render_docs() -> str:
             "- Classification: logits cosine above 0.999 and equal top-1 class.",
             "- Depth and restoration: PSNR above 40 dB against native output.",
             "- Point: peak locations equal within one output cell.",
+            "",
+            "## Validated constraints",
+            "",
+            "A check mark applies only under any constraint listed here.",
+            "",
+            *validated_constraints,
             "",
             "## Blocked combinations",
             "",

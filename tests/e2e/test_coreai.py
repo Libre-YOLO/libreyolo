@@ -1,4 +1,4 @@
-"""Trained-weight Core AI parity on real Apple hardware.
+"""Core AI artifact parity on real Apple hardware.
 
 The test compares the public ``.aimodel`` export with the exact fixed-canvas
 PyTorch graph prepared by the exporter. Two probes establish both numeric
@@ -12,12 +12,15 @@ so the gate cannot hide a broken box/logit association.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 pytestmark = [
@@ -37,6 +40,7 @@ if sys.platform != "darwin":  # pragma: no cover - platform gate
 
 REL_TOL = 3e-4
 MIN_SENSITIVITY_MARGIN = 100.0
+MIN_REL_SENSITIVITY = 1e-6
 CASES = [
     ("LibreYOLO9t.pt", "yolo9", 640),
     ("LibreDFINEn.pt", "dfine", 640),
@@ -51,6 +55,13 @@ CASES = [
     ("LibreRTDETRv4s.pt", "rtdetrv4", 640),
     ("LibreRTMDett.pt", "rtmdet", 640),
     ("LibreYOLO9E2Et.pt", "yolo9_e2e", 640),
+    ("LibreYOLO1b.pt", "yolo1", 448),
+    ("LibreYOLO2b.pt", "yolo2", 608),
+    ("LibreYOLO3b.pt", "yolo3", 416),
+    ("LibreYOLO4b.pt", "yolo4", 608),
+    ("LibreYOLO7b.pt", "yolo7", 640),
+    ("LibrePIDNets-sem.pt", "pidnet", 1024),
+    ("LibreLingBotVisions-sem.pt", "lingbotvision", 512),
     ("LibreResNet18-cls.pt", "resnet", 224),
     ("LibreMobileNetV4s-cls.pt", "mobilenetv4", 224),
     ("LibreEfficientNetV2b0-cls.pt", "efficientnetv2", 224),
@@ -97,8 +108,8 @@ def _prepared_reference(model, family, imgsz, x1, x2):
     from libreyolo.export.coreai import (
         _exported_output_names,
         _prepare_coreai_graph,
+        _wrap_coreai_contract,
     )
-    from libreyolo.export.coreml import _wrap_for_family
     from libreyolo.export.exporter import CoreAIExporter
 
     exporter = CoreAIExporter(model)
@@ -109,7 +120,7 @@ def _prepared_reference(model, family, imgsz, x1, x2):
         1,
         (imgsz, imgsz),
     ) as (nn_model, _):
-        wrapped = _wrap_for_family(nn_model, family).eval()
+        wrapped = _wrap_coreai_contract(nn_model, family)
         with _prepare_coreai_graph(wrapped, x1, family):
             # The eager prepared graph is the semantic reference. Running the
             # decomposed ExportedProgram as a module is not equivalent for
@@ -182,6 +193,10 @@ def _assert_parity(output_names, ref1, ref2, got1, got2):
             f"out[{index}] ({output_names[index]}) relative error "
             f"{error:.3e} exceeds {REL_TOL:.0e}"
         )
+        assert sensitivity >= MIN_REL_SENSITIVITY, (
+            f"out[{index}] ({output_names[index]}) relative input sensitivity "
+            f"{sensitivity:.3e} is below {MIN_REL_SENSITIVITY:.0e}"
+        )
         assert margin >= MIN_SENSITIVITY_MARGIN, (
             f"out[{index}] parity margin {margin:.1f}x is below "
             f"{MIN_SENSITIVITY_MARGIN:.0f}x "
@@ -212,19 +227,7 @@ def _align_unordered_queries(reference, candidate):
     return [array[:, order, ...] for array in candidate]
 
 
-@pytest.mark.parametrize("weights,family,imgsz", CASES)
-def test_coreai_artifact_matches_prepared_trained_model(
-    weights, family, imgsz, tmp_path
-):
-    from libreyolo import LibreYOLO
-
-    if family == "rfdetr":
-        pytest.importorskip(
-            "transformers",
-            reason="RF-DETR parity requires the rfdetr extra",
-        )
-
-    model = LibreYOLO(weights, device="cpu")
+def _assert_model_artifact_parity(model, family, imgsz, tmp_path):
     artifact = model.export(
         format="coreai",
         imgsz=imgsz,
@@ -249,6 +252,102 @@ def test_coreai_artifact_matches_prepared_trained_model(
         got1 = _align_unordered_queries(ref1, got1)
         got2 = _align_unordered_queries(ref2, got2)
     _assert_parity(output_names, ref1, ref2, got1, got2)
+
+
+@pytest.mark.parametrize("weights,family,imgsz", CASES)
+def test_coreai_artifact_matches_prepared_trained_model(
+    weights, family, imgsz, tmp_path
+):
+    from libreyolo import LibreYOLO
+
+    if family == "rfdetr":
+        pytest.importorskip(
+            "transformers",
+            reason="RF-DETR parity requires the rfdetr extra",
+        )
+
+    model = LibreYOLO(weights, device="cpu")
+    _assert_model_artifact_parity(model, family, imgsz, tmp_path)
+
+
+def test_coreai_fomo_synthetic_trained_parity(tmp_path):
+    from libreyolo import LibreFOMO
+
+    torch.manual_seed(20260728)
+    model = LibreFOMO(None, size="s", nb_classes=2, device="cpu")
+    network = model.model.train()
+    optimizer = torch.optim.SGD(network.parameters(), lr=0.02, momentum=0.9)
+
+    for step in range(8):
+        images = torch.rand(4, 3, 96, 96)
+        logits = network(images)
+        targets = torch.zeros(
+            logits.shape[0],
+            *logits.shape[-2:],
+            dtype=torch.long,
+        )
+        targets[:, 2 + step % 4, 3 + step % 5] = 1
+        targets[:, 7 - step % 4, 8 - step % 5] = 2
+        loss = F.cross_entropy(logits, targets)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+    network.eval()
+    _assert_model_artifact_parity(model, "fomo", 96, tmp_path)
+
+
+def test_coreai_yolonas_synthetic_trained_parity(tmp_path):
+    from libreyolo import LibreYOLONAS
+    from libreyolo.models.yolonas.loss import PPYoloELoss
+
+    torch.manual_seed(20260728)
+    model = LibreYOLONAS(None, size="s", nb_classes=2, device="cpu")
+    network = model.model.train()
+    loss_fn = PPYoloELoss(num_classes=2)
+    optimizer = torch.optim.SGD(network.parameters(), lr=0.01, momentum=0.9)
+
+    for step in range(12):
+        images = torch.rand(2, 3, 96, 96)
+        targets = torch.zeros(2, 10, 5)
+        targets[0, 0] = torch.tensor([float(step % 2), 36.0 + step, 42.0, 24.0, 30.0])
+        targets[1, 0] = torch.tensor([float((step + 1) % 2), 64.0, 52.0, 20.0, 26.0])
+        outputs = network(images)
+        loss, _ = loss_fn(outputs, targets)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+    network.eval()
+    # A randomly initialized detector's decoded boxes are dominated by its
+    # fixed anchor grid. Scaling only the owned synthetic regression heads
+    # makes the conversion gate sensitive to both outputs without asserting
+    # anything about detection accuracy.
+    with torch.no_grad():
+        for head in (
+            network.heads.head1,
+            network.heads.head2,
+            network.heads.head3,
+        ):
+            head.reg_pred.weight.mul_(20.0)
+
+    _assert_model_artifact_parity(model, "yolonas", 96, tmp_path)
+
+
+def test_coreai_yolo9_p2_permissive_transfer_parity(tmp_path):
+    from libreyolo import LibreYOLO9P2
+    from libreyolo.utils.download import download_weights
+
+    torch.manual_seed(20260728)
+    model = LibreYOLO9P2(None, size="t", device="cpu")
+    weights_path = Path(model._resolve_weights_path("LibreYOLO9t.pt"))
+    if not weights_path.exists():
+        download_weights(str(weights_path), model.size)
+    with weights_path.open("rb") as weights_file:
+        digest = hashlib.file_digest(weights_file, "sha256").hexdigest()
+    assert digest == "b4d7e93f9e0393830fb42e6135c0e3464b2673b05e5ecf4b7f2374ec18e39eb2"
+    model._load_transfer_weights(weights_path)
+    _assert_model_artifact_parity(model, "yolo9_p2", 640, tmp_path)
 
 
 @pytest.mark.parametrize("weights,family,imgsz", FROZEN_CLASS_CASES)
