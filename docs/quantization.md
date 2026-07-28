@@ -69,8 +69,11 @@ the Swin patch embed, the final matte-logit conv (`conv_out1`), the tiny
 bilateral-reference attention gates (`gdt_convs_attn`), and the
 training-only supervision heads (`gdt_convs_pred`, `conv_ms_spvn`), which
 never run at inference and would otherwise sit permanently uncalibrated in
-the manifest. Override with `quantize(..., keep_high_precision=("head.",))`
-if you know what you are doing.
+the manifest, and the deformable-conv weight containers (`regular_conv`),
+whose weights are read directly by `torchvision.ops.deform_conv2d` rather
+than through the module forward, so module-swap quantization cannot cover
+them. Override with `quantize(..., keep_high_precision=("head.",))` if you
+know what you are doing.
 
 ## Calibration data is not training data
 
