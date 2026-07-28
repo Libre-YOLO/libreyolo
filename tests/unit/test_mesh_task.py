@@ -522,9 +522,13 @@ class TestSurfaceRenderer:
             [[[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]]],
             dtype=np.float32,
         )
-        depths = np.full((1, 4), 5.0, dtype=np.float32)
+        # Camera-space metres, tilted so the face normal is not degenerate.
+        verts3d = np.array(
+            [[[-0.2, -0.2, 5.0], [0.2, -0.2, 5.0], [0.2, 0.2, 5.2], [-0.2, 0.2, 5.2]]],
+            dtype=np.float32,
+        )
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
-        return verts2d, depths, faces
+        return verts2d, verts3d, faces
 
     def test_renders_a_visible_surface(self):
         from PIL import Image
@@ -532,8 +536,8 @@ class TestSurfaceRenderer:
         from libreyolo.utils.drawing import render_mesh_surface
 
         img = Image.new("RGB", (64, 64), (0, 0, 0))
-        verts2d, depths, faces = self._quad()
-        out = render_mesh_surface(img, verts2d, depths, faces, alpha=1.0)
+        verts2d, verts3d, faces = self._quad()
+        out = render_mesh_surface(img, verts2d, verts3d, faces, alpha=1.0)
         arr = np.asarray(out)
         # The middle of the quad must be painted, the corner must not.
         assert arr[32, 32].sum() > 0
@@ -546,11 +550,11 @@ class TestSurfaceRenderer:
         from libreyolo.utils.drawing import render_mesh_surface
 
         img = Image.new("RGB", (64, 64), (0, 0, 0))
-        verts2d, depths, faces = self._quad()
-        forward = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=1.0))
+        verts2d, verts3d, faces = self._quad()
+        forward = np.asarray(render_mesh_surface(img, verts2d, verts3d, faces, alpha=1.0))
         reversed_faces = faces[:, ::-1].copy()
         backward = np.asarray(
-            render_mesh_surface(img, verts2d, depths, reversed_faces, alpha=1.0)
+            render_mesh_surface(img, verts2d, verts3d, reversed_faces, alpha=1.0)
         )
         assert forward[32, 32].sum() > 0
         assert backward[32, 32].sum() > 0
@@ -563,9 +567,10 @@ class TestSurfaceRenderer:
         img = Image.new("RGB", (64, 64), (0, 0, 0))
         # Two overlapping people at different depths; the near one wins.
         verts2d = np.repeat(self._quad()[0], 2, axis=0)
+        base3d = self._quad()[1]
         faces = self._quad()[2]
-        far = np.full((1, 4), 20.0, dtype=np.float32)
-        near = np.full((1, 4), 2.0, dtype=np.float32)
+        far = base3d + np.array([0.0, 0.0, 15.0], dtype=np.float32)
+        near = base3d - np.array([0.0, 0.0, 3.0], dtype=np.float32)
         out = render_mesh_surface(
             img, verts2d, np.concatenate([far, near]), faces, alpha=1.0
         )
@@ -577,9 +582,9 @@ class TestSurfaceRenderer:
         from libreyolo.utils.drawing import render_mesh_surface
 
         img = Image.new("RGB", (64, 64), (0, 0, 0))
-        verts2d, depths, faces = self._quad()
-        opaque = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=1.0))
-        blended = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=0.5))
+        verts2d, verts3d, faces = self._quad()
+        opaque = np.asarray(render_mesh_surface(img, verts2d, verts3d, faces, alpha=1.0))
+        blended = np.asarray(render_mesh_surface(img, verts2d, verts3d, faces, alpha=0.5))
         assert blended[32, 32].sum() < opaque[32, 32].sum()
 
     def test_empty_geometry_is_a_no_op(self):
@@ -589,7 +594,8 @@ class TestSurfaceRenderer:
 
         img = Image.new("RGB", (32, 32))
         out = render_mesh_surface(
-            img, np.zeros((0, 0, 2)), np.zeros((0, 0)), np.zeros((0, 3), dtype=np.int64)
+            img, np.zeros((0, 0, 2)), np.zeros((0, 0, 3)),
+            np.zeros((0, 3), dtype=np.int64)
         )
         assert out.size == img.size
 
@@ -599,9 +605,9 @@ class TestSurfaceRenderer:
         from libreyolo.utils.drawing import draw_mesh
 
         img = Image.new("RGB", (64, 64), (0, 0, 0))
-        verts2d, depths, faces = self._quad()
+        verts2d, verts3d, faces = self._quad()
         surface = np.asarray(
-            draw_mesh(img, vertices2d=verts2d, faces=faces, vertex_depths=depths,
+            draw_mesh(img, vertices2d=verts2d, faces=faces, vertices3d=verts3d,
                       surface_alpha=1.0)
         )
         scatter = np.asarray(draw_mesh(img, vertices2d=verts2d))

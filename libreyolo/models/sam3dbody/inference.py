@@ -314,8 +314,8 @@ class MeshInferenceRunner:
                 joints2d=m.joints2d,
                 vertices2d=m.extras.get("vertices2d"),
                 faces=m.faces,
-                # Camera-space depth per vertex drives both the shading
-                # normals and the far-to-near draw order.
-                vertex_depths=m.vertices[..., 2] if m.vertices is not None else None,
+                # Metric camera-space vertices drive the shading normals and
+                # the far-to-near draw order.
+                vertices3d=m.vertices,
             )
         return annotated
