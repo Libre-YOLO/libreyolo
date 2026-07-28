@@ -66,6 +66,7 @@ class FaceEmbedRunner:
             gen = self._predict_video(
                 source,
                 detector=detector,
+                face_boxes=face_boxes,
                 face_conf=face_conf,
                 gallery=gallery,
                 threshold=threshold,
@@ -207,6 +208,7 @@ class FaceEmbedRunner:
         source,
         *,
         detector: Optional[FaceDetector],
+        face_boxes: Optional[Sequence],
         face_conf: float,
         gallery,
         threshold: float,
@@ -215,12 +217,17 @@ class FaceEmbedRunner:
         vid_stride: int,
         output_path: Optional[str],
     ):
-        """Embed (and optionally identify) faces frame by frame."""
+        """Embed (and optionally identify) faces frame by frame.
+
+        Caller-supplied ``face_boxes`` apply to every frame (a fixed region on
+        a static camera); dropping them here would leave the frame callback
+        with neither a detector nor boxes.
+        """
 
         def predict_frame(pil_img):
             rgb_np = np.asarray(pil_img)
             h, w = rgb_np.shape[:2]
-            faces = self._collect_faces(rgb_np, detector, None, face_conf)
+            faces = self._collect_faces(rgb_np, detector, face_boxes, face_conf)
             result = self._run_embed(rgb_np, faces, (h, w), str(source))
             if gallery is not None:
                 self._identify(result, gallery, threshold)

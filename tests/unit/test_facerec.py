@@ -476,17 +476,22 @@ def test_enroll_through_a_different_model_raises(tiny_onnx, tmp_path):
 
 
 def test_video_source_routes_to_video_inference(tiny_onnx, monkeypatch):
-    """A video path must go through the video runner, not ImageLoader."""
+    """A video path routes to the video runner AND its frames actually embed.
+
+    The fake driver invokes the frame callback the way the real one does; a
+    fake that only records the call would pass even when every frame raises.
+    """
     from libreyolo.models.facerec import LibreFaceEmbedder
     from libreyolo.models.facerec import inference as inference_module
 
     model = LibreFaceEmbedder(tiny_onnx, device="cpu")
     called = {}
+    frame = Image.fromarray((np.random.rand(96, 96, 3) * 255).astype(np.uint8))
 
     def fake_run_video_inference(source, predict_frame, **kwargs):
         called["source"] = str(source)
         called["stride"] = kwargs.get("vid_stride")
-        return iter(())
+        yield predict_frame(frame)
 
     monkeypatch.setattr(
         inference_module, "run_video_inference", fake_run_video_inference
@@ -494,5 +499,37 @@ def test_video_source_routes_to_video_inference(tiny_onnx, monkeypatch):
     monkeypatch.setattr(
         inference_module, "collect_video_results", lambda gen, src, stride: list(gen)
     )
-    model("clip.mp4", face_boxes=[(0, 0, 10, 10)])
+
+    # Caller-supplied boxes must survive into every frame: with no detector,
+    # dropping them left the frame callback with no face source at all.
+    results = model("clip.mp4", face_boxes=[(0, 0, 96, 96)], vid_stride=2)
     assert called["source"] == "clip.mp4"
+    assert called["stride"] == 2
+    assert len(results) == 1
+    assert results[0].embeddings.data.shape == (1, 8)
+
+
+def test_video_with_gallery_identifies_each_frame(tiny_onnx, monkeypatch):
+    from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
+    from libreyolo.models.facerec import inference as inference_module
+
+    model = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    frame = Image.fromarray((np.random.rand(96, 96, 3) * 255).astype(np.uint8))
+
+    reference = model(frame, face_boxes=[(0, 0, 96, 96)])
+    gallery = FaceGallery(embedder=model)
+    gallery.enroll_embedding("alice", reference.embeddings.data[0])
+
+    monkeypatch.setattr(
+        inference_module,
+        "run_video_inference",
+        lambda source, predict_frame, **kw: iter([predict_frame(frame)]),
+    )
+    monkeypatch.setattr(
+        inference_module, "collect_video_results", lambda gen, src, stride: list(gen)
+    )
+
+    results = model(
+        "clip.mp4", face_boxes=[(0, 0, 96, 96)], gallery=gallery, threshold=0.9
+    )
+    assert results[0].identities.name == ["alice"]
