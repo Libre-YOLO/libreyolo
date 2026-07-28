@@ -94,6 +94,8 @@ class _ActObserverMixin:
         """Reconstruct fp32 masters from packed weights (QAT-from-PTQ)."""
         if not self.is_finalized:
             return
+        self.__dict__.pop("_q_unpacked_cache", None)
+        self.__dict__.pop("_q_calibrated_host", None)
         with torch.no_grad():
             if getattr(self, "_q_wformat", "int8") == "fp8":
                 weight = unpack_fp8_weight(self.weight_packed, self._q_w_scale)
@@ -105,9 +107,20 @@ class _ActObserverMixin:
     def _effective_weight(self) -> torch.Tensor:
         fp8 = getattr(self, "_q_wformat", "int8") == "fp8"
         if self.is_finalized:
+            # Unpacking is deterministic while finalized; on CUDA, cache the
+            # dequantized tensor so repeated forwards stop paying a full
+            # weight-sized unpack per call (dropped by make_prepared, and on
+            # any device move).
+            cached = self.__dict__.get("_q_unpacked_cache")
+            if cached is not None and cached.device == self.weight_packed.device:
+                return cached
             if fp8:
-                return unpack_fp8_weight(self.weight_packed, self._q_w_scale)
-            return unpack_int8_weight(self.weight_packed, self._q_w_scale)
+                weight = unpack_fp8_weight(self.weight_packed, self._q_w_scale)
+            else:
+                weight = unpack_int8_weight(self.weight_packed, self._q_w_scale)
+            if weight.is_cuda:
+                self._q_unpacked_cache = weight
+            return weight
         if fp8:
             return K.fake_quant_fp8(
                 self.weight.float(),
@@ -170,6 +183,35 @@ class _ActObserverMixin:
             if hasattr(self, attr):
                 delattr(self, attr)
 
+    def _native_act_scale(self, device) -> torch.Tensor:
+        """Calibrated static E4M3 activation scale, cached while finalized."""
+        act_scale = self.__dict__.get("_q_native_act_scale")
+        if act_scale is None or act_scale.device != device:
+            amax = torch.maximum(self._q_act_lo.abs(), self._q_act_hi.abs())
+            act_scale = (amax.float() / E4M3_MAX).reshape(()).to(device)
+            self._q_native_act_scale = act_scale
+        return act_scale
+
+    def _native_eligible(self, x: torch.Tensor) -> bool:
+        if (
+            not self.is_finalized
+            or getattr(self, "_q_wformat", "int8") != "fp8"
+            or getattr(self, "_q_aformat", "int8") != "fp8"
+            or not x.is_cuda
+            or self._q_observing
+            or getattr(self, "_q_export_mode", False)
+        ):
+            return False
+        # q_calibrated does a device-to-host .item() sync, which would
+        # invalidate CUDA graph capture if evaluated on the hot path; the
+        # flag is immutable while finalized, so read it once and cache the
+        # host bool (make_prepared drops the cache with the state).
+        calibrated = self.__dict__.get("_q_calibrated_host")
+        if calibrated is None:
+            calibrated = self.q_calibrated
+            self.__dict__["_q_calibrated_host"] = calibrated
+        return calibrated
+
     def _maybe_quant_input(self, x: torch.Tensor) -> torch.Tensor:
         if self._q_observing:
             self._observe(x)
@@ -188,11 +230,53 @@ class _ActObserverMixin:
 
 
 class QuantConv2d(nn.Conv2d, _ActObserverMixin):
-    """INT8 W8A8 simulated convolution (per-channel weights, affine input)."""
+    """INT8 W8A8 simulated convolution (per-channel weights, affine input).
+
+    Finalized fp8 modules on CUDA take a half-precision native tier: the
+    input convolves in fp16 against a cached weight dequantized from the
+    packed E4M3 codes. This is the standard fp8-deployment convention
+    (fp8-derived weights, half-precision conv activations); the E4M3
+    activation snap is simulation-only for convs, so the native tier's conv
+    activations carry fp16 precision instead. The prepared/simulated path
+    (``LIBREYOLO_QUANT_KERNELS=off``) remains the strict W8A8 oracle.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._init_act_state(self.out_channels)
+
+    def make_prepared(self):
+        self.__dict__.pop("_q_native_act_scale", None)
+        self.__dict__.pop("_q_native_w16", None)
+        super().make_prepared()
+
+    def _native_fp8_forward(self, x: torch.Tensor):
+        """Half-precision native tier, or None to take the simulated path."""
+        if not self._native_eligible(x) or K.resolve("fp8_gemm") is None:
+            return None  # fp8_gemm availability doubles as the "native ok" gate
+        cached = self.__dict__.get("_q_native_w16")
+        if cached is None or cached[0].device != x.device:
+            w16 = unpack_fp8_weight(self.weight_packed, self._q_w_scale).to(torch.float16)
+            b16 = self.bias.to(torch.float16) if self.bias is not None else None
+            cached = (w16, b16)
+            self._q_native_w16 = cached
+        in_dtype = x.dtype
+        x16 = x if x.dtype == torch.float16 else x.to(torch.float16)
+        out = self._conv_forward(x16, cached[0], cached[1])
+        return out if in_dtype == torch.float16 else out.to(in_dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self._native_fp8_forward(x)
+        if out is not None:
+            return out
+        in_dtype = x.dtype
+        with autocast_off(x.device.type):
+            x = x.float()
+            x = self._maybe_quant_input(x)
+            weight = self._effective_weight()
+            bias = self.bias.float() if self.bias is not None else None
+            out = self._conv_forward(x, weight, bias)
+        return out.to(in_dtype) if in_dtype != out.dtype else out
 
     @classmethod
     def from_float(cls, conv: nn.Conv2d) -> "QuantConv2d":
@@ -213,19 +297,15 @@ class QuantConv2d(nn.Conv2d, _ActObserverMixin):
         mod.bias = conv.bias
         return mod
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        in_dtype = x.dtype
-        with autocast_off(x.device.type):
-            x = x.float()
-            x = self._maybe_quant_input(x)
-            weight = self._effective_weight()
-            bias = self.bias.float() if self.bias is not None else None
-            out = self._conv_forward(x, weight, bias)
-        return out.to(in_dtype) if in_dtype != out.dtype else out
-
 
 class QuantLinear(nn.Linear, _ActObserverMixin):
-    """INT8 W8A8 simulated linear (per-channel weights, affine input)."""
+    """INT8 W8A8 simulated linear (per-channel weights, affine input).
+
+    Finalized fp8 modules on an fp8-capable GPU (Ada/Hopper/Blackwell) run
+    natively on the fp8 tensor cores via the ``fp8_gemm`` registry kernel
+    with the same calibrated static scales the simulation uses; everything
+    else takes the simulated fp32-island path.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -244,7 +324,32 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
         mod.bias = linear.bias
         return mod
 
+    def _native_fp8_forward(self, x: torch.Tensor):
+        """Native tensor-core path, or None to take the simulated path."""
+        if not self._native_eligible(x):
+            return None
+        impl = K.resolve("fp8_gemm")
+        if impl is None:
+            return None
+        aux = self.__dict__.get("_q_native_aux")
+        if aux is None or aux[0].device != x.device:
+            from .kernels.scaled_mm_fp8 import make_aux
+
+            aux = make_aux(
+                self._native_act_scale(x.device), self._q_w_scale, self.bias, x.device
+            )
+            self._q_native_aux = aux
+        return impl(x, self.weight_packed, aux)
+
+    def make_prepared(self):
+        self.__dict__.pop("_q_native_act_scale", None)
+        self.__dict__.pop("_q_native_aux", None)
+        super().make_prepared()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self._native_fp8_forward(x)
+        if out is not None:
+            return out
         in_dtype = x.dtype
         with autocast_off(x.device.type):
             x = x.float()

@@ -254,8 +254,10 @@ def _cast_tree(obj, dtype):
     return obj
 
 
-def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
-    """Cast the model to a half-width dtype, keeping float32 I/O at the root."""
+def _install_io_hooks(root: nn.Module, dtype: torch.dtype):
+    """Root-level float32 I/O contract around a half-width interior."""
+    if getattr(root, "_q_fp16_hooks", None):
+        return
 
     def _pre(module, args):
         return tuple(
@@ -266,11 +268,16 @@ def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
     def _post(module, args, output):
         return _cast_tree(output, torch.float32)
 
-    root.to(dtype)
     root._q_fp16_hooks = [
         root.register_forward_pre_hook(_pre),
         root.register_forward_hook(_post),
     ]
+
+
+def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
+    """Cast the model to a half-width dtype, keeping float32 I/O at the root."""
+    root.to(dtype)
+    _install_io_hooks(root, dtype)
 
 
 def _cast_dtype(recipe: str) -> torch.dtype:
@@ -798,6 +805,11 @@ def apply_quant_structure(wrapper, manifest: Dict):
             remainder = manifest.get("remainder", "fp32")
             if remainder == "fp16":
                 _cast_finalized_remainder(wrapper.model, torch.float16)
+                # The fp16 remainder needs the same root-level float32 I/O
+                # contract as the cast recipes: without it, fp32 inputs meet
+                # fp16 modules (torchvision deform_conv2d and friends reject
+                # mixed dtypes outright).
+                _install_io_hooks(wrapper.model, torch.float16)
             elif remainder != "fp32":
                 raise QuantizationError(
                     "Finalized checkpoint has unsupported remainder dtype "

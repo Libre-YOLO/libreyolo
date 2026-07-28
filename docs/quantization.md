@@ -103,6 +103,22 @@ claim about the quantized arithmetic. It is not a speed claim; packed
 low-bit kernels are a separate deployment concern. The `fp16` and `bf16`
 casts are the exception: they execute natively.
 
+**Native fp8 tier** (finalized checkpoints on fp8 tensor cores, Ada sm_89 /
+Hopper / Blackwell): finalized fp8 `QuantLinear` modules run their GEMM
+directly on the packed E4M3 weights via `torch._scaled_mm` (the `fp8_gemm`
+registry kernel), using the same calibrated static activation scales as the
+simulation; finalized fp8 `QuantConv2d` modules convolve in fp16 against
+weights dequantized from the packed E4M3 codes (the standard fp8-deployment
+convention; the E4M3 activation snap on conv inputs is simulation-only).
+Finalize with `remainder="fp16"` so the non-quantized interior runs in half
+precision (the loader installs the same float32 I/O root hooks the cast
+recipes use). Residual drift vs the simulated tier is half-precision
+rounding plus GEMM summation order; `LIBREYOLO_QUANT_KERNELS=off` restores
+the exact simulated path everywhere. Measured on LibreFeyNobg (263M Swin-L
+matte, RTX 5070 Ti, 1024px): 484 ms simulated -> 217 ms native eager ->
+128 ms with `cuda_graph=True`, vs 131 ms for the fp16 cast checkpoint at
+twice the file size.
+
 `model.quant_info()` reports the recipe, module counts, calibration state,
 and execution tier.
 

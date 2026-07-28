@@ -280,6 +280,12 @@ class GraphRunner:
         # necessarily the model's. Without this, a model on cuda:1 captures
         # against cuda:0 and the capture fails.
         with torch.cuda.device(input_tensor.device):
+            # Warm up on the SAME stream the capture will record on. Library
+            # handles (cuBLASLt for torch._scaled_mm, cuDNN) allocate their
+            # workspaces lazily per stream; warming on a throwaway stream
+            # leaves the capture stream cold, and the first call inside
+            # capture then allocates and invalidates the whole capture with
+            # cudaErrorStreamCaptureInvalidated.
             stream = torch.cuda.Stream()
             stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(stream):
@@ -290,8 +296,12 @@ class GraphRunner:
             if self._pool is None:
                 self._pool = torch.cuda.graph_pool_handle()
 
+            # Quiesce the device before capture begins; in-flight work when
+            # capture starts can invalidate it (seen on Windows/WDDM).
+            torch.cuda.synchronize()
+
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, pool=self._pool):
+            with torch.cuda.graph(graph, pool=self._pool, stream=stream):
                 output = self.forward_fn(static_input)
 
         static_outputs, skeleton = _flatten(output)
@@ -367,6 +377,13 @@ def forward_maybe_graphed(model: Any, input_tensor: torch.Tensor) -> Any:
     """
     mode = getattr(model, "_cuda_graph_mode", None)
     if mode is None:
+        return model._forward(input_tensor)
+    if getattr(model, "GRAPH_DISPATCH_IN_FORWARD", False):
+        # Some families capture only part of the forward and finish the rest
+        # eagerly, because the tail does data-dependent work that cannot be
+        # recorded. Their ``_forward`` decides when to replay, so calling the
+        # runner here instead would return the partial result and silently skip
+        # the tail.
         return model._forward(input_tensor)
     return model._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
 

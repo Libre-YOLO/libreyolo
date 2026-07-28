@@ -262,9 +262,10 @@ _TRANSFORM_QUANT = (
 _RECIPE_DESC = {
     "fp16": "fp16 (half-precision cast, float32 I/O contract; near-lossless, "
     "intended for GPU inference - on CPU use the fp32 default)",
-    "fp8": "fp8 (E4M3 weights+activations on Conv2d and Linear, calibrated)",
-    "nvfp4": "NVFP4 (E2M1 Linear weights in 16-element blocks with FP8 block "
-    "scales; non-Linear layers stay in higher precision)",
+    "fp8": "fp8 (E4M3 weights, calibrated static scales, fp16 remainder; on "
+    "Ada/Hopper/Blackwell GPUs the Linear layers execute natively on the fp8 "
+    "tensor cores via torch._scaled_mm, matching the fp16 checkpoint's speed "
+    "at half its size - pass cuda_graph=True to predict for the full effect)",
 }
 
 

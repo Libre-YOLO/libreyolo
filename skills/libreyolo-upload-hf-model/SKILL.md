@@ -189,7 +189,7 @@ LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
 LibreFeyNobgl-matte.pt, LibreFeyNobgl-matte-fp16.pt,
-LibreFeyNobgl-matte-fp8.pt, LibreFeyNobgl-matte-nvfp4.pt,
+LibreFeyNobgl-matte-fp8.pt,
 
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 

@@ -167,6 +167,11 @@ for _op in UNPACK_OPS:
     globals()[_op] = _make_proxy(_op)
 
 
+# In-tree GEMM kernels built on stock torch (no triton, no build step).
+# fp8_gemm: finalized fp8 QuantLinear on the fp8 tensor cores via
+# torch._scaled_mm (Ada/Hopper/Blackwell); resolves to None elsewhere.
+from . import scaled_mm_fp8  # noqa: E402,F401  (self-registers)
+
 # Optional out-of-tree compiled kernels (e.g. the CUTLASS NVFP4 GEMM).
 # The package self-registers on import; absence is the normal case.
 if importlib.util.find_spec("libreyolo_kernels") is not None:

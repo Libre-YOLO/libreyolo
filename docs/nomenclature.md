@@ -454,8 +454,7 @@ LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
 # feynobg — FeyNobg background removal (matte-only)
 LibreFeyNobgl-matte.pt           # FeyNobg (Swin-L tier, 24 stage-3 blocks), Apache-2.0 weights
 LibreFeyNobgl-matte-fp16.pt      # half-precision cast (HF only, pass path as weights; GPU-oriented)
-LibreFeyNobgl-matte-fp8.pt       # pre-quantized fp8 variant (HF only, pass path as weights)
-LibreFeyNobgl-matte-nvfp4.pt     # pre-quantized nvfp4 variant (HF only, pass path as weights)
+LibreFeyNobgl-matte-fp8.pt       # pre-quantized fp8 variant (HF only, pass path as weights; native fp8 tensor-core execution on Ada/Hopper/Blackwell)
 
 # ppocr — PP-OCRv5 text detection + recognition (ocr-only)
 LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights

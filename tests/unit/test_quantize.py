@@ -11,6 +11,7 @@ from libreyolo.quant import (
     NVFP4Linear,
     QuantConv2d,
     QuantizationError,
+    QuantLinear,
 )
 from libreyolo.quant.fake_quant import (
     E2M1_MAX,
@@ -803,3 +804,36 @@ def test_birefnet_nvfp4_save_load_roundtrip(tmp_path, birefnet_t):
     assert set(src.keys()) == set(dst.keys())
     for key in src:
         assert torch.equal(src[key].cpu(), dst[key].cpu()), key
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fp8_native_linear_matches_simulation():
+    """The scaled_mm native path tracks the simulated fp8 linear closely."""
+    import os
+
+    from libreyolo.quant import kernels as K
+
+    if K.resolve("fp8_gemm") is None:
+        pytest.skip("no fp8 tensor cores on this device")
+    torch.manual_seed(0)
+    lin = torch.nn.Linear(256, 512).cuda().eval()
+    q = QuantLinear.from_float(lin)
+    q._q_wformat = q._q_aformat = "fp8"
+    q._q_kind = "linear_fp8"
+    x = torch.randn(64, 256, device="cuda")
+    q._q_observing = True
+    q(x)
+    q._q_observing = False
+    q.freeze_weight_qparams()
+    q.make_finalized()
+
+    native = q(x.half())
+    os.environ["LIBREYOLO_QUANT_KERNELS"] = "reference"
+    K.clear_cache()
+    try:
+        sim = q(x.half())
+    finally:
+        os.environ.pop("LIBREYOLO_QUANT_KERNELS")
+        K.clear_cache()
+    rel = (native.float() - sim.float()).abs().mean() / sim.float().abs().mean()
+    assert float(rel) < 5e-3, float(rel)

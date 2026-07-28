@@ -129,3 +129,23 @@ def test_matte_feynobg_quantized_checkpoint_loads_and_predicts(path, recipe):
     res = model.predict(str(_SAMPLE), verbose=False)[0]
     w, h = Image.open(_SAMPLE).size
     assert res.matte is not None and res.matte.array.shape == (h, w)
+
+
+def test_matte_feynobg_cuda_graph_parity():
+    """Graphed predict (encoder capture, eager deformable decoder) is
+    bit-identical to eager for every staged precision variant."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required for graph capture")
+    staged = [p for p in (_LOCAL_FEYNOBG, _LOCAL_FEYNOBG_FP16, _LOCAL_FEYNOBG_FP8) if p.exists()]
+    if not staged:
+        pytest.skip("no feynobg weights staged locally")
+    for path in staged:
+        model = _load(str(path), device="cuda")
+        eager = model.predict(str(_SAMPLE), verbose=False)[0].matte.array
+        model.predict(str(_SAMPLE), verbose=False, cuda_graph=True)
+        graphed = model.predict(str(_SAMPLE), verbose=False, cuda_graph=True)[0].matte.array
+        assert float(np.abs(graphed - eager).max()) == 0.0, path.name
+        del model
+        torch.cuda.empty_cache()

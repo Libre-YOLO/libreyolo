@@ -170,8 +170,16 @@ class LibreBiRefNet(BaseModel):
         mode = getattr(self, "_cuda_graph_mode", None)
         if mode is None:
             return self.model(input_tensor)
+        # forward_enc/forward_dec are called as plain methods, so the root
+        # __call__ hooks that implement the float32 I/O contract for
+        # half-precision checkpoints (fp16 cast recipe, fp16-remainder
+        # finalized quant) never fire; apply the same contract at the seam.
+        param_dtype = next(self.model.parameters()).dtype
+        if input_tensor.dtype == torch.float32 and param_dtype != torch.float32:
+            input_tensor = input_tensor.to(param_dtype)
         feats = self._get_graph_runner().run(input_tensor, auto=(mode == "auto"))
-        return self.model.forward_dec(input_tensor, feats)
+        out = self.model.forward_dec(input_tensor, feats)
+        return out.float() if out.dtype != torch.float32 else out
 
     def _postprocess(
         self,
