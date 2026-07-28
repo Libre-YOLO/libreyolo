@@ -81,9 +81,10 @@ def postprocess(
 
     if original_size is not None:
         input_h, input_w = _input_size_hw(input_size)
+        effective_resize = min(resize_size, input_h, input_w)
         if letterbox:
             orig_w, orig_h = original_size
-            r = min(resize_size / orig_h, resize_size / orig_w)
+            r = min(effective_resize / orig_h, effective_resize / orig_w)
             new_w = int(round(orig_w * r))
             new_h = int(round(orig_h * r))
             offset_x = (input_w - new_w) // 2
@@ -138,6 +139,7 @@ def _undo_letterbox_xyxy(
 ) -> torch.Tensor:
     input_h, input_w = _input_size_hw(input_size)
     orig_w, orig_h = original_size
+    resize_size = min(resize_size, input_h, input_w)
     r = min(resize_size / orig_h, resize_size / orig_w)
     new_w = int(round(orig_w * r))
     new_h = int(round(orig_h * r))
@@ -163,6 +165,7 @@ def _undo_letterbox_xy(
     """Map ``(..., 2)`` points from letterbox space back to original-image pixels."""
     input_h, input_w = _input_size_hw(input_size)
     orig_w, orig_h = original_size
+    resize_size = min(resize_size, input_h, input_w)
     r = min(resize_size / orig_h, resize_size / orig_w)
     new_w = int(round(orig_w * r))
     new_h = int(round(orig_h * r))

@@ -105,7 +105,7 @@ def predict_cmd(
     model: str = typer.Option("yolox-s", help="Model name or path"),
     conf: float = typer.Option(0.25, help="Confidence threshold"),
     iou: float = typer.Option(0.45, help="NMS IoU threshold"),
-    imgsz: str = typer.Option("640", help="Input image size: 640 (square) or 480x640 (HxW)"),
+    imgsz: Optional[str] = typer.Option(None, help="Input image size: 640 (square) or 480x640 (HxW)"),
     classes: Optional[str] = typer.Option(
         None, help="Filter by class IDs, e.g. [0,2,5]"
     ),
@@ -152,7 +152,7 @@ def predict_cmd(
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
     user_provided = get_user_provided_params()
-    imgsz = parse_imgsz_str(imgsz)
+    imgsz = parse_imgsz_str(imgsz) if imgsz is not None else None
 
     # Validate source exists
     source_path = Path(source)

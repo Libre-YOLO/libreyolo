@@ -61,6 +61,7 @@ def preprocess_numpy(
         input_h, input_w = int(input_size[0]), int(input_size[1])
     else:
         input_h = input_w = int(input_size)
+    resize_size = min(resize_size, input_h, input_w)
     ratio = min(resize_size / orig_h, resize_size / orig_w)
     new_w, new_h = int(round(orig_w * ratio)), int(round(orig_h * ratio))
 
