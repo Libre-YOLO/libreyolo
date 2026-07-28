@@ -122,9 +122,29 @@ def test_coreai_validated_tier_has_trained_weight_parity_coverage():
         if fmt == "coreai" and entry.tier == "validated"
     }
     assert validated == {
+        ("clip", "classify"),
+        ("convnext", "classify"),
+        ("deim", "detect"),
+        ("deimv2", "detect"),
+        ("depth_anything", "depth"),
         ("dfine", "detect"),
+        ("ec", "detect"),
+        ("efficientnetv2", "classify"),
+        ("mobilenetv4", "classify"),
+        ("nafnet", "restore"),
+        ("picodet", "detect"),
+        ("realesrgan", "restore"),
+        ("resnet", "classify"),
         ("rfdetr", "detect"),
+        ("rtdetr", "detect"),
+        ("rtdetrv2", "detect"),
+        ("rtdetrv4", "detect"),
+        ("rtmdet", "detect"),
+        ("siglip2", "classify"),
         ("yolo9", "detect"),
+        ("yolo9_e2e", "detect"),
+        ("yolox", "detect"),
+        ("zipdepth", "depth"),
     }
 
 
@@ -149,6 +169,7 @@ def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeyp
     assert rows
     # The full matrix lives in docs/export_support.md; the README is curated.
     assert gen_compat_table.render_docs().startswith("# Export support")
+
 
 def test_dump_inventory_refuses_partial_overwrite(tmp_path):
     from tools.dump_model_inventory import write_inventory

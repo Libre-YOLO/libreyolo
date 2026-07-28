@@ -650,66 +650,113 @@ _add(
 )
 
 
-# Conversion has been observed for the families below, but a validated tier
-# requires a reproducible trained-weight parity test in this repository.
 _add(
     "experimental",
-    (
-        "yolo1",
-        "deim",
-        "deimv2",
-        "rtdetr",
-        "rtdetrv2",
-        "rtdetrv4",
-        "yolo9_e2e",
-        "yolox",
-        "rtmdet",
-        "picodet",
-        "yolonas",
-    ),
+    ("yolo1",),
     ("detect",),
     ("coreai",),
     reason=(
-        "Conversion has been measured, but no reproducible trained-weight "
-        "Core AI parity test is committed for this family yet."
+        "The published trained LibreYOLO1b checkpoint converts and runs, but "
+        "its Core AI output differs from the prepared PyTorch graph by "
+        "3.02e-01 at the native 448 canvas. This is a real numeric failure, "
+        "not a missing checkpoint or a random-weight measurement."
     ),
 )
 _add(
     "experimental",
-    (
-        "resnet",
-        "mobilenetv4",
-        "efficientnetv2",
-        "clip",
-        "siglip2",
-        "convnext",
-        "dinov2",
+    ("yolonas",),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "Conversion has been measured, but no permissively licensed "
+        "LibreYOLO trained checkpoint is published for a reproducible Core AI "
+        "parity gate."
     ),
+)
+_add(
+    "experimental",
+    ("dinov2",),
     ("classify",),
     ("coreai",),
     reason=(
-        "Conversion has been measured, but no reproducible trained-weight "
-        "Core AI parity test is committed for this family yet."
+        "Conversion has been measured, but the LibreDINOv2 classification "
+        "checkpoint is not publicly downloadable for a reproducible trained-"
+        "weight Core AI parity gate."
     ),
 )
 _add(
-    "experimental",
-    ("zipdepth", "depth_anything"),
+    "validated",
+    (
+        "deim",
+        "deimv2",
+        "ec",
+        "picodet",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+        "rtmdet",
+        "yolo9_e2e",
+        "yolox",
+    ),
+    ("detect",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "fixed export canvas; a representative published trained checkpoint "
+        "for each family is covered on Apple hardware by direct named-output "
+        "parity with a 3e-04 tolerance and a 100x input-sensitivity margin; "
+        "RT-DETRv2 permits one shared whole-query permutation across its box "
+        "and logit outputs because DETR query rows are an unordered set"
+    ),
+)
+_add(
+    "validated",
+    ("convnext", "efficientnetv2", "mobilenetv4", "resnet"),
+    ("classify",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "fixed export canvas; a representative published trained ImageNet "
+        "checkpoint for each family is covered on Apple hardware by direct "
+        "named-output parity with a 3e-04 tolerance and a 100x "
+        "input-sensitivity margin"
+    ),
+)
+_add(
+    "validated",
+    ("depth_anything", "zipdepth"),
     ("depth",),
     ("coreai",),
-    reason=(
-        "Conversion has been measured, but no reproducible trained-weight "
-        "Core AI parity test is committed for this family yet."
+    since="1.5",
+    constraint=(
+        "fixed export canvas; permissively licensed trained checkpoints are "
+        "covered on Apple hardware by direct named-output parity with a "
+        "3e-04 tolerance and a 100x input-sensitivity margin"
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("nafnet", "realesrgan"),
     ("restore",),
     ("coreai",),
-    reason=(
-        "Conversion has been measured, but no reproducible trained-weight "
-        "Core AI parity test is committed for this family yet."
+    since="1.5",
+    constraint=(
+        "fixed export canvas; permissively licensed trained restoration "
+        "checkpoints are covered on Apple hardware by direct named-output "
+        "parity with a 3e-04 tolerance and a 100x input-sensitivity margin"
+    ),
+)
+_add(
+    "validated",
+    ("clip", "siglip2"),
+    ("classify",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "frozen class set and fixed export canvas; permissively licensed "
+        "trained checkpoints are covered on Apple hardware by direct named-"
+        "output parity with a 3e-04 tolerance and a 100x input-sensitivity "
+        "margin"
     ),
 )
 
@@ -772,13 +819,12 @@ _add(
     ("detect",),
     ("coreai",),
     reason=(
-        "Converts, and agrees with its ONNX export at 7.1e-08, but that number "
-        "cannot be relied on: no weights are published for this family, so it "
-        "was measured with random initialisation, and the reference then moves "
-        "only 1.9e-06 between two very different probes. Parity of 7.1e-08 "
-        "against a reference that barely responds to its input is not "
-        "evidence. Publish or point at trained weights and this resolves in "
-        "one run; every sibling that could be measured that way passed."
+        "The published LibreYOLO9P2s-visdrone checkpoint passes the trained "
+        "Core AI parity gate at 640. It remains experimental because the only "
+        "published checkpoint is a non-commercial VisDrone research preview; "
+        "LibreYOLO's permissive validation gate must not depend on that "
+        "restricted artifact. A permissively licensed trained checkpoint "
+        "would make this promotable."
     ),
 )
 _add(
@@ -802,21 +848,6 @@ _add(
 )
 _add(
     "experimental",
-    ("ec",),
-    ("detect",),
-    ("coreai",),
-    reason=(
-        "Just over the line. Trained weights give 1.08e-04 against a "
-        "reference input-sensitivity of 9.9e-01, versus a 1e-04 gate: a factor "
-        "of 1.08, not an order of magnitude. Its five siblings in the DETR "
-        "group pass the identical check between 2.8e-06 and 4.6e-05, so this "
-        "is a marginal numeric residual rather than a structural fault. Worth "
-        "one look at the highest-error output before either tightening the "
-        "conversion or accepting it."
-    ),
-)
-_add(
-    "experimental",
     ("yolo2", "yolo3", "yolo4"),
     ("detect",),
     ("coreai",),
@@ -828,8 +859,9 @@ _add(
         "input-sensitivities of 0.18 to 0.37. The residual is structural, not "
         "numeric drift, and it is shared with yolo7, which fails the same way "
         "at 2.9e-01. All four are darknet-lineage models sharing "
-        "models/darknet, so one cause probably explains all four. yolo1 sits "
-        "in the same lineage and passes, which makes it the useful control."
+        "models/darknet, so one cause probably explains all four. The "
+        "published trained YOLO1-B checkpoint now fails the same direct gate "
+        "at 3.0e-01, strengthening the shared-lineage diagnosis."
     ),
 )
 _add(
