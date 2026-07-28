@@ -77,6 +77,7 @@ from .depth_anything3.model import (  # noqa: E402,F401  (import registers famil
 )
 from .nafnet.model import LibreNAFNet  # noqa: E402,F401  (restore-only)
 from .birefnet.model import LibreBiRefNet  # noqa: E402,F401  (matte-only; can_load keyed on squeeze_module+gdt_convs_attn+ipt_blk)
+from .feynobg.model import LibreFeyNobg  # noqa: E402,F401  (matte-only; BiRefNet keys + 24-block stage-3 marker, disjoint from birefnet)
 from .realesrgan.model import LibreRealESRGAN  # noqa: E402,F401  (restore/super-resolution; RRDBNet+SRVGG keys are unique)
 from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolution; RSTB keys are unique)
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
@@ -689,6 +690,7 @@ __all__ = [
     "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",
+    "LibreFeyNobg",
     "LibreRealESRGAN",
     "LibreSwinIR",
     "LibreEoMT",

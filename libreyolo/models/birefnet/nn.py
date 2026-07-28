@@ -574,12 +574,16 @@ class LibreBiRefNetModel(nn.Module):
     the released General / lite configuration.
     """
 
-    def __init__(self, size: str = "l"):
+    def __init__(self, size: str = "l", dims: BiRefNetDims | None = None):
+        # ``dims`` lets architecture-sharing families (feynobg: BiRefNet with a
+        # deeper stage 3) reuse this module with their own dimension table.
         super().__init__()
-        if size not in BIREFNET_DIMS:
-            raise ValueError(f"Unknown BiRefNet size {size!r}; expected one of {sorted(BIREFNET_DIMS)}")
+        if dims is None:
+            if size not in BIREFNET_DIMS:
+                raise ValueError(f"Unknown BiRefNet size {size!r}; expected one of {sorted(BIREFNET_DIMS)}")
+            dims = BIREFNET_DIMS[size]
         self.size = size
-        d = BIREFNET_DIMS[size]
+        d = dims
 
         self.bb = SwinTransformer(
             embed_dim=d.embed_dim, depths=d.depths, num_heads=d.num_heads,

@@ -27,6 +27,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |
+| feynobg | matte | exp | ✓ | exp | exp |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  |
 | grounding_dino | detect |  |  |  |  |  |  |  |
@@ -165,6 +166,9 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `eomt` / `panoptic` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
+- `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `feynobg` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `florence2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.

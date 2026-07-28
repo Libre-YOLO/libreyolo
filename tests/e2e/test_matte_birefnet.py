@@ -76,3 +76,43 @@ def test_matte_matches_official_reference():
         ref = np.asarray(Image.open(FIXT / "mattes" / f"{name}.png").convert("L"), np.float32) / 255.0
         pred = model.predict(str(img), verbose=False)[0].matte.array
         assert matte_mae(pred, ref) <= 0.02
+
+
+_LOCAL_FEYNOBG = REPO / "weights" / "LibreFeyNobgl-matte.pt"
+_LOCAL_FEYNOBG_FP8 = REPO / "weights" / "LibreFeyNobgl-matte-fp8.pt"
+_LOCAL_FEYNOBG_NVFP4 = REPO / "weights" / "LibreFeyNobgl-matte-nvfp4.pt"
+
+
+def test_matte_feynobg_autodownload_or_local(tmp_path):
+    """LibreFeyNobg loads (HF auto-download, or local staging) and predicts."""
+    name = str(_LOCAL_FEYNOBG) if _LOCAL_FEYNOBG.exists() else "LibreFeyNobgl-matte.pt"
+    model = _load(name)
+    assert model.FAMILY == "feynobg" and model.size == "l" and model.task == "matte"
+
+    res = model.predict(str(_SAMPLE), verbose=False)[0]
+    w, h = Image.open(_SAMPLE).size
+    assert res.matte is not None and res.matte.array.shape == (h, w)
+
+
+@pytest.mark.parametrize(
+    "path, recipe",
+    [(_LOCAL_FEYNOBG_FP8, "fp8"), (_LOCAL_FEYNOBG_NVFP4, "nvfp4")],
+    ids=["fp8", "nvfp4"],
+)
+def test_matte_feynobg_quantized_checkpoint_loads_and_predicts(path, recipe):
+    """Quantized LibreFeyNobg checkpoints load via plain weights= and predict.
+
+    The quantized variants never auto-download; users fetch them from HF and
+    pass the .pt path directly, so that exact flow is what we exercise.
+    """
+    if not path.exists():
+        pytest.skip(f"{path.name} not staged locally")
+    model = _load(str(path))
+    assert model.FAMILY == "feynobg" and model.size == "l" and model.task == "matte"
+    info = model.quant_info()
+    assert info is not None and info["recipe"] == recipe
+    assert info.get("state") == "finalized"
+
+    res = model.predict(str(_SAMPLE), verbose=False)[0]
+    w, h = Image.open(_SAMPLE).size
+    assert res.matte is not None and res.matte.array.shape == (h, w)

@@ -5,6 +5,13 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases
 before 1.4.0 are documented in the
 [GitHub Releases](https://github.com/LibreYOLO/libreyolo/releases) only.
 
+## [Unreleased]
+
+### Added
+
+- LibreFeyNobg, a new matte (background removal) family: FeyNobg by Feyn Inc., BiRefNet architecture with stage 3 deepened to 24 blocks (263M params), size l at fixed 1024px; code and weights Apache-2.0, converted from feyninc/FeyNobg; reuses the birefnet nn module with a family-local dimension table
+- Quantization support for the birefnet and feynobg families (fp16/bf16/fp8/int8/w4a16/w4a8/nvfp4/mxfp4; int2 rejected since these families are inference-only and cannot heal); pre-quantized fp8 and nvfp4 LibreFeyNobg checkpoints published on the LibreYOLO Hugging Face org, loadable by passing the downloaded .pt as the weights argument
+
 ## [1.4.0] - 2026-07-24
 
 LibreYOLO v1.4.0: 15 new model families, 3 new tasks (panoptic, matte, OCR), a quantization stack, two new trackers, and a multi-GPU training correctness overhaul.

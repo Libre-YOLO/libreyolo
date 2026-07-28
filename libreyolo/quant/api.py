@@ -52,7 +52,7 @@ LINEAR_RECIPES = ("w4a16", "w4a8", "nvfp4", "mxfp4", "int2")
 # Recipes whose activations need calibration statistics.
 CALIBRATED_RECIPES = ("int8", "fp8", "w4a8", "int2")
 RESEARCH_RECIPES = ("int2",)
-SUPPORTED_FAMILIES = ("yolo9", "rfdetr")
+SUPPORTED_FAMILIES = ("yolo9", "rfdetr", "birefnet", "feynobg")
 CALIB_ALGORITHMS = ("auto", "percentile", "minmax")
 
 GROUP_SIZE = 128  # grouped-int recipes: scale group along in_features
@@ -75,6 +75,12 @@ _FAMILY_KEEP_HIGH_PRECISION: Dict[str, Tuple[str, ...]] = {
         "embeddings",
         "ref_point",
     ),
+    # birefnet/feynobg (shared architecture): patch embed is the first layer;
+    # conv_out1 is the final matte logit conv; gdt_convs_attn are the tiny
+    # bilateral-reference gates whose sigmoids multiply whole feature maps
+    # (quantization error there is amplified multiplicatively).
+    "birefnet": ("bb.patch_embed.", "conv_out1", "gdt_convs_attn"),
+    "feynobg": ("bb.patch_embed.", "conv_out1", "gdt_convs_attn"),
 }
 _ALWAYS_KEEP = ("dfl",)
 
@@ -96,6 +102,12 @@ def _check_support(family: str, recipe: str):
         raise QuantizationError(
             f"Quantization is not supported for model family '{family}' yet. "
             f"Supported families: {', '.join(SUPPORTED_FAMILIES)}"
+        )
+    if family in ("birefnet", "feynobg") and recipe in RESEARCH_RECIPES:
+        raise QuantizationError(
+            f"'{recipe}' requires QAT/QAD healing, and the {family} family is "
+            "inference-only (no trainer), so PTQ-only int2 would be unusable. "
+            f"Use 'nvfp4'/'mxfp4'/'w4a16' for sub-8-bit {family}."
         )
     if family == "yolo9" and recipe in LINEAR_RECIPES:
         raise QuantizationError(

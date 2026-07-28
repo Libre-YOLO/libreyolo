@@ -351,6 +351,23 @@
     "optional_extra": null,
     "available": true
   },
+  "feynobg": {
+    "class": "libreyolo.models.feynobg.model.LibreFeyNobg",
+    "tasks": [
+      "matte"
+    ],
+    "default_task": "matte",
+    "sizes": {
+      "l": 1024
+    },
+    "default_imgsz": {
+      "l": 1024
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "florence2": {
     "class": "libreyolo.models.vlm.florence2.LibreFlorence2",
     "tasks": [

@@ -45,23 +45,28 @@ manifest too, so `best.pt` from a QAT run is itself a quantized checkpoint.
 
 | Recipe | What it does | Families (v1) | Calibration |
 |---|---|---|---|
-| `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr | none |
-| `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr | none |
-| `fp8` | E4M3 W+A simulation: per-channel weight scales, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations |
-| `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr | required for activations (skipped with `calib=None`, weights-only) |
-| `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr | not needed (weight-only) |
-| `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr | required for activations |
-| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
-| `mxfp4` | OCP MXFP4 on `Linear`: E2M1 elements, 32-element blocks, power-of-two (E8M0) block scales. Dynamic activation scaling. | rfdetr | not needed (dynamic) |
+| `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
+| `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
+| `fp8` | E4M3 W+A simulation: per-channel weight scales, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. | yolo9, rfdetr, birefnet, feynobg | required for activations |
+| `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr, birefnet, feynobg | required for activations (skipped with `calib=None`, weights-only) |
+| `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr, birefnet, feynobg | not needed (weight-only) |
+| `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr, birefnet, feynobg | required for activations |
+| `nvfp4` | W4A4 NVFP4 simulation on `Linear`: E2M1 elements, 16-element blocks, FP8 E4M3 block scales, FP32 tensor scale. Dynamic activation scaling. | rfdetr, birefnet, feynobg | not needed (dynamic) |
+| `mxfp4` | OCP MXFP4 on `Linear`: E2M1 elements, 32-element blocks, power-of-two (E8M0) block scales. Dynamic activation scaling. | rfdetr, birefnet, feynobg | not needed (dynamic) |
 | `int2` | Research preview: grouped 2-bit weights (group 64) plus INT8 activations, on `Linear`. PTQ alone is unusable; QAT/QAD required. | rfdetr | required for activations |
 
 Linear-only recipes are rejected for conv-heavy families such as yolo9 on
 purpose: sub-8-bit acceleration is GEMM-only on current hardware, so
-convolutions stay in higher precision. Transformer families (RF-DETR) are
-the target; yolo9 uses `int8` or `fp8`.
+convolutions stay in higher precision. Transformer families (RF-DETR, and
+the Swin-backed birefnet/feynobg matte families) are the target; yolo9 uses
+`int8` or `fp8`. birefnet and feynobg are inference-only, so QAT/QAD healing
+is unavailable there; `int2` is rejected for both for that reason (PTQ-only
+int2 is unusable).
 
 Per-family `keep_high_precision` defaults protect the first layer and the
-heads (and always the YOLO9 DFL conv). Override with
+heads (and always the YOLO9 DFL conv). For birefnet and feynobg that means
+the Swin patch embed, the final matte-logit conv (`conv_out1`), and the tiny
+bilateral-reference attention gates (`gdt_convs_attn`). Override with
 `quantize(..., keep_high_precision=("head.",))` if you know what you are
 doing.
 

@@ -729,3 +729,77 @@ def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     reloaded = LibreYOLO9(str(path), size="t", device="cpu")
     assert reloaded.quant_info()["recipe"] == "fp16"
     assert next(reloaded.model.parameters()).dtype == torch.float16
+
+
+# ---------------------------------------------------------------------------
+# birefnet (matte) family
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def birefnet_t():
+    from libreyolo.models.birefnet.model import LibreBiRefNet
+
+    return LibreBiRefNet(None, size="t", device="cpu")
+
+
+def test_birefnet_nvfp4_swaps_linears_and_respects_keeps(birefnet_t):
+    birefnet_t.quantize(recipe="nvfp4", verbose=False)
+    quant_names = [
+        n for n, m in birefnet_t.model.named_modules() if isinstance(m, NVFP4Linear)
+    ]
+    assert quant_names, "expected Swin Linear layers to be swapped to NVFP4Linear"
+    for pattern in ("patch_embed", "conv_out1", "gdt_convs_attn"):
+        assert not any(pattern in n for n in quant_names), pattern
+    info = birefnet_t.quant_info()
+    assert info["recipe"] == "nvfp4"
+    assert info["execution"] == "simulated"
+
+
+def test_birefnet_fp8_swaps_convs_and_linears(birefnet_t):
+    birefnet_t.quantize(recipe="fp8", calib=None, verbose=False)
+    kinds = {
+        type(m).__name__
+        for m in birefnet_t.model.modules()
+        if isinstance(m, (QuantConv2d,)) or type(m).__name__ == "QuantLinear"
+    }
+    assert kinds, "expected fp8 quant modules on both Conv2d and Linear"
+
+
+def test_birefnet_int2_rejected(birefnet_t):
+    with pytest.raises(QuantizationError, match="inference-only"):
+        birefnet_t.quantize(recipe="int2", verbose=False)
+
+
+def test_feynobg_supported_and_int2_rejected():
+    # feynobg shares the birefnet architecture; the gate check is family-level
+    # and cheap to exercise without instantiating the 263M model.
+    from libreyolo.quant.api import SUPPORTED_FAMILIES, _check_support
+
+    assert "feynobg" in SUPPORTED_FAMILIES
+    _check_support("feynobg", "fp8")
+    _check_support("feynobg", "nvfp4")
+    with pytest.raises(QuantizationError, match="inference-only"):
+        _check_support("feynobg", "int2")
+
+
+def test_birefnet_nvfp4_save_load_roundtrip(tmp_path, birefnet_t):
+    from libreyolo import LibreYOLO
+
+    birefnet_t.quantize(recipe="nvfp4", verbose=False)
+    path = tmp_path / "LibreBiRefNett-matte-nvfp4.pt"
+    birefnet_t.save(str(path))
+
+    # The real user path: metadata dispatch picks family+size, then the quant
+    # manifest rebuilds the quantized structure before the state dict loads.
+    reloaded = LibreYOLO(str(path), device="cpu")
+    info = reloaded.quant_info()
+    assert info["recipe"] == "nvfp4"
+    assert reloaded.size == "t"
+    assert reloaded.task == "matte"
+
+    src = birefnet_t.model.state_dict()
+    dst = reloaded.model.state_dict()
+    assert set(src.keys()) == set(dst.keys())
+    for key in src:
+        assert torch.equal(src[key].cpu(), dst[key].cpu()), key
