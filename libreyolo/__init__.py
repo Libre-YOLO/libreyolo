@@ -60,6 +60,7 @@ from .utils.results import (
     DepthMap,
     RestoredImage,
     Matte,
+    Meshes,
     OCRRegions,
 )
 
@@ -242,6 +243,7 @@ __all__ = [
     "DepthMap",
     "RestoredImage",
     "Matte",
+    "Meshes",
     "OCRRegions",
     # Assets
     "SAMPLE_IMAGE",

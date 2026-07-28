@@ -21,6 +21,7 @@ TaskType = Literal[
     "restore",
     "matte",
     "ocr",
+    "mesh",
 ]
 TASKS = (
     "detect",
@@ -36,6 +37,7 @@ TASKS = (
     "restore",
     "matte",
     "ocr",
+    "mesh",
 )
 
 TASK_ALIASES = {
@@ -91,6 +93,12 @@ TASK_ALIASES = {
     "text": "ocr",
     "text-recognition": "ocr",
     "text_recognition": "ocr",
+    "mesh": "mesh",
+    "body-mesh": "mesh",
+    "body_mesh": "mesh",
+    "hmr": "mesh",
+    "human-mesh-recovery": "mesh",
+    "human_mesh_recovery": "mesh",
 }
 
 TASK_TO_SUFFIX = {
@@ -106,6 +114,7 @@ TASK_TO_SUFFIX = {
     "restore": "restore",
     "matte": "matte",
     "ocr": "ocr",
+    "mesh": "mesh",
 }
 
 SUFFIX_TO_TASK = {v: k for k, v in TASK_TO_SUFFIX.items()}

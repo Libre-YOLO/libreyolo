@@ -208,6 +208,7 @@ From `libreyolo/tasks.py`:
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
+| `mesh`        | `-mesh` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -267,6 +268,20 @@ Detection quads are genuine polygons (rotated text) and do not populate
 `Results.boxes`. Canonical ocr filenames must carry the `-ocr` suffix; task
 aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
 the API boundary.
+
+`mesh` is the task for human body mesh recovery: recovering a posed 3D body per
+detected person. Models expose `Results.meshes`, row-aligned with
+`Results.boxes` exactly as pose keypoints are, carrying the parametric core
+(`global_orient`, `body_pose`, `betas`, `transl`) plus decoded `vertices`,
+`joints3d` and `joints2d`. Everything is in the camera frame of the original
+image, with metric translation in meters and `joints2d` in original-image
+pixels; there is no world frame in this version. Parameter layouts vary by body
+model, so `Meshes.body_model` names the parameterization and shapes are read
+from the tensors rather than assumed. Canonical mesh filenames must carry the
+`-mesh` suffix; task aliases `body-mesh`, `hmr`, and `human-mesh-recovery`
+resolve to `mesh` at the API boundary. Note that `smpl` is deliberately *not*
+an alias: the shipped body model is MHR, and accepting the name would imply an
+interoperability that is not provided. See ADR 0013 for the full contract.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family

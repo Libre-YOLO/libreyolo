@@ -869,6 +869,75 @@ def draw_gaze_arrows(
     return img_draw
 
 
+# MHR-70 keypoint skeleton. Indices 0-16 follow the COCO body ordering
+# exactly, 17-22 are the feet, 23-62 are the two hands and 63-69 are extra
+# anatomical landmarks; only the body, feet and neck links are drawn, because
+# finger edges collapse into noise at whole-image scale.
+MHR70_SKELETON_EDGES: Tuple[Tuple[int, int], ...] = COCO_KEYPOINT_EDGES + (
+    (15, 17), (15, 18), (15, 19),  # left ankle to big toe, small toe, heel
+    (16, 20), (16, 21), (16, 22),  # right ankle to big toe, small toe, heel
+    (63, 5), (63, 6),              # neck to shoulders
+)
+MESH_VERTEX_COLOR: Tuple[int, int, int] = (120, 200, 255)
+
+
+def draw_mesh(
+    img: Image.Image,
+    joints2d: np.ndarray | None = None,
+    vertices2d: np.ndarray | None = None,
+    edges: Tuple[Tuple[int, int], ...] = MHR70_SKELETON_EDGES,
+    vertex_color: Tuple[int, int, int] = MESH_VERTEX_COLOR,
+    max_vertices: int = 1200,
+    vertex_alpha: float = 0.55,
+) -> Image.Image:
+    """Overlay projected body meshes and their skeletons on an image.
+
+    Deliberately renderer-free: the mesh is conveyed as a decimated scatter of
+    its projected vertices rather than a shaded surface, so visualization never
+    pulls in a rasterizer dependency.
+
+    Args:
+        img: PIL image to draw on.
+        joints2d: ``(N, K, 2)`` projected keypoints in pixels, or None.
+        vertices2d: ``(N, V, 2)`` projected mesh vertices in pixels, or None.
+        edges: Pairs of keypoint indices to connect.
+        vertex_color: RGB color for the vertex scatter.
+        max_vertices: Per-person cap on drawn vertices; the cloud is evenly
+            subsampled above this, since drawing 18k dots per person is slow
+            and reads as a solid blob anyway.
+        vertex_alpha: Blend weight of the vertex overlay.
+    """
+    img_draw = img.convert("RGB")
+
+    if vertices2d is not None:
+        verts = np.asarray(vertices2d, dtype=np.float32)
+        if verts.ndim == 2:
+            verts = verts[None, ...]
+        if verts.size:
+            overlay = img_draw.copy()
+            draw = ImageDraw.Draw(overlay)
+            img_diag = (img.width ** 2 + img.height ** 2) ** 0.5
+            radius = max(1, int(round(img_diag / 900)))
+            for person in verts:
+                if len(person) > max_vertices:
+                    step = int(np.ceil(len(person) / max_vertices))
+                    person = person[::step]
+                for x, y in person:
+                    cx, cy = float(x), float(y)
+                    draw.ellipse(
+                        [cx - radius, cy - radius, cx + radius, cy + radius],
+                        fill=vertex_color,
+                    )
+            img_draw = Image.blend(img_draw, overlay, vertex_alpha)
+
+    if joints2d is not None:
+        joints = np.asarray(joints2d, dtype=np.float32)
+        if joints.size:
+            img_draw = draw_keypoints(img_draw, joints, edges=edges)
+
+    return img_draw
+
+
 def draw_tile_grid(
     img: Image.Image,
     tile_coords: List[Tuple[int, int, int, int]],

@@ -1688,6 +1688,13 @@ class BaseModel(ABC):
                 "Augmented validation does not support restoration models yet. "
                 "Use augment=False for restore models."
             )
+        if augment and self.task == "mesh":
+            raise ValueError(
+                "Augmented validation does not support body-mesh models: a "
+                "horizontal flip swaps left and right body parts, so merging "
+                "flipped mesh parameters is not a matter of averaging. "
+                "Use augment=False for mesh models."
+            )
         if augment and self.task == "matte":
             raise ValueError(
                 "Augmented validation does not support matte models yet. "
@@ -1715,6 +1722,14 @@ class BaseModel(ABC):
             **kwargs,
         )
 
+        if self.task == "mesh":
+            raise NotImplementedError(
+                "Body-mesh validation needs a ground-truth mesh dataset, and the "
+                "usual benchmarks (3DPW, EMDB, AGORA) are research-license only, "
+                "so none is bundled. The metrics themselves are available as "
+                "libreyolo.validation.mesh_metrics (MPJPE, PA-MPJPE, PVE) for "
+                "evaluating against a dataset you already hold."
+            )
         if self.task == "gaze":
             raise NotImplementedError(
                 "Validation against gaze ground-truth datasets (MPIIGaze, Gaze360) "
