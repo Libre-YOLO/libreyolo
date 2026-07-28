@@ -9,21 +9,21 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  | exp |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
-| deim | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| deimv2 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | exp |
+| clip | classify | ✓ |  |  |  |  |  |  | ✓ |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  |  |  |  |  |  | exp |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  | exp |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
@@ -37,33 +37,33 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | exp |
 | locateanything | detect |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |
 | pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
 | ppocr | ocr |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | exp |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  | exp |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |
 | segformer | semantic |  |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  | exp |
+| siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
@@ -72,12 +72,12 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
 | yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |  |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
-| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
 | yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
 | yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |  |
-| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | exp |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | ✓ |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 

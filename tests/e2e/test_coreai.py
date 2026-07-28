@@ -3,8 +3,10 @@
 The test compares the public ``.aimodel`` export with the exact fixed-canvas
 PyTorch graph prepared by the exporter. Two probes establish both numeric
 agreement and meaningful input sensitivity. Multi-output DETR tensors are
-compared in the graph's declared order without independently sorting or
-matching rows, so the gate cannot hide a broken box/logit association.
+compared in the graph's declared output order. RT-DETRv2 alone permits a
+single whole-row assignment shared by every output tensor because its query
+rows are an unordered set; outputs are never sorted or matched independently,
+so the gate cannot hide a broken box/logit association.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import sys
 import numpy as np
 import pytest
 import torch
+from scipy.optimize import linear_sum_assignment
 
 pytestmark = [
     pytest.mark.general_nightly,
@@ -38,6 +41,28 @@ CASES = [
     ("LibreYOLO9t.pt", "yolo9", 640),
     ("LibreDFINEn.pt", "dfine", 640),
     ("LibreRFDETRn.pt", "rfdetr", 384),
+    ("LibreYOLOXn.pt", "yolox", 416),
+    ("LibreDEIMn.pt", "deim", 640),
+    ("LibreDEIMv2atto.pt", "deimv2", 320),
+    ("LibreECs.pt", "ec", 640),
+    ("LibrePICODETs.pt", "picodet", 320),
+    ("LibreRTDETRr18.pt", "rtdetr", 640),
+    ("LibreRTDETRv2r18.pt", "rtdetrv2", 640),
+    ("LibreRTDETRv4s.pt", "rtdetrv4", 640),
+    ("LibreRTMDett.pt", "rtmdet", 640),
+    ("LibreYOLO9E2Et.pt", "yolo9_e2e", 640),
+    ("LibreResNet18-cls.pt", "resnet", 224),
+    ("LibreMobileNetV4s-cls.pt", "mobilenetv4", 224),
+    ("LibreEfficientNetV2b0-cls.pt", "efficientnetv2", 224),
+    ("LibreConvNeXtt-cls.pt", "convnext", 224),
+    ("LibreDepthAnythingV2s-depth.pt", "depth_anything", 518),
+    ("LibreZipDepthb-depth.pt", "zipdepth", 384),
+    ("LibreRealESRGANx4t-restore.pt", "realesrgan", 64),
+    ("LibreNAFNetl-restore-sidd.pt", "nafnet", 256),
+]
+FROZEN_CLASS_CASES = [
+    ("LibreCLIPb32-cls.pt", "clip", 224),
+    ("LibreSigLIP2b16-cls.pt", "siglip2", 256),
 ]
 
 
@@ -103,6 +128,90 @@ def _prepared_reference(model, family, imgsz, x1, x2):
     return _exported_output_names(exported), ref1, ref2
 
 
+def _artifact_outputs(artifact, tensors, output_names=None):
+    loaded = _run(coreai_runtime.AIModel.load(artifact))
+    function = _run(loaded.load_function(next(iter(loaded.function_names))))
+    input_name = _input_name(function)
+    names = list(output_names) if output_names is not None else None
+    outputs = []
+    for tensor in tensors:
+        result = _run(
+            function(
+                {input_name: coreai_runtime.NDArray(tensor.detach().cpu().numpy())}
+            )
+        )
+        assert isinstance(result, dict), "Core AI output contract must be named"
+        if names is None:
+            names = list(result)
+        assert set(names) == set(result), (
+            f"runtime names {sorted(result)} != graph names {sorted(names)}"
+        )
+        outputs.append(
+            [
+                np.asarray(
+                    result[name].numpy()
+                    if hasattr(result[name], "numpy")
+                    else result[name]
+                )
+                for name in names
+            ]
+        )
+    return names, outputs
+
+
+def _assert_parity(output_names, ref1, ref2, got1, got2):
+    assert [array.shape for array in got1] == [array.shape for array in ref1]
+    for index, (expected1, expected2, actual1, actual2) in enumerate(
+        zip(ref1, ref2, got1, got2)
+    ):
+        scale = max(
+            float(np.abs(expected1).max()),
+            float(np.abs(expected2).max()),
+            1e-12,
+        )
+        error = (
+            max(
+                float(np.abs(actual1 - expected1).max()),
+                float(np.abs(actual2 - expected2).max()),
+            )
+            / scale
+        )
+        sensitivity = float(np.abs(expected2 - expected1).max()) / scale
+        margin = float("inf") if error == 0 else sensitivity / error
+        assert error <= REL_TOL, (
+            f"out[{index}] ({output_names[index]}) relative error "
+            f"{error:.3e} exceeds {REL_TOL:.0e}"
+        )
+        assert margin >= MIN_SENSITIVITY_MARGIN, (
+            f"out[{index}] parity margin {margin:.1f}x is below "
+            f"{MIN_SENSITIVITY_MARGIN:.0f}x "
+            f"(error={error:.3e}, sensitivity={sensitivity:.3e})"
+        )
+
+
+def _align_unordered_queries(reference, candidate):
+    """Apply one whole-row assignment shared by every output tensor."""
+    assert len(reference) >= 2
+    assert all(array.ndim == 3 for array in reference + candidate)
+    assert len({array.shape[1] for array in reference + candidate}) == 1
+
+    ref_rows = []
+    got_rows = []
+    for expected, actual in zip(reference, candidate):
+        scale = max(float(np.abs(expected).max()), 1e-12)
+        ref_rows.append(expected[0].reshape(expected.shape[1], -1) / scale)
+        got_rows.append(actual[0].reshape(actual.shape[1], -1) / scale)
+    ref_key = np.concatenate(ref_rows, axis=1)
+    got_key = np.concatenate(got_rows, axis=1)
+    cost = np.max(
+        np.abs(ref_key[:, None, :] - got_key[None, :, :]),
+        axis=2,
+    )
+    rows, columns = linear_sum_assignment(cost)
+    order = columns[np.argsort(rows)]
+    return [array[:, order, ...] for array in candidate]
+
+
 @pytest.mark.parametrize("weights,family,imgsz", CASES)
 def test_coreai_artifact_matches_prepared_trained_model(
     weights, family, imgsz, tmp_path
@@ -131,54 +240,58 @@ def test_coreai_artifact_matches_prepared_trained_model(
     output_names, ref1, ref2 = _prepared_reference(model, family, imgsz, x1, x2)
     assert len(output_names) == len(ref1)
 
-    loaded = _run(coreai_runtime.AIModel.load(artifact))
-    function = _run(loaded.load_function(next(iter(loaded.function_names))))
-    input_name = _input_name(function)
+    _, (got1, got2) = _artifact_outputs(artifact, (x1, x2), output_names)
+    if family == "rtdetrv2":
+        # Core AI may choose a different order for equal/near-equal top-k
+        # encoder queries. DETR query rows are an unordered set, but boxes and
+        # logits must remain paired, so derive exactly one joint assignment
+        # from every output and apply it wholesale to every tensor.
+        got1 = _align_unordered_queries(ref1, got1)
+        got2 = _align_unordered_queries(ref2, got2)
+    _assert_parity(output_names, ref1, ref2, got1, got2)
 
-    def call(tensor):
-        result = _run(
-            function(
-                {input_name: coreai_runtime.NDArray(tensor.detach().cpu().numpy())}
-            )
-        )
-        assert isinstance(result, dict), "Core AI output contract must be named"
-        assert set(output_names) == set(result), (
-            f"runtime names {sorted(result)} != graph names {sorted(output_names)}"
-        )
-        return [
-            np.asarray(
-                result[name].numpy() if hasattr(result[name], "numpy") else result[name]
-            )
-            for name in output_names
-        ]
 
-    got1 = call(x1)
-    got2 = call(x2)
-    assert [array.shape for array in got1] == [array.shape for array in ref1]
+@pytest.mark.parametrize("weights,family,imgsz", FROZEN_CLASS_CASES)
+def test_coreai_frozen_classifier_matches_trained_model(
+    weights, family, imgsz, tmp_path
+):
+    from libreyolo import LibreYOLO
 
-    for index, (expected1, expected2, actual1, actual2) in enumerate(
-        zip(ref1, ref2, got1, got2)
-    ):
-        scale = max(
-            float(np.abs(expected1).max()),
-            float(np.abs(expected2).max()),
-            1e-12,
-        )
-        error = (
-            max(
-                float(np.abs(actual1 - expected1).max()),
-                float(np.abs(actual2 - expected2).max()),
-            )
-            / scale
-        )
-        sensitivity = float(np.abs(expected2 - expected1).max()) / scale
-        margin = float("inf") if error == 0 else sensitivity / error
-        assert error <= REL_TOL, (
-            f"out[{index}] ({output_names[index]}) relative error "
-            f"{error:.3e} exceeds {REL_TOL:.0e}"
-        )
-        assert margin >= MIN_SENSITIVITY_MARGIN, (
-            f"out[{index}] parity margin {margin:.1f}x is below "
-            f"{MIN_SENSITIVITY_MARGIN:.0f}x "
-            f"(error={error:.3e}, sensitivity={sensitivity:.3e})"
-        )
+    model = LibreYOLO(weights, device="cpu")
+    model.set_classes(
+        ["cat", "dog", "car"],
+        templates=["a photo of a {}."],
+    )
+    artifact = model.export(
+        format="coreai",
+        imgsz=imgsz,
+        output_path=str(tmp_path / family),
+    )
+
+    if family == "clip":
+        from libreyolo.models.clip.export import _FrozenCLIPClassifier
+
+        scale = float(model.model.logit_scale.exp().detach().cpu())
+        weight = (scale * model._text_embeds).detach().cpu()
+        frozen = _FrozenCLIPClassifier(model.model.visual, weight).eval()
+    else:
+        from libreyolo.models.siglip2.export import _FrozenSigLIP2Classifier
+
+        scale = float(model.model.logit_scale.exp().detach().cpu())
+        weight = (scale * model._text_embeds).detach().cpu()
+        bias = model.model.logit_bias.detach().to("cpu", torch.float32).reshape(())
+        frozen = _FrozenSigLIP2Classifier(
+            model.model.vision_model,
+            weight,
+            bias,
+        ).eval()
+
+    generator = torch.Generator().manual_seed(20260728)
+    x1 = torch.rand(1, 3, imgsz, imgsz, generator=generator)
+    x2 = torch.rand(1, 3, imgsz, imgsz, generator=generator)
+    with torch.no_grad():
+        ref1 = _flatten(frozen(x1))
+        ref2 = _flatten(frozen(x2))
+    output_names, (got1, got2) = _artifact_outputs(artifact, (x1, x2))
+    assert len(output_names) == 1
+    _assert_parity(output_names, ref1, ref2, got1, got2)
