@@ -44,6 +44,29 @@ class _TupleModel(torch.nn.Module):
         return self.a + zero, self.b + zero
 
 
+class _FourOutputModel(torch.nn.Module):
+    def forward(self, x):
+        batch = x.shape[0]
+        zero = x.sum() * 0.0
+        return (
+            torch.zeros(batch, 2, 4) + zero,
+            torch.zeros(batch, 2, 3) + zero,
+            torch.zeros(batch, 2, 17, 2) + zero,
+            torch.zeros(batch, 2, 17) + zero,
+        )
+
+
+class _ThreeOutputModel(torch.nn.Module):
+    def forward(self, x):
+        batch = x.shape[0]
+        zero = x.sum() * 0.0
+        return (
+            torch.zeros(batch, 2, 6) + zero,
+            torch.zeros(batch, 2) + zero,
+            torch.zeros(batch, 2, 17, 3) + zero,
+        )
+
+
 def test_raw_output_adapter_layout_and_argmax():
     from libreyolo.export.deepstream import DeepStreamRawOutput
 
@@ -58,9 +81,7 @@ def test_raw_output_adapter_layout_and_argmax():
 
     assert out.shape == (1, 2, 6)
     np.testing.assert_allclose(out[0, 0].numpy(), [0, 10, 20, 30, 0.7, 1.0])
-    np.testing.assert_allclose(
-        out[0, 1].numpy(), [5, 15, 25, 35, 0.9, 0.0], rtol=1e-6
-    )
+    np.testing.assert_allclose(out[0, 1].numpy(), [5, 15, 25, 35, 0.9, 0.0], rtol=1e-6)
 
 
 def test_detr_output_adapter_sigmoid_denorm_and_order():
@@ -102,7 +123,6 @@ def test_sidecar_files_content(tmp_path):
         class_names=["person", "car"],
         imgsz=(640, 640),
         batch=1,
-        dynamic=True,
         precision="fp16",
         conf=0.25,
         iou=0.45,
@@ -127,9 +147,121 @@ def test_wrap_rejects_unknown_family():
     from libreyolo.export.deepstream import wrap_for_deepstream
 
     with pytest.raises(NotImplementedError, match="not supported"):
-        wrap_for_deepstream(
-            torch.nn.Identity(), model_family="fomo", imgsz=(64, 64)
+        wrap_for_deepstream(torch.nn.Identity(), model_family="fomo", imgsz=(64, 64))
+
+
+def test_preflight_unsupported_task_lists_every_supported_task():
+    from libreyolo.export.deepstream import deepstream_supported_tasks
+    from libreyolo.export.exporter import OnnxExporter
+
+    class _Wrapper:
+        task = "obb"
+
+        @staticmethod
+        def _get_model_name():
+            return "yolo9"
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        OnnxExporter(_Wrapper())._preflight(
+            half=False, int8=False, data=None, deepstream=True
         )
+
+    message = str(exc_info.value)
+    for task in deepstream_supported_tasks():
+        assert task in message
+
+
+@pytest.mark.parametrize("format_name", ["torchscript", "coreml"])
+def test_base_preflight_rejects_deepstream_for_non_onnx_formats(format_name):
+    from libreyolo.export.exporter import BaseExporter
+
+    class _Exporter:
+        pass
+
+    exporter = _Exporter()
+    exporter.format_name = format_name
+
+    with pytest.raises(ValueError, match="only for ONNX export"):
+        BaseExporter._preflight(
+            exporter, half=False, int8=False, data=None, deepstream=True
+        )
+
+
+def test_deepstream_raw_tasks_preserve_output_names_and_dynamic_axes(
+    monkeypatch, tmp_path
+):
+    import libreyolo.export.onnx as onnx_module
+
+    captured = []
+
+    def _capture_export(*args, **kwargs):
+        captured.append(kwargs)
+        return kwargs["output_path"]
+
+    monkeypatch.setattr(onnx_module.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(onnx_module, "_export_onnx_graph", _capture_export)
+
+    onnx_module.export_onnx(
+        _FourOutputModel(),
+        torch.zeros(1, 3, 32, 32),
+        output_path=str(tmp_path / "yolonas_pose.onnx"),
+        opset=17,
+        simplify=False,
+        dynamic=True,
+        half=False,
+        metadata={"model_family": "yolonas", "task": "pose"},
+        deepstream=True,
+    )
+    onnx_module.export_onnx(
+        _ThreeOutputModel(),
+        torch.zeros(1, 3, 32, 32),
+        output_path=str(tmp_path / "rfdetr_pose.onnx"),
+        opset=17,
+        simplify=False,
+        dynamic=True,
+        half=False,
+        metadata={"model_family": "rfdetr", "task": "pose"},
+        deepstream=True,
+    )
+    onnx_module.export_onnx(
+        _TupleModel(torch.zeros(1, 66), torch.zeros(1, 66)),
+        torch.zeros(1, 3, 32, 32),
+        output_path=str(tmp_path / "gaze.onnx"),
+        opset=17,
+        simplify=False,
+        dynamic=True,
+        half=False,
+        metadata={"model_family": "l2cs", "task": "gaze"},
+        deepstream=True,
+    )
+
+    assert captured[0]["output_names"] == [
+        "boxes",
+        "scores",
+        "keypoints_xy",
+        "keypoints_conf",
+    ]
+    assert captured[0]["dynamic_axes"] == {
+        "images": {0: "batch"},
+        "boxes": {0: "batch", 1: "anchors"},
+        "scores": {0: "batch", 1: "anchors"},
+        "keypoints_xy": {0: "batch", 1: "anchors", 2: "keypoints"},
+        "keypoints_conf": {0: "batch", 1: "anchors", 2: "keypoints"},
+    }
+    assert captured[1]["input_names"] == ["input"]
+    assert captured[1]["output_names"] == ["dets", "labels", "keypoints"]
+    assert captured[1]["dynamic_axes"] == {
+        "input": {0: "batch"},
+        "dets": {0: "batch"},
+        "labels": {0: "batch"},
+        "keypoints": {0: "batch"},
+    }
+    assert captured[2]["output_names"] == ["yaw_logits", "pitch_logits"]
+    assert captured[2]["dynamic_axes"] == {
+        "images": {0: "faces"},
+        "yaw_logits": {0: "faces"},
+        "pitch_logits": {0: "faces"},
+    }
 
 
 @pytest.mark.onnx
@@ -193,9 +325,7 @@ def test_deepstream_graph_matches_torch_through_onnxruntime(
     "family,expect_cluster,expect_nms",
     [("yolo9", "cluster-mode=2", True), ("rfdetr", "cluster-mode=4", False)],
 )
-def test_detr_configs_disable_clustering(
-    tmp_path, family, expect_cluster, expect_nms
-):
+def test_detr_configs_disable_clustering(tmp_path, family, expect_cluster, expect_nms):
     """DETR heads emit one query per object, so DeepStream must not cluster."""
     from libreyolo.export.deepstream import write_deepstream_sidecars
 
@@ -207,7 +337,6 @@ def test_detr_configs_disable_clustering(
         class_names=["a"],
         imgsz=(640, 640),
         batch=1,
-        dynamic=False,
         precision="fp32",
     )
     config = Path(config_path).read_text()
@@ -303,7 +432,6 @@ def test_config_network_type_per_task(tmp_path, task, family, expected):
         class_names=["a", "b"],
         imgsz=(224, 224),
         batch=1,
-        dynamic=False,
         precision="fp32",
         task=task,
     )
@@ -366,7 +494,6 @@ def test_instance_seg_config_uses_mask_parser(tmp_path):
         class_names=["a"],
         imgsz=(640, 640),
         batch=1,
-        dynamic=False,
         precision="fp32",
         task="segment",
     )
@@ -407,7 +534,6 @@ def test_depth_config_uses_raw_tensor_meta_and_no_labels(tmp_path):
         class_names=[],
         imgsz=(384, 384),
         batch=1,
-        dynamic=False,
         precision="fp32",
         task="depth",
     )
@@ -453,7 +579,6 @@ def test_raw_tensor_tasks_share_one_config_shape(tmp_path, task, family):
         class_names=[],
         imgsz=(224, 224),
         batch=1,
-        dynamic=False,
         precision="fp32",
         task=task,
     )
@@ -465,6 +590,58 @@ def test_raw_tensor_tasks_share_one_config_shape(tmp_path, task, family):
     assert "custom-lib-path" not in config
     assert "cluster-mode" not in config
     assert labels_path == ""
+
+
+def test_yolonas_pose_config_matches_native_bgr_bottom_right_preprocess(tmp_path):
+    """Graph parity cannot catch a wrong external nvinfer preprocessor."""
+    from libreyolo.export.deepstream import write_deepstream_sidecars
+
+    onnx_path = tmp_path / "yolonas_pose.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, _ = write_deepstream_sidecars(
+        str(onnx_path),
+        model_family="yolonas",
+        class_names=[],
+        imgsz=(640, 640),
+        batch=1,
+        precision="fp32",
+        task="pose",
+    )
+    config = Path(config_path).read_text()
+
+    assert "model-color-format=1" in config
+    assert "maintain-aspect-ratio=1" in config
+    assert "symmetric-padding=0" in config
+
+
+def test_preprocess_keys_stay_in_property_section(monkeypatch, tmp_path):
+    """Future letterboxed seg profiles must not leak keys into class attrs."""
+    import libreyolo.export.deepstream as deepstream_module
+
+    monkeypatch.setitem(
+        deepstream_module._PREPROCESS_PROFILES,
+        "dfine",
+        {"maintain_aspect_ratio": 1, "symmetric_padding": 1},
+    )
+    onnx_path = tmp_path / "dfine_seg.onnx"
+    onnx_path.write_bytes(b"stub")
+    config_path, _ = deepstream_module.write_deepstream_sidecars(
+        str(onnx_path),
+        model_family="dfine",
+        class_names=["person"],
+        imgsz=(640, 640),
+        batch=1,
+        precision="fp32",
+        task="segment",
+    )
+    property_section, class_attrs = (
+        Path(config_path).read_text().split("[class-attrs-all]", maxsplit=1)
+    )
+
+    assert "maintain-aspect-ratio=1" in property_section
+    assert "symmetric-padding=1" in property_section
+    assert "maintain-aspect-ratio" not in class_attrs
+    assert "symmetric-padding" not in class_attrs
 
 
 def test_raw_tensor_normalization_is_per_family():

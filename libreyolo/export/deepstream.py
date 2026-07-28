@@ -29,8 +29,8 @@ that project is included here.
 Known preprocessing approximations (documented in the DeepStream guide):
 
 - Letterbox families pad with gray (114/128) natively; nvinfer pads black.
-- YOLO-NAS natively resizes the longest side to 636 inside a 640 canvas;
-  nvinfer's ``maintain-aspect-ratio`` scales to the full 640.
+- YOLO-NAS detection natively resizes the longest side to 636 inside a
+  640 canvas; nvinfer's ``maintain-aspect-ratio`` scales to the full 640.
 """
 
 from __future__ import annotations
@@ -143,6 +143,7 @@ _RAW_TENSOR_TASKS = {
 def _raw_tensor_families(task: str) -> set[str]:
     """Families exportable as a raw-tensor network for ``task``."""
     return _RAW_TENSOR_TASKS.get(task, set())
+
 
 # Raw-tensor families that normalize with ImageNet stats *outside* the
 # model, so the DeepStream graph must do it (nvinfer cannot divide per
@@ -545,6 +546,17 @@ def deepstream_supported_families(task: str = "detect") -> set[str]:
     )
 
 
+def deepstream_supported_tasks() -> set[str]:
+    """Tasks with at least one DeepStream-supported family."""
+    candidates = {"detect", "classify", "segment", "semantic"} | set(_RAW_TENSOR_TASKS)
+    return {task for task in candidates if deepstream_supported_families(task)}
+
+
+def deepstream_uses_raw_outputs(task: str | None) -> bool:
+    """Whether DeepStream preserves the task's native ONNX output schema."""
+    return task in _RAW_TENSOR_TASKS
+
+
 # --- nvinfer sidecar generation -------------------------------------------
 
 # Per-family nvinfer preprocessing profile. nvinfer computes
@@ -564,7 +576,8 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     "yolo4": {"maintain_aspect_ratio": 1},
     # YOLOv1's dense head needs the plain stretch square.
     "yolo1": {},
-    # YOLO-NAS letterboxes centered (native resize-to-636 approximated).
+    # YOLO-NAS detection letterboxes centered (native resize-to-636
+    # approximated). Pose overrides the color and padding geometry below.
     "yolonas": {"maintain_aspect_ratio": 1, "symmetric_padding": 1},
     # YOLOX: BGR frames in raw 0-255 space, letterboxed.
     "yolox": {
@@ -604,10 +617,9 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     "pidnet": {"maintain_aspect_ratio": 1},
     # Depth: nets normalize internally, so [0, 1] RGB; all stretch-resize.
     "depth_anything": {},
-    "depth_anything3": {},
     "zipdepth": {},
-    # Raw-tensor tasks. yolonas-pose letterboxes centered on BGR frames;
-    # yolo9-pose letterboxes top-left on RGB; the rest stretch-resize RGB.
+    # Raw-tensor tasks. yolo9-pose letterboxes top-left on RGB; the rest
+    # stretch-resize RGB unless overridden below.
     "nafnet": {},
     "realesrgan": {},
     "swinir": {},
@@ -615,6 +627,17 @@ _PREPROCESS_PROFILES: dict[str, dict] = {
     "l2cs": {},
     "eomt": {},
     "lingbotvision": {},
+}
+
+# A family can have task-specific preprocessing. YOLO-NAS pose consumes BGR
+# and pads on the bottom/right at the full 640 resize, unlike YOLO-NAS
+# detection's RGB, centered, resize-to-636 contract.
+_TASK_PREPROCESS_PROFILES: dict[tuple[str, str], dict] = {
+    ("yolonas", "pose"): {
+        "model_color_format": 1,
+        "maintain_aspect_ratio": 1,
+        "symmetric_padding": 0,
+    },
 }
 
 
@@ -625,7 +648,6 @@ def write_deepstream_sidecars(
     class_names: list[str],
     imgsz: tuple[int, int],
     batch: int,
-    dynamic: bool,
     precision: str,
     conf: float = 0.25,
     iou: float = 0.45,
@@ -649,7 +671,10 @@ def write_deepstream_sidecars(
     else:
         labels_path = None
 
-    profile = _PREPROCESS_PROFILES.get(model_family, {})
+    profile = {
+        **_PREPROCESS_PROFILES.get(model_family, {}),
+        **_TASK_PREPROCESS_PROFILES.get((model_family, task), {}),
+    }
     net_scale = profile.get("net_scale_factor", 1.0 / 255.0)
     offsets = profile.get("offsets")
     maintain_ar = profile.get("maintain_aspect_ratio", 0)
@@ -675,16 +700,14 @@ def write_deepstream_sidecars(
         f"model-color-format={color_format}",
         f"onnx-file={onnx_file.name}",
         f"model-engine-file={onnx_file.name}_b{batch}_gpu0_{mode_name}.engine",
-        *(
-            [f"labelfile-path={labels_path.name}"]
-            if labels_path is not None
-            else []
-        ),
+        *([f"labelfile-path={labels_path.name}"] if labels_path is not None else []),
         f"batch-size={batch}",
         f"network-mode={network_mode}",
         "interval=0",
         "gie-unique-id=1",
         f"infer-dims=3;{imgsz[0]};{imgsz[1]}",
+        f"maintain-aspect-ratio={int(maintain_ar)}",
+        f"symmetric-padding={int(symmetric_pad)}",
     ]
 
     if task == "classify":
@@ -715,8 +738,6 @@ def write_deepstream_sidecars(
             f"num-detected-classes={len(class_names)}",
             # DETR-style seg heads emit one query per object: no clustering.
             "cluster-mode=4",
-            f"maintain-aspect-ratio={int(maintain_ar)}",
-            f"symmetric-padding={int(symmetric_pad)}",
             "output-instance-mask=1",
             f"segmentation-threshold={conf}",
             "parse-bbox-instance-mask-func-name=NvDsInferParseYoloSeg",
@@ -742,8 +763,6 @@ def write_deepstream_sidecars(
             "network-type=0",
             f"num-detected-classes={len(class_names)}",
             f"cluster-mode={cluster_mode}",
-            f"maintain-aspect-ratio={int(maintain_ar)}",
-            f"symmetric-padding={int(symmetric_pad)}",
             "parse-bbox-func-name=NvDsInferParseYolo",
             "custom-lib-path=nvdsinfer_custom_impl_Yolo/"
             "libnvdsinfer_custom_impl_Yolo.so",
@@ -756,8 +775,6 @@ def write_deepstream_sidecars(
         if not nms_free:
             lines.insert(len(lines) - 1, f"nms-iou-threshold={iou}")
 
-    if maintain_ar and task != "detect":
-        lines.append(f"maintain-aspect-ratio={int(maintain_ar)}")
     if offsets is not None:
         lines.insert(3, "offsets=" + ";".join(f"{o:.10g}" for o in offsets))
 

@@ -606,6 +606,11 @@ class BaseExporter(ABC):
 
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
         """Run cheap format-specific checks before model or calibration setup."""
+        if kwargs.get("deepstream") and self.format_name != "onnx":
+            raise ValueError(
+                "deepstream=True is supported only for ONNX export "
+                f"(format='onnx'); got format={self.format_name!r}."
+            )
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
         if not isinstance(task, str):
@@ -1444,7 +1449,10 @@ class OnnxExporter(BaseExporter):
                     "detection models only."
                 )
         if kwargs.get("deepstream"):
-            from .deepstream import deepstream_supported_families
+            from .deepstream import (
+                deepstream_supported_families,
+                deepstream_supported_tasks,
+            )
 
             if kwargs.get("nms"):
                 raise ValueError(
@@ -1457,9 +1465,10 @@ class OnnxExporter(BaseExporter):
             family = self.model._get_model_name()
             supported = deepstream_supported_families(task)
             if not supported:
+                supported_tasks = ", ".join(sorted(deepstream_supported_tasks()))
                 raise NotImplementedError(
                     f"DeepStream export does not support the {task!r} task. "
-                    "Supported tasks: detect, classify, semantic."
+                    f"Supported tasks: {supported_tasks}."
                 )
             if family not in supported:
                 raise NotImplementedError(
@@ -1554,7 +1563,6 @@ class OnnxExporter(BaseExporter):
                 class_names=class_names,
                 imgsz=imgsz,
                 batch=dummy.shape[0],
-                dynamic=dynamic,
                 precision="int8" if int8 else ("fp16" if half else "fp32"),
                 conf=conf,
                 iou=iou,
