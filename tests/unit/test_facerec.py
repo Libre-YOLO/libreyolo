@@ -300,3 +300,146 @@ def test_cli_names_resolve_facerec():
 
     assert resolve_model_name("facerec-l") == "librefacerec-l.onnx"
     assert resolve_model_name("librefacerec-l") == "librefacerec-l.onnx"
+
+
+# ---------------------------------------------------------------------------
+# FaceGallery + identification
+# ---------------------------------------------------------------------------
+
+
+def _vec(dim, hot):
+    v = np.zeros(dim, dtype=np.float32)
+    v[hot] = 1.0
+    return v
+
+
+def test_gallery_enroll_embedding_and_match():
+    from libreyolo.models.facerec import FaceGallery
+
+    g = FaceGallery()
+    g.enroll_embedding("alice", _vec(8, 0))
+    g.enroll_embedding("alice", _vec(8, 1))  # second reference, different pose
+    g.enroll_embedding("bob", _vec(8, 2))
+    assert len(g) == 2
+    assert g.identities == ["alice", "bob"]
+    assert "alice" in g and "carol" not in g
+
+    # max-cosine over references: a query near alice's 2nd ref still hits alice
+    matches = g.match(_vec(8, 1), top_k=2, threshold=0.3)
+    assert matches[0][0] == ("alice", pytest.approx(1.0))
+    # below-threshold queries return no name, never the nearest wrong person
+    q = np.full(8, 0.1, dtype=np.float32)
+    assert g.match(_vec(8, 5), threshold=0.5) == [[]]
+
+    assert g.remove("bob") == 1
+    assert g.identities == ["alice"]
+
+
+def test_gallery_dim_mismatch_raises():
+    from libreyolo.models.facerec import FaceGallery
+
+    g = FaceGallery()
+    g.enroll_embedding("alice", _vec(8, 0))
+    with pytest.raises(ValueError, match="dim mismatch"):
+        g.enroll_embedding("bob", _vec(16, 0))
+    with pytest.raises(ValueError, match="dim mismatch"):
+        g.match(_vec(16, 0))
+
+
+def test_gallery_save_load_roundtrip(tmp_path):
+    from libreyolo.models.facerec import FaceGallery
+
+    g = FaceGallery()
+    g.enroll_embedding("alice", _vec(8, 0))
+    g.enroll_embedding("bob", _vec(8, 2))
+    p = tmp_path / "team.gallery.npz"
+    g.save(p)
+
+    loaded = FaceGallery.load(p)
+    assert loaded.identities == ["alice", "bob"]
+    assert loaded.dim == 8
+    assert loaded.match(_vec(8, 2))[0][0][0] == "bob"
+
+    with pytest.raises(ValueError):
+        FaceGallery().save(tmp_path / "empty.npz")
+
+
+def test_gallery_model_fingerprint_guard(tmp_path, tiny_onnx):
+    from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
+
+    model = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    g = FaceGallery(embedder=model)
+    g.enroll_embedding("alice", _vec(8, 0))
+    p = tmp_path / "team.gallery.npz"
+    g.save(p)
+
+    # same model loads fine
+    FaceGallery.load(p, embedder=model)
+
+    # different weights file -> fingerprint mismatch
+    other_path = tmp_path / "other.onnx"
+    _build_tiny_face_onnx(str(other_path), dim=8)
+    other = LibreFaceEmbedder(str(other_path), device="cpu")
+    other._weights_fingerprint = "deadbeefdeadbeef"
+    with pytest.raises(ValueError, match="different embedding model"):
+        FaceGallery.load(p, embedder=other)
+
+
+def test_gallery_enroll_from_images_and_identify(tiny_onnx, tmp_path):
+    from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
+
+    model = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    rng = np.random.RandomState(7)
+    img_a = Image.fromarray((rng.rand(96, 96, 3) * 255).astype(np.uint8))
+    path_a = tmp_path / "alice.jpg"
+    img_a.save(path_a)
+
+    g = FaceGallery(embedder=model)
+    # enroll needs a face source; the tiny graph has no detector, so BYO boxes
+    res = model(img_a, face_boxes=[(0, 0, 96, 96)])
+    g.enroll_embedding("alice", res.embeddings.data[0])
+    assert len(g) == 1
+
+    # identify the same face -> alice at ~1.0 cosine
+    out = model(img_a, face_boxes=[(0, 0, 96, 96)], gallery=g, threshold=0.9)
+    assert out.identities is not None
+    assert out.identities.name == ["alice"]
+    assert float(out.identities.score[0]) == pytest.approx(1.0, abs=1e-5)
+    assert out.summary()[0]["identity"] == "alice"
+
+    # impossible threshold -> unknown, but the raw best score stays visible
+    out2 = model(img_a, face_boxes=[(0, 0, 96, 96)], gallery=g, threshold=1.1)
+    assert out2.identities.name == [None]
+    assert float(out2.identities.score[0]) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_identify_empty_gallery_raises(tiny_onnx):
+    from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
+
+    model = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    img = Image.fromarray((np.random.rand(64, 64, 3) * 255).astype(np.uint8))
+    with pytest.raises(ValueError, match="empty FaceGallery"):
+        model(img, face_boxes=[(0, 0, 64, 64)], gallery=FaceGallery())
+
+
+def test_identities_payload_slicing_and_results_plumbing():
+    from libreyolo.utils.results import Identities
+
+    ids = Identities(["alice", None, "bob"], np.array([0.9, 0.2, 0.7]))
+    assert len(ids) == 3
+    assert ids.name[1] is None
+    assert ids[0].name == ["alice"]
+    assert ids[1:].name == [None, "bob"]
+    assert ids[[0, 2]].name == ["alice", "bob"]
+    assert ids.numpy() is ids and ids.cpu() is ids
+
+    boxes = Boxes(
+        torch.tensor([[0, 0, 10, 10], [5, 5, 20, 20], [8, 8, 30, 30]], dtype=torch.float32),
+        torch.tensor([0.9, 0.8, 0.7]),
+        torch.zeros(3),
+    )
+    r = Results(boxes=boxes, orig_shape=(64, 64), identities=ids)
+    sliced = r[0]
+    assert sliced.identities.name == ["alice"]
+    r2 = r.update(identities=Identities(["carol"] * 3, np.ones(3)))
+    assert r2.identities.name == ["carol", "carol", "carol"]

@@ -115,6 +115,8 @@ def entrypoint() -> None:
     # Face-embedding verification (facial-recognition): compare two images.
     app.command("compare", cls=KeyValueCommand)(special.compare_cmd)
     app.command("verify", cls=KeyValueCommand)(special.compare_cmd)
+    # Face identification: build a gallery from a folder-per-person tree.
+    app.command("enroll", cls=KeyValueCommand)(special.enroll_cmd)
 
     # Core mode commands
     app.command("predict", cls=KeyValueCommand)(predict.predict_cmd)

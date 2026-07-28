@@ -41,6 +41,8 @@ class FaceEmbedRunner:
         face_boxes: Optional[Sequence] = None,
         face_detector: Optional[FaceDetector] = None,
         face_conf: float = 0.5,
+        gallery=None,
+        threshold: float = 0.4,
         save: bool = False,
         output_path: Optional[str] = None,
         color_format: str = "auto",
@@ -61,6 +63,7 @@ class FaceEmbedRunner:
             return [
                 self._predict_single(
                     p, detector=detector, face_boxes=None, face_conf=face_conf,
+                    gallery=gallery, threshold=threshold,
                     save=save, output_path=output_path, color_format=color_format,
                     output_file_format=output_file_format,
                 )
@@ -69,6 +72,7 @@ class FaceEmbedRunner:
 
         return self._predict_single(
             source, detector=detector, face_boxes=face_boxes, face_conf=face_conf,
+            gallery=gallery, threshold=threshold,
             save=save, output_path=output_path, color_format=color_format,
             output_file_format=output_file_format,
         )
@@ -85,6 +89,8 @@ class FaceEmbedRunner:
         output_path: Optional[str],
         color_format: str,
         output_file_format: Optional[str],
+        gallery=None,
+        threshold: float = 0.4,
     ) -> Results:
         image_path = image if isinstance(image, (str, Path)) else None
         pil = ImageLoader.load(image, color_format=color_format)
@@ -93,6 +99,8 @@ class FaceEmbedRunner:
 
         faces = self._collect_faces(rgb_np, detector, face_boxes, face_conf)
         result = self._run_embed(rgb_np, faces, (h, w), image_path)
+        if gallery is not None:
+            self._identify(result, gallery, threshold)
 
         if save:
             ext = (output_file_format or "jpg").lower().lstrip(".")
@@ -175,10 +183,48 @@ class FaceEmbedRunner:
         )
 
     # ------------------------------------------------------------------
+    def _identify(self, result: Results, gallery, threshold: float) -> None:
+        """Attach an Identities payload by matching against ``gallery``."""
+        from ...utils.results import Identities
+
+        if result.embeddings is None or len(result.embeddings) == 0:
+            result.identities = Identities([], np.zeros((0,), dtype=np.float32))
+            return
+        if len(gallery) == 0:
+            raise ValueError(
+                "Cannot identify against an empty FaceGallery — enroll at "
+                "least one identity first."
+            )
+        # Match unthresholded to keep the best score visible for unknowns,
+        # then apply the threshold to the name only.
+        matches = gallery.match(
+            result.embeddings, top_k=1, threshold=-1.0, model=self.model
+        )
+        names, scores = [], []
+        for m in matches:
+            best_name, best_score = m[0] if m else (None, float("nan"))
+            names.append(best_name if best_score >= threshold else None)
+            scores.append(best_score)
+        result.identities = Identities(names, np.asarray(scores, dtype=np.float32))
+
+    # ------------------------------------------------------------------
     def _annotate(self, pil_img, result):
         if result.boxes is None or len(result.boxes) == 0:
             return pil_img
         from ...utils.drawing import draw_boxes
+
+        if result.identities is not None and len(result.identities) == len(result.boxes):
+            # Label each face with its matched identity (or "unknown"),
+            # colored per identity, with the match score as the confidence.
+            labels = [n if n is not None else "unknown" for n in result.identities.name]
+            palette = {label: i for i, label in enumerate(dict.fromkeys(labels))}
+            return draw_boxes(
+                pil_img,
+                result.boxes.xyxy.tolist(),
+                [max(float(s), 0.0) for s in result.identities.score],
+                [palette[label] for label in labels],
+                class_names={i: label for label, i in palette.items()},
+            )
 
         return draw_boxes(
             pil_img,

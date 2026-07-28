@@ -101,6 +101,110 @@ def compare_cmd(
     out.result(data)
 
 
+def enroll_cmd(
+    model: str = typer.Option(..., help="Face-embedding model (path or name)"),
+    source: str = typer.Option(
+        ..., help="Folder-per-person tree: source/<identity>/*.jpg"
+    ),
+    gallery: str = typer.Option(
+        ..., help="Output gallery file (.npz); extended in place if it exists"
+    ),
+    face_detector: Optional[str] = typer.Option(
+        None, "--face-detector", help="Face detector (YuNet .onnx or LibreYOLO detector)"
+    ),
+    device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
+    json_output: bool = typer.Option(False, "--json", help="JSON output to stdout"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress stderr"),
+) -> None:
+    """Enroll identities into a face gallery from a folder-per-person tree."""
+    from libreyolo.utils.image_loader import ImageLoader
+
+    out = _get_output(json_output, quiet)
+
+    source_dir = Path(source)
+    if not source_dir.is_dir():
+        exit_with_error(
+            out,
+            "source_not_found",
+            f"source must be a directory laid out as <identity>/<images>: {source}",
+        )
+    identity_dirs = sorted(d for d in source_dir.iterdir() if d.is_dir())
+    if not identity_dirs:
+        exit_with_error(
+            out,
+            "config_unsupported",
+            f"No identity subfolders found under {source}. Expected "
+            "source/<identity_name>/*.jpg (the folder name becomes the identity).",
+        )
+
+    model_path = resolve_model_or_exit(out, model)
+    loaded = load_model_or_exit(
+        out, model=model, model_path=model_path, device=device, task="facial-recognition"
+    )
+    if getattr(loaded, "task", None) != "embed":
+        exit_with_error(
+            out,
+            "config_unsupported",
+            "enroll requires a face-embedding model (task=facial-recognition).",
+        )
+    loaded.face_detector = _resolve_embed_face_detector(out, face_detector, device)
+
+    from libreyolo.models.facerec import FaceGallery
+
+    gallery_path = Path(gallery)
+    if gallery_path.exists():
+        book = FaceGallery.load(gallery_path, embedder=loaded)
+    else:
+        book = FaceGallery(embedder=loaded)
+
+    enrolled: dict[str, int] = {}
+    skipped: list[str] = []
+    for identity_dir in identity_dirs:
+        images = ImageLoader.collect_images(identity_dir)
+        if not images:
+            skipped.append(identity_dir.name)
+            continue
+        count = 0
+        for image in images:
+            try:
+                count += book.enroll(identity_dir.name, image)
+            except ValueError as exc:  # e.g. no face found in one reference
+                if not quiet:
+                    typer.echo(f"skip {image}: {exc}", err=True)
+        if count:
+            enrolled[identity_dir.name] = count
+        else:
+            skipped.append(identity_dir.name)
+
+    if not enrolled:
+        exit_stage_error(
+            out,
+            stage="enroll",
+            detail="no faces found in any identity folder",
+            code="config_unsupported",
+        )
+
+    try:
+        book.save(gallery_path)
+    except Exception as exc:
+        exit_stage_error(out, stage="enroll", detail=exc, code="io_error")
+
+    data = {
+        "gallery": str(gallery_path),
+        "identities": len(book),
+        "references": sum(enrolled.values()),
+        "enrolled": enrolled,
+        "skipped": skipped,
+    }
+    if not json_output:
+        data["_human_text"] = (
+            f"enrolled {sum(enrolled.values())} reference faces for "
+            f"{len(enrolled)} identities -> {gallery_path}"
+            + (f" (skipped: {', '.join(skipped)})" if skipped else "")
+        )
+    out.result(data)
+
+
 def _metadata_value_for_cli(value: Any) -> Any:
     """Return a compact JSON-safe representation for raw checkpoint metadata."""
     if value is None or isinstance(value, (str, int, float, bool)):

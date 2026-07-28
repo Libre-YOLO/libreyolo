@@ -6,14 +6,19 @@ L2-normalized identity embedding. Verification is cosine similarity.
 """
 
 from .align import ARCFACE_DST_112, align_face, estimate_norm
+from .gallery import FaceGallery
 from .model import LibreFaceEmbedder, OpenCVFaceDetector
 from .preprocess import PreprocCfg
+from .weights import FACEREC_WEIGHT_URLS, resolve_facerec_weight
 
 __all__ = [
     "LibreFaceEmbedder",
     "OpenCVFaceDetector",
+    "FaceGallery",
     "PreprocCfg",
     "align_face",
     "estimate_norm",
     "ARCFACE_DST_112",
+    "FACEREC_WEIGHT_URLS",
+    "resolve_facerec_weight",
 ]

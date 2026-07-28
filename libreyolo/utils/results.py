@@ -1082,6 +1082,73 @@ class Embeddings(_TensorPayload):
         )
 
 
+class Identities:
+    """Per-face identification outcome, row-aligned with ``Results.boxes``.
+
+    Produced by the ``embed`` task when a ``FaceGallery`` is supplied.
+    ``name`` is ``None`` for faces below the match threshold (*unknown*):
+    an unidentified face is never assigned the nearest wrong person.
+    """
+
+    def __init__(
+        self,
+        names: List[Optional[str]],
+        scores: TensorLike,
+    ):
+        self._names = list(names)
+        self._scores = np.asarray(_numpy(scores), dtype=np.float32).reshape(-1)
+        if len(self._names) != self._scores.shape[0]:
+            raise ValueError(
+                f"names ({len(self._names)}) and scores "
+                f"({self._scores.shape[0]}) must be row-aligned"
+            )
+
+    @property
+    def name(self) -> List[Optional[str]]:
+        """Matched identity per face, ``None`` for unknown."""
+        return list(self._names)
+
+    @property
+    def score(self) -> np.ndarray:
+        """Best gallery cosine similarity per face."""
+        return self._scores
+
+    @property
+    def data(self) -> List[Tuple[Optional[str], float]]:
+        return [(n, float(s)) for n, s in zip(self._names, self._scores)]
+
+    # Container protocol used by Results._apply — identity labels are
+    # device-less, so tensor movement is a no-op.
+    def to(self, *args, **kwargs) -> "Identities":
+        return self
+
+    def cpu(self) -> "Identities":
+        return self
+
+    def cuda(self) -> "Identities":
+        return self
+
+    def numpy(self) -> "Identities":
+        return self
+
+    def __getitem__(self, idx) -> "Identities":
+        if isinstance(idx, (int, np.integer)):
+            return Identities([self._names[idx]], self._scores[idx : idx + 1])
+        if isinstance(idx, slice):
+            return Identities(self._names[idx], self._scores[idx])
+        idx = np.asarray(idx)
+        if idx.dtype == bool:
+            idx = np.flatnonzero(idx)
+        return Identities([self._names[i] for i in idx], self._scores[idx])
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def __repr__(self) -> str:
+        known = sum(1 for n in self._names if n is not None)
+        return f"Identities(n={len(self)}, known={known})"
+
+
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
@@ -1100,6 +1167,7 @@ class Results:
         "matte",
         "ocr",
         "embeddings",
+        "identities",
     )
 
     def __init__(
@@ -1127,6 +1195,7 @@ class Results:
         ocr: Optional[OCRRegions] = None,
         restore_scale: int = 1,
         embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1161,6 +1230,7 @@ class Results:
         # deblur/denoise and every non-restore task.
         self.restore_scale = int(restore_scale) if restore_scale else 1
         self.embeddings = embeddings
+        self.identities = identities
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -1188,6 +1258,7 @@ class Results:
             "ocr": self.ocr,
             "restore_scale": self.restore_scale,
             "embeddings": self.embeddings,
+            "identities": self.identities,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -1250,6 +1321,7 @@ class Results:
         ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
         embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1285,6 +1357,8 @@ class Results:
             self.restore_scale = int(restore_scale) if restore_scale else 1
         if embeddings is not None:
             self.embeddings = embeddings
+        if identities is not None:
+            self.identities = identities
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -1537,6 +1611,9 @@ class Results:
                 row["embedding_dim"] = int(emb.dim)
                 if embeddings:
                     row["embedding"] = [round(float(v), decimals) for v in emb.data[i]]
+            if self.identities is not None and i < len(self.identities):
+                row["identity"] = self.identities.name[i]
+                row["identity_score"] = round(float(self.identities.score[i]), decimals)
             if track_ids is not None:
                 row["track_id"] = int(track_ids[i])
             rows.append(row)
