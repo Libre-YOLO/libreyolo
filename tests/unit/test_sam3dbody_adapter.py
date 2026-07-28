@@ -213,6 +213,30 @@ class TestRunnerGuards:
         with pytest.raises(ValueError, match="Tiled inference"):
             runner(rgb(), person_boxes=[[0, 0, 9, 9]], tiling=True)
 
+    def test_person_boxes_with_video_is_refused_upfront(self, tmp_path):
+        """Static boxes cannot follow a moving person, so say so clearly.
+
+        Without this guard the boxes are silently dropped and each frame
+        raises "pass person_boxes", telling the user to do what they did.
+        """
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00" * 16)
+        runner = MeshInferenceRunner(FakeModel())
+        with pytest.raises(ValueError, match="cannot be reused across video"):
+            runner(str(video), person_boxes=[[0, 0, 9, 9]])
+
+    def test_video_with_a_detector_is_not_refused(self, tmp_path):
+        """The guard must only reject the boxes case, not video as such."""
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00" * 16)
+        model = FakeModel(person_detector=CallablePersonDetector(fn=lambda img: []))
+        runner = MeshInferenceRunner(model)
+        # Reaches the decode path and fails there on the fake file, rather than
+        # being turned away by the person-source guard.
+        with pytest.raises(Exception) as exc:
+            runner(str(video))
+        assert "cannot be reused across video" not in str(exc.value)
+
     def test_bad_output_format_rejected(self):
         runner = MeshInferenceRunner(FakeModel())
         with pytest.raises(ValueError, match="output_file_format"):

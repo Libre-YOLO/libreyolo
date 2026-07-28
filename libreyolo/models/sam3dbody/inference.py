@@ -78,6 +78,18 @@ class MeshInferenceRunner:
 
         detector = self._resolve_runtime_detector(person_detector, person_boxes)
 
+        if person_boxes is not None and is_video_file(source):
+            # Refuse rather than drop them: a single set of boxes cannot follow
+            # a moving person across frames, and letting this through would
+            # surface as a per-frame "pass person_boxes" error telling the user
+            # to do the thing they already did.
+            raise ValueError(
+                "person_boxes applies to a single image and cannot be reused "
+                "across video frames, where people move between them. Pass "
+                "person_detector=... for video, or call the model per frame "
+                "with the boxes for that frame."
+            )
+
         if is_video_file(source):
             gen = self._predict_video(
                 source,
