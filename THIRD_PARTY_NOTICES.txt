@@ -899,3 +899,25 @@ Model weights (sensenova/SenseNova-Vision-7B-MoT, CC BY-NC 4.0,
 non-commercial) are mirrored byte-identically with attribution at
 huggingface.co/LibreYOLO/SenseNovaVision7b; mirroring does not change the
 license. See libreyolo/models/sensenova/NOTICE for the full provenance chain.
+
+--------------------------------------------------------------------
+AuraFace-v1 (fal.ai)
+--------------------------------------------------------------------
+Source: https://huggingface.co/fal/AuraFace-v1
+License: Apache-2.0 (weights)
+Used for: the librefacerec-l face-embedding ONNX weights (single file
+glintr100.onnx, mirrored unmodified to the LibreYOLO Hugging Face org
+as librefacerec-l.onnx). No code is ported; the graph is consumed
+opaquely via onnxruntime. Upstream training data is undisclosed; only
+this single Apache-2.0 file is mirrored, none of the other artifacts
+in the upstream repository.
+
+--------------------------------------------------------------------
+YuNet face detector (OpenCV Zoo)
+--------------------------------------------------------------------
+Source: https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet
+License: MIT (weights), Copyright (c) Shiqi Yu
+Used for: the librefacerec-det default face-detector ONNX weights
+(face_detection_yunet_2023mar.onnx, mirrored unmodified to the
+LibreYOLO Hugging Face org as librefacerec-det.onnx). Consumed via
+OpenCV's bundled cv2.FaceDetectorYN; no code is ported.
