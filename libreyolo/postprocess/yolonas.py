@@ -13,15 +13,10 @@ from __future__ import annotations
 
 from typing import Tuple, Union
 
-
-def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
-    if isinstance(input_size, (list, tuple)):
-        return int(input_size[0]), int(input_size[1])
-    n = int(input_size)
-    return n, n
-
 import torch
 import torchvision.ops
+
+from .common import _input_size_hw
 
 YOLO_NAS_RESIZE_SIZE = 636
 YOLO_NAS_POSE_RESIZE_SIZE = 640

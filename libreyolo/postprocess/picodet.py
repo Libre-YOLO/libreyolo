@@ -13,14 +13,9 @@ from __future__ import annotations
 from typing import List, Sequence, Tuple, Union
 
 import torch
-
-
-def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
-    if isinstance(input_size, (list, tuple)):
-        return int(input_size[0]), int(input_size[1])
-    n = int(input_size)
-    return n, n
 import torch.nn.functional as F
+
+from .common import _input_size_hw
 
 
 def _grid_centers(
@@ -135,7 +130,7 @@ def postprocess(
     output: Tuple[List[torch.Tensor], List[torch.Tensor]],
     conf_thres: float = 0.025,
     iou_thres: float = 0.6,
-    input_size: int = 320,
+    input_size: Union[int, Tuple[int, int]] = 320,
     original_size: Tuple[int, int] | None = None,
     ratio: float = 1.0,  # unused; kept for signature parity
     max_det: int = 100,
@@ -161,7 +156,7 @@ def postprocess(
     valid_scores, class_ids, valid_boxes = _per_level_filter_topk(
         cls_scores, bbox_preds, strides=strides, reg_max=reg_max,
         score_thr=conf_thres, nms_pre=1000,
-        canvas_size=(input_size_w, input_size_h),
+        canvas_size=(input_size_h, input_size_w),
     )
     if valid_scores.numel() == 0:
         return {"boxes": [], "scores": [], "classes": [], "num_detections": 0}

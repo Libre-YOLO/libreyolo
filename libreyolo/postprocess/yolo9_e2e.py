@@ -8,12 +8,7 @@ from typing import Dict, Tuple, Union
 
 import torch
 
-
-def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
-    if isinstance(input_size, (list, tuple)):
-        return int(input_size[0]), int(input_size[1])
-    n = int(input_size)
-    return n, n
+from .common import _input_size_hw
 
 
 def _scale_and_clip_boxes(

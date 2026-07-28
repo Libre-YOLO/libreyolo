@@ -19,14 +19,7 @@ import torch
 import torch.nn.functional as F
 import torchvision.ops
 
-
-def _input_size_hw(input_size: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
-    if isinstance(input_size, (list, tuple)):
-        return int(input_size[0]), int(input_size[1])
-    n = int(input_size)
-    return n, n
-
-from .common import postprocess_detections
+from .common import _input_size_hw, postprocess_detections
 
 
 def _make_grid_priors(feats: List[torch.Tensor], strides: List[int]) -> torch.Tensor:
@@ -371,10 +364,14 @@ def _postprocess_segment(
     )
     if original_size is not None:
         orig_w, orig_h = original_size
-        resized = math.ceil(mask_logits.shape[-1] / ratio)
+        # Resize each axis independently; with a rectangular canvas the mask
+        # tensor is non-square, so a single width-derived size would distort
+        # masks and blow up memory at wide aspect ratios.
+        resized_h = math.ceil(mask_logits.shape[-2] / ratio)
+        resized_w = math.ceil(mask_logits.shape[-1] / ratio)
         mask_logits = F.interpolate(
             mask_logits,
-            size=(resized, resized),
+            size=(resized_h, resized_w),
             mode="bilinear",
             align_corners=False,
         )[..., :orig_h, :orig_w]
