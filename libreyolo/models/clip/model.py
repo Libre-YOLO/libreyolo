@@ -71,7 +71,9 @@ class LibreCLIP(BaseModel):
     # the model resizes to a fixed square; keep predict to a single forward.
     TTA_ENABLED: ClassVar[bool] = False
 
-    validator_class: ClassVar[Optional[type]] = None  # set lazily (see _resolve_validator)
+    validator_class: ClassVar[Optional[type]] = (
+        None  # set lazily (see _resolve_validator)
+    )
 
     # =========================================================================
     # Registry classmethods
@@ -141,10 +143,14 @@ class LibreCLIP(BaseModel):
         else:
             # Zero-config: pick a default size and autodownload its checkpoint.
             size = size or "b32"
-            weight_source = self._resolve_weights_path(f"{self.FILENAME_PREFIX}{size}-cls.pt")
+            weight_source = self._resolve_weights_path(
+                f"{self.FILENAME_PREFIX}{size}-cls.pt"
+            )
         size = size or "b32"
 
-        self._default_templates = list(templates) if templates else list(DEFAULT_TEMPLATES)
+        self._default_templates = (
+            list(templates) if templates else list(DEFAULT_TEMPLATES)
+        )
         self._text_embeds: Optional[torch.Tensor] = None
         self.tokenizer = None  # built after super().__init__
 
@@ -248,8 +254,9 @@ class LibreCLIP(BaseModel):
         }
 
     def _build_transform(self, imgsz: int):
-        from ...data.classify_dataset import build_classify_transforms
         from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         return build_classify_transforms(
             imgsz,
@@ -262,15 +269,20 @@ class LibreCLIP(BaseModel):
 
     @staticmethod
     def _get_preprocess_numpy():
-        from ...data.classify_dataset import build_classify_transforms
-        from torchvision.transforms import InterpolationMode
         import numpy as _np
+        from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         def _preprocess_numpy(img_rgb_hwc, input_size=224):
             res = input_size if isinstance(input_size, int) else input_size[0]
             transform = build_classify_transforms(
-                res, augment=False, mean=CLIP_MEAN, std=CLIP_STD,
-                interpolation=InterpolationMode.BICUBIC, crop_pct=1.0,
+                res,
+                augment=False,
+                mean=CLIP_MEAN,
+                std=CLIP_STD,
+                interpolation=InterpolationMode.BICUBIC,
+                crop_pct=1.0,
             )
             pil = Image.fromarray(_np.asarray(img_rgb_hwc).astype("uint8"))
             return transform(pil).numpy(), 1.0
@@ -409,14 +421,48 @@ class LibreCLIP(BaseModel):
         inference). The ONNX is fixed to the labels set at export time and to a
         fixed input resolution; re-export to change either.
         """
-        if format.lower() != "onnx":
+        if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
                 f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "
-                "(frozen-class) is supported. Open-vocabulary export (two towers "
+                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
                 "+ tokenizer) is out of scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
+
+        if format.lower() == "coreai":
+            # LibreCLIP is a two-tower module with no single forward(x), which
+            # is why the ONNX path builds its graph by hand. Reuse the very
+            # same frozen-class module here rather than duplicating it, then
+            # hand it to the shared Core AI converter.
+            import torch as _torch
+
+            from ...export.coreai import (
+                export_coreai,
+                prepare_frozen_classifier_export,
+            )
+            from .export import _FrozenCLIPClassifier
+
+            size, output_path, metadata = prepare_frozen_classifier_export(
+                self, kwargs, default_output="clip_coreai"
+            )
+            scale = float(self.model.logit_scale.exp().detach().cpu())
+            weight = (scale * self._text_embeds).detach().cpu()
+            device = next(self.model.visual.parameters()).device
+            was_training = self.model.visual.training
+            visual = self.model.visual.to("cpu").eval()
+            try:
+                frozen = _FrozenCLIPClassifier(visual, weight).eval()
+                dummy = _torch.randn(1, 3, size, size)
+                return export_coreai(
+                    frozen,
+                    dummy,
+                    output_path=output_path,
+                    metadata=metadata,
+                    model_family="clip",
+                )
+            finally:
+                self.model.visual.to(device).train(was_training)
 
         from .export import export_frozen_onnx
 

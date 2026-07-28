@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import importlib
+import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,9 +15,7 @@ import pytest
 from libreyolo.export.exporter import NcnnExporter, OnnxExporter
 from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
 from libreyolo.models.inventory import collect_model_inventory
-from libreyolo.tasks import TASKS
-from libreyolo.tasks import task_to_suffix
-
+from libreyolo.tasks import TASKS, task_to_suffix
 
 pytestmark = pytest.mark.unit
 
@@ -115,6 +113,19 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
     fomo_tflite = get_support("fomo", "point", "tflite")
     assert depth_ncnn.tier == "blocked" and "reshape" in depth_ncnn.reason
     assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
+
+
+def test_coreai_validated_tier_has_trained_weight_parity_coverage():
+    validated = {
+        (family, task)
+        for (family, task, fmt), entry in SUPPORT.items()
+        if fmt == "coreai" and entry.tier == "validated"
+    }
+    assert validated == {
+        ("dfine", "detect"),
+        ("rfdetr", "detect"),
+        ("yolo9", "detect"),
+    }
 
 
 def test_fallback_reasons_describe_project_support_not_developer_environment():

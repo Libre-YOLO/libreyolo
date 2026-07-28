@@ -7,7 +7,6 @@ from typing import Iterator, Literal
 
 from ..tasks import TASKS
 
-
 Tier = Literal["validated", "experimental", "blocked"]
 EXPORT_FORMATS = (
     "onnx",
@@ -17,6 +16,7 @@ EXPORT_FORMATS = (
     "ncnn",
     "tflite",
     "coreml",
+    "coreai",
 )
 
 
@@ -134,7 +134,7 @@ _add(
     "blocked",
     ("clip", "siglip2"),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
     reason=(
         "Frozen-class vision-language export is ONNX-only in v1; re-export "
         "the frozen ONNX graph for a different deployment runtime."
@@ -144,7 +144,7 @@ _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
     reason="LibreDINOv2 classify export currently supports ONNX only.",
 )
 _add(
@@ -650,6 +650,341 @@ _add(
 )
 
 
+# Conversion has been observed for the families below, but a validated tier
+# requires a reproducible trained-weight parity test in this repository.
+_add(
+    "experimental",
+    (
+        "yolo1",
+        "deim",
+        "deimv2",
+        "rtdetr",
+        "rtdetrv2",
+        "rtdetrv4",
+        "yolo9_e2e",
+        "yolox",
+        "rtmdet",
+        "picodet",
+        "yolonas",
+    ),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "Conversion has been measured, but no reproducible trained-weight "
+        "Core AI parity test is committed for this family yet."
+    ),
+)
+_add(
+    "experimental",
+    (
+        "resnet",
+        "mobilenetv4",
+        "efficientnetv2",
+        "clip",
+        "siglip2",
+        "convnext",
+        "dinov2",
+    ),
+    ("classify",),
+    ("coreai",),
+    reason=(
+        "Conversion has been measured, but no reproducible trained-weight "
+        "Core AI parity test is committed for this family yet."
+    ),
+)
+_add(
+    "experimental",
+    ("zipdepth", "depth_anything"),
+    ("depth",),
+    ("coreai",),
+    reason=(
+        "Conversion has been measured, but no reproducible trained-weight "
+        "Core AI parity test is committed for this family yet."
+    ),
+)
+_add(
+    "experimental",
+    ("nafnet", "realesrgan"),
+    ("restore",),
+    ("coreai",),
+    reason=(
+        "Conversion has been measured, but no reproducible trained-weight "
+        "Core AI parity test is committed for this family yet."
+    ),
+)
+
+# HOW THE Core AI NUMBERS BELOW WERE MEASURED, and why an earlier set of them
+# was withdrawn.
+#
+# Every figure is the worst relative error against a reference graph, using
+# TRAINED weights, with each artifact fed the input ITS OWN contract expects,
+# and reported alongside the reference's own input-sensitivity.
+#
+# All three qualifiers were learned the hard way.
+#
+# Trained weights: a randomly initialised detection head emits nearly the same
+# tensor whatever it is shown, because the constant anchor grid dominates its
+# output. Measured on the ONNX reference between two very different probes,
+# random-init yolox moved by 1.5e-09 and rtmdet by 8.9e-12. Agreement at 1e-08
+# against a reference that moves 1.5e-09 certifies nothing. picodet was caught
+# because it hit exactly zero and was recorded as blocked; its neighbours
+# failed the same way by degrees and were recorded as validated.
+#
+# Input contract: _wrap_for_family wraps some families in a preprocessing
+# module for the Apple formats, so a Core AI graph takes canonical RGB[0,1] and
+# converts internally (YOLOX scales by 255 and swaps to BGR, RF-DETR applies
+# ImageNet normalization). The ONNX exporter applies no such wrapper. Handing
+# both the same tensor compares two different functions and reads ~0.5 however
+# correct the conversion is.
+#
+# Sensitivity margin: a result counts only if parity is at least 100x below
+# how far the reference itself moves between probes. Otherwise the honest
+# answer is that the measurement cannot support a verdict.
+_add(
+    "validated",
+    ("dfine",),
+    ("detect",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "fixed export canvas; trained LibreDFINEn weights are covered on "
+        "macOS 27 by direct named-output parity with a 3e-04 tolerance and "
+        "a 100x input-sensitivity margin"
+    ),
+)
+
+
+_add(
+    "validated",
+    ("yolo9",),
+    ("detect",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "fixed export canvas; trained LibreYOLO9t weights are covered on "
+        "macOS 27 by direct named-output parity with a 3e-04 tolerance and "
+        "a 100x input-sensitivity margin"
+    ),
+)
+_add(
+    "experimental",
+    ("yolo9_p2",),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "Converts, and agrees with its ONNX export at 7.1e-08, but that number "
+        "cannot be relied on: no weights are published for this family, so it "
+        "was measured with random initialisation, and the reference then moves "
+        "only 1.9e-06 between two very different probes. Parity of 7.1e-08 "
+        "against a reference that barely responds to its input is not "
+        "evidence. Publish or point at trained weights and this resolves in "
+        "one run; every sibling that could be measured that way passed."
+    ),
+)
+_add(
+    "blocked",
+    ("yolo7",),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "WITHDRAWN from validated. This family was recorded at 1.4e-07 on "
+        "random initialisation. With trained weights, where the reference "
+        "actually moves (input-sensitivity 1.3e-01), the same comparison gives "
+        "2.9e-01: the artifact does not reproduce the model. The earlier "
+        "number was two near-constant tensors agreeing, not a correct "
+        "conversion. "
+        "yolo7 is the one family where the trained-weight re-measurement "
+        "turned a pass into a failure rather than confirming it, so whatever "
+        "it does differently from yolo9 and yolox, which pass the identical "
+        "check at 1.9e-06 and 2.4e-06, is the place to look. Only the b size "
+        "exists, so a second size cannot be used to narrow it."
+    ),
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "Just over the line. Trained weights give 1.08e-04 against a "
+        "reference input-sensitivity of 9.9e-01, versus a 1e-04 gate: a factor "
+        "of 1.08, not an order of magnitude. Its five siblings in the DETR "
+        "group pass the identical check between 2.8e-06 and 4.6e-05, so this "
+        "is a marginal numeric residual rather than a structural fault. Worth "
+        "one look at the highest-error output before either tightening the "
+        "conversion or accepting it."
+    ),
+)
+_add(
+    "experimental",
+    ("yolo2", "yolo3", "yolo4"),
+    ("detect",),
+    ("coreai",),
+    reason=(
+        "Not close. Random initialisation put these at 2.4e-04 and the note "
+        "here said to re-measure with real weights before reading anything "
+        "into it. Done: with trained weights they are 1.5e-01 (yolo2), "
+        "1.1e-01 (yolo3) and 1.6e-01 (yolo4) against reference "
+        "input-sensitivities of 0.18 to 0.37. The residual is structural, not "
+        "numeric drift, and it is shared with yolo7, which fails the same way "
+        "at 2.9e-01. All four are darknet-lineage models sharing "
+        "models/darknet, so one cause probably explains all four. yolo1 sits "
+        "in the same lineage and passes, which makes it the useful control."
+    ),
+)
+_add(
+    "blocked",
+    ("birefnet",),
+    ("matte",),
+    ("coreai",),
+    reason=(
+        "The decoder needs torchvision deform_conv2d, which the Core AI "
+        "converter cannot lower ('unable to handle call function op: "
+        "deform_conv2d.default'). The same operator already blocks the NCNN "
+        "path. An encoder-only contract is the realistic route, matching the "
+        "seam the CUDA graph work used."
+    ),
+)
+_add(
+    "validated",
+    ("rfdetr",),
+    ("detect",),
+    ("coreai",),
+    since="1.5",
+    constraint=(
+        "fixed export canvas; trained LibreRFDETRn weights are covered on "
+        "macOS 27 against the graph the exporter itself prepares, using "
+        "direct named-output parity with a 3e-04 tolerance and a 100x "
+        "input-sensitivity margin. "
+        "Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the "
+        "backbone bakes its position embedding for its configured 384 canvas, "
+        "so exporting at any other size left an antialiased bicubic in the "
+        "graph and the converter has no lowering for "
+        "aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN "
+        "baking path for the actual canvas, so the interpolation happens "
+        "eagerly, outside the graph, computing exactly what it computed "
+        "before. "
+        "NOTE the reference. This family is verified against the exporter's "
+        "prepared graph, not against ONNX, and the difference is not a "
+        "detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that "
+        "same prepared graph by 9.3e-01. Core AI's rebake preserves the "
+        "antialiased resize the eager "
+        "model performs, whereas the ONNX path disables antialiasing (the "
+        "model checks torch.onnx.is_in_onnx_export). Which artifact is right "
+        "is an ONNX question and is not settled here, but ONNX cannot be used "
+        "as the reference for this family at a non-native canvas."
+    ),
+)
+_add(
+    "blocked",
+    ("swinir",),
+    ("restore",),
+    ("coreai",),
+    reason=(
+        "The export process DIES rather than hangs, and the kill point moves "
+        "between runs, which is the signature of memory exhaustion rather "
+        "than a stuck loop. One run reached 'Step 3/3: Optimizing and writing "
+        "the asset' before stopping; a later run of the same graph at the "
+        "same 128 canvas died inside to_coreai() before returning, in both "
+        "cases with a leaked-semaphore warning and no traceback. Window "
+        "attention unrolls into a very large number of small ops, so the "
+        "converter's peak memory is the prime suspect on a 16 GB machine. "
+        "Next steps: watch RSS during conversion, try the smallest available "
+        "size at a 64 canvas, and check the system log for a memory kill. Do "
+        "NOT assume optimize() is at fault; an earlier note said so on the "
+        "strength of a single run and the second run contradicted it."
+    ),
+)
+
+_add(
+    "experimental",
+    ("pidnet", "lingbotvision"),
+    ("semantic",),
+    ("coreai",),
+    reason=(
+        "The conversion is correct and measured: against the eager contract "
+        "graph, pidnet is 6.7e-05 and lingbotvision 7.8e-07, both inside the "
+        "1e-04 gate. Eager rather than ONNX because ONNX is itself blocked "
+        "for the semantic task, so there is no ONNX artifact to compare with; "
+        "an earlier 2.3e-04 for pidnet came from comparing two gate-forced "
+        "exports and is superseded. "
+        "Held at experimental rather than promoted, because _TASK_BLOCKS "
+        "refuses semantic for EVERY format: the shared dense-logits and "
+        "backend argmax decode contract does not exist yet. The artifact "
+        "carries raw logits and nothing downstream knows how to read them. "
+        "What stands between these two and validated is that cross-format "
+        "task contract, not anything about Core AI."
+    ),
+)
+_add(
+    "blocked",
+    ("segformer",),
+    ("semantic",),
+    ("coreai",),
+    reason=(
+        "LibreSegformer implements no export path at all ('Export is not "
+        "implemented for LibreSegformer yet'), so this is not a Core AI "
+        "limitation. Note its weights are non-commercial regardless."
+    ),
+)
+_add(
+    "blocked",
+    ("eomt",),
+    ("semantic",),
+    ("coreai",),
+    reason=(
+        "torch.export refuses the graph: GuardOnDataDependentSymNode, "
+        "'Could not guard on data-dependent expression Eq(u0, 1)'. Something "
+        "in the mask path reads a value off a tensor and branches on it, "
+        "which becomes an unbacked symbol with no hint the tracer can "
+        "resolve. This is a real capture failure, not a missing operator and "
+        "not the task gate: it was measured with the gate open. Fixing it "
+        "means finding the host read and making the shape static for a fixed "
+        "export canvas, the same shape of fix as the rfdetr torch._assert."
+    ),
+)
+_add(
+    "experimental",
+    ("fomo",),
+    ("point",),
+    ("coreai",),
+    reason=(
+        "Converts and matches the eager contract graph at 4.3e-07, measured "
+        "at the family's native 96 canvas. An earlier attempt at 640 said "
+        "nothing useful: 96 is the size this model is built for. "
+        "Held at experimental for the same reason as the semantic families: "
+        "_TASK_BLOCKS refuses point for every format because the shared "
+        "heatmap and backend peak-decoding contract does not exist, so the "
+        "artifact emits a raw heatmap that nothing downstream can decode."
+    ),
+)
+_add(
+    "blocked",
+    ("l2cs",),
+    ("gaze",),
+    ("coreai",),
+    reason=(
+        "The model itself refuses: 'LibreL2CS export to coreai is not "
+        "implemented. The v1 gaze export contract supports ONNX only.' That "
+        "is a model-side decision, unchanged by opening the support gate, so "
+        "nothing about Core AI is being tested here. Wiring the gaze contract "
+        "beyond ONNX comes first."
+    ),
+)
+_add(
+    "blocked",
+    ("depth_anything3",),
+    ("depth",),
+    ("coreai",),
+    reason=(
+        "The model raises NotImplementedError for every format: depth export "
+        "is out of scope per ADR 0006, the depth task contract. Depth Anything "
+        "V2 exports and validates at 5.2e-06, so this is specific to the V3 "
+        "family and not a Core AI limitation."
+    ),
+)
+
+
 _TASK_BLOCKS = {
     "ocr": (
         "OCR uses two networks for detection and recognition with dynamic "
@@ -743,6 +1078,11 @@ def get_support(family: str, task: str, fmt: str) -> SupportEntry:
         return SupportEntry(
             "blocked",
             "This family and task have not been validated through the ONNX-to-TFLite path.",
+        )
+    if fmt == "coreai":
+        return SupportEntry(
+            "blocked",
+            "This family and task have not been validated for Core AI export.",
         )
     if fmt == "coreml":
         return SupportEntry(

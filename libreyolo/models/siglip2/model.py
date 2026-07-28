@@ -46,7 +46,12 @@ from ...tasks import normalize_task
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.serialization import load_trusted_torch_file
 from ..base.model import BaseModel
-from .labels import DEFAULT_TEMPLATES, humanize_labels, imagenet1k_classnames, openai_imagenet_templates
+from .labels import (
+    DEFAULT_TEMPLATES,
+    humanize_labels,
+    imagenet1k_classnames,
+    openai_imagenet_templates,
+)
 from .nn import SIGLIP2_CONFIGS, build_siglip2_model
 
 logger = logging.getLogger(__name__)
@@ -69,9 +74,13 @@ def siglip2_logits(
     L2-normalized class matrix ``[K, D]``. Returns ``[B, K]`` logits.
     """
     image_features = F.normalize(image_features, dim=-1)
-    scale = logit_scale.exp().to(device=image_features.device, dtype=image_features.dtype)
+    scale = logit_scale.exp().to(
+        device=image_features.device, dtype=image_features.dtype
+    )
     bias = logit_bias.to(device=image_features.device, dtype=image_features.dtype)
-    text_embeds = text_embeds.to(device=image_features.device, dtype=image_features.dtype)
+    text_embeds = text_embeds.to(
+        device=image_features.device, dtype=image_features.dtype
+    )
     return scale * (image_features @ text_embeds.t()) + bias
 
 
@@ -110,7 +119,9 @@ class LibreSigLIP2(BaseModel):
     # Attention pooling + fixed square resize make multi-scale TTA meaningless.
     TTA_ENABLED: ClassVar[bool] = False
 
-    validator_class: ClassVar[Optional[type]] = None  # set lazily (see _resolve_validator)
+    validator_class: ClassVar[Optional[type]] = (
+        None  # set lazily (see _resolve_validator)
+    )
 
     # =========================================================================
     # Registry classmethods
@@ -165,7 +176,9 @@ class LibreSigLIP2(BaseModel):
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "classify"
         if resolved_task != "classify":
-            raise ValueError(f"LibreSigLIP2 only supports task='classify'; got {task!r}.")
+            raise ValueError(
+                f"LibreSigLIP2 only supports task='classify'; got {task!r}."
+            )
 
         if isinstance(model_path, dict):
             weight_source: str | dict = model_path
@@ -177,10 +190,14 @@ class LibreSigLIP2(BaseModel):
                 size = self.detect_size_from_filename(model_path)
         else:
             size = size or "b16"
-            weight_source = self._resolve_weights_path(f"{self.FILENAME_PREFIX}{size}-cls.pt")
+            weight_source = self._resolve_weights_path(
+                f"{self.FILENAME_PREFIX}{size}-cls.pt"
+            )
         size = size or "b16"
 
-        self._default_templates = list(templates) if templates else list(DEFAULT_TEMPLATES)
+        self._default_templates = (
+            list(templates) if templates else list(DEFAULT_TEMPLATES)
+        )
         self._multi_label = bool(multi_label)
         self._text_embeds: Optional[torch.Tensor] = None
         self.tokenizer = None  # built after super().__init__
@@ -296,8 +313,9 @@ class LibreSigLIP2(BaseModel):
         }
 
     def _build_transform(self, imgsz: int):
-        from ...data.classify_dataset import build_classify_transforms
         from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         return build_classify_transforms(
             imgsz,
@@ -311,15 +329,21 @@ class LibreSigLIP2(BaseModel):
 
     @staticmethod
     def _get_preprocess_numpy():
-        from ...data.classify_dataset import build_classify_transforms
-        from torchvision.transforms import InterpolationMode
         import numpy as _np
+        from torchvision.transforms import InterpolationMode
+
+        from ...data.classify_dataset import build_classify_transforms
 
         def _preprocess_numpy(img_rgb_hwc, input_size=224):
             res = input_size if isinstance(input_size, int) else input_size[0]
             transform = build_classify_transforms(
-                res, augment=False, mean=SIGLIP_MEAN, std=SIGLIP_STD,
-                interpolation=InterpolationMode.BILINEAR, crop_pct=1.0, square_resize=True,
+                res,
+                augment=False,
+                mean=SIGLIP_MEAN,
+                std=SIGLIP_STD,
+                interpolation=InterpolationMode.BILINEAR,
+                crop_pct=1.0,
+                square_resize=True,
             )
             pil = Image.fromarray(_np.asarray(img_rgb_hwc).astype("uint8"))
             return transform(pil).numpy(), 1.0
@@ -398,7 +422,10 @@ class LibreSigLIP2(BaseModel):
             )
 
         state = self._extract_state(loaded)
-        if "logit_bias" not in state or "vision_model.embeddings.patch_embedding.weight" not in state:
+        if (
+            "logit_bias" not in state
+            or "vision_model.embeddings.patch_embedding.weight" not in state
+        ):
             raise RuntimeError(
                 "Checkpoint does not look like a LibreSigLIP2 model (missing "
                 "'logit_bias'/'vision_model.embeddings.patch_embedding.weight')."
@@ -458,14 +485,50 @@ class LibreSigLIP2(BaseModel):
         the labels and input resolution set at export time; re-export to change
         either.
         """
-        if format.lower() != "onnx":
+        if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
                 f"LibreSigLIP2 export to {format!r} is not implemented; only 'onnx' "
-                "(frozen-class) is supported. Open-vocabulary export (two towers "
+                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
                 "+ tokenizer) is out of scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
+
+        if format.lower() == "coreai":
+            # LibreSigLIP2 is a two-tower module with no single forward(x),
+            # which is why the ONNX path builds its graph by hand. Reuse that
+            # same frozen-class module rather than duplicating it, then hand
+            # it to the shared Core AI converter. The logit_bias matters here:
+            # without it the exported logits do not match native.
+            import torch as _torch
+
+            from ...export.coreai import (
+                export_coreai,
+                prepare_frozen_classifier_export,
+            )
+            from .export import _FrozenSigLIP2Classifier
+
+            size, output_path, metadata = prepare_frozen_classifier_export(
+                self, kwargs, default_output="siglip2_coreai"
+            )
+            scale = float(self.model.logit_scale.exp().detach().cpu())
+            weight = (scale * self._text_embeds).detach().cpu()
+            bias = self.model.logit_bias.detach().to("cpu", _torch.float32).reshape(())
+            device = next(self.model.vision_model.parameters()).device
+            was_training = self.model.vision_model.training
+            vision = self.model.vision_model.to("cpu").eval()
+            try:
+                frozen = _FrozenSigLIP2Classifier(vision, weight, bias).eval()
+                dummy = _torch.randn(1, 3, size, size)
+                return export_coreai(
+                    frozen,
+                    dummy,
+                    output_path=output_path,
+                    metadata=metadata,
+                    model_family="siglip2",
+                )
+            finally:
+                self.model.vision_model.to(device).train(was_training)
 
         from .export import export_frozen_onnx
 
