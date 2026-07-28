@@ -63,6 +63,7 @@ file = name + ".pt"
 | SigLIP2 | `LibreSigLIP2` | `LibreSigLIP2b16-cls.pt` (zero-shot, open-vocab classify) |
 | NAFNet | `LibreNAFNet` | `LibreNAFNets-restore.pt` (restore-only; `-sidd` variant = SIDD denoise) |
 | BiRefNet | `LibreBiRefNet` | `LibreBiRefNetl-matte.pt` (matte / background-removal; `l` is MIT, `t`/lite has no explicit weights-license tag) |
+| FeyNobg | `LibreFeyNobg` | `LibreFeyNobgl-matte.pt` (matte / background-removal; Apache-2.0 code+weights; also ships `-fp8`/`-nvfp4` pre-quantized repos, see below) |
 | RealESRGAN | `LibreRealESRGAN` | `LibreRealESRGANx4-restore.pt` (super-resolution; sizes `x4`/`x2`/`x4t`) |
 | SwinIR | `LibreSwinIR` | `LibreSwinIRm-restore.pt` (4x super-resolution; sizes `s`/`m`/`l`; Apache-2.0) |
 | PPOCR | `LibrePPOCR` | `LibrePPOCRt-ocr.pt` (PP-OCRv5 text det+rec; sizes `t`/`l`; Apache-2.0) |
@@ -187,6 +188,9 @@ LibrePPOCRt-ocr.pt, LibrePPOCRl-ocr.pt,
 
 LibreBiRefNett-matte.pt, LibreBiRefNetl-matte.pt,
 
+LibreFeyNobgl-matte.pt,
+LibreFeyNobgl-matte-fp8.pt, LibreFeyNobgl-matte-nvfp4.pt,
+
 LibrePIDNets-sem.pt, LibrePIDNetm-sem.pt, LibrePIDNetl-sem.pt,
 
 LibreLingBotVisions-sem.pt, LibreLingBotVisionb-sem.pt,
@@ -237,6 +241,14 @@ A name being *valid* does not make it *hostable*; run the gate.
 The `-visdrone` suffix is a `WEIGHT_VARIANTS` dataset variant (grammar in
 `docs/nomenclature.md`): only families that declare `WEIGHT_VARIANTS` in
 their `model.py` may carry one, and plain COCO-default weights never do.
+
+Pre-quantized variant repos (`-fp8`, `-nvfp4`; FeyNobg only today): built by
+`weights/upload_feynobg_hf.py --recipe <r>` from a finalized quantized
+checkpoint (`docs/quantization.md`). They follow the same 5-file contract but
+are **not** auto-download names: the loader never fetches them, users pass the
+downloaded `.pt` path as the weights argument. Their README YAML must carry
+`base_model: <upstream-hf-repo>` + `base_model_relation: quantized` so the repo
+appears in the upstream model's "Quantizations" sidebar on Hugging Face.
 
 Classification (`-cls`) repos use `pipeline_tag: image-classification`,
 `datasets: imagenet-1k`, and **omit the Benchmarks section** (Vision Analysis
