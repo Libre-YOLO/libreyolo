@@ -96,6 +96,9 @@ with `face_boxes=[...]`.
 - Training, validation, and export raise `NotImplementedError`: like gaze,
   this is an inference product consuming opaque ONNX graphs.
 
+The full contract, including the alternatives these decisions rule out, is
+recorded in [`adr/0013-embed-task-contract.md`](adr/0013-embed-task-contract.md).
+
 ## Responsible use
 
 Face embeddings are biometric identifiers. The task is intended for
