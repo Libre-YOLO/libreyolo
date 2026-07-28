@@ -79,6 +79,7 @@ def test_matte_matches_official_reference():
 
 
 _LOCAL_FEYNOBG = REPO / "weights" / "LibreFeyNobgl-matte.pt"
+_LOCAL_FEYNOBG_FP16 = REPO / "weights" / "LibreFeyNobgl-matte-fp16.pt"
 _LOCAL_FEYNOBG_FP8 = REPO / "weights" / "LibreFeyNobgl-matte-fp8.pt"
 _LOCAL_FEYNOBG_NVFP4 = REPO / "weights" / "LibreFeyNobgl-matte-nvfp4.pt"
 
@@ -96,22 +97,34 @@ def test_matte_feynobg_autodownload_or_local(tmp_path):
 
 @pytest.mark.parametrize(
     "path, recipe",
-    [(_LOCAL_FEYNOBG_FP8, "fp8"), (_LOCAL_FEYNOBG_NVFP4, "nvfp4")],
-    ids=["fp8", "nvfp4"],
+    [
+        (_LOCAL_FEYNOBG_FP16, "fp16"),
+        (_LOCAL_FEYNOBG_FP8, "fp8"),
+        (_LOCAL_FEYNOBG_NVFP4, "nvfp4"),
+    ],
+    ids=["fp16", "fp8", "nvfp4"],
 )
 def test_matte_feynobg_quantized_checkpoint_loads_and_predicts(path, recipe):
     """Quantized LibreFeyNobg checkpoints load via plain weights= and predict.
 
     The quantized variants never auto-download; users fetch them from HF and
     pass the .pt path directly, so that exact flow is what we exercise.
+    fp16 is a cast recipe (no packed finalized state) and is GPU-oriented, so
+    its predict leg runs only when CUDA is available.
     """
     if not path.exists():
         pytest.skip(f"{path.name} not staged locally")
-    model = _load(str(path))
+    import torch
+
+    if recipe == "fp16" and not torch.cuda.is_available():
+        pytest.skip("fp16 cast checkpoint is impractically slow on CPU")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = _load(str(path), device=device)
     assert model.FAMILY == "feynobg" and model.size == "l" and model.task == "matte"
     info = model.quant_info()
     assert info is not None and info["recipe"] == recipe
-    assert info.get("state") == "finalized"
+    if recipe != "fp16":
+        assert info.get("state") == "finalized"
 
     res = model.predict(str(_SAMPLE), verbose=False)[0]
     w, h = Image.open(_SAMPLE).size
