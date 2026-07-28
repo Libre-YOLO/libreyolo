@@ -61,6 +61,7 @@ from .utils.results import (
     RestoredImage,
     Matte,
     OCRRegions,
+    Embeddings,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -243,6 +244,7 @@ __all__ = [
     "RestoredImage",
     "Matte",
     "OCRRegions",
+    "Embeddings",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
