@@ -683,6 +683,13 @@ def write_deepstream_sidecars(
 
     network_mode = {"fp32": 0, "int8": 1, "fp16": 2}.get(precision, 0)
     mode_name = {0: "fp32", 1: "int8", 2: "fp16"}[network_mode]
+    # DeepStream-Yolo's custom engine builder serializes detection engines
+    # with this fixed basename, regardless of the ONNX filename.
+    engine_name = (
+        f"model_b{batch}_gpu0_{mode_name}.engine"
+        if task == "detect"
+        else f"{onnx_file.name}_b{batch}_gpu0_{mode_name}.engine"
+    )
 
     # Heads emitting one prediction per object (DETR Hungarian matching, or
     # YOLO9's one-to-one E2E head) must not be clustered: DeepStream's NMS
@@ -699,7 +706,7 @@ def write_deepstream_sidecars(
         f"net-scale-factor={net_scale:.10g}",
         f"model-color-format={color_format}",
         f"onnx-file={onnx_file.name}",
-        f"model-engine-file={onnx_file.name}_b{batch}_gpu0_{mode_name}.engine",
+        f"model-engine-file={engine_name}",
         *([f"labelfile-path={labels_path.name}"] if labels_path is not None else []),
         f"batch-size={batch}",
         f"network-mode={network_mode}",

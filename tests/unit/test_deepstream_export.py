@@ -133,6 +133,7 @@ def test_sidecar_files_content(tmp_path):
 
     config = (tmp_path / "config_infer_primary_libreyolo9s.txt").read_text()
     assert "onnx-file=libreyolo9s.onnx" in config
+    assert "model-engine-file=model_b1_gpu0_fp16.engine" in config
     assert "num-detected-classes=2" in config
     assert "network-mode=2" in config
     assert "cluster-mode=2" in config
