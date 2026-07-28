@@ -443,3 +443,56 @@ def test_identities_payload_slicing_and_results_plumbing():
     assert sliced.identities.name == ["alice"]
     r2 = r.update(identities=Identities(["carol"] * 3, np.ones(3)))
     assert r2.identities.name == ["carol", "carol", "carol"]
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (PR #654)
+# ---------------------------------------------------------------------------
+
+
+def test_enroll_through_a_different_model_raises(tiny_onnx, tmp_path):
+    """A gallery holds one embedding space; enrolling via another model fails.
+
+    Without this guard the gallery keeps the first model's fingerprint and
+    silently appends a vector that will never compare correctly.
+    """
+    from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
+
+    model_a = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    other_path = tmp_path / "other.onnx"
+    _build_tiny_face_onnx(str(other_path), dim=8)
+    model_b = LibreFaceEmbedder(str(other_path), device="cpu")
+    model_b._weights_fingerprint = "deadbeefdeadbeef"
+
+    img = Image.fromarray((np.random.rand(96, 96, 3) * 255).astype(np.uint8))
+    path = tmp_path / "face.jpg"
+    img.save(path)
+
+    gallery = FaceGallery(embedder=model_a)
+    gallery.enroll_embedding("alice", _vec(8, 0))
+
+    with pytest.raises(ValueError, match="different embedding model"):
+        gallery.enroll("bob", str(path), embedder=model_b)
+
+
+def test_video_source_routes_to_video_inference(tiny_onnx, monkeypatch):
+    """A video path must go through the video runner, not ImageLoader."""
+    from libreyolo.models.facerec import LibreFaceEmbedder
+    from libreyolo.models.facerec import inference as inference_module
+
+    model = LibreFaceEmbedder(tiny_onnx, device="cpu")
+    called = {}
+
+    def fake_run_video_inference(source, predict_frame, **kwargs):
+        called["source"] = str(source)
+        called["stride"] = kwargs.get("vid_stride")
+        return iter(())
+
+    monkeypatch.setattr(
+        inference_module, "run_video_inference", fake_run_video_inference
+    )
+    monkeypatch.setattr(
+        inference_module, "collect_video_results", lambda gen, src, stride: list(gen)
+    )
+    model("clip.mp4", face_boxes=[(0, 0, 10, 10)])
+    assert called["source"] == "clip.mp4"

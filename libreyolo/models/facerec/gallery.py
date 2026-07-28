@@ -84,8 +84,13 @@ class FaceGallery:
                 "with FaceGallery(embedder=model) or pass embedder=model. For "
                 "precomputed vectors use enroll_embedding()."
             )
+        # A gallery is only meaningful within one embedding space, so an
+        # enrolment through a different model has to fail here rather than
+        # append a vector that silently will not compare.
         if self._model_fingerprint is None:
             self._model_fingerprint = _embedder_fingerprint(model)
+        else:
+            self._check_model(model)
 
         if isinstance(sources, (str, Path)) or not isinstance(sources, Sequence):
             sources = [sources]

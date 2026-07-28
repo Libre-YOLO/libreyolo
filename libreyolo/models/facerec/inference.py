@@ -18,6 +18,7 @@ import torch
 from ...utils.general import log_saved_result, resolve_save_path
 from ...utils.image_loader import ImageInput, ImageLoader
 from ...utils.results import Boxes, Embeddings, Results
+from ...utils.video import collect_video_results, is_video_file, run_video_inference
 from ..l2cs.face import FaceBox, FaceDetector, resolve_face_detector
 from .align import align_face
 
@@ -50,6 +51,8 @@ class FaceEmbedRunner:
         output_file_format: Optional[str] = None,
         augment: bool = False,
         tiling: bool = False,
+        stream: bool = False,
+        vid_stride: int = 1,
         **_: object,
     ):
         if augment:
@@ -58,6 +61,22 @@ class FaceEmbedRunner:
             raise ValueError("Tiled inference is not supported for face embedding.")
 
         detector = self._resolve_runtime_detector(face_detector, face_boxes)
+
+        if is_video_file(source):
+            gen = self._predict_video(
+                source,
+                detector=detector,
+                face_conf=face_conf,
+                gallery=gallery,
+                threshold=threshold,
+                save=save,
+                show=show,
+                vid_stride=vid_stride,
+                output_path=output_path,
+            )
+            if stream:
+                return gen
+            return collect_video_results(gen, source, vid_stride)
 
         if isinstance(source, (str, Path)) and Path(source).is_dir():
             return [
@@ -180,6 +199,41 @@ class FaceEmbedRunner:
             path=str(image_path) if image_path else None,
             names=self.model.names,
             embeddings=Embeddings(emb, orig_shape),
+        )
+
+    # ------------------------------------------------------------------
+    def _predict_video(
+        self,
+        source,
+        *,
+        detector: Optional[FaceDetector],
+        face_conf: float,
+        gallery,
+        threshold: float,
+        save: bool,
+        show: bool,
+        vid_stride: int,
+        output_path: Optional[str],
+    ):
+        """Embed (and optionally identify) faces frame by frame."""
+
+        def predict_frame(pil_img):
+            rgb_np = np.asarray(pil_img)
+            h, w = rgb_np.shape[:2]
+            faces = self._collect_faces(rgb_np, detector, None, face_conf)
+            result = self._run_embed(rgb_np, faces, (h, w), str(source))
+            if gallery is not None:
+                self._identify(result, gallery, threshold)
+            return result
+
+        yield from run_video_inference(
+            source,
+            predict_frame,
+            vid_stride=vid_stride,
+            save=save,
+            show=show,
+            output_path=output_path,
+            annotate_fn=self._annotate,
         )
 
     # ------------------------------------------------------------------
