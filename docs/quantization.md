@@ -47,7 +47,7 @@ manifest too, so `best.pt` from a QAT run is itself a quantized checkpoint.
 |---|---|---|---|
 | `fp16` | Cast to half precision with a float32 I/O contract. Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
 | `bf16` | Cast to bfloat16 (fp32's exponent range at half storage; the fix when fp16 overflows on DETR-style models). Inference-only. | yolo9, rfdetr, birefnet, feynobg | none |
-| `fp8` | E4M3 W+A simulation: per-channel weight scales, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. | yolo9, rfdetr, birefnet, feynobg | required for activations |
+| `fp8` | E4M3 W+A simulation: per-channel weight scales by default, calibrated per-tensor activation scales, on `Conv2d` and `Linear`. Selected Linear modules may use a manifest-recorded tensorwise weight scale when that is faster and validation-safe. | yolo9, rfdetr, birefnet, feynobg | required for activations |
 | `int8` | W8A8 simulation: per-channel symmetric INT8 weights, per-tensor affine INT8 activations, on `Conv2d` and `Linear`. | yolo9, rfdetr, birefnet, feynobg | required for activations (skipped with `calib=None`, weights-only) |
 | `w4a16` | Grouped symmetric INT4 weights (group 128 along in_features), float activations, on `Linear`. | rfdetr, birefnet, feynobg | not needed (weight-only) |
 | `w4a8` | Grouped INT4 weights plus calibrated INT8 activations, on `Linear`. Maps to NPU W4A8 deployments (Hexagon, Hailo `a8_w4`). | rfdetr, birefnet, feynobg | required for activations |
@@ -107,7 +107,12 @@ casts are the exception: they execute natively.
 Hopper / Blackwell): finalized fp8 `QuantLinear` modules run their GEMM
 directly on the packed E4M3 weights via `torch._scaled_mm` (the `fp8_gemm`
 registry kernel), using the same calibrated static activation scales as the
-simulation; finalized fp8 `QuantConv2d` modules convolve in fp16 against
+simulation. The optional Triton tier fuses activation scaling, saturation,
+and E4M3 conversion into one pass. For per-channel weights it also fuses the
+bounded row-scale and bias epilogue into one pass; modules explicitly listed
+in the manifest's `fp8_tensorwise_weights` fuse the weight scale and bias
+directly into cuBLASLt. Without Triton, the same arithmetic uses stock PyTorch
+operations. Finalized fp8 `QuantConv2d` modules convolve in fp16 against
 weights dequantized from the packed E4M3 codes (the standard fp8-deployment
 convention; the E4M3 activation snap on conv inputs is simulation-only).
 Finalize with `remainder="fp16"` so the non-quantized interior runs in half
@@ -115,11 +120,18 @@ precision (the loader installs the same float32 I/O root hooks the cast
 recipes use). Residual drift vs the simulated tier is half-precision
 rounding plus GEMM summation order; `LIBREYOLO_QUANT_KERNELS=off` restores
 the exact simulated path everywhere. Measured on LibreFeyNobg (263M Swin-L
-matte, RTX 5070 Ti, 1024px): 484 ms simulated -> 217 ms native eager ->
-128 ms with `cuda_graph=True`, vs 131 ms for the fp16 cast checkpoint at
-twice the file size.
+matte, RTX 5070 Ti, 1024px, controlled ABBA runs): fp8 vs fp16 is
+85.7 vs 95.0 ms for a batch-1 graphed forward and 123.1 vs 129.3 ms through
+the full graphed `predict` path. At batch 4 the full path is 515.4 vs
+535.3 ms. The finalized fp8 file is 275 MB vs 531 MB for fp16.
 
-`model.quant_info()` reports the recipe, module counts, calibration state,
+`model.quant_info()` reports the recipe and module state;
+`libreyolo.quant.kernels.active()` reports the selected implementations.
+Linux CUDA PyTorch environments commonly already include Triton. On Windows,
+install a PyTorch-compatible `triton-windows` build to enable the fused cast
+and epilogue; inference remains functional without it.
+
+The remaining `quant_info()` fields report module counts, calibration state,
 and execution tier.
 
 ## Export

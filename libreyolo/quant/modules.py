@@ -61,9 +61,17 @@ class _ActObserverMixin:
         tracing emits them as constants (export mode)."""
         with torch.no_grad():
             if getattr(self, "_q_wformat", "int8") == "fp8":
-                self._q_w_scale.copy_(fp8_weight_qparams(self.weight.float()))
+                self._q_w_scale.copy_(self._fp8_weight_qparams())
             else:
                 self._q_w_scale.copy_(int8_weight_qparams(self.weight.float()))
+
+    def _fp8_weight_qparams(self) -> torch.Tensor:
+        """Return the configured FP8 weight scales in the stable row layout."""
+        weight = self.weight.float()
+        if getattr(self, "_q_fp8_weight_scaling", "per_channel") == "tensorwise":
+            scale = (weight.detach().abs().amax() / E4M3_MAX).clamp_min(1e-12)
+            return scale.reshape(1).expand(self._q_w_scale.shape)
+        return fp8_weight_qparams(weight)
 
     def _weight_scale(self):
         return self._q_w_scale if self._q_export_mode else None
@@ -124,7 +132,7 @@ class _ActObserverMixin:
         if fp8:
             return K.fake_quant_fp8(
                 self.weight.float(),
-                fp8_weight_qparams(self.weight.float()).reshape(
+                self._fp8_weight_qparams().reshape(
                     -1, *([1] * (self.weight.dim() - 1))
                 ),
             )
@@ -328,7 +336,10 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
         """Native tensor-core path, or None to take the simulated path."""
         if not self._native_eligible(x):
             return None
-        impl = K.resolve("fp8_gemm")
+        tensorwise = (
+            getattr(self, "_q_fp8_weight_scaling", "per_channel") == "tensorwise"
+        )
+        impl = K.resolve("fp8_gemm_tensorwise" if tensorwise else "fp8_gemm")
         if impl is None:
             return None
         aux = self.__dict__.get("_q_native_aux")
@@ -336,7 +347,11 @@ class QuantLinear(nn.Linear, _ActObserverMixin):
             from .kernels.scaled_mm_fp8 import make_aux
 
             aux = make_aux(
-                self._native_act_scale(x.device), self._q_w_scale, self.bias, x.device
+                self._native_act_scale(x.device),
+                self._q_w_scale,
+                self.bias,
+                x.device,
+                tensorwise=tensorwise,
             )
             self._q_native_aux = aux
         return impl(x, self.weight_packed, aux)

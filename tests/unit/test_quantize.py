@@ -199,6 +199,96 @@ def test_nvfp4_linear_finalize_roundtrip():
         assert torch.equal(q(x), ref)
 
 
+def test_fp8_tensorwise_weight_scaling_roundtrip():
+    from libreyolo.quant.fake_quant import E4M3_MAX, fake_quant_fp8
+    from libreyolo.quant.packing import unpack_fp8_weight
+
+    torch.manual_seed(0)
+    q = QuantLinear.from_float(nn.Linear(64, 32))
+    q._q_wformat = q._q_aformat = "fp8"
+    q._q_fp8_weight_scaling = "tensorwise"
+    expected_scale = (q.weight.detach().abs().amax() / E4M3_MAX).clamp_min(1e-12)
+    expected = fake_quant_fp8(q.weight.float(), expected_scale.reshape(1))
+
+    q.freeze_weight_qparams()
+    assert torch.equal(q._q_w_scale, expected_scale.expand_as(q._q_w_scale))
+    assert torch.equal(q._effective_weight(), expected)
+
+    q.make_finalized()
+    assert torch.equal(
+        unpack_fp8_weight(q.weight_packed, q._q_w_scale),
+        expected,
+    )
+    q.make_prepared()
+    assert q._q_fp8_weight_scaling == "tensorwise"
+    assert torch.equal(q.weight, expected)
+
+
+def test_fp8_tensorwise_manifest_rebuilds_exact_modules(tmp_path):
+    from libreyolo.quant import (
+        apply_quant_structure,
+        export_finalized_pt,
+        quantize_model,
+    )
+
+    class TinyFeynModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.bb = nn.Module()
+            self.bb.layers = nn.ModuleList(
+                [nn.Sequential(nn.Linear(16, 16)) for _ in range(2)]
+            )
+            self.head = nn.Linear(16, 4)
+
+        def forward(self, x):
+            for layer in self.bb.layers:
+                x = layer(x)
+            return self.head(x)
+
+    class TinyWrapper:
+        FAMILY = "feynobg"
+
+        def __init__(self):
+            self.model = TinyFeynModel()
+            self.device = torch.device("cpu")
+            self.size = "l"
+            self.task = "matte"
+            self.nb_classes = 1
+            self.names = {0: "foreground"}
+            self.model_path = None
+
+        def _get_model_name(self):
+            return "feynobg"
+
+        def _get_input_size(self):
+            return 1024
+
+    source = TinyWrapper()
+    quantize_model(
+        source,
+        recipe="fp8",
+        calib=None,
+        keep_high_precision=(),
+        verbose=False,
+    )
+    assert source._quant_manifest["fp8_tensorwise_weights"] == ["bb.layers.0.0"]
+    assert source.model.bb.layers[0][0]._q_fp8_weight_scaling == "tensorwise"
+    assert not hasattr(source.model.bb.layers[1][0], "_q_fp8_weight_scaling")
+
+    path = export_finalized_pt(
+        source,
+        out=tmp_path / "tiny-fp8.pt",
+        remainder="fp16",
+    )
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    loaded = TinyWrapper()
+    apply_quant_structure(loaded, checkpoint["quant"])
+    loaded.model.load_state_dict(checkpoint["model"])
+    assert loaded.model.bb.layers[0][0]._q_fp8_weight_scaling == "tensorwise"
+    assert not hasattr(loaded.model.bb.layers[1][0], "_q_fp8_weight_scaling")
+    assert loaded.model.bb.layers[0][0].is_finalized
+
+
 # ---------------------------------------------------------------------------
 # Kernel registry
 # ---------------------------------------------------------------------------
@@ -218,6 +308,28 @@ def test_kernel_registry_reference_forced_by_env(monkeypatch):
     finally:
         monkeypatch.delenv("LIBREYOLO_QUANT_KERNELS", raising=False)
         kernels.clear_cache()
+
+
+def test_kernel_registry_active_allows_lazy_registration(monkeypatch):
+    from libreyolo.quant import kernels
+
+    loaded = False
+
+    def lazy_load():
+        nonlocal loaded
+        if not loaded:
+            loaded = True
+            kernels.register(
+                "lazy_active_test",
+                lambda: None,
+                name="test",
+            )
+
+    monkeypatch.setattr(kernels, "_ensure_intree_loaded", lazy_load)
+    try:
+        assert kernels.active()["lazy_active_test"] == "test"
+    finally:
+        kernels.unregister("lazy_active_test", "test")
 
 
 def test_kernel_registry_custom_impl_and_env_override(monkeypatch):
@@ -765,6 +877,7 @@ def test_birefnet_fp8_swaps_convs_and_linears(birefnet_t):
         if isinstance(m, (QuantConv2d,)) or type(m).__name__ == "QuantLinear"
     }
     assert kinds, "expected fp8 quant modules on both Conv2d and Linear"
+    assert "fp8_tensorwise_weights" not in birefnet_t.quant_info()
 
 
 def test_birefnet_int2_rejected(birefnet_t):
@@ -806,8 +919,9 @@ def test_birefnet_nvfp4_save_load_roundtrip(tmp_path, birefnet_t):
         assert torch.equal(src[key].cpu(), dst[key].cpu()), key
 
 
+@pytest.mark.parametrize("weight_scaling", ["per_channel", "tensorwise"])
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-def test_fp8_native_linear_matches_simulation():
+def test_fp8_native_linear_matches_simulation(weight_scaling):
     """The scaled_mm native path tracks the simulated fp8 linear closely."""
     import os
 
@@ -820,6 +934,7 @@ def test_fp8_native_linear_matches_simulation():
     q = QuantLinear.from_float(lin)
     q._q_wformat = q._q_aformat = "fp8"
     q._q_kind = "linear_fp8"
+    q._q_fp8_weight_scaling = weight_scaling
     x = torch.randn(64, 256, device="cuda")
     q._q_observing = True
     q(x)
@@ -835,5 +950,35 @@ def test_fp8_native_linear_matches_simulation():
     finally:
         os.environ.pop("LIBREYOLO_QUANT_KERNELS")
         K.clear_cache()
-    rel = (native.float() - sim.float()).abs().mean() / sim.float().abs().mean()
+    rel = (
+        (native.float() - sim.float()).abs().mean()
+        / sim.float().abs().mean()
+    ).detach()
     assert float(rel) < 5e-3, float(rel)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fp8_triton_fused_cast_and_epilogue_match_torch():
+    from libreyolo.quant import kernels as K
+
+    cast = K.resolve("fp8_cast_static")
+    epilogue = K.resolve("fp8_perchannel_epilogue")
+    if cast is None or epilogue is None:
+        pytest.skip("Triton FP8 kernels unavailable")
+
+    torch.manual_seed(0)
+    x = torch.randn(257, 192, device="cuda", dtype=torch.float16).contiguous()
+    inverse_scale = torch.tensor(3.25, device="cuda", dtype=torch.float16)
+    expected_fp8 = (
+        (x.float() * inverse_scale.float())
+        .clamp(-448.0, 448.0)
+        .to(torch.float8_e4m3fn)
+    )
+    assert torch.equal(cast(x, inverse_scale), expected_fp8)
+
+    values = torch.randn(257, 192, device="cuda", dtype=torch.float16)
+    scale = torch.rand(1, 192, device="cuda", dtype=torch.float16)
+    bias = torch.randn(1, 192, device="cuda", dtype=torch.float16)
+    expected = (values.float() * scale.float() + bias.float()).half()
+    actual = epilogue(values, scale, bias)
+    torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)

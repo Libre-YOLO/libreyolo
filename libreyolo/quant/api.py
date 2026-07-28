@@ -101,6 +101,15 @@ _FAMILY_KEEP_HIGH_PRECISION: Dict[str, Tuple[str, ...]] = {
 }
 _ALWAYS_KEEP = ("dfl",)
 
+# Tensorwise weight scaling lets cuBLASLt fuse the complete FP8 Linear
+# epilogue. Broad use is not accuracy-neutral on vision transformers, but the
+# first Swin stage is both faster and more faithful in the FeyNobg divergence
+# sweep. Exact selected names are persisted in each checkpoint. Other families
+# stay per-channel until they have their own validation evidence.
+_FAMILY_FP8_TENSORWISE_PREFIXES: Dict[str, Tuple[str, ...]] = {
+    "feynobg": ("bb.layers.0.",),
+}
+
 
 class QuantizationError(ValueError):
     """Raised for unsupported or invalid quantization requests."""
@@ -219,6 +228,36 @@ def _quant_modules(root: nn.Module):
     for name, module in root.named_modules():
         if isinstance(module, QUANT_MODULE_TYPES):
             yield name, module
+
+
+def _set_fp8_tensorwise_modules(root: nn.Module, names) -> Tuple[str, ...]:
+    """Mark exact QuantLinear names for tensorwise FP8 weight scaling."""
+    requested = tuple(str(name) for name in names)
+    modules = dict(root.named_modules())
+    missing = []
+    for name in requested:
+        module = modules.get(name)
+        if not isinstance(module, QuantLinear):
+            missing.append(name)
+            continue
+        module._q_fp8_weight_scaling = "tensorwise"
+    if missing:
+        raise QuantizationError(
+            "FP8 tensorwise manifest names do not resolve to QuantLinear "
+            f"modules: {missing[:8]}"
+        )
+    return requested
+
+
+def _default_fp8_tensorwise_modules(family: str, root: nn.Module) -> Tuple[str, ...]:
+    prefixes = _FAMILY_FP8_TENSORWISE_PREFIXES.get(family, ())
+    if not prefixes:
+        return ()
+    return tuple(
+        name
+        for name, module in root.named_modules()
+        if isinstance(module, QuantLinear) and name.startswith(prefixes)
+    )
 
 
 def _cast_finalized_remainder(root: nn.Module, dtype: torch.dtype):
@@ -438,6 +477,11 @@ def quantize_model(
             )
         counts = _swap_selected(wrapper.model, recipe, selected)
         manifest["module_count"] = sum(counts.values())
+        if recipe == "fp8":
+            tensorwise = _default_fp8_tensorwise_modules(family, wrapper.model)
+            if tensorwise:
+                _set_fp8_tensorwise_modules(wrapper.model, tensorwise)
+                manifest["fp8_tensorwise_weights"] = list(tensorwise)
 
         if recipe in CALIBRATED_RECIPES:
             if calib is not None:
@@ -786,6 +830,13 @@ def apply_quant_structure(wrapper, manifest: Dict):
         )
         selected = _select_modules(wrapper.model, recipe, keep)
         counts = _swap_selected(wrapper.model, recipe, selected)
+        tensorwise = manifest.get("fp8_tensorwise_weights", ())
+        if tensorwise:
+            if recipe != "fp8":
+                raise QuantizationError(
+                    "fp8_tensorwise_weights is only valid for recipe='fp8'."
+                )
+            _set_fp8_tensorwise_modules(wrapper.model, tensorwise)
         swapped = sum(counts.values())
         expected = int(manifest.get("module_count") or 0)
         already = sum(1 for _ in _quant_modules(wrapper.model))

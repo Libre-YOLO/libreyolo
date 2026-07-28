@@ -129,8 +129,11 @@ def resolve(op: str) -> Optional[Callable]:
 
 def active() -> Dict[str, str]:
     """Map of op slot to the name of the implementation currently selected."""
+    # Importing the optional in-tree kernels registers new slots. Do that
+    # before iterating so a first-ever active() call cannot mutate the dict.
+    _ensure_intree_loaded()
     out = {}
-    for op, entries in _REGISTRY.items():
+    for op, entries in list(_REGISTRY.items()):
         impl = resolve(op)
         out[op] = next(
             (e["name"] for e in entries if e["impl"] is impl), "unavailable"
