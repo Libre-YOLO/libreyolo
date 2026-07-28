@@ -15,6 +15,7 @@ manifest so ``LibreYOLO(path)`` can rebuild the quantized structure before
 loading weights.
 """
 
+import itertools
 import logging
 from typing import Dict, Optional, Tuple
 
@@ -192,6 +193,26 @@ def _quant_modules(root: nn.Module):
             yield name, module
 
 
+def _reference_tensor(module: nn.Module) -> torch.Tensor:
+    """Return any tensor the module owns, to read its device from.
+
+    Quant modules differ in what they hold depending on their state, so no
+    single attribute is always present: a prepared MXFP4Linear owns only the
+    weight parameter and registers no buffers, while a finalized one deletes
+    that parameter and owns packed buffers instead. Bias is absent on many
+    modules. Look at parameters and buffers together.
+    """
+    for tensor in itertools.chain(
+        module.parameters(recurse=False), module.buffers(recurse=False)
+    ):
+        if tensor is not None:
+            return tensor
+    raise RuntimeError(
+        f"{type(module).__name__} owns no parameters or buffers, so its "
+        "device cannot be determined"
+    )
+
+
 def _cast_finalized_remainder(root: nn.Module, dtype: torch.dtype):
     """Cast deployment parameters without changing quantized buffer formats."""
     exact_buffers = {
@@ -280,18 +301,23 @@ def _run_calibration(
         module._q_obs_method = algorithm
     _set_observing(root, True)
     seen = 0
-    with torch.no_grad():
-        for np_batch in loader:
-            x = torch.from_numpy(np_batch).to(wrapper.device)
-            root(x)
-            seen += x.shape[0]
-    _set_observing(root, False)
+    try:
+        with torch.no_grad():
+            for np_batch in loader:
+                x = torch.from_numpy(np_batch).to(wrapper.device)
+                root(x)
+                seen += x.shape[0]
+    finally:
+        # Restore on every exit path. A batch that raises (bad sample, OOM,
+        # interrupt) would otherwise leave every observer live, so each later
+        # forward keeps widening the ranges and silently corrupts calibration.
+        _set_observing(root, False)
+        if was_training:
+            root.train()
     for _, module in _quant_modules(root):
         if hasattr(module, "finalize_observation"):
             module.finalize_observation()
         module._q_obs_method = "minmax"
-    if was_training:
-        root.train()
     return seen
 
 
@@ -682,9 +708,7 @@ def dequantize_model(wrapper):
     else:
         for name, module in list(_quant_modules(root)):
             finalized = getattr(module, "is_finalized", False)
-            ref = module.bias if module.bias is not None else next(
-                iter(module.buffers())
-            )
+            ref = _reference_tensor(module)
             if isinstance(module, QuantConv2d):
                 new = nn.Conv2d(
                     module.in_channels,

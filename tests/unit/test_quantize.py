@@ -729,3 +729,115 @@ def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
     reloaded = LibreYOLO9(str(path), size="t", device="cpu")
     assert reloaded.quant_info()["recipe"] == "fp16"
     assert next(reloaded.model.parameters()).dtype == torch.float16
+
+
+# ---------------------------------------------------------------------------
+# Robustness of the quant API state machine
+# ---------------------------------------------------------------------------
+
+
+def test_reference_tensor_handles_every_module_state():
+    """Device lookup must work whatever tensors a quant module owns.
+
+    A prepared MXFP4Linear without bias owns only its weight parameter and
+    registers no buffers, so a buffers-only lookup raised StopIteration and
+    crashed dequantize on the ordinary quantize -> train -> dequantize path.
+    """
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import _reference_tensor
+
+    prepared = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    assert not list(prepared.buffers())          # the condition that broke it
+    assert _reference_tensor(prepared).device == prepared.weight.device
+
+    finalized = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    finalized.make_finalized()
+    assert "weight" not in dict(finalized.named_parameters())
+    assert _reference_tensor(finalized) is not None
+
+    with_bias = MXFP4Linear.from_float(nn.Linear(64, 32, bias=True))
+    assert _reference_tensor(with_bias) is not None
+
+
+def test_dequantize_survives_bias_free_mxfp4_in_prepared_state(yolo9t):
+    """dequantize_model must not crash on a bias-free prepared MXFP4Linear."""
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import dequantize_model
+
+    root = yolo9t.model
+    parent = None
+    for module in root.modules():
+        for child_name, child in list(module.named_children()):
+            if isinstance(child, nn.Linear) and child.bias is None:
+                parent, name, original = module, child_name, child
+                break
+        if parent is not None:
+            break
+    if parent is None:  # graft one so the test is not architecture-dependent
+        parent, name = root, "_probe_linear"
+        original = nn.Linear(8, 8, bias=False)
+    setattr(parent, name, MXFP4Linear.from_float(
+        original if isinstance(original, nn.Linear) else nn.Linear(8, 8, bias=False)
+    ))
+    yolo9t._quant_manifest = {"recipe": "mxfp4", "state": "prepared"}
+
+    dequantize_model(yolo9t)  # previously raised StopIteration
+
+
+class _Boom(RuntimeError):
+    pass
+
+
+class _TinyQuantWrapper:
+    """Minimal stand-in for a model wrapper, holding real quant modules."""
+
+    def __init__(self):
+        self.model = nn.Sequential(QuantConv2d(3, 4, 3, padding=1))
+        self.device = "cpu"
+
+    def _get_input_size(self):
+        return 32
+
+    def _get_preprocess_numpy(self):
+        return None
+
+
+@pytest.mark.parametrize("fails", [True, False])
+def test_calibration_always_clears_observing_mode(monkeypatch, fails):
+    """Observing must be cleared on the failure path as well as the happy one.
+
+    Left set, every later forward keeps widening the observed ranges and
+    silently corrupts the calibration that follows.
+    """
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper()
+    quant_modules = [m for _, m in quant_api._quant_modules(wrapper.model)]
+    assert quant_modules, "fixture must contain quant modules"
+
+    class _Loader:
+        def __iter__(self):
+            if fails:
+                raise _Boom("bad calibration sample")
+            yield np.zeros((1, 3, 32, 32), dtype=np.float32)
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    if fails:
+        with pytest.raises(_Boom):
+            quant_api._run_calibration(
+                wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+                allow_download_scripts=False,
+            )
+    else:
+        quant_api._run_calibration(
+            wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+            allow_download_scripts=False,
+        )
+
+    assert not any(getattr(m, "_q_observing", False) for m in quant_modules)
