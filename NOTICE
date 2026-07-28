@@ -108,6 +108,19 @@ OMDet-Turbo / Transformers (Apache License 2.0)
     mirrored unchanged from omlab/omdet-turbo-swin-tiny-hf revision
     7fe93cecfb770c4d76cf71163956221249cab566 at LibreYOLO/LibreOMDetTurbot.
 
+OV-DEIM (Apache License 2.0)
+    Path:    libreyolo/models/openvocab/ov_deim.py,
+             libreyolo/models/openvocab/ovdeim/
+    License: licenses/Apache-2.0.txt
+    Source:  https://github.com/wleilei/OV-DEIM
+             (pinned at commit dfbf394672407b7f837ec08e7d68e8127548b254)
+
+    The vendored architecture modules are taken from OV-DEIM under
+    Apache-2.0, with the RT-DETR (Apache-2.0, Copyright (c) 2023 lyuwenyu)
+    and DEIMv2 (Apache-2.0) lineage headers preserved. Licensing was
+    confirmed by the upstream author (wleilei/OV-DEIM#4). See
+    docs/provenance/ov_deim.md.
+
 SegFormer / transformers (Apache License 2.0)
     Path:    libreyolo/models/segformer/
     License: libreyolo/models/segformer/NOTICE  (Apache-2.0 code source)
