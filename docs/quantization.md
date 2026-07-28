@@ -65,10 +65,12 @@ int2 is unusable).
 
 Per-family `keep_high_precision` defaults protect the first layer and the
 heads (and always the YOLO9 DFL conv). For birefnet and feynobg that means
-the Swin patch embed, the final matte-logit conv (`conv_out1`), and the tiny
-bilateral-reference attention gates (`gdt_convs_attn`). Override with
-`quantize(..., keep_high_precision=("head.",))` if you know what you are
-doing.
+the Swin patch embed, the final matte-logit conv (`conv_out1`), the tiny
+bilateral-reference attention gates (`gdt_convs_attn`), and the
+training-only supervision heads (`gdt_convs_pred`, `conv_ms_spvn`), which
+never run at inference and would otherwise sit permanently uncalibrated in
+the manifest. Override with `quantize(..., keep_high_precision=("head.",))`
+if you know what you are doing.
 
 ## Calibration data is not training data
 

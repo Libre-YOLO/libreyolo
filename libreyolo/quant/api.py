@@ -78,9 +78,26 @@ _FAMILY_KEEP_HIGH_PRECISION: Dict[str, Tuple[str, ...]] = {
     # birefnet/feynobg (shared architecture): patch embed is the first layer;
     # conv_out1 is the final matte logit conv; gdt_convs_attn are the tiny
     # bilateral-reference gates whose sigmoids multiply whole feature maps
-    # (quantization error there is amplified multiplicatively).
-    "birefnet": ("bb.patch_embed.", "conv_out1", "gdt_convs_attn"),
-    "feynobg": ("bb.patch_embed.", "conv_out1", "gdt_convs_attn"),
+    # (quantization error there is amplified multiplicatively); gdt_convs_pred
+    # and conv_ms_spvn are training-only supervision heads that never run at
+    # inference, so quantizing them would only leave permanently uncalibrated
+    # activation observers in the manifest.
+    "birefnet": (
+        "bb.patch_embed.",
+        "conv_out1",
+        "gdt_convs_attn",
+        "gdt_convs_pred",
+        "conv_ms_spvn",
+        "regular_conv",
+    ),
+    "feynobg": (
+        "bb.patch_embed.",
+        "conv_out1",
+        "gdt_convs_attn",
+        "gdt_convs_pred",
+        "conv_ms_spvn",
+        "regular_conv",
+    ),
 }
 _ALWAYS_KEEP = ("dfl",)
 
