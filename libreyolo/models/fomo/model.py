@@ -38,6 +38,7 @@ class LibreFOMO(BaseModel):
 
     SUPPORTED_TASKS = ("point",)
     DEFAULT_TASK = "point"
+    REQUIRE_TASK_SUFFIX = True
     TRAIN_CONFIG = FOMOConfig
     val_preprocessor_class = FOMOValPreprocessor
     validator_class = FOMOValidator

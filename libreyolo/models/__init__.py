@@ -82,6 +82,7 @@ from .swinir.model import LibreSwinIR  # noqa: E402,F401  (restore/super-resolut
 from .eomt.model import LibreEoMT  # noqa: E402,F401  (semantic-only; EoMT query/mask keys are unique)
 from .pidnet.model import LibrePIDNet  # noqa: E402,F401  (semantic-only; can_load uses PIDNet fusion keys)
 from .segformer.model import LibreSegformer  # noqa: E402,F401  (semantic-only; can_load uses decode_head/encoder.stages keys, unique to this family)
+from .lingbotvision.model import LibreLingBotVision  # noqa: E402,F401  (semantic-only; can_load keyed on backbone.rope_embed.periods + storage_tokens + predict head)
 from .mobilenetv4.model import LibreMobileNetV4  # noqa: E402  (classify-only; can_load is highly specific)
 from .convnext.model import LibreConvNeXt  # noqa: E402  (classify-only; can_load is highly specific)
 from .efficientnetv2.model import LibreEfficientNetV2  # noqa: E402  (classify-only; can_load is highly specific)
@@ -324,6 +325,7 @@ def LibreYOLO(
                 break
 
     # Download if missing
+    download_error: Exception | None = None
     if not Path(model_path).exists():
         if size is None:
             for cls in BaseModel._registry:
@@ -354,9 +356,15 @@ def LibreYOLO(
         try:
             download_weights(model_path, size)
         except Exception as e:
+            download_error = e
             logger.warning("Auto-download failed: %s", e)
 
     if not Path(model_path).exists():
+        if download_error is not None:
+            raise FileNotFoundError(
+                f"Model weights file not found: {model_path}\n"
+                f"Auto-download failed: {download_error}"
+            ) from download_error
         raise FileNotFoundError(f"Model weights file not found: {model_path}")
 
     # Load weights once
@@ -686,6 +694,7 @@ __all__ = [
     "LibreEoMT",
     "LibrePIDNet",
     "LibreSegformer",
+    "LibreLingBotVision",
     "LibreMobileNetV4",
     "LibreConvNeXt",
     "LibreEfficientNetV2",

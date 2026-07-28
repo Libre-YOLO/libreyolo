@@ -64,6 +64,7 @@ class LibreCLIP(BaseModel):
     }
     SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
     DEFAULT_TASK: ClassVar[str] = "classify"
+    REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     TRAIN_CONFIG = None
 
     # The text->image attention pooling makes multi-scale TTA meaningless and

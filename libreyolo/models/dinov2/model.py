@@ -209,6 +209,11 @@ class LibreDINOv2(BaseModel):
         """
         if not any(k.startswith("backbone.") for k in weights_dict):
             return False
+        # LibreLingBotVision checkpoints also pair backbone.* with a
+        # predict.weight dense head; their RoPE buffer is the discriminator
+        # (DINOv2 backbones carry learned position embeddings, never RoPE).
+        if "backbone.rope_embed.periods" in weights_dict:
+            return False
         is_semantic = "predict.weight" in weights_dict
         is_classify = (
             "linear.weight" in weights_dict and "predict.weight" not in weights_dict

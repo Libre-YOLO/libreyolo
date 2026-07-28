@@ -57,6 +57,9 @@ class LibreYOLO9(BaseModel):
     EXPERIMENTAL_WEIGHT_FILENAMES: frozenset = frozenset()
     TRAIN_CONFIG = YOLO9Config
     val_preprocessor_class = YOLO9ValPreprocessor
+    # The detection forward is pure tensor work with no host sync, so it
+    # captures and replays bit-identically (tests/unit/test_cuda_graph.py).
+    SUPPORTS_CUDA_GRAPH = True
     # Additional checkpoint model_family values accepted as transfer-learning
     # sources (subclass hook; e.g. yolo9_p2 accepts base yolo9 checkpoints).
     TRANSFER_COMPATIBLE_FAMILIES: tuple = ()
