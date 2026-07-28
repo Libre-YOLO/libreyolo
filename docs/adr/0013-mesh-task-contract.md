@@ -139,10 +139,16 @@ The task contract exists independently of any one model, so families can land
 incrementally. The MHR decoder is usable on its own to turn parameters into
 geometry.
 
-Visualization is renderer-free: meshes are drawn as a decimated scatter of
-projected vertices plus the skeleton, so `save=True` never pulls in a
-rasterizer. Full surface rendering remains available to users through the OBJ
-export on the payload.
+Visualization renders an actual shaded surface, because that is what a body
+mesh is expected to look like and a scatter of projected vertices does not
+communicate one. The renderer is a small painter's-algorithm rasterizer in
+numpy and PIL: back-facing triangles culled, the rest sorted far-to-near and
+filled with Lambertian shading. This deliberately avoids `pyrender` and
+PyTorch3D, which upstream projects use and which both need a GL context and
+install badly on some platforms. Cost is roughly half a second per person at
+36874 triangles, only on the `save=True` path. The vertex scatter survives as
+a fallback for results that carry projected points but no topology, and
+`save_obj()` remains the route to a real 3D file.
 
 The chief cost is that LibreYOLO's body meshes are not SMPL, so the SMPL-shaped
 ecosystem (Blender add-ons, retargeting pipelines) needs a conversion step.

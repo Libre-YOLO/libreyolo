@@ -510,3 +510,112 @@ class TestDrawing:
         out = draw_mesh(img, vertices2d=np.random.rand(1, 18439, 2) * 128,
                         max_vertices=100)
         assert out.size == img.size
+
+
+class TestSurfaceRenderer:
+    """The shaded-surface path, which is what a body mesh should look like."""
+
+    @staticmethod
+    def _quad():
+        """A square made of two triangles, centered in a 64x64 image."""
+        verts2d = np.array(
+            [[[16.0, 16.0], [48.0, 16.0], [48.0, 48.0], [16.0, 48.0]]],
+            dtype=np.float32,
+        )
+        depths = np.full((1, 4), 5.0, dtype=np.float32)
+        faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+        return verts2d, depths, faces
+
+    def test_renders_a_visible_surface(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import render_mesh_surface
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        verts2d, depths, faces = self._quad()
+        out = render_mesh_surface(img, verts2d, depths, faces, alpha=1.0)
+        arr = np.asarray(out)
+        # The middle of the quad must be painted, the corner must not.
+        assert arr[32, 32].sum() > 0
+        assert arr[2, 2].sum() == 0
+
+    def test_renders_regardless_of_winding_order(self):
+        """Either triangle winding must produce a surface, not an empty image."""
+        from PIL import Image
+
+        from libreyolo.utils.drawing import render_mesh_surface
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        verts2d, depths, faces = self._quad()
+        forward = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=1.0))
+        reversed_faces = faces[:, ::-1].copy()
+        backward = np.asarray(
+            render_mesh_surface(img, verts2d, depths, reversed_faces, alpha=1.0)
+        )
+        assert forward[32, 32].sum() > 0
+        assert backward[32, 32].sum() > 0
+
+    def test_nearer_surface_is_drawn_over_farther(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import render_mesh_surface
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        # Two overlapping people at different depths; the near one wins.
+        verts2d = np.repeat(self._quad()[0], 2, axis=0)
+        faces = self._quad()[2]
+        far = np.full((1, 4), 20.0, dtype=np.float32)
+        near = np.full((1, 4), 2.0, dtype=np.float32)
+        out = render_mesh_surface(
+            img, verts2d, np.concatenate([far, near]), faces, alpha=1.0
+        )
+        assert np.asarray(out)[32, 32].sum() > 0
+
+    def test_alpha_blends_with_the_photo(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import render_mesh_surface
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        verts2d, depths, faces = self._quad()
+        opaque = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=1.0))
+        blended = np.asarray(render_mesh_surface(img, verts2d, depths, faces, alpha=0.5))
+        assert blended[32, 32].sum() < opaque[32, 32].sum()
+
+    def test_empty_geometry_is_a_no_op(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import render_mesh_surface
+
+        img = Image.new("RGB", (32, 32))
+        out = render_mesh_surface(
+            img, np.zeros((0, 0, 2)), np.zeros((0, 0)), np.zeros((0, 3), dtype=np.int64)
+        )
+        assert out.size == img.size
+
+    def test_draw_mesh_prefers_the_surface_when_topology_is_available(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import draw_mesh
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        verts2d, depths, faces = self._quad()
+        surface = np.asarray(
+            draw_mesh(img, vertices2d=verts2d, faces=faces, vertex_depths=depths,
+                      surface_alpha=1.0)
+        )
+        scatter = np.asarray(draw_mesh(img, vertices2d=verts2d))
+        # A filled surface covers the quad centre; a vertex scatter does not.
+        assert surface[32, 32].sum() > scatter[32, 32].sum()
+
+    def test_skeleton_is_off_by_default_over_a_surface(self):
+        from PIL import Image
+
+        from libreyolo.utils.drawing import draw_mesh
+
+        img = Image.new("RGB", (64, 64), (0, 0, 0))
+        joints = np.full((1, 70, 2), 32.0, dtype=np.float32)
+        without = np.asarray(draw_mesh(img, joints2d=joints))
+        with_skeleton = np.asarray(draw_mesh(img, joints2d=joints, draw_skeleton=True))
+        assert without.sum() == 0
+        assert with_skeleton.sum() > 0

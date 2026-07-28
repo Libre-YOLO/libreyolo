@@ -879,37 +879,149 @@ MHR70_SKELETON_EDGES: Tuple[Tuple[int, int], ...] = COCO_KEYPOINT_EDGES + (
     (63, 5), (63, 6),              # neck to shoulders
 )
 MESH_VERTEX_COLOR: Tuple[int, int, int] = (120, 200, 255)
+# Neutral clay, the convention for body-mesh overlays: light enough to read
+# against dark clothing, desaturated enough not to compete with the photo.
+MESH_SURFACE_COLOR: Tuple[int, int, int] = (200, 202, 210)
+# Light direction in camera space, pointing from the scene toward the viewer
+# and slightly up-left, which is what makes limbs read as rounded.
+_MESH_LIGHT_DIR = np.array([-0.35, -0.55, -0.75], dtype=np.float32)
+
+
+def render_mesh_surface(
+    img: Image.Image,
+    vertices2d: np.ndarray,
+    vertex_depths: np.ndarray,
+    faces: np.ndarray,
+    color: Tuple[int, int, int] = MESH_SURFACE_COLOR,
+    alpha: float = 0.9,
+    ambient: float = 0.35,
+) -> Image.Image:
+    """Rasterize shaded body-mesh surfaces over an image.
+
+    A small painter's-algorithm renderer: back-facing triangles are culled,
+    the rest are sorted far-to-near and filled with Lambertian shading. This
+    keeps a real surface render available without taking on a GPU rasterizer
+    dependency such as pyrender or PyTorch3D, neither of which installs
+    cleanly everywhere LibreYOLO runs.
+
+    Args:
+        img: PIL image to draw on.
+        vertices2d: ``(N, V, 2)`` projected vertices in pixels.
+        vertex_depths: ``(N, V)`` camera-space depth per vertex, used for
+            draw ordering and for reconstructing shading normals.
+        faces: ``(F, 3)`` vertex indices, shared by every person.
+        color: Base RGB of the surface.
+        alpha: Blend weight of the rendered surface over the photo.
+        ambient: Fraction of base color present in unlit areas.
+    """
+    verts2d = np.asarray(vertices2d, dtype=np.float32)
+    depths = np.asarray(vertex_depths, dtype=np.float32)
+    faces = np.asarray(faces, dtype=np.int64)
+    if verts2d.ndim == 2:
+        verts2d = verts2d[None, ...]
+        depths = depths[None, ...]
+    if verts2d.size == 0 or faces.size == 0:
+        return img.convert("RGB")
+
+    overlay = img.convert("RGB")
+    draw = ImageDraw.Draw(overlay)
+    base = np.asarray(color, dtype=np.float32)
+    light = _MESH_LIGHT_DIR / np.linalg.norm(_MESH_LIGHT_DIR)
+
+    for person_xy, person_z in zip(verts2d, depths):
+        # Reconstruct each triangle in a pseudo-camera space: screen x/y plus
+        # true depth. Normals from this are enough for plausible shading and
+        # avoid needing the intrinsics again here.
+        tri = np.stack(
+            [
+                np.concatenate([person_xy[faces[:, i]], person_z[faces[:, i], None]], axis=1)
+                for i in range(3)
+            ],
+            axis=1,
+        )  # (F, 3, 3)
+
+        edge1 = tri[:, 1] - tri[:, 0]
+        edge2 = tri[:, 2] - tri[:, 0]
+        normals = np.cross(edge1, edge2)
+        norm_len = np.linalg.norm(normals, axis=1)
+        valid = norm_len > 1e-12
+        normals[valid] /= norm_len[valid, None]
+
+        # Screen-space winding tells us which triangles face the camera.
+        signed_area = edge1[:, 0] * edge2[:, 1] - edge1[:, 1] * edge2[:, 0]
+        front = valid & (signed_area < 0)
+        if not front.any():
+            # Winding convention differs; fall back to the other orientation
+            # rather than rendering nothing.
+            front = valid & (signed_area > 0)
+        if not front.any():
+            continue
+
+        tri_front = tri[front]
+        shade = ambient + (1.0 - ambient) * np.clip(normals[front] @ light, 0.0, 1.0)
+        colors = np.clip(base[None, :] * shade[:, None], 0, 255).astype(np.uint8)
+
+        # Painter's algorithm: farthest first, so nearer surfaces overwrite.
+        order = np.argsort(-tri_front[:, :, 2].mean(axis=1))
+        for idx in order:
+            a, b, c = tri_front[idx]
+            draw.polygon(
+                [(a[0], a[1]), (b[0], b[1]), (c[0], c[1])],
+                fill=tuple(int(v) for v in colors[idx]),
+            )
+
+    if alpha >= 1.0:
+        return overlay
+    return Image.blend(img.convert("RGB"), overlay, alpha)
 
 
 def draw_mesh(
     img: Image.Image,
     joints2d: np.ndarray | None = None,
     vertices2d: np.ndarray | None = None,
+    faces: np.ndarray | None = None,
+    vertex_depths: np.ndarray | None = None,
     edges: Tuple[Tuple[int, int], ...] = MHR70_SKELETON_EDGES,
     vertex_color: Tuple[int, int, int] = MESH_VERTEX_COLOR,
+    surface_color: Tuple[int, int, int] = MESH_SURFACE_COLOR,
     max_vertices: int = 1200,
-    vertex_alpha: float = 0.55,
+    surface_alpha: float = 0.9,
+    draw_skeleton: bool = False,
 ) -> Image.Image:
-    """Overlay projected body meshes and their skeletons on an image.
+    """Overlay body meshes on an image.
 
-    Deliberately renderer-free: the mesh is conveyed as a decimated scatter of
-    its projected vertices rather than a shaded surface, so visualization never
-    pulls in a rasterizer dependency.
+    Renders a shaded surface when the topology and depths are available, which
+    is what a body mesh is meant to look like. Falls back to a decimated vertex
+    scatter when only projected points are on hand, so a parameters-only result
+    still shows something.
 
     Args:
         img: PIL image to draw on.
         joints2d: ``(N, K, 2)`` projected keypoints in pixels, or None.
         vertices2d: ``(N, V, 2)`` projected mesh vertices in pixels, or None.
+        faces: ``(F, 3)`` shared mesh topology; enables surface rendering.
+        vertex_depths: ``(N, V)`` camera-space depths; enables surface
+            rendering and correct draw order.
         edges: Pairs of keypoint indices to connect.
-        vertex_color: RGB color for the vertex scatter.
-        max_vertices: Per-person cap on drawn vertices; the cloud is evenly
-            subsampled above this, since drawing 18k dots per person is slow
-            and reads as a solid blob anyway.
-        vertex_alpha: Blend weight of the vertex overlay.
+        vertex_color: RGB color for the fallback vertex scatter.
+        surface_color: Base RGB of the rendered surface.
+        max_vertices: Per-person cap on scattered vertices in fallback mode.
+        surface_alpha: Blend weight of the rendered surface.
+        draw_skeleton: Also draw the joint skeleton. Off by default: over a
+            solid surface it mostly adds clutter.
     """
     img_draw = img.convert("RGB")
 
-    if vertices2d is not None:
+    if vertices2d is not None and faces is not None and vertex_depths is not None:
+        img_draw = render_mesh_surface(
+            img_draw,
+            vertices2d,
+            vertex_depths,
+            faces,
+            color=surface_color,
+            alpha=surface_alpha,
+        )
+    elif vertices2d is not None:
         verts = np.asarray(vertices2d, dtype=np.float32)
         if verts.ndim == 2:
             verts = verts[None, ...]
@@ -928,9 +1040,9 @@ def draw_mesh(
                         [cx - radius, cy - radius, cx + radius, cy + radius],
                         fill=vertex_color,
                     )
-            img_draw = Image.blend(img_draw, overlay, vertex_alpha)
+            img_draw = Image.blend(img_draw, overlay, 0.55)
 
-    if joints2d is not None:
+    if draw_skeleton and joints2d is not None:
         joints = np.asarray(joints2d, dtype=np.float32)
         if joints.size:
             img_draw = draw_keypoints(img_draw, joints, edges=edges)

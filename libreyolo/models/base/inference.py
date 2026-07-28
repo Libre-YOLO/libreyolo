@@ -732,6 +732,12 @@ class InferenceRunner:
                     annotated_img,
                     joints2d=meshes_np.joints2d,
                     vertices2d=meshes_np.extras.get("vertices2d"),
+                    faces=meshes_np.faces,
+                    vertex_depths=(
+                        meshes_np.vertices[..., 2]
+                        if meshes_np.vertices is not None
+                        else None
+                    ),
                 )
         else:
             annotated_img = original_img.copy()

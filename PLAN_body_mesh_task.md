@@ -47,7 +47,9 @@ license included and a gate that records acceptance.
 * `LibreSAM3DBody` adapter with person-detector chaining
   (`person_boxes=` / `person_detector=`), following the gaze family's pattern.
 * Metrics: MPJPE, PA-MPJPE with a reflection-safe Procrustes, PVE.
-* `draw_mesh`: renderer-free projected-vertex scatter plus the MHR-70 skeleton.
+* `draw_mesh`: a shaded surface render via a small numpy/PIL painter's-algorithm
+  rasterizer (back-face culling, Lambertian shading, far-to-near ordering), with
+  no GL dependency. Vertex scatter remains the fallback when topology is absent.
 * Gates: export raises an explicit not-implemented error, validation explains
   the dataset-license situation, TTA is rejected.
 * Docs: ADR 0013, nomenclature, checkpoint schema.
@@ -105,3 +107,25 @@ fetches it from the upstream release and caches it locally.
    field.
 3. Export contract, validation dataset story, video and world-frame support,
    SMPL-X whole-body hands and face.
+
+## Do not use: AmmarkoV/SAM3DBody-cpp
+
+Investigated 2026-07-29 and rejected. It is a genuine standalone C++ inference
+engine for SAM 3D Body with real original work around it (BVH writer, OpenGL
+renderer, multi-view calibration), and it is labelled MIT. The MIT label does
+not hold: the repository commits Meta's MHR mesh geometry (`body_mesh.tri`,
+18439 vertices), a joint table auto-generated from `mhr_model.pt`, and ONNX
+exports of Meta's checkpoint, all under MIT with no SAM License propagated. Its
+Hugging Face weights repo is tagged `license:mit` while containing
+SAM-licensed decoder weights, the separately-licensed DINOv3 backbone, and an
+AGPL Ultralytics-derived detector. A third party cannot relicense Meta's work,
+so relying on that label would be laundering someone else's invalid
+relicensing. His own C code is plausibly his to license, but the same files
+also ship in MocapNET under FORTH's non-commercial terms, so provenance is
+unclear there too.
+
+Worth knowing rather than acting on: he wired LibreYOLO in as a license-clean
+alternative to Ultralytics YOLO11 (`--detector libreyolo`, with an auto mode
+that prefers a LibreYOLO export) and hosts `libreyolo9.onnx`. Redistributing
+that is entirely legitimate. A friendly heads-up about the mislabelled weights
+would protect him and avoid reputational adjacency for LibreYOLO.
