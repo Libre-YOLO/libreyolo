@@ -70,6 +70,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
+| `sam3dbody` | `LibreSAM3DBody` | All-caps acronym plus CamelCase `Body` (hyphens dropped); mesh-only family. Named in full rather than shortened so it does not collide with the `LibreSAM` promptable-segmentation tier. Sizes are backbone codes: `d3` (DINOv3 ViT-H/16+) and `h` (ViT-H). This family wraps an optional third-party package rather than porting it; see ADR 0013 |
 
 Casing rules observed in the table:
 

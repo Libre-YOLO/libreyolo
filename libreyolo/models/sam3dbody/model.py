@@ -1,0 +1,291 @@
+"""LibreYOLO adapter for SAM 3D Body (inference only).
+
+This is a **wrapper, not a port**. Meta's SAM 3D Body code is published under
+the SAM License, which is not one of the permissive licenses LibreYOLO's own
+code may be derived from, so none of it is vendored here. Instead this module
+calls the upstream package's public API and translates its output into
+LibreYOLO's ``Meshes`` result payload.
+
+The practical consequence is that the upstream package is an optional
+dependency the user installs themselves. LibreYOLO ships no SAM-licensed bytes,
+and a user who never touches the mesh task never encounters those terms. The
+weights are a separate matter: the SAM License does permit redistribution with
+passthrough, so they are mirrored on the LibreYOLO org behind the same kind of
+gate Meta uses.
+
+The body model underneath is MHR, which is Apache 2.0 and fetched from its
+public release by :func:`~libreyolo.models.sam3dbody.mhr_body.ensure_mhr_model`.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import ClassVar, Dict, List, Optional
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+from ..base.model import BaseModel
+from .mhr_body import ensure_mhr_model
+from .person import PersonDetector, resolve_person_detector
+
+logger = logging.getLogger(__name__)
+
+UPSTREAM_REPO = "https://github.com/facebookresearch/sam-3d-body"
+SAM_LICENSE_URL = f"{UPSTREAM_REPO}/blob/main/LICENSE"
+
+
+class LibreSAM3DBody(BaseModel):
+    """SAM 3D Body: image + person boxes -> per-person MHR body meshes."""
+
+    FAMILY = "sam3dbody"
+    FILENAME_PREFIX = "LibreSAM3DBody"
+    WEIGHT_EXT = ".ckpt"
+    # Size codes name the backbone: DINOv3 ViT-H/16+ and the original ViT-H.
+    INPUT_SIZES: ClassVar[Dict[str, int]] = {"d3": 512, "h": 512}
+    SUPPORTED_TASKS = ("mesh",)
+    DEFAULT_TASK = "mesh"
+
+    TTA_ENABLED = False
+    SUPPORTS_BATCHED_PREDICT = False
+
+    def __init__(
+        self,
+        model_path=None,
+        size: str = "d3",
+        nb_classes: int = 1,
+        device: str = "auto",
+        task: str | None = None,
+        person_detector: Optional[PersonDetector] = None,
+        sam_3d_body_path: str | Path | None = None,
+        mhr_path: str | Path | None = None,
+        **kwargs,
+    ):
+        self._sam_3d_body_path = sam_3d_body_path or os.environ.get("SAM_3D_BODY_PATH")
+        self._mhr_path = mhr_path
+        self._ckpt_path = self._resolve_checkpoint(model_path, size)
+        self._estimator = None
+
+        super().__init__(
+            model_path=None,  # upstream's loader builds and loads in one step
+            size=size,
+            nb_classes=1,
+            device=device,
+            task=task,
+            **kwargs,
+        )
+        self.names = {0: "person"}
+        self.person_detector = (
+            resolve_person_detector(person_detector) if person_detector is not None else None
+        )
+        self.model.eval()
+
+    # =========================================================================
+    # Upstream package plumbing
+    # =========================================================================
+
+    def _import_upstream(self):
+        """Import the upstream package, with actionable guidance if absent."""
+        if self._sam_3d_body_path:
+            path = str(Path(self._sam_3d_body_path).resolve())
+            import sys
+
+            if path not in sys.path:
+                sys.path.insert(0, path)
+        # The MHR head prefers the pymomentum backend when this is unset, which
+        # has no reliable Windows wheel. Selecting the TorchScript path keeps
+        # the dependency surface to plain PyTorch.
+        os.environ.setdefault("MOMENTUM_ENABLED", "")
+        try:
+            import sam_3d_body  # noqa: F401
+
+            return sam_3d_body
+        except ImportError as e:
+            raise ImportError(
+                "LibreSAM3DBody wraps Meta's sam-3d-body package, which is not "
+                "bundled with LibreYOLO because it is published under the SAM "
+                "License rather than a permissive one.\n\n"
+                "Install it yourself:\n"
+                f"  git clone {UPSTREAM_REPO}\n"
+                "  pip install roma einops yacs omegaconf braceexpand "
+                "pytorch-lightning timm\n\n"
+                "Then point LibreYOLO at the clone, either with\n"
+                "  LibreSAM3DBody(..., sam_3d_body_path='/path/to/sam-3d-body')\n"
+                "or by setting the SAM_3D_BODY_PATH environment variable.\n\n"
+                f"Its terms, which you accept by using it: {SAM_LICENSE_URL}"
+            ) from e
+
+    @classmethod
+    def _resolve_checkpoint(cls, model_path, size: str) -> Path:
+        """Locate the upstream checkpoint, downloading from the mirror if needed."""
+        if model_path is not None:
+            path = Path(model_path)
+            if path.is_dir():
+                path = path / "model.ckpt"
+            if not path.exists():
+                raise FileNotFoundError(f"SAM 3D Body checkpoint not found: {path}")
+            return path
+
+        cache = Path.home() / ".cache" / "libreyolo" / "sam3dbody" / size
+        ckpt = cache / "model.ckpt"
+        if ckpt.exists():
+            return ckpt
+        return cls._download_checkpoint(cache, size)
+
+    @classmethod
+    def _download_checkpoint(cls, cache: Path, size: str) -> Path:
+        """Fetch the checkpoint and its config from the gated LibreYOLO mirror."""
+        repo = f"LibreYOLO/{cls.FILENAME_PREFIX}{size}-mesh"
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            raise ImportError(
+                "huggingface_hub is required to download SAM 3D Body weights."
+            ) from e
+
+        cache.mkdir(parents=True, exist_ok=True)
+        try:
+            # The config must sit beside the checkpoint: upstream's loader looks
+            # for model_config.yaml next to (or one level above) the weights.
+            for filename in ("model_config.yaml", "LICENSE", "model.ckpt"):
+                hf_hub_download(repo_id=repo, filename=filename, local_dir=str(cache))
+        except Exception as e:  # noqa: BLE001 - surface the gate, whatever the cause
+            raise RuntimeError(
+                f"Could not download SAM 3D Body weights from {repo}.\n\n"
+                "These weights are redistributed under Meta's SAM License, and "
+                "the mirror is gated: you must accept the license terms on the "
+                f"model page (https://huggingface.co/{repo}) and authenticate "
+                "with `hf auth login`.\n\n"
+                f"Underlying error: {e}"
+            ) from e
+        return cache / "model.ckpt"
+
+    # =========================================================================
+    # BaseModel surface
+    # =========================================================================
+
+    def _init_model(self) -> nn.Module:
+        self._import_upstream()
+        from sam_3d_body import load_sam_3d_body
+
+        mhr = Path(self._mhr_path) if self._mhr_path else ensure_mhr_model()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model, cfg = load_sam_3d_body(
+            str(self._ckpt_path), device=device, mhr_path=str(mhr)
+        )
+        self._cfg = cfg
+        return model
+
+    @property
+    def estimator(self):
+        """The upstream estimator, built lazily on first use."""
+        if self._estimator is None:
+            self._import_upstream()
+            from sam_3d_body import SAM3DBodyEstimator
+
+            self._estimator = SAM3DBodyEstimator(self.model, self._cfg)
+        return self._estimator
+
+    @property
+    def faces(self) -> torch.Tensor:
+        """Shared MHR mesh topology."""
+        return self.model.head_pose.faces.detach().cpu()
+
+    def estimate(
+        self,
+        image_rgb: np.ndarray,
+        boxes_xyxy: np.ndarray,
+        focal_length: Optional[float] = None,
+    ) -> List[dict]:
+        """Run the upstream estimator over one image and its person boxes."""
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "SAM 3D Body inference requires CUDA: the upstream estimator "
+                "moves its batch to the GPU unconditionally, so there is no "
+                "CPU path to fall back to."
+            )
+        cam_int = None
+        if focal_length is not None:
+            h, w = image_rgb.shape[:2]
+            cam_int = torch.tensor(
+                [[[float(focal_length), 0.0, w / 2.0],
+                  [0.0, float(focal_length), h / 2.0],
+                  [0.0, 0.0, 1.0]]],
+                dtype=torch.float32,
+            )
+        return self.estimator.process_one_image(
+            image_rgb, bboxes=np.asarray(boxes_xyxy, dtype=np.float32),
+            cam_int=cam_int, inference_type="body",
+        )
+
+    @property
+    def _runner(self):
+        if getattr(self, "_runner_instance", None) is None:
+            from .inference import MeshInferenceRunner
+
+            self._runner_instance = MeshInferenceRunner(self)
+        return self._runner_instance
+
+    # The detection-shaped hooks do not apply: the upstream estimator owns
+    # preprocessing, the forward pass and decoding.
+    @classmethod
+    def can_load(cls, weights_dict: dict) -> bool:
+        return False  # foreign checkpoint format; constructed explicitly
+
+    @classmethod
+    def detect_size(cls, weights_dict: dict) -> Optional[str]:
+        return None
+
+    @classmethod
+    def detect_nb_classes(cls, weights_dict: dict) -> Optional[int]:
+        return 1
+
+    def _get_available_layers(self) -> Dict[str, nn.Module]:
+        return {name: module for name, module in self.model.named_modules() if name}
+
+    @staticmethod
+    def _get_preprocess_numpy():
+        raise NotImplementedError(
+            "LibreSAM3DBody preprocesses per person crop inside the upstream "
+            "estimator, not through the detection-shaped numpy path."
+        )
+
+    def _preprocess(self, *args, **kwargs):
+        raise NotImplementedError(
+            "LibreSAM3DBody preprocesses inside the upstream estimator."
+        )
+
+    def _forward(self, *args, **kwargs):
+        raise NotImplementedError(
+            "LibreSAM3DBody runs the forward pass inside the upstream estimator."
+        )
+
+    def _postprocess(self, *args, **kwargs):
+        raise NotImplementedError(
+            "LibreSAM3DBody decodes inside the upstream estimator; "
+            "MeshInferenceRunner maps the result into Meshes."
+        )
+
+    def val(self, *args, **kwargs):
+        raise NotImplementedError(
+            "Body-mesh validation needs a ground-truth mesh dataset, and the "
+            "usual benchmarks (3DPW, EMDB, AGORA) are research-license only, so "
+            "none is bundled. The metrics are available as "
+            "libreyolo.validation.mesh_metrics (MPJPE, PA-MPJPE, PVE) for "
+            "evaluating against a dataset you already hold."
+        )
+
+    def train(self, *args, **kwargs):
+        raise NotImplementedError(
+            "Training is out of scope for LibreSAM3DBody. Train upstream at "
+            f"{UPSTREAM_REPO}."
+        )
+
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        raise NotImplementedError(
+            "Body-mesh export is not implemented yet; the exported-graph "
+            "metadata contract for the mesh task is still to be defined."
+        )

@@ -1,96 +1,107 @@
-# PLAN: `mesh` task (human body mesh recovery), Meta stack
+# Body mesh (`mesh`) task: status and follow-ups
 
-Scope: the Meta stack only, SAM 3D Body on the MHR body model. Other families
-(ROMP, 4D-Humans, NLF, Multi-HMR, TokenHMR, CameraHMR, SMPLer-X, GVHMR) were
-surveyed and are out of scope by decision. Investigation date 2026-07-28.
+Scope: human body mesh recovery. First family is SAM 3D Body on the MHR body
+model, integrated as a **wrapper** rather than a port. Investigation and
+implementation 2026-07-28/29.
 
-Status: **task contract and body model shipped; regressor blocked on weight
-access.** See "What is done" and "What is blocked" below.
+Status: **shipped and working end to end.** Branch `mesh-body-recovery` off
+`dev`.
 
-## Why the Meta stack, in one paragraph
+## Why the field is a licensing minefield
 
-The rest of the field predicts into SMPL, and SMPL is unusable here: the model
-files are non-commercial and non-redistributable, the `smplx` PyPI package's
-*code* carries that same non-commercial license (the most common misconception
-in this area), and the license reaches into any checkpoint trained against it.
-MHR is Apache 2.0 for code and assets with no registration, and SAM 3D Body's
-weights are redistributable under the SAM license with passthrough. It is the
-only end-to-end path where the body model, the code and the weights all clear.
+Nearly every mesh model predicts into SMPL, and SMPL is unusable for a
+permissive library: the model files are non-commercial and non-redistributable,
+the `smplx` PyPI package's *code* carries the same non-commercial license (the
+most common misconception in this area), and the license forbids using the
+model to train networks for commercial deployment, so it reaches into
+checkpoints too. Worse, SMPL is registration-gated, so no library can offer
+autodownload for it.
+
+MHR (Apache 2.0, code and assets, ungated) fixes the body-model layer. What it
+does not fix is the regressor layer: the only strong MHR regressor is SAM 3D
+Body, whose **code** is under the SAM License with military and trade-control
+field-of-use clauses. That code cannot enter an MIT tree.
+
+## The resolution: wrap, do not port
+
+`LibreSAM3DBody` calls the upstream package's public API and translates its
+output into `Meshes`. LibreYOLO ships no SAM-licensed bytes; the upstream
+package is an optional dependency the user installs. The SAM License triggers
+on *distributing* SAM Materials, and an adapter distributes none of their code.
+A user who never touches the mesh task never encounters those terms.
+
+Weights are separate from code: the SAM License permits redistribution with
+passthrough, so the checkpoints are mirrored on the LibreYOLO org with the
+license included and a gate that records acceptance.
 
 ## What is done
 
-Landed on branch `mesh-body-recovery`, off `dev`:
+* Task registration: `mesh`, suffix `-mesh`, aliases `body-mesh`, `hmr`,
+  `human-mesh-recovery`. `smpl` deliberately not aliased.
+* `Meshes` payload, row-aligned with `Results.boxes` as pose keypoints are.
+  Body-model-agnostic: `body_model` names the parameterization, counts are read
+  from the tensors. `save_obj()` writes Wavefront OBJ.
+* MHR body model decoder, fetched from the public Apache release, no
+  dependency beyond PyTorch.
+* Camera helpers: crop-camera lifting and perspective projection.
+* `LibreSAM3DBody` adapter with person-detector chaining
+  (`person_boxes=` / `person_detector=`), following the gaze family's pattern.
+* Metrics: MPJPE, PA-MPJPE with a reflection-safe Procrustes, PVE.
+* `draw_mesh`: renderer-free projected-vertex scatter plus the MHR-70 skeleton.
+* Gates: export raises an explicit not-implemented error, validation explains
+  the dataset-license situation, TTA is rejected.
+* Docs: ADR 0013, nomenclature, checkpoint schema.
 
-* **Task registration.** `mesh` in `TaskType`/`TASKS`, suffix `-mesh`, aliases
-  `body-mesh`, `hmr`, `human-mesh-recovery`. `smpl` deliberately not aliased.
-* **`Meshes` result payload**, row-aligned with `Results.boxes` the way pose
-  keypoints are. Body-model-agnostic: `body_model` names the parameterization
-  and all counts are read from the tensors. Slicing selects a person without
-  touching shared face topology; device moves cover topology and extras.
-  `save_obj()` writes standard Wavefront OBJ.
-* **MHR body model** (`libreyolo/models/sam3dbody/mhr_body.py`): TorchScript
-  loader, parameter assembly, unit conversion, and a downloader for the public
-  Apache-2.0 release asset. Validated against the real 696 MB asset.
-* **Camera helpers** (`camera.py`): crop-camera to full-image lifting and
-  perspective projection, so `joints2d` is in original-image pixels.
-* **Metrics** (`libreyolo/validation/mesh_metrics.py`): MPJPE, PA-MPJPE with a
-  reflection-safe Procrustes, PVE.
-* **Drawing** (`draw_mesh`): renderer-free projected-vertex scatter plus the
-  MHR-70 skeleton. No rasterizer dependency.
-* **Gates**: export raises an explicit not-implemented error, validation
-  explains the dataset-license situation, TTA is rejected with the
-  left/right-swap reason.
-* **Docs**: ADR 0013, nomenclature, checkpoint schema.
-* **Tests**: 54 unit tests on fabricated payloads, plus 9 `external_data`
-  integration tests against the real MHR asset.
+### Verified, not assumed
 
-Verified numbers, not assumptions: MHR `model_params` is 204 wide (3
-translation, 3 global rotation, 130 body pose, 68 bone scales), `betas` 45,
-`expression` 72, outputs 18439 vertices and 127 joints in centimeters, with
-translation entering the rig in decimeters. The upstream comment saying 127 is
-stale; the assertion two functions below it says 136. Rest-pose height decodes
-to 1.727 m and a requested 0.1/0.2/0.3 m translation moves the body by exactly
-that, which is what pins the unit conventions.
+* MHR `model_params` is 204 wide (3 translation, 3 global rotation, 130 body
+  pose, 68 bone scales); `betas` 45; `expression` 72; outputs 18439 vertices
+  and 127 joints in centimeters, translation entering in decimeters. The
+  upstream comment saying 127 is stale. Rest-pose height decodes to 1.727 m.
+* Real inference on the sample image: 1 person, 18439 vertices, 70 joints,
+  metric depth 4.0-4.9 m in front of the camera, 1.7 s on CUDA.
+* Projection parity against upstream: **max 0.0001 px** across all 70 joints,
+  confirming the camera-frame contract and focal-length handling.
 
-## What is blocked
+### Weight mirrors
 
-**SAM 3D Body regressor weights.** `facebook/sam-3d-body-dinov3` and
-`facebook/sam-3d-body-vith` are **gated with manual approval** on Hugging Face,
-and the token cached on this machine is invalid ("Invalid user token"). Both
-must be resolved before the regressor family can be built, because a port that
-cannot be run against real weights certifies nothing.
+* `LibreYOLO/LibreSAM3DBodyd3-mesh` (DINOv3 ViT-H/16+, 2109 MB)
+* `LibreYOLO/LibreSAM3DBodyh-mesh` (ViT-H, 1691 MB)
 
-To unblock, in order:
+Both public with `gated="auto"`: the user accepts the SAM License and attests
+they are not in a comprehensively sanctioned jurisdiction, then gets immediate
+access. Meta's own gate is manual and can take days; auto records the same
+acceptance without the wait. Flip to `manual` with one
+`update_repo_settings(gated="manual")` call if a human review step is wanted.
 
-1. Request access at https://huggingface.co/facebook/sam-3d-body-dinov3 and
-   wait for approval. Note the upstream warning that comprehensively sanctioned
-   jurisdictions are rejected.
-2. Generate a fresh token and `hf auth login --force`.
-3. Confirm with `huggingface_hub.model_info("facebook/sam-3d-body-dinov3")` and
-   an `hf_hub_download` of `model_config.yaml`.
+The MHR asset is **not** mirrored: it is Apache 2.0 and public, so LibreYOLO
+fetches it from the upstream release and caches it locally.
 
-Then the remaining work is the regressor family itself: DINOv3/ViT-H backbone,
-promptable decoder, MHR head and camera head; a `weights/convert_sam3dbody.py`
-converter into the LibreYOLO checkpoint schema; a top-down runner following the
-l2cs chaining pattern (`person_boxes=` / `person_detector=`, never an external
-detectron2 dependency); parity evidence on trained weights; and an upload to
-the LibreYOLO org carrying the SAM license text, since passthrough is a
-condition of redistribution.
+## Known limitations
 
-Naming when it lands: `LibreSAM3DBody<size>-mesh.pt`, sizes `d3` (DINOv3) and
-`h` (ViT-H), chosen to avoid colliding with the existing `LibreSAM` promptable
-tier.
+* The upstream repository has no packaging metadata, so it cannot be
+  `pip install`ed. Users clone it and set `SAM_3D_BODY_PATH`. If they
+  restructure, the adapter breaks.
+* The upstream estimator moves its batch to the GPU unconditionally, so there
+  is no CPU path. The adapter raises a clear error rather than failing deep
+  inside their code.
+* Their loader pulls DINOv3 from `torch.hub` at load time, which carries its
+  own license. That lands on the user's machine via their code, not ours.
 
-## Nothing is mirrored
+## Follow-ups
 
-The MHR asset is fetched from the public upstream release and cached locally
-rather than copied to the LibreYOLO org: it is freely reachable, Apache 2.0 and
-700 MB, so a second copy serves no one. No SMPL-derived artifact exists
-anywhere in this work.
-
-## Scope fences
-
-Out of scope and not started: video tracking, temporal smoothing, world-frame
-trajectories (the schema reserves room via future `*_world` fields), SMPL-X
-whole-body hands and face, training, mesh export formats beyond OBJ, any
-renderer dependency, and exported-graph support.
+1. **A permissive second family.** Verified survey: `simple-romp` is the
+   cleanest option, MIT with a self-contained LBS layer that does not import
+   `smplx`, no bundled SMPL bytes, and an existing `prepare_smpl` flow where
+   the user converts their own SMPL file. HMR 2.0 is the accuracy pick (clean
+   MIT, but `smplx` must be swapped for a permissive LBS layer). Reject HybrIK
+   and WHAM: both carry Max Planck proprietary-headered files, and WHAM has a
+   hard AGPL `ultralytics` dependency.
+2. **NVIDIA GEM-X is worth a serious look.** Apache-2.0 code, redistributable
+   commercially-usable weights with **no military or trade-control clause**,
+   targeting SOMA (Apache 2.0), with zero SMPL anywhere. The catch is that it
+   is video-only with no documented single-image path. If a single-frame
+   invocation works, it is a better licensing fit than anything else in the
+   field.
+3. Export contract, validation dataset story, video and world-frame support,
+   SMPL-X whole-body hands and face.

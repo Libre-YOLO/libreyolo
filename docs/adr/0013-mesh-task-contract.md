@@ -101,6 +101,38 @@ second copy would serve no one.
 * **Training** is out of scope; mesh training needs its own dataset-licensing
   investigation.
 
+### The first family is wrapped, not ported
+
+SAM 3D Body is the only strong MHR regressor. Its **code** is published under
+the SAM License, which is not one of the permissive licenses this project may
+derive code from: it carries field-of-use restrictions (no military or warfare
+use, no nuclear, espionage, guns or illegal weapons), a no-reverse-engineering
+clause, an indemnification obligation, and a term letting Meta amend the
+agreement unilaterally. Vendoring or reimplementing it would either put
+non-OSI code in an MIT tree or restructure incompatibly-licensed code to
+obscure its origin, both of which the licensing policy forbids.
+
+So `LibreSAM3DBody` **wraps** the upstream package rather than porting it. The
+adapter is LibreYOLO's own MIT code that calls the upstream public API and
+translates its output dict into `Meshes`. The SAM License obligation triggers
+on *distributing* SAM Materials; an adapter copies none of their code, and the
+upstream package is an optional dependency the user installs themselves. The
+practical consequence that matters: a user who never touches the mesh task
+never encounters SAM terms at all.
+
+Weights are a separate question from code. The SAM License does permit
+redistribution provided the terms are passed through, so the checkpoints are
+mirrored on the LibreYOLO org with the license included, behind a gate
+comparable to Meta's. Redistributing them ungated would route around Meta's
+sanctions screening and move that exposure onto this project.
+
+Consequences the wrapper accepts: the upstream repository has no packaging
+metadata, so it cannot be `pip install`ed and the user must clone it and point
+`SAM_3D_BODY_PATH` at it; the upstream estimator moves its batch to the GPU
+unconditionally, so there is no CPU path; and the mesh flagship depends on a
+third-party layout that could change. Those are the price of not taking their
+license into the tree.
+
 ## Consequences
 
 The task contract exists independently of any one model, so families can land
