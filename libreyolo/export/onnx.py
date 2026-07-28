@@ -186,11 +186,17 @@ def export_onnx(
             "Install with: uv sync --extra onnx  or  pip install onnx"
         )
 
+    task = metadata.get("task")
+    deepstream_raw_outputs = False
     if deepstream:
-        # One DeepStream output tensor per task, produced by the adapter
-        # applied upstream: detection emits (batch, N, 6) parser rows,
-        # classification (batch, num_classes) probabilities, and semantic
-        # segmentation (batch, C, H, W) probabilities for the class map.
+        from .deepstream import deepstream_uses_raw_outputs
+
+        deepstream_raw_outputs = deepstream_uses_raw_outputs(task)
+
+    if deepstream and not deepstream_raw_outputs:
+        # Parser-backed and native nvinfer tasks use one adapted output.
+        # Raw-tensor tasks retain their normal ONNX names and dynamic axes
+        # below so applications can decode every tensor from metadata.
         input_name = "input" if metadata.get("model_family") == "rfdetr" else "images"
         return _export_onnx_graph(
             nn_model,
@@ -203,9 +209,7 @@ def export_onnx(
             input_names=[input_name],
             output_names=["output"],
             dynamic_axes=(
-                {input_name: {0: "batch"}, "output": {0: "batch"}}
-                if dynamic
-                else None
+                {input_name: {0: "batch"}, "output": {0: "batch"}} if dynamic else None
             ),
         )
 
@@ -237,7 +241,6 @@ def export_onnx(
     # to output count heuristic for direct export_onnx() calls. For known
     # DETR detection families we already know the output schema, so skip
     # the probe forward pass entirely and reuse the count below.
-    task = metadata.get("task")
     model_family = metadata.get("model_family")
     is_seg = metadata.get("segmentation") == "true" or task == "segment"
     is_yolo9_pose = model_family == "yolo9" and task == "pose"
@@ -261,6 +264,7 @@ def export_onnx(
         and not is_depth
         and not is_semantic
         and not is_gaze
+        and task != "pose"
     ):
         num_outputs = _detect_num_outputs(nn_model, dummy)
         is_seg = num_outputs >= 3

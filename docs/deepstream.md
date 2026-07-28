@@ -10,7 +10,8 @@ model = LibreYOLO9("libreyolo9s.pt", size="s")
 model.export(format="onnx", deepstream=True)
 ```
 
-This writes three files next to each other:
+This writes an ONNX graph and an `nvinfer` config next to each other. Tasks
+with class labels also get a labels file. For the detection example above:
 
 - `libreyolo9s.onnx`: the detection graph with a single output tensor of
   shape `(batch, num_detections, 6)`, rows `[x1, y1, x2, y2, score,
@@ -92,7 +93,8 @@ your own fine-tuned weights.
 parser library): DeepStream has no post-processor for these, so the graph's
 native outputs pass through untouched and the application decodes them from
 the tensor metadata. Multi-output graphs are fine; every output layer
-reaches the metadata. No labels file is written.
+reaches the metadata with the same output names and dynamic batch axes as a
+regular ONNX export. No labels file is written.
 
 | Task | Families |
 |---|---|
@@ -121,8 +123,10 @@ benchmark accounting:
 
 - Letterbox families (yolo9, yolox, yolonas, rtmdet, yolo2/3/4/7) pad with
   gray natively; `nvinfer` pads black.
-- yolonas natively resizes the longest side to 636 inside its 640 canvas;
-  `nvinfer`'s `maintain-aspect-ratio` uses the full 640.
+- yolonas detection natively resizes the longest side to 636 inside its 640
+  canvas; `nvinfer`'s `maintain-aspect-ratio` uses the full 640. Yolonas pose
+  already uses the full 640, BGR input, and bottom/right padding; its generated
+  config preserves those task-specific settings.
 - Classification natively resizes the shortest side then centre-crops;
   `nvinfer` stretches the frame or object ROI to the network input. Expect
   small differences on tightly cropped subjects.
