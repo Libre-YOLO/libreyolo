@@ -47,7 +47,7 @@ name becomes the identity), the same convention as classification datasets.
 
 | Name | Role | Dim | Weights license | Notes |
 |---|---|---|---|---|
-| `librefacerec-l` | embedder (default) | 512 | Apache-2.0 | iResNet100, mirrored from AuraFace-v1; LFW ROC-AUC 0.998 through this pipeline |
+| `librefacerec-l` | embedder (default) | 512 | Apache-2.0 | iResNet100, mirrored from AuraFace-v1; LFW dev-test ROC-AUC 0.980, 96.9% accuracy through this pipeline |
 | `librefacerec-det` | default detector | - | MIT | YuNet with 5 landmarks, runs on OpenCV's bundled `cv2.FaceDetectorYN` |
 
 Weights carry their own licenses on their Hugging Face model cards; review
@@ -84,9 +84,15 @@ with `face_boxes=[...]`.
 - **Brute-force matching only.** Thousands of identities cost one matmul.
   For larger scale, export `results.embeddings` to a dedicated vector
   store.
-- **Thresholds are model-specific.** The 0.4 default was chosen on labeled
-  LFW pairs for `librefacerec-l`; recalibrate for other embedders and for
-  your population.
+- **Thresholds are model-specific.** Measured on the LFW dev pairs with
+  `librefacerec-l` (threshold picked on the train split, scored on the
+  held-out test split): ROC-AUC 0.980, 96.9% accuracy at threshold 0.227,
+  95.6% at the 0.4 default. No different-person pair scored above 0.30 in
+  that split, so 0.4 is a conservative default that trades recall for
+  near-zero false accepts; lower it toward 0.3 when missed matches cost
+  more than false ones. Recalibrate for other embedders and for your
+  population, and note LFW is a saturated, frontal, celebrity-photo
+  benchmark where leading models report roughly 99.5% and above.
 - Training, validation, and export raise `NotImplementedError`: like gaze,
   this is an inference product consuming opaque ONNX graphs.
 
