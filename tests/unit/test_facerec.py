@@ -213,7 +213,7 @@ def test_factory_routes_onnx_embed_task(tiny_onnx):
     assert model.task == "embed"
 
 
-def test_inference_only_guards(tiny_onnx):
+def test_inference_only_guards(tiny_onnx, monkeypatch):
     from libreyolo.models.facerec import LibreFaceEmbedder
 
     model = LibreFaceEmbedder(tiny_onnx, device="cpu")
@@ -224,5 +224,79 @@ def test_inference_only_guards(tiny_onnx):
     img = Image.fromarray((np.random.rand(64, 64, 3) * 255).astype(np.uint8))
     with pytest.raises(ValueError):
         model(img, face_boxes=[(0, 0, 64, 64)], augment=True)
+    # No detector, no boxes, and the default detector unobtainable (kept
+    # hermetic: the real fallback would try an auto-download here).
+    monkeypatch.setattr(
+        model, "default_face_detector",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("offline")),
+    )
     with pytest.raises(RuntimeError):
-        model(img)  # no detector, no boxes
+        model(img)
+
+
+# ---------------------------------------------------------------------------
+# Named weights + auto-download wiring
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_facerec_weight_existing_path(tiny_onnx):
+    from libreyolo.models.facerec.weights import resolve_facerec_weight
+
+    assert resolve_facerec_weight(tiny_onnx) == tiny_onnx
+
+
+def test_resolve_facerec_weight_downloads_bare_name(monkeypatch, tmp_path):
+    from pathlib import Path as P
+
+    from libreyolo.models.facerec.weights import resolve_facerec_weight
+
+    calls = {}
+
+    def fake_download(url, dest, **kwargs):
+        calls["url"] = url
+        P(dest).parent.mkdir(parents=True, exist_ok=True)
+        P(dest).write_bytes(b"stub")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "libreyolo.utils.download.download_url_to_path", fake_download
+    )
+    got = resolve_facerec_weight("librefacerec-l")
+    assert P(got) == P("weights") / "librefacerec-l.onnx"
+    assert P(got).exists()
+    assert calls["url"].endswith("librefacerec-l/resolve/main/librefacerec-l.onnx")
+
+
+def test_resolve_facerec_weight_unknown_name(tmp_path, monkeypatch):
+    from libreyolo.models.facerec.weights import resolve_facerec_weight
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError, match="Known downloadable"):
+        resolve_facerec_weight("librefacerec-zz.onnx")
+
+
+def test_factory_routes_librefacerec_name(monkeypatch, tmp_path):
+    import shutil
+
+    from libreyolo import LibreYOLO
+    from libreyolo.models.facerec import LibreFaceEmbedder
+
+    pytest.importorskip("onnxruntime")
+    monkeypatch.chdir(tmp_path)
+    wdir = tmp_path / "weights"
+    wdir.mkdir()
+    _build_tiny_face_onnx(str(wdir / "librefacerec-l.onnx"), dim=8)
+
+    model = LibreYOLO("librefacerec-l")
+    assert isinstance(model, LibreFaceEmbedder)
+    assert model.task == "embed"
+
+    with pytest.raises(ValueError, match="embed"):
+        LibreYOLO("librefacerec-l", task="detect")
+
+
+def test_cli_names_resolve_facerec():
+    from libreyolo.cli.config import resolve_model_name
+
+    assert resolve_model_name("facerec-l") == "librefacerec-l.onnx"
+    assert resolve_model_name("librefacerec-l") == "librefacerec-l.onnx"

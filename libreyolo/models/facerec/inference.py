@@ -108,7 +108,17 @@ class FaceEmbedRunner:
             return None
         if explicit is not None:
             return resolve_face_detector(explicit)
-        return self.model.face_detector
+        if self.model.face_detector is not None:
+            return self.model.face_detector
+        try:
+            return self.model.default_face_detector()
+        except Exception as e:
+            raise RuntimeError(
+                "LibreFaceEmbedder could not obtain its default face detector "
+                f"({e}). Pass face_boxes=[...] for BYO boxes, or "
+                "face_detector=... (a callable, a LibreYOLO model, or an "
+                "OpenCVFaceDetector) when constructing or calling the model."
+            ) from e
 
     def _collect_faces(self, image_rgb, detector, face_boxes, face_conf) -> List[FaceBox]:
         if face_boxes is not None:

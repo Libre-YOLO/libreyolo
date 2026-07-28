@@ -32,14 +32,9 @@ def _resolve_embed_face_detector(out: OutputHandler, face_detector: Optional[str
     ``resolve_face_detector``).
     """
     if face_detector is None:
-        exit_with_error(
-            out,
-            "config_unsupported",
-            "Face-embedding (facial-recognition) is two-stage and needs a face "
-            "detector. Pass --face-detector <model> (an OpenCV face-detector .onnx "
-            "or a LibreYOLO detector trained on faces).",
-            suggestion="e.g. --face-detector path/to/facedet.onnx",
-        )
+        # The runner falls back to the family's default detector
+        # (auto-downloaded on first use).
+        return None
     if str(face_detector).lower().endswith(".onnx"):
         from libreyolo.models.facerec import OpenCVFaceDetector
 

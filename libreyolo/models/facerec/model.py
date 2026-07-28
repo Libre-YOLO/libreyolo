@@ -63,7 +63,14 @@ class LibreFaceEmbedder:
             ) from e
 
         if not Path(model_path).exists():
-            raise FileNotFoundError(f"Face-embedding ONNX model not found: {model_path}")
+            from .weights import is_facerec_weight_name, resolve_facerec_weight
+
+            if is_facerec_weight_name(model_path):
+                model_path = resolve_facerec_weight(model_path)
+            else:
+                raise FileNotFoundError(
+                    f"Face-embedding ONNX model not found: {model_path}"
+                )
 
         available = ort.get_available_providers()
         if device in ("auto", "cuda", "gpu") and "CUDAExecutionProvider" in available:
@@ -86,6 +93,7 @@ class LibreFaceEmbedder:
         self.face_detector = (
             resolve_face_detector(face_detector) if face_detector is not None else None
         )
+        self._default_detector_instance = None
 
         out_dim = self.session.get_outputs()[0].shape[-1]
         self._dim = int(out_dim) if isinstance(out_dim, int) else None
@@ -108,6 +116,14 @@ class LibreFaceEmbedder:
         emb = np.concatenate(outs, axis=0)
         self._dim = emb.shape[1]
         return l2_normalize(emb, axis=1)
+
+    def default_face_detector(self):
+        """The family's default detector (auto-downloaded on first use)."""
+        if self._default_detector_instance is None:
+            from .weights import default_face_detector
+
+            self._default_detector_instance = default_face_detector()
+        return self._default_detector_instance
 
     # ------------------------------------------------------------------
     @property

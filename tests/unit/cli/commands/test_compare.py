@@ -82,14 +82,19 @@ def test_compare_different_people(monkeypatch, tmp_path):
     assert json.loads(result.stdout)["same_person"] is False
 
 
-def test_compare_requires_face_detector(monkeypatch, tmp_path):
+def test_compare_face_detector_optional(monkeypatch, tmp_path):
+    """Omitting --face-detector falls back to the family default detector."""
     a, b, _ = _imgs(tmp_path)
-    _patch(monkeypatch, _FakeEmbedModel(sim=0.82))
+    model = _FakeEmbedModel(sim=0.82)
+    _patch(monkeypatch, model)
     result = runner.invoke(
         _make_app(),
         [f"model={a}", f"source={a}", f"source2={b}", "--json"],
     )
-    assert result.exit_code != 0
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["same_person"] is True
+    # The CLI leaves the detector unset so the runner resolves the default.
+    assert model.face_detector is None
 
 
 def test_compare_missing_source(monkeypatch, tmp_path):
