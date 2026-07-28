@@ -205,6 +205,10 @@ class TrainConfig:
                 raise TypeError(f"imgsz tuple elements must be ints, got ({type(h).__name__}, {type(w).__name__}).")
             if h <= 0 or w <= 0:
                 raise ValueError(f"imgsz tuple elements must be positive, got ({h}, {w}).")
+            if h == w:
+                # Square tuples are equivalent to the scalar form; normalize so
+                # downstream code paths that expect a scalar keep working.
+                self.imgsz = h
 
     @classmethod
     def from_kwargs(cls, **kwargs):

@@ -71,17 +71,20 @@ logger = logging.getLogger(__name__)
 # CNN-based detection families (YOLO variants, RTMDet, PicoDet) have no fixed
 # positional embeddings and adapt to any (H, W) divisible by their stride.
 # Transformer-based families (DETR variants, RF-DETR, D-FINE, etc.) use
-# positional embeddings tied to a square grid and must not receive rectangular input.
-RECTANGULAR_TRAINING_FAMILIES = frozenset({
-    "yolo9",
-    "yolo9_e2e",
-    "yolo9_p2",
-    "yolox",
-    "yolo7",
-    "yolonas",
-    "rtmdet",
-    "picodet",
-})
+# positional embeddings tied to a square grid and must not receive rectangular
+# input. YOLO-NAS is excluded: its preprocessing resizes the longest side to a
+# fixed target, which cannot fill a rectangular canvas.
+# Values are the family's maximum feature stride; both imgsz dimensions must be
+# divisible by it.
+RECTANGULAR_TRAINING_FAMILIES = {
+    "yolo9": 32,
+    "yolo9_e2e": 32,
+    "yolo9_p2": 32,
+    "yolox": 32,
+    "yolo7": 32,
+    "rtmdet": 32,
+    "picodet": 64,
+}
 
 
 class BaseTrainer(ABC):
@@ -1299,21 +1302,29 @@ class BaseTrainer(ABC):
                 "(e.g. RF-DETR, D-FINE, DEIM)."
             )
 
-        # Validate rectangular imgsz for the selected family.
+        # Validate rectangular imgsz for the selected family and task.
         imgsz = self.config.imgsz
-        if isinstance(imgsz, (list, tuple)):
+        if isinstance(imgsz, (list, tuple)) and int(imgsz[0]) != int(imgsz[1]):
             family = self.get_model_family() if hasattr(self, "get_model_family") else ""
             if family and family.lower() not in RECTANGULAR_TRAINING_FAMILIES:
                 raise ValueError(
                     f"Rectangular imgsz={tuple(imgsz)} is not supported for {family}. "
-                    f"Only CNN-based families support rectangular training input. "
-                    f"Supported families: {sorted(RECTANGULAR_TRAINING_FAMILIES)}."
+                    f"Only CNN-based detection families support rectangular training "
+                    f"input. Supported families: {sorted(RECTANGULAR_TRAINING_FAMILIES)}."
                 )
-            h, w = imgsz
-            if h % 32 != 0 or w % 32 != 0:
+            task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            if task != "detect":
                 raise ValueError(
-                    f"imgsz=({h}, {w}): both height and width must be divisible by 32, "
-                    f"got remainders ({h % 32}, {w % 32})."
+                    f"Rectangular imgsz={tuple(imgsz)} is only supported for the "
+                    f"detect task, got task='{task}'."
+                )
+            stride = RECTANGULAR_TRAINING_FAMILIES.get(family.lower(), 32)
+            h, w = int(imgsz[0]), int(imgsz[1])
+            if h % stride != 0 or w % stride != 0:
+                raise ValueError(
+                    f"imgsz=({h}, {w}): both height and width must be divisible by "
+                    f"{stride} (the {family} maximum feature stride), got remainders "
+                    f"({h % stride}, {w % stride})."
                 )
 
         if is_main_process():

@@ -59,6 +59,15 @@ def preprocess_numpy(
     orig_h, orig_w = img_rgb_hwc.shape[:2]
     if isinstance(input_size, (list, tuple)):
         input_h, input_w = int(input_size[0]), int(input_size[1])
+        if input_h != input_w:
+            # YOLO-NAS preprocessing resizes the longest side to a fixed
+            # ``resize_size`` before padding, so a rectangular canvas would
+            # either crop the image or leave most of it as padding. Reject
+            # until the resize recipe itself is made aspect-aware.
+            raise ValueError(
+                f"YOLO-NAS does not support rectangular input sizes, got "
+                f"({input_h}, {input_w}). Use a square imgsz."
+            )
     else:
         input_h = input_w = int(input_size)
     resize_size = min(resize_size, input_h, input_w)
