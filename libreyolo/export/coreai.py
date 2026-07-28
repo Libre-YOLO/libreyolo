@@ -68,6 +68,7 @@ _ANCHOR_FREEZE_FAMILIES = {
     "picodet",
     "rtmdet",
 }
+_DARKNET_FAMILIES = {"yolo1", "yolo2", "yolo3", "yolo4"}
 _RTDETR_STATIC_FAMILIES = {
     "rtdetr",
     "rtdetrv2",
@@ -77,6 +78,74 @@ _RTDETR_STATIC_FAMILIES = {
     "deimv2",
     "ec",
 }
+
+
+def _fuse_darknet_batchnorm(nn_model: nn.Module):
+    """Fold exact Darknet inference BN into its preceding convolution.
+
+    Core AI 0.4.1 does not preserve Darknet's normalization formula,
+    ``(x - mean) / (sqrt(var) + eps) * weight + bias``. In particular,
+    Darknet adds epsilon after the square root, unlike ``nn.BatchNorm2d``.
+    Folding the frozen inference parameters into the convolution is
+    algebraically equivalent and removes the converter-sensitive expression.
+
+    The swap is scoped to Core AI graph preparation and restored afterwards.
+    """
+    from ..models.darknet.blocks import DarknetConv
+
+    prepared: list[tuple[DarknetConv, nn.Conv2d, nn.Conv2d, nn.Module]] = []
+    for module in nn_model.modules():
+        if not isinstance(module, DarknetConv) or module.bn is None:
+            continue
+
+        conv = module.conv
+        bn = module.bn
+        replacement = nn.Conv2d(
+            conv.in_channels,
+            conv.out_channels,
+            conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            groups=conv.groups,
+            bias=True,
+            padding_mode=conv.padding_mode,
+            device=conv.weight.device,
+            dtype=conv.weight.dtype,
+        )
+        with torch.no_grad():
+            scale = bn.weight / (torch.sqrt(bn.running_var) + bn.eps)
+            replacement.weight.copy_(conv.weight * scale[:, None, None, None])
+            conv_bias = (
+                conv.bias
+                if conv.bias is not None
+                else torch.zeros_like(bn.running_mean)
+            )
+            replacement.bias.copy_((conv_bias - bn.running_mean) * scale + bn.bias)
+
+        prepared.append((module, replacement, conv, bn))
+
+    # Do not mutate the live graph until every replacement has been allocated
+    # and populated. A failure on a later layer must leave earlier layers
+    # untouched, before the caller has had a chance to register our restore
+    # callback.
+    for module, replacement, _, _ in prepared:
+        module.conv = replacement
+        module.bn = None
+
+    if prepared:
+        logger.info(
+            "Folded %d exact Darknet batch-normalization layers into their "
+            "convolutions for Core AI conversion.",
+            len(prepared),
+        )
+
+    def _restore():
+        for module, _, conv, bn in prepared:
+            module.conv = conv
+            module.bn = bn
+
+    return _restore
 
 
 def _freeze_anchor_grid(nn_model: nn.Module, dummy: torch.Tensor):
@@ -183,6 +252,31 @@ class _YoloNASDecodedOnly(nn.Module):
             if isinstance(decoded, (list, tuple)):
                 return tuple(decoded)
         return out
+
+
+class _FOMOPreprocess(nn.Module):
+    """Map canonical RGB[0,1] input to FOMO's RGB[-1,1] contract."""
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, x):
+        return self.model((x - 0.5) / 0.5)
+
+
+def _wrap_coreai_contract(
+    nn_model: nn.Module,
+    model_family: str | None,
+) -> nn.Module:
+    """Apply the complete per-family Core AI input/output contract."""
+    family = (model_family or "").lower()
+    wrapped = _wrap_for_family(nn_model, family)
+    if family == "fomo":
+        wrapped = _FOMOPreprocess(wrapped)
+    if family == "yolonas":
+        wrapped = _YoloNASDecodedOnly(wrapped)
+    return wrapped.eval()
 
 
 def _rebake_rfdetr_pos_embed(nn_model: nn.Module, dummy: torch.Tensor):
@@ -475,6 +569,9 @@ def _prepare_coreai_graph(
     """Apply fixed-canvas graph preparation and always restore live state."""
     family = (model_family or "").lower()
     with ExitStack() as stack:
+        if family in _DARKNET_FAMILIES:
+            stack.callback(_fuse_darknet_batchnorm(nn_model))
+
         if family in _ANCHOR_FREEZE_FAMILIES:
             stack.callback(_freeze_anchor_grid(nn_model, dummy))
 
@@ -623,14 +720,9 @@ def export_coreai(
     # output contract, and a Core AI artifact must emit the same tensors as
     # the other backends for the same family or downstream consumers cannot
     # swap formats.
-    wrapped = _wrap_for_family(nn_model, model_family)
-    wrapped.eval()
-
-    # YOLO-NAS returns (decoded, raw) in export mode; the other
-    # backends ship the decoded pair alone. Match them so the
-    # artifact can be parity-checked against ONNX.
-    if (model_family or "").lower() == "yolonas":
-        wrapped = _YoloNASDecodedOnly(wrapped).eval()
+    # Reuse one wrapper function in conversion and parity tests so the
+    # reference cannot accidentally retain YOLO-NAS's raw training maps.
+    wrapped = _wrap_coreai_contract(nn_model, model_family)
 
     # Fixed-canvas preparation is scoped so both successful conversion and any
     # capture/lowering failure leave the caller's live model unchanged.

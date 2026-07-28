@@ -179,7 +179,7 @@ def _decode_detection_export(output: torch.Tensor, spec) -> torch.Tensor:
     if spec.softmax:
         class_block = torch.softmax(class_block, dim=-1)
 
-    grid = output.new_ones(cells).cumsum(0) - 1.0  # 0..cells-1
+    grid = torch.arange(cells, device=output.device, dtype=output.dtype)
     rows_idx = (grid // s).view(1, cells, 1)
     cols_idx = (grid - (grid // s) * s).view(1, cells, 1)
 
@@ -227,10 +227,10 @@ def decode_export(
         a = len(spec.anchors)
         x = output.view(b, a, 5 + nc, h, w).permute(0, 1, 3, 4, 2)  # B,A,H,W,5+nc
 
-        # Grids from ``output`` (new_ones/cumsum) follow the input device at
-        # runtime; anchors come in as device-tracked buffers for the same reason.
-        col = (output.new_ones(w).cumsum(0) - 1.0).view(1, 1, 1, w)
-        row = (output.new_ones(h).cumsum(0) - 1.0).view(1, 1, h, 1)
+        # Build the fixed-canvas grid directly. Core AI 0.4.1 mislowers the
+        # equivalent ``new_ones(...).cumsum(0) - 1`` expression.
+        col = torch.arange(w, device=output.device, dtype=output.dtype).view(1, 1, 1, w)
+        row = torch.arange(h, device=output.device, dtype=output.dtype).view(1, 1, h, 1)
         aw = anchors[:, 0].view(1, a, 1, 1)
         ah = anchors[:, 1].view(1, a, 1, 1)
 

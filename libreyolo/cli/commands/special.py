@@ -270,9 +270,7 @@ def formats_cmd(
             "requires_onnx": cls.requires_onnx,
         }
         aliases = sorted(
-            alias
-            for alias, target in BaseExporter._aliases.items()
-            if target == name
+            alias for alias, target in BaseExporter._aliases.items() if target == name
         )
         if aliases:
             info["aliases"] = aliases
@@ -296,6 +294,8 @@ def formats_cmd(
             )
             if "tier" in f:
                 lines.append(f"    Tier: {f['tier']} ({f['reason']})")
+                if f.get("constraint"):
+                    lines.append(f"    Constraint: {f['constraint']}")
         data["_human_text"] = "\n".join(lines)
 
     out.result(data)

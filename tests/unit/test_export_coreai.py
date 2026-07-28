@@ -162,6 +162,96 @@ def test_graph_preparation_restores_replaced_pool_after_capture_error():
     assert model[0] is original
 
 
+def test_yolonas_contract_wrapper_keeps_only_decoded_outputs():
+    class _SyntheticYoloNAS(nn.Module):
+        def forward(self, x):
+            return ((x + 1, x + 2), (x + 3, x + 4))
+
+    x = torch.zeros(1, 1, 2, 2)
+    wrapped = coreai._wrap_coreai_contract(_SyntheticYoloNAS(), "yolonas")
+    boxes, scores = wrapped(x)
+    torch.testing.assert_close(boxes, x + 1)
+    torch.testing.assert_close(scores, x + 2)
+
+
+def test_fomo_contract_wrapper_applies_native_normalization():
+    x = torch.tensor([[[[0.0, 0.5, 1.0]]]]).expand(1, 3, 1, 3)
+    wrapped = coreai._wrap_coreai_contract(nn.Identity(), "fomo")
+    torch.testing.assert_close(wrapped(x), (x - 0.5) / 0.5)
+
+
+def test_graph_preparation_fuses_exact_darknet_batchnorm_and_restores():
+    from libreyolo.models.darknet.blocks import DarknetConv
+
+    torch.manual_seed(7)
+    model = DarknetConv(
+        3,
+        4,
+        size=3,
+        stride=1,
+        batch_normalize=True,
+        activation="leaky",
+    ).eval()
+    with torch.no_grad():
+        model.bn.running_mean.copy_(torch.randn(4))
+        model.bn.running_var.copy_(torch.rand(4) + 0.2)
+        model.bn.weight.copy_(torch.randn(4))
+        model.bn.bias.copy_(torch.randn(4))
+
+    dummy = torch.randn(1, 3, 8, 8)
+    original_conv = model.conv
+    original_bn = model.bn
+    expected = model(dummy)
+
+    with coreai._prepare_coreai_graph(model, dummy, "yolo1"):
+        assert model.conv is not original_conv
+        assert model.bn is None
+        torch.testing.assert_close(model(dummy), expected, rtol=2e-6, atol=2e-6)
+
+    assert model.conv is original_conv
+    assert model.bn is original_bn
+    torch.testing.assert_close(model(dummy), expected, rtol=0, atol=0)
+
+
+def test_darknet_batchnorm_fusion_failure_is_atomic(monkeypatch):
+    from libreyolo.models.darknet.blocks import DarknetConv
+
+    model = nn.Sequential(
+        DarknetConv(
+            3,
+            4,
+            size=3,
+            stride=1,
+            batch_normalize=True,
+            activation="leaky",
+        ),
+        DarknetConv(
+            4,
+            5,
+            size=3,
+            stride=1,
+            batch_normalize=True,
+            activation="leaky",
+        ),
+    ).eval()
+    original = [(block.conv, block.bn) for block in model]
+    conv2d = nn.Conv2d
+    calls = 0
+
+    def fail_second_replacement(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("synthetic allocation failure")
+        return conv2d(*args, **kwargs)
+
+    monkeypatch.setattr(coreai.nn, "Conv2d", fail_second_replacement)
+    with pytest.raises(RuntimeError, match="synthetic allocation failure"):
+        coreai._fuse_darknet_batchnorm(model)
+
+    assert [(block.conv, block.bn) for block in model] == original
+
+
 def test_anchor_freeze_reaches_wrapped_model_and_restores_cache():
     class Head(nn.Module):
         def __init__(self):
