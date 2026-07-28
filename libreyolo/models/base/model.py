@@ -1330,6 +1330,13 @@ class BaseModel(ABC):
             raise NotImplementedError(
                 "Tracking does not support restoration models. Use predict()."
             )
+        if task == "mesh":
+            raise NotImplementedError(
+                "Tracking does not support body-mesh models yet. Use predict(). "
+                "Associating meshes over time also needs a temporal contract "
+                "(track IDs on the mesh rows, and a world frame) that the mesh "
+                "task does not define yet."
+            )
         if task == "ocr":
             raise NotImplementedError(
                 "Tracking does not support OCR models yet. Use predict()."

@@ -297,6 +297,45 @@ class TestRealModelParity:
         assert torch.allclose(reprojected, meshes.joints2d, atol=1e-2)
 
 
+class TestDeviceAndTaskGuards:
+    """Regression cover for the device and task-dispatch guards."""
+
+    def _bare_model(self, device: str):
+        from libreyolo.models.sam3dbody.model import LibreSAM3DBody
+
+        model = LibreSAM3DBody.__new__(LibreSAM3DBody)
+        model.device = torch.device(device)
+        return model
+
+    def test_estimate_rejects_a_cpu_model_even_when_cuda_exists(self):
+        """A global CUDA check would wave this through into a device mismatch."""
+        model = self._bare_model("cpu")
+        with pytest.raises(RuntimeError, match="requires a CUDA device"):
+            model.estimate(rgb(), np.zeros((1, 4), dtype=np.float32))
+
+    def test_estimate_error_names_the_offending_device(self):
+        model = self._bare_model("cpu")
+        with pytest.raises(RuntimeError, match="is on cpu"):
+            model.estimate(rgb(), np.zeros((1, 4), dtype=np.float32))
+
+    def test_faces_degrades_when_upstream_stops_exposing_topology(self):
+        model = self._bare_model("cpu")
+        model.model = object()  # no head_pose attribute at all
+        assert model.faces is None
+
+    def test_track_is_refused_for_mesh_models(self):
+        """val() guards mesh; track() must too, or it silently misbehaves."""
+        from libreyolo.models.base.model import BaseModel
+
+        class Stub:
+            task = "mesh"
+
+        # track() is a generator function, so its guards, like every other
+        # task guard there, raise on first iteration rather than on the call.
+        with pytest.raises(NotImplementedError, match="body-mesh"):
+            next(BaseModel.track(Stub(), source="video.mp4"))
+
+
 class TestUpstreamDependency:
     def test_missing_package_explains_the_licensing_situation(self, monkeypatch):
         """The error must tell users why it is not bundled and how to install it."""

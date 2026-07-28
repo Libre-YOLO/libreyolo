@@ -172,9 +172,11 @@ class LibreSAM3DBody(BaseModel):
         from sam_3d_body import load_sam_3d_body
 
         mhr = Path(self._mhr_path) if self._mhr_path else ensure_mhr_model()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Honour the caller's device rather than grabbing any available GPU:
+        # device="cpu" on a CUDA machine is a legitimate request, and silently
+        # overriding it would also desynchronize the guard in estimate().
         model, cfg = load_sam_3d_body(
-            str(self._ckpt_path), device=device, mhr_path=str(mhr)
+            str(self._ckpt_path), device=str(self.device), mhr_path=str(mhr)
         )
         self._cfg = cfg
         return model
@@ -190,9 +192,18 @@ class LibreSAM3DBody(BaseModel):
         return self._estimator
 
     @property
-    def faces(self) -> torch.Tensor:
-        """Shared MHR mesh topology."""
-        return self.model.head_pose.faces.detach().cpu()
+    def faces(self) -> Optional[torch.Tensor]:
+        """Shared MHR mesh topology, or None if upstream stops exposing it."""
+        head = getattr(self.model, "head_pose", None)
+        faces = getattr(head, "faces", None)
+        if faces is None:
+            logger.warning(
+                "The loaded sam-3d-body build does not expose head_pose.faces, "
+                "so mesh results will carry no topology: OBJ export and surface "
+                "rendering will be unavailable."
+            )
+            return None
+        return faces.detach().cpu()
 
     def estimate(
         self,
@@ -201,11 +212,21 @@ class LibreSAM3DBody(BaseModel):
         focal_length: Optional[float] = None,
     ) -> List[dict]:
         """Run the upstream estimator over one image and its person boxes."""
-        if not torch.cuda.is_available():
+        # Guard on this model's device, not on global CUDA availability: with
+        # device="cpu" on a CUDA machine the weights are on CPU, and a global
+        # check would wave that through into a device-mismatch crash inside the
+        # upstream estimator.
+        if self.device.type != "cuda":
             raise RuntimeError(
-                "SAM 3D Body inference requires CUDA: the upstream estimator "
-                "moves its batch to the GPU unconditionally, so there is no "
-                "CPU path to fall back to."
+                "SAM 3D Body inference requires a CUDA device, but this model "
+                f"is on {self.device}. The upstream estimator moves its batch "
+                "to the GPU unconditionally, so there is no CPU path to fall "
+                "back to. Construct with device='cuda'."
+                + (
+                    ""
+                    if torch.cuda.is_available()
+                    else " No CUDA device is visible to PyTorch here."
+                )
             )
         cam_int = None
         if focal_length is not None:
