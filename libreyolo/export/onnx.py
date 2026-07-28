@@ -176,6 +176,9 @@ def export_onnx(
             ``(batch, max_det, 6)`` detection tensor first, followed by the raw
             detector tensor used by LibreYOLO backends for native postprocess
             parity. Skip the segmentation-probe / family output-schema logic.
+        deepstream: When True, use the DeepStream-adapted schema for tasks with
+            an nvinfer post-processor. Raw-tensor tasks preserve their regular
+            ONNX output names and dynamic axes.
 
     Returns:
         The output_path string.

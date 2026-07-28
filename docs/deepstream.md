@@ -22,7 +22,9 @@ with class labels also get a labels file. For the detection example above:
 - `libreyolo9s_labels.txt`: one class name per line.
 
 DeepStream builds the TensorRT engine from the ONNX on first run and caches
-it next to the model.
+it next to the model. Detection configs use the parser builder's required
+`model_b{batch}_gpu0_{precision}.engine` cache name; other tasks keep a
+model-specific engine filename.
 
 ## The parser library
 
@@ -93,7 +95,7 @@ your own fine-tuned weights.
 parser library): DeepStream has no post-processor for these, so the graph's
 native outputs pass through untouched and the application decodes them from
 the tensor metadata. Multi-output graphs are fine; every output layer
-reaches the metadata with the same output names and dynamic batch axes as a
+reaches the metadata with the same output names and dynamic axes as a
 regular ONNX export. No labels file is written.
 
 | Task | Families |
@@ -135,6 +137,11 @@ benchmark accounting:
   accurate.
 - pidnet emits a class map at 1/8 of the input resolution and
   lingbotvision at 1/16; DeepStream upsamples the class map for display.
+
+The ONNX parity gate feeds already-preprocessed tensors, so it validates graph
+outputs but cannot detect a wrong `nvinfer` color order or padding policy.
+Config-level tests cover the declared settings; end-to-end DeepStream
+validation is still required.
 
 For exact-parity workloads, validate on your data before deploying; all
 other math is parity-tested against each family's native postprocess.
