@@ -38,7 +38,14 @@ Required field meanings:
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
   legacy sparse mappings, but out-of-range keys are invalid.
-- `imgsz`: positive integer square input resolution.
+- `imgsz`: positive integer square input resolution. Checkpoints trained with
+  a rectangular input size (supported detection families only) keep a scalar
+  here for legacy readers, set to `max(imgsz_h, imgsz_w)`, and additionally
+  dual-write `imgsz_h` and `imgsz_w` with the real dimensions, mirroring the
+  export-runtime convention below. Readers that understand the rectangular
+  fields must prefer them over the scalar; loading a checkpoint does not set
+  the inference input size in either case (pass `imgsz` explicitly at predict
+  or validation time, same as for non-default square sizes).
 
 Pose checkpoints additionally include:
 

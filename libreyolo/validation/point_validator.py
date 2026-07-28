@@ -181,7 +181,10 @@ class PointValidator(BaseValidator):
         actual_imgsz = self._resolve_imgsz()
         self.config.imgsz = actual_imgsz
         self._actual_imgsz = actual_imgsz
-        img_size = (actual_imgsz, actual_imgsz)
+        if isinstance(actual_imgsz, (list, tuple)):
+            img_size = tuple(actual_imgsz)
+        else:
+            img_size = (actual_imgsz, actual_imgsz)
 
         img_files: Optional[List] = None
         label_files: Optional[List] = None
@@ -240,12 +243,18 @@ class PointValidator(BaseValidator):
             drop_last=False,
         )
 
-    def _resolve_imgsz(self) -> int:
-        if self.config.imgsz is not None:
-            return int(self.config.imgsz)
+    def _resolve_imgsz(self) -> int | tuple[int, int]:
+        imgsz = self.config.imgsz
+        if imgsz is not None:
+            if isinstance(imgsz, (list, tuple)):
+                return (int(imgsz[0]), int(imgsz[1]))
+            return int(imgsz)
         fn = getattr(self.model, "_get_input_size", None)
         if callable(fn):
-            return int(fn())
+            raw = fn()
+            if isinstance(raw, (list, tuple)):
+                return (int(raw[0]), int(raw[1]))
+            return int(raw)
         return 640
 
     def _init_metrics(self) -> None:
@@ -416,8 +425,12 @@ class PointValidator(BaseValidator):
                 x_orig_px = ((vgt[:, 0] + vgt[:, 2]) / 2.0 - off_x) / r
                 y_orig_px = ((vgt[:, 1] + vgt[:, 3]) / 2.0 - off_y) / r
             else:
-                sx = self._actual_imgsz / float(orig_w)
-                sy = self._actual_imgsz / float(orig_h)
+                if isinstance(self._actual_imgsz, (list, tuple)):
+                    act_w, act_h = self._actual_imgsz[1], self._actual_imgsz[0]
+                else:
+                    act_w = act_h = self._actual_imgsz
+                sx = act_w / float(orig_w)
+                sy = act_h / float(orig_h)
                 x_orig_px = (vgt[:, 0] + vgt[:, 2]) / 2.0 / sx
                 y_orig_px = (vgt[:, 1] + vgt[:, 3]) / 2.0 / sy
 

@@ -67,6 +67,25 @@ from ..utils.serialization import (
 
 logger = logging.getLogger(__name__)
 
+# Families whose architecture supports rectangular (non-square) training input.
+# CNN-based detection families (YOLO variants, RTMDet, PicoDet) have no fixed
+# positional embeddings and adapt to any (H, W) divisible by their stride.
+# Transformer-based families (DETR variants, RF-DETR, D-FINE, etc.) use
+# positional embeddings tied to a square grid and must not receive rectangular
+# input. YOLO-NAS is excluded: its preprocessing resizes the longest side to a
+# fixed target, which cannot fill a rectangular canvas.
+# Values are the family's maximum feature stride; both imgsz dimensions must be
+# divisible by it.
+RECTANGULAR_TRAINING_FAMILIES = {
+    "yolo9": 32,
+    "yolo9_e2e": 32,
+    "yolo9_p2": 32,
+    "yolox": 32,
+    "yolo7": 32,
+    "rtmdet": 32,
+    "picodet": 64,
+}
+
 
 class BaseTrainer(ABC):
     """Base trainer for all LibreYOLO model families.
@@ -204,7 +223,10 @@ class BaseTrainer(ABC):
 
     @property
     def input_size(self) -> Tuple[int, int]:
-        return (self.config.imgsz, self.config.imgsz)
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (list, tuple)):
+            return (int(imgsz[0]), int(imgsz[1]))
+        return (int(imgsz), int(imgsz))
 
     # =========================================================================
     # Hook methods — subclasses override these
@@ -1280,6 +1302,31 @@ class BaseTrainer(ABC):
                 "(e.g. RF-DETR, D-FINE, DEIM)."
             )
 
+        # Validate rectangular imgsz for the selected family and task.
+        imgsz = self.config.imgsz
+        if isinstance(imgsz, (list, tuple)) and int(imgsz[0]) != int(imgsz[1]):
+            family = self.get_model_family() if hasattr(self, "get_model_family") else ""
+            if family and family.lower() not in RECTANGULAR_TRAINING_FAMILIES:
+                raise ValueError(
+                    f"Rectangular imgsz={tuple(imgsz)} is not supported for {family}. "
+                    f"Only CNN-based detection families support rectangular training "
+                    f"input. Supported families: {sorted(RECTANGULAR_TRAINING_FAMILIES)}."
+                )
+            task = getattr(getattr(self, "wrapper_model", None), "task", "detect")
+            if task != "detect":
+                raise ValueError(
+                    f"Rectangular imgsz={tuple(imgsz)} is only supported for the "
+                    f"detect task, got task='{task}'."
+                )
+            stride = RECTANGULAR_TRAINING_FAMILIES.get(family.lower(), 32)
+            h, w = int(imgsz[0]), int(imgsz[1])
+            if h % stride != 0 or w % stride != 0:
+                raise ValueError(
+                    f"imgsz=({h}, {w}): both height and width must be divisible by "
+                    f"{stride} (the {family} maximum feature stride), got remainders "
+                    f"({h % stride}, {w % stride})."
+                )
+
         if is_main_process():
             logger.info("Setting up training...")
         self.model.to(self.device)
@@ -1541,6 +1588,7 @@ class BaseTrainer(ABC):
                 logger.info(f"Starting training for {self.config.epochs} epochs")
                 logger.info(f"Model: {self.get_model_tag()}")
                 logger.info(f"Batch size: {self.config.batch}")
+                logger.info(f"Input size: {self.input_size}")
                 logger.info(f"Learning rate: {self.effective_lr}")
 
             start_event = self._build_train_start_event()
@@ -2744,6 +2792,20 @@ class BaseTrainer(ABC):
                 "imgsz=640; set config.imgsz to avoid this compatibility fallback."
             )
 
+        # Handle rectangular imgsz: checkpoint schema stores a scalar imgsz
+        # (legacy), while imgsz_h/imgsz_w store the actual dimensions.
+        if isinstance(checkpoint_imgsz, (list, tuple)):
+            cp_h, cp_w = int(checkpoint_imgsz[0]), int(checkpoint_imgsz[1])
+            cp_imgsz_scalar = max(cp_h, cp_w)
+        else:
+            cp_imgsz_scalar = int(checkpoint_imgsz)
+            cp_h = cp_w = cp_imgsz_scalar
+
+        extra_checkpoint_meta = {}
+        if cp_h != cp_w:
+            extra_checkpoint_meta["imgsz_h"] = cp_h
+            extra_checkpoint_meta["imgsz_w"] = cp_w
+
         checkpoint = wrap_libreyolo_checkpoint(
             model_to_save.state_dict(),
             model_family=self.get_model_family(),
@@ -2751,7 +2813,7 @@ class BaseTrainer(ABC):
             task=getattr(getattr(self, "wrapper_model", None), "task", "detect"),
             nc=checkpoint_nc,
             names=names,
-            imgsz=int(checkpoint_imgsz),
+            imgsz=cp_imgsz_scalar,
             epoch=epoch,
             optimizer=self.optimizer.state_dict(),
             config=self.config.to_dict(),
@@ -2762,6 +2824,7 @@ class BaseTrainer(ABC):
             best_metric_value=self.best_mAP50_95,
             best_epoch=self.best_epoch,
             is_ema_weights=self.ema_model is not None,
+            **extra_checkpoint_meta,
         )
         checkpoint.update(self._checkpoint_extra_metadata())
         quant_manifest = getattr(self.wrapper_model, "_quant_manifest", None)

@@ -47,7 +47,7 @@ class TrainConfig:
     # Data
     data: Optional[str] = None
     data_dir: Optional[str] = None
-    imgsz: int = 640
+    imgsz: Union[int, Tuple[int, int]] = 640
 
     # Training
     epochs: int = 300
@@ -192,6 +192,23 @@ class TrainConfig:
     profile_steps: int = 20
     profile_trace: bool = True
     profile_open: bool = True
+
+    def __post_init__(self):
+        if isinstance(self.imgsz, (list, tuple)):
+            if len(self.imgsz) != 2:
+                raise ValueError(
+                    f"imgsz tuple must have exactly 2 elements (height, width), "
+                    f"got {len(self.imgsz)}."
+                )
+            h, w = self.imgsz
+            if not (isinstance(h, int) and isinstance(w, int)):
+                raise TypeError(f"imgsz tuple elements must be ints, got ({type(h).__name__}, {type(w).__name__}).")
+            if h <= 0 or w <= 0:
+                raise ValueError(f"imgsz tuple elements must be positive, got ({h}, {w}).")
+            if h == w:
+                # Square tuples are equivalent to the scalar form; normalize so
+                # downstream code paths that expect a scalar keep working.
+                self.imgsz = h
 
     @classmethod
     def from_kwargs(cls, **kwargs):

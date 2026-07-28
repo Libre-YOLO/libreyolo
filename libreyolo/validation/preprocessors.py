@@ -334,6 +334,11 @@ class YOLONASValPreprocessor(YOLO9ValPreprocessor):
 
         orig_h, orig_w = img.shape[:2]
         target_h, target_w = input_size  # e.g. (640, 640)
+        if target_h != target_w:
+            raise ValueError(
+                f"YOLO-NAS validation does not support rectangular input sizes, "
+                f"got ({target_h}, {target_w}). Use a square imgsz."
+            )
 
         img_rgb = np.ascontiguousarray(img[:, :, ::-1])  # BGR → RGB
         img_chw, _ = preprocess_numpy(

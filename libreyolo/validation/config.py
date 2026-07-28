@@ -17,7 +17,7 @@ class ValidationConfig:
         data_dir: Direct path to dataset directory (alternative to data).
         split: Dataset split to validate on ("val" or "test").
         batch_size: Batch size for validation.
-        imgsz: Image size for validation (assumes square input).
+        imgsz: Image size for validation. Accepts an int (square) or (height, width) tuple.
         conf_thres: Confidence threshold. Use 0.0 or a low value for mAP calculation.
         iou_thres: IoU threshold for NMS.
         max_det: Maximum detections per image.
@@ -39,7 +39,7 @@ class ValidationConfig:
 
     # Inference
     batch_size: int = 16
-    imgsz: int = 640
+    imgsz: Union[int, Tuple[int, int]] = 640
     conf_thres: float = 0.001
     iou_thres: float = 0.6
     max_det: int = 300

@@ -73,19 +73,28 @@ class OBBValidator(BaseValidator):
         self._num_gt_by_class: Dict[int, int] = {}
         self._predictions_by_class: Dict[int, List[dict]] = {}
 
-    def _resolve_imgsz(self) -> int:
-        if self.config.imgsz is not None:
-            return int(self.config.imgsz)
+    def _resolve_imgsz(self) -> int | tuple[int, int]:
+        imgsz = self.config.imgsz
+        if imgsz is not None:
+            if isinstance(imgsz, (list, tuple)):
+                return (int(imgsz[0]), int(imgsz[1]))
+            return int(imgsz)
         get_input_size = getattr(self.model, "_get_input_size", None)
         if callable(get_input_size):
-            return int(get_input_size())
+            raw = get_input_size()
+            if isinstance(raw, (list, tuple)):
+                return (int(raw[0]), int(raw[1]))
+            return int(raw)
         return 640
 
     def _setup_dataloader(self) -> DataLoader:
         actual_imgsz = self._resolve_imgsz()
         self.config.imgsz = actual_imgsz
         self._actual_imgsz = actual_imgsz
-        img_size = (actual_imgsz, actual_imgsz)
+        if isinstance(actual_imgsz, (list, tuple)):
+            img_size = tuple(actual_imgsz)
+        else:
+            img_size = (actual_imgsz, actual_imgsz)
 
         img_files: List[Path] | None = None
         label_files: List[Path] | None = None

@@ -10,6 +10,7 @@ from ..command_utils import (
     exit_with_error,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -40,7 +41,9 @@ def val_cmd(
     data_dir: Optional[str] = typer.Option(None, help="Direct dataset directory"),
     split: str = typer.Option("val", help="Dataset split: val, test, train"),
     batch: int = typer.Option(16, help="Batch size"),
-    imgsz: Optional[int] = typer.Option(None, help="Image size"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Image size: 640 (square) or 480x640 (HxW)"
+    ),
     conf: float = typer.Option(0.001, help="Confidence threshold"),
     iou: float = typer.Option(0.6, help="NMS IoU threshold"),
     max_det: int = typer.Option(300, help="Max detections per image"),
@@ -76,6 +79,10 @@ def val_cmd(
     from libreyolo.utils.general import increment_path
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
+    try:
+        imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
     model_path = resolve_model_or_exit(out, model)
 
     if allow_download_scripts:

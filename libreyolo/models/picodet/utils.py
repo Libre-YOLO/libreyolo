@@ -48,8 +48,12 @@ def preprocess_numpy(
     """
     # Upstream PaddleDetection / Bo's port resize with cv2.INTER_LINEAR.
     # PIL's bilinear kernel differs and drifts ~0.3-0.5 mAP on COCO, so match cv2.
+    if isinstance(input_size, (list, tuple)):
+        input_h, input_w = int(input_size[0]), int(input_size[1])
+    else:
+        input_h = input_w = int(input_size)
     arr = cv2.resize(
-        img_rgb_hwc, (input_size, input_size), interpolation=cv2.INTER_LINEAR
+        img_rgb_hwc, (input_w, input_h), interpolation=cv2.INTER_LINEAR
     ).astype(np.float32)
     arr -= np.array(IMAGENET_MEAN, dtype=np.float32)
     arr /= np.array(IMAGENET_STD, dtype=np.float32)

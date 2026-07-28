@@ -193,15 +193,20 @@ class BaseValidator(ABC):
         imgsz = self.config.imgsz
         batch_size = min(self.config.batch_size, 4)
 
+        if isinstance(imgsz, (list, tuple)):
+            imgsz_h, imgsz_w = int(imgsz[0]), int(imgsz[1])
+        else:
+            imgsz_h = imgsz_w = int(imgsz)
+
         dummy_input = torch.zeros(
-            (batch_size, 3, imgsz, imgsz),
+            (batch_size, 3, imgsz_h, imgsz_w),
             dtype=torch.float32,
             device=self.device,
         )
 
         # Prevent NoneType errors during warmup forward pass
         if hasattr(self.model, "_original_size"):
-            self.model._original_size = (imgsz, imgsz)
+            self.model._original_size = (imgsz_h, imgsz_w)
 
         self.model.model.eval()
         with torch.no_grad():

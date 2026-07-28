@@ -22,7 +22,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
-from typing import List
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
@@ -91,7 +91,7 @@ def _find_grad_tensor(obj) -> torch.Tensor | None:
 
 def autobatch(
     model: nn.Module,
-    imgsz: int = 640,
+    imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
     fraction: float = _DEFAULT_FRACTION,
     default: int = 16,
@@ -107,7 +107,7 @@ def autobatch(
 
     Args:
         model: Model already resident on the target CUDA device.
-        imgsz: Square input size (height == width).
+        imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP (autocast) will be used during training.
         fraction: Target fraction of *total* VRAM to occupy (default 0.60).
         default: Fallback batch size for non-CUDA devices or probe failures.
@@ -158,6 +158,7 @@ def autobatch(
             bn_bufs[name] = saved
 
     was_training = model.training
+    imgsz_h, imgsz_w = imgsz if isinstance(imgsz, (list, tuple)) else (imgsz, imgsz)
     model.train()
     try:
         ctx = torch.autocast("cuda") if amp else contextlib.nullcontext()
@@ -165,7 +166,7 @@ def autobatch(
             try:
                 torch.cuda.empty_cache()
                 torch.cuda.reset_peak_memory_stats(device)
-                x = torch.zeros(b, 3, imgsz, imgsz, dtype=torch.float32, device=device)
+                x = torch.zeros(b, 3, imgsz_h, imgsz_w, dtype=torch.float32, device=device)
                 with ctx:
                     out = model(x)
                 t = _find_grad_tensor(out)
@@ -238,7 +239,7 @@ def _fit_batch_size(
 
 def resolve_auto_batch(
     model: nn.Module,
-    imgsz: int = 640,
+    imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
     fraction: float = _DEFAULT_FRACTION,
     world_size: int = 1,
@@ -257,7 +258,7 @@ def resolve_auto_batch(
 
     Args:
         model: Model on the target device (not yet DDP-wrapped).
-        imgsz: Square input size.
+        imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP is active.
         fraction: Target fraction of total VRAM (default 0.60).
         world_size: Number of DDP ranks (1 for single-GPU).

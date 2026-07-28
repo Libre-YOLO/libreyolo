@@ -13,6 +13,7 @@ from ..command_utils import (
     get_user_provided_params,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..config import (
@@ -245,7 +246,7 @@ def train_cmd(
     # Training
     epochs: int = typer.Option(300, help="Training epochs"),
     batch: int = typer.Option(16, help="Batch size per device"),
-    imgsz: int = typer.Option(640, help="Training image size"),
+    imgsz: str = typer.Option("640", help="Training image size: 640 (square) or 480x640 (HxW)"),
     device: str = typer.Option("auto", help="Device: 0, cpu, mps, auto"),
     workers: int = typer.Option(4, help="Dataloader workers"),
     cache: str = typer.Option(
@@ -459,10 +460,15 @@ def train_cmd(
 
     # All training params in CLI-facing names (single source of truth).
     # build_train_kwargs() maps these to TrainConfig field names automatically.
+    try:
+        parsed_imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
+
     params = {
         "epochs": epochs,
         "batch": batch,
-        "imgsz": imgsz,
+        "imgsz": parsed_imgsz,
         "device": device,
         "workers": workers,
         "cache": cache_val,
