@@ -233,6 +233,17 @@ class MeshInferenceRunner:
                 np.stack([np.asarray(r[key], dtype=np.float32) for r in raw])
             )
 
+        def stack_optional(key):
+            """Stack a field the upstream estimator may not emit.
+
+            Which parameter blocks come back depends on the inference type
+            (body-only runs omit the hand decoder's output), so a missing key
+            must degrade to "not reported" rather than raising.
+            """
+            if any(key not in r or r[key] is None for r in raw):
+                return None
+            return stack(key)
+
         transl = stack("pred_cam_t")
         vertices = stack("pred_vertices")
         joints3d = stack("pred_keypoints_3d")
@@ -261,9 +272,14 @@ class MeshInferenceRunner:
             conf=torch.as_tensor(np.array([p.score for p in people], dtype=np.float32)),
             focal_length=focal,
             extras={
-                "scale": stack("scale_params"),
-                "hand_pose": stack("hand_pose_params"),
-                "vertices2d": vertices2d,
+                key: value
+                for key, value in (
+                    ("scale", stack_optional("scale_params")),
+                    ("hand_pose", stack_optional("hand_pose_params")),
+                    ("expression", stack_optional("expr_params")),
+                    ("vertices2d", vertices2d),
+                )
+                if value is not None
             },
             orig_shape=orig_shape,
         )

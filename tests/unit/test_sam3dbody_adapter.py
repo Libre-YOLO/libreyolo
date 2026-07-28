@@ -160,6 +160,21 @@ class TestRunnerMapping:
         assert meshes.extras["scale"].shape == (1, 28)
         assert meshes.extras["hand_pose"].shape == (1, 108)
 
+    def test_missing_optional_params_are_omitted_not_fatal(self):
+        """Body-only runs omit hand output; that must degrade, not raise."""
+
+        class BodyOnlyModel(FakeModel):
+            def estimate(self, image_rgb, boxes_xyxy, focal_length=None):
+                out = fake_person_output(0)
+                del out["hand_pose_params"]
+                return [out]
+
+        meshes = MeshInferenceRunner(BodyOnlyModel())(
+            rgb(), person_boxes=[[10, 10, 50, 150]]
+        ).meshes
+        assert "hand_pose" not in meshes.extras
+        assert "scale" in meshes.extras
+
     def test_topology_is_shared_not_per_person(self):
         meshes = self._run(FakeModel(n_out=2)).meshes
         assert meshes.faces.shape == (20, 3)
