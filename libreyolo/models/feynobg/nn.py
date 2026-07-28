@@ -2,10 +2,11 @@
 
 FeyNobg (https://github.com/feyninc/nobg, Apache-2.0) keeps BiRefNet's forward
 path bit-for-bit and only widens capacity: the third Swin-L stage grows from 18
-to 24 blocks (222M -> 263M parameters). The module graph and state-dict key
-schema are therefore identical to ``libreyolo/models/birefnet/nn.py``, which
-this file reuses with a family-local dimension table instead of duplicating the
-Swin tower and bilateral-reference decoder.
+to 24 blocks (222M -> 263M parameters). The module graph is therefore identical
+to ``libreyolo/models/birefnet/nn.py``, which this file reuses with a
+family-local dimension table instead of duplicating the Swin tower and
+bilateral-reference decoder. (The upstream nobg library names the same tensors
+HF-style; weights/convert_feynobg_weights.py remaps them onto this schema.)
 """
 
 from __future__ import annotations

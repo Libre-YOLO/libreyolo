@@ -62,7 +62,9 @@ See weights/convert_feynobg_weights.py in the LibreYOLO source repository.
 """
 
 _TRANSFORM_WRAP = (
-    "Conversion is a state-dict metadata-wrap: learned parameters are unchanged."
+    "Conversion is a deterministic state-dict key remap (fused qkv, renamed "
+    "modules) into the LibreYOLO checkpoint schema: learned parameters are "
+    "unchanged."
 )
 _TRANSFORM_QUANT = (
     "Weights are post-training quantized ({recipe}) with LibreYOLO's quantize "
@@ -122,10 +124,10 @@ post-training quantization with LibreYOLO's `quantize` API
     else:
         modifications = """## Modifications
 
-State-dict key remapping only (metadata-wrap into the LibreYOLO v1.0 checkpoint
-schema). Learned parameters are unchanged. Our fp32 forward matches the upstream
-released weights with `max_abs_diff == 0` (weights/parity_feynobg.py). See
-`weights/convert_feynobg_weights.py` in the
+State-dict key remapping only (fused qkv, renamed modules, wrapped into the
+LibreYOLO v1.0 checkpoint schema). Learned parameters are unchanged. Our fp32
+forward matches the upstream released weights with `max_abs_diff == 0`
+(weights/parity_feynobg.py). See `weights/convert_feynobg_weights.py` in the
 [LibreYOLO source repository](https://github.com/LibreYOLO/libreyolo)."""
 
     return f"""{head}

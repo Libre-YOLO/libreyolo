@@ -15,10 +15,14 @@ Wanli Ouyang, and Nicu Sebe. "Bilateral Reference for High-Resolution
 Dichotomous Image Segmentation." CAAI Artificial Intelligence Research, 2024.
 
 Architecture-sharing verdict (why this family has no nn code of its own):
-FeyNobg keeps BiRefNet's module graph and state-dict key schema bit-for-bit
-and only deepens the third Swin-L stage from 18 to 24 blocks. This family
-therefore instantiates the birefnet nn module with a family-local dimension
-table (libreyolo/models/feynobg/nn.py) instead of duplicating the Swin tower
-and bilateral-reference decoder. No code was copied from the nobg library;
-the port is parity-gated against the nobg reference at fp32
+FeyNobg keeps BiRefNet's module graph and only deepens the third Swin-L
+stage from 18 to 24 blocks. This family therefore instantiates the birefnet
+nn module with a family-local dimension table
+(libreyolo/models/feynobg/nn.py) instead of duplicating the Swin tower and
+bilateral-reference decoder. The upstream nobg library stores the same
+architecture under Hugging-Face-style tensor names (split q/k/v attention,
+indexed decoder ModuleLists); weights/convert_feynobg_weights.py remaps
+those deterministically onto the original BiRefNet schema used in-tree,
+with learned parameters unchanged. No code was copied from the nobg
+library; the port is parity-gated against the nobg reference at fp32
 (weights/parity_feynobg.py, max_abs_diff == 0).
