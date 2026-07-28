@@ -460,10 +460,15 @@ def train_cmd(
 
     # All training params in CLI-facing names (single source of truth).
     # build_train_kwargs() maps these to TrainConfig field names automatically.
+    try:
+        parsed_imgsz = parse_imgsz_str(imgsz)
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
+
     params = {
         "epochs": epochs,
         "batch": batch,
-        "imgsz": parse_imgsz_str(imgsz),
+        "imgsz": parsed_imgsz,
         "device": device,
         "workers": workers,
         "cache": cache_val,

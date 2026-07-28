@@ -1161,6 +1161,11 @@ class InferenceRunner:
             )
 
         input_size = imgsz if imgsz is not None else self.model._get_input_size()
+        if isinstance(input_size, (list, tuple)):
+            raise ValueError(
+                "Tiled inference requires a square imgsz (tiles are square). "
+                f"Got imgsz={tuple(input_size)}; pass a single int or disable tiling."
+            )
         img_pil = ImageLoader.load(image, color_format=color_format)
         orig_width, orig_height = img_pil.size
         image_path = image if isinstance(image, (str, Path)) else None

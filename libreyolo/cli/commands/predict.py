@@ -152,7 +152,10 @@ def predict_cmd(
 
     out = OutputHandler(json_mode=json_output, quiet=quiet)
     user_provided = get_user_provided_params()
-    imgsz = parse_imgsz_str(imgsz) if imgsz is not None else None
+    try:
+        imgsz = parse_imgsz_str(imgsz) if imgsz is not None else None
+    except ValueError as exc:
+        exit_with_error(out, "invalid_imgsz", str(exc))
 
     # Validate source exists
     source_path = Path(source)

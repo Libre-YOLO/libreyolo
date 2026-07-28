@@ -93,6 +93,8 @@ def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
     if imgsz is None:
         return None
     if isinstance(imgsz, int):
+        if imgsz <= 0:
+            raise ValueError(f"imgsz must be positive, got {imgsz}.")
         return imgsz
     s = str(imgsz).strip()
     if not s:
@@ -105,8 +107,20 @@ def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
             raise ValueError(
                 f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
             )
-        return (h, w)
-    return int(s)
+        if h <= 0 or w <= 0:
+            raise ValueError(
+                f"imgsz dimensions must be positive, got ({h}, {w})."
+            )
+        return h if h == w else (h, w)
+    try:
+        value = int(s)
+    except ValueError:
+        raise ValueError(
+            f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
+        )
+    if value <= 0:
+        raise ValueError(f"imgsz must be positive, got {value}.")
+    return value
 
 
 def get_loaded_model_input_size(
