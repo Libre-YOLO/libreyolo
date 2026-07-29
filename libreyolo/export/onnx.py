@@ -42,7 +42,7 @@ def _uses_dfine_style_export_wrapper(model_family) -> bool:
 
 def _requires_onnx_opset17(model_family) -> bool:
     """Whether the family needs opset 17 for ONNX auto-opset selection."""
-    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES
+    return model_family in _DETR_TUPLE_OUTPUT_FAMILIES or model_family == "moge2"
 
 
 def _set_metadata(model_proto, metadata: dict) -> None:
@@ -226,6 +226,7 @@ def export_onnx(
     is_restore = task == "restore"
     is_matte = task == "matte"
     is_depth = task == "depth"
+    is_normal = task == "normal"
     is_gaze = task == "gaze"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
@@ -235,6 +236,7 @@ def export_onnx(
         and not is_restore
         and not is_matte
         and not is_depth
+        and not is_normal
         and not is_semantic
         and not is_gaze
     ):
@@ -304,6 +306,13 @@ def export_onnx(
         output_names = ["depth"]
         dynamic_axes = (
             {"images": {0: "batch"}, "depth": {0: "batch"}} if dynamic else None
+        )
+    elif is_normal:
+        # Dense OpenCV-frame unit normals (B, 3, H, W) at the export canvas;
+        # backends resize, renormalize, and return HWC on the original canvas.
+        output_names = ["normal"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "normal": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_pose:
         output_names = ["predictions", "keypoints"]

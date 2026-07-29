@@ -610,6 +610,88 @@ class DepthMap(_TensorPayload):
         )
 
 
+class NormalMap(_TensorPayload):
+    """Dense surface-normal field for a single image.
+
+    Data is float32 ``(H, W, 3)`` on the original image canvas in the OpenCV
+    camera frame: ``+x`` right, ``+y`` down, and ``+z`` into the scene.
+    Normals face the camera, so a fronto-parallel surface is ``(0, 0, -1)``.
+    Producers must emit a unit vector at every pixel.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if not isinstance(data, (torch.Tensor, np.ndarray)):
+            raise TypeError(
+                "normal-map data must be a torch.Tensor or numpy.ndarray"
+            )
+        if data.ndim != 3 or data.shape[-1] != 3:
+            raise ValueError(
+                f"expected (H, W, 3) normal map but got shape {tuple(data.shape)}"
+            )
+        if int(data.shape[0]) <= 0 or int(data.shape[1]) <= 0:
+            raise ValueError("normal-map height and width must be positive")
+
+        if isinstance(data, torch.Tensor):
+            data = data.to(dtype=torch.float32)
+        else:
+            data = np.asarray(data, dtype=np.float32)
+
+        data_shape = (int(data.shape[0]), int(data.shape[1]))
+        if orig_shape is None:
+            orig_shape = data_shape
+        else:
+            orig_shape = (int(orig_shape[0]), int(orig_shape[1]))
+            if orig_shape != data_shape:
+                raise ValueError(
+                    f"normal map shape {data_shape} does not match original "
+                    f"image shape {orig_shape}"
+                )
+        super().__init__(data, orig_shape)
+
+    def assert_normalized(self, atol: float = 1e-4) -> None:
+        """Assert that every pixel is finite and unit length within ``atol``."""
+        if atol < 0:
+            raise ValueError(f"atol must be non-negative, got {atol}")
+
+        if isinstance(self.data, torch.Tensor):
+            finite = torch.isfinite(self.data).all(dim=-1)
+            if not bool(finite.all()):
+                invalid = int((~finite).sum().item())
+                raise AssertionError(
+                    f"normal map contains {invalid} non-finite pixel(s)"
+                )
+            norms = torch.linalg.vector_norm(self.data, dim=-1)
+            max_error = float((norms - 1.0).abs().max().item())
+        else:
+            finite = np.isfinite(self.data).all(axis=-1)
+            if not bool(finite.all()):
+                invalid = int((~finite).sum())
+                raise AssertionError(
+                    f"normal map contains {invalid} non-finite pixel(s)"
+                )
+            norms = np.linalg.norm(self.data, axis=-1)
+            max_error = float(np.max(np.abs(norms - 1.0)))
+
+        if max_error > atol:
+            raise AssertionError(
+                f"normal map is not unit-normalized: maximum norm error "
+                f"{max_error:.6g} exceeds atol={atol:.6g}"
+            )
+
+    def __getitem__(self, idx):
+        # A dense normal field is whole-image data, not an instance collection.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"NormalMap(shape={tuple(self.data.shape)}, "
+            f"orig_shape={self.orig_shape})"
+        )
+
+
 class RestoredImage(_TensorPayload):
     """Dense restored RGB image for a single input.
 
@@ -1329,6 +1411,7 @@ class Results:
         "semantic_mask",
         "panoptic",
         "depth_map",
+        "normal_map",
         "restored",
         "matte",
         "ocr",
@@ -1364,6 +1447,7 @@ class Results:
         embeddings: Optional[Embeddings] = None,
         identities: Optional[Identities] = None,
         meshes: Optional[Meshes] = None,
+        normal_map: Optional[NormalMap] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1373,6 +1457,8 @@ class Results:
             points = Points(points.data, orig_shape)
         if depth_map is not None and depth_map.orig_shape is None:
             depth_map = DepthMap(depth_map.data, orig_shape)
+        if normal_map is not None and normal_map.orig_shape != tuple(orig_shape):
+            normal_map = NormalMap(normal_map.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
         if matte is not None and matte.orig_shape is None:
@@ -1390,6 +1476,7 @@ class Results:
         self.semantic_mask = semantic_mask
         self.panoptic = panoptic
         self.depth_map = depth_map
+        self.normal_map = normal_map
         self.restored = restored
         self.matte = matte
         self.ocr = ocr
@@ -1422,6 +1509,7 @@ class Results:
             "semantic_mask": self.semantic_mask,
             "panoptic": self.panoptic,
             "depth_map": self.depth_map,
+            "normal_map": self.normal_map,
             "restored": self.restored,
             "matte": self.matte,
             "ocr": self.ocr,
@@ -1493,6 +1581,7 @@ class Results:
         embeddings: Optional[Embeddings] = None,
         identities: Optional[Identities] = None,
         meshes: Optional[Meshes] = None,
+        normal_map: Optional[NormalMap] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1514,6 +1603,12 @@ class Results:
             self.panoptic = panoptic
         if depth_map is not None:
             self.depth_map = depth_map
+        if normal_map is not None:
+            self.normal_map = (
+                normal_map
+                if normal_map.orig_shape == tuple(self.orig_shape)
+                else NormalMap(normal_map.data, self.orig_shape)
+            )
         if restored is not None:
             self.restored = restored
         if meshes is not None:
@@ -1537,6 +1632,21 @@ class Results:
             if self.boxes is not None:
                 self.boxes = self.boxes.with_id(track_id)
         return self
+
+    def plot(self):
+        """Render a dense normal result as its canonical RGB visualization."""
+        if self.normal_map is None:
+            raise NotImplementedError(
+                "Results.plot() is currently defined for normal-map results only."
+            )
+
+        from PIL import Image
+
+        from .drawing import draw_normal_map
+
+        h, w = self.orig_shape
+        canvas = Image.new("RGB", (w, h))
+        return draw_normal_map(canvas, _numpy(self.normal_map.data))
 
     def cutout(self, image: Any = None) -> np.ndarray:
         """Return an RGBA ``(H, W, 4)`` uint8 cutout: source RGB + matte alpha.
@@ -1706,6 +1816,16 @@ class Results:
                         "mean": round(self.depth_map.mean, decimals),
                     }
                 ]
+            if self.normal_map is not None:
+                h, w = self.normal_map.orig_shape
+                return [
+                    {
+                        "name": "normal_map",
+                        "shape": [int(h), int(w), 3],
+                        "frame": "opencv",
+                        "orientation": "camera-facing",
+                    }
+                ]
             if self.restored is not None:
                 h, w = self.restored.array.shape[:2]
                 return [
@@ -1863,6 +1983,8 @@ class Results:
             return 1
         if self.depth_map is not None:
             return 1
+        if self.normal_map is not None:
+            return 1
         if self.restored is not None:
             return 1
         if self.matte is not None:
@@ -1889,6 +2011,8 @@ class Results:
             parts.append(f"panoptic={self.panoptic}")
         if self.depth_map is not None:
             parts.append(f"depth_map={self.depth_map}")
+        if self.normal_map is not None:
+            parts.append(f"normal_map={self.normal_map}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
             if self.restore_scale != 1:

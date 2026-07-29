@@ -218,6 +218,52 @@ Float `.npy` maps are used as-is and do not apply `depth_scale`.
 
 Canonical loader: `libreyolo.data.DepthDataset`.
 
+## normal
+
+Surface-normal estimation pairs each image with a same-stem three-channel
+16-bit PNG, plus an optional same-stem validity mask:
+
+```text
+images/val/room.jpg -> normals/val/room.png
+                     -> masks/val/room.png    # optional
+```
+
+Normal-map rules:
+
+- the PNG is exactly three-channel `uint16`, with channels stored as RGB;
+- map resolution must equal the paired image resolution;
+- decode with `n = png / 65535 * 2 - 1`, then renormalize each vector;
+- decoded vectors use LibreYOLO's OpenCV camera frame (`+x` right, `+y` down,
+  `+z` into the scene) and face the camera;
+- the optional mask is a single-channel PNG where nonzero means valid;
+- when no mask exists, every finite, nonzero decoded vector is valid;
+- invalid and padded target pixels are represented internally by `(0, 0, 0)`;
+- resizing interpolates the three vector components bilinearly and then
+  renormalizes; validity masks use nearest-neighbor interpolation;
+- a horizontal flip also negates the x component.
+
+YAML adds two optional keys on top of the common split contract:
+
+- `normals_dir`: normal-map directory name substituted for `images`
+  (default `normals`).
+- `masks_dir`: optional validity-mask directory name substituted for `images`
+  (default `masks`). Missing same-stem mask files mean that sample has no
+  explicit mask.
+
+```yaml
+path: normal-dataset
+train: images/train
+val: images/val
+normals_dir: normals
+masks_dir: masks
+nc: 1
+names: {0: normal}
+```
+
+Validation reports mean and median angular error in degrees and the percentage
+of valid pixels within 11.25, 22.5, and 30 degrees. Canonical loader:
+`libreyolo.data.NormalDataset`.
+
 ## restore
 
 Image restoration pairs each degraded input image with a clean RGB target image

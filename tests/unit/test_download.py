@@ -13,6 +13,8 @@ from libreyolo.utils import download
 
 pytestmark = pytest.mark.unit
 
+_PROCESS_SYNC_TIMEOUT = 30
+
 
 class _DownloadFamily:
     @classmethod
@@ -59,7 +61,7 @@ def _prepare(monkeypatch):
 def _hold_download_lock(target, entered, release):
     with download._download_lock(Path(target)):
         entered.put(time.monotonic())
-        release.wait(timeout=10)
+        release.wait(timeout=_PROCESS_SYNC_TIMEOUT)
 
 
 def test_interrupted_download_retries_from_partial(monkeypatch, tmp_path):
@@ -277,25 +279,28 @@ def test_download_lock_serializes_processes(tmp_path):
 
     try:
         first.start()
-        entered.get(timeout=10)
+        entered.get(timeout=_PROCESS_SYNC_TIMEOUT)
         second.start()
         with pytest.raises(queue.Empty):
             entered.get(timeout=0.3)
 
         release_first.set()
-        entered.get(timeout=10)
+        entered.get(timeout=_PROCESS_SYNC_TIMEOUT)
         release_second.set()
-        first.join(timeout=10)
-        second.join(timeout=10)
+        first.join(timeout=_PROCESS_SYNC_TIMEOUT)
+        second.join(timeout=_PROCESS_SYNC_TIMEOUT)
         assert first.exitcode == 0
         assert second.exitcode == 0
     finally:
         release_first.set()
         release_second.set()
         for process in (first, second):
+            if process.pid is None:
+                continue
+            process.join(timeout=5)
             if process.is_alive():
                 process.terminate()
-            process.join(timeout=5)
+                process.join(timeout=5)
 
 
 def test_factory_reports_and_chains_download_failure(monkeypatch, tmp_path):

@@ -395,6 +395,15 @@ def predict_cmd(
                     f"depth min={depth_map.min:.4g} "
                     f"max={depth_map.max:.4g} mean={depth_map.mean:.4g}"
                 )
+            elif getattr(r, "normal_map", None) is not None:
+                normal_map = r.normal_map
+                result_data["normal"] = {
+                    "shape": list(normal_map.data.shape),
+                    "dtype": str(normal_map.data.dtype),
+                    "frame": "opencv",
+                    "orientation": "camera-facing",
+                }
+                summary = f"normal map {normal_map.data.shape[1]}x{normal_map.data.shape[0]}"
             else:
                 summary = "(no detections)"
 

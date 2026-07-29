@@ -72,6 +72,7 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
     LibreDepthAnythingV2,
 )
 from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
+from .moge2.model import LibreMoGe2  # noqa: E402,F401  (normal-only; official Microsoft MIT checkpoint)
 from .depth_anything3.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnything3,
 )
@@ -712,6 +713,7 @@ __all__ = [
     "LibreRTDETRv4",
     "LibreFOMO",
     "LibreDepthAnythingV2",
+    "LibreMoGe2",
     "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",

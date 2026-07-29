@@ -963,6 +963,11 @@ class BaseModel(ABC):
                 "Test-time augmentation does not support depth estimation yet. "
                 "Use augment=False for depth models."
             )
+        if getattr(self, "task", "detect") == "normal":
+            raise ValueError(
+                "Test-time augmentation does not support surface normals yet. "
+                "Use augment=False for normal models."
+            )
         if getattr(self, "task", "detect") == "restore":
             raise ValueError(
                 "Test-time augmentation does not support restoration models yet. "
@@ -1366,6 +1371,11 @@ class BaseModel(ABC):
                 "Tracking does not support depth maps yet. "
                 "Use predict() for depth models."
             )
+        if task == "normal":
+            raise NotImplementedError(
+                "Tracking does not support surface-normal maps. "
+                "Use predict() for normal models."
+            )
         if task == "semantic":
             raise NotImplementedError(
                 "Tracking does not support semantic segmentation yet. "
@@ -1705,6 +1715,7 @@ class BaseModel(ABC):
             DepthValidator,
             DetectionValidator,
             MatteValidator,
+            NormalValidator,
             OBBValidator,
             OCRValidator,
             PanopticValidator,
@@ -1739,6 +1750,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support depth estimation yet. "
                 "Use augment=False for depth models."
+            )
+        if augment and self.task == "normal":
+            raise ValueError(
+                "Augmented validation does not support surface normals yet. "
+                "Use augment=False for normal models."
             )
         if augment and self.task == "restore":
             raise ValueError(
@@ -1807,6 +1823,8 @@ class BaseModel(ABC):
             validator_cls = PanopticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "normal":
+            validator_cls = NormalValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
         elif self.task == "matte":

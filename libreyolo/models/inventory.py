@@ -16,6 +16,12 @@ OPTIONAL_MODELS = (
     ("libreyolo.models.sam.sam3", "LibreSAM3", "sam", "transformers"),
     ("libreyolo.models.mobilesam.model", "LibreMobileSAM", "sam", None),
     ("libreyolo.models.picosam3.model", "LibrePicoSAM3", "sam", None),
+    (
+        "libreyolo.models.sam3dbody.model",
+        "LibreSAM3DBody",
+        None,
+        "sam_3d_body",
+    ),
     ("libreyolo.models.vlm.florence2", "LibreFlorence2", "vlm", "transformers"),
     ("libreyolo.models.vlm.kosmos2", "LibreKosmos2", "vlm", "transformers"),
     ("libreyolo.models.vlm.internvl3", "LibreInternVL3", "vlm", "transformers"),
@@ -89,7 +95,7 @@ def collect_model_inventory() -> dict[str, dict]:
     from libreyolo.models import try_ensure_rfdetr
     from libreyolo.models.base.model import BaseModel
 
-    optional: dict[str, tuple[str, bool]] = {}
+    optional: dict[str, tuple[str | None, bool]] = {}
     try_ensure_rfdetr()
     classes = list(BaseModel._registry)
     if any(cls.FAMILY == "rfdetr" for cls in BaseModel._registry):
