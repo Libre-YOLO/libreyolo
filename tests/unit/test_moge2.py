@@ -109,6 +109,17 @@ class TestMoGe2Preprocess:
         assert float(chw[0].min()) == 1.0
         assert float(chw[1:].max()) == 0.0
 
+    def test_exported_preprocess_rejects_aspect_ratio_mismatch(self):
+        from libreyolo.backends.base import BaseBackend
+
+        image = np.zeros((240, 400, 3), dtype=np.uint8)
+
+        with pytest.raises(
+            ValueError,
+            match="aspect ratio to match the fixed export canvas",
+        ):
+            BaseBackend._preprocess_normal(image, 518, "rgb")
+
 
 @pytest.fixture(scope="module")
 def moge_small():

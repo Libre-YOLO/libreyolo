@@ -769,9 +769,10 @@ _add(
     ("onnx",),
     since="1.5",
     constraint=(
-        "fixed square batch-1 export canvas divisible by 14; the official "
-        "MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas "
-        "native-versus-ONNX angular parity below 0.1 degree"
+        "fixed square batch-1 export canvas divisible by 14; exported inference "
+        "rejects non-square sources rather than stretching image-plane geometry; "
+        "the official MIT ViT-S/B/L normal checkpoints are covered by FP32 "
+        "same-canvas native-versus-ONNX angular parity below 0.1 degree"
     ),
 )
 _add(

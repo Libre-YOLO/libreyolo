@@ -654,14 +654,25 @@ class BaseBackend(ABC):
     def _preprocess_normal(image, input_size, color_format):
         """Surface-normal preprocessing for fixed-shape exported runtimes.
 
-        The fixed graph receives RGB in ``[0, 1]`` on its exported canvas.
-        Its three-channel vector field is resized back to the original canvas
-        and renormalized after inference, so padding is deliberately avoided.
+        The source aspect ratio must match the exported canvas. Stretching
+        would change MoGe-2's image-plane geometry, while padding would change
+        the coordinate field seen by the fixed graph. Native ``.pt`` inference
+        remains available for arbitrary aspect ratios.
         """
         input_h, input_w = _imgsz_hw(input_size)
         img = ImageLoader.load(image, color_format=color_format)
         original_size = img.size
         original_img = img.copy()
+        orig_w, orig_h = original_size
+        if orig_w * input_h != input_w * orig_h:
+            raise ValueError(
+                "Surface-normal exported-runtime inference requires the source "
+                "aspect ratio to match the fixed export canvas. "
+                f"Input image is {orig_w}x{orig_h}, but the exported canvas is "
+                f"{input_w}x{input_h}. Stretching would change image-plane "
+                "geometry and normal directions. Use a native .pt model for "
+                "arbitrary-aspect-ratio prediction."
+            )
         arr = np.asarray(img, dtype=np.uint8)
         resized = cv2.resize(arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
         chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
