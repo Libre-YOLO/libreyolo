@@ -746,6 +746,18 @@ _add(
 )
 _add(
     "validated",
+    ("moge2",),
+    ("normal",),
+    ("onnx",),
+    since="1.5",
+    constraint=(
+        "fixed square batch-1 export canvas divisible by 14; the official "
+        "MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas "
+        "native-versus-ONNX angular parity below 0.1 degree"
+    ),
+)
+_add(
+    "validated",
     ("nafnet", "realesrgan"),
     ("restore",),
     ("coreai",),
@@ -1014,6 +1026,10 @@ _TASK_BLOCKS = {
     "semantic": (
         "This family is not wired to the shared dense-logits and backend "
         "argmax semantic export contract."
+    ),
+    "normal": (
+        "This family is not wired to the fixed-canvas dense unit-normal "
+        "export and backend renormalization contract."
     ),
     "panoptic": "Panoptic export does not yet have a backend runtime contract.",
     "gaze": (

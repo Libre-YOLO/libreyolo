@@ -106,6 +106,24 @@ project the weights were derived from. Per-family summary:
              any-view checkpoints are not hosted. CC-BY-NC-4.0
              Large/Giant/Nested checkpoints are explicitly excluded.
 
+    MoGe-2  (LibreMoGe2{s,b,l}-normal)                 MIT
+             upstream / pinned revision / model.pt SHA-256:
+             Ruicheng/moge-2-vits-normal
+               679230677b4d282c6f304189a93e98e14f085902
+               79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc
+             Ruicheng/moge-2-vitb-normal
+               54ad3a693e61907ea4633d13dec6ee682fa09419
+               16b8110e86d5dc5a849db120ca96ef3a223fd30b0c9146d1d81db504073da5f6
+             Ruicheng/moge-2-vitl-normal
+               b135031bae30b5ac2ae141a0e68717795ce38340
+               280741fd09bc3f403ccff9967784c2a391b52d2c0742ae3efdb21d9f90cc1a01
+             All three upstream Hugging Face model cards declare license: mit.
+             LibreYOLO downloads the exact pinned objects directly. Conversion
+             retains the encoder, shared neck, and normal-head tensors
+             unchanged, removes the unused point/mask/metric-scale heads, and
+             adds LibreYOLO checkpoint metadata. Convert with
+             weights/convert_moge2_weights.py.
+
     NAFNet   (LibreNAFNet{s,l}-restore)                no bundled weights
              upstream code: megvii-research/NAFNet (MIT)
              Some published GoPro-trained checkpoint files do not carry an

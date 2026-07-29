@@ -132,6 +132,7 @@ selects the task. These families are extras on top of the core library.
 - **Classification:** ResNet, ConvNeXt, MobileNetV4, EfficientNetV2, DINOv2, CLIP, SigLIP2
 - **Point detection:** FOMO, LocateAnything
 - **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
+- **Surface-normal estimation:** MoGe-2 (ViT-S/B/L)
 - **Image restoration & super-resolution:** NAFNet, Real-ESRGAN, SwinIR
 - **Background removal (matting):** BiRefNet
 - **OCR:** PP-OCR

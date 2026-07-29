@@ -78,6 +78,7 @@ def render_docs() -> str:
             "- Pose: keypoint L2 below 2 pixels at native resolution.",
             "- Classification: logits cosine above 0.999 and equal top-1 class.",
             "- Depth and restoration: PSNR above 40 dB against native output.",
+            "- Surface normals: mean angular error below 0.1 degree.",
             "- Point: peak locations equal within one output cell.",
             "",
             "## Validated constraints",

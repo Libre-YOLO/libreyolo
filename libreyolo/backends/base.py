@@ -44,6 +44,7 @@ from ..utils.results import (
     Keypoints,
     Matte,
     Masks,
+    NormalMap,
     OBB,
     Points,
     Probs,
@@ -410,6 +411,8 @@ class BaseBackend(ABC):
             return self._preprocess_restore(image, effective_imgsz, color_format)
         if self.task == "depth":
             return self._preprocess_depth(image, effective_imgsz, color_format)
+        if self.task == "normal":
+            return self._preprocess_normal(image, effective_imgsz, color_format)
         if self.task == "matte":
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
@@ -636,6 +639,24 @@ class BaseBackend(ABC):
         depth map is resized back to the original canvas after inference
         (ADR 0006). Padding is deliberately avoided: padded pixels would leak
         fake depth context into real pixels through the receptive field.
+        """
+        input_h, input_w = _imgsz_hw(input_size)
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        original_img = img.copy()
+        arr = np.asarray(img, dtype=np.uint8)
+        resized = cv2.resize(arr, (input_w, input_h), interpolation=cv2.INTER_LINEAR)
+        chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
+        img_tensor = torch.from_numpy(np.ascontiguousarray(chw)).unsqueeze(0)
+        return img_tensor, original_img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_normal(image, input_size, color_format):
+        """Surface-normal preprocessing for fixed-shape exported runtimes.
+
+        The fixed graph receives RGB in ``[0, 1]`` on its exported canvas.
+        Its three-channel vector field is resized back to the original canvas
+        and renormalized after inference, so padding is deliberately avoided.
         """
         input_h, input_w = _imgsz_hw(input_size)
         img = ImageLoader.load(image, color_format=color_format)
@@ -2125,6 +2146,61 @@ class BaseBackend(ABC):
             names=self.names,
         )
 
+    @staticmethod
+    def _parse_normal_output(
+        all_outputs, original_size: Tuple[int, int]
+    ) -> torch.Tensor:
+        """Decode backend normals to an HWC unit field on the original canvas."""
+        source = np.asarray(all_outputs[0])
+        normal = np.asarray(source, dtype=np.float32)
+        if normal.ndim == 3:
+            if normal.shape[0] == 3:
+                normal = normal[None]
+            elif normal.shape[-1] == 3:
+                normal = np.transpose(normal, (2, 0, 1))[None]
+        elif normal.ndim == 4 and normal.shape[-1] == 3:
+            normal = np.transpose(normal, (0, 3, 1, 2))
+        if normal.ndim != 4 or normal.shape[0] != 1 or normal.shape[1] != 3:
+            raise ValueError(
+                "Normal backend output must have shape [1, 3, H, W] or "
+                f"[1, H, W, 3], got {tuple(source.shape)}."
+            )
+
+        orig_w, orig_h = original_size
+        normal_t = torch.from_numpy(np.ascontiguousarray(normal))
+        normal_t = F.interpolate(
+            normal_t,
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+        finite = torch.isfinite(normal_t).all(dim=1, keepdim=True)
+        safe = torch.where(finite, normal_t, 0.0)
+        norms = torch.linalg.vector_norm(safe, dim=1, keepdim=True)
+        valid = finite & (norms > 1e-12)
+        unit = safe / norms.clamp_min(1e-12)
+        fallback = torch.zeros_like(unit)
+        fallback[:, 2] = -1.0
+        unit = torch.where(valid, unit, fallback)
+        return unit[0].permute(1, 2, 0).contiguous()
+
+    def _build_normal_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        normal = self._parse_normal_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            normal_map=NormalMap(normal, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
     def _parse_semantic_output(
         self,
         all_outputs,
@@ -2466,6 +2542,13 @@ class BaseBackend(ABC):
             if isinstance(depth_data, torch.Tensor):
                 depth_data = depth_data.cpu().numpy()
             annotated_img = draw_depth_map(original_img, depth_data)
+        elif result.boxes is None and getattr(result, "normal_map", None) is not None:
+            from ..utils.drawing import draw_normal_map
+
+            normal_data = result.normal_map.data
+            if isinstance(normal_data, torch.Tensor):
+                normal_data = normal_data.cpu().numpy()
+            annotated_img = draw_normal_map(original_img, normal_data)
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2662,6 +2745,8 @@ class BaseBackend(ABC):
             return {"restored": torch.from_numpy(restored).float().clamp(0.0, 1.0)}
         if self.task == "depth":
             return {"depth": self._parse_depth_output(outputs, original_size)}
+        if self.task == "normal":
+            return {"normal": self._parse_normal_output(outputs, original_size)}
         if self.task == "matte":
             return {"matte": self._parse_matte_output(outputs, original_size)}
         if self.task == "gaze":
@@ -2761,6 +2846,7 @@ class BaseBackend(ABC):
             SegmentationValidator,
             ValidationConfig,
             MatteValidator,
+            NormalValidator,
         )
 
         if augment:
@@ -2813,6 +2899,8 @@ class BaseBackend(ABC):
             validator_cls = SemanticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
+        elif self.task == "normal":
+            validator_cls = NormalValidator
         elif self.task == "matte":
             validator_cls = MatteValidator
         elif self.task == "gaze":
@@ -2890,6 +2978,21 @@ class BaseBackend(ABC):
             return result
         if self.task == "depth":
             result = self._build_depth_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "normal":
+            result = self._build_normal_result(
                 all_outputs,
                 orig_shape=orig_shape,
                 original_size=original_size,
@@ -3187,6 +3290,13 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     image_path=image_path,
                 )
+            elif self.task == "normal":
+                result = self._build_normal_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
             elif self.task == "matte":
                 result = self._build_matte_result(
                     per_image,
@@ -3401,6 +3511,13 @@ class BaseBackend(ABC):
                 )
             if self.task == "depth":
                 return self._build_depth_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "normal":
+                return self._build_normal_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,

@@ -571,6 +571,27 @@
     "optional_extra": "sam",
     "available": true
   },
+  "moge2": {
+    "class": "libreyolo.models.moge2.model.LibreMoGe2",
+    "tasks": [
+      "normal"
+    ],
+    "default_task": "normal",
+    "sizes": {
+      "s": 518,
+      "b": 518,
+      "l": 518
+    },
+    "default_imgsz": {
+      "s": 518,
+      "b": 518,
+      "l": 518
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": null,
+    "available": true
+  },
   "nafnet": {
     "class": "libreyolo.models.nafnet.model.LibreNAFNet",
     "tasks": [

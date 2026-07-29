@@ -144,6 +144,7 @@ _FIXED_SQUARE_EXPORT_FAMILIES = {
     "deim",
     "deimv2",
     "ec",
+    "moge2",
     "rtdetr",
     "rtdetrv2",
     "rtdetrv4",
@@ -325,21 +326,22 @@ class BaseExporter(ABC):
                 "metadata contract for the mesh task is still to be defined; "
                 "run mesh models through the PyTorch path for now."
             )
-        if task == "depth":
-            # Depth export uses the fixed-resolution dense contract: backends
-            # stretch-resize to the exported canvas and resize the depth map
-            # back to the original canvas (ADR 0006). The batch axis is static
-            # (dynamic is forced off) and backends schedule one image per run,
-            # so a batch != 1 artifact could never be fed correctly.
+        if task in {"depth", "normal"}:
+            # Dense-map export uses a fixed-resolution contract: backends
+            # stretch-resize to the exported canvas and resize the result back
+            # to the original canvas. The batch axis is static (dynamic is
+            # forced off) and backends schedule one image per run, so a batch
+            # != 1 artifact could never be fed correctly.
+            task_label = "Depth" if task == "depth" else "Surface-normal"
             if batch != 1:
                 raise ValueError(
-                    "Depth export uses a fixed-resolution, batch-1 runtime "
+                    f"{task_label} export uses a fixed-resolution, batch-1 runtime "
                     f"contract in v1; got batch={batch}."
                 )
             if dynamic:
                 warnings.warn(
-                    "Depth export uses a fixed-resolution runtime contract in "
-                    "v1; forcing dynamic=False.",
+                    f"{task_label} export uses a fixed-resolution runtime "
+                    "contract in v1; forcing dynamic=False.",
                     RuntimeWarning,
                     stacklevel=2,
                 )
@@ -605,11 +607,18 @@ class BaseExporter(ABC):
                     "NAFNet export imgsz must be divisible by the network "
                     f"downsample factor {padder_size}, got {imgsz}."
                 )
-        if getattr(self.model, "task", "detect") == "depth":
-            divisor = int(getattr(self.model, "depth_imgsz_divisor", 1) or 1)
+        dense_task = getattr(self.model, "task", "detect")
+        if dense_task in {"depth", "normal"}:
+            divisor_attr = (
+                "depth_imgsz_divisor"
+                if dense_task == "depth"
+                else "normal_imgsz_divisor"
+            )
+            divisor = int(getattr(self.model, divisor_attr, 1) or 1)
             if imgsz[0] % divisor or imgsz[1] % divisor:
                 raise ValueError(
-                    "Depth export imgsz must be divisible by the network "
+                    f"{dense_task.capitalize()} export imgsz must be divisible "
+                    "by the network "
                     f"stride {divisor}, got {imgsz}."
                 )
         if model_name == "rfdetr":
@@ -715,6 +724,12 @@ class BaseExporter(ABC):
         rfdetr_inner = None
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
+        moge2_onnx_mode = family == "moge2" and hasattr(
+            root_model, "set_onnx_compatible_mode"
+        )
+        original_moge2_onnx_mode = bool(
+            getattr(root_model, "onnx_compatible_mode", False)
+        )
         if task == "semantic":
             nn_model = _SemanticExportWrapper(nn_model).to(device)
             nn_model.eval()
@@ -855,9 +870,13 @@ class BaseExporter(ABC):
             nn_model.half()
             dummy = dummy.half()
 
+        if moge2_onnx_mode:
+            root_model.set_onnx_compatible_mode(True)
         try:
             yield nn_model, dummy
         finally:
+            if moge2_onnx_mode:
+                root_model.set_onnx_compatible_mode(original_moge2_onnx_mode)
             if rfdetr_export_snapshots:
                 _restore_rfdetr_export_state(rfdetr_export_snapshots)
             nn_model.to(original_device)

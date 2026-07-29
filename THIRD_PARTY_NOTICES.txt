@@ -835,6 +835,41 @@ of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, subject to the inclusion of the above
 copyright notice and this permission notice. THE SOFTWARE IS PROVIDED "AS IS",
 WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------
+MoGe-2 (Microsoft)
+--------------------------------------------------------------------
+Source: https://github.com/microsoft/MoGe
+Commit: 925b8ed835a7a9cdb7578ba15c658a0afc969030
+License: MIT
+Copyright (c) Microsoft Corporation.
+Used for: the MoGe-2 ViT-S/B/L surface-normal encoder wrapper, image-plane
+          coordinate construction, convolutional neck, normal decoder, and
+          normal-only inference graph in libreyolo/models/moge2/. The point,
+          mask, and metric-scale heads are omitted. The DINOv2 backbone reuses
+          LibreYOLO's existing Apache-2.0 implementation rather than copying
+          another upstream implementation.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 --------------------------------------------------------------------
 PicoSAM3
 --------------------------------------------------------------------
