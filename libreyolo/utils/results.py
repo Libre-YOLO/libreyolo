@@ -236,7 +236,9 @@ class Masks:
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
             if contours:
-                contour = max(contours, key=cv2.contourArea).squeeze(1).astype(np.float64)
+                contour = (
+                    max(contours, key=cv2.contourArea).squeeze(1).astype(np.float64)
+                )
                 if normalize:
                     contour[:, 0] /= w
                     contour[:, 1] /= h
@@ -334,7 +336,9 @@ class Keypoints(_TensorPayload):
         conf = self.conf
         if conf is None:
             if isinstance(self.data, torch.Tensor):
-                return torch.ones(self.data.shape[:-1], dtype=torch.bool, device=self.data.device)
+                return torch.ones(
+                    self.data.shape[:-1], dtype=torch.bool, device=self.data.device
+                )
             return np.ones(self.data.shape[:-1], dtype=bool)
         return conf > 0
 
@@ -527,7 +531,9 @@ class PanopticSegmentation(_TensorPayload):
     # rebuild via ``self.__class__(data, orig_shape)``) would drop it. Override
     # the move/slice methods to carry it through.
     def to(self, *args, **kwargs):
-        return self.__class__(_move(self.data, *args, **kwargs), self.segments_info, self.orig_shape)
+        return self.__class__(
+            _move(self.data, *args, **kwargs), self.segments_info, self.orig_shape
+        )
 
     def cpu(self):
         return self.__class__(_cpu(self.data), self.segments_info, self.orig_shape)
@@ -594,7 +600,9 @@ class DepthMap(_TensorPayload):
             return data * 0
         normalized = (data - lo) / (hi - lo)
         if isinstance(normalized, torch.Tensor):
-            return torch.where(torch.isfinite(normalized), normalized, torch.zeros_like(normalized))
+            return torch.where(
+                torch.isfinite(normalized), normalized, torch.zeros_like(normalized)
+            )
         return np.where(np.isfinite(normalized), normalized, np.zeros_like(normalized))
 
     def __getitem__(self, idx):
@@ -610,6 +618,78 @@ class DepthMap(_TensorPayload):
         )
 
 
+class EdgeMap(_TensorPayload):
+    """Dense edge-probability map for a single image.
+
+    Data is float32 ``(H, W)`` on the original image canvas. ``0`` means
+    non-edge and ``1`` means edge. The continuous map is retained so callers
+    can choose a threshold appropriate to their dataset or application.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if not isinstance(data, (torch.Tensor, np.ndarray)):
+            raise TypeError("edge-map data must be a torch.Tensor or numpy.ndarray")
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (H, W) edge map but got shape {tuple(data.shape)}"
+            )
+        if int(data.shape[0]) <= 0 or int(data.shape[1]) <= 0:
+            raise ValueError("edge-map height and width must be positive")
+
+        if isinstance(data, torch.Tensor):
+            data = data.to(dtype=torch.float32)
+            if not bool(torch.isfinite(data).all()):
+                raise ValueError("edge map contains non-finite values")
+            if bool(((data < 0.0) | (data > 1.0)).any()):
+                raise ValueError("edge-map values must be in [0, 1]")
+        else:
+            data = np.asarray(data, dtype=np.float32)
+            if not bool(np.isfinite(data).all()):
+                raise ValueError("edge map contains non-finite values")
+            if bool(np.any((data < 0.0) | (data > 1.0))):
+                raise ValueError("edge-map values must be in [0, 1]")
+
+        data_shape = (int(data.shape[0]), int(data.shape[1]))
+        if orig_shape is None:
+            orig_shape = data_shape
+        else:
+            orig_shape = (int(orig_shape[0]), int(orig_shape[1]))
+            if orig_shape != data_shape:
+                raise ValueError(
+                    f"edge map shape {data_shape} does not match original "
+                    f"image shape {orig_shape}"
+                )
+        super().__init__(data, orig_shape)
+
+    def binary(self, threshold: float = 0.5) -> TensorLike:
+        """Return a boolean edge mask at ``threshold``."""
+        threshold = float(threshold)
+        if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            raise ValueError(
+                f"edge threshold must be finite and in [0, 1], got {threshold}"
+            )
+        return self.data >= threshold
+
+    @property
+    def array(self) -> np.ndarray:
+        """Return the map as an ``(H, W)`` float32 NumPy array."""
+        return np.asarray(_numpy(self.data), dtype=np.float32)
+
+    def __getitem__(self, idx):
+        # A dense edge map is whole-image data, not an instance collection.
+        return self.__class__(self.data, self.orig_shape)
+
+    def __len__(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:
+        return (
+            f"EdgeMap(shape={tuple(self.data.shape)}, "
+            f"range=({float(self.data.min()):.4g}, "
+            f"{float(self.data.max()):.4g}), orig_shape={self.orig_shape})"
+        )
+
+
 class NormalMap(_TensorPayload):
     """Dense surface-normal field for a single image.
 
@@ -621,9 +701,7 @@ class NormalMap(_TensorPayload):
 
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
         if not isinstance(data, (torch.Tensor, np.ndarray)):
-            raise TypeError(
-                "normal-map data must be a torch.Tensor or numpy.ndarray"
-            )
+            raise TypeError("normal-map data must be a torch.Tensor or numpy.ndarray")
         if data.ndim != 3 or data.shape[-1] != 3:
             raise ValueError(
                 f"expected (H, W, 3) normal map but got shape {tuple(data.shape)}"
@@ -687,8 +765,7 @@ class NormalMap(_TensorPayload):
 
     def __repr__(self) -> str:
         return (
-            f"NormalMap(shape={tuple(self.data.shape)}, "
-            f"orig_shape={self.orig_shape})"
+            f"NormalMap(shape={tuple(self.data.shape)}, orig_shape={self.orig_shape})"
         )
 
 
@@ -774,10 +851,7 @@ class Matte(_TensorPayload):
         return 1
 
     def __repr__(self) -> str:
-        return (
-            f"Matte(shape={tuple(self.data.shape)}, "
-            f"orig_shape={self.orig_shape})"
-        )
+        return f"Matte(shape={tuple(self.data.shape)}, orig_shape={self.orig_shape})"
 
 
 class OCRRegions(_TensorPayload):
@@ -889,17 +963,29 @@ class OCRRegions(_TensorPayload):
 
     def cpu(self):
         return self.__class__(
-            _cpu(self.data), self.texts, _cpu(self._conf), _cpu(self._det_conf), self.orig_shape
+            _cpu(self.data),
+            self.texts,
+            _cpu(self._conf),
+            _cpu(self._det_conf),
+            self.orig_shape,
         )
 
     def cuda(self):
         return self.__class__(
-            _cuda(self.data), self.texts, _cuda(self._conf), _cuda(self._det_conf), self.orig_shape
+            _cuda(self.data),
+            self.texts,
+            _cuda(self._conf),
+            _cuda(self._det_conf),
+            self.orig_shape,
         )
 
     def numpy(self):
         return self.__class__(
-            _numpy(self.data), self.texts, _numpy(self._conf), _numpy(self._det_conf), self.orig_shape
+            _numpy(self.data),
+            self.texts,
+            _numpy(self._conf),
+            _numpy(self._det_conf),
+            self.orig_shape,
         )
 
     def __getitem__(self, idx):
@@ -1028,10 +1114,17 @@ class OBB(_TensorPayload):
         y = corners[..., 1]
         if isinstance(corners, torch.Tensor):
             return torch.stack(
-                [x.min(dim=1).values, y.min(dim=1).values, x.max(dim=1).values, y.max(dim=1).values],
+                [
+                    x.min(dim=1).values,
+                    y.min(dim=1).values,
+                    x.max(dim=1).values,
+                    y.max(dim=1).values,
+                ],
                 dim=1,
             )
-        return np.stack([x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1)
+        return np.stack(
+            [x.min(axis=1), y.min(axis=1), x.max(axis=1), y.max(axis=1)], axis=1
+        )
 
 
 class Gaze(_TensorPayload):
@@ -1138,7 +1231,11 @@ class Embeddings(_TensorPayload):
         b = other.normalized if isinstance(other, Embeddings) else other
         single = getattr(b, "ndim", 2) == 1
         if isinstance(a, torch.Tensor):
-            b = b if isinstance(b, torch.Tensor) else torch.as_tensor(b, dtype=a.dtype, device=a.device)
+            b = (
+                b
+                if isinstance(b, torch.Tensor)
+                else torch.as_tensor(b, dtype=a.dtype, device=a.device)
+            )
             b = b.reshape(1, -1) if single else b
             b = b / b.norm(dim=-1, keepdim=True).clamp_min(1e-10)
             sim = a @ b.T
@@ -1156,8 +1253,7 @@ class Embeddings(_TensorPayload):
 
     def __repr__(self) -> str:
         return (
-            f"Embeddings(n={len(self)}, dim={self.dim}, "
-            f"shape={tuple(self.data.shape)})"
+            f"Embeddings(n={len(self)}, dim={self.dim}, shape={tuple(self.data.shape)})"
         )
 
 
@@ -1226,6 +1322,8 @@ class Identities:
     def __repr__(self) -> str:
         known = sum(1 for n in self._names if n is not None)
         return f"Identities(n={len(self)}, known={known})"
+
+
 class Meshes:
     """Parametric human body meshes for a single image.
 
@@ -1354,9 +1452,7 @@ class Meshes:
                 "cannot be written as OBJ."
             )
         if not 0 <= index < len(self):
-            raise IndexError(
-                f"index {index} is out of range for {len(self)} mesh(es)"
-            )
+            raise IndexError(f"index {index} is out of range for {len(self)} mesh(es)")
         verts = np.asarray(_numpy(self.vertices))[index]
         faces = np.asarray(_numpy(self.faces))
 
@@ -1412,6 +1508,7 @@ class Results:
         "panoptic",
         "depth_map",
         "normal_map",
+        "edges",
         "restored",
         "matte",
         "ocr",
@@ -1448,6 +1545,7 @@ class Results:
         identities: Optional[Identities] = None,
         meshes: Optional[Meshes] = None,
         normal_map: Optional[NormalMap] = None,
+        edges: Optional[EdgeMap] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1459,6 +1557,8 @@ class Results:
             depth_map = DepthMap(depth_map.data, orig_shape)
         if normal_map is not None and normal_map.orig_shape != tuple(orig_shape):
             normal_map = NormalMap(normal_map.data, orig_shape)
+        if edges is not None and edges.orig_shape != tuple(orig_shape):
+            edges = EdgeMap(edges.data, orig_shape)
         if restored is not None and restored.orig_shape is None:
             restored = RestoredImage(restored.data, orig_shape)
         if matte is not None and matte.orig_shape is None:
@@ -1477,6 +1577,7 @@ class Results:
         self.panoptic = panoptic
         self.depth_map = depth_map
         self.normal_map = normal_map
+        self.edges = edges
         self.restored = restored
         self.matte = matte
         self.ocr = ocr
@@ -1491,7 +1592,9 @@ class Results:
         self.path = path
         self.names = names or {}
         self.speed = speed or {}
-        self.track_id = track_id if track_id is not None else (boxes.id if boxes else None)
+        self.track_id = (
+            track_id if track_id is not None else (boxes.id if boxes else None)
+        )
         self.frame_idx = frame_idx
 
     def _new(self, **overrides) -> "Results":
@@ -1510,6 +1613,7 @@ class Results:
             "panoptic": self.panoptic,
             "depth_map": self.depth_map,
             "normal_map": self.normal_map,
+            "edges": self.edges,
             "restored": self.restored,
             "matte": self.matte,
             "ocr": self.ocr,
@@ -1540,7 +1644,9 @@ class Results:
         overrides = {}
         for key in self._keys:
             value = getattr(self, key)
-            overrides[key] = getattr(value, method)(*args, **kwargs) if value is not None else None
+            overrides[key] = (
+                getattr(value, method)(*args, **kwargs) if value is not None else None
+            )
 
         if method == "cpu":
             overrides["track_id"] = _cpu(self.track_id)
@@ -1582,6 +1688,7 @@ class Results:
         identities: Optional[Identities] = None,
         meshes: Optional[Meshes] = None,
         normal_map: Optional[NormalMap] = None,
+        edges: Optional[EdgeMap] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1596,7 +1703,11 @@ class Results:
         if gaze is not None:
             self.gaze = gaze
         if points is not None:
-            self.points = points if points.orig_shape is not None else Points(points.data, self.orig_shape)
+            self.points = (
+                points
+                if points.orig_shape is not None
+                else Points(points.data, self.orig_shape)
+            )
         if semantic_mask is not None:
             self.semantic_mask = semantic_mask
         if panoptic is not None:
@@ -1609,17 +1720,29 @@ class Results:
                 if normal_map.orig_shape == tuple(self.orig_shape)
                 else NormalMap(normal_map.data, self.orig_shape)
             )
+        if edges is not None:
+            self.edges = (
+                edges
+                if edges.orig_shape == tuple(self.orig_shape)
+                else EdgeMap(edges.data, self.orig_shape)
+            )
         if restored is not None:
             self.restored = restored
         if meshes is not None:
             self.meshes = meshes
         if matte is not None:
-            self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
+            self.matte = (
+                matte
+                if matte.orig_shape is not None
+                else Matte(matte.data, self.orig_shape)
+            )
         if ocr is not None:
             self.ocr = (
                 ocr
                 if ocr.orig_shape is not None
-                else OCRRegions(ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape)
+                else OCRRegions(
+                    ocr.data, ocr.texts, ocr.conf, ocr.det_conf, self.orig_shape
+                )
             )
         if restore_scale is not None:
             self.restore_scale = int(restore_scale) if restore_scale else 1
@@ -1633,18 +1756,32 @@ class Results:
                 self.boxes = self.boxes.with_id(track_id)
         return self
 
+    @property
+    def normals(self) -> Optional[NormalMap]:
+        """Alias for :attr:`normal_map`, matching the plural dense-task API."""
+        return self.normal_map
+
+    @normals.setter
+    def normals(self, value: Optional[NormalMap]) -> None:
+        self.normal_map = value
+
     def plot(self):
-        """Render a dense normal result as its canonical RGB visualization."""
-        if self.normal_map is None:
+        """Render a dense normal or edge result in its canonical visualization."""
+        if self.normal_map is None and self.edges is None:
             raise NotImplementedError(
-                "Results.plot() is currently defined for normal-map results only."
+                "Results.plot() is currently defined for normal and edge results only."
             )
 
         from PIL import Image
 
+        h, w = self.orig_shape
+        if self.edges is not None:
+            from .drawing import draw_edge_map
+
+            return draw_edge_map(Image.new("RGB", (w, h)), self.edges.array)
+
         from .drawing import draw_normal_map
 
-        h, w = self.orig_shape
         canvas = Image.new("RGB", (w, h))
         return draw_normal_map(canvas, _numpy(self.normal_map.data))
 
@@ -1656,7 +1793,9 @@ class Results:
         reloaded from ``self.path``. Only valid for matte results.
         """
         if self.matte is None:
-            raise ValueError("cutout() is only defined for matte results (Results.matte is None).")
+            raise ValueError(
+                "cutout() is only defined for matte results (Results.matte is None)."
+            )
         alpha = self.matte.array  # (H, W) float32 in [0, 1]
         h, w = alpha.shape
         rgb = self._source_rgb(image, (h, w))
@@ -1684,7 +1823,9 @@ class Results:
             if rgb.shape[-1] == 4:
                 rgb = rgb[..., :3]
         if rgb.shape[:2] != (h, w):
-            rgb = np.asarray(Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR))
+            rgb = np.asarray(
+                Image.fromarray(rgb.astype(np.uint8)).resize((w, h), Image.BILINEAR)
+            )
         return rgb.astype(np.uint8)
 
     def save(self, path: str, image: Any = None) -> str:
@@ -1747,7 +1888,9 @@ class Results:
                             "name": "text",
                             "text": ocr_np.texts[i],
                             "confidence": round(float(ocr_np.conf[i]), decimals),
-                            "det_confidence": round(float(ocr_np.det_conf[i]), decimals),
+                            "det_confidence": round(
+                                float(ocr_np.det_conf[i]), decimals
+                            ),
                             "polygon": {
                                 "x": [round(float(x), decimals) for x in polygon[:, 0]],
                                 "y": [round(float(y), decimals) for y in polygon[:, 1]],
@@ -1826,6 +1969,18 @@ class Results:
                         "orientation": "camera-facing",
                     }
                 ]
+            if self.edges is not None:
+                h, w = self.edges.orig_shape
+                edge_values = self.edges.array
+                return [
+                    {
+                        "name": "edges",
+                        "shape": [int(h), int(w)],
+                        "min": round(float(edge_values.min()), decimals),
+                        "max": round(float(edge_values.max()), decimals),
+                        "mean": round(float(edge_values.mean()), decimals),
+                    }
+                ]
             if self.restored is not None:
                 h, w = self.restored.array.shape[:2]
                 return [
@@ -1863,7 +2018,11 @@ class Results:
         boxes_np = self.boxes.numpy()
         obb_np = None
         if self.obb is not None:
-            obb_np = self.obb.numpy() if isinstance(self.obb.data, torch.Tensor) else self.obb
+            obb_np = (
+                self.obb.numpy()
+                if isinstance(self.obb.data, torch.Tensor)
+                else self.obb
+            )
         # Converted once rather than per row: mesh payloads carry vertex arrays
         # large enough that repeating the conversion per person is wasteful.
         meshes_np = self.meshes.numpy() if self.meshes is not None else None
@@ -1913,15 +2072,27 @@ class Results:
                     "y": [round(float(y), decimals) for y in segment[:, 1]],
                 }
             if self.gaze is not None and i < len(self.gaze):
-                gaze_np = self.gaze.numpy() if isinstance(self.gaze.data, torch.Tensor) else self.gaze
+                gaze_np = (
+                    self.gaze.numpy()
+                    if isinstance(self.gaze.data, torch.Tensor)
+                    else self.gaze
+                )
                 row["gaze"] = {
                     "pitch_rad": round(float(gaze_np.data[i, 0]), decimals),
                     "yaw_rad": round(float(gaze_np.data[i, 1]), decimals),
-                    "pitch_deg": round(float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals),
-                    "yaw_deg": round(float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals),
+                    "pitch_deg": round(
+                        float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals
+                    ),
+                    "yaw_deg": round(
+                        float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals
+                    ),
                 }
             if self.embeddings is not None and i < len(self.embeddings):
-                emb = self.embeddings.numpy() if isinstance(self.embeddings.data, torch.Tensor) else self.embeddings
+                emb = (
+                    self.embeddings.numpy()
+                    if isinstance(self.embeddings.data, torch.Tensor)
+                    else self.embeddings
+                )
                 # A 512-float vector is ~2 KB/face — omit it from summaries by
                 # default and surface only its dimension; opt in with embeddings=True.
                 row["embedding_dim"] = int(emb.dim)
@@ -1985,6 +2156,8 @@ class Results:
             return 1
         if self.normal_map is not None:
             return 1
+        if self.edges is not None:
+            return 1
         if self.restored is not None:
             return 1
         if self.matte is not None:
@@ -2013,6 +2186,8 @@ class Results:
             parts.append(f"depth_map={self.depth_map}")
         if self.normal_map is not None:
             parts.append(f"normal_map={self.normal_map}")
+        if self.edges is not None:
+            parts.append(f"edges={self.edges}")
         if self.restored is not None:
             parts.append(f"restored={self.restored}")
             if self.restore_scale != 1:
@@ -2081,7 +2256,6 @@ def stack_result_embeddings(prediction: Any) -> torch.Tensor:
     dimensions = {int(tensor.shape[1]) for tensor in non_empty}
     if len(dimensions) != 1:
         raise RuntimeError(
-            "Cannot stack embeddings with different dimensions: "
-            f"{sorted(dimensions)}."
+            f"Cannot stack embeddings with different dimensions: {sorted(dimensions)}."
         )
     return torch.cat(non_empty, dim=0)

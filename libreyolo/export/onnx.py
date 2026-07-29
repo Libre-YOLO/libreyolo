@@ -227,6 +227,7 @@ def export_onnx(
     is_matte = task == "matte"
     is_depth = task == "depth"
     is_normal = task == "normal"
+    is_edge = task == "edge"
     is_gaze = task == "gaze"
     known_detr_detection = _uses_dfine_style_export_wrapper(model_family)
     num_outputs = None
@@ -237,6 +238,7 @@ def export_onnx(
         and not is_matte
         and not is_depth
         and not is_normal
+        and not is_edge
         and not is_semantic
         and not is_gaze
     ):
@@ -313,6 +315,12 @@ def export_onnx(
         output_names = ["normal"]
         dynamic_axes = (
             {"images": {0: "batch"}, "normal": {0: "batch"}} if dynamic else None
+        )
+    elif is_edge:
+        # Fused edge probability map (B, 1, H, W) at the export canvas.
+        output_names = ["edges"]
+        dynamic_axes = (
+            {"images": {0: "batch"}, "edges": {0: "batch"}} if dynamic else None
         )
     elif is_yolo9_pose:
         output_names = ["predictions", "keypoints"]

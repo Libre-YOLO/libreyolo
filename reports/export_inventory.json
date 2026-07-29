@@ -157,6 +157,23 @@
     "optional_extra": null,
     "available": true
   },
+  "dexined": {
+    "class": "libreyolo.models.dexined.model.LibreDexiNed",
+    "tasks": [
+      "edge"
+    ],
+    "default_task": "edge",
+    "sizes": {
+      "b": 352
+    },
+    "default_imgsz": {
+      "b": 352
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
   "dfine": {
     "class": "libreyolo.models.dfine.model.LibreDFINE",
     "tasks": [
@@ -1167,6 +1184,23 @@
       "s": 64,
       "m": 64,
       "l": 64
+    },
+    "task_sizes": {},
+    "export_override": "none",
+    "optional_extra": null,
+    "available": true
+  },
+  "teed": {
+    "class": "libreyolo.models.teed.model.LibreTEED",
+    "tasks": [
+      "edge"
+    ],
+    "default_task": "edge",
+    "sizes": {
+      "t": 352
+    },
+    "default_imgsz": {
+      "t": 352
     },
     "task_sizes": {},
     "export_override": "none",

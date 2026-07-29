@@ -316,8 +316,12 @@ def draw_points(
             outline=(0, 0, 0),
             width=stroke,
         )
-        draw.line([(x - radius * 1.5, y), (x + radius * 1.5, y)], fill=(0, 0, 0), width=1)
-        draw.line([(x, y - radius * 1.5), (x, y + radius * 1.5)], fill=(0, 0, 0), width=1)
+        draw.line(
+            [(x - radius * 1.5, y), (x + radius * 1.5, y)], fill=(0, 0, 0), width=1
+        )
+        draw.line(
+            [(x, y - radius * 1.5), (x, y + radius * 1.5)], fill=(0, 0, 0), width=1
+        )
 
         if isinstance(class_names, dict):
             class_name = class_names.get(cls_id_int)
@@ -334,8 +338,14 @@ def draw_points(
         full_bbox = draw.textbbox((0, 0), label, font=font)
         text_width = full_bbox[2] - full_bbox[0]
         text_height = full_bbox[3] - full_bbox[1]
-        label_x = min(max(0, x + radius + label_padding), img.width - text_width - label_padding * 2)
-        label_y = min(max(0, y - text_height / 2 - label_padding), img.height - text_height - label_padding * 2)
+        label_x = min(
+            max(0, x + radius + label_padding),
+            img.width - text_width - label_padding * 2,
+        )
+        label_y = min(
+            max(0, y - text_height / 2 - label_padding),
+            img.height - text_height - label_padding * 2,
+        )
         draw.rectangle(
             [
                 label_x,
@@ -442,7 +452,9 @@ def draw_ocr_regions(
         text_height = full_bbox[3] - full_bbox[1]
         top_left_x = min(p[0] for p in pts)
         top_left_y = min(p[1] for p in pts)
-        label_x = min(max(0, top_left_x), max(0, img.width - text_width - label_padding * 2))
+        label_x = min(
+            max(0, top_left_x), max(0, img.width - text_width - label_padding * 2)
+        )
         label_y = top_left_y - text_height - label_padding * 2
         if label_y < 0:
             label_y = top_left_y
@@ -677,6 +689,24 @@ def draw_depth_map(
     return result
 
 
+def draw_edge_map(
+    img: Image.Image,
+    edge_map: np.ndarray,
+) -> Image.Image:
+    """Render edge probabilities as inverted grayscale."""
+    edges = np.asarray(edge_map, dtype=np.float32)
+    if edges.ndim != 2:
+        raise ValueError(f"expected an (H, W) edge map, got {edges.shape}")
+    if edges.shape != (img.height, img.width):
+        edge_image = Image.fromarray(edges, mode="F").resize(
+            (img.width, img.height),
+            Image.BILINEAR,
+        )
+        edges = np.asarray(edge_image, dtype=np.float32)
+    grayscale = np.rint((1.0 - np.clip(edges, 0.0, 1.0)) * 255.0).astype(np.uint8)
+    return Image.fromarray(grayscale, mode="L").convert("RGB")
+
+
 def draw_normal_map(
     img: Image.Image,
     normal_map: np.ndarray,
@@ -690,9 +720,7 @@ def draw_normal_map(
     """
     normals = np.asarray(normal_map, dtype=np.float32)
     if normals.ndim != 3 or normals.shape[-1] != 3:
-        raise ValueError(
-            f"expected (H, W, 3) normal map but got shape {normals.shape}"
-        )
+        raise ValueError(f"expected (H, W, 3) normal map but got shape {normals.shape}")
     if normals.shape[:2] != (img.height, img.width):
         components = []
         for component in range(3):
@@ -762,10 +790,23 @@ def draw_matte(
 
 # COCO 17-keypoint skeleton + colors (matches super-gradients defaults).
 COCO_KEYPOINT_EDGES: Tuple[Tuple[int, int], ...] = (
-    (0, 1), (0, 2), (1, 2), (1, 3), (2, 4),
-    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
-    (5, 11), (6, 12), (11, 12),
-    (11, 13), (13, 15), (12, 14), (14, 16),
+    (0, 1),
+    (0, 2),
+    (1, 2),
+    (1, 3),
+    (2, 4),
+    (5, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
 )
 COCO_KEYPOINT_COLOR: Tuple[int, int, int] = (51, 153, 255)
 COCO_EDGE_COLOR: Tuple[int, int, int] = (255, 128, 0)
@@ -804,7 +845,7 @@ def draw_keypoints(
     img_draw = img.copy()
     draw = ImageDraw.Draw(img_draw)
 
-    img_diag = (img.width ** 2 + img.height ** 2) ** 0.5
+    img_diag = (img.width**2 + img.height**2) ** 0.5
     if point_radius is None:
         point_radius = max(2, int(round(img_diag / 400)))
     if edge_width is None:
@@ -814,7 +855,8 @@ def draw_keypoints(
 
     for instance in arr:
         visible = (
-            instance[:, 2] >= conf_thres if has_conf
+            instance[:, 2] >= conf_thres
+            if has_conf
             else np.ones(instance.shape[0], dtype=bool)
         )
         for a, b in edges:
@@ -830,8 +872,12 @@ def draw_keypoints(
                 continue
             cx, cy = float(x), float(y)
             draw.ellipse(
-                [cx - point_radius, cy - point_radius,
-                 cx + point_radius, cy + point_radius],
+                [
+                    cx - point_radius,
+                    cy - point_radius,
+                    cx + point_radius,
+                    cy + point_radius,
+                ],
                 fill=point_color,
                 outline=(0, 0, 0),
             )
@@ -915,9 +961,14 @@ def draw_gaze_arrows(
 # anatomical landmarks; only the body, feet and neck links are drawn, because
 # finger edges collapse into noise at whole-image scale.
 MHR70_SKELETON_EDGES: Tuple[Tuple[int, int], ...] = COCO_KEYPOINT_EDGES + (
-    (15, 17), (15, 18), (15, 19),  # left ankle to big toe, small toe, heel
-    (16, 20), (16, 21), (16, 22),  # right ankle to big toe, small toe, heel
-    (63, 5), (63, 6),              # neck to shoulders
+    (15, 17),
+    (15, 18),
+    (15, 19),  # left ankle to big toe, small toe, heel
+    (16, 20),
+    (16, 21),
+    (16, 22),  # right ankle to big toe, small toe, heel
+    (63, 5),
+    (63, 6),  # neck to shoulders
 )
 MESH_VERTEX_COLOR: Tuple[int, int, int] = (120, 200, 255)
 # Neutral clay, the convention for body-mesh overlays: light enough to read
@@ -1102,7 +1153,7 @@ def draw_mesh(
         if verts.size:
             overlay = img_draw.copy()
             draw = ImageDraw.Draw(overlay)
-            img_diag = (img.width ** 2 + img.height ** 2) ** 0.5
+            img_diag = (img.width**2 + img.height**2) ** 0.5
             radius = max(1, int(round(img_diag / 900)))
             for person in verts:
                 if len(person) > max_vertices:

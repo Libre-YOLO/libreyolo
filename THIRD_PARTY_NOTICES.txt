@@ -1008,3 +1008,29 @@ huggingface.co/LibreYOLO/LibreSAM3DBodyd3-mesh and
 huggingface.co/LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
 text and an access gate recording acceptance. Mirroring does not change the
 license: those weights remain SAM-licensed, not MIT.
+
+--------------------------------------------------------------------
+TEED (Xavier Soria Poma)
+--------------------------------------------------------------------
+Source: https://github.com/xavysp/TEED
+Commit: 40fa4b1391dc6424f88989d0ca75d5b592c8681d
+License: MIT
+Copyright (c) 2022 Xavier Soria Poma
+Used for: the native TEED edge-detection architecture in
+          libreyolo/models/teed/nn.py. The port retains the released
+          parameter layout for strict local checkpoint conversion. The full
+          MIT notice and the source/weights/data separation are recorded in
+          libreyolo/models/teed/NOTICE.
+
+--------------------------------------------------------------------
+DexiNed (Xavier Soria Poma)
+--------------------------------------------------------------------
+Source: https://github.com/xavysp/DexiNed
+Commit: 08ed67ad0579f3969536a9719cdc1b829fb74fc1
+License: MIT
+Copyright (c) 2019 Xavier Soria Poma
+Used for: the native DexiNed edge-detection architecture in
+          libreyolo/models/dexined/nn.py. The port retains the released
+          parameter layout for strict local checkpoint conversion. The full
+          MIT notice and the source/weights/data separation are recorded in
+          libreyolo/models/dexined/NOTICE.

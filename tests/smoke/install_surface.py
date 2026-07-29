@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import importlib.resources
 import json
 from pathlib import Path
 import shutil
@@ -55,7 +56,17 @@ def _load_json_stdout(result: subprocess.CompletedProcess[str]) -> dict[str, Any
 
 def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     import libreyolo
-    from libreyolo import FaceGallery, Gallery, LibreYOLO, Results, SAMPLE_IMAGE
+    from libreyolo import (
+        EdgeMap,
+        EdgeValidator,
+        FaceGallery,
+        Gallery,
+        LibreDexiNed,
+        LibreTEED,
+        LibreYOLO,
+        Results,
+        SAMPLE_IMAGE,
+    )
 
     if not callable(LibreYOLO):
         raise AssertionError("LibreYOLO import did not resolve to a callable")
@@ -65,6 +76,15 @@ def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
         raise AssertionError("FaceGallery did not resolve to the Gallery alias")
     if "Gallery" not in libreyolo.__all__ or "FaceGallery" not in libreyolo.__all__:
         raise AssertionError("Gallery exports are missing from libreyolo.__all__")
+    for public_type in (EdgeMap, EdgeValidator, LibreTEED, LibreDexiNed):
+        if not isinstance(public_type, type):
+            raise AssertionError(
+                f"Edge public API did not resolve to a class: {public_type!r}"
+            )
+    for package_name in ("libreyolo.models.teed", "libreyolo.models.dexined"):
+        notice = importlib.resources.files(package_name).joinpath("NOTICE")
+        if not notice.is_file():
+            raise AssertionError(f"Family NOTICE is missing from {package_name}")
 
     # The LibreVLM tier exposes a factory plus family classes via lazy imports
     # (transformers is not required to import these names).

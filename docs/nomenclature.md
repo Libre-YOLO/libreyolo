@@ -69,6 +69,8 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `depth_anything3` | `LibreDepthAnything3` | CamelCase preserved + version (Depth Anything 3), depth-only |
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `moge2`     | `LibreMoGe2` | Upstream brand casing preserved (`MoGe`) + version; surface-normal-only |
+| `teed`      | `LibreTEED` | All-caps acronym (`TEED`); edge-only tiny CNN specialist |
+| `dexined`   | `LibreDexiNed` | Upstream brand casing preserved (`DexiNed`); edge-only base CNN specialist |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `feynobg`   | `LibreFeyNobg` | CamelCase preserved (FeyNobg); matte-only background-removal family built on the BiRefNet architecture |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
@@ -161,6 +163,8 @@ ships:
 | `depth_anything3` | `l` (DA3MONO-LARGE ViT-L, native upper-bound 504) |
 | `zipdepth`  | `b` (base, GPU/CPU convex upsampling), `bnpu` (base capacity with the separately trained unfold-free upsampling head for NPU/edge compilers); both at short-side 384 |
 | `moge2`     | `s`, `b`, `l` (official MoGe-2 ViT-S/B/L-14 normal checkpoints; all at native short side 518, `l` quality default) |
+| `teed`      | `t` (tiny, 58,910 parameters; fixed 352 square) |
+| `dexined`   | `b` (base, 35.2M parameters; fixed 352 square) |
 | `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
 | `feynobg`   | `l` (single released variant: Swin-L tier with stage 3 deepened to 24 blocks, 263M params) at fixed 1024 |
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
@@ -211,6 +215,7 @@ From `libreyolo/tasks.py`:
 | `obb`         | `-obb` |
 | `point`       | `-point` |
 | `depth`       | `-depth` |
+| `edge`        | `-edge` |
 | `normal`      | `-normal` |
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
@@ -251,8 +256,16 @@ as a Mask2Former-style non-overlapping thing+stuff merge.
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
 
+`edge` is the task for dense edge detection. Models expose `Results.edges`, a
+float32 `(H, W)` probability map in `[0, 1]` on the original image canvas.
+`EdgeMap.binary(threshold)` produces a boolean mask. Plotting renders the
+continuous map as inverted grayscale (high-confidence edges are black), but
+does not alter the stored probabilities. Validation reports BSDS-style ODS and
+OIS F-measures after non-maximum thinning with one-to-one pixel matching.
+
 `normal` is the task for dense surface-normal estimation. Models expose
-`Results.normal_map`, a float32 `(H, W, 3)` unit-vector field in `[-1, 1]` on
+`Results.normal_map` (also available as `Results.normals`), a float32
+`(H, W, 3)` unit-vector field in `[-1, 1]` on
 the original image canvas at its original resolution. Vectors use the OpenCV
 camera frame: `+x` points right, `+y` points down, and `+z` points into the
 scene. Normals face the camera (`n . ray < 0` for each visible surface), so a
@@ -369,6 +382,8 @@ Detector-factory family support follows:
 | `depth_anything3` | `("depth",)`                  | depth  | Depth Anything 3 mono (ViT-L + DPT); size `l` at upper-bound 504; recommended quality default; Apache-2.0 code/weights; predict + zero-shot `val`; not trainable in LibreYOLO |
 | `zipdepth`  | `("depth",)`                        | depth  | ZipDepth lightweight CNN (RepVGG encoder + FPN decoder, DA2-L distilled); sizes `b`/`bnpu` at short-side 384; predict + zero-shot `val` + fixed-resolution ONNX/TorchScript export; MIT code and weights; not trainable in LibreYOLO |
 | `moge2`     | `("normal",)`                       | normal | MoGe-2 ViT-S/B/L-14 normal models; sizes `s`/`b`/`l` at native short-side 518 (`l` quality default); OpenCV camera-frame unit normals; predict + zero-shot `val` + fixed-resolution ONNX export; official code and checkpoints are MIT; not trainable in LibreYOLO |
+| `teed`      | `("edge",)`                         | edge   | TEED tiny edge CNN at 352; MIT architecture source; predict + ODS/OIS `val` + fixed-resolution ONNX; local checkpoints only because the released BIPED-trained weights are non-commercial |
+| `dexined`   | `("edge",)`                         | edge   | DexiNed base edge CNN at 352; MIT architecture source; predict + ODS/OIS `val` + fixed-resolution ONNX; local checkpoints only because the released BIPED-trained weights are non-commercial |
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
 | `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
 | `feynobg`   | `("matte",)`                        | matte  | FeyNobg background removal (BiRefNet architecture, deeper stage 3); size `l`, fixed 1024; same matte surface as birefnet; inference-only; fp8/nvfp4 pre-quantized checkpoints published on HF |
@@ -494,6 +509,10 @@ LibreZipDepthbnpu-depth.pt       # base, unfold-free upsampling (NPU/edge export
 LibreMoGe2s-normal.pt            # ViT-S/14, native short side 518
 LibreMoGe2b-normal.pt            # ViT-B/14, native short side 518
 LibreMoGe2l-normal.pt            # ViT-L/14, native short side 518, quality default
+
+# edge specialists - architecture code is MIT; no released weights are mirrored
+LibreTEEDt-edge.pt               # tiny TEED, local compatible checkpoint
+LibreDexiNedb-edge.pt            # base DexiNed, local compatible checkpoint
 
 # nafnet — NAFNet restoration (restore-only)
 LibreNAFNets-restore.pt

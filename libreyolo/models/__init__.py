@@ -73,6 +73,8 @@ from .depth_anything.model import (  # noqa: E402,F401  (import registers family
 )
 from .zipdepth.model import LibreZipDepth  # noqa: E402,F401  (depth-only; can_load keyed on encoder.stem_half + decoder.convex_up)
 from .moge2.model import LibreMoGe2  # noqa: E402,F401  (normal-only; official Microsoft MIT checkpoint)
+from .teed.model import LibreTEED  # noqa: E402,F401  (edge-only; MIT source)
+from .dexined.model import LibreDexiNed  # noqa: E402,F401  (edge-only; MIT source)
 from .depth_anything3.model import (  # noqa: E402,F401  (import registers family)
     LibreDepthAnything3,
 )
@@ -101,6 +103,7 @@ from .clip.model import LibreCLIP  # noqa: E402,F401  (import registers family)
 # vision_model.embeddings.patch_embedding + text_model.head, so order does not
 # matter. NB: SigLIP carries logit_bias, which CLIP lacks.
 from .siglip2.model import LibreSigLIP2  # noqa: E402,F401  (import registers family)
+
 # PP-OCRv5 text detection + recognition pipeline. can_load is uniquely keyed
 # on the composite det.*/rec.* checkpoint layout, so order does not matter.
 from .ppocr.model import LibrePPOCR  # noqa: E402,F401  (import registers family)
@@ -714,6 +717,8 @@ __all__ = [
     "LibreFOMO",
     "LibreDepthAnythingV2",
     "LibreMoGe2",
+    "LibreTEED",
+    "LibreDexiNed",
     "LibreDepthAnything3",
     "LibreNAFNet",
     "LibreBiRefNet",

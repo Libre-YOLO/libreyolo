@@ -40,6 +40,7 @@ from ..utils.predict_args import normalize_predict_kwargs
 from ..utils.results import (
     Boxes,
     DepthMap,
+    EdgeMap,
     Gaze,
     Keypoints,
     Matte,
@@ -413,6 +414,8 @@ class BaseBackend(ABC):
             return self._preprocess_depth(image, effective_imgsz, color_format)
         if self.task == "normal":
             return self._preprocess_normal(image, effective_imgsz, color_format)
+        if self.task == "edge":
+            return self._preprocess_edge(image, effective_imgsz, color_format)
         if self.task == "matte":
             return self._preprocess_matte(image, effective_imgsz, color_format)
         if self.task == "gaze":
@@ -678,6 +681,22 @@ class BaseBackend(ABC):
         chw = resized.astype(np.float32).transpose(2, 0, 1) / 255.0
         img_tensor = torch.from_numpy(np.ascontiguousarray(chw)).unsqueeze(0)
         return img_tensor, original_img, original_size, 1.0
+
+    @staticmethod
+    def _preprocess_edge(image, input_size, color_format):
+        """Canonical fixed-square RGB preprocessing for edge specialists."""
+        from ..models.edge_common import preprocess_numpy
+
+        input_h, input_w = _imgsz_hw(input_size)
+        if input_h != input_w:
+            raise NotImplementedError(
+                "Edge exported-runtime inference requires square imgsz."
+            )
+        img = ImageLoader.load(image, color_format=color_format).convert("RGB")
+        original_size = img.size
+        chw, ratio = preprocess_numpy(np.asarray(img), input_h)
+        tensor = torch.from_numpy(chw).unsqueeze(0).float()
+        return tensor, img.copy(), original_size, ratio
 
     @property
     def restore_scale(self) -> int:
@@ -2195,6 +2214,29 @@ class BaseBackend(ABC):
         unit = torch.where(valid, unit, fallback)
         return unit[0].permute(1, 2, 0).contiguous()
 
+    @staticmethod
+    def _parse_edge_output(all_outputs, original_size: Tuple[int, int]) -> torch.Tensor:
+        """Decode backend edge output to an (H, W) probability map."""
+        edges = np.asarray(all_outputs[0], dtype=np.float32)
+        if edges.ndim == 2:
+            edges = edges[None, None]
+        elif edges.ndim == 3:
+            edges = edges[:, None] if edges.shape[0] == 1 else edges[None]
+        if edges.ndim != 4 or edges.shape[1] != 1:
+            raise ValueError(
+                "Edge backend output must have shape [B, 1, H, W], "
+                f"got {tuple(np.asarray(all_outputs[0]).shape)}."
+            )
+        orig_w, orig_h = original_size
+        edge_tensor = torch.from_numpy(np.ascontiguousarray(edges))
+        edge_tensor = F.interpolate(
+            edge_tensor,
+            size=(orig_h, orig_w),
+            mode="bilinear",
+            align_corners=False,
+        )
+        return edge_tensor[0, 0].clamp(0.0, 1.0)
+
     def _build_normal_result(
         self,
         all_outputs,
@@ -2207,6 +2249,23 @@ class BaseBackend(ABC):
         return Results(
             boxes=None,
             normal_map=NormalMap(normal, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _build_edge_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        image_path,
+    ) -> Results:
+        edges = self._parse_edge_output(all_outputs, original_size)
+        return Results(
+            boxes=None,
+            edges=EdgeMap(edges, orig_shape),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
@@ -2560,6 +2619,13 @@ class BaseBackend(ABC):
             if isinstance(normal_data, torch.Tensor):
                 normal_data = normal_data.cpu().numpy()
             annotated_img = draw_normal_map(original_img, normal_data)
+        elif result.boxes is None and getattr(result, "edges", None) is not None:
+            from ..utils.drawing import draw_edge_map
+
+            edge_data = result.edges.data
+            if isinstance(edge_data, torch.Tensor):
+                edge_data = edge_data.cpu().numpy()
+            annotated_img = draw_edge_map(original_img, edge_data)
         elif len(result) > 0:
             if result.masks is not None:
                 annotated_img = draw_masks(
@@ -2758,6 +2824,8 @@ class BaseBackend(ABC):
             return {"depth": self._parse_depth_output(outputs, original_size)}
         if self.task == "normal":
             return {"normal": self._parse_normal_output(outputs, original_size)}
+        if self.task == "edge":
+            return {"edges": self._parse_edge_output(outputs, original_size)}
         if self.task == "matte":
             return {"matte": self._parse_matte_output(outputs, original_size)}
         if self.task == "gaze":
@@ -2848,6 +2916,7 @@ class BaseBackend(ABC):
         from ..validation import (
             ClassifyValidator,
             DepthValidator,
+            EdgeValidator,
             DetectionValidator,
             OBBValidator,
             PointValidator,
@@ -2912,6 +2981,8 @@ class BaseBackend(ABC):
             validator_cls = DepthValidator
         elif self.task == "normal":
             validator_cls = NormalValidator
+        elif self.task == "edge":
+            validator_cls = EdgeValidator
         elif self.task == "matte":
             validator_cls = MatteValidator
         elif self.task == "gaze":
@@ -3004,6 +3075,21 @@ class BaseBackend(ABC):
             return result
         if self.task == "normal":
             result = self._build_normal_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
+        if self.task == "edge":
+            result = self._build_edge_result(
                 all_outputs,
                 orig_shape=orig_shape,
                 original_size=original_size,
@@ -3308,6 +3394,13 @@ class BaseBackend(ABC):
                     original_size=original_size,
                     image_path=image_path,
                 )
+            elif self.task == "edge":
+                result = self._build_edge_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=image_path,
+                )
             elif self.task == "matte":
                 result = self._build_matte_result(
                     per_image,
@@ -3529,6 +3622,13 @@ class BaseBackend(ABC):
                 )
             if self.task == "normal":
                 return self._build_normal_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    image_path=str(source),
+                )
+            if self.task == "edge":
+                return self._build_edge_result(
                     all_outputs,
                     orig_shape=orig_shape,
                     original_size=original_size,

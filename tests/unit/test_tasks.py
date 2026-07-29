@@ -60,6 +60,18 @@ def test_normalize_normal_task_aliases():
         assert normalize_task(alias) == "normal"
 
 
+def test_normalize_edge_task_aliases():
+    for alias in (
+        "edge",
+        "edges",
+        "boundary",
+        "boundaries",
+        "edge-detection",
+        "edge_detection",
+    ):
+        assert normalize_task(alias) == "edge"
+
+
 def test_normalize_restore_task_aliases():
     assert normalize_task("restore") == "restore"
     assert normalize_task("restoration") == "restore"
@@ -88,6 +100,7 @@ def test_task_type_literal_is_public():
         "obb",
         "point",
         "depth",
+        "edge",
         "normal",
         "restore",
         "matte",
@@ -136,12 +149,14 @@ def test_task_suffix_helpers():
     assert suffix_to_task("-obb") == "obb"
     assert suffix_to_task("-point") == "point"
     assert suffix_to_task("-depth") == "depth"
+    assert suffix_to_task("-edge") == "edge"
     assert suffix_to_task("-normal") == "normal"
     assert suffix_to_task("-restore") == "restore"
     assert suffix_to_task("-matte") == "matte"
     assert task_to_suffix("obb") == "obb"
     assert task_to_suffix("point") == "point"
     assert task_to_suffix("depth") == "depth"
+    assert task_to_suffix("edge") == "edge"
     assert task_to_suffix("normal") == "normal"
     assert task_to_suffix("restore") == "restore"
     assert task_to_suffix("matte") == "matte"

@@ -346,6 +346,24 @@ _add(
     constraint="fixed-resolution export canvas",
 )
 _add(
+    "validated",
+    ("teed", "dexined"),
+    ("edge",),
+    ("onnx",),
+    since="1.5",
+    constraint="fixed-resolution batch-1 edge-probability canvas",
+)
+_add(
+    "blocked",
+    ("teed", "dexined"),
+    ("edge",),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
+    reason=(
+        "The edge exported-runtime contract is ONNX-only in v1; add runtime "
+        "parity before enabling another format."
+    ),
+)
+_add(
     "blocked",
     ("zipdepth",),
     ("depth",),

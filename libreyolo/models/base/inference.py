@@ -33,6 +33,7 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_edge_map,
     draw_normal_map,
     draw_mesh,
     draw_ocr_regions,
@@ -53,6 +54,7 @@ from ...utils.results import (
     Boxes,
     DepthMap,
     Embeddings,
+    EdgeMap,
     Keypoints,
     Masks,
     Matte,
@@ -145,6 +147,7 @@ def _build_meshes(mesh_data: dict, orig_shape: Tuple[int, int]) -> Meshes:
         extras=extras,
         orig_shape=orig_shape,
     )
+
 
 if TYPE_CHECKING:
     from .model import BaseModel
@@ -258,16 +261,20 @@ class InferenceRunner:
                     f"Invalid output_file_format: {output_file_format}. "
                     "Must be one of: 'jpg', 'png', 'webp'"
                 )
-            
+
         if tiling and augment:
             raise ValueError(
-                "tiling and augment cannot be used together. "
-                "Disable one of them."
+                "tiling and augment cannot be used together. Disable one of them."
             )
         if augment and getattr(self.model, "task", None) == "point":
             raise ValueError(
                 "Test-time augmentation does not support point-task models yet. "
                 "Use augment=False for point models."
+            )
+        if augment and getattr(self.model, "task", None) == "edge":
+            raise ValueError(
+                "Test-time augmentation does not support edge detection yet. "
+                "Use augment=False for edge models."
             )
 
         # Handle video input
@@ -332,7 +339,6 @@ class InferenceRunner:
                 **kwargs,
             )
 
-
         # Use tiled inference if enabled
         if tiling:
             return self._predict_tiled(
@@ -349,7 +355,7 @@ class InferenceRunner:
                 output_file_format=output_file_format,
                 **kwargs,
             )
-        
+
         if augment and getattr(self.model, "TTA_ENABLED", False):
             result = self.model._predict_augment(
                 source,
@@ -636,7 +642,9 @@ class InferenceRunner:
             results.append(result)
         return results
 
-    def _save_annotated_image(self, result: Results, original_img, save_path: Path) -> None:
+    def _save_annotated_image(
+        self, result: Results, original_img, save_path: Path
+    ) -> None:
         """Internal helper to draw boxes, masks, and keypoints and save to disk."""
         # Classification and whole-image embed results carry no boxes; there is
         # nothing to draw, so persist the source image as-is.
@@ -673,6 +681,14 @@ class InferenceRunner:
             if isinstance(depth_data, torch.Tensor):
                 depth_data = depth_data.cpu().numpy()
             annotated_img = draw_depth_map(original_img, depth_data)
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
+        if result.boxes is None and getattr(result, "edges", None) is not None:
+            edge_data = result.edges.data
+            if isinstance(edge_data, torch.Tensor):
+                edge_data = edge_data.cpu().numpy()
+            annotated_img = draw_edge_map(original_img, edge_data)
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
@@ -744,7 +760,9 @@ class InferenceRunner:
                     result.obb.conf.tolist(),
                     result.obb.cls.tolist(),
                     class_names=result.names,
-                    track_ids=result.obb.id.tolist() if result.obb.id is not None else None,
+                    track_ids=result.obb.id.tolist()
+                    if result.obb.id is not None
+                    else None,
                 )
             else:
                 annotated_img = draw_boxes(
@@ -786,8 +804,11 @@ class InferenceRunner:
         masks_t: Optional[torch.Tensor] = None,
         keypoints_t: Optional[torch.Tensor] = None,
     ) -> Tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor,
-        Optional[torch.Tensor], Optional[torch.Tensor],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        Optional[torch.Tensor],
+        Optional[torch.Tensor],
     ]:
         """Filter detections to keep only the requested class IDs."""
         mask = torch.zeros(len(cls_t), dtype=torch.bool, device=cls_t.device)
@@ -905,6 +926,23 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
+            )
+
+        # Edge detection: a dense (H, W) probability map, no boxes.
+        edge_data = detections.get("edges", detections.get("edge"))
+        if edge_data is not None:
+            orig_w, orig_h = original_size
+            edge_t = (
+                edge_data
+                if isinstance(edge_data, torch.Tensor)
+                else torch.as_tensor(edge_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                edges=EdgeMap(edge_t.float(), (orig_h, orig_w)),
             )
 
         # Surface normals: a dense (H, W, 3) unit-vector field, no boxes.
@@ -1034,7 +1072,9 @@ class InferenceRunner:
                 points_t = torch.zeros((0, 4), dtype=torch.float32)
             points_obj = Points(points_t)
             if classes is not None and len(points_t) > 0:
-                cls_mask = torch.zeros(len(points_t), dtype=torch.bool, device=points_t.device)
+                cls_mask = torch.zeros(
+                    len(points_t), dtype=torch.bool, device=points_t.device
+                )
                 for cid in classes:
                     cls_mask |= points_obj.cls == cid
                 points_obj = Points(points_t[cls_mask])
@@ -1160,7 +1200,7 @@ class InferenceRunner:
 
         # Pass "effective_imgsz" immediately to kwargs
         kwargs["input_size"] = effective_imgsz
-        
+
         # Preprocess
         input_tensor, original_img, original_size, ratio = self.model._preprocess(
             image, color_format, input_size=effective_imgsz
@@ -1330,6 +1370,11 @@ class InferenceRunner:
             raise ValueError(
                 "Tiled inference does not support depth maps yet. "
                 "Use non-tiled inference for depth models."
+            )
+        if getattr(self.model, "task", "detect") in ("edge", "normal"):
+            raise ValueError(
+                "Tiled inference does not support edge or normal maps yet. "
+                "Use non-tiled inference for dense edge/normal models."
             )
 
         if getattr(self.model, "_is_segmentation", False):

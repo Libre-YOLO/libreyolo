@@ -32,7 +32,7 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `normal`, `restore`,
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `edge`, `normal`, `restore`,
   `matte`, `ocr`, `embed`, or `mesh`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
@@ -87,6 +87,11 @@ the dimensions are recorded rather than assumed, the same way pose records
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
+
+Edge checkpoints use the task string `edge`, `nc: 1`, and
+`names: {0: "edge"}`. The single class-like slot exists only for checkpoint
+schema compatibility; edge predictions are dense float32 probability maps in
+`[0, 1]`, not classes.
 
 Restore checkpoints use the task string `restore`, `nc: 1`, and
 `names: {0: "image"}`. The single class-like slot exists only for checkpoint

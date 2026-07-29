@@ -308,6 +308,7 @@ def run_video_inference(
     from .drawing import (
         draw_boxes,
         draw_depth_map,
+        draw_edge_map,
         draw_normal_map,
         draw_keypoints,
         draw_masks,
@@ -398,6 +399,14 @@ def run_video_inference(
                         if isinstance(normal_np, torch.Tensor):
                             normal_np = normal_np.cpu().numpy()
                         annotated_pil = draw_normal_map(pil_img, normal_np)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "edges", None) is not None
+                    ):
+                        edge_np = result.edges.data
+                        if isinstance(edge_np, torch.Tensor):
+                            edge_np = edge_np.cpu().numpy()
+                        annotated_pil = draw_edge_map(pil_img, edge_np)
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:

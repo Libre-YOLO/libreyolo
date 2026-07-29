@@ -9,6 +9,13 @@ before 1.4.0 are documented in the
 
 ### Added
 
+- Canonical `edge` and `normal` dense-prediction task contracts, including
+  original-canvas result payloads and visualization, dataset schemas,
+  validators (edge ODS/OIS and normal angular metrics), and public API aliases
+- LibreTEED and LibreDexiNed edge specialists with native MIT-licensed
+  architectures, local checkpoint converters, and fixed-resolution ONNX
+  runtime parity; upstream BIPED-trained checkpoints are not bundled,
+  mirrored, or auto-downloaded because the dataset terms are non-commercial
 - LibreFeyNobg, a new matte (background removal) family: FeyNobg by Feyn Inc., BiRefNet architecture with stage 3 deepened to 24 blocks (263M params), size l at fixed 1024px; code and weights Apache-2.0, converted from feyninc/FeyNobg; reuses the birefnet nn module with a family-local dimension table
 - Quantization support for the birefnet and feynobg families (fp16/bf16/fp8/int8/w4a16/w4a8/nvfp4/mxfp4; int2 rejected since these families are inference-only and cannot heal); pre-quantized fp16 and fp8 LibreFeyNobg checkpoints published on the LibreYOLO Hugging Face org, loadable by passing the downloaded .pt as the weights argument (fp16 is GPU-oriented; bf16 is blocked by torchvision's missing BFloat16 deform_conv2d kernel; an nvfp4 variant was built, measured, and withdrawn: no kernel path beats fp16 on these GEMM shapes and 4-bit noise can flip foreground selection on ambiguous scenes)
 - Native fp8 execution tier: finalized fp8 QuantLinear runs on the fp8 tensor cores via torch._scaled_mm (Ada/Hopper/Blackwell); optional Triton kernels fuse activation conversion and the per-channel scale/bias epilogue, while validation-selected FeyNobg Swin stage-0 Linears use manifest-recorded tensorwise weight scales for a fully fused cuBLASLt epilogue. Finalized fp8 QuantConv2d convolves in fp16 on cached dequantized weights, and fp16-remainder checkpoints get float32 I/O root hooks. On LibreFeyNobg/RTX 5070 Ti, fp8 is 123.1 vs 129.3 ms for batch-1 graphed predict and 515.4 vs 535.3 ms at batch 4, with a 275 vs 531 MB file.

@@ -64,6 +64,27 @@ New unit tests are in the PR gate by default. If a test cannot satisfy this
 contract, prefer a local fixture or mock. If real external data is essential,
 move the coverage to the appropriate e2e, nightly, or manual suite.
 
+### Native-port parity gates
+
+A ported architecture must have a pinned-reference tensor parity test in
+addition to ordinary shape and API tests. The reference checkout and any
+checkpoint remain external and the test is marked `external_data`; the PR gate
+still exercises the port with local random weights plus exported-runtime
+parity.
+
+The edge-specialist gate is `tests/unit/test_edge_models_parity.py`:
+
+```bash
+LIBREYOLO_TEED_UPSTREAM=/path/to/TEED \
+LIBREYOLO_TEED_CHECKPOINT=/path/to/local/teed.pth \
+LIBREYOLO_DEXINED_UPSTREAM=/path/to/DexiNed \
+pytest -q tests/unit/test_edge_models_parity.py
+```
+
+The pinned commits and source licenses are recorded in the per-family NOTICE
+files. External checkpoints retain their own data/weight terms and must not be
+added to the repository as test fixtures.
+
 ## Install Smoke
 
 Scripts:

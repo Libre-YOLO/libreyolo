@@ -224,6 +224,16 @@ authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the
 upstream license of those checkpoints.
 
+TEED and DexiNed edge specialists
+---------------------------------
+The TEED and DexiNed architecture source is MIT-licensed. LibreYOLO bundles
+the architecture ports and local checkpoint converters, but does not bundle,
+mirror, or auto-download the authors' released checkpoints. Those checkpoints
+were trained on BIPED, whose published dataset terms restrict use to
+non-commercial purposes. Converting a locally held checkpoint does not change
+its applicable terms. A checkpoint trained independently on compatibly
+licensed data may be distributed under the terms established by its trainer.
+
 Third-party SOURCE CODE bundled inside the LibreYOLO Python package
 (separate from weights) is disclosed in the top-level NOTICE file.
 Notably, the DEIMv2 family bundles DINOv3 backbone code under Meta's
