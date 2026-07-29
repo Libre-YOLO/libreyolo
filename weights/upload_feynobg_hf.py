@@ -408,8 +408,21 @@ def main() -> int:
 
     api = HfApi()
     api.create_repo(repo, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=str(out_dir), repo_id=repo, repo_type="model",
-                      commit_message=f"Initial upload: {name} (FeyNobg, Apache-2.0)")
+    # Whitelist the 5-file contract: a reused --out directory may hold
+    # unrelated files, and an unrestricted upload_folder would publish them.
+    api.upload_folder(
+        folder_path=str(out_dir),
+        repo_id=repo,
+        repo_type="model",
+        allow_patterns=[
+            ".gitattributes",
+            "README.md",
+            "LICENSE",
+            "NOTICE",
+            f"{name}.pt",
+        ],
+        commit_message=f"Initial upload: {name} (FeyNobg, Apache-2.0)",
+    )
     print(f"Uploaded to https://huggingface.co/{repo}")
     return 0
 

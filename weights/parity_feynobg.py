@@ -62,7 +62,9 @@ def main() -> int:
     ckpt_path = os.environ.get(
         "LIBRE_FEYNOBG_CKPT", os.path.join(_REPO, "weights", "LibreFeyNobgl-matte.pt")
     )
-    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    # weights_only: the converted checkpoint is tensors + primitive metadata,
+    # and the path is environment-selected, so never unpickle arbitrary code.
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     state = ckpt.get("model", ckpt.get("state_dict", ckpt))
     if hasattr(state, "state_dict"):
         state = state.state_dict()
