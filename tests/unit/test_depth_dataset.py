@@ -98,6 +98,41 @@ class TestDepthPaths:
 
 
 class TestDepthDataset:
+    def test_opencv_bicubic_resize_matches_declared_coreml_pixels(self, tmp_path):
+        import cv2
+
+        yaml_path = _make_dataset_root(tmp_path, n_images=1)
+        config = resolve_depth_data(yaml_path)
+        dataset = DepthDataset(
+            config,
+            split="train",
+            imgsz=17,
+            resize_mode="stretch",
+            resize_backend="opencv",
+            interpolation="bicubic",
+        )
+        yy, xx = np.mgrid[:7, :11]
+        image = np.stack(
+            (
+                (xx * 17 + yy * 3) % 256,
+                (xx * 5 + yy * 29) % 256,
+                (xx * 31 + yy * 7) % 256,
+            ),
+            axis=-1,
+        ).astype(np.uint8)
+        depth = (xx + 10 * yy).astype(np.float32)
+
+        resized_image, resized_depth, _ratio, _pad = dataset._resize(image, depth)
+
+        np.testing.assert_array_equal(
+            resized_image,
+            cv2.resize(image, (17, 17), interpolation=cv2.INTER_CUBIC),
+        )
+        np.testing.assert_array_equal(
+            resized_depth,
+            cv2.resize(depth, (17, 17), interpolation=cv2.INTER_NEAREST),
+        )
+
     def test_loads_16bit_png_with_scale(self, tmp_path):
         yaml_path = _make_dataset_root(tmp_path)
         config = resolve_depth_data(yaml_path)

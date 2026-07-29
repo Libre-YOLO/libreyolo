@@ -8,7 +8,6 @@ from typer.testing import CliRunner
 
 from libreyolo.cli.parsing import KeyValueCommand
 
-
 pytestmark = pytest.mark.unit
 runner = CliRunner()
 
@@ -46,6 +45,15 @@ class _LoadedModel:
         self.captured["kwargs"] = kwargs
         self.output_path.mkdir()
         return str(self.output_path)
+
+
+class _LoadedPPOCR(_LoadedModel):
+    FAMILY = "ppocr"
+    size = "t"
+    INPUT_SIZES = {"t": 960}
+
+    def _get_input_size(self):
+        return 960
 
 
 def test_export_cli_allows_coreml_embedded_nms(monkeypatch, tmp_path):
@@ -103,3 +111,39 @@ def test_export_cli_rejects_coreml_max_det(monkeypatch):
     data = _parse_json_output(result.output)
     assert data["error"] == "config_unsupported"
     assert "max_det is only supported for ONNX" in data["message"]
+
+
+def test_export_cli_forwards_ppocr_bounds_and_reports_effective_dynamic(
+    monkeypatch,
+    tmp_path,
+):
+    from libreyolo.cli.commands import export
+
+    captured = {}
+    monkeypatch.setattr(export, "resolve_model_or_exit", lambda out, model: model)
+    monkeypatch.setattr(
+        export,
+        "load_model_or_exit",
+        lambda out, model, model_path, device: _LoadedPPOCR(
+            tmp_path / "ocr.mlpackage",
+            captured,
+        ),
+    )
+
+    result = runner.invoke(
+        _build_app(),
+        [
+            "model=LibrePPOCRt-ocr.pt",
+            "format=coreml",
+            "rec_max_width=2048",
+            "rec_batch_max=4",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = _parse_json_output(result.output)
+    assert captured["kwargs"]["rec_max_width"] == 2048
+    assert captured["kwargs"]["rec_batch_max"] == 4
+    assert captured["kwargs"]["dynamic"] is True
+    assert data["dynamic"] is True

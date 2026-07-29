@@ -39,3 +39,33 @@ card declares Apache-2.0. The learned weights are independently converted from
 the official checkpoint and then checked exactly against the reference.
 
 The Apache License 2.0 text is included at ``licenses/Apache-2.0.txt``.
+
+LibreSAM split Core ML host preprocessing
+-----------------------------------------
+
+``libreyolo/backends/coreml_sam.py`` pins the SAM-1, SAM2, and visual
+SAM3 image/prompt/mask operation order to Hugging Face Transformers v5.3.0:
+
+    Repository: https://github.com/huggingface/transformers
+    Commit:     aad13b87ed59f2afcfaebc985f403301887a35fc
+    License:    Apache License 2.0
+
+The relevant upstream files are the SAM image/prompt processor, SAM2 fast
+image processor, SAM3 fast image processor, and SAM3 tracker processor listed
+in ``THIRD_PARTY_NOTICES.txt``. The Core ML host implementation does not
+vendor a Transformers model architecture.
+
+SAM-1 and SAM2.1 checkpoint provenance
+--------------------------------------
+
+The split Core ML exporter consumes the same checkpoints as native LibreSAM.
+The exact Apache-2.0 snapshot revisions and ``model.safetensors`` SHA-256
+values reviewed for this contract are recorded in
+``weights/LICENSE_NOTICE.txt``.
+
+SAM-1 is downloaded directly from the upstream ``facebook/sam-vit-*``
+repositories. SAM2.1 is loaded from the four ``LibreYOLO/LibreSAM2*`` mirrors.
+For every SAM2.1 size, the recorded safetensors SHA-256 is identical between
+the pinned upstream ``facebook/sam2.1-hiera-*`` snapshot and its pinned
+LibreYOLO mirror. The mirror model cards state that learned parameters are
+unchanged and declare Apache-2.0.

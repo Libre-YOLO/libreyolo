@@ -213,6 +213,9 @@ class SemanticDataset(Dataset):
         imgsz: int,
         augment: bool = False,
         resize_mode: str = "letterbox",
+        resize_backend: str = "pillow",
+        interpolation: str = "bilinear",
+        resize_rounding: str = "round",
         ignore_index: int = IGNORE_INDEX,
         scale_jitter: Tuple[float, float] = (0.5, 1.5),
         hsv_prob: float = 0.5,
@@ -226,6 +229,22 @@ class SemanticDataset(Dataset):
         self.imgsz = int(imgsz)
         self.augment = augment
         self.resize_mode = resize_mode
+        self.resize_backend = str(resize_backend).strip().lower()
+        self.interpolation = str(interpolation).strip().lower()
+        self.resize_rounding = str(resize_rounding).strip().lower()
+        if self.resize_backend not in {"pillow", "opencv"}:
+            raise ValueError(
+                f"resize_backend must be 'pillow' or 'opencv', got {resize_backend!r}"
+            )
+        if self.interpolation not in {"nearest", "bilinear", "bicubic"}:
+            raise ValueError(
+                "interpolation must be nearest, bilinear, or bicubic, "
+                f"got {interpolation!r}"
+            )
+        if self.resize_rounding not in {"round", "floor"}:
+            raise ValueError(
+                f"resize_rounding must be 'round' or 'floor', got {resize_rounding!r}"
+            )
         self.ignore_index = int(data_config.get("ignore_index", ignore_index))
         self.scale_jitter = scale_jitter
         self.hsv_prob = float(hsv_prob)
@@ -329,15 +348,15 @@ class SemanticDataset(Dataset):
             # squash the aspect ratio and make that crop dead code, turning
             # zoom-in jitter into a plain resize. valid_content_hw() reports the
             # post-crop size and is the right thing for readers of the canvas.
-            new_w = max(1, int(round(w0 * ratio)))
-            new_h = max(1, int(round(h0 * ratio)))
+            resize_dimension = (
+                (lambda value: int(value))
+                if self.resize_rounding == "floor"
+                else (lambda value: int(round(value)))
+            )
+            new_w = max(1, resize_dimension(w0 * ratio))
+            new_h = max(1, resize_dimension(h0 * ratio))
 
-        img_pil = Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR)
-        mask_pil = Image.fromarray(mask.astype(np.int32), mode="I").resize(
-            (new_w, new_h), Image.NEAREST
-        )
-        img = np.array(img_pil)
-        mask = np.asarray(mask_pil).astype(np.int64)
+        img, mask = self._resize_pair(img, mask, (new_w, new_h))
 
         # Random crop any overflow (scale jitter can exceed imgsz).
         if new_h > self.imgsz or new_w > self.imgsz:
@@ -378,19 +397,18 @@ class SemanticDataset(Dataset):
         new_w = max(1, int(round(w0 * ratio)))
         new_h = max(1, int(round(h0 * ratio)))
 
-        img_pil = Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR)
-        mask_pil = Image.fromarray(mask.astype(np.int32), mode="I").resize(
-            (new_w, new_h), Image.NEAREST
-        )
-        img = np.array(img_pil)
-        mask = np.asarray(mask_pil).astype(np.int64)
+        img, mask = self._resize_pair(img, mask, (new_w, new_h))
 
         # Pad up to imgsz on any short side so a full imgsz crop is possible.
         pad_h = max(0, self.imgsz - new_h)
         pad_w = max(0, self.imgsz - new_w)
         if pad_h or pad_w:
-            img = np.pad(img, ((0, pad_h), (0, pad_w), (0, 0)), constant_values=_PAD_COLOR)
-            mask = np.pad(mask, ((0, pad_h), (0, pad_w)), constant_values=self.ignore_index)
+            img = np.pad(
+                img, ((0, pad_h), (0, pad_w), (0, 0)), constant_values=_PAD_COLOR
+            )
+            mask = np.pad(
+                mask, ((0, pad_h), (0, pad_w)), constant_values=self.ignore_index
+            )
         H, W = img.shape[:2]
 
         top, left = 0, 0
@@ -409,6 +427,46 @@ class SemanticDataset(Dataset):
         img = img[top : top + self.imgsz, left : left + self.imgsz]
         mask = mask[top : top + self.imgsz, left : left + self.imgsz]
         return img, mask, ratio, (0, 0)
+
+    def _resize_pair(
+        self,
+        img: np.ndarray,
+        mask: np.ndarray,
+        size: tuple[int, int],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.resize_backend == "opencv":
+            import cv2
+
+            image_interpolation = {
+                "nearest": cv2.INTER_NEAREST,
+                "bilinear": cv2.INTER_LINEAR,
+                "bicubic": cv2.INTER_CUBIC,
+            }[self.interpolation]
+            resized_img = cv2.resize(
+                img,
+                size,
+                interpolation=image_interpolation,
+            )
+            resized_mask = cv2.resize(
+                mask.astype(np.int32, copy=False),
+                size,
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(np.int64, copy=False)
+            return resized_img, resized_mask
+
+        image_interpolation = {
+            "nearest": Image.Resampling.NEAREST,
+            "bilinear": Image.Resampling.BILINEAR,
+            "bicubic": Image.Resampling.BICUBIC,
+        }[self.interpolation]
+        resized_img = np.array(Image.fromarray(img).resize(size, image_interpolation))
+        resized_mask = np.asarray(
+            Image.fromarray(mask.astype(np.int32), mode="I").resize(
+                size,
+                Image.Resampling.NEAREST,
+            )
+        ).astype(np.int64)
+        return resized_img, resized_mask
 
     def __getitem__(self, index: int):
         img_path = self.img_files[index]

@@ -58,18 +58,57 @@ def generate_masks_with_special_tokens_and_transfer_map(input_ids):
     return attention_mask, position_ids
 
 
-def _msda(value, shapes_list, sampling_locations, attention_weights):
+def _msda(
+    value,
+    shapes_list,
+    sampling_locations,
+    attention_weights,
+    n_points,
+):
+    """Multi-scale deformable sampling without rank-six intermediates.
+
+    Core ML supports tensor ranks up to five. Keep level and point in one
+    flattened axis; slicing each level before ``grid_sample`` preserves the
+    original level-major, point-minor order exactly.
+    """
     b, _, nh, hd = value.shape
-    _, nq, _, nl, npnt, _ = sampling_locations.shape
+    _, nq, _, total_points, _ = sampling_locations.shape
+    nl = len(shapes_list)
+    if total_points != nl * n_points:
+        raise ValueError(
+            "Grounding DINO sampling locations disagree with levels/points."
+        )
     value_list = value.split([h * w for h, w in shapes_list], dim=1)
     grids = 2 * sampling_locations - 1
     out_list = []
     for lid, (h, w) in enumerate(shapes_list):
         v = value_list[lid].flatten(2).transpose(1, 2).reshape(b * nh, hd, h, w)
-        g = grids[:, :, :, lid].transpose(1, 2).flatten(0, 1)
-        out_list.append(F.grid_sample(v, g, mode="bilinear", padding_mode="zeros", align_corners=False))
-    aw = attention_weights.transpose(1, 2).reshape(b * nh, 1, nq, nl * npnt)
-    out = (torch.stack(out_list, dim=-2).flatten(-2) * aw).sum(-1).view(b, nh * hd, nq)
+        start = lid * n_points
+        g = (
+            grids[:, :, :, start : start + n_points]
+            .transpose(1, 2)
+            .flatten(0, 1)
+        )
+        out_list.append(
+            F.grid_sample(
+                v,
+                g,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=False,
+            )
+        )
+    aw = attention_weights.transpose(1, 2).reshape(
+        b * nh,
+        1,
+        nq,
+        nl * n_points,
+    )
+    out = (
+        (torch.stack(out_list, dim=-2).flatten(-2) * aw)
+        .sum(-1)
+        .view(b, nh * hd, nq)
+    )
     return out.transpose(1, 2).contiguous()
 
 
@@ -131,16 +170,97 @@ class GDMSDeformAttn(nn.Module):
         if attention_mask is not None:
             value = value.masked_fill(~attention_mask[..., None], 0.0)
         value = value.view(b, seq, self.n_heads, self.d_model // self.n_heads)
-        off = self.sampling_offsets(hidden_states).view(b, nq, self.n_heads, self.n_levels, self.n_points, 2)
-        aw = self.attention_weights(hidden_states).view(b, nq, self.n_heads, self.n_levels * self.n_points)
-        aw = F.softmax(aw, -1).view(b, nq, self.n_heads, self.n_levels, self.n_points)
+        off = self.sampling_offsets(hidden_states).view(
+            b,
+            nq,
+            self.n_heads,
+            self.n_levels * self.n_points,
+            2,
+        )
+        aw = self.attention_weights(hidden_states).view(
+            b,
+            nq,
+            self.n_heads,
+            self.n_levels * self.n_points,
+        )
+        aw = F.softmax(aw, -1)
         nc = reference_points.shape[-1]
         if nc == 2:
-            normalizer = torch.stack([spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
-            loc = reference_points[:, :, None, :, None, :] + off / normalizer[None, None, None, :, None, :]
+            normalizer = torch.stack(
+                [spatial_shapes[..., 1], spatial_shapes[..., 0]],
+                dim=-1,
+            )
+            reference_flat = torch.cat(
+                [
+                    reference_points[:, :, None, level : level + 1, :].expand(
+                        -1,
+                        -1,
+                        self.n_heads,
+                        self.n_points,
+                        -1,
+                    )
+                    for level in range(self.n_levels)
+                ],
+                dim=3,
+            )
+            normalizer_flat = torch.cat(
+                [
+                    normalizer[level : level + 1].expand(
+                        self.n_points,
+                        -1,
+                    )
+                    for level in range(self.n_levels)
+                ],
+                dim=0,
+            )
+            loc = reference_flat + off / normalizer_flat[None, None, None]
         else:
-            loc = reference_points[:, :, None, :, None, :2] + off / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
-        out = _msda(value, spatial_shapes_list, loc, aw)
+            reference_xy = torch.cat(
+                [
+                    reference_points[
+                        :,
+                        :,
+                        None,
+                        level : level + 1,
+                        :2,
+                    ].expand(
+                        -1,
+                        -1,
+                        self.n_heads,
+                        self.n_points,
+                        -1,
+                    )
+                    for level in range(self.n_levels)
+                ],
+                dim=3,
+            )
+            reference_wh = torch.cat(
+                [
+                    reference_points[
+                        :,
+                        :,
+                        None,
+                        level : level + 1,
+                        2:,
+                    ].expand(
+                        -1,
+                        -1,
+                        self.n_heads,
+                        self.n_points,
+                        -1,
+                    )
+                    for level in range(self.n_levels)
+                ],
+                dim=3,
+            )
+            loc = reference_xy + off / self.n_points * reference_wh * 0.5
+        out = _msda(
+            value,
+            spatial_shapes_list,
+            loc,
+            aw,
+            self.n_points,
+        )
         return self.output_proj(out)
 
 

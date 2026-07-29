@@ -143,6 +143,30 @@ class TestSnapshotComplete:
         self._mark_complete(tmp_path, {"repo": "other/model"})
         assert LibreOWLv2._snapshot_complete(tmp_path, repo="example/model") is False
 
+    def test_pinned_revision_marker_must_match(self, tmp_path):
+        (tmp_path / "config.json").write_text("{}")
+        (tmp_path / "model.safetensors").write_text("x")
+        self._mark_complete(
+            tmp_path,
+            {"repo": "example/model", "revision": "abc123"},
+        )
+        assert (
+            LibreOWLv2._snapshot_complete(
+                tmp_path,
+                repo="example/model",
+                revision="abc123",
+            )
+            is True
+        )
+        assert (
+            LibreOWLv2._snapshot_complete(
+                tmp_path,
+                repo="example/model",
+                revision="def456",
+            )
+            is False
+        )
+
 
 class TestCallDefaults:
     def test_owlv2_default_conf_is_injected(self, monkeypatch):

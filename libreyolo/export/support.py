@@ -32,6 +32,141 @@ class SupportEntry:
 
 SUPPORT: dict[tuple[str, str, str], SupportEntry] = {}
 
+# Artifact eligibility is deliberately separate from technical export support.
+# A permissively licensed architecture can accept user-trained weights even
+# when a published checkpoint is non-commercial, research-only, or unclear.
+# These notes are sourced from the repository's existing NOTICE surfaces.
+CHECKPOINT_GATES: dict[tuple[str, str], str] = {
+    (
+        "birefnet",
+        "matte",
+    ): (
+        "The `l` checkpoint is MIT. The `t` checkpoint is not rehosted because "
+        "its upstream repository has no explicit license metadata or LICENSE file."
+    ),
+    (
+        "deimv2",
+        "detect",
+    ): (
+        "DINOv3-backed variants carry Meta's custom, non-OSI DINOv3 terms. "
+        "Do not treat conversion of the permissive HGNet variants as evidence "
+        "for those variants."
+    ),
+    (
+        "depth_anything",
+        "depth",
+    ): (
+        "The `s` checkpoint is Apache-2.0. Published `b`, `l`, and `g` "
+        "checkpoints are CC-BY-NC-4.0 and are not redistributed by LibreYOLO."
+    ),
+    (
+        "l2cs",
+        "gaze",
+    ): (
+        "Published gaze checkpoints are bound by the research/non-commercial "
+        "Gaze360 dataset terms and are not bundled, mirrored, or auto-downloaded."
+    ),
+    (
+        "internvl3",
+        "detect",
+    ): (
+        "The published `-hf` weights carry the Qwen License rather than a "
+        "permissive MIT, Apache-2.0, or BSD license."
+    ),
+    (
+        "lfm2vl",
+        "detect",
+    ): (
+        "Published checkpoints carry the non-permissive LFM Open License v1.0 "
+        "with a revenue threshold."
+    ),
+    (
+        "locateanything",
+        "detect",
+    ): "The published LocateAnything checkpoint is NVIDIA non-commercial.",
+    (
+        "locateanything",
+        "point",
+    ): "The published LocateAnything checkpoint is NVIDIA non-commercial.",
+    (
+        "nafnet",
+        "restore",
+    ): (
+        "Some published GoPro checkpoints have no explicit standalone weights "
+        "license. Convert only checkpoints the user has the right to use."
+    ),
+    (
+        "ov_deim",
+        "detect",
+    ): (
+        "Published detector weights are CC BY-NC 4.0, and the MobileCLIP text "
+        "tower carries research-only model terms. These are not MIT artifacts."
+    ),
+    (
+        "sam3",
+        "segment",
+    ): (
+        "SAM 3 access is gated by Meta's custom SAM License; LibreYOLO does not "
+        "redistribute the checkpoint under its MIT license."
+    ),
+    (
+        "segformer",
+        "semantic",
+    ): (
+        "The architecture port is Apache-2.0, but published ADE20K checkpoints "
+        "are restricted to research or evaluation by NVIDIA's license."
+    ),
+    (
+        "sensenovavision",
+        "detect",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "segment",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "panoptic",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "pose",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "point",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "depth",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "sensenovavision",
+        "ocr",
+    ): "The published SenseNova-Vision checkpoint is CC BY-NC 4.0.",
+    (
+        "yolo9_p2",
+        "detect",
+    ): (
+        "The VisDrone research-preview variant is CC BY-NC-SA. Permissive "
+        "YOLO9 transfer weights may be used for conversion-only tests."
+    ),
+    (
+        "yolonas",
+        "detect",
+    ): (
+        "Published pretrained weights may carry separate non-commercial terms "
+        "and are not bundled. Synthetic or user-trained states remain separate."
+    ),
+    (
+        "yolonas",
+        "pose",
+    ): (
+        "Published pretrained weights may carry separate non-commercial terms "
+        "and are not bundled. Synthetic or user-trained states remain separate."
+    ),
+}
+
 
 def _add(
     tier: Tier,
@@ -134,18 +269,21 @@ _add(
     "blocked",
     ("clip", "siglip2"),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai", "coreml"}),
     reason=(
-        "Frozen-class vision-language export is ONNX-only in v1; re-export "
-        "the frozen ONNX graph for a different deployment runtime."
+        "Frozen-class vision-language export is available only for ONNX and "
+        "the Apple runtimes in v1."
     ),
 )
 _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
-    reason="LibreDINOv2 classify export currently supports ONNX only.",
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai", "coreml"}),
+    reason=(
+        "LibreDINOv2 classify export is not wired for this runtime; use ONNX, "
+        "Core AI, or experimental Core ML export."
+    ),
 )
 _add(
     "blocked",
@@ -202,7 +340,10 @@ _add(
     ("yolox", "yolo9", "rtdetr", "rfdetr"),
     ("detect",),
     ("coreml",),
-    reason="Conversion is available, but runtime parity requires a macOS runner.",
+    reason=(
+        "Fixed-canvas, batch-one raw-output conversion is available, but "
+        "numeric Core ML runtime parity has not yet been recorded on macOS."
+    ),
 )
 _add(
     "experimental",
@@ -306,8 +447,11 @@ _add(
     "blocked",
     ("picosam3",),
     ("segment",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "onnx"),
-    reason="PicoSAM3 currently exports its raw ROI CNN through ONNX only.",
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreml"}),
+    reason=(
+        "PicoSAM3's raw ROI component is currently wired only for ONNX and "
+        "Core ML."
+    ),
 )
 _add(
     "experimental",
@@ -459,11 +603,11 @@ _add(
     "blocked",
     ("rtmdet",),
     ("segment",),
-    EXPORT_FORMATS,
+    tuple(fmt for fmt in EXPORT_FORMATS if fmt != "coreml"),
     reason=(
-        "RTMDet-Ins export is not supported yet; the dynamic-kernel mask "
-        "decode has no exported-runtime contract. Use native PyTorch "
-        "inference for task='segment'."
+        "RTMDet-Ins dynamic-kernel mask decoding has no contract for this "
+        "exported runtime. Use native PyTorch inference or the Core ML "
+        "raw-output profile."
     ),
 )
 _add(
@@ -577,13 +721,6 @@ _add(
     constraint="fixed 512x512 input",
 )
 _add(
-    "blocked",
-    ("fomo",),
-    ("point",),
-    ("coreml",),
-    reason="The CoreML wrapper does not implement the raw point-heatmap contract.",
-)
-_add(
     "validated",
     ("fomo",),
     ("point",),
@@ -641,15 +778,6 @@ _add(
         "graph has not produced a parity-valid edge-runtime artifact."
     ),
 )
-_add(
-    "blocked",
-    ("dinov2", "eomt", "pidnet", "lingbotvision"),
-    ("semantic",),
-    ("coreml",),
-    reason="The CoreML wrapper does not implement the dense semantic-logits contract.",
-)
-
-
 _add(
     "validated",
     ("yolo1", "yolo2", "yolo3", "yolo4"),
@@ -1001,6 +1129,381 @@ _add(
     ),
 )
 
+# Core ML uses a fixed-canvas, batch-one raw-output contract. These rows are
+# conversion-enabled, but none is validated until the saved artifact has run
+# through numeric parity on macOS. Keep this list aligned with the strict
+# family/task preflight in export/coreml.py.
+_COREML_EXPERIMENTAL_REASON = (
+    "Fixed-canvas, batch-one raw-output conversion is available, but numeric "
+    "Core ML runtime parity has not yet been recorded on macOS."
+)
+_add(
+    "experimental",
+    (
+        "deim",
+        "dfine",
+        "ec",
+        "picodet",
+        "rtdetrv2",
+        "rtdetrv4",
+        "rtmdet",
+        "yolo1",
+        "yolo2",
+        "yolo3",
+        "yolo4",
+        "yolo7",
+        "yolo9_e2e",
+        "yolo9_p2",
+    ),
+    ("detect",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("deimv2",),
+    ("detect",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Only the permissive `atto`, `femto`, `pico`, and `n` variants are "
+        "accepted. DINOv3-backed `s`, `m`, `l`, `x`, and unknown variants "
+        "fail in preflight."
+    ),
+)
+_add(
+    "experimental",
+    (
+        "clip",
+        "convnext",
+        "dinov2",
+        "efficientnetv2",
+        "mobilenetv4",
+        "resnet",
+        "siglip2",
+    ),
+    ("classify",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "CLIP and SigLIP2 freeze the current class set and require their native "
+        "input resolution. SigLIP2 preserves the exported softmax or sigmoid "
+        "classification activation."
+    ),
+)
+_add(
+    "experimental",
+    ("depth_anything", "zipdepth"),
+    ("depth",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("nafnet", "realesrgan"),
+    ("restore",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "The source image must exactly match the fixed export canvas. Re-export, "
+        "crop, or tile instead of padding an arbitrary smaller image to the canvas."
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2", "lingbotvision", "pidnet"),
+    ("semantic",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("fomo",),
+    ("point",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("l2cs",),
+    ("gaze",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("dfine",),
+    ("segment",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("segment", "pose"),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("segment", "pose", "obb"),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+)
+_add(
+    "experimental",
+    ("eomt",),
+    ("semantic", "segment", "panoptic"),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Fixed square DINOv2 S/B/L component. The graph emits compact raw "
+        "class-query logits and stride-4 mask logits. LibreYOLO preserves "
+        "EoMT's exact shortest-edge split/stitch geometry for semantic and "
+        "longest-edge top-left pad/query decoding for instance and panoptic "
+        "tasks on the host. The functional attention-mask graph has real "
+        "Core ML Tools 9 conversion evidence; macOS runtime parity is pending."
+    ),
+)
+_add(
+    "experimental",
+    ("segformer",),
+    ("semantic",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "All b0-b5 eval graphs pass fixed-canvas two-probe TorchScript trace "
+        "parity. The architecture/source is permissive, but published ADE20K "
+        "weights remain restricted to research or evaluation."
+    ),
+)
+_add(
+    "experimental",
+    ("swinir",),
+    ("restore",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Sizes `s`, `m`, and `l` are enabled at their native 64x64 canvas. "
+        "Every full graph has bit-exact two-probe TorchScript parity and Core "
+        "ML Tools 9 FP16 ML Program conversion evidence. The exact source "
+        "canvas is required; non-native canvases and Apple runtime parity "
+        "remain pending."
+    ),
+)
+_add(
+    "experimental",
+    ("yolonas",),
+    ("detect", "pose"),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Square fixed canvas with the native longest-side cap: 636-centered RGB "
+        "padding for detect; 640 top-left placement, bottom/right padding, and "
+        "BGR graph input for pose. Current evidence uses license-clean synthetic "
+        "graphs, not restricted published weights."
+    ),
+)
+_add(
+    "experimental",
+    ("picosam3",),
+    ("segment",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Raw fixed batch-one 96x96 ROI component. The host expands each box "
+        "by 10%, crops and resizes the ROI, then places mask logits back into "
+        "the source image; point/text/mask prompts remain unsupported."
+    ),
+)
+_add(
+    "experimental",
+    ("rtmdet",),
+    ("segment",),
+    ("coreml",),
+    reason=_COREML_EXPERIMENTAL_REASON,
+    constraint=(
+        "Fixed batch-one canvas divisible by 32. The graph emits three class "
+        "maps, three box-distance maps, three 169-parameter dynamic-kernel "
+        "maps, and one stride-8 mask feature map; LibreYOLO performs per-level "
+        "top-k, class-aware NMS, dynamic mask decoding, and placement on the "
+        "host."
+    ),
+)
+_add(
+    "experimental",
+    ("ppocr",),
+    ("ocr",),
+    ("coreml",),
+    reason=(
+        "A strict iOS18/macOS15 two-function ML Program package is available, "
+        "but numeric Core ML runtime parity has not yet been recorded on macOS."
+    ),
+    constraint=(
+        "FP32 only. The detector and recognizer use named bounded-flexible "
+        "TensorType functions; DB contours, perspective crops, reading order, "
+        "bucketing, and CTC decoding remain exact host operations. Export "
+        "requires an explicit finite rec_max_width; overflow is an error, "
+        "never silent truncation."
+    ),
+)
+_add(
+    "experimental",
+    ("edgetam", "mobilesam", "sam", "sam2", "sam3"),
+    ("segment",),
+    ("coreml",),
+    reason=(
+        "A strict iOS18/macOS15 seven-function ML Program package is "
+        "implemented, but numeric Core ML runtime parity has not yet been "
+        "recorded on macOS."
+    ),
+    constraint=(
+        "FP32 only. One fixed model-ready image encoder and six named prompt "
+        "decoders cover points, boxes, points+boxes, and single/multimask "
+        "modes. Point count is bounded by prompt_max_points (default 16); "
+        "raw-image preprocessing, prompt transforms, query loops, and mask "
+        "upscaling remain exact host operations. SAM3 is visual-prompt-only "
+        "and converted artifacts are local-user-only under its custom license."
+    ),
+)
+
+# Explicit Core ML walls. A row must not disappear into get_support()'s
+# fallback because the generated compatibility table is also the work queue.
+_add(
+    "experimental",
+    ("birefnet",),
+    ("matte",),
+    ("coreml",),
+    reason=(
+        "The exact `t` and `l` graphs convert with Apple's post-9.0 "
+        "torchvision::deform_conv2d ML Program lowering, but numeric runtime "
+        "and matte-quality parity have not yet been recorded on Apple Silicon."
+    ),
+    constraint=(
+        "Fixed 1024x1024, batch one, raw matte logits. Stable Core ML Tools "
+        "9.0 predates the required lowering; export feature-detects the Apple "
+        "converter implementation instead of trusting its version string. "
+        "Published `l` weights are MIT; `t` artifacts remain local-user-only "
+        "until their upstream weight provenance is explicit."
+    ),
+)
+_add(
+    "experimental",
+    ("owlv2",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The current finite class vocabulary is frozen into an image-only "
+        "detector graph. Strict TorchScript and reference preprocessing parity "
+        "are implemented; numeric Core ML runtime parity is pending."
+    ),
+    constraint=(
+        "Fixed native 960x960 (`b16`) or 1008x1008 (`l14`) FP32 TensorType "
+        "input with exact pad-before-Gaussian-resize preprocessing. The text "
+        "tower and tokenizer are intentionally absent at runtime, so changing "
+        "classes requires re-export. Published mirror provenance must be "
+        "completed before converted weights are treated as release artifacts."
+    ),
+)
+_add(
+    "experimental",
+    ("grounding_dino",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The current finite prompt and class vocabulary are frozen into an "
+        "image-only detector while the complete cross-modal encoder/decoder "
+        "remains in the graph. A compact representative graph completes Core "
+        "ML Tools 9 conversion; full released-checkpoint Apple runtime parity "
+        "is pending."
+    ),
+    constraint=(
+        "Sizes `t` and `b` use a fixed 800x800 batch-one RGB stretch profile, "
+        "900 queries, and at most 256 BERT tokens. The exact pre-fusion BERT "
+        "boundary, prompt tokens, masks, positions, and WordPiece ABI are "
+        "frozen; changing classes requires re-export. Fixed stretch differs "
+        "from the native keep-aspect image policy for non-square sources."
+    ),
+)
+_add(
+    "experimental",
+    ("omdet_turbo",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The 51.98M-parameter image-only deployment graph derived from the "
+        "pinned 115.4M checkpoint is bit-exact with the native detector for "
+        "the frozen vocabulary, traces exactly, and completes Core ML Tools "
+        "9 FP16 ML Program conversion; macOS runtime parity is pending."
+    ),
+    constraint=(
+        "The released `t` checkpoint uses a fixed 640x640 batch-one FP32 "
+        "TensorType boundary. The current class vocabulary and task-language "
+        "embeddings are frozen; changing classes requires re-export. Exact "
+        "Torchvision-v2 uint8 bilinear-antialias stretch remains on the host; "
+        "the graph emits 900 normalized boxes and per-class logits for exact "
+        "top-900 and class-aware NMS decoding."
+    ),
+)
+_add(
+    "experimental",
+    ("depth_anything3",),
+    ("depth",),
+    ("coreml",),
+    reason=(
+        "The full DA3MONO-LARGE raw depth/sky component converts with Core ML "
+        "Tools 9, but numeric runtime parity has not yet been recorded on macOS."
+    ),
+    constraint=(
+        "Fixed 504x504, batch one. The graph emits positive relative depth "
+        "and non-negative sky scores. LibreYOLO preserves the native sky-region "
+        "gate, random-with-replacement sampling, 0.99 quantile, reciprocal, "
+        "and final align_corners=True resize on the host. Non-square input uses "
+        "the documented fixed-stretch depth approximation."
+    ),
+)
+_add(
+    "blocked",
+    ("ov_deim",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "Open-vocabulary detection needs a frozen-vocabulary or bounded "
+        "text/image component contract before Core ML export can be enabled."
+    ),
+)
+_add(
+    "blocked",
+    ("florence2", "internvl3", "kosmos2", "lfm2vl", "qwen3vl", "smolvlm2"),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "Generative vision-language inference requires tokenizer, prefill, "
+        "decode, and state/cache runtime components rather than one image graph."
+    ),
+)
+_add(
+    "blocked",
+    ("locateanything",),
+    ("detect", "point"),
+    ("coreml",),
+    reason=(
+        "LocateAnything is a generative multi-input pipeline and has no "
+        "tokenizer, state/cache, or output-decoding Core ML component contract."
+    ),
+)
+_add(
+    "blocked",
+    ("sensenovavision",),
+    ("detect", "segment", "panoptic", "pose", "point", "depth", "ocr"),
+    ("coreml",),
+    reason=(
+        "SenseNova-Vision is a generative multimodal pipeline with text and "
+        "diffusion/VAE outputs; it has no stateful multi-component Core ML contract."
+    ),
+)
+
 
 _TASK_BLOCKS = {
     "ocr": (
@@ -1045,6 +1548,10 @@ _FAMILY_BLOCKS = {
     "qwen3vl": "Generative VLM export is out of scope for v1.",
     "smolvlm2": "Generative VLM export is out of scope for v1.",
     "locateanything": "Generative VLM export is out of scope for v1.",
+    "sensenovavision": (
+        "Generative multimodal export needs tokenizer, state/cache, and "
+        "diffusion/VAE component contracts; it is out of scope for v1."
+    ),
 }
 
 _NCNN_BLOCKS = {
@@ -1141,6 +1648,7 @@ def validated_alternatives(family: str, task: str) -> tuple[str, ...]:
 
 
 __all__ = [
+    "CHECKPOINT_GATES",
     "EXPORT_FORMATS",
     "SUPPORT",
     "SupportEntry",

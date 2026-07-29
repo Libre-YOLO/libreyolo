@@ -274,6 +274,8 @@ def test_rfdetr_backend_uses_topk_over_queries_and_classes():
 
 
 def test_rfdetr_obb_backend_parses_angle_output():
+    from libreyolo.data.obb import scale_xywhr
+
     backend = _DummyBackend(
         "rfdetr",
         task="obb",
@@ -293,12 +295,44 @@ def test_rfdetr_obb_backend_parses_angle_output():
     assert masks is None
     assert classes.tolist() == [1]
     np.testing.assert_allclose(parsed_boxes[0], [80.0, 20.0, 120.0, 30.0])
-    np.testing.assert_allclose(
-        obb[0],
-        [100.0, 25.0, 40.0, 10.0, 0.3, scores[0], 1.0],
-        rtol=1e-6,
-        atol=1e-6,
+    expected_obb = scale_xywhr(
+        np.array([0.5, 0.25, 0.2, 0.1, 0.3], dtype=np.float32),
+        200,
+        100,
+        min_size=1e-4,
     )
+    np.testing.assert_allclose(obb[0, :5], expected_obb, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(obb[0, 5:], [scores[0], 1.0], rtol=1e-6)
+
+
+def test_rfdetr_obb_backend_refits_non_square_stretch():
+    from libreyolo.data.obb import scale_xywhr
+
+    backend = _DummyBackend(
+        "rfdetr",
+        task="obb",
+        supported_tasks=("detect", "obb"),
+    )
+    boxes = np.array([[[0.5, 0.5, 0.4, 0.2]]], dtype=np.float32)
+    logits = np.array([[[10.0]]], dtype=np.float32)
+    angles = np.array([[[np.pi / 4]]], dtype=np.float32)
+
+    _boxes, _scores, _classes, _masks, obb = backend._parse_rfdetr(
+        [boxes, logits, angles],
+        orig_w=320,
+        orig_h=80,
+        conf=0.5,
+    )
+
+    expected = scale_xywhr(
+        np.array([0.5, 0.5, 0.4, 0.2, np.pi / 4], dtype=np.float32),
+        320,
+        80,
+        min_size=1e-4,
+    )
+    naive = np.array([160.0, 40.0, 128.0, 16.0, np.pi / 4], dtype=np.float32)
+    np.testing.assert_allclose(obb[0, :5], expected, rtol=1e-6, atol=1e-5)
+    assert not np.allclose(obb[0, :5], naive, rtol=1e-4, atol=1e-4)
 
 
 def test_rfdetr_pose_backend_parses_keypoints_not_masks():
@@ -376,7 +410,7 @@ def test_rfdetr_pose_backend_decodes_grouppose_keypoint_slots():
     assert 0.7 < scores[0] < 1.0
 
 
-def test_rfdetr_grouppose_backend_honors_requested_max_det():
+def test_rfdetr_grouppose_masks_background_before_requested_topk():
     backend = _DummyBackend(
         "rfdetr",
         task="pose",
@@ -386,10 +420,24 @@ def test_rfdetr_grouppose_backend_honors_requested_max_det():
     )
     backend.nb_classes = 1
     backend.names = {0: "person"}
-    boxes = np.array([[[0.5, 0.5, 0.2, 0.4]]], dtype=np.float32)
-    logits = np.array([[[10.0, 9.0]]], dtype=np.float32)
-    keypoints = np.zeros((1, 1, 34, 8), dtype=np.float32)
-    keypoints[0, 0, 17, :7] = [0.25, 0.5, 2.0, 0.0, 0.0, 1.0, 0.0]
+    boxes = np.array(
+        [
+            [
+                [0.3, 0.3, 0.2, 0.2],
+                [0.5, 0.5, 0.2, 0.4],
+                [0.7, 0.7, 0.1, 0.1],
+            ]
+        ],
+        dtype=np.float32,
+    )
+    # Every background score is larger than every person score.  Masking must
+    # happen before top-k or the requested detections would all be background.
+    logits = np.array(
+        [[[10.0, 7.0], [9.0, 6.0], [8.0, 5.0]]],
+        dtype=np.float32,
+    )
+    keypoints = np.zeros((1, 3, 34, 8), dtype=np.float32)
+    keypoints[0, :, 17, :7] = [0.25, 0.5, 2.0, 0.0, 0.0, 1.0, 0.0]
 
     parsed_boxes, scores, classes, masks, obb, parsed_keypoints = (
         backend._parse_outputs(
@@ -397,16 +445,16 @@ def test_rfdetr_grouppose_backend_honors_requested_max_det():
             64,
             (200, 100),
             conf=0.0,
-            max_det=1,
+            max_det=2,
         )
     )
 
     assert masks is None
     assert obb is None
-    assert parsed_boxes.shape == (0, 4)
-    assert scores.shape == (0,)
-    assert classes.shape == (0,)
-    assert parsed_keypoints.shape == (0, 17, 3)
+    assert parsed_boxes.shape == (2, 4)
+    assert scores.shape == (2,)
+    assert classes.tolist() == [0, 0]
+    assert parsed_keypoints.shape == (2, 17, 3)
 
 
 def test_rfdetr_pose_backend_uses_exported_grouppose_schema():
@@ -1456,6 +1504,25 @@ def test_classify_backend_predict_returns_probs_and_saves_original(
     assert len(result) == 1
     assert output_path.exists()
     assert result.saved_path == str(output_path)
+
+
+def test_classify_backend_sigmoid_keeps_independent_probabilities():
+    backend = _DummyBackend(
+        "siglip2",
+        task="classify",
+        supported_tasks=("classify",),
+        classification_activation="sigmoid",
+    )
+
+    probabilities = backend._parse_classify_probs(
+        [np.array([[0.0, 2.0]], dtype=np.float32)]
+    )
+
+    torch.testing.assert_close(
+        probabilities,
+        torch.sigmoid(torch.tensor([0.0, 2.0])),
+    )
+    assert float(probabilities.sum()) > 1.0
 
 
 def test_classify_validator_accepts_backend_single_output_list():

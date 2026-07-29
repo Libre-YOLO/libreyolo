@@ -28,6 +28,30 @@ class CLIPClassifyValidator(ClassifyValidator):
         # differ from wnid folder names, so do not enforce a name match.
         return None
 
+    def _resolve_class_names(self, train_classes: list[str]) -> list[str]:
+        if not getattr(self.model, "frozen_classes", False):
+            return train_classes
+
+        from ..models.clip.labels import humanize_labels
+
+        names = getattr(self.model, "names", None)
+        if not isinstance(names, dict) or sorted(names) != list(range(len(names))):
+            raise ValueError(
+                "Frozen CLIP artifacts require contiguous ordered class names."
+            )
+        artifact_classes = [str(names[index]) for index in range(len(names))]
+        dataset_classes = humanize_labels(train_classes)
+        if artifact_classes != dataset_classes:
+            raise ValueError(
+                "Frozen CLIP class order does not match the dataset's humanized "
+                f"train-folder order: artifact={artifact_classes}, "
+                f"dataset={dataset_classes}. Re-export after set_classes() with "
+                "this dataset's sorted train folders."
+            )
+        # The ImageFolder still indexes the raw directory names. Exact ordered
+        # comparison above proves that these indices match the frozen text head.
+        return train_classes
+
     def _dataset_transform_kwargs(self) -> dict:
         from torchvision.transforms import InterpolationMode
 

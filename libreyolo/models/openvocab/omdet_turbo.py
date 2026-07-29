@@ -26,6 +26,9 @@ class LibreOMDetTurbo(LibreOpenVocabDetector):
     HF_REPOS: ClassVar[Dict[str, str]] = {
         "t": "LibreYOLO/LibreOMDetTurbot",
     }
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {
+        "t": "d569ff1da5668156f07b5859246be435804fed2d",
+    }
     # Informational only: the HF processor owns resizing and predict(imgsz=...)
     # is rejected by the open-vocab base. Mirrors the published config image_size.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"t": 640}
@@ -110,6 +113,14 @@ class LibreOMDetTurbo(LibreOpenVocabDetector):
             max_det=max_det,
             classes=kwargs.get("classes"),
         )
+
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        """Export the current finite class vocabulary as an image-only graph."""
+        if str(format).strip().lower() != "coreml":
+            return super().export(format=format, **kwargs)
+        from ...export.coreml_omdet_turbo import export_omdet_turbo_coreml
+
+        return export_omdet_turbo_coreml(self, kwargs)
 
 
 __all__ = ["LibreOMDetTurbo"]

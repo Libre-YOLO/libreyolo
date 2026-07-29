@@ -8,10 +8,10 @@ import torch
 
 from .base import (
     _INSTALL_HINT,
+    LibreOpenVocabDetector,
     _contains_subsequence,
     _label_tokens,
     _normalize_label,
-    LibreOpenVocabDetector,
 )
 
 
@@ -76,7 +76,10 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
     def _prompt_chunks(self) -> list[str]:
         max_text_len = self._max_text_len()
         all_class_ids = list(range(len(self.names)))
-        if max_text_len is None or self._token_count(self._prompt(all_class_ids)) <= max_text_len:
+        if (
+            max_text_len is None
+            or self._token_count(self._prompt(all_class_ids)) <= max_text_len
+        ):
             return [self._prompt(all_class_ids)]
 
         chunks: list[str] = []
@@ -216,6 +219,16 @@ class LibreGroundingDINO(LibreOpenVocabDetector):
             ):
                 matches.append(class_id)
         return matches[0] if len(matches) == 1 else None
+
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        """Export the current finite class vocabulary as an image-only graph."""
+        if str(format).strip().lower() != "coreml":
+            return super().export(format=format, **kwargs)
+        from ...export.coreml_grounding_dino import (
+            export_grounding_dino_coreml,
+        )
+
+        return export_grounding_dino_coreml(self, kwargs)
 
 
 __all__ = ["LibreGroundingDINO"]

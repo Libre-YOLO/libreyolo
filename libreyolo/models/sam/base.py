@@ -158,8 +158,8 @@ class LibreSAMModel(BaseModel):
         if self._snapshot_complete(local_dir):
             return str(local_dir)
         try:
-            from huggingface_hub import snapshot_download
             import transformers  # noqa: F401  (ships with the extra)
+            from huggingface_hub import snapshot_download
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
         logger.info(
@@ -653,7 +653,13 @@ class LibreSAMModel(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
+        normalized = str(format).strip().lower()
+        if normalized == "coreml":
+            from ...export.exporter import BaseExporter
+
+            return BaseExporter.create(normalized, self)(**kwargs)
         raise NotImplementedError(
-            f"{type(self).__name__} export is out of scope for LibreSAM v1. "
-            "Run it through predict() instead."
+            f"{type(self).__name__} currently supports only the split, "
+            "host-orchestrated Core ML export. Pass format='coreml'; "
+            f"got format={format!r}."
         )

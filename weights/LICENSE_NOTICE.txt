@@ -78,6 +78,24 @@ project the weights were derived from. Per-family summary:
              google/siglip2-so400m-patch14-384 (Hugging Face).
              Convert with weights/convert_siglip2_weights.py.
 
+    OWLv2    (LibreOWLv2{b16,l14})                    Apache-2.0
+             base patch-16 ensemble:
+               upstream google/owlv2-base-patch16-ensemble
+               revision cfd3195ba4ea9592eec887ded089f4c08eff231d
+               mirror LibreYOLO/LibreOWLv2b16
+               revision 499390c5a97e2620c83028de36be28860771d0b3
+               model.safetensors SHA-256:
+               e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7
+             large patch-14 ensemble:
+               upstream google/owlv2-large-patch14-ensemble
+               revision 95e26936e865f87db1742128404b3c035d47d89d
+               mirror LibreYOLO/LibreOWLv2l14
+               revision ed036ee9085ad9a8201281e5cfb6609458bd22c7
+               model.safetensors SHA-256:
+               d1c2261503c55aaf400667a843a54a5167e3c696334674c4093d6d10f7f40075
+             The pinned mirror assets are byte-identical to upstream; see
+             libreyolo/models/owlv2/NOTICE for sizes and runtime-asset hashes.
+
     OMDet-Turbo (LibreOMDetTurbot)                     Apache-2.0
              upstream: omlab/omdet-turbo-swin-tiny-hf
              pinned revision:
@@ -159,6 +177,63 @@ project the weights were derived from. Per-family summary:
              dictionary ships inside each checkpoint as charset
              metadata (Apache-2.0, attribution in
              libreyolo/models/ppocr/NOTICE).
+
+    SAM 1    (facebook/sam-vit-{base,large,huge})       Apache-2.0
+             Downloaded directly from the upstream Hugging Face repositories;
+             LibreYOLO does not rehost these checkpoints. The exact
+             safetensors sources reviewed for the split Core ML contract are:
+               base revision:
+                 70c1a07f894ebb5b307fd9eaaee97b9dfc16068f
+               base model.safetensors SHA-256:
+                 892c410e496344e527255ccdcb2cb7244a609acb5389c7c4fdba1288f861c579
+               large revision:
+                 6851e0441005b0fb96f2cc4dfac472f3d1b14af1
+               large model.safetensors SHA-256:
+                 a57e1b13cd1545938dfcbc9fb26df7f60de6650237a9383382a874a623564b81
+               huge revision:
+                 87aecf0df4ce6b30cd7de76e87673c49644bdf67
+               huge model.safetensors SHA-256:
+                 edfb0462392541fca9af44ff039bfb32dbd0c939997f3abb77a26e23af7afd7c
+             Each pinned upstream model card declares Apache-2.0.
+
+    SAM 2.1  (LibreYOLO/LibreSAM2{tiny,small,base-plus,large})
+                                                               Apache-2.0
+             The LibreYOLO repositories mirror unchanged learned parameters
+             from the corresponding facebook/sam2.1-hiera-* snapshots. Exact
+             upstream revision -> LibreYOLO mirror revision -> safetensors
+             SHA-256 provenance:
+               tiny:
+                 de431c4043854a71d8101e17995dfe596bf101a5
+                 c30b06ef250f14fe1ac8712bdddc9242e9bcc4b4
+                 48c14467e5cf9e51870511feb72c89688e82dd74523142c0538b663e193ac2a7
+               small:
+                 ee5bba1d82bb8749febdf90f45e84b687142ba03
+                 6c26f791263446531a8cc89f1d73d4d57f9ff51b
+                 0a4067b11ce1e23d5229203f11c718a823060d15a4b23fa2372a7d4b77cbbc60
+               base-plus:
+                 b7320756a13354e7530a63935656d35b2f91a290
+                 44a0f4a23a9e099b0d8a24b47c9599f94c87e226
+                 2012733a0de5d03efd1bba550a2847c4551be9ef2e0d497c83074df66189f780
+               large:
+                 665f8e2ad61cf5f53d65644ff27c8ee525124610
+                 bfb39cc6b36a83a01c05eeaff34b190f0c617b2d
+                 dc407dce21301fd94abb395c5099b4f2c455fdc8a8f261ac3d0ea6d4cd197230
+             The matching SHA-256 is identical on each upstream and mirror
+             snapshot. The upstream and mirror model cards declare
+             Apache-2.0; learned parameters are unchanged.
+
+    MobileSAM (LibreYOLO/LibreMobileSAM)                PROVENANCE GAP
+             Current LibreYOLO mirror revision:
+               c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9
+             LibreMobileSAM.pt SHA-256:
+               79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe
+             The mirror card declares Apache-2.0 and attributes the
+             Apache-2.0 ChaoningZhang/MobileSAM and TinyViT projects, but it
+             does not record the exact upstream source commit or checkpoint
+             revision/hash from which this file was converted. This mirror
+             hash does not repair that missing source provenance. Keep the
+             Core ML release-notice gap active and do not describe converted
+             artifacts as redistribution-ready until the source is pinned.
 
     SAM 3    (facebook/sam3 snapshot; not rehosted)   custom SAM License
              upstream: facebook/sam3 on Hugging Face. Access is gated and

@@ -1,0 +1,49 @@
+Grounding DINO / Transformers provenance
+=========================================
+
+The native Grounding DINO implementation in this directory and its Core ML
+frozen-vocabulary adapter are derived from:
+
+  Hugging Face Transformers
+  https://github.com/huggingface/transformers
+  v5.12.1 source commit ddb849abe009d1089e6c691bfc897f27211c663c
+  Annotated tag object: a030302dcd4777bbf042ee46c30c5dbe6d2a2eb2
+  Apache License 2.0
+  Copyright 2018-2026 The Hugging Face team
+
+The Core ML adapter preserves the cross-modal text path. It freezes only the
+prompt-independent boundary immediately after the BERT text tower, together
+with the exact token ids, masks, position ids, and WordPiece pieces needed for
+host postprocessing. The fixed-stretch image contract and frozen text
+vocabulary are LibreYOLO deployment constraints, not claims made by upstream.
+
+The underlying model architecture and released checkpoints originate from:
+
+  Grounding DINO
+  https://github.com/IDEA-Research/GroundingDINO
+  Apache License 2.0
+  Copyright 2023 IDEA-Research
+
+Released weight provenance
+--------------------------
+
+Tiny:
+
+  Upstream: IDEA-Research/grounding-dino-tiny
+  Upstream revision: a2bb814dd30d776dcf7e30523b00659f4f141c71
+  LibreYOLO mirror: LibreYOLO/LibreGroundingDINOt
+  Mirror revision: 842ba2640b927b39c4c06a62e4d2238a9df965f1
+  model.safetensors SHA-256:
+    1a2412ef99bd74bcd3c2a246fa1e48581f8889a1300c9051974741314fc042f3
+
+Base:
+
+  Upstream: IDEA-Research/grounding-dino-base
+  Upstream revision: 12bdfa3120f3e7ec7b434d90674b3396eccf88eb
+  LibreYOLO mirror: LibreYOLO/LibreGroundingDINOb
+  Mirror revision: 2d2f9b44aa8740a3c6a5b84c5d739441f22b7494
+  model.safetensors SHA-256:
+    5548f844c928c4b6f411fa8cbcc2bfa8dbbba437cb1d513975519f93c2a9ed21
+
+For both variants, the upstream and LibreYOLO mirror model.safetensors files
+have identical byte sizes and SHA-256 digests.

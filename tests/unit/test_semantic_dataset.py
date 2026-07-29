@@ -55,6 +55,43 @@ class TestMaskPairing:
 
 
 class TestSemanticDatasetMasks:
+    def test_opencv_floor_letterbox_matches_pidnet_pixels(self, tmp_path):
+        _write_image(tmp_path / "images" / "train" / "sample.png", 11, 7)
+        mask = np.zeros((7, 11), dtype=np.uint8)
+        _write_mask(tmp_path / "masks" / "train" / "sample.png", mask)
+        config = {
+            "train": str(tmp_path / "images" / "train"),
+            "names": {0: "thing"},
+            "nc": 1,
+            "masks_dir": "masks",
+        }
+        dataset = SemanticDataset(
+            config,
+            split="train",
+            imgsz=17,
+            resize_backend="opencv",
+            interpolation="bilinear",
+            resize_rounding="floor",
+        )
+        yy, xx = np.mgrid[:7, :11]
+        image = np.stack(
+            (
+                (xx * 17 + yy * 3) % 256,
+                (xx * 5 + yy * 29) % 256,
+                (xx * 31 + yy * 7) % 256,
+            ),
+            axis=-1,
+        ).astype(np.uint8)
+
+        resized, _mask, ratio, _pad = dataset._resize(image, mask, 1.0)
+
+        from libreyolo.models.pidnet.model import preprocess_numpy
+
+        expected, expected_ratio = preprocess_numpy(image, 17)
+        expected_pixels = np.rint(expected.transpose(1, 2, 0) * 255.0).astype(np.uint8)
+        np.testing.assert_array_equal(resized, expected_pixels)
+        assert ratio == expected_ratio
+
     def test_loads_paired_masks(self, tmp_path):
         config = _make_mask_dataset(tmp_path)
         dataset = SemanticDataset(config, split="train", imgsz=32)
@@ -327,7 +364,9 @@ def test_polygon_out_of_range_class_raises(tmp_path):
         dataset[0]
 
 
-def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, monkeypatch):
+def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(
+    tmp_path, monkeypatch
+):
     """Training scale jitter > 1 must resize PAST the canvas (keeping aspect) and
     let the random crop take the overflow out — not clamp the resize to imgsz.
 
@@ -342,7 +381,9 @@ def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, mon
     imgsz = 64
     orig_h, orig_w = 100, 50  # portrait, aspect 2.0
     _write_image(tmp_path / "images" / "train" / "a.jpg", orig_w, orig_h)
-    _write_mask(tmp_path / "masks" / "train" / "a.png", np.zeros((orig_h, orig_w), np.uint8))
+    _write_mask(
+        tmp_path / "masks" / "train" / "a.png", np.zeros((orig_h, orig_w), np.uint8)
+    )
     config = {
         "path": str(tmp_path),
         "train": str(tmp_path / "images" / "train"),
@@ -350,7 +391,9 @@ def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, mon
         "names": {0: "bg"},
         "nc": 1,
     }
-    dataset = SemanticDataset(config, split="train", imgsz=imgsz, resize_mode="letterbox")
+    dataset = SemanticDataset(
+        config, split="train", imgsz=imgsz, resize_mode="letterbox"
+    )
 
     # Marker band in the bottom 10 source rows only.
     img = np.zeros((orig_h, orig_w, 3), dtype=np.uint8)
@@ -372,4 +415,6 @@ def test_resize_zoom_in_jitter_crops_overflow_instead_of_squashing(tmp_path, mon
     # The band lived in the bottom of the source; cropping from the top must
     # have discarded it. A clamped (squashing) resize would keep it.
     content = img_out[:, :content_w, :]
-    assert content.max() == 0, "bottom marker band survived: resize squashed instead of cropping"
+    assert content.max() == 0, (
+        "bottom marker band survived: resize squashed instead of cropping"
+    )

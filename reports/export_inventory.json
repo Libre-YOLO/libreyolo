@@ -406,7 +406,7 @@
       "b": 800
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "openvocab",
     "available": true
   },
@@ -603,7 +603,7 @@
       "t": 640
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "openvocab",
     "available": true
   },
@@ -643,7 +643,7 @@
       "l14": 1008
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "openvocab",
     "available": true
   },
@@ -1044,8 +1044,31 @@
       "b5": 640
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": null,
+    "available": true
+  },
+  "sensenovavision": {
+    "class": "libreyolo.models.sensenova.model.LibreSenseNovaVision",
+    "tasks": [
+      "detect",
+      "segment",
+      "panoptic",
+      "pose",
+      "point",
+      "depth",
+      "ocr"
+    ],
+    "default_task": "detect",
+    "sizes": {
+      "7b": 1024
+    },
+    "default_imgsz": {
+      "7b": 1024
+    },
+    "task_sizes": {},
+    "export_override": "blocked",
+    "optional_extra": "vlm",
     "available": true
   },
   "siglip2": {

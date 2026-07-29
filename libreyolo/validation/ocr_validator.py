@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import unicodedata
+from numbers import Integral
 from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
@@ -236,9 +237,20 @@ class OCRValidator:
         totals = {"num_pred": 0, "num_gt": 0, "det_matches": 0, "e2e_matches": 0}
         ned_scores: List[float] = []
         conf = float(getattr(self.config, "conf_thres", 0.0) or 0.0)
+        raw_imgsz = getattr(self.config, "imgsz", None)
+        if (
+            isinstance(raw_imgsz, bool)
+            or not isinstance(raw_imgsz, Integral)
+            or int(raw_imgsz) <= 0
+        ):
+            raise ValueError(
+                "OCR validation imgsz must be one positive integer: it is the "
+                "detector long-side limit, not a (height, width) canvas."
+            )
+        imgsz = int(raw_imgsz)
 
         for image_path, gt_regions in samples:
-            result = self.model.predict(str(image_path), conf=conf)
+            result = self.model.predict(str(image_path), conf=conf, imgsz=imgsz)
             if isinstance(result, list):
                 result = result[0]
             if result.ocr is None:

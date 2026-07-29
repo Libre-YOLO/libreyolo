@@ -25,6 +25,7 @@ through the permissive ``transformers`` model API. See
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
 from .base import LibreSAMModel
@@ -115,7 +116,12 @@ def LibreSAM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreSAMModel:
     Returns:
         A ``LibreSAMModel`` with the interactive ``set_image``/``predict`` surface.
     """
-    key = str(model).strip().lower()
+    model_value = str(model).strip()
+    if Path(model_value).suffix.lower() == ".mlpackage":
+        from ...backends.coreml import CoreMLBackend
+
+        return CoreMLBackend(model_value, **kwargs)
+    key = model_value.lower()
     match = _ALIASES.get(key)
     if match is None:
         raise ValueError(

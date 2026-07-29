@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from ..data.obb import scale_xywhr
 from ..models.yolo9.utils import (
     _YOLO9_MAX_NMS_CANDIDATES,
     postprocess as yolo9_postprocess,
@@ -27,7 +28,14 @@ from ..models.yolonas.utils import (
 )
 from ..models.yolox.utils import preprocess_image as yolox_preprocess_image
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
-from ..utils.drawing import draw_boxes, draw_keypoints, draw_masks, draw_obb
+from ..utils.drawing import (
+    draw_boxes,
+    draw_keypoints,
+    draw_masks,
+    draw_obb,
+    draw_panoptic,
+    draw_semantic_mask,
+)
 from ..utils.general import (
     COCO_CLASSES,
     get_safe_stem,
@@ -49,6 +57,7 @@ from ..utils.results import (
     Probs,
     Results,
     RestoredImage,
+    PanopticSegmentation,
     SemanticMask,
 )
 from ..utils.video import collect_video_results, is_video_file, run_video_inference
@@ -137,7 +146,7 @@ def _read_metadata_imgsz(
         ):
             raise NotImplementedError(
                 "Rectangular exported-backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only. "
+                "for YOLO9-family, NAFNet, and Real-ESRGAN exports only. "
                 f"{artifact} declares model_family={model_family or 'unknown'!r}."
             )
         return imgsz
@@ -243,6 +252,10 @@ def _is_nms_free_family(model_family: Optional[str]) -> bool:
         "deim",
         "deimv2",
         "ec",
+        "eomt",
+        "grounding_dino",
+        "omdet_turbo",
+        "owlv2",
         "rfdetr",
         "rtdetr",
         "rtdetrv2",
@@ -316,6 +329,7 @@ class BaseBackend(ABC):
         num_bins: int | None = None,
         bin_width_deg: float | None = None,
         offset_deg: float | None = None,
+        classification_activation: str | None = None,
     ):
         self.model_path = model_path
         self.nb_classes = nb_classes
@@ -376,6 +390,14 @@ class BaseBackend(ABC):
         self.num_bins = int(num_bins if num_bins is not None else 90)
         self.bin_width_deg = float(bin_width_deg if bin_width_deg is not None else 4.0)
         self.offset_deg = float(offset_deg if offset_deg is not None else -180.0)
+        self.classification_activation = str(
+            classification_activation or "softmax"
+        ).lower()
+        if self.classification_activation not in {"softmax", "sigmoid"}:
+            raise ValueError(
+                "classification_activation must be 'softmax' or 'sigmoid', "
+                f"got {classification_activation!r}."
+            )
         if not hasattr(self, "model"):
             self.model = _BackendEvalProxy()
 
@@ -828,6 +850,7 @@ class BaseBackend(ABC):
         ratio: float | None = None,
         iou: float = 0.45,
         max_det: int = 300,
+        classes: Optional[List[int]] = None,
     ):
         """Parse raw outputs into boxes, scores, classes, masks, OBB, and keypoints."""
         orig_w, orig_h = original_size
@@ -925,6 +948,17 @@ class BaseBackend(ABC):
             )
             return boxes, scores, cls, None
         elif self.model_family == "rtmdet":
+            if self.task == "segment":
+                return self._parse_rtmdet_segment(
+                    all_outputs,
+                    effective_imgsz,
+                    orig_w,
+                    orig_h,
+                    conf,
+                    iou,
+                    max_det,
+                    ratio,
+                )
             boxes, scores, cls = self._parse_rtmdet(
                 all_outputs, effective_imgsz, orig_w, orig_h, conf, ratio
             )
@@ -1055,6 +1089,58 @@ class BaseBackend(ABC):
         class_ids = class_ids[valid_boxes]
 
         return boxes, max_scores, class_ids
+
+    @staticmethod
+    def _parse_rtmdet_segment(
+        all_outputs,
+        effective_imgsz,
+        orig_w,
+        orig_h,
+        conf,
+        iou,
+        max_det,
+        ratio=1.0,
+    ):
+        """Decode the fixed ten-tensor RTMDet-Ins exported-runtime ABI."""
+        if len(all_outputs) != 10:
+            raise RuntimeError(
+                "RTMDet-Ins exported inference requires ten ordered tensors "
+                "(three class maps, three box maps, three kernel maps, and "
+                f"mask features); got {len(all_outputs)}."
+            )
+
+        from ..postprocess.rtmdet import postprocess
+
+        tensors = tuple(
+            torch.from_numpy(np.ascontiguousarray(value))
+            if isinstance(value, np.ndarray)
+            else torch.as_tensor(value)
+            for value in all_outputs
+        )
+        input_h, input_w = _imgsz_hw(effective_imgsz)
+        if ratio is None or ratio == 1.0:
+            ratio = min(input_w / orig_w, input_h / orig_h)
+        result = postprocess(
+            (
+                tensors[0:3],
+                tensors[3:6],
+                tensors[6:9],
+                tensors[9],
+            ),
+            conf_thres=conf,
+            iou_thres=iou,
+            input_size=(input_h, input_w),
+            original_size=(orig_w, orig_h),
+            ratio=float(ratio),
+            max_det=max_det,
+            nms_pre=1000,
+        )
+        return (
+            np.asarray(result["boxes"], dtype=np.float32),
+            np.asarray(result["scores"], dtype=np.float32),
+            np.asarray(result["classes"], dtype=np.int64),
+            np.asarray(result["masks"], dtype=np.bool_),
+        )
 
     def _parse_picodet(self, all_outputs, effective_imgsz, orig_w, orig_h, conf):
         """Parse PICODET output: (B, N, 4+nc) — xyxy (input-canvas pixels) + sigmoid scores.
@@ -1721,6 +1807,29 @@ class BaseBackend(ABC):
                 logits = logits[:, :public_classes]
         scores = 1.0 / (1.0 + np.exp(-logits.astype(np.float64))).astype(np.float32)
         num_queries, num_classes = scores.shape
+        pose_schema = (
+            getattr(self, "num_keypoints_per_class", None)
+            if raw_keypoint_output is not None
+            else None
+        )
+        if pose_schema:
+            schema_counts = np.asarray(
+                [int(count) for count in pose_schema],
+                dtype=np.int64,
+            )
+            if (
+                schema_counts.size != num_classes
+                or schema_counts.max(initial=0) <= 0
+                or np.any(schema_counts < 0)
+            ):
+                raise ValueError(
+                    "Invalid RF-DETR GroupPose num_keypoints_per_class metadata "
+                    f"for {num_classes} classes: {list(schema_counts)}"
+                )
+            # Classes without keypoints (normally the internal background
+            # class) are not public pose candidates. Mask them before top-k so
+            # they cannot consume the query budget and erase valid poses.
+            scores[:, schema_counts == 0] = -np.inf
         if raw_keypoint_output is not None:
             raw_keypoints = self._normalize_rfdetr_keypoint_output(
                 raw_keypoint_output,
@@ -1758,7 +1867,7 @@ class BaseBackend(ABC):
             and num_classes > 1
             and keypoints_raw.shape[1] % num_classes == 0
         ):
-            schema = getattr(self, "num_keypoints_per_class", None)
+            schema = pose_schema
             keypoint_counts = None
             if schema:
                 schema_counts = np.asarray(
@@ -1927,16 +2036,19 @@ class BaseBackend(ABC):
         obb_out = None
         if angles_raw is not None:
             angles = np.asarray(angles_raw, dtype=np.float32).reshape(-1)
-            obb_out = np.stack(
-                [
-                    cx * orig_w,
-                    cy * orig_h,
-                    w * orig_w,
-                    h * orig_h,
-                    angles,
-                    max_scores,
-                    class_ids.astype(np.float32),
-                ],
+            normalized_obb = np.stack([cx, cy, w, h, angles], axis=1)
+            scaled_obb = scale_xywhr(
+                normalized_obb,
+                float(orig_w),
+                float(orig_h),
+                min_size=1e-4,
+            )
+            obb_out = np.concatenate(
+                (
+                    scaled_obb,
+                    max_scores[:, None],
+                    class_ids.astype(np.float32)[:, None],
+                ),
                 axis=1,
             ).astype(np.float32, copy=False)
 
@@ -2034,8 +2146,7 @@ class BaseBackend(ABC):
     # Result building
     # =========================================================================
 
-    @staticmethod
-    def _parse_classify_probs(all_outputs) -> torch.Tensor:
+    def _parse_classify_probs(self, all_outputs) -> torch.Tensor:
         logits = np.asarray(all_outputs[0])
         if logits.ndim == 1:
             logits = logits[None, :]
@@ -2045,6 +2156,8 @@ class BaseBackend(ABC):
                 f"got {tuple(logits.shape)}."
             )
         logits_t = torch.from_numpy(logits).float()
+        if self.classification_activation == "sigmoid":
+            return torch.sigmoid(logits_t)[0]
         return torch.softmax(logits_t, dim=1)[0]
 
     @staticmethod
@@ -2143,7 +2256,17 @@ class BaseBackend(ABC):
         orig_w, orig_h = original_size
         logits_t = torch.from_numpy(np.ascontiguousarray(logits))
         align_corners = False
-        if self.model_family == "pidnet":
+        if self.model_family == "segformer":
+            from ..export.coreml_segformer import segformer_valid_logits_hw
+
+            input_h, input_w = _imgsz_hw(effective_imgsz)
+            valid_h, valid_w = segformer_valid_logits_hw(
+                (orig_h, orig_w),
+                (input_h, input_w),
+                (int(logits_t.shape[-2]), int(logits_t.shape[-1])),
+            )
+            logits_t = logits_t[..., :valid_h, :valid_w]
+        elif self.model_family == "pidnet":
             input_h, input_w = _imgsz_hw(effective_imgsz)
             scale_y = logits_t.shape[-2] / input_h
             scale_x = logits_t.shape[-1] / input_w
@@ -2179,6 +2302,75 @@ class BaseBackend(ABC):
         return Results(
             boxes=None,
             semantic_mask=SemanticMask(semantic, orig_shape),
+            orig_shape=orig_shape,
+            path=str(image_path) if image_path else None,
+            names=self.names,
+        )
+
+    def _parse_panoptic_output(
+        self,
+        all_outputs,
+        original_size: Tuple[int, int],
+        effective_imgsz: ImageSize,
+        conf: float,
+        iou: float,
+        max_det: int,
+        ratio: float,
+    ) -> Dict[str, Any]:
+        """Decode one panoptic map; implemented by compatible backends."""
+        del (
+            all_outputs,
+            original_size,
+            effective_imgsz,
+            conf,
+            iou,
+            max_det,
+            ratio,
+        )
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement panoptic output parsing."
+        )
+
+    def _build_panoptic_result(
+        self,
+        all_outputs,
+        *,
+        orig_shape: Tuple[int, int],
+        original_size: Tuple[int, int],
+        effective_imgsz: ImageSize,
+        conf: float,
+        iou: float,
+        max_det: int,
+        ratio: float,
+        image_path,
+    ) -> Results:
+        decoded = self._parse_panoptic_output(
+            all_outputs,
+            original_size,
+            effective_imgsz,
+            conf,
+            iou,
+            max_det,
+            ratio,
+        )
+        if not isinstance(decoded, dict) or "panoptic" not in decoded:
+            raise ValueError(
+                "Panoptic backend parser must return a mapping containing "
+                "'panoptic' and optional 'segments_info'."
+            )
+        panoptic = torch.as_tensor(decoded["panoptic"]).long()
+        if tuple(panoptic.shape) != tuple(orig_shape):
+            raise ValueError(
+                "Panoptic backend output must match the original image shape: "
+                f"got {tuple(panoptic.shape)}, expected {tuple(orig_shape)}."
+            )
+        return Results(
+            boxes=None,
+            panoptic=PanopticSegmentation(
+                panoptic,
+                decoded.get("segments_info") or [],
+                orig_shape,
+            ),
             orig_shape=orig_shape,
             path=str(image_path) if image_path else None,
             names=self.names,
@@ -2364,7 +2556,11 @@ class BaseBackend(ABC):
                 names=self.names,
             )
 
-        if obb is None and not _is_nms_free_family(self.model_family):
+        if (
+            obb is None
+            and not _is_nms_free_family(self.model_family)
+            and not (self.model_family == "rtmdet" and self.task == "segment")
+        ):
             # YOLO9 needs class-aware NMS so multi-label detections
             # on a shared anchor (same box, different class) survive, matching
             # the native batched_nms path. Class-agnostic NMS would drop the
@@ -2457,6 +2653,24 @@ class BaseBackend(ABC):
         annotated_img = original_img
         if result.boxes is None and getattr(result, "probs", None) is not None:
             pass
+        elif (
+            result.boxes is None
+            and getattr(result, "semantic_mask", None) is not None
+        ):
+            semantic = result.semantic_mask.data
+            if isinstance(semantic, torch.Tensor):
+                semantic = semantic.cpu().numpy()
+            annotated_img = draw_semantic_mask(original_img, semantic)
+        elif result.boxes is None and getattr(result, "panoptic", None) is not None:
+            panoptic = result.panoptic.data
+            if isinstance(panoptic, torch.Tensor):
+                panoptic = panoptic.cpu().numpy()
+            annotated_img = draw_panoptic(
+                original_img,
+                panoptic,
+                result.panoptic.segments_info,
+                class_names=self.names,
+            )
         elif result.boxes is None and getattr(result, "restored", None) is not None:
             annotated_img = Image.fromarray(result.restored.array, mode="RGB")
         elif result.boxes is None and getattr(result, "depth_map", None) is not None:
@@ -2590,9 +2804,18 @@ class BaseBackend(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz backend inference is currently supported "
-                "for YOLO9-family and NAFNet exports only."
+                "for YOLO9-family, NAFNet, and Real-ESRGAN exports only."
             )
         return effective
+
+    def _supports_rectangular_validation(self) -> bool:
+        """Whether this backend declares an exact rectangular validation canvas.
+
+        This is a preprocessing-contract capability, not permission to bypass
+        rectangular checks globally. Backends remain square-only unless they
+        explicitly prove that validation and prediction use the same geometry.
+        """
+        return False
 
     def _forward(self, input_tensor: torch.Tensor):
         blob = input_tensor.detach().cpu().numpy()
@@ -2680,6 +2903,16 @@ class BaseBackend(ABC):
                     float(ratio or 1.0),
                 )
             }
+        if self.task == "panoptic":
+            return self._parse_panoptic_output(
+                outputs,
+                original_size,
+                effective_imgsz,
+                conf_thres,
+                iou_thres,
+                max_det,
+                float(ratio or 1.0),
+            )
         if self.task == "point":
             result = self._build_point_result(
                 outputs,
@@ -2751,12 +2984,16 @@ class BaseBackend(ABC):
     ) -> Dict:
         from ..validation import (
             ClassifyValidator,
+            CLIPClassifyValidator,
             DepthValidator,
             DetectionValidator,
             OBBValidator,
+            OCRValidator,
+            PanopticValidator,
             PointValidator,
             PoseValidator,
             RestoreValidator,
+            SigLIP2ClassifyValidator,
             SemanticValidator,
             SegmentationValidator,
             ValidationConfig,
@@ -2770,7 +3007,7 @@ class BaseBackend(ABC):
         if imgsz is None:
             imgsz = self._get_input_size()
         imgsz = self._resolve_predict_imgsz(imgsz)
-        if _is_rectangular_imgsz(imgsz):
+        if _is_rectangular_imgsz(imgsz) and not self._supports_rectangular_validation():
             raise NotImplementedError(
                 "Rectangular exported-backend validation is not supported yet."
             )
@@ -2798,7 +3035,10 @@ class BaseBackend(ABC):
             **kwargs,
         )
         if self.task == "classify":
-            validator_cls = ClassifyValidator
+            validator_cls = {
+                "clip": CLIPClassifyValidator,
+                "siglip2": SigLIP2ClassifyValidator,
+            }.get(self.model_family, ClassifyValidator)
         elif self.task == "point":
             validator_cls = PointValidator
         elif self.task == "segment":
@@ -2811,10 +3051,14 @@ class BaseBackend(ABC):
             validator_cls = RestoreValidator
         elif self.task == "semantic":
             validator_cls = SemanticValidator
+        elif self.task == "panoptic":
+            validator_cls = PanopticValidator
         elif self.task == "depth":
             validator_cls = DepthValidator
         elif self.task == "matte":
             validator_cls = MatteValidator
+        elif self.task == "ocr":
+            validator_cls = OCRValidator
         elif self.task == "gaze":
             raise NotImplementedError(
                 "Exported gaze validation requires a gaze-labelled dataset contract."
@@ -2949,6 +3193,26 @@ class BaseBackend(ABC):
                     output_path,
                 )
             return result
+        if self.task == "panoptic":
+            result = self._build_panoptic_result(
+                all_outputs,
+                orig_shape=orig_shape,
+                original_size=original_size,
+                effective_imgsz=effective_imgsz,
+                conf=conf,
+                iou=iou,
+                max_det=max_det,
+                ratio=float(ratio or 1.0),
+                image_path=image_path,
+            )
+            if save:
+                self._save_annotated(
+                    result,
+                    original_img,
+                    image_path if image_path is not None else save_stem,
+                    output_path,
+                )
+            return result
         if self.task == "point":
             result = self._build_point_result(
                 all_outputs,
@@ -2976,6 +3240,7 @@ class BaseBackend(ABC):
             ratio=ratio,
             iou=iou,
             max_det=max_det,
+            classes=classes,
         )
         boxes, max_scores, class_ids, masks, obb, keypoints = (
             self._unpack_parsed_outputs(parsed)
@@ -3209,6 +3474,18 @@ class BaseBackend(ABC):
                     ratio=float(ratio or 1.0),
                     image_path=image_path,
                 )
+            elif self.task == "panoptic":
+                result = self._build_panoptic_result(
+                    per_image,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    conf=conf,
+                    iou=iou,
+                    max_det=max_det,
+                    ratio=float(ratio or 1.0),
+                    image_path=image_path,
+                )
             elif self.task == "point":
                 result = self._build_point_result(
                     per_image,
@@ -3228,6 +3505,7 @@ class BaseBackend(ABC):
                     ratio=ratio,
                     iou=iou,
                     max_det=max_det,
+                    classes=classes,
                 )
                 boxes, max_scores, class_ids, masks, obb, keypoints = (
                     self._unpack_parsed_outputs(parsed)
@@ -3428,6 +3706,18 @@ class BaseBackend(ABC):
                     ratio=float(ratio or 1.0),
                     image_path=str(source),
                 )
+            if self.task == "panoptic":
+                return self._build_panoptic_result(
+                    all_outputs,
+                    orig_shape=orig_shape,
+                    original_size=original_size,
+                    effective_imgsz=effective_imgsz,
+                    conf=conf,
+                    iou=iou,
+                    max_det=max_det,
+                    ratio=float(ratio or 1.0),
+                    image_path=str(source),
+                )
             if self.task == "point":
                 return self._build_point_result(
                     all_outputs,
@@ -3446,6 +3736,7 @@ class BaseBackend(ABC):
                 ratio=ratio,
                 iou=iou,
                 max_det=max_det,
+                classes=classes,
             )
             boxes, max_scores, class_ids, masks, obb, keypoints = (
                 self._unpack_parsed_outputs(parsed)

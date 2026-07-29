@@ -18,8 +18,9 @@ tokenizer is vendored (see :mod:`.tokenizer`). open_clip is **not** a runtime
 dependency. Weights are the MIT-redistributable OpenCLIP LAION-2B checkpoints
 (see the family ``NOTICE`` for the LAION data-provenance note).
 
-Zero-shot only: ``train()`` raises. ONNX export bakes the *current* label set
-into a fixed ``[B, K]`` classifier graph (see :meth:`export`).
+Zero-shot only: ``train()`` raises. ONNX and Apple export paths bake the
+*current* label set into a fixed ``[B, K]`` classifier graph (see
+:meth:`export`).
 """
 
 from __future__ import annotations
@@ -409,57 +410,89 @@ class LibreCLIP(BaseModel):
         )
 
     # =========================================================================
-    # Export — frozen-class ONNX
+    # Export — frozen-class image classifiers
     # =========================================================================
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export a **frozen-class** ONNX classifier for the current labels.
+        """Export a **frozen-class** image classifier for the current labels.
 
         The current ``set_classes`` text embeddings are baked into a final
         ``Linear`` (weight = ``logit_scale.exp() * text_embeds``), giving a
         standard ``[B, K]`` image-classifier graph (no text tower / tokenizer at
-        inference). The ONNX is fixed to the labels set at export time and to a
-        fixed input resolution; re-export to change either.
+        inference). The artifact is fixed to the labels set at export time and
+        to a fixed input resolution; re-export to change either.
         """
-        if format.lower() not in {"onnx", "coreai"}:
+        export_format = format.lower()
+        if export_format not in {"onnx", "coreai", "coreml"}:
             raise NotImplementedError(
                 f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "
-                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                "'coreai', and 'coreml' frozen-class exports are supported. "
+                "Open-vocabulary export (two towers + tokenizer) is out of scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
 
-        if format.lower() == "coreai":
+        if export_format in {"coreai", "coreml"}:
             # LibreCLIP is a two-tower module with no single forward(x), which
             # is why the ONNX path builds its graph by hand. Reuse the very
-            # same frozen-class module here rather than duplicating it, then
-            # hand it to the shared Core AI converter.
+            # same frozen-class module here rather than duplicating it.
             import torch as _torch
 
-            from ...export.coreai import (
-                export_coreai,
-                prepare_frozen_classifier_export,
-            )
             from .export import _FrozenCLIPClassifier
 
-            size, output_path, metadata = prepare_frozen_classifier_export(
-                self, kwargs, default_output="clip_coreai"
-            )
+            if export_format == "coreai":
+                from ...export.coreai import (
+                    export_coreai,
+                    prepare_frozen_classifier_export,
+                )
+
+                size, output_path, metadata = prepare_frozen_classifier_export(
+                    self, kwargs, default_output="clip_coreai"
+                )
+            else:
+                from ...export.coreml import (
+                    export_coreml,
+                    prepare_frozen_classifier_coreml_export,
+                )
+
+                (
+                    size,
+                    output_path,
+                    metadata,
+                    precision,
+                    compute_units,
+                ) = prepare_frozen_classifier_coreml_export(
+                    self, kwargs, default_output="clip_coreml"
+                )
+
             scale = float(self.model.logit_scale.exp().detach().cpu())
-            weight = (scale * self._text_embeds).detach().cpu()
+            weight = (scale * self._text_embeds).detach().to("cpu", _torch.float32)
             device = next(self.model.visual.parameters()).device
             was_training = self.model.visual.training
             visual = self.model.visual.to("cpu").eval()
             try:
                 frozen = _FrozenCLIPClassifier(visual, weight).eval()
-                dummy = _torch.randn(1, 3, size, size)
-                return export_coreai(
+                if export_format == "coreai":
+                    dummy = _torch.randn(1, 3, size, size)
+                    return export_coreai(
+                        frozen,
+                        dummy,
+                        output_path=output_path,
+                        metadata=metadata,
+                        model_family="clip",
+                    )
+
+                dummy = _torch.zeros(1, 3, size, size)
+                return export_coreml(
                     frozen,
                     dummy,
                     output_path=output_path,
+                    precision=precision,
+                    compute_units=compute_units,
                     metadata=metadata,
                     model_family="clip",
+                    model_task="classify",
+                    model_size=self.size,
                 )
             finally:
                 self.model.visual.to(device).train(was_training)

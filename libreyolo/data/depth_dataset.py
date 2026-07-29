@@ -201,6 +201,8 @@ class DepthDataset(Dataset):
         imgsz: int,
         augment: bool = False,
         resize_mode: str = "letterbox",
+        resize_backend: str = "pillow",
+        interpolation: str = "bilinear",
     ):
         if resize_mode not in ("letterbox", "stretch"):
             raise ValueError(
@@ -210,9 +212,18 @@ class DepthDataset(Dataset):
         self.imgsz = int(imgsz)
         self.augment = augment
         self.resize_mode = resize_mode
-        self.depth_scale = float(
-            data_config.get("depth_scale", DEFAULT_DEPTH_SCALE)
-        )
+        self.resize_backend = str(resize_backend).strip().lower()
+        self.interpolation = str(interpolation).strip().lower()
+        if self.resize_backend not in {"pillow", "opencv"}:
+            raise ValueError(
+                f"resize_backend must be 'pillow' or 'opencv', got {resize_backend!r}"
+            )
+        if self.interpolation not in {"nearest", "bilinear", "bicubic"}:
+            raise ValueError(
+                "interpolation must be nearest, bilinear, or bicubic, "
+                f"got {interpolation!r}"
+            )
+        self.depth_scale = float(data_config.get("depth_scale", DEFAULT_DEPTH_SCALE))
         if self.depth_scale <= 0:
             raise ValueError(f"depth_scale must be positive, got {self.depth_scale}")
 
@@ -286,14 +297,42 @@ class DepthDataset(Dataset):
             new_w = max(1, int(round(w0 * ratio)))
             new_h = max(1, int(round(h0 * ratio)))
 
-        img_pil = Image.fromarray(img).resize((new_w, new_h), Image.BILINEAR)
-        # Nearest-neighbor keeps depth discontinuities sharp instead of
-        # inventing intermediate depths along object boundaries.
-        depth_pil = Image.fromarray(depth, mode="F").resize(
-            (new_w, new_h), Image.NEAREST
-        )
-        img = np.array(img_pil)
-        depth = np.asarray(depth_pil).astype(np.float32)
+        if self.resize_backend == "opencv":
+            import cv2
+
+            image_interpolation = {
+                "nearest": cv2.INTER_NEAREST,
+                "bilinear": cv2.INTER_LINEAR,
+                "bicubic": cv2.INTER_CUBIC,
+            }[self.interpolation]
+            img = cv2.resize(
+                img,
+                (new_w, new_h),
+                interpolation=image_interpolation,
+            )
+            # Nearest-neighbor keeps depth discontinuities sharp instead of
+            # inventing intermediate depths along object boundaries.
+            depth = cv2.resize(
+                depth.astype(np.float32, copy=False),
+                (new_w, new_h),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(np.float32, copy=False)
+        else:
+            image_interpolation = {
+                "nearest": Image.Resampling.NEAREST,
+                "bilinear": Image.Resampling.BILINEAR,
+                "bicubic": Image.Resampling.BICUBIC,
+            }[self.interpolation]
+            img_pil = Image.fromarray(img).resize(
+                (new_w, new_h),
+                image_interpolation,
+            )
+            depth_pil = Image.fromarray(depth, mode="F").resize(
+                (new_w, new_h),
+                Image.Resampling.NEAREST,
+            )
+            img = np.array(img_pil)
+            depth = np.asarray(depth_pil).astype(np.float32)
 
         # Top-left anchored padding, matching the family inference letterbox
         # (content at the origin, pad at bottom/right). Pad depth with 0 so

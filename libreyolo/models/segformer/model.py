@@ -87,6 +87,10 @@ class LibreSegformer(BaseModel):
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     # b0-b4 are fine-tuned on ADE20K at 512; b5 is the one trained at 640.
     INPUT_SIZES: ClassVar[Dict[str, int]] = {**{size: 512 for size in SIZE_CONFIGS}, "b5": 640}
+    # The four overlap-patch stages reduce by 4 * 2 * 2 * 2.  Keep this
+    # visible to the shared exporter so an invalid fixed canvas is rejected
+    # before tracing or any live-model mutation.
+    IMGSZ_DIVISOR: ClassVar[int] = 32
 
     # Fine-tune recipe (SegFormer paper / mmsegmentation ADE20K config):
     #  - resize_crop: training resizes the short side to imgsz*ratio and random-
@@ -101,6 +105,9 @@ class LibreSegformer(BaseModel):
     # Read by SegformerTrainer._setup_semantic_data and SemanticValidator.
     semantic_resize_mode: ClassVar[str] = "resize_crop"
     semantic_imgsz_divisor: ClassVar[int] = 32
+    semantic_resize_backend: ClassVar[str] = "opencv"
+    semantic_resize_interpolation: ClassVar[str] = "bilinear"
+    semantic_resize_rounding: ClassVar[str] = "floor"
     semantic_scale_jitter: ClassVar[Tuple[float, float]] = (0.5, 2.0)
     # The reference ADE20K recipe uses no photometric jitter. SemanticDataset
     # defaults to 0.5, so this has to be declared explicitly or training quietly
@@ -490,7 +497,13 @@ class LibreSegformer(BaseModel):
         self.model.eval()
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        raise NotImplementedError("Export is not implemented for LibreSegformer yet.")
+        """Export dense logits through the shared semantic runtime contract.
+
+        Format availability remains governed by the central export-support
+        matrix.  In particular, the Core ML row stays experimental until a
+        converted artifact has passed real macOS runtime parity.
+        """
+        return super().export(format=format, **kwargs)
 
 
 __all__ = ["LibreSegformer", "preprocess_numpy"]

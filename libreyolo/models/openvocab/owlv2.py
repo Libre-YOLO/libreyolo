@@ -6,8 +6,7 @@ from typing import Any, ClassVar, Dict, Tuple
 
 import torch
 
-from .base import _INSTALL_HINT
-from .base import LibreOpenVocabDetector
+from .base import _INSTALL_HINT, LibreOpenVocabDetector
 
 
 class LibreOWLv2(LibreOpenVocabDetector):
@@ -94,6 +93,14 @@ class LibreOWLv2(LibreOpenVocabDetector):
             max_det=max_det,
             classes=kwargs.get("classes"),
         )
+
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        """Export the current finite class vocabulary as an image-only graph."""
+        if str(format).strip().lower() != "coreml":
+            return super().export(format=format, **kwargs)
+        from ...export.coreml_owlv2 import export_owlv2_coreml
+
+        return export_owlv2_coreml(self, kwargs)
 
 
 __all__ = ["LibreOWLv2"]

@@ -133,6 +133,49 @@ Returned `conf` is SAM's predicted mask-IoU (mask quality), surfaced honestly as
 a soft score, not a calibrated detection confidence. `val()` (mAP) is
 unsupported — promptable masks have no fixed class set to score against.
 
+## Experimental Core ML Contract
+
+SAM-1, SAM2 image, EdgeTAM image, SAM 3 visual prompting, and MobileSAM expose
+an experimental split Core ML export:
+
+```python
+model.export(
+    format="coreml",
+    output_path="sam.mlpackage",
+    prompt_max_points=16,
+)
+```
+
+The output is one native multifunction ML Program with seven named functions:
+
+- `encode_image`
+- `decode_points_single` and `decode_points_multimask`
+- `decode_boxes_single` and `decode_boxes_multimask`
+- `decode_points_boxes_single` and `decode_points_boxes_multimask`
+
+The package has fixed batch and query dimensions (`N=1`, `Q=1`). Point count
+`P` is genuinely dynamic from 1 through the finite `prompt_max_points` bound;
+the host loops over multiple prompt queries without padding or splitting one
+query. Inputs, embeddings, masks, and IoU scores are FP32, while point labels
+are INT32. Lossy precision, embedded NMS, and mask-prompt export are rejected.
+
+The host owns raw-image preprocessing, prompt-coordinate transforms, decoder
+selection, the query loop, family-specific mask resize/crop/threshold behavior,
+automatic-mask grid orchestration, and `Results` assembly. This preserves the
+interactive lifecycle: `set_image()` runs `encode_image` once, subsequent
+prompts reuse its cached named embeddings, and `reset_image()` invalidates the
+cache. Function outputs are consumed by declared names, not mapping order.
+
+Native multifunction ML Programs require an iOS 18 / macOS 15 deployment
+target. Conversion and structural validation can run on other hosts, but
+artifact execution and PyTorch parity require a supported macOS Core ML
+runtime. SAM 3 export is visual-prompt-only, excludes PCS text prompting, and
+is local-user-only because its gated custom-license weights are not
+redistributable under LibreYOLO's MIT license. MobileSAM retains an explicit
+release provenance gap documented in its NOTICE and
+`weights/LICENSE_NOTICE.txt`; creating a local artifact does not close that
+gap.
+
 ## Licensing
 
 SAM-1 and SAM-2 code and weights are Apache-2.0. SAM-1 loads from the upstream
@@ -177,8 +220,9 @@ part of a separate future video plan.
   video-session contract rather than an EdgeTAM-only tracking API.
 - SAM 3 image exemplars and SAM 3.1, subject to the trigger above.
 - Mask prompts (`masks=`), `train()`, `val()`, and `track()` raise. SAM-1/2/3,
-  EdgeTAM, and MobileSAM export also raise; PicoSAM3 alone exports its raw 96px
-  ROI CNN to ONNX.
+  EdgeTAM, and MobileSAM export only through the split Core ML contract above;
+  their single-graph ONNX and TorchScript exports remain unsupported.
+  PicoSAM3 exports its raw 96px ROI CNN through its separate artifact contract.
 - "Segment everything" is a simplified grid AMG (predicted-IoU threshold +
   box-IoU dedup); it omits stability-score filtering, multi-crop, and mask-IoU
   dedup, and is documented as approximate. The prompted path is the precise API.

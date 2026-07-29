@@ -1,0 +1,61 @@
+OWLv2 frozen-vocabulary Core ML adapter
+========================================
+
+Host preprocessing
+------------------
+
+Source repository:
+  https://github.com/huggingface/transformers
+
+Pinned source:
+  v5.12.1
+  source commit ddb849abe009d1089e6c691bfc897f27211c663c
+  annotated tag object a030302dcd4777bbf042ee46c30c5dbe6d2a2eb2
+
+Relevant upstream file:
+  src/transformers/models/owlv2/image_processing_owlv2.py
+
+License:
+  Apache License 2.0
+
+LibreYOLO use:
+  libreyolo/export/coreml_owlv2.py adapts the OWLv2 rescale, bottom/right
+  square-pad, Gaussian antialias, and bilinear-resize order into a small
+  host preprocessing function. The exported graph uses LibreYOLO's existing
+  native OWLv2 implementation in libreyolo/models/owlv2/nn.py and freezes a
+  finite set of text embeddings. No tokenizer or text tower remains in the
+  deployment graph.
+
+Weights
+-------
+
+The Google source snapshots, LibreYOLO mirrors, and reviewed safetensors are:
+
+  base patch-16 ensemble
+    upstream:
+      google/owlv2-base-patch16-ensemble
+      revision cfd3195ba4ea9592eec887ded089f4c08eff231d
+    mirror:
+      LibreYOLO/LibreOWLv2b16
+      revision 499390c5a97e2620c83028de36be28860771d0b3
+    model.safetensors:
+      619918824 bytes
+      SHA-256 e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7
+
+  large patch-14 ensemble
+    upstream:
+      google/owlv2-large-patch14-ensemble
+      revision 95e26936e865f87db1742128404b3c035d47d89d
+    mirror:
+      LibreYOLO/LibreOWLv2l14
+      revision ed036ee9085ad9a8201281e5cfb6609458bd22c7
+    model.safetensors:
+      1750520144 bytes
+      SHA-256 d1c2261503c55aaf400667a843a54a5167e3c696334674c4093d6d10f7f40075
+
+For each pair, the Hugging Face LFS SHA-256 and byte size are identical at the
+pinned revisions. The Git blob ids also match for config.json,
+preprocessor_config.json, added_tokens.json, merges.txt,
+special_tokens_map.json, tokenizer_config.json, and vocab.json. The upstream
+and mirror model cards declare Apache-2.0. Learned parameters and runtime
+assets are unchanged.

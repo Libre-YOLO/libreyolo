@@ -117,6 +117,9 @@ class LibrePIDNet(BaseModel):
 
     semantic_resize_mode: ClassVar[str] = "letterbox"
     semantic_imgsz_divisor: ClassVar[int] = 8
+    semantic_resize_backend: ClassVar[str] = "opencv"
+    semantic_resize_interpolation: ClassVar[str] = "bilinear"
+    semantic_resize_rounding: ClassVar[str] = "floor"
 
     _SIZE_CONFIGS: ClassVar[dict] = SIZE_CONFIGS
     _UPSTREAM_URL: ClassVar[str] = "https://github.com/XuJiacong/PIDNet"

@@ -286,6 +286,13 @@ class OCRInferenceRunner:
 
         texts: List[str] = [""] * len(crops)
         rec_scores = np.zeros(len(crops), dtype=np.float32)
+        validate_crops = getattr(model, "_validate_recognition_crops", None)
+        if callable(validate_crops):
+            # Exported runtimes have finite dynamic-shape bounds. Validate
+            # before rec_batches allocates its padded bucket so an extreme
+            # aspect ratio fails explicitly instead of causing an avoidable
+            # large allocation or being truncated.
+            validate_crops(crops, max(1, int(rec_batch)))
         for chunk_indices, batch in rec_batches(crops, batch_size=max(1, int(rec_batch))):
             batch_t = torch.from_numpy(batch).to(model.device)
             with torch.no_grad():

@@ -128,6 +128,25 @@ class RestoreValidator(BaseValidator):
 
     def _preprocess_batch(self, batch: Any) -> tuple:
         images, targets, img_info, img_ids = batch
+        input_contract = getattr(self.model, "input_contract", None)
+        if getattr(input_contract, "geometry", None) == "native":
+            exported = getattr(self.model, "imgsz", self.config.imgsz)
+            if isinstance(exported, (tuple, list)):
+                expected_h, expected_w = int(exported[0]), int(exported[1])
+            else:
+                expected_h = expected_w = int(exported)
+            mismatches = [
+                (index, tuple(info["orig_shape"]))
+                for index, info in enumerate(img_info)
+                if tuple(info["orig_shape"]) != (expected_h, expected_w)
+            ]
+            if mismatches:
+                raise ValueError(
+                    "This fixed-canvas restoration artifact requires every "
+                    f"low-resolution input to be exactly {expected_w}x{expected_h}; "
+                    f"batch samples {mismatches} do not match. Re-export, crop, "
+                    "or tile instead of relying on validation-batch padding."
+                )
         return images, targets, img_info, img_ids
 
     def _postprocess_predictions(self, preds: Any, batch: Any) -> torch.Tensor:

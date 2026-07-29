@@ -28,6 +28,14 @@ shape, but the window attention sees that padding, so sub-canvas inputs
 measurably diverge from native inference. Export at the resolution you intend
 to run, and prefer native PyTorch inference when fidelity matters.
 
+Core ML export is available for all three sizes at the models' native fixed
+64x64 canvas. The package consumes one RGB image and returns a 256x256 RGB
+float tensor. Core ML does not silently pad or resize restoration inputs:
+runtime images must be exactly 64x64 so window attention sees the same pixels
+as the prepared PyTorch graph. The full `s`, `m`, and `l` graphs have passed
+two-input TorchScript parity and Core ML Tools 9 conversion; Apple runtime
+parity remains an experimental hardware gate.
+
 The architecture is adapted from the official Apache-2.0 SwinIR repository at
 commit `6545850fbf8df298df73d81f3e8cba638787c8bd`. See
 `libreyolo/models/swinir/NOTICE` and `THIRD_PARTY_NOTICES.txt` for provenance.

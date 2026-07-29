@@ -1127,7 +1127,8 @@ class LibreEoMT(BaseModel):
         )
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
-        if self.task == "semantic":
+        normalized_format = str(format).strip().lower()
+        if self.task == "semantic" or normalized_format in {"coreml", "mlpackage"}:
             return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
             "LibreEoMT instance and panoptic export need query-mask runtime contracts."

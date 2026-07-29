@@ -151,7 +151,13 @@ class LibreDepthAnything3(BaseModel):
         )
 
     def export(self, format: str = "onnx", **kwargs) -> str:
+        normalized = str(format).strip().lower()
+        if normalized == "coreml":
+            from ...export.exporter import BaseExporter
+
+            return BaseExporter.create(normalized, self)(**kwargs)
         raise NotImplementedError(
-            "Export is not implemented for Depth Anything 3 yet (depth export "
-            "is out of scope per ADR 0006: depth task contract)."
+            "Export for Depth Anything 3 currently supports only the "
+            "host-postprocessed Core ML component. Pass format='coreml'; "
+            f"got format={format!r}."
         )

@@ -4,6 +4,7 @@ from .config import ValidationConfig
 from .detection_validator import DetectionValidator, SegmentationValidator
 from .classify_validator import ClassifyValidator
 from .clip_validator import CLIPClassifyValidator
+from .siglip2_validator import SigLIP2ClassifyValidator
 from .obb_validator import OBBValidator
 from .coco_evaluator import COCOEvaluator
 from .pose_validator import PoseValidator
@@ -24,6 +25,7 @@ __all__ = [
     "SegmentationValidator",
     "ClassifyValidator",
     "CLIPClassifyValidator",
+    "SigLIP2ClassifyValidator",
     "OBBValidator",
     "PoseValidator",
     "PointValidator",

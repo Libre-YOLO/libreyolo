@@ -1,8 +1,10 @@
 """Unit tests for the unified Exporter module."""
 
 import json
+import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,6 +31,14 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def coremltools_stub(monkeypatch):
+    """Satisfy the Core ML dependency preflight without platform packages."""
+    module = ModuleType("coremltools")
+    monkeypatch.setitem(sys.modules, "coremltools", module)
+    return module
 
 
 class _TinyModel(nn.Module):
@@ -154,14 +164,14 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="TORCHSCRIPT embedded NMS"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
-    def test_coreml_exporter_accepts_embedded_nms_preflight(self):
+    def test_coreml_exporter_accepts_embedded_nms_preflight(self, coremltools_stub):
         wrapper = _make_wrapper(model_name="yolo9")
         wrapper.task = "detect"
         exporter = CoreMLExporter(wrapper)
 
         exporter._preflight(half=False, int8=False, data=None, nms=True)
 
-    def test_coreml_embedded_nms_preflight_rejects_rtdetr(self):
+    def test_coreml_embedded_nms_preflight_rejects_rtdetr(self, coremltools_stub):
         wrapper = _make_wrapper(model_name="rtdetr")
         wrapper.task = "detect"
         exporter = CoreMLExporter(wrapper)
@@ -169,12 +179,14 @@ class TestExporterFormats:
         with pytest.raises(NotImplementedError, match="YOLOX and YOLO9"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
-    def test_coreml_embedded_nms_preflight_rejects_yolo9_segment(self):
+    def test_coreml_embedded_nms_preflight_rejects_yolo9_segment(
+        self, coremltools_stub
+    ):
         wrapper = _make_wrapper(model_name="yolo9")
         wrapper.task = "segment"
         exporter = CoreMLExporter(wrapper)
 
-        with pytest.raises(NotImplementedError, match="YOLO9 detection"):
+        with pytest.raises(NotImplementedError, match="task 'segment'"):
             exporter._preflight(half=False, int8=False, data=None, nms=True)
 
     def test_export_rejects_yolo9_segment(self):
@@ -204,13 +216,84 @@ class TestExporterFormats:
                 },
             )
 
-    def test_coreml_embedded_nms_preflight_rejects_max_det(self):
+    def test_coreml_embedded_nms_preflight_rejects_max_det(self, coremltools_stub):
         wrapper = _make_wrapper(model_name="yolo9")
         wrapper.task = "detect"
         exporter = CoreMLExporter(wrapper)
 
         with pytest.raises(NotImplementedError, match="does not support max_det"):
             exporter._preflight(half=False, int8=False, data=None, nms=True, max_det=12)
+
+    @pytest.mark.parametrize(
+        "compute_units",
+        ["ane", "cpu", "", None],
+    )
+    def test_coreml_rejects_invalid_compute_units_before_dependency_import(
+        self, compute_units
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(ValueError, match="compute_units"):
+            exporter._preflight(
+                half=False,
+                int8=False,
+                data=None,
+                compute_units=compute_units,
+            )
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("conf", -0.01),
+            ("conf", 1.01),
+            ("conf", float("nan")),
+            ("iou", float("inf")),
+            ("iou", "not-a-number"),
+        ],
+    )
+    def test_coreml_rejects_invalid_embedded_nms_thresholds_before_import(
+        self, name, value
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.task = "detect"
+        exporter = CoreMLExporter(wrapper)
+
+        with pytest.raises(ValueError, match=rf"NMS {name}.*\[0, 1\]"):
+            exporter._preflight(
+                half=False,
+                int8=False,
+                data=None,
+                nms=True,
+                **{name: value},
+            )
+
+    def test_coreml_rejects_dynamic_before_base_export(self):
+        exporter = CoreMLExporter(_make_wrapper(model_name="yolo9"))
+
+        with pytest.raises(NotImplementedError, match="fixed input shape"):
+            exporter(dynamic=True, output_path="unused.mlpackage")
+
+    def test_coreml_rejects_batch_before_base_export(self):
+        exporter = CoreMLExporter(_make_wrapper(model_name="yolo9"))
+
+        with pytest.raises(ValueError, match="single-image contract"):
+            exporter(batch=2, output_path="unused.mlpackage")
+
+    def test_coreml_metadata_carries_classifier_preprocess(self):
+        wrapper = _make_wrapper(model_name="resnet")
+        wrapper.task = "classify"
+        wrapper.crop_pct = 0.95
+        wrapper.interpolation = "bicubic"
+
+        metadata = CoreMLExporter(wrapper)._build_metadata(
+            "fp32", False, None, imgsz=224
+        )
+
+        assert metadata["dynamic"] is False
+        assert metadata["crop_pct"] == 0.95
+        assert metadata["interpolation"] == "bicubic"
 
     def test_onnx_embedded_nms_preflight_rejects_non_yolo9_detect(self):
         exporter = OnnxExporter(_make_wrapper(model_name="yolox"))
@@ -396,6 +479,37 @@ class TestExporterFormats:
         )
 
         assert device == torch.device("cpu")
+
+    @pytest.mark.parametrize("device_arg", [None, "auto", "cpu"])
+    def test_coreml_export_always_traces_on_cpu_and_normalizes_path(
+        self,
+        device_arg,
+    ):
+        wrapper = _make_wrapper(model_name="yolo9")
+        wrapper.device = torch.device("mps")
+
+        _imgsz, device, output_path = CoreMLExporter(wrapper)._resolve_params(
+            output_path="custom.onnx",
+            imgsz=None,
+            device=device_arg,
+            half=False,
+            int8=False,
+        )
+
+        assert device == torch.device("cpu")
+        assert output_path == "custom.mlpackage"
+
+    def test_coreml_export_rejects_explicit_non_cpu_trace_device(self):
+        wrapper = _make_wrapper(model_name="yolo9")
+
+        with pytest.raises(NotImplementedError, match="traces on CPU"):
+            CoreMLExporter(wrapper)._resolve_params(
+                output_path="custom.mlpackage",
+                imgsz=None,
+                device="cuda:0",
+                half=False,
+                int8=False,
+            )
 
     @pytest.mark.parametrize("device_arg", ["0", 0])
     def test_export_normalizes_bare_numeric_device(self, device_arg):

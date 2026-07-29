@@ -23,3 +23,17 @@ parity against the upstream Apache-2.0 implementation.
 Pretrained weights are converted from the MobileSAM Apache-2.0 checkpoint and
 hosted as LibreMobileSAM.pt under LibreYOLO/LibreMobileSAM. The hosted model
 repo must carry this NOTICE and the Apache-2.0 LICENSE alongside the weights.
+
+Provenance gap
+--------------
+
+The currently reviewed LibreYOLO mirror is revision
+``c80f272421d38fc26ef4bd0c02111b6c1f1c8cb9`` and its
+``LibreMobileSAM.pt`` SHA-256 is
+``79f09a3671f38696d45da0aed49ef382fde2efd1bc966d172ac9822b952e35fe``.
+The hosted model card and NOTICE do not identify the exact upstream MobileSAM
+source commit or checkpoint revision/hash used for the conversion. The mirror
+hash alone cannot establish that missing source provenance. Release-facing
+Core ML metadata must retain an explicit provenance gap until the upstream
+source is pinned; converted artifacts must not be represented as ready for
+redistribution before then.

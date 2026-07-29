@@ -138,14 +138,28 @@ def test_rtmdet_ins_rejects_detect_checkpoint_for_segment_task(tmp_path):
         )
 
 
-def test_rtmdet_ins_training_and_export_are_explicitly_unsupported():
+def test_rtmdet_ins_training_is_unsupported_but_export_boundary_is_flat():
     wrapper = LibreRTMDet(None, size="t", nb_classes=2, device="cpu", task="segment")
     with pytest.raises(NotImplementedError, match="training"):
         wrapper.train(data="unused.yaml", allow_experimental=True)
 
     wrapper.model.head.export = True
-    with pytest.raises(NotImplementedError, match="export"):
-        wrapper.model(torch.zeros(1, 3, 64, 64))
+    with torch.no_grad():
+        outputs = wrapper.model(torch.zeros(1, 3, 64, 64))
+    assert isinstance(outputs, tuple)
+    assert len(outputs) == 10
+    assert [tuple(value.shape) for value in outputs] == [
+        (1, 2, 8, 8),
+        (1, 2, 4, 4),
+        (1, 2, 2, 2),
+        (1, 4, 8, 8),
+        (1, 4, 4, 4),
+        (1, 4, 2, 2),
+        (1, 169, 8, 8),
+        (1, 169, 4, 4),
+        (1, 169, 2, 2),
+        (1, 8, 8, 8),
+    ]
 
 
 def test_rtmdet_ins_postprocess_clamps_boxes_to_both_frames():

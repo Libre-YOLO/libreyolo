@@ -16,12 +16,12 @@ def write_inventory(output: Path, *, allow_family_removal: bool = False) -> dict
 
     The committed snapshot is canonical: it is collected in a fully
     provisioned environment where every optional tier imports. When optional
-    dependencies are missing, ``collect_model_inventory()`` silently returns a
-    subset, and writing that subset would drop families from the generated
-    compatibility tables. Refuse to shrink the family set unless the caller
-    explicitly allows it (for intentional family removals).
+    dependencies are missing, ``collect_model_inventory()`` can return a
+    subset, and writing that subset would drop families, tasks, or sizes from
+    generated compatibility tables. Refuse to shrink the canonical case set
+    unless the caller explicitly allows it for an intentional removal.
     """
-    from libreyolo.models.inventory import collect_model_inventory
+    from libreyolo.models.inventory import collect_model_inventory, iter_model_cases
 
     inventory = collect_model_inventory()
     if output.exists() and not allow_family_removal:
@@ -36,6 +36,24 @@ def write_inventory(output: Path, *, allow_family_removal: bool = False) -> dict
                 "installed in this environment. Install them and rerun, or "
                 "pass --allow-family-removal for an intentional removal."
             )
+        existing_cases = {
+            (family, task, size) for family, task, size, _ in iter_model_cases(existing)
+        }
+        fresh_cases = {
+            (family, task, size)
+            for family, task, size, _ in iter_model_cases(inventory)
+        }
+        missing_cases = sorted(existing_cases - fresh_cases)
+        if missing_cases:
+            rendered = ", ".join("/".join(case) for case in missing_cases)
+            raise SystemExit(
+                f"Refusing to overwrite {output}: the fresh inventory is "
+                f"missing canonical family/task/size cases present in the "
+                f"committed snapshot: {rendered}. This usually means an "
+                "optional model registered only partially. Install the full "
+                "dependency set and rerun, or pass --allow-family-removal "
+                "for an intentional removal."
+            )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     return inventory
@@ -47,8 +65,8 @@ def main() -> None:
     parser.add_argument(
         "--allow-family-removal",
         action="store_true",
-        help="Permit writing an inventory that drops families present in the "
-        "existing snapshot.",
+        help="Permit writing an inventory that drops families, tasks, or sizes "
+        "present in the existing snapshot.",
     )
     args = parser.parse_args()
     inventory = write_inventory(

@@ -6,8 +6,12 @@ import os
 import re
 from typing import Any, Dict, Optional
 
+import numpy as np
+import torch
 import torch.nn as nn
+from PIL import Image
 
+from ...utils.image_loader import ImageInput, ImageLoader
 from ...validation.preprocessors import RTDETRv2ValPreprocessor
 from ..rtdetr.model import LibreRTDETR, RTDETR_CONFIGS
 from .nn import RTDETRv2Model
@@ -98,3 +102,25 @@ class LibreRTDETRv2(LibreRTDETR):
             eval_idx=cfg["eval_idx"],
             eval_spatial_size=(self.input_size, self.input_size),
         )
+
+    def _preprocess(
+        self,
+        image: ImageInput,
+        color_format: str = "auto",
+        input_size: Optional[int] = None,
+    ):
+        """Use the same accuracy-preserving PIL resize as RT-DETRv2 val."""
+        img = ImageLoader.load(image, color_format=color_format)
+        original_size = img.size
+        effective_size = int(input_size or self.input_size)
+        resized = img.resize(
+            (effective_size, effective_size),
+            resample=Image.Resampling.BILINEAR,
+        )
+        chw = (
+            np.asarray(resized, dtype=np.float32)
+            .transpose(2, 0, 1)
+            .copy()
+            / 255.0
+        )
+        return torch.from_numpy(chw).unsqueeze(0), img, original_size, 1.0

@@ -62,6 +62,7 @@ class LibreOpenVocabDetector(BaseModel):
     FAMILY: ClassVar[str] = ""
     FILENAME_PREFIX: ClassVar[str] = ""
     HF_REPOS: ClassVar[Dict[str, str]] = {}
+    HF_REVISIONS: ClassVar[Dict[str, str]] = {}
     INPUT_SIZES: ClassVar[Dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
@@ -231,16 +232,19 @@ class LibreOpenVocabDetector(BaseModel):
         local_dir: Path,
         *,
         repo: str | None = None,
+        revision: str | None = None,
     ) -> bool:
         marker_path = local_dir / _SNAPSHOT_COMPLETE_MARKER
         if not marker_path.exists():
             return False
-        if repo is not None:
+        if repo is not None or revision is not None:
             try:
                 marker = json.loads(marker_path.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 return False
-            if marker.get("repo") != repo:
+            if repo is not None and marker.get("repo") != repo:
+                return False
+            if revision is not None and marker.get("revision") != revision:
                 return False
         if not (local_dir / "config.json").exists():
             return False
@@ -271,27 +275,45 @@ class LibreOpenVocabDetector(BaseModel):
 
     def _ensure_weights(self) -> str:
         repo = self.HF_REPOS[self.size]
+        revision = self.HF_REVISIONS.get(self.size)
         local_dir = Path("weights") / f"{self.FILENAME_PREFIX}{self.size}"
         self._notify_license_once()
-        if self._snapshot_complete(local_dir, repo=repo):
+        if self._snapshot_complete(
+            local_dir,
+            repo=repo,
+            revision=revision,
+        ):
             return str(local_dir)
         try:
             from huggingface_hub import snapshot_download
             import transformers  # noqa: F401
         except ImportError as exc:
             raise ImportError(_INSTALL_HINT) from exc
+        source = f"{repo}@{revision}" if revision else repo
         logger.info(
-            "Downloading %s weights from %s -> %s ...", self.FAMILY, repo, local_dir
+            "Downloading %s weights from %s -> %s ...",
+            self.FAMILY,
+            source,
+            local_dir,
         )
+        download_kwargs = {}
+        if revision is not None:
+            download_kwargs["revision"] = revision
         snapshot_download(
             repo,
             local_dir=str(local_dir),
             ignore_patterns=list(self.SNAPSHOT_IGNORE_PATTERNS),
+            **download_kwargs,
         )
         (local_dir / _SNAPSHOT_COMPLETE_MARKER).write_text(
-            json.dumps({"repo": repo}) + "\n", encoding="utf-8"
+            json.dumps({"repo": repo, "revision": revision}) + "\n",
+            encoding="utf-8",
         )
-        if not self._snapshot_complete(local_dir, repo=repo):
+        if not self._snapshot_complete(
+            local_dir,
+            repo=repo,
+            revision=revision,
+        ):
             (local_dir / _SNAPSHOT_COMPLETE_MARKER).unlink(missing_ok=True)
             raise FileNotFoundError(
                 f"Downloaded snapshot for {repo} is missing config or weight files "

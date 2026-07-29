@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -257,6 +258,20 @@ def _composite_keys(size: str):
     }
 
 
+def _valid_pipeline():
+    return {
+        "det_limit_side_len": 960,
+        "det_db_thresh": 0.3,
+        "det_db_box_thresh": 0.6,
+        "det_db_unclip_ratio": 1.5,
+        "rec_image_shape": [3, 48, 320],
+    }
+
+
+def _valid_charset():
+    return ["blank", *[f"char_{index}" for index in range(18383)], " "]
+
+
 def test_can_load_and_size_detection():
     from libreyolo.models.ppocr.model import LibrePPOCR
 
@@ -304,6 +319,82 @@ def test_predict_without_charset_raises():
     img = np.zeros((64, 64, 3), dtype=np.uint8)
     with pytest.raises(RuntimeError, match="charset"):
         model.predict(img)
+
+
+def test_checkpoint_ocr_metadata_is_compatible_to_load_but_strict_for_export():
+    from libreyolo.models.ppocr.model import LibrePPOCR
+
+    model = LibrePPOCR(model_path=None, size="t")
+    state_dict = _composite_keys("t")
+    valid = {
+        "charset": _valid_charset(),
+        "pipeline": _valid_pipeline(),
+        "components": {},
+    }
+
+    model._validate_loaded_state_dict_for_task(state_dict, valid)
+    assert model.charset == valid["charset"]
+    assert model.pipeline_config == valid["pipeline"]
+    assert model.components_config == {}
+    model._require_complete_ocr_metadata_for_export()
+
+    missing_pipeline = {key: value for key, value in valid.items() if key != "pipeline"}
+    model._validate_loaded_state_dict_for_task(state_dict, missing_pipeline)
+    assert model.pipeline_config == _valid_pipeline()
+    with pytest.raises(
+        RuntimeError,
+        match="missing required OCR metadata key 'pipeline'",
+    ):
+        model._require_complete_ocr_metadata_for_export()
+
+    partial_pipeline = {
+        **valid,
+        "pipeline": {"det_db_thresh": 0.2},
+    }
+    model._validate_loaded_state_dict_for_task(state_dict, partial_pipeline)
+    # The old inference fallback remains available, but cannot be exported as
+    # if it had come from the checkpoint.
+    assert model.pipeline_config["det_limit_side_len"] == 960
+    assert model.pipeline_config["det_db_thresh"] == 0.2
+    with pytest.raises(RuntimeError, match="invalid pipeline"):
+        model._require_complete_ocr_metadata_for_export()
+
+    invalid_charset = list(valid["charset"])
+    invalid_charset[1] = 7
+    model._validate_loaded_state_dict_for_task(
+        state_dict,
+        {**valid, "charset": invalid_charset},
+    )
+    assert model.charset is None
+    with pytest.raises(RuntimeError, match="charset entry 1 must be a string"):
+        model._require_complete_ocr_metadata_for_export()
+
+    model._validate_loaded_state_dict_for_task(
+        state_dict,
+        {**valid, "components": ["orientation"]},
+    )
+    with pytest.raises(RuntimeError, match="components metadata must be a dict"):
+        model._require_complete_ocr_metadata_for_export()
+
+    model._validate_loaded_state_dict_for_task(
+        state_dict,
+        {**valid, "components": {"orientation": True}},
+    )
+    with pytest.raises(RuntimeError, match="does not package optional PP-OCR"):
+        model._require_complete_ocr_metadata_for_export()
+
+
+def test_checkpoint_ctc_count_mismatch_still_fails_load():
+    from libreyolo.models.ppocr.model import LibrePPOCR
+
+    model = LibrePPOCR(model_path=None, size="t")
+    checkpoint = {
+        "charset": ["blank", "a", " "],
+        "pipeline": _valid_pipeline(),
+        "components": {},
+    }
+    with pytest.raises(RuntimeError, match="CTC head emits 18385 classes"):
+        model._validate_loaded_state_dict_for_task(_composite_keys("t"), checkpoint)
 
 
 # --------------------------------------------------------------------------
@@ -421,3 +512,63 @@ def test_match_image_optimal_assignment_in_crowded_layouts():
     counts = match_image([pred_a, pred_b], ["two", "one"], gt)
     assert counts["det_matches"] == 2
     assert counts["e2e_matches"] == 2
+
+
+def test_ocr_validator_forwards_imgsz_as_detector_long_side(monkeypatch):
+    from libreyolo.utils.results import OCRRegions, Results
+    from libreyolo.validation import ocr_validator
+
+    monkeypatch.setattr(
+        ocr_validator,
+        "resolve_ocr_samples",
+        lambda data, split: [(Path("sample.png"), [])],
+    )
+    empty_result = Results(
+        boxes=None,
+        orig_shape=(12, 20),
+        ocr=OCRRegions(torch.zeros((0, 4, 2)), []),
+    )
+    calls = []
+
+    class _Model:
+        def predict(self, source, **kwargs):
+            calls.append((source, kwargs))
+            return empty_result
+
+    config = SimpleNamespace(
+        data="ocr.yaml",
+        split="val",
+        conf_thres=0.17,
+        imgsz=1536,
+        verbose=False,
+    )
+    metrics = ocr_validator.OCRValidator(_Model(), config)()
+
+    assert calls == [
+        ("sample.png", {"conf": pytest.approx(0.17), "imgsz": 1536})
+    ]
+    assert metrics["metrics/e2e_f1"] == 0.0
+
+
+def test_ocr_validator_rejects_rectangular_imgsz_before_predict(monkeypatch):
+    from libreyolo.validation import ocr_validator
+
+    monkeypatch.setattr(
+        ocr_validator,
+        "resolve_ocr_samples",
+        lambda data, split: [(Path("sample.png"), [])],
+    )
+
+    class _Model:
+        def predict(self, source, **kwargs):
+            raise AssertionError("predict must not run for an invalid OCR imgsz")
+
+    config = SimpleNamespace(
+        data="ocr.yaml",
+        split="val",
+        conf_thres=0.0,
+        imgsz=(960, 640),
+        verbose=False,
+    )
+    with pytest.raises(ValueError, match="detector long-side limit"):
+        ocr_validator.OCRValidator(_Model(), config)()

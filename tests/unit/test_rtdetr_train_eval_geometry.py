@@ -12,7 +12,9 @@ is a pure stretch (``coord / original_dimension``), not a letterbox.
 
 import numpy as np
 import pytest
+from PIL import Image
 
+from libreyolo.models.rtdetrv2.model import LibreRTDETRv2
 from libreyolo.models.rtdetr.transforms import RTDETRTrainTransform
 from libreyolo.validation.preprocessors import (
     RTDETRv2ValPreprocessor,
@@ -91,3 +93,29 @@ def test_train_transform_declares_unresized_optin():
     # image from the dataset; guard that opt-in so a refactor can't silently
     # reintroduce a letterbox-then-stretch double resize.
     assert RTDETRTrainTransform.wants_unresized_image is True
+
+
+@pytest.mark.unit
+def test_rtdetrv2_predict_pixels_match_validation_pil_resize():
+    """Protect the PIL kernel shared by prediction, validation, and CoreML."""
+    rng = np.random.default_rng(7)
+    rgb = rng.integers(0, 256, size=(37, 61, 3), dtype=np.uint8)
+    target = 53
+
+    model = object.__new__(LibreRTDETRv2)
+    predicted, *_ = LibreRTDETRv2._preprocess(
+        model,
+        Image.fromarray(rgb, mode="RGB"),
+        color_format="rgb",
+        input_size=target,
+    )
+    validated, _ = RTDETRv2ValPreprocessor(
+        img_size=(target, target),
+        max_labels=1,
+    )(
+        rgb[:, :, ::-1].copy(),
+        np.empty((0, 5), dtype=np.float32),
+        (target, target),
+    )
+
+    np.testing.assert_array_equal(predicted[0].numpy(), validated)

@@ -55,6 +55,21 @@ class SemanticValidator(BaseValidator):
             imgsz=self.config.imgsz,
             augment=False,
             resize_mode=resize_mode,
+            resize_backend=getattr(
+                self.model,
+                "semantic_resize_backend",
+                "pillow",
+            ),
+            interpolation=getattr(
+                self.model,
+                "semantic_resize_interpolation",
+                "bilinear",
+            ),
+            resize_rounding=getattr(
+                self.model,
+                "semantic_resize_rounding",
+                "round",
+            ),
         )
 
         model_nc = getattr(self.model, "nb_classes", None)
@@ -154,7 +169,9 @@ class SemanticValidator(BaseValidator):
         canvas_hw = tuple(tensor.shape[-2:])
         flipped = tensor if inplace else tensor.clone()
         for i, info in enumerate(img_info):
-            new_h, new_w = valid_content_hw(info["orig_shape"], info["ratio"], canvas_hw)
+            new_h, new_w = valid_content_hw(
+                info["orig_shape"], info["ratio"], canvas_hw
+            )
             window = tensor[i, ..., :new_h, :new_w]
             # .flip() already materializes a copy, so this stays correct even
             # when source and destination are the same storage.

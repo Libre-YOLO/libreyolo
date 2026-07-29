@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from types import ModuleType
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -402,5 +401,5 @@ def test_edgetam_scope_methods_raise():
         model.train("data.yaml")
     with pytest.raises(NotImplementedError, match="validation is not supported"):
         model.val("data.yaml")
-    with pytest.raises(NotImplementedError, match="export is out of scope"):
+    with pytest.raises(NotImplementedError, match="format='coreml'"):
         model.export()

@@ -27,8 +27,9 @@ The towers are a native ``torch`` re-implementation (see :mod:`.nn`); no
 ``google/siglip2-*`` fixed-resolution checkpoints (``model_type: "siglip"``),
 converted with ``weights/convert_siglip2_weights.py``.
 
-Zero-shot only: ``train()`` raises. ONNX export bakes the *current* label set
-into a fixed ``[B, K]`` classifier graph (see :meth:`export`).
+Zero-shot only: ``train()`` raises. ONNX and Apple export paths bake the
+*current* label set into a fixed ``[B, K]`` classifier graph (see
+:meth:`export`).
 """
 
 from __future__ import annotations
@@ -471,61 +472,93 @@ class LibreSigLIP2(BaseModel):
         )
 
     # =========================================================================
-    # Export - frozen-class ONNX
+    # Export - frozen-class image classifiers
     # =========================================================================
 
     def export(self, format: str = "onnx", **kwargs) -> str:
-        """Export a **frozen-class** ONNX classifier for the current labels.
+        """Export a **frozen-class** image classifier for the current labels.
 
         The current ``set_classes`` text embeddings are baked into a final linear
         (``weight = logit_scale.exp() * text_embeds``, ``bias = logit_bias``),
         giving a standard ``[B, K]`` image-classifier graph (no text tower /
         tokenizer at inference). The exported logits match native; apply softmax
-        (single-label) or sigmoid (multi-label) downstream. The ONNX is fixed to
-        the labels and input resolution set at export time; re-export to change
-        either.
+        (single-label) or sigmoid (multi-label) downstream. The artifact is fixed
+        to the labels and input resolution set at export time; re-export to
+        change either.
         """
-        if format.lower() not in {"onnx", "coreai"}:
+        export_format = format.lower()
+        if export_format not in {"onnx", "coreai", "coreml"}:
             raise NotImplementedError(
                 f"LibreSigLIP2 export to {format!r} is not implemented; only 'onnx' "
-                "and 'coreai' (frozen-class) are supported. Open-vocabulary export (two towers "
-                "+ tokenizer) is out of scope for v1."
+                "'coreai', and 'coreml' frozen-class exports are supported. "
+                "Open-vocabulary export (two towers + tokenizer) is out of scope for v1."
             )
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() before export().")
 
-        if format.lower() == "coreai":
+        if export_format in {"coreai", "coreml"}:
             # LibreSigLIP2 is a two-tower module with no single forward(x),
             # which is why the ONNX path builds its graph by hand. Reuse that
-            # same frozen-class module rather than duplicating it, then hand
-            # it to the shared Core AI converter. The logit_bias matters here:
-            # without it the exported logits do not match native.
+            # same frozen-class module rather than duplicating it. The
+            # logit_bias matters: without it exported logits do not match native.
             import torch as _torch
 
-            from ...export.coreai import (
-                export_coreai,
-                prepare_frozen_classifier_export,
-            )
             from .export import _FrozenSigLIP2Classifier
 
-            size, output_path, metadata = prepare_frozen_classifier_export(
-                self, kwargs, default_output="siglip2_coreai"
-            )
+            if export_format == "coreai":
+                from ...export.coreai import (
+                    export_coreai,
+                    prepare_frozen_classifier_export,
+                )
+
+                size, output_path, metadata = prepare_frozen_classifier_export(
+                    self, kwargs, default_output="siglip2_coreai"
+                )
+            else:
+                from ...export.coreml import (
+                    export_coreml,
+                    prepare_frozen_classifier_coreml_export,
+                )
+
+                (
+                    size,
+                    output_path,
+                    metadata,
+                    precision,
+                    compute_units,
+                ) = prepare_frozen_classifier_coreml_export(
+                    self, kwargs, default_output="siglip2_coreml"
+                )
+
             scale = float(self.model.logit_scale.exp().detach().cpu())
-            weight = (scale * self._text_embeds).detach().cpu()
+            weight = (scale * self._text_embeds).detach().to("cpu", _torch.float32)
             bias = self.model.logit_bias.detach().to("cpu", _torch.float32).reshape(())
             device = next(self.model.vision_model.parameters()).device
             was_training = self.model.vision_model.training
             vision = self.model.vision_model.to("cpu").eval()
             try:
                 frozen = _FrozenSigLIP2Classifier(vision, weight, bias).eval()
-                dummy = _torch.randn(1, 3, size, size)
-                return export_coreai(
+                if export_format == "coreai":
+                    dummy = _torch.randn(1, 3, size, size)
+                    return export_coreai(
+                        frozen,
+                        dummy,
+                        output_path=output_path,
+                        metadata=metadata,
+                        model_family="siglip2",
+                    )
+
+                dummy = _torch.zeros(1, 3, size, size)
+                return export_coreml(
                     frozen,
                     dummy,
                     output_path=output_path,
+                    precision=precision,
+                    compute_units=compute_units,
                     metadata=metadata,
                     model_family="siglip2",
+                    model_task="classify",
+                    model_size=self.size,
                 )
             finally:
                 self.model.vision_model.to(device).train(was_training)

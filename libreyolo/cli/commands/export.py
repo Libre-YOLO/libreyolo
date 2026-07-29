@@ -37,6 +37,17 @@ def export_cmd(
     conf: float = typer.Option(0.25, help="Confidence threshold for embedded NMS"),
     iou: float = typer.Option(0.45, help="IoU threshold for embedded NMS"),
     max_det: int = typer.Option(300, help="Maximum detections for ONNX embedded NMS"),
+    rec_max_width: Optional[int] = typer.Option(
+        None,
+        help=(
+            "Finite maximum PP-OCR recognizer crop width for CoreML "
+            "(required for PP-OCR CoreML export)"
+        ),
+    ),
+    rec_batch_max: int = typer.Option(
+        6,
+        help="Maximum PP-OCR recognizer batch for CoreML",
+    ),
     opset: Optional[int] = typer.Option(
         None, help="ONNX opset version (auto if omitted)"
     ),
@@ -104,6 +115,20 @@ def export_cmd(
         out, model=model, model_path=model_path, device=device
     )
 
+    # Core ML multifunction packages for OCR and promptable segmentation
+    # contain bounded RangeDim axes even when the CLI's generic dynamic option
+    # is left at its default. Report and forward the artifact's effective
+    # contract instead of the user's pre-resolution spelling.
+    if fmt == "coreml" and loaded_model.FAMILY in {
+        "edgetam",
+        "mobilesam",
+        "ppocr",
+        "sam",
+        "sam2",
+        "sam3",
+    }:
+        dynamic = True
+
     # Build export kwargs
     export_kwargs: dict = {
         "half": half,
@@ -115,6 +140,10 @@ def export_cmd(
         "device": device,
         "verbose": verbose,
     }
+    if fmt == "coreml":
+        export_kwargs["rec_batch_max"] = rec_batch_max
+        if rec_max_width is not None:
+            export_kwargs["rec_max_width"] = rec_max_width
     if nms:
         export_kwargs["nms"] = True
         export_kwargs["conf"] = conf

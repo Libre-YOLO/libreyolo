@@ -9,6 +9,7 @@ import copy
 import importlib.util
 import json
 import logging
+import math
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -601,6 +602,13 @@ class BaseExporter(ABC):
                     "Depth export imgsz must be divisible by the network "
                     f"stride {divisor}, got {imgsz}."
                 )
+        if getattr(self.model, "task", "detect") == "semantic":
+            divisor = int(getattr(self.model, "semantic_imgsz_divisor", 1) or 1)
+            if imgsz[0] % divisor or imgsz[1] % divisor:
+                raise ValueError(
+                    "Semantic export imgsz must be divisible by the network "
+                    f"stride {divisor}, got {imgsz}."
+                )
         if model_name == "rfdetr":
             from ..models.rfdetr.imgsz import resolve_patch_window, validate_imgsz
 
@@ -614,7 +622,8 @@ class BaseExporter(ABC):
         if _is_rectangular_imgsz(imgsz) and model_name in _FIXED_SQUARE_EXPORT_FAMILIES:
             raise NotImplementedError(
                 f"Rectangular imgsz export is not supported for {model_name}: "
-                "this family uses a fixed square export/preprocessing spatial contract. "
+                "this family uses a fixed square export/preprocessing spatial "
+                "contract. "
                 "Use the native square imgsz for now."
             )
         if (
@@ -623,7 +632,7 @@ class BaseExporter(ABC):
         ):
             raise NotImplementedError(
                 "Rectangular imgsz export is currently supported for "
-                "YOLO9-family exports only."
+                "YOLO9-family, NAFNet, and Real-ESRGAN exports only."
             )
         if (
             _is_rectangular_imgsz(imgsz)
@@ -704,6 +713,19 @@ class BaseExporter(ABC):
         rfdetr_inner = None
         family = self.model._get_model_name()
         task = getattr(self.model, "task", "detect")
+        if family == "sam2" and self.format_name == "coreml":
+            # The Core ML SAM2 encoder freezes the model's own evaluated Hiera
+            # positional tensor and replaces one export-only method. Keep that
+            # graph surgery off the user's live interactive model.
+            nn_model = copy.deepcopy(nn_model).to(device)
+            nn_model.eval()
+        if family == "depth_anything3" and self.format_name == "coreml":
+            # The Core ML component evaluates the fixed 37x37 -> 36x36 DINO
+            # position-table interpolation once and replaces the table on the
+            # prepared graph. Keep that exact converter workaround off the
+            # user's live model.
+            nn_model = copy.deepcopy(nn_model).to(device)
+            nn_model.eval()
         if task == "semantic":
             nn_model = _SemanticExportWrapper(nn_model).to(device)
             nn_model.eval()
@@ -1551,8 +1573,165 @@ class CoreMLExporter(BaseExporter):
     apply_model_half = False  # ct.convert handles precision via compute_precision
     supports_embedded_nms = True
 
+    def __call__(
+        self, *, dynamic: bool = False, batch: int = 1, **kwargs
+    ) -> str:
+        """Export a strict Core ML contract.
+
+        ``BaseExporter`` defaults to dynamic ONNX export.  Core ML's current
+        public contract is usually narrower: one RGB input represents one
+        image at a declared canvas size (usually ImageType; RF-DETR pose uses
+        TensorType). LibrePPOCR is a bounded-flexible two-function package, so
+        its profile deliberately records ``dynamic=True``. Reject unsupported
+        requests before dependency loading or any live-model mutation instead
+        of silently writing an unusable or mislabeled artifact.
+        """
+        family = self.model._get_model_name()
+        sam_families = {"edgetam", "mobilesam", "sam", "sam2", "sam3"}
+        if family in sam_families:
+            if batch != 1:
+                raise ValueError(
+                    "LibreSAM Core ML export uses fixed image/query batch one; "
+                    f"got batch={batch}."
+                )
+            # The image frame is fixed, while the point-prompt axis has a
+            # finite RangeDim recorded by the seven-function package manifest.
+            return super().__call__(dynamic=True, batch=1, **kwargs)
+        if family == "ppocr":
+            if batch != 1:
+                raise ValueError(
+                    "LibrePPOCR Core ML export uses a batch-one detector "
+                    "function. Configure the recognizer bound with "
+                    "rec_batch_max=... instead of batch=...."
+                )
+            # The package contains bounded RangeDim axes even when callers use
+            # the Core ML API's default dynamic=False spelling. Its exact
+            # bounds are persisted in the multifunction contract.
+            return super().__call__(dynamic=True, batch=1, **kwargs)
+        if dynamic:
+            raise NotImplementedError(
+                "Core ML export uses a fixed input shape; "
+                "dynamic=True is not supported."
+            )
+        if batch != 1:
+            raise ValueError(
+                "Core ML export uses a single-image contract; "
+                f"got batch={batch}. Use batch=1."
+            )
+        return super().__call__(dynamic=False, batch=1, **kwargs)
+
     def _preflight(self, *, half: bool, int8: bool, data: Optional[str], **kwargs):
+        # Support policy must fail before optional dependency discovery (ADR
+        # 0011), while dependency discovery must still happen before the
+        # destructive LoRA merge in BaseExporter.__call__.
+        from .coreml import _validate_export_profile
+
+        family = self.model._get_model_name()
+        task = getattr(self.model, "task", "detect")
+        if not isinstance(task, str):
+            task = "detect"
+        _validate_export_profile(
+            family,
+            task,
+            getattr(self.model, "size", None),
+        )
+        if family == "birefnet":
+            from .coreml_birefnet import validate_birefnet_coreml_profile
+
+            validate_birefnet_coreml_profile(
+                size=getattr(self.model, "size", None),
+                precision="fp16" if half else "fp32",
+                canvas_hw=int(self.model._get_input_size()),
+            )
+        if family == "depth_anything3":
+            from .coreml_depth_anything3 import (
+                validate_depth_anything3_coreml_profile,
+            )
+
+            validate_depth_anything3_coreml_profile(
+                self.model.model,
+                size=getattr(self.model, "size", None),
+                canvas_hw=int(self.model._get_input_size()),
+            )
+        if family in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}:
+            from .coreml_sam import validate_sam_coreml_profile
+
+            validate_sam_coreml_profile(
+                family=family,
+                size=getattr(self.model, "size", None),
+                precision="fp16" if half else "fp32",
+                prompt_max_points=kwargs.get("prompt_max_points", 16),
+            )
+            if kwargs.get("nms"):
+                raise NotImplementedError(
+                    "LibreSAM Core ML exports raw prompt mask logits and "
+                    "predicted IoU; nms=True is not applicable."
+                )
+        if family == "ppocr":
+            from .coreml_ppocr import validate_ppocr_coreml_profile
+
+            require_metadata = getattr(
+                self.model,
+                "_require_complete_ocr_metadata_for_export",
+                None,
+            )
+            if callable(require_metadata):
+                require_metadata()
+            rec_max_width = kwargs.get("rec_max_width")
+            if rec_max_width is None:
+                raise ValueError(
+                    "LibrePPOCR Core ML export requires an explicit finite "
+                    "rec_max_width=... (at least 320). Crops wider than that "
+                    "bound fail at runtime; they are never truncated."
+                )
+            validate_ppocr_coreml_profile(
+                size=getattr(self.model, "size", None),
+                precision="fp16" if half else "fp32",
+                det_limit_side_len=int(
+                    getattr(self.model, "pipeline_config", {}).get(
+                        "det_limit_side_len",
+                        self.model._get_input_size(),
+                    )
+                ),
+                rec_batch_max=kwargs.get("rec_batch_max", 6),
+                rec_max_width=rec_max_width,
+            )
+            if kwargs.get("nms"):
+                raise NotImplementedError(
+                    "LibrePPOCR keeps DB contour extraction and CTC decoding "
+                    "on the host; nms=True is not applicable."
+                )
+        super()._preflight(half=half, int8=int8, data=data, **kwargs)
+
+        compute_units = str(kwargs.get("compute_units", "all")).lower()
+        valid_compute_units = {
+            "all",
+            "cpu_and_gpu",
+            "cpu_and_ne",
+            "cpu_only",
+        }
+        if compute_units not in valid_compute_units:
+            raise ValueError(
+                f"Invalid Core ML compute_units {compute_units!r}; expected one of "
+                f"{sorted(valid_compute_units)}."
+            )
+
         if kwargs.get("nms"):
+            for name, default in (("conf", 0.25), ("iou", 0.45)):
+                raw_value = kwargs.get(name, default)
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Core ML embedded NMS {name} must be a finite number "
+                        f"in [0, 1], got {raw_value!r}."
+                    ) from exc
+                if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                    raise ValueError(
+                        f"Core ML embedded NMS {name} must be a finite number "
+                        f"in [0, 1], got {raw_value!r}."
+                    )
+
             family = self.model._get_model_name()
             task = getattr(self.model, "task", "detect")
             if not isinstance(task, str):
@@ -1572,14 +1751,230 @@ class CoreMLExporter(BaseExporter):
                     "CoreML embedded NMS does not support max_det. "
                     "Use ONNX embedded NMS when max_det control is required."
                 )
-        super()._preflight(half=half, int8=int8, data=data, **kwargs)
+
+        try:
+            import coremltools
+        except ImportError as exc:
+            raise ImportError(
+                "Core ML export requires coremltools. "
+                "Install with: uv sync --extra coreml  or  "
+                "pip install 'libreyolo[coreml]'"
+            ) from exc
+        if family == "birefnet":
+            from .coreml_birefnet import require_birefnet_coreml_lowering
+
+            require_birefnet_coreml_lowering(coremltools)
+
+    def _resolve_params(self, output_path, imgsz, device, half, int8):
+        requested_device = device
+        imgsz, device, output_path = super()._resolve_params(
+            output_path,
+            imgsz,
+            device,
+            half,
+            int8,
+        )
+        if requested_device is not None and str(requested_device).lower() != "auto":
+            requested = torch.device(
+                f"cuda:{requested_device}"
+                if isinstance(requested_device, int)
+                or isinstance(requested_device, str)
+                and requested_device.isdigit()
+                else requested_device
+            )
+            if requested.type != "cpu":
+                raise NotImplementedError(
+                    "Core ML conversion traces on CPU; pass device='cpu', "
+                    "device='auto', or omit device."
+                )
+        # coremltools consumes a CPU TorchScript graph. In particular, never
+        # inherit MPS from a model constructed with device='auto' on macOS.
+        device = torch.device("cpu")
+        from .coreml import _normalize_mlpackage_path
+
+        output_path = _normalize_mlpackage_path(output_path)
+        family = self.model._get_model_name()
+        if family == "birefnet":
+            from .coreml_birefnet import validate_birefnet_coreml_profile
+
+            validate_birefnet_coreml_profile(
+                size=getattr(self.model, "size", None),
+                precision="fp16" if half else "fp32",
+                canvas_hw=imgsz,
+            )
+        if family == "depth_anything3":
+            from .coreml_depth_anything3 import (
+                validate_depth_anything3_coreml_profile,
+            )
+
+            validate_depth_anything3_coreml_profile(
+                self.model.model,
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family in {"edgetam", "mobilesam", "sam", "sam2", "sam3"}:
+            native = int(self.model._get_input_size())
+            if imgsz != (native, native):
+                raise NotImplementedError(
+                    f"{family} Core ML export requires its fixed native "
+                    f"{native}x{native} encoder frame; got "
+                    f"{imgsz[0]}x{imgsz[1]}."
+                )
+        if family == "ppocr":
+            if imgsz[0] != imgsz[1]:
+                raise NotImplementedError(
+                    "LibrePPOCR's detector limit is one long-side value; pass "
+                    "a square imgsz."
+                )
+            det_limit = int(imgsz[0])
+            if det_limit < 32 or det_limit > 4000 or det_limit % 32:
+                raise ValueError(
+                    "LibrePPOCR Core ML detector imgsz must be a multiple of "
+                    f"32 in [32, 4000], got {det_limit}."
+                )
+        if self.model._get_model_name() == "swinir":
+            from .coreml_swinir import validate_swinir_coreml_profile
+
+            validate_swinir_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        family = self.model._get_model_name()
+        if family == "picosam3":
+            from .coreml_picosam3 import validate_picosam3_coreml_profile
+
+            validate_picosam3_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family == "owlv2":
+            from .coreml_owlv2 import validate_owlv2_coreml_profile
+
+            validate_owlv2_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family == "grounding_dino":
+            from .coreml_grounding_dino import (
+                validate_grounding_dino_coreml_profile,
+            )
+
+            validate_grounding_dino_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family == "omdet_turbo":
+            from .coreml_omdet_turbo import (
+                validate_omdet_turbo_coreml_profile,
+            )
+
+            validate_omdet_turbo_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family == "rtmdet" and getattr(self.model, "task", None) == "segment":
+            from .coreml_rtmdet_ins import validate_rtmdet_ins_coreml_profile
+
+            validate_rtmdet_ins_coreml_profile(
+                size=getattr(self.model, "size", None),
+                canvas_hw=imgsz,
+            )
+        if family == "eomt":
+            native = int(self.model._get_input_size())
+            if imgsz != (native, native):
+                raise NotImplementedError(
+                    "EoMT Core ML export must match the checkpoint's fixed "
+                    f"{native}x{native} position-embedding canvas; got "
+                    f"{imgsz[0]}x{imgsz[1]}."
+                )
+        if family in {"l2cs", "yolo1"}:
+            native = int(self.model._get_input_size())
+            if imgsz != (native, native):
+                raise NotImplementedError(
+                    f"{family} Core ML export requires its fixed native "
+                    f"{native}x{native} canvas; got {imgsz[0]}x{imgsz[1]}."
+                )
+        if family == "realesrgan":
+            multiple = int(getattr(self.model, "_pad_multiple", 1) or 1)
+            if imgsz[0] % multiple or imgsz[1] % multiple:
+                raise ValueError(
+                    "Real-ESRGAN Core ML export canvas must be divisible by "
+                    f"the {multiple}-pixel input packing factor; got {imgsz}."
+                )
+        return imgsz, device, output_path
 
     def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
-        # CoreML uses a hard-fixed ct.ImageType(shape=...); the exported graph
-        # has a fixed input shape, so report dynamic=False regardless of the
-        # requested flag (mirrors the NCNN override).
+        # CoreML normally uses a hard-fixed input shape. LibrePPOCR is the
+        # bounded-flexible multifunction exception.
         meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
-        meta["dynamic"] = False
+        family = self.model._get_model_name()
+        meta["dynamic"] = family in {
+            "edgetam",
+            "mobilesam",
+            "ppocr",
+            "sam",
+            "sam2",
+            "sam3",
+        }
+        if family == "ppocr":
+            require_metadata = getattr(
+                self.model,
+                "_require_complete_ocr_metadata_for_export",
+                None,
+            )
+            if callable(require_metadata):
+                require_metadata()
+            charset = getattr(self.model, "charset", None)
+            if not isinstance(charset, (list, tuple)) or not charset:
+                raise RuntimeError(
+                    "LibrePPOCR Core ML export requires checkpoint charset "
+                    "metadata. Load an official or schema-compliant composite "
+                    "checkpoint before export."
+                )
+            pipeline = dict(getattr(self.model, "pipeline_config", {}) or {})
+            if isinstance(imgsz, tuple):
+                pipeline["det_limit_side_len"] = int(imgsz[0])
+            pipeline.setdefault("rec_image_shape", [3, 48, 320])
+            rec_head = getattr(
+                getattr(getattr(self.model.model, "rec", None), "head", None),
+                "ctc_head",
+                None,
+            )
+            fc = getattr(rec_head, "fc", None)
+            rec_num_classes = getattr(fc, "out_features", None)
+            if rec_num_classes is None:
+                weight = getattr(fc, "weight", None)
+                rec_num_classes = (
+                    int(weight.shape[0]) if torch.is_tensor(weight) else None
+                )
+            if rec_num_classes is None:
+                raise RuntimeError(
+                    "LibrePPOCR Core ML export could not derive the CTC class "
+                    "count from rec.head.ctc_head.fc."
+                )
+            meta.update(
+                {
+                    "charset": list(charset),
+                    "pipeline": pipeline,
+                    "rec_num_classes": int(rec_num_classes),
+                }
+            )
+        # Classification preprocessing is part of the runtime contract for
+        # every exported format, not only ONNX.
+        crop_pct = getattr(self.model, "crop_pct", None)
+        interpolation = getattr(self.model, "interpolation", None)
+        if crop_pct is not None:
+            meta["crop_pct"] = float(crop_pct)
+        if interpolation is not None:
+            meta["interpolation"] = str(interpolation)
+        if self.model._get_model_name() == "eomt":
+            meta["num_queries"] = int(self.model.num_queries)
+            if getattr(self.model, "task", None) == "panoptic":
+                thing_class_ids = getattr(self.model, "thing_class_ids", None)
+                if thing_class_ids is not None:
+                    meta["thing_class_ids"] = sorted(
+                        int(value) for value in thing_class_ids
+                    )
         return meta
 
     def _export(
@@ -1594,6 +1989,9 @@ class CoreMLExporter(BaseExporter):
         nms=False,
         iou=0.45,
         conf=0.25,
+        rec_batch_max=6,
+        rec_max_width=None,
+        prompt_max_points=16,
         **kwargs,
     ):
         from .coreml import export_coreml
@@ -1609,4 +2007,9 @@ class CoreMLExporter(BaseExporter):
             conf=conf,
             metadata=metadata,
             model_family=self.model._get_model_name(),
+            model_task=getattr(self.model, "task", "detect"),
+            model_size=getattr(self.model, "size", None),
+            rec_batch_max=rec_batch_max,
+            rec_max_width=rec_max_width,
+            prompt_max_points=prompt_max_points,
         )

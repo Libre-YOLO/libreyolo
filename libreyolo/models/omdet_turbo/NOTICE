@@ -1,0 +1,49 @@
+OMDet-Turbo frozen-vocabulary Core ML adapter
+==============================================
+
+Source code
+-----------
+
+Source repository:
+  https://github.com/huggingface/transformers
+
+Pinned source:
+  v5.12.1
+  annotated tag object a030302dcd4777bbf042ee46c30c5dbe6d2a2eb2
+  source commit ddb849abe009d1089e6c691bfc897f27211c663c
+
+Relevant upstream files:
+  src/transformers/models/detr/image_processing_detr.py
+  src/transformers/models/omdet_turbo/modeling_omdet_turbo.py
+  src/transformers/models/omdet_turbo/processing_omdet_turbo.py
+
+License:
+  Apache License 2.0
+
+LibreYOLO use:
+  libreyolo/export/coreml_omdet_turbo.py preserves the pinned Torchvision v2
+  uint8 RGB bilinear-antialias stretch, ImageNet normalization, final
+  900-query output ABI, flattened top-900 selection, and class-aware NMS
+  behavior. It computes the class and task embeddings once, then exports only
+  the image backbone, hybrid encoder, detector decoder, and those immutable
+  embeddings. No tokenizer or language backbone remains in the deployment
+  graph.
+
+Weights
+-------
+
+Upstream:
+  omlab/omdet-turbo-swin-tiny-hf
+  revision 7fe93cecfb770c4d76cf71163956221249cab566
+
+LibreYOLO mirror:
+  LibreYOLO/LibreOMDetTurbot
+  revision d569ff1da5668156f07b5859246be435804fed2d
+
+model.safetensors:
+  461822656 bytes
+  SHA-256 439d1575d7e237ad565ed6969ea2a2dfcedf2086155e9ca3ac96cd6180a48cfd
+
+The pinned mirror model.safetensors is byte-identical to the upstream file.
+Configuration, processor, and tokenizer assets are likewise unchanged. Both
+the upstream model card and mirror declare Apache-2.0.

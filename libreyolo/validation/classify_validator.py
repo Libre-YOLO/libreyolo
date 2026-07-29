@@ -45,6 +45,21 @@ class ClassifyValidator(BaseValidator):
             return None
         return ordered
 
+    def _resolve_class_names(self, train_classes: list[str]) -> list[str]:
+        """Resolve dataset labels to the model's output-index order."""
+        model_classes = self._model_class_names()
+        if model_classes is None:
+            return train_classes
+
+        expected = set(model_classes)
+        actual = set(train_classes)
+        if expected != actual:
+            raise ValueError(
+                "Classification train classes must match the model class names "
+                f"({self._format_class_delta(expected, actual)})."
+            )
+        return model_classes
+
     def _dataset_transform_kwargs(self) -> dict:
         """Extra kwargs for ``build_classify_transforms`` (mean/std/interp/crop).
 
@@ -77,18 +92,7 @@ class ClassifyValidator(BaseValidator):
         dataset_root = resolve_classify_data(self.config.data)
         split = self.config.split or "val"
         train_classes = get_class_names(dataset_root, split="train")
-        model_classes = self._model_class_names()
-        if model_classes is None:
-            class_names = train_classes
-        else:
-            expected = set(model_classes)
-            actual = set(train_classes)
-            if expected != actual:
-                raise ValueError(
-                    "Classification train classes must match the model class names "
-                    f"({self._format_class_delta(expected, actual)})."
-                )
-            class_names = model_classes
+        class_names = self._resolve_class_names(train_classes)
 
         # Label indices are pinned to the model/checkpoint class order when it is
         # explicit, otherwise to the train split order shared across splits.

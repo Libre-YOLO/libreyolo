@@ -11,8 +11,19 @@ Upstream:
 
 Runtime reference:
   Source: https://github.com/huggingface/transformers
+  Version: v5.12.1
+  Source commit: ddb849abe009d1089e6c691bfc897f27211c663c
+  Annotated tag object: a030302dcd4777bbf042ee46c30c5dbe6d2a2eb2
   License: Apache-2.0
   Copyright: The HuggingFace Team and Mobile Perception Systems Lab at TU/e
+
+Core ML export adapter:
+  libreyolo/export/coreml_eomt.py adapts the deterministic eval-forward
+  structure from the Transformers revision above. It replaces the upstream
+  in-place boolean attention-mask slice assignment with an equivalent
+  concatenation of the unchanged query and encoder mask regions. This lets
+  Core ML Tools lower the same input-dependent mask without freezing it from
+  the tracing sample. The adapter remains subject to Apache-2.0.
 
 Backbone:
   DINOv2 is Apache-2.0. LibreEoMT ships only DINOv2-based EoMT checkpoints,

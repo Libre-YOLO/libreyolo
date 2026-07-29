@@ -104,3 +104,23 @@ mask_logits: float32 [batch, 1, 96, 96]
 Box-to-ROI cropping and full-image mask placement remain host operations. For
 IMX500 deployment, the sensor supplies the ROI crop before inference; `.rpk`
 packaging remains a deployment step, not a LibreYOLO export format.
+
+Core ML exposes the same component boundary with a fixed batch-one ImageType:
+
+```text
+roi_image:   RGB uint8 ImageType [1, 3, 96, 96]
+mask_logits: float32             [1, 1, 96, 96]
+```
+
+The package declares `artifact_scope=roi_component` and
+`component_contract=picosam3_roi_v1`. Loading it through `LibreYOLO()` returns
+the prompt-aware Core ML backend: `predict(..., bboxes=...)` performs the same
+10% padded-square crop, Pillow bilinear resize, one Core ML invocation per ROI,
+logit resize, strict `> 0` threshold, and full-image placement as native
+PicoSAM3. Fixed batch one is an artifact constraint, so multiple prompts are
+scheduled sequentially rather than mislabeled as a dynamic batch.
+
+The exact repository graph and RGB/ImageNet adapter convert and save with
+Core ML Tools 9.0 on Linux, and the saved package reloads with input
+`roi_image` (RGB ImageType 96x96) and output `mask_logits` (FP32
+`[1, 1, 96, 96]`). Numeric prediction parity remains a macOS hardware gate.

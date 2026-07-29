@@ -57,8 +57,35 @@ def _rows() -> tuple[list[str], list[str], list[str]]:
     return rows, validated_constraints, blocked
 
 
+def _checkpoint_gates() -> list[str]:
+    from libreyolo.export.support import CHECKPOINT_GATES
+
+    return [
+        f"- `{family}` / `{task}`: {reason}"
+        for (family, task), reason in sorted(CHECKPOINT_GATES.items())
+    ]
+
+
+def _experimental_constraints() -> list[str]:
+    from libreyolo.export.support import EXPORT_FORMATS, get_support
+
+    inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    constraints = []
+    for family, metadata in inventory.items():
+        for task in metadata["tasks"]:
+            for fmt in EXPORT_FORMATS:
+                entry = get_support(family, task, fmt)
+                if entry.tier == "experimental" and entry.constraint:
+                    constraints.append(
+                        f"- `{family}` / `{task}` / `{fmt}`: {entry.constraint}"
+                    )
+    return constraints
+
+
 def render_docs() -> str:
     rows, validated_constraints, blocked = _rows()
+    checkpoint_gates = _checkpoint_gates()
+    experimental_constraints = _experimental_constraints()
     return "\n".join(
         [
             "# Export support",
@@ -70,6 +97,13 @@ def render_docs() -> str:
             "numeric parity guarantee, and an empty cell is blocked in preflight.",
             "",
             *rows,
+            "",
+            "## Core ML experimental profile",
+            "",
+            "Every Core ML `exp` row is fixed-canvas, batch-one, and raw-output.",
+            "It records an implemented conversion path, not macOS runtime parity,",
+            "application preprocessing parity, task accuracy, or device performance.",
+            "No Core ML row is parity-validated yet.",
             "",
             "## Parity thresholds",
             "",
@@ -85,6 +119,19 @@ def render_docs() -> str:
             "A check mark applies only under any constraint listed here.",
             "",
             *validated_constraints,
+            "",
+            "## Experimental constraints",
+            "",
+            "Experimental rows may be narrower than the family-wide size surface.",
+            "",
+            *experimental_constraints,
+            "",
+            "## Checkpoint and artifact gates",
+            "",
+            "These notices are independent of technical export status. A family may",
+            "accept user-trained weights even when a published checkpoint is restricted.",
+            "",
+            *checkpoint_gates,
             "",
             "## Blocked combinations",
             "",

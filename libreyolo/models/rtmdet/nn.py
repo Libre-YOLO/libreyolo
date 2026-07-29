@@ -701,12 +701,6 @@ class RTMDetInsSepBNHead(nn.Module):
             nn.init.constant_(reg_conv.bias, 1.0)
 
     def forward(self, feats):
-        if self.export:
-            raise NotImplementedError(
-                "RTMDet-Ins export is not supported yet; use native PyTorch "
-                "inference for task='segment'."
-            )
-
         mask_feat = self.mask_head(feats)
         cls_scores = []
         bbox_preds = []
@@ -728,6 +722,17 @@ class RTMDetInsSepBNHead(nn.Module):
             # The exp_on_reg entries in _SIZE_CONFIG apply only to detection.
             bbox_preds.append(F.relu(self.rtm_reg[idx](reg_feat)) * self.strides[idx])
             kernel_preds.append(self.rtm_kernel[idx](kernel_feat))
+
+        if self.export:
+            # A flat, fixed-arity boundary is supported by TorchScript and
+            # Core ML. Candidate filtering, NMS, and the variable-instance
+            # dynamic mask network stay in the existing host postprocessor.
+            return (
+                *cls_scores,
+                *bbox_preds,
+                *kernel_preds,
+                mask_feat,
+            )
 
         return (
             tuple(cls_scores),

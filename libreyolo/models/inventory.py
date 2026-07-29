@@ -7,6 +7,8 @@ import importlib
 import importlib.util
 import inspect
 import textwrap
+from collections.abc import Iterator, Mapping
+from typing import Any
 
 
 OPTIONAL_MODELS = (
@@ -23,6 +25,12 @@ OPTIONAL_MODELS = (
     (
         "libreyolo.models.vlm.locateanything",
         "LibreLocateAnything",
+        "vlm",
+        "transformers",
+    ),
+    (
+        "libreyolo.models.sensenova",
+        "LibreSenseNovaVision",
         "vlm",
         "transformers",
     ),
@@ -132,4 +140,23 @@ def collect_model_inventory() -> dict[str, dict]:
     return dict(sorted(inventory.items()))
 
 
-__all__ = ["OPTIONAL_MODELS", "collect_model_inventory"]
+def iter_model_cases(
+    inventory: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Iterator[tuple[str, str, str, Any]]:
+    """Yield canonical ``(family, task, size, imgsz)`` export cases.
+
+    Multi-task families can expose different size sets for each task. The
+    family-wide ``sizes`` field is only a discovery union and must not be used
+    to generate executable export cases.
+    """
+    source = collect_model_inventory() if inventory is None else inventory
+    for family, metadata in sorted(source.items()):
+        default_sizes = metadata["default_imgsz"]
+        task_sizes = metadata["task_sizes"]
+        for task in metadata["tasks"]:
+            sizes = task_sizes.get(task) or default_sizes
+            for size, imgsz in sizes.items():
+                yield family, task, size, imgsz
+
+
+__all__ = ["OPTIONAL_MODELS", "collect_model_inventory", "iter_model_cases"]

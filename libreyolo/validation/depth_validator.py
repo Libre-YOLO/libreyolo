@@ -40,9 +40,7 @@ _METRIC_KEYS = (
 )
 
 
-def align_inverse_depth(
-    pred: torch.Tensor, gt_inverse: torch.Tensor
-) -> torch.Tensor:
+def align_inverse_depth(pred: torch.Tensor, gt_inverse: torch.Tensor) -> torch.Tensor:
     """Least-squares scale-and-shift alignment of a prediction to a target.
 
     Solves ``min_{s,t} sum((s * pred + t - gt_inverse)^2)`` over the given
@@ -96,6 +94,12 @@ class DepthValidator(BaseValidator):
             imgsz=self.config.imgsz,
             augment=False,
             resize_mode=resize_mode,
+            resize_backend=getattr(self.model, "depth_resize_backend", "pillow"),
+            interpolation=getattr(
+                self.model,
+                "depth_resize_interpolation",
+                "bilinear",
+            ),
         )
         return DataLoader(
             dataset,
@@ -171,8 +175,12 @@ class DepthValidator(BaseValidator):
             self._metric_sums["metrics/abs_rel"] += float((residual.abs() / gt).mean())
             self._rmse_sum += float(torch.sqrt((residual * residual).mean()))
             self._metric_sums["metrics/delta1"] += float((ratio < 1.25).double().mean())
-            self._metric_sums["metrics/delta2"] += float((ratio < 1.25**2).double().mean())
-            self._metric_sums["metrics/delta3"] += float((ratio < 1.25**3).double().mean())
+            self._metric_sums["metrics/delta2"] += float(
+                (ratio < 1.25**2).double().mean()
+            )
+            self._metric_sums["metrics/delta3"] += float(
+                (ratio < 1.25**3).double().mean()
+            )
             self._image_count += 1
 
     def _compute_metrics(self) -> Dict[str, float]:

@@ -218,23 +218,54 @@ class LibrePicoSAM3(LibreSAMModel):
         output: str | Path | None = None,
         output_path: str | Path | None = None,
         opset: int = 13,
-        dynamic: bool = True,
+        dynamic: bool | None = None,
         **kwargs,
     ) -> str:
-        """Export the raw 96x96 ROI CNN as ``roi_image -> mask_logits``."""
+        """Export the raw 96x96 ROI CNN as ``roi_image -> mask_logits``.
+
+        ONNX keeps its optional dynamic batch axis. Core ML is a fixed
+        batch-one ``ImageType`` component; ROI extraction and full-image mask
+        placement remain host operations for both formats.
+        """
+
+        export_format = str(format).lower()
+        if export_format not in {"onnx", "coreml"}:
+            raise NotImplementedError(
+                "LibrePicoSAM3 export currently supports ONNX and Core ML."
+            )
+        if output is not None and output_path is not None:
+            raise ValueError("Pass only one of output= or output_path=.")
+
+        if export_format == "coreml":
+            if int(opset) != 13:
+                raise TypeError("opset= applies only to PicoSAM3 ONNX export.")
+            from ...export import BaseExporter
+
+            requested_imgsz = kwargs.pop("imgsz", self.INPUT_SIZES[self.size])
+            if isinstance(requested_imgsz, (tuple, list)):
+                requested_hw = tuple(int(value) for value in requested_imgsz)
+            else:
+                requested_hw = (int(requested_imgsz), int(requested_imgsz))
+            if requested_hw != (96, 96):
+                raise NotImplementedError(
+                    "PicoSAM3 Core ML export requires its fixed 96x96 ROI "
+                    f"canvas; got {requested_hw[0]}x{requested_hw[1]}."
+                )
+            destination = output_path or output or "LibrePicoSAM3pico.mlpackage"
+            return BaseExporter.create("coreml", self)(
+                output_path=str(destination),
+                imgsz=96,
+                dynamic=False if dynamic is None else bool(dynamic),
+                **kwargs,
+            )
 
         if kwargs:
             unknown = ", ".join(sorted(kwargs))
             raise TypeError(f"Unsupported PicoSAM3 export arguments: {unknown}")
-        if str(format).lower() != "onnx":
-            raise NotImplementedError(
-                "LibrePicoSAM3 export currently supports ONNX only."
-            )
-        if output is not None and output_path is not None:
-            raise ValueError("Pass only one of output= or output_path=.")
         destination = Path(output_path or output or "LibrePicoSAM3pico.onnx")
         destination.parent.mkdir(parents=True, exist_ok=True)
         axes = None
+        dynamic = True if dynamic is None else bool(dynamic)
         if dynamic:
             axes = {"roi_image": {0: "batch"}, "mask_logits": {0: "batch"}}
         imgsz = self.INPUT_SIZES[self.size]

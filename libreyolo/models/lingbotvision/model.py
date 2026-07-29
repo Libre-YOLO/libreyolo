@@ -84,6 +84,9 @@ class LibreLingBotVision(BaseModel):
     # ViT square canvas: stretch-resize (like LibreDINOv2), patch-16 grid.
     semantic_resize_mode: ClassVar[str] = "stretch"
     semantic_imgsz_divisor: ClassVar[int] = 16
+    semantic_resize_backend: ClassVar[str] = "opencv"
+    semantic_resize_interpolation: ClassVar[str] = "bilinear"
+    semantic_resize_rounding: ClassVar[str] = "round"
     # The linear-probe recipe uses no photometric jitter; SemanticDataset
     # defaults to 0.5, so declare it explicitly (see LibreSegformer precedent).
     semantic_hsv_prob: ClassVar[float] = 0.0

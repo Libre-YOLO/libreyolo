@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import ast
+import copy
 import json
 import os
 import subprocess
@@ -13,8 +15,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from libreyolo.export.exporter import NcnnExporter, OnnxExporter
-from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
-from libreyolo.models.inventory import collect_model_inventory
+from libreyolo.export.support import (
+    CHECKPOINT_GATES,
+    EXPORT_FORMATS,
+    SUPPORT,
+    get_support,
+)
+from libreyolo.models.inventory import (
+    OPTIONAL_MODELS,
+    collect_model_inventory,
+    iter_model_cases,
+)
 from libreyolo.tasks import TASKS, task_to_suffix
 
 pytestmark = pytest.mark.unit
@@ -37,6 +48,101 @@ def test_matrix_keys_use_canonical_registry_values():
         assert family in families
         assert task in TASKS
         assert fmt in EXPORT_FORMATS
+
+
+def test_public_lazy_model_classes_are_in_the_inventory_contract():
+    """Keep public optional families from silently disappearing from reports."""
+    tree = ast.parse((REPO_ROOT / "libreyolo" / "__init__.py").read_text("utf-8"))
+    lazy_mapping = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(
+            isinstance(target, ast.Name) and target.id == "_lazy"
+            for target in node.targets
+        ):
+            lazy_mapping = ast.literal_eval(node.value)
+            break
+    assert lazy_mapping is not None
+
+    facade_classes = {"LibreOpenVocab", "LibreSAM", "LibreVLM"}
+    public_lazy_models = {
+        class_name
+        for module_name, class_name in lazy_mapping.values()
+        if module_name.startswith(".models.") and class_name not in facade_classes
+    }
+    inventory_classes = {
+        metadata["class"].rsplit(".", 1)[-1]
+        for metadata in json.loads(
+            INVENTORY_SNAPSHOT.read_text(encoding="utf-8")
+        ).values()
+    }
+    optional_classes = {class_name for _, class_name, _, _ in OPTIONAL_MODELS}
+
+    assert public_lazy_models <= inventory_classes
+    assert public_lazy_models - {"LibreDINOv2", "LibreRFDETR"} <= optional_classes
+
+
+def test_canonical_cases_use_each_tasks_size_map():
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
+    cases = list(iter_model_cases(inventory))
+    keys = [(family, task, size) for family, task, size, _ in cases]
+    assert len(keys) == len(set(keys))
+
+    for family, metadata in inventory.items():
+        for task in metadata["tasks"]:
+            expected = metadata["task_sizes"].get(task) or metadata["default_imgsz"]
+            actual = {
+                size: imgsz
+                for case_family, case_task, size, imgsz in cases
+                if (case_family, case_task) == (family, task)
+            }
+            assert actual == expected
+
+
+def test_every_inventory_row_has_an_explicit_coreml_disposition():
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
+    expected = {
+        (family, task, "coreml")
+        for family, metadata in inventory.items()
+        for task in metadata["tasks"]
+    }
+    assert expected <= SUPPORT.keys()
+
+
+def test_checkpoint_gates_are_canonical_and_independent_of_technical_tier():
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
+    for family, task in CHECKPOINT_GATES:
+        assert family in inventory
+        assert task in inventory[family]["tasks"]
+
+    assert get_support("sensenovavision", "detect", "coreml").tier == "blocked"
+    assert CHECKPOINT_GATES[("sensenovavision", "detect")]
+    assert get_support("depth_anything", "depth", "onnx").tier == "validated"
+    assert CHECKPOINT_GATES[("depth_anything", "depth")]
+
+
+def test_coreml_matrix_is_explicit_and_never_overclaims_validation():
+    from libreyolo.export.coreml import supported_coreml_exports
+
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
+    entries = {
+        (family, task): get_support(family, task, "coreml")
+        for family, metadata in inventory.items()
+        for task in metadata["tasks"]
+    }
+    assert entries
+    assert all(entry.tier in {"experimental", "blocked"} for entry in entries.values())
+    assert not any(entry.tier == "validated" for entry in entries.values())
+    assert {
+        key for key, entry in entries.items() if entry.tier == "experimental"
+    } == supported_coreml_exports()
+
+    deimv2 = get_support("deimv2", "detect", "coreml")
+    assert deimv2.tier == "experimental"
+    assert deimv2.constraint
+    assert all(size in deimv2.constraint for size in ("atto", "femto", "pico", "n"))
+    assert all(size in deimv2.constraint for size in ("s", "m", "l", "x"))
 
 
 def test_matrix_rejects_duplicate_explicit_keys():
@@ -181,6 +287,23 @@ def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeyp
     assert gen_compat_table.render_docs().startswith("# Export support")
 
 
+def test_compat_table_contains_every_inventory_row_once():
+    from tools import gen_compat_table
+
+    inventory = json.loads(INVENTORY_SNAPSHOT.read_text(encoding="utf-8"))
+    expected = [
+        (family, task)
+        for family, metadata in inventory.items()
+        for task in metadata["tasks"]
+    ]
+    rows, _, _ = gen_compat_table._rows()
+    actual = []
+    for row in rows[2:]:
+        cells = [cell.strip() for cell in row.strip("|").split("|")]
+        actual.append((cells[0], cells[1]))
+    assert actual == expected
+
+
 def test_dump_inventory_refuses_partial_overwrite(tmp_path):
     from tools.dump_model_inventory import write_inventory
 
@@ -196,6 +319,30 @@ def test_dump_inventory_refuses_partial_overwrite(tmp_path):
     written = json.loads(output.read_text(encoding="utf-8"))
     assert "zzz_fake_family" not in written
     assert written == inventory
+
+
+def test_dump_inventory_refuses_partial_task_size_overwrite(tmp_path, monkeypatch):
+    from libreyolo.models import inventory as inventory_module
+    from tools.dump_model_inventory import write_inventory
+
+    complete = collect_model_inventory()
+    partial = copy.deepcopy(complete)
+    family, task = next(
+        (family, task)
+        for family, metadata in partial.items()
+        for task, sizes in metadata["task_sizes"].items()
+        if len(sizes) > 1
+    )
+    removed_size = next(iter(partial[family]["task_sizes"][task]))
+    del partial[family]["task_sizes"][task][removed_size]
+
+    output = tmp_path / "export_inventory.json"
+    output.write_text(json.dumps(complete), encoding="utf-8")
+    monkeypatch.setattr(inventory_module, "collect_model_inventory", lambda: partial)
+
+    with pytest.raises(SystemExit, match=rf"{family}/{task}/{removed_size}"):
+        write_inventory(output)
+    assert json.loads(output.read_text(encoding="utf-8")) == complete
 
 
 @pytest.mark.skipif(
@@ -274,3 +421,7 @@ def test_generated_docs_expose_validated_constraints():
     assert "## Validated constraints" in docs
     assert "`yolonas` / `detect` / `coreai`" in docs
     assert "raw-image preprocessing" in docs
+    assert "## Experimental constraints" in docs
+    assert "`deimv2` / `detect` / `coreml`" in docs
+    assert "## Checkpoint and artifact gates" in docs
+    assert "`sensenovavision` / `detect`" in docs
