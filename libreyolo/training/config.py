@@ -194,6 +194,13 @@ class TrainConfig:
     profile_open: bool = True
 
     def __post_init__(self):
+        if isinstance(self.imgsz, str):
+            raise TypeError(
+                f"imgsz must be an int (square) or tuple[int, int] (height, width), "
+                f"got str: {self.imgsz!r}. "
+                "Pass an int like 640 or a tuple like (480, 640). "
+                "From the CLI use the format 640 or 480x640 (parsed automatically)."
+            )
         if isinstance(self.imgsz, (list, tuple)):
             if len(self.imgsz) != 2:
                 raise ValueError(
@@ -206,8 +213,6 @@ class TrainConfig:
             if h <= 0 or w <= 0:
                 raise ValueError(f"imgsz tuple elements must be positive, got ({h}, {w}).")
             if h == w:
-                # Square tuples are equivalent to the scalar form; normalize so
-                # downstream code paths that expect a scalar keep working.
                 self.imgsz = h
 
     @classmethod

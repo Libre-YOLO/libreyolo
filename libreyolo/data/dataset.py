@@ -265,9 +265,22 @@ class YOLODataset(ImageCacheMixin, Dataset):
             label_files: List of label paths (optional, inferred if not provided).
             num_classes: Optional class-count bound used for OBB label validation.
         """
-        self.img_size = img_size
+        if isinstance(img_size, int):
+            self.img_size = (img_size, img_size)
+        elif isinstance(img_size, (list, tuple)):
+            if len(img_size) != 2:
+                raise ValueError(
+                    f"img_size must be a 2-element (height, width) tuple, "
+                    f"got {len(img_size)} elements: {img_size}."
+                )
+            self.img_size = (int(img_size[0]), int(img_size[1]))
+        else:
+            raise TypeError(
+                f"img_size must be int or (height, width) tuple, "
+                f"got {type(img_size).__name__}: {img_size!r}."
+            )
         self.preproc = preproc
-        self._input_dim = img_size
+        self._input_dim = self.img_size
         self.load_segments = load_segments
         self.load_obb = load_obb
         self.num_classes = num_classes
@@ -643,8 +656,21 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
-        self.img_size = img_size
-        self._input_dim = img_size
+        if isinstance(img_size, int):
+            self.img_size = (img_size, img_size)
+        elif isinstance(img_size, (list, tuple)):
+            if len(img_size) != 2:
+                raise ValueError(
+                    f"img_size must be a 2-element (height, width) tuple, "
+                    f"got {len(img_size)} elements: {img_size}."
+                )
+            self.img_size = (int(img_size[0]), int(img_size[1]))
+        else:
+            raise TypeError(
+                f"img_size must be int or (height, width) tuple, "
+                f"got {type(img_size).__name__}: {img_size!r}."
+            )
+        self._input_dim = self.img_size
         self.preproc = preproc
         self.load_segments = load_segments
         self.load_obb = load_obb

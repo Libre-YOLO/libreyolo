@@ -224,9 +224,19 @@ class BaseTrainer(ABC):
     @property
     def input_size(self) -> Tuple[int, int]:
         imgsz = self.config.imgsz
+        if isinstance(imgsz, int):
+            return (imgsz, imgsz)
         if isinstance(imgsz, (list, tuple)):
+            if len(imgsz) != 2:
+                raise ValueError(
+                    f"imgsz tuple must have exactly 2 elements (height, width), "
+                    f"got {len(imgsz)}: {imgsz}."
+                )
             return (int(imgsz[0]), int(imgsz[1]))
-        return (int(imgsz), int(imgsz))
+        raise TypeError(
+            f"imgsz must be int or tuple[int, int], "
+            f"got {type(imgsz).__name__}: {imgsz!r}."
+        )
 
     # =========================================================================
     # Hook methods — subclasses override these
