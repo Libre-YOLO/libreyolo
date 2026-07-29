@@ -69,7 +69,10 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `depth_anything3` | `LibreDepthAnything3` | CamelCase preserved + version (Depth Anything 3), depth-only |
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
+| `feynobg`   | `LibreFeyNobg` | CamelCase preserved (FeyNobg); matte-only background-removal family built on the BiRefNet architecture |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
+| `facerec`   | `LibreFaceEmbedder` | Descriptive family name (no upstream brand): embed-only two-stage face detection + identity-embedding family, inference-only |
+| `sam3dbody` | `LibreSAM3DBody` | All-caps acronym plus CamelCase `Body` (hyphens dropped); mesh-only family. Named in full rather than shortened so it does not collide with the `LibreSAM` promptable-segmentation tier. Sizes are backbone codes: `d3` (DINOv3 ViT-H/16+) and `h` (ViT-H). This family wraps an optional third-party package rather than porting it; see ADR 0013 |
 
 Casing rules observed in the table:
 
@@ -157,6 +160,7 @@ ships:
 | `depth_anything3` | `l` (DA3MONO-LARGE ViT-L, native upper-bound 504) |
 | `zipdepth`  | `b` (base, GPU/CPU convex upsampling), `bnpu` (base capacity with the separately trained unfold-free upsampling head for NPU/edge compilers); both at short-side 384 |
 | `birefnet`  | `t` (BiRefNet_lite, Swin-T tier), `l` (BiRefNet general, Swin-L tier); both at fixed 1024 |
+| `feynobg`   | `l` (single released variant: Swin-L tier with stage 3 deepened to 24 blocks, 263M params) at fixed 1024 |
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
@@ -208,6 +212,8 @@ From `libreyolo/tasks.py`:
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
+| `embed`       | `-embed` |
+| `mesh`        | `-mesh` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -268,6 +274,30 @@ Detection quads are genuine polygons (rotated text) and do not populate
 aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
 the API boundary.
 
+`embed` is the task for face identity embeddings (facial recognition). Models
+expose `Results.embeddings`, an `(N, D)` payload of L2-normalized identity
+vectors row-aligned with the face boxes, so cosine similarity is a dot product.
+Supplying a `FaceGallery` of enrolled identities adds `Results.identities`
+(matched name and score per face, `None` when below threshold). The task is
+two-stage and inference-only: training, validation, and re-export raise.
+Canonical embed filenames must carry the `-embed` suffix; task aliases
+`facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
+`embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
+for the full contract.
+`mesh` is the task for human body mesh recovery: recovering a posed 3D body per
+detected person. Models expose `Results.meshes`, row-aligned with
+`Results.boxes` exactly as pose keypoints are, carrying the parametric core
+(`global_orient`, `body_pose`, `betas`, `transl`) plus decoded `vertices`,
+`joints3d` and `joints2d`. Everything is in the camera frame of the original
+image, with metric translation in meters and `joints2d` in original-image
+pixels; there is no world frame in this version. Parameter layouts vary by body
+model, so `Meshes.body_model` names the parameterization and shapes are read
+from the tensors rather than assumed. Canonical mesh filenames must carry the
+`-mesh` suffix; task aliases `body-mesh`, `hmr`, and `human-mesh-recovery`
+resolve to `mesh` at the API boundary. Note that `smpl` is deliberately *not*
+an alias: the shipped body model is MHR, and accepting the name would imply an
+interoperability that is not provided. See ADR 0013 for the full contract.
+
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family
 only when it appears in that family's `SUPPORTED_TASKS`.
@@ -322,6 +352,7 @@ Detector-factory family support follows:
 | `zipdepth`  | `("depth",)`                        | depth  | ZipDepth lightweight CNN (RepVGG encoder + FPN decoder, DA2-L distilled); sizes `b`/`bnpu` at short-side 384; predict + zero-shot `val` + fixed-resolution ONNX/TorchScript export; MIT code and weights; not trainable in LibreYOLO |
 | `nafnet`    | `("restore",)`                      | restore | NAFNet RGB restoration; sizes `s`/`l`; native predict runs at original resolution with reflect padding; paired PSNR/SSIM train+val; fixed-resolution ONNX v1. Published denoise weights: `LibreNAFNetl-restore-sidd.pt` (SIDD width-64, bit-exact conversion, upstream PSNR 40.3045 dB) |
 | `birefnet`  | `("matte",)`                        | matte  | BiRefNet background removal; sizes `t` (lite)/`l` (general), both fixed 1024; predict + `cutout` + transparent-PNG save + zero-shot `val` (MAE/S-measure); inference-only in v1; fixed-resolution ONNX (opset 19 DeformConv) |
+| `feynobg`   | `("matte",)`                        | matte  | FeyNobg background removal (BiRefNet architecture, deeper stage 3); size `l`, fixed 1024; same matte surface as birefnet; inference-only; fp8/nvfp4 pre-quantized checkpoints published on HF |
 | `ppocr`     | `("ocr",)`                          | ocr    | PP-OCRv5 two-stage text detection + recognition (zh/zh-TW/en/ja/pinyin, one dictionary); sizes `t` (mobile)/`l` (server); one composite checkpoint bundles det.* and rec.* plus the charset; predict + `val` (hmean / e2e F1 / 1-NED); inference-only; export unsupported (two-network pipeline) |
 | `realesrgan` | `("restore",)`                     | restore | Real-ESRGAN super-resolution; sizes `x4`/`x2`/`x4t`; native predict at original resolution, `Results.restored` is `restore_scale` x the input; optional seam-free tiling (`predict(..., tile=512)`); inference + PSNR/SSIM `val` only (no training); dynamic-H/W ONNX |
 | `swinir`    | `("restore",)`                     | restore | SwinIR transformer super-resolution; sizes `s`/`m`/`l`, all 4x; native predict at original resolution with window padding; optional tiled inference; inference + PSNR/SSIM `val` only (no training); fixed-resolution ONNX |
@@ -447,6 +478,11 @@ LibreSwinIRl-restore.pt
 # birefnet — BiRefNet background removal (matte-only)
 LibreBiRefNett-matte.pt          # BiRefNet_lite (Swin-T tier)
 LibreBiRefNetl-matte.pt          # BiRefNet general (Swin-L tier), MIT weights
+
+# feynobg — FeyNobg background removal (matte-only)
+LibreFeyNobgl-matte.pt           # FeyNobg (Swin-L tier, 24 stage-3 blocks), Apache-2.0 weights
+LibreFeyNobgl-matte-fp16.pt      # half-precision cast (HF only, pass path as weights; GPU-oriented)
+LibreFeyNobgl-matte-fp8.pt       # pre-quantized fp8 variant (HF only, pass path as weights; native fp8 tensor-core execution on Ada/Hopper/Blackwell)
 
 # ppocr — PP-OCRv5 text detection + recognition (ocr-only)
 LibrePPOCRt-ocr.pt               # mobile det + mobile rec (CPU tier), Apache-2.0 weights

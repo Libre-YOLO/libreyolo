@@ -133,9 +133,10 @@ selects the task. These families are extras on top of the core library.
 - **Point detection:** FOMO, LocateAnything
 - **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
 - **Image restoration & super-resolution:** NAFNet, Real-ESRGAN, SwinIR
-- **Background removal (matting):** BiRefNet
+- **Background removal (matting):** BiRefNet, FeyNobg
 - **OCR:** PP-OCR
 - **Gaze estimation:** L2CS
+- **Facial recognition (face embedding):** LibreFaceRec (verification + gallery identification)
 - **Open-vocabulary & VLM detection:** Grounding DINO, OWLv2, OmDet-Turbo, OV-DEIM, Florence-2, Kosmos-2, Qwen3-VL, InternVL3, LFM2-VL, SmolVLM2, LocateAnything
 
 </details>

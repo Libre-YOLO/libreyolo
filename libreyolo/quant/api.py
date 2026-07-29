@@ -53,7 +53,7 @@ LINEAR_RECIPES = ("w4a16", "w4a8", "nvfp4", "mxfp4", "int2")
 # Recipes whose activations need calibration statistics.
 CALIBRATED_RECIPES = ("int8", "fp8", "w4a8", "int2")
 RESEARCH_RECIPES = ("int2",)
-SUPPORTED_FAMILIES = ("yolo9", "rfdetr")
+SUPPORTED_FAMILIES = ("yolo9", "rfdetr", "birefnet", "feynobg")
 CALIB_ALGORITHMS = ("auto", "percentile", "minmax")
 
 GROUP_SIZE = 128  # grouped-int recipes: scale group along in_features
@@ -76,8 +76,40 @@ _FAMILY_KEEP_HIGH_PRECISION: Dict[str, Tuple[str, ...]] = {
         "embeddings",
         "ref_point",
     ),
+    # birefnet/feynobg (shared architecture): patch embed is the first layer;
+    # conv_out1 is the final matte logit conv; gdt_convs_attn are the tiny
+    # bilateral-reference gates whose sigmoids multiply whole feature maps
+    # (quantization error there is amplified multiplicatively); gdt_convs_pred
+    # and conv_ms_spvn are training-only supervision heads that never run at
+    # inference, so quantizing them would only leave permanently uncalibrated
+    # activation observers in the manifest.
+    "birefnet": (
+        "bb.patch_embed.",
+        "conv_out1",
+        "gdt_convs_attn",
+        "gdt_convs_pred",
+        "conv_ms_spvn",
+        "regular_conv",
+    ),
+    "feynobg": (
+        "bb.patch_embed.",
+        "conv_out1",
+        "gdt_convs_attn",
+        "gdt_convs_pred",
+        "conv_ms_spvn",
+        "regular_conv",
+    ),
 }
 _ALWAYS_KEEP = ("dfl",)
+
+# Tensorwise weight scaling lets cuBLASLt fuse the complete FP8 Linear
+# epilogue. Broad use is not accuracy-neutral on vision transformers, but the
+# first Swin stage is both faster and more faithful in the FeyNobg divergence
+# sweep. Exact selected names are persisted in each checkpoint. Other families
+# stay per-channel until they have their own validation evidence.
+_FAMILY_FP8_TENSORWISE_PREFIXES: Dict[str, Tuple[str, ...]] = {
+    "feynobg": ("bb.layers.0.",),
+}
 
 
 class QuantizationError(ValueError):
@@ -97,6 +129,12 @@ def _check_support(family: str, recipe: str):
         raise QuantizationError(
             f"Quantization is not supported for model family '{family}' yet. "
             f"Supported families: {', '.join(SUPPORTED_FAMILIES)}"
+        )
+    if family in ("birefnet", "feynobg") and recipe in RESEARCH_RECIPES:
+        raise QuantizationError(
+            f"'{recipe}' requires QAT/QAD healing, and the {family} family is "
+            "inference-only (no trainer), so PTQ-only int2 would be unusable. "
+            f"Use 'nvfp4'/'mxfp4'/'w4a16' for sub-8-bit {family}."
         )
     if family == "yolo9" and recipe in LINEAR_RECIPES:
         raise QuantizationError(
@@ -213,6 +251,36 @@ def _reference_tensor(module: nn.Module) -> torch.Tensor:
     )
 
 
+def _set_fp8_tensorwise_modules(root: nn.Module, names) -> Tuple[str, ...]:
+    """Mark exact QuantLinear names for tensorwise FP8 weight scaling."""
+    requested = tuple(str(name) for name in names)
+    modules = dict(root.named_modules())
+    missing = []
+    for name in requested:
+        module = modules.get(name)
+        if not isinstance(module, QuantLinear):
+            missing.append(name)
+            continue
+        module._q_fp8_weight_scaling = "tensorwise"
+    if missing:
+        raise QuantizationError(
+            "FP8 tensorwise manifest names do not resolve to QuantLinear "
+            f"modules: {missing[:8]}"
+        )
+    return requested
+
+
+def _default_fp8_tensorwise_modules(family: str, root: nn.Module) -> Tuple[str, ...]:
+    prefixes = _FAMILY_FP8_TENSORWISE_PREFIXES.get(family, ())
+    if not prefixes:
+        return ()
+    return tuple(
+        name
+        for name, module in root.named_modules()
+        if isinstance(module, QuantLinear) and name.startswith(prefixes)
+    )
+
+
 def _cast_finalized_remainder(root: nn.Module, dtype: torch.dtype):
     """Cast deployment parameters without changing quantized buffer formats."""
     exact_buffers = {
@@ -246,8 +314,10 @@ def _cast_tree(obj, dtype):
     return obj
 
 
-def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
-    """Cast the model to a half-width dtype, keeping float32 I/O at the root."""
+def _install_io_hooks(root: nn.Module, dtype: torch.dtype):
+    """Root-level float32 I/O contract around a half-width interior."""
+    if getattr(root, "_q_fp16_hooks", None):
+        return
 
     def _pre(module, args):
         return tuple(
@@ -258,11 +328,16 @@ def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
     def _post(module, args, output):
         return _cast_tree(output, torch.float32)
 
-    root.to(dtype)
     root._q_fp16_hooks = [
         root.register_forward_pre_hook(_pre),
         root.register_forward_hook(_post),
     ]
+
+
+def _install_cast_io_hooks(root: nn.Module, dtype: torch.dtype):
+    """Cast the model to a half-width dtype, keeping float32 I/O at the root."""
+    root.to(dtype)
+    _install_io_hooks(root, dtype)
 
 
 def _cast_dtype(recipe: str) -> torch.dtype:
@@ -428,6 +503,11 @@ def quantize_model(
             )
         counts = _swap_selected(wrapper.model, recipe, selected)
         manifest["module_count"] = sum(counts.values())
+        if recipe == "fp8":
+            tensorwise = _default_fp8_tensorwise_modules(family, wrapper.model)
+            if tensorwise:
+                _set_fp8_tensorwise_modules(wrapper.model, tensorwise)
+                manifest["fp8_tensorwise_weights"] = list(tensorwise)
 
         if recipe in CALIBRATED_RECIPES:
             if calib is not None:
@@ -782,6 +862,13 @@ def apply_quant_structure(wrapper, manifest: Dict):
         )
         selected = _select_modules(wrapper.model, recipe, keep)
         counts = _swap_selected(wrapper.model, recipe, selected)
+        tensorwise = manifest.get("fp8_tensorwise_weights", ())
+        if tensorwise:
+            if recipe != "fp8":
+                raise QuantizationError(
+                    "fp8_tensorwise_weights is only valid for recipe='fp8'."
+                )
+            _set_fp8_tensorwise_modules(wrapper.model, tensorwise)
         swapped = sum(counts.values())
         expected = int(manifest.get("module_count") or 0)
         already = sum(1 for _ in _quant_modules(wrapper.model))
@@ -801,6 +888,11 @@ def apply_quant_structure(wrapper, manifest: Dict):
             remainder = manifest.get("remainder", "fp32")
             if remainder == "fp16":
                 _cast_finalized_remainder(wrapper.model, torch.float16)
+                # The fp16 remainder needs the same root-level float32 I/O
+                # contract as the cast recipes: without it, fp32 inputs meet
+                # fp16 modules (torchvision deform_conv2d and friends reject
+                # mixed dtypes outright).
+                _install_io_hooks(wrapper.model, torch.float16)
             elif remainder != "fp32":
                 raise QuantizationError(
                     "Finalized checkpoint has unsupported remainder dtype "

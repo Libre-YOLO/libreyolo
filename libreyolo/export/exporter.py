@@ -314,6 +314,17 @@ class BaseExporter(ABC):
         pre_trace_hook = kwargs.pop("_pre_trace_hook", None)
 
         task = getattr(self.model, "task", "detect")
+        if task == "mesh":
+            # Gated off for the first version, as semantic and point were: the
+            # runtime metadata contract for a mesh graph (which body model,
+            # how many betas, whether the body-model decoder is inside the
+            # graph or applied afterwards) has to be defined before artifacts
+            # exist that backends would have to keep reading.
+            raise NotImplementedError(
+                "Body-mesh export is not implemented yet. The exported-graph "
+                "metadata contract for the mesh task is still to be defined; "
+                "run mesh models through the PyTorch path for now."
+            )
         if task == "depth":
             # Depth export uses the fixed-resolution dense contract: backends
             # stretch-resize to the exported canvas and resize the depth map

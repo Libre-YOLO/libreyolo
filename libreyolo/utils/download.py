@@ -298,9 +298,18 @@ def download_weights(model_path: str, size: str):
     if notice:
         logger.warning(notice)
 
+    download_url_to_path(url, path, verify=cls.verify_downloaded_file)
+
+
+def download_url_to_path(url: str, path: Path, *, verify=None) -> None:
+    """Download ``url`` to ``path`` with locking, resume, retries and verify.
+
+    ``verify`` is an optional ``(local_path, source_url) -> None`` hook run on
+    the temporary file before it is atomically published at ``path``.
+    """
     logger.info(
         "Model weights not found at %s. Attempting download from %s...",
-        model_path,
+        path,
         url,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -355,11 +364,12 @@ def download_weights(model_path: str, size: str):
                 time.sleep(_DOWNLOAD_BACKOFF_SECONDS * (2**attempt))
 
         # Verify the temporary file before publishing it at the final path.
-        try:
-            cls.verify_downloaded_file(str(partial), url)
-        except Exception:
-            _reset_partial(partial)
-            raise
+        if verify is not None:
+            try:
+                verify(str(partial), url)
+            except Exception:
+                _reset_partial(partial)
+                raise
         os.replace(partial, path)
         _partial_metadata_path(partial).unlink(missing_ok=True)
         logger.info("Download complete.")

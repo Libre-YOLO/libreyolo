@@ -869,6 +869,220 @@ def draw_gaze_arrows(
     return img_draw
 
 
+# MHR-70 keypoint skeleton. Indices 0-16 follow the COCO body ordering
+# exactly, 17-22 are the feet, 23-62 are the two hands and 63-69 are extra
+# anatomical landmarks; only the body, feet and neck links are drawn, because
+# finger edges collapse into noise at whole-image scale.
+MHR70_SKELETON_EDGES: Tuple[Tuple[int, int], ...] = COCO_KEYPOINT_EDGES + (
+    (15, 17), (15, 18), (15, 19),  # left ankle to big toe, small toe, heel
+    (16, 20), (16, 21), (16, 22),  # right ankle to big toe, small toe, heel
+    (63, 5), (63, 6),              # neck to shoulders
+)
+MESH_VERTEX_COLOR: Tuple[int, int, int] = (120, 200, 255)
+# Neutral clay, the convention for body-mesh overlays: light enough to read
+# against dark clothing, desaturated enough not to compete with the photo.
+MESH_SURFACE_COLOR: Tuple[int, int, int] = (200, 202, 210)
+# Light direction in camera space, pointing from the scene toward the viewer
+# and slightly up-left, which is what makes limbs read as rounded.
+_MESH_LIGHT_DIR = np.array([-0.35, -0.55, -0.75], dtype=np.float32)
+
+
+def render_mesh_surface(
+    img: Image.Image,
+    vertices2d: np.ndarray,
+    vertices3d: np.ndarray,
+    faces: np.ndarray,
+    color: Tuple[int, int, int] = MESH_SURFACE_COLOR,
+    alpha: float = 0.9,
+    ambient: float = 0.22,
+    specular: float = 0.30,
+    shininess: float = 16.0,
+    shading: str = "diffuse",
+) -> Image.Image:
+    """Rasterize shaded body-mesh surfaces over an image.
+
+    A small painter's-algorithm renderer: back-facing triangles are culled,
+    the rest are sorted far-to-near and filled. This keeps a real surface
+    render available without a GPU rasterizer dependency such as pyrender or
+    PyTorch3D, neither of which installs cleanly everywhere LibreYOLO runs.
+
+    Shading normals are computed from the **metric camera-space** vertices,
+    not from screen coordinates. Mixing pixel units with metric depth makes
+    every normal point at the camera, which flattens the render into what
+    looks like a silhouette.
+
+    Args:
+        img: PIL image to draw on.
+        vertices2d: ``(N, V, 2)`` projected vertices in pixels.
+        vertices3d: ``(N, V, 3)`` camera-space metric vertices. Drives both
+            the shading normals and the far-to-near draw order.
+        faces: ``(F, 3)`` vertex indices, shared by every person.
+        color: Base RGB of the surface, used by ``shading="diffuse"``.
+        alpha: Blend weight of the rendered surface over the photo.
+        ambient: Fraction of base color present in unlit areas.
+        specular: Strength of the highlight that conveys curvature.
+        shininess: Highlight tightness; larger is glossier.
+        shading: ``"diffuse"`` for lit clay, or ``"normal"`` to colour each
+            face by its normal direction, the convention papers use when the
+            point is to show surface orientation rather than realism.
+    """
+    verts2d = np.asarray(vertices2d, dtype=np.float32)
+    verts3d = np.asarray(vertices3d, dtype=np.float32)
+    faces = np.asarray(faces, dtype=np.int64)
+    if verts2d.ndim == 2:
+        verts2d = verts2d[None, ...]
+    if verts3d.ndim == 2:
+        verts3d = verts3d[None, ...]
+    if verts2d.size == 0 or faces.size == 0:
+        return img.convert("RGB")
+
+    overlay = img.convert("RGB")
+    draw = ImageDraw.Draw(overlay)
+    base = np.asarray(color, dtype=np.float32)
+    light = _MESH_LIGHT_DIR / np.linalg.norm(_MESH_LIGHT_DIR)
+
+    for person_xy, person_xyz in zip(verts2d, verts3d):
+        tri2d = np.stack([person_xy[faces[:, i]] for i in range(3)], axis=1)
+        tri3d = np.stack([person_xyz[faces[:, i]] for i in range(3)], axis=1)
+
+        # True geometric normals, in metres, from the camera-space mesh.
+        normals = np.cross(tri3d[:, 1] - tri3d[:, 0], tri3d[:, 2] - tri3d[:, 0])
+        norm_len = np.linalg.norm(normals, axis=1)
+        valid = norm_len > 1e-12
+        normals[valid] /= norm_len[valid, None]
+
+        centroid = tri3d.mean(axis=1)
+        view_len = np.linalg.norm(centroid, axis=1)
+        view = centroid / np.maximum(view_len, 1e-9)[:, None]
+
+        # A face is visible when its normal opposes the viewing direction.
+        # Orient normals toward the camera so shading never depends on the
+        # mesh's winding convention.
+        facing = np.einsum("ij,ij->i", normals, view)
+        normals[facing > 0] *= -1
+        front = valid & (np.abs(facing) > 1e-6)
+        if not front.any():
+            continue
+        # Screen-space winding is the reliable visibility test for a closed
+        # body: keep the consistently-wound half.
+        edge1 = tri2d[:, 1] - tri2d[:, 0]
+        edge2 = tri2d[:, 2] - tri2d[:, 0]
+        signed_area = edge1[:, 0] * edge2[:, 1] - edge1[:, 1] * edge2[:, 0]
+        for sign in (-1.0, 1.0):
+            candidate = front & (signed_area * sign > 0)
+            if candidate.sum() > front.sum() * 0.25:
+                front = candidate
+                break
+
+        n = normals[front]
+        v = view[front]
+        if shading == "normal":
+            colors = np.clip((n * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8)
+        else:
+            diffuse = np.clip(n @ light, 0.0, 1.0)
+            # Blinn-Phong highlight: the half-vector between light and viewer.
+            half = light - v
+            half /= np.maximum(np.linalg.norm(half, axis=1), 1e-9)[:, None]
+            spec = np.power(
+                np.clip(np.einsum("ij,ij->i", n, half), 0.0, 1.0), shininess
+            )
+            shade = ambient + (1.0 - ambient) * diffuse
+            lit = base[None, :] * shade[:, None] + 255.0 * specular * spec[:, None]
+            colors = np.clip(lit, 0, 255).astype(np.uint8)
+
+        tri_front = tri2d[front]
+        depth_front = tri3d[front, :, 2].mean(axis=1)
+        # Painter's algorithm: farthest first, so nearer surfaces overwrite.
+        for idx in np.argsort(-depth_front):
+            a, b, c = tri_front[idx]
+            draw.polygon(
+                [(a[0], a[1]), (b[0], b[1]), (c[0], c[1])],
+                fill=tuple(int(value) for value in colors[idx]),
+            )
+
+    if alpha >= 1.0:
+        return overlay
+    return Image.blend(img.convert("RGB"), overlay, alpha)
+
+
+def draw_mesh(
+    img: Image.Image,
+    joints2d: np.ndarray | None = None,
+    vertices2d: np.ndarray | None = None,
+    faces: np.ndarray | None = None,
+    vertices3d: np.ndarray | None = None,
+    edges: Tuple[Tuple[int, int], ...] = MHR70_SKELETON_EDGES,
+    vertex_color: Tuple[int, int, int] = MESH_VERTEX_COLOR,
+    surface_color: Tuple[int, int, int] = MESH_SURFACE_COLOR,
+    max_vertices: int = 1200,
+    surface_alpha: float = 0.9,
+    shading: str = "diffuse",
+    draw_skeleton: bool = False,
+) -> Image.Image:
+    """Overlay body meshes on an image.
+
+    Renders a shaded surface when the topology and depths are available, which
+    is what a body mesh is meant to look like. Falls back to a decimated vertex
+    scatter when only projected points are on hand, so a parameters-only result
+    still shows something.
+
+    Args:
+        img: PIL image to draw on.
+        joints2d: ``(N, K, 2)`` projected keypoints in pixels, or None.
+        vertices2d: ``(N, V, 2)`` projected mesh vertices in pixels, or None.
+        faces: ``(F, 3)`` shared mesh topology; enables surface rendering.
+        vertices3d: ``(N, V, 3)`` camera-space metric vertices; enables
+            surface rendering, shading normals and correct draw order.
+        edges: Pairs of keypoint indices to connect.
+        vertex_color: RGB color for the fallback vertex scatter.
+        surface_color: Base RGB of the rendered surface.
+        max_vertices: Per-person cap on scattered vertices in fallback mode.
+        surface_alpha: Blend weight of the rendered surface.
+        shading: ``"diffuse"`` or ``"normal"``; see ``render_mesh_surface``.
+        draw_skeleton: Also draw the joint skeleton. Off by default: over a
+            solid surface it mostly adds clutter.
+    """
+    img_draw = img.convert("RGB")
+
+    if vertices2d is not None and faces is not None and vertices3d is not None:
+        img_draw = render_mesh_surface(
+            img_draw,
+            vertices2d,
+            vertices3d,
+            faces,
+            color=surface_color,
+            alpha=surface_alpha,
+            shading=shading,
+        )
+    elif vertices2d is not None:
+        verts = np.asarray(vertices2d, dtype=np.float32)
+        if verts.ndim == 2:
+            verts = verts[None, ...]
+        if verts.size:
+            overlay = img_draw.copy()
+            draw = ImageDraw.Draw(overlay)
+            img_diag = (img.width ** 2 + img.height ** 2) ** 0.5
+            radius = max(1, int(round(img_diag / 900)))
+            for person in verts:
+                if len(person) > max_vertices:
+                    step = int(np.ceil(len(person) / max_vertices))
+                    person = person[::step]
+                for x, y in person:
+                    cx, cy = float(x), float(y)
+                    draw.ellipse(
+                        [cx - radius, cy - radius, cx + radius, cy + radius],
+                        fill=vertex_color,
+                    )
+            img_draw = Image.blend(img_draw, overlay, 0.55)
+
+    if draw_skeleton and joints2d is not None:
+        joints = np.asarray(joints2d, dtype=np.float32)
+        if joints.size:
+            img_draw = draw_keypoints(img_draw, joints, edges=edges)
+
+    return img_draw
+
+
 def draw_tile_grid(
     img: Image.Image,
     tile_coords: List[Tuple[int, int, int, int]],

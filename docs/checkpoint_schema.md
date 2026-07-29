@@ -65,6 +65,25 @@ Pose checkpoints additionally include:
   `0` for classes without keypoints. Runtime backends use this schema to select
   the active keypoints for the predicted class.
 
+Mesh checkpoints use the task string `mesh`, `nc: 1`, and
+`names: {0: "person"}`. Because parameter layouts differ between body models,
+the dimensions are recorded rather than assumed, the same way pose records
+`num_keypoints`:
+
+- `body_model`: the parameterization the checkpoint predicts into, such as
+  `mhr`. Required; consumers use it to interpret every field below and to pick
+  a body-model decoder.
+- `num_betas`: identity/shape coefficient count (45 for MHR).
+- `num_body_pose`: width of the body-pose parameter block (130 for MHR). This
+  is a flat parameter vector, not one triplet per joint, because rig joints
+  carry different degrees of freedom.
+- `num_vertices` / `num_joints`: geometry sizes the body-model decoder emits
+  (18439 and 127 for MHR), recorded so a payload can be validated before the
+  decoder is loaded.
+- `rotation_format`: how rotations are encoded, such as `euler_zyx` for MHR or
+  `axis_angle`. Never inferred from the tensor shape, since a 3-vector is
+  ambiguous between the two.
+
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
@@ -186,8 +205,11 @@ want graph-embedded NMS should use the first output.
 
 Quantized models add one optional flat key, `quant`: a small manifest dict
 (`schema`, `recipe`, `keep_high_precision`, `execution`, calibration
-provenance, `module_count`, `state`). Loaders that see `quant` rebuild the
-quantized module structure before `load_state_dict`. See `quantization.md`.
+provenance, `module_count`, `state`). FP8 manifests may additionally carry
+`fp8_tensorwise_weights`, an exact list of `QuantLinear` module names whose
+weight scale is tensorwise rather than per-output-channel. Loaders that see
+`quant` rebuild the quantized module structure and scaling policy before
+`load_state_dict`. See `quantization.md`.
 
 `state` distinguishes the two artifact forms:
 
@@ -201,7 +223,9 @@ quantized module structure before `load_state_dict`. See `quantization.md`.
     (fp32 per-channel). Dequant: `weight_packed * scale`. Activation range
     buffers (`_q_act_lo`/`_q_act_hi`/`_q_calibrated`) are retained.
   - fp8: `weight_packed` (float8_e4m3fn, original weight shape) and
-    `_q_w_scale` (fp32 per-channel). Dequant: `weight_packed * scale`.
+    `_q_w_scale` (fp32, one entry per output channel). Modules listed in
+    `fp8_tensorwise_weights` repeat one tensorwise scale in every entry so the
+    state-dict tensor shape remains stable. Dequant: `weight_packed * scale`.
   - w4a16 / w4a8: `weight_packed` (uint8, two 4-bit codes per byte, low
     nibble first; code = q + 8) and `_q_w_gscale` (fp32, [out, ngroups],
     group 128 along in_features). int2: four 2-bit codes per byte

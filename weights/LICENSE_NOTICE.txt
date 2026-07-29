@@ -137,6 +137,16 @@ project the weights were derived from. Per-family summary:
                maintainer can host them once the tag is confirmed. Users may
                still convert BiRefNet_lite locally at their own discretion.
 
+    FeyNobg (LibreFeyNobgl-matte)                      Apache-2.0
+             upstream: feyninc/FeyNobg on Hugging Face (nobg library on
+             GitHub), code and weights explicitly Apache-2.0 (YAML license
+             tag) -> rehosted under the LibreYOLO org
+             (LibreYOLO/LibreFeyNobgl-matte), including
+             post-training-quantized fp8/nvfp4 variants
+             (LibreFeyNobgl-matte-{fp8,nvfp4}). Upstream training data is
+             not disclosed; only the released weights are redistributed.
+             Convert with weights/convert_feynobg_weights.py.
+
     SegFormer (LibreSegformer{b0,b1,b2,b3,b4,b5}-sem)  NON-COMMERCIAL weights
              upstream code: huggingface/transformers modeling_segformer.py
              (Apache-2.0); weights: NVIDIA's ADE20K checkpoints

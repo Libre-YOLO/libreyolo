@@ -238,13 +238,16 @@ def test_resolve_matte_pairs_on_matte8_fixture():
 # --------------------------------------------------------------------------
 
 
-def _synthetic_birefnet_sd(embed_dim: int) -> dict:
-    return {
+def _synthetic_birefnet_sd(embed_dim: int, stage3_depth: int = 18) -> dict:
+    sd = {
         "bb.patch_embed.proj.weight": torch.zeros(embed_dim, 3, 4, 4),
         "squeeze_module.0.conv_in.weight": torch.zeros(1),
         "decoder.ipt_blk5.conv1.weight": torch.zeros(1),
         "decoder.gdt_convs_attn_4.0.weight": torch.zeros(1),
     }
+    if stage3_depth >= 24:
+        sd["bb.layers.2.blocks.23.norm1.weight"] = torch.zeros(1)
+    return sd
 
 
 def test_birefnet_can_load_and_size_detection():
@@ -254,6 +257,24 @@ def test_birefnet_can_load_and_size_detection():
     assert LibreBiRefNet.detect_size(_synthetic_birefnet_sd(96)) == "t"
     assert LibreBiRefNet.detect_size(_synthetic_birefnet_sd(192)) == "l"
     assert LibreBiRefNet.detect_checkpoint_task(_synthetic_birefnet_sd(192)) == "matte"
+
+
+def test_birefnet_and_feynobg_claims_are_disjoint():
+    from libreyolo.models.birefnet import LibreBiRefNet
+    from libreyolo.models.feynobg import LibreFeyNobg
+
+    # FeyNobg shares the Swin-L width; the 24-block stage-3 marker key routes
+    # the checkpoint to the feynobg family and away from birefnet.
+    feynobg_sd = _synthetic_birefnet_sd(192, stage3_depth=24)
+    assert LibreBiRefNet.can_load(feynobg_sd) is False
+    assert LibreBiRefNet.detect_size(feynobg_sd) is None
+    assert LibreFeyNobg.can_load(feynobg_sd) is True
+    assert LibreFeyNobg.detect_size(feynobg_sd) == "l"
+    assert LibreFeyNobg.detect_checkpoint_task(feynobg_sd) == "matte"
+
+    # birefnet's own checkpoints are never claimed by feynobg.
+    assert LibreFeyNobg.can_load(_synthetic_birefnet_sd(192)) is False
+    assert LibreFeyNobg.can_load(_synthetic_birefnet_sd(96)) is False
 
 
 def test_birefnet_rejects_foreign_state_dicts():
@@ -277,6 +298,12 @@ def test_birefnet_filename_detection():
 
     assert LibreBiRefNet.detect_size_from_filename("LibreBiRefNetl-matte.pt") == "l"
     assert LibreBiRefNet.detect_size_from_filename("LibreBiRefNett-matte.pt") == "t"
+
+
+def test_feynobg_filename_detection():
+    from libreyolo.models.feynobg import LibreFeyNobg
+
+    assert LibreFeyNobg.detect_size_from_filename("LibreFeyNobgl-matte.pt") == "l"
 
 
 def test_birefnet_train_raises():

@@ -178,7 +178,10 @@ as the source of truth. By tier:
   `LibreYOLO("LibreNAFNetl-restore-sidd.pt")`), RealESRGAN (restore:
   super-resolution, `x4`/`x2`/`x4t`; `r.restored` is `r.restore_scale` x the
   input; big images via `predict(..., tile=512)`), BiRefNet (matte: background
-  removal, sizes t/l, fixed 1024), PPOCR (ocr: text detection + recognition,
+  removal, sizes t/l, fixed 1024), FeyNobg (matte: background removal, size
+  l, fixed 1024, the quality flagship; also ships fp8/nvfp4 quantized
+  checkpoints on HF, pass the downloaded .pt as the weights argument),
+  PPOCR (ocr: text detection + recognition,
   sizes t/l), EoMT + PIDNet + DINOv2 (semantic).
 - **Classifiers** (ImageNet-1k, native timm ports — predict logits are
   bit-identical to timm): MobileNetV4 (s/m/l), ConvNeXt (t/s/b),
