@@ -76,3 +76,76 @@ def test_matte_matches_official_reference():
         ref = np.asarray(Image.open(FIXT / "mattes" / f"{name}.png").convert("L"), np.float32) / 255.0
         pred = model.predict(str(img), verbose=False)[0].matte.array
         assert matte_mae(pred, ref) <= 0.02
+
+
+_LOCAL_FEYNOBG = REPO / "weights" / "LibreFeyNobgl-matte.pt"
+_LOCAL_FEYNOBG_FP16 = REPO / "weights" / "LibreFeyNobgl-matte-fp16.pt"
+_LOCAL_FEYNOBG_FP8 = REPO / "weights" / "LibreFeyNobgl-matte-fp8.pt"
+_LOCAL_FEYNOBG_NVFP4 = REPO / "weights" / "LibreFeyNobgl-matte-nvfp4.pt"
+
+
+def test_matte_feynobg_autodownload_or_local(tmp_path):
+    """LibreFeyNobg loads (HF auto-download, or local staging) and predicts."""
+    name = str(_LOCAL_FEYNOBG) if _LOCAL_FEYNOBG.exists() else "LibreFeyNobgl-matte.pt"
+    model = _load(name)
+    assert model.FAMILY == "feynobg" and model.size == "l" and model.task == "matte"
+
+    res = model.predict(str(_SAMPLE), verbose=False)[0]
+    w, h = Image.open(_SAMPLE).size
+    assert res.matte is not None and res.matte.array.shape == (h, w)
+
+
+@pytest.mark.parametrize(
+    "path, recipe",
+    [
+        (_LOCAL_FEYNOBG_FP16, "fp16"),
+        (_LOCAL_FEYNOBG_FP8, "fp8"),
+        (_LOCAL_FEYNOBG_NVFP4, "nvfp4"),
+    ],
+    ids=["fp16", "fp8", "nvfp4"],
+)
+def test_matte_feynobg_quantized_checkpoint_loads_and_predicts(path, recipe):
+    """Quantized LibreFeyNobg checkpoints load via plain weights= and predict.
+
+    The quantized variants never auto-download; users fetch them from HF and
+    pass the .pt path directly, so that exact flow is what we exercise.
+    fp16 is a cast recipe (no packed finalized state) and is GPU-oriented, so
+    its predict leg runs only when CUDA is available.
+    """
+    if not path.exists():
+        pytest.skip(f"{path.name} not staged locally")
+    import torch
+
+    if recipe == "fp16" and not torch.cuda.is_available():
+        pytest.skip("fp16 cast checkpoint is impractically slow on CPU")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = _load(str(path), device=device)
+    assert model.FAMILY == "feynobg" and model.size == "l" and model.task == "matte"
+    info = model.quant_info()
+    assert info is not None and info["recipe"] == recipe
+    if recipe != "fp16":
+        assert info.get("state") == "finalized"
+
+    res = model.predict(str(_SAMPLE), verbose=False)[0]
+    w, h = Image.open(_SAMPLE).size
+    assert res.matte is not None and res.matte.array.shape == (h, w)
+
+
+def test_matte_feynobg_cuda_graph_parity():
+    """Graphed predict (encoder capture, eager deformable decoder) is
+    bit-identical to eager for every staged precision variant."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required for graph capture")
+    staged = [p for p in (_LOCAL_FEYNOBG, _LOCAL_FEYNOBG_FP16, _LOCAL_FEYNOBG_FP8) if p.exists()]
+    if not staged:
+        pytest.skip("no feynobg weights staged locally")
+    for path in staged:
+        model = _load(str(path), device="cuda")
+        eager = model.predict(str(_SAMPLE), verbose=False)[0].matte.array
+        model.predict(str(_SAMPLE), verbose=False, cuda_graph=True)
+        graphed = model.predict(str(_SAMPLE), verbose=False, cuda_graph=True)[0].matte.array
+        assert float(np.abs(graphed - eager).max()) == 0.0, path.name
+        del model
+        torch.cuda.empty_cache()

@@ -27,6 +27,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
+| feynobg | matte | exp | ✓ | exp | exp |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
@@ -111,6 +112,7 @@ A check mark applies only under any constraint listed here.
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
+- `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
@@ -246,6 +248,10 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
+- `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `feynobg` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
+- `feynobg` / `matte` / `coreai`: This family and task have not been validated for Core AI export.
 - `florence2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
