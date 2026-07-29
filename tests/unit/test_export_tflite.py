@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
@@ -296,6 +297,46 @@ def test_tflite_exporter_runs_static_onnx_then_helper(monkeypatch, tmp_path):
         "--flatbuffer_direct_allow_custom_ops"
     ]
     assert not Path(captured["tflite"]["onnx_path"]).exists()
+
+
+def test_tflite_backend_restores_yolonas_channel_first_outputs():
+    from libreyolo.backends.tflite import TFLiteBackend
+
+    class _Interpreter:
+        def __init__(self):
+            self.outputs = {
+                1: np.arange(3 * 5, dtype=np.float32).reshape(1, 3, 5),
+                2: np.arange(4 * 5, dtype=np.float32).reshape(1, 4, 5),
+            }
+
+        def set_tensor(self, index, value):
+            self.input = (index, value)
+
+        def invoke(self):
+            return None
+
+        def get_tensor(self, index):
+            return self.outputs[index]
+
+    backend = TFLiteBackend.__new__(TFLiteBackend)
+    backend.interpreter = _Interpreter()
+    backend.input_details = [
+        {"index": 0, "shape": np.array([1, 3, 8, 8]), "dtype": np.float32}
+    ]
+    backend.output_details = [
+        {"index": 1, "dtype": np.float32},
+        {"index": 2, "dtype": np.float32},
+    ]
+    backend.model_family = "yolonas"
+    backend.task = "detect"
+    backend.nb_classes = 3
+
+    scores, boxes = backend._run_inference(
+        np.zeros((1, 3, 8, 8), dtype=np.float32)
+    )
+
+    assert scores.shape == (1, 5, 3)
+    assert boxes.shape == (1, 5, 4)
 
 
 def test_intermediate_onnx_removed_when_tflite_helper_fails(monkeypatch, tmp_path):

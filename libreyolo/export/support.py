@@ -116,6 +116,94 @@ _add(
     ),
 )
 _add(
+    "blocked",
+    ("yolo1",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf leaves an unresolved ONNX_CONCAT custom operation; LiteRT "
+        "cannot allocate the converted detector."
+    ),
+)
+_add(
+    "blocked",
+    ("yolo9_e2e", "yolo9_p2"),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "LiteRT rejects the converted detector's CONV_2D channel layout "
+        "(32 input channels versus a zero filter-channel dimension)."
+    ),
+)
+_add(
+    "blocked",
+    ("rtmdet",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "LiteRT rejects the converted detector's CONV_2D channel layout "
+        "(96 input channels versus a zero filter-channel dimension)."
+    ),
+)
+_add(
+    "blocked",
+    ("picodet",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "The converted graph allocates, but LiteRT returns a null output "
+        "tensor after invoke."
+    ),
+)
+_add(
+    "blocked",
+    ("dfine",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf flatbuffer-direct lowering crashes in GatherElements shape "
+        "handling with an axis IndexError."
+    ),
+)
+_add(
+    "blocked",
+    ("ec",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf flatbuffer-direct lowering overflows an int32 while building "
+        "a Slice operation."
+    ),
+)
+_add(
+    "blocked",
+    ("rtdetr",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "LiteRT rejects a converted MUL with incompatible [1,300,1] and "
+        "[0,0,0] shapes."
+    ),
+)
+_add(
+    "validated",
+    ("yolonas",),
+    ("detect",),
+    ("tflite",),
+    since="1.6",
+    constraint="fixed export canvas",
+)
+_add(
+    "blocked",
+    ("yolonas",),
+    ("pose",),
+    ("tflite",),
+    reason=(
+        "LiteRT rejects the converted pose graph because a CONCATENATION "
+        "input has an unsupported/invalid tensor type."
+    ),
+)
+_add(
     "validated",
     ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
     ("classify",),

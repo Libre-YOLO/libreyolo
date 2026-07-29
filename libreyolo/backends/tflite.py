@@ -171,6 +171,13 @@ class TFLiteBackend(BaseBackend):
                 and output.shape[-1] == self.nb_classes + 4
             ):
                 output = np.transpose(output, (0, 2, 1))
+            if (
+                self.model_family == "yolonas"
+                and self.task in {"detect", "pose"}
+                and output.ndim == 3
+                and output.shape[1] in {4, self.nb_classes}
+            ):
+                output = np.transpose(output, (0, 2, 1))
             outputs.append(np.ascontiguousarray(output))
         return outputs
 

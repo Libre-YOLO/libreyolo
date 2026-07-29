@@ -82,7 +82,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
 | yolo9_e2e | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | yolo9_p2 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
-| yolonas | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
+| yolonas | detect | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | yolonas | pose | ✓ | ✓ | exp | ✓ | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | exp | ✓ | ✓ | ✓ | exp | ✓ |
 | zipdepth | depth | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
@@ -198,6 +198,7 @@ A check mark applies only under any constraint listed here.
 - `yolo9_p2` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo9_p2` / `detect` / `coreai`: fixed 640x640 export canvas; a deterministic YOLO9-P2-T model initialized from the SHA-256-pinned, permissively licensed trained LibreYOLO9t checkpoint is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion, not P2 task accuracy, and does not depend on the restricted VisDrone research-preview checkpoint
 - `yolonas` / `detect` / `openvino`: fixed export canvas
+- `yolonas` / `detect` / `tflite`: fixed export canvas
 - `yolonas` / `detect` / `coreai`: fixed 96x96 export canvas with pre-shaped canonical RGB tensors; a deterministic, license-clean synthetic YOLO-NAS-S state is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the state receives 12 native training steps and a 20x regression-head scale to make both exported outputs non-degenerate; this validates conversion, not detection accuracy, raw-image preprocessing, or native-640 behavior, and does not convert restricted official weights
 - `yolonas` / `pose` / `openvino`: fixed export canvas
 - `yolox` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
@@ -254,7 +255,7 @@ A check mark applies only under any constraint listed here.
 - `dexined` / `edge` / `coreml`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dexined` / `edge` / `coreai`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `dfine` / `detect` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
-- `dfine` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `dfine` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `dfine` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -278,7 +279,7 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
-- `ec` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `ec` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering overflows an int32 while building a Slice operation.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `ec` / `pose` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `pose` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -430,7 +431,7 @@ A check mark applies only under any constraint listed here.
 - `owlv2` / `detect` / `tflite`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreml`: Open-vocabulary runtime export is out of scope for v1.
 - `owlv2` / `detect` / `coreai`: Open-vocabulary runtime export is out of scope for v1.
-- `picodet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `picodet` / `detect` / `tflite`: The converted graph allocates, but LiteRT returns a null output tensor after invoke.
 - `picodet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `picosam3` / `segment` / `torchscript`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
 - `picosam3` / `segment` / `tensorrt`: PicoSAM3 currently exports its raw ROI CNN through ONNX only.
@@ -472,7 +473,7 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `obb` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `obb` / `coreai`: This family and task have not been validated for Core AI export.
 - `rtdetr` / `detect` / `ncnn`: NCNN export is not supported for RT-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
-- `rtdetr` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `rtdetr` / `detect` / `tflite`: LiteRT rejects a converted MUL with incompatible [1,300,1] and [0,0,0] shapes.
 - `rtdetrv2` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv2: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rtdetrv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -480,7 +481,7 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv4` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
-- `rtmdet` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `rtmdet` / `detect` / `tflite`: LiteRT rejects the converted detector's CONV_2D channel layout (96 input channels versus a zero filter-channel dimension).
 - `rtmdet` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtmdet` / `segment` / `onnx`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
 - `rtmdet` / `segment` / `torchscript`: RTMDet-Ins export is not supported yet; the dynamic-kernel mask decode has no exported-runtime contract. Use native PyTorch inference for task='segment'.
@@ -559,7 +560,7 @@ A check mark applies only under any constraint listed here.
 - `teed` / `edge` / `tflite`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `teed` / `edge` / `coreml`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
 - `teed` / `edge` / `coreai`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.
-- `yolo1` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolo1` / `detect` / `tflite`: onnx2tf leaves an unresolved ONNX_CONCAT custom operation; LiteRT cannot allocate the converted detector.
 - `yolo1` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo2` / `detect` / `tflite`: onnx2tf 2.4.x leaves an unresolved ONNX_CONCAT custom operation; LiteRT cannot prepare the converted detector graph.
 - `yolo2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -569,13 +570,12 @@ A check mark applies only under any constraint listed here.
 - `yolo4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo7` / `detect` / `tflite`: The converted LiteRT graph changes decoded box coordinates beyond the detector parity tolerance.
 - `yolo7` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolo9_e2e` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolo9_e2e` / `detect` / `tflite`: LiteRT rejects the converted detector's CONV_2D channel layout (32 input channels versus a zero filter-channel dimension).
 - `yolo9_e2e` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolo9_p2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolo9_p2` / `detect` / `tflite`: LiteRT rejects the converted detector's CONV_2D channel layout (32 input channels versus a zero filter-channel dimension).
 - `yolo9_p2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolonas` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolonas` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolonas` / `pose` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `yolonas` / `pose` / `tflite`: LiteRT rejects the converted pose graph because a CONCATENATION input has an unsupported/invalid tensor type.
 - `yolonas` / `pose` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolonas` / `pose` / `coreai`: This family and task have not been validated for Core AI export.
 - `zipdepth` / `depth` / `tflite`: onnx2tf 2.4.x flatbuffer-direct conversion does not support the edge-mode Pad operation in ZipDepth's convex upsampler.

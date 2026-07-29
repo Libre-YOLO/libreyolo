@@ -116,6 +116,30 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
     assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
 
 
+@pytest.mark.parametrize(
+    ("family", "task", "reason_fragment"),
+    [
+        ("yolo1", "detect", "ONNX_CONCAT"),
+        ("yolo9_e2e", "detect", "zero filter-channel"),
+        ("yolo9_p2", "detect", "zero filter-channel"),
+        ("yolonas", "pose", "CONCATENATION"),
+        ("rtmdet", "detect", "96 input channels"),
+        ("picodet", "detect", "null output"),
+        ("dfine", "detect", "GatherElements"),
+        ("ec", "detect", "Slice"),
+        ("rtdetr", "detect", "[0,0,0]"),
+    ],
+)
+def test_round6_tflite_blocks_are_measured(family, task, reason_fragment):
+    entry = get_support(family, task, "tflite")
+    assert entry.tier == "blocked"
+    assert reason_fragment in entry.reason
+
+
+def test_yolonas_detect_tflite_is_validated():
+    assert get_support("yolonas", "detect", "tflite").tier == "validated"
+
+
 def test_coreai_validated_tier_has_hardware_parity_coverage():
     validated = {
         (family, task)
