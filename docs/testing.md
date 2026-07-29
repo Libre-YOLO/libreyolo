@@ -1,6 +1,6 @@
 # LibreYOLO Testing Strategy
 
-Version: 2.5
+Version: 2.6
 
 This is the CI/test contract for LibreYOLO. Times are UTC.
 
@@ -84,6 +84,67 @@ pytest -q tests/unit/test_edge_models_parity.py
 The pinned commits and source licenses are recorded in the per-family NOTICE
 files. External checkpoints retain their own data/weight terms and must not be
 added to the repository as test fixtures.
+
+### LibreMODUS external-weight gates
+
+LibreMODUS is marked `modus`. Its PR-gate coverage is entirely local:
+
+```bash
+pytest -q tests/unit/test_modus.py
+```
+
+That test builds a two-layer random MoT model and a fake tokenizer. It checks
+the released 196,840-token ordering, learned checkpoint-key surface,
+Accelerate dispatch with checkpoint-absent deterministic buffers, constrained
+COCO/grounding grammars, dense payloads, the supported matrix, chaining,
+self-verification, and local FP8 cache arithmetic. It performs no HTTP request
+and loads no external weight.
+
+The dense-boundary tests also pin the public camera-facing normal convention,
+relative-depth normalization, aligned multi-input canvas requirement, separate
+standard text/image guidance scales (`4.0` / `2.0`), and authenticated-only
+upstream download policy.
+
+The real checkpoint is intentionally excluded from scheduled CI: it is about
+30 GB, is loaded directly from an external custom-term repository, and needs
+hardware larger than the standard nightly L4 for the BF16 reference. Before a
+release claims full LibreMODUS validation, a maintainer runs the following
+manual gates with:
+
+- MODUS source pinned to
+  `c299ef0fbba1cfe7c93336c45d7085afd770c0fa`;
+- checkpoint revision
+  `8428a81602c19141e422b1e1795dddcb5d2bc14b`;
+- the same GPU architecture, image preprocessing, seeds, noise tensors, and
+  ten flow steps for upstream/LibreYOLO parity;
+- externally obtained datasets that are never added to this repository.
+
+Required BF16 results:
+
+| Gate | Required result |
+| --- | --- |
+| Step parity, five images per task | velocity-field and autoregressive-logit maximum absolute difference `< 1e-3` |
+| NYUv2 depth | AbsRel within `0.005` of `0.065` |
+| NYUv2 normals | mean angular error within `0.5°` of `19.92°` |
+| RefCOCO val, fixed 500-example subset | grounding accuracy within `1.0` point of `54.5` |
+| COCO detection | record the exact subset, mAP, and a qualitative grid; upstream publishes no reference number |
+
+After recording this port's BF16 numbers, run the identical samples and seeds
+with `LibreMODUS(dtype="fp8")`:
+
+| FP8 delta versus this port's BF16 result | Acceptance |
+| --- | --- |
+| NYUv2 depth AbsRel | `<= +0.002` |
+| NYUv2 normal mean angle | `<= +0.15°` |
+| RefCOCO grounding | `>= -0.3` point |
+| BIPED edge ODS | `>= -0.005` |
+| 512px end-to-end peak VRAM | `< 12 GB` |
+
+If an FP8 quality gate fails, widen the high-precision decoder-block exemption
+and record the resulting recipe; do not weaken the threshold silently.
+Metric/parity/VRAM gates are **not yet passed** unless a PR or release record
+contains the hardware, software versions, commands, dataset subset manifests,
+and raw results. A CPU unit green run is not evidence for them.
 
 ## Install Smoke
 

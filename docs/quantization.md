@@ -131,6 +131,22 @@ Linux CUDA PyTorch environments commonly already include Triton. On Windows,
 install a PyTorch-compatible `triton-windows` build to enable the fused cast
 and epilogue; inference remains functional without it.
 
+### LibreMODUS local weight-only FP8
+
+LibreMODUS's `dtype="fp8"` path is deliberately separate from the finalized
+checkpoint tier above. Its external checkpoint cannot be redistributed, so it
+is converted locally and cached as sharded safetensors. Eligible linear weights
+in the interior decoder blocks use E4M3 plus one FP16 scale per output row;
+forward dequantizes them to the input dtype before `F.linear`.
+
+This reduces checkpoint/parameter storage but does **not** quantize activations
+or call the native `fp8_gemm` registry. It therefore makes no tensor-core speed
+claim. Embeddings, `lm_head`, norms, timestep/AdaLN modulation, first/last
+decoder blocks, projectors, SigLIP, and the FLUX VAE remain BF16. The cache key
+contains the immutable source revision (or local file SHA-256) and full recipe,
+and the cache is never uploaded. See [`libremodus.md`](libremodus.md) for usage
+and [`testing.md`](testing.md) for its quality/VRAM acceptance gates.
+
 The remaining `quant_info()` fields report module counts, calibration state,
 and execution tier.
 

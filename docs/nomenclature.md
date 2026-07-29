@@ -101,8 +101,8 @@ exceptions being lowercase version suffixes (`DEIMv2`, `RTDETRv2`,
 The VLM and promptable SAM tiers are separate categories and do not follow this
 rule. Their weights-directory prefixes (`LibreQwen3VL`, `LibreLFM2VL`,
 `LibreSmolVLM2`, `LibreInternVL3`, `LibreFlorence2`, `LibreKosmos2`,
-`LocateAnything`, `LibreSAM`, `LibreSAM2`, `LibreSAM3`, `LibreMobileSAM`,
-`LibrePicoSAM3`, `LibreEdgeTAM`) are not registered
+`LocateAnything`, `LibreMODUS`, `LibreSAM`, `LibreSAM2`, `LibreSAM3`,
+`LibreMobileSAM`, `LibrePicoSAM3`, `LibreEdgeTAM`) are not registered
 into the detector factory and do not emit `Libre<FAMILY><size>.pt` detector
 checkpoints. Their `FILENAME_PREFIX` is only a weights-directory prefix for a
 downloaded Hugging Face snapshot or promptable checkpoint, so upstream brand
@@ -170,6 +170,12 @@ ships:
 | `ppocr`     | `t` (PP-OCRv5 mobile det + mobile rec, CPU tier), `l` (PP-OCRv5 server det + server rec, quality tier); detection long side 960 |
 | `clip`      | `b32`, `b16`, `l14` (ViT patch size baked in, all at 224) |
 | `siglip2`   | `b16` (base patch-16 at 256), `so400m` (shape-optimized 400M patch-14 at 384) |
+
+VLM snapshot families use model-specific size names:
+
+| Family | Size codes |
+|---|---|
+| `libremodus` | `14b-a7b` (14B total parameters, approximately 7B active; external MODUS snapshot) |
 
 Promptable SAM tier size aliases:
 
@@ -334,6 +340,13 @@ Dataset and label contracts are documented in
 only when it appears in that family's `SUPPORTED_TASKS`.
 
 ## Per-family task support
+
+The VLM tier is separate from the detector checkpoint factory. LibreMODUS is
+the multi-task analysis family in that tier:
+
+| Family | `SUPPORTED_TASKS` | Default | Notes |
+|---|---|---|---|
+| `libremodus` | `("detect", "depth", "normal", "edge")` | detect | External `14b-a7b` snapshot; standard tasks plus image-conditioned `any2any()`; inference-only; no RGB output |
 
 The promptable SAM tier is separate from the detector checkpoint factory. Its
 families all expose the promptable `segment` task:
@@ -553,6 +566,20 @@ LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter read
 LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
 LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 ```
+
+### VLM analysis (external snapshot tier)
+
+```text
+# libremodus - external Hugging Face snapshot, no .pt checkpoint filename.
+# The canonical factory alias resolves this directory without renaming or
+# mirroring the upstream files.
+libremodus-14b-a7b -> weights/LibreMODUS14b-a7b/
+```
+
+LibreMODUS is resolved by `LibreVLM("libremodus-14b-a7b")`, not by the
+single-file `LibreYOLO(...)` checkpoint factory. A local path may point directly
+at an upstream snapshot directory instead. See
+[`libremodus.md`](libremodus.md).
 
 ### Open-vocabulary detection (inference-only snapshot tier)
 

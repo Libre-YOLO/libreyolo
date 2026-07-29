@@ -281,6 +281,27 @@ distributed as training checkpoints.
 For release compatibility, readers accept legacy best-metric aliases such as
 `best_mAP50_95`, `best_mAP50`, `best_metric`, and `best_metric_name`.
 
+## External Snapshot Exception
+
+The schema above governs LibreYOLO-authored `.pt` checkpoints. It does not
+rename or wrap multi-file upstream snapshots used by separate model tiers.
+
+LibreMODUS size `14b-a7b` is one such explicit exception. The alias
+`libremodus-14b-a7b` resolves through `LibreVLM(...)` to a directory containing
+the pinned upstream safetensors, configs, and tokenizer files. LibreYOLO neither
+adds v1.0 metadata to that directory nor republishes it as a `.pt` file. A local
+FP8 cache is an internal sharded safetensors derivative keyed by source and
+recipe; it is not an official checkpoint and must not be uploaded.
+
+Before dispatch, the LibreMODUS loader validates all required files and checks
+that the rebuilt tokenizer length exactly matches the row count of
+`language_model.model.embed_tokens.weight`. That tensor is authoritative
+because the released `llm_config.json` retains the smaller base-vocabulary
+value.
+
+See [`nomenclature.md`](nomenclature.md) and
+[`libremodus.md`](libremodus.md).
+
 ## Legacy And Foreign Weights
 
 New LibreYOLO writers validate strictly and must emit v1.0 metadata.

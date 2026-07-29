@@ -17,6 +17,8 @@
 # - Module structure and parameter names (mlp.0/mlp.2, fc1/fc2, pos_embed)
 #   are fixed by the released SenseNova-Vision-7B-MoT checkpoint's state
 #   dict and carry no expression beyond that interface.
+# - LearnableEmbedding is independently implemented from MODUS's public
+#   `embedding` tensor name and shape only; see models/modus/NOTICE.
 
 import math
 
@@ -26,7 +28,9 @@ from torch import nn
 from transformers.activations import ACT2FN
 
 
-def sincos_position_embedding_1d(embed_dim: int, positions: torch.Tensor) -> torch.Tensor:
+def sincos_position_embedding_1d(
+    embed_dim: int, positions: torch.Tensor
+) -> torch.Tensor:
     """Sine-cosine table for one axis: [sin(p*w), cos(p*w)] per position.
 
     Frequencies follow the transformer convention 1/10000^(2i/d). Returns a
@@ -73,11 +77,31 @@ class PositionEmbedding(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        table = sincos_position_embedding_2d(self.hidden_size, self.max_num_patch_per_side)
+        table = sincos_position_embedding_2d(
+            self.hidden_size, self.max_num_patch_per_side
+        )
         self.pos_embed.data.copy_(table)
 
     def forward(self, position_ids):
         return self.pos_embed[position_ids]
+
+
+class LearnableEmbedding(nn.Module):
+    """Checkpoint-shaped learnable table indexed by integer position ids.
+
+    The ``embedding`` parameter name and ``(positions, hidden_size)`` layout
+    are part of the public MODUS checkpoint schema.  This tiny wrapper is
+    intentionally implemented from that tensor interface alone; the
+    incompatibly licensed Bagel helper with the same role is not used.
+    """
+
+    def __init__(self, num_embeddings: int, hidden_size: int):
+        super().__init__()
+        self.embedding = nn.Parameter(torch.empty(num_embeddings, hidden_size))
+        nn.init.normal_(self.embedding, std=0.02)
+
+    def forward(self, position_ids: torch.Tensor) -> torch.Tensor:
+        return self.embedding[position_ids]
 
 
 class TimestepEmbedder(nn.Module):
@@ -95,7 +119,9 @@ class TimestepEmbedder(nn.Module):
         self.frequency_embedding_size = frequency_embedding_size
 
     @staticmethod
-    def timestep_embedding(t: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
+    def timestep_embedding(
+        t: torch.Tensor, dim: int, max_period: int = 10000
+    ) -> torch.Tensor:
         """Sinusoidal timestep embedding: [cos(t*f), sin(t*f)] per frequency.
 
         Frequencies decay geometrically from 1 to 1/max_period, following the
@@ -111,7 +137,9 @@ class TimestepEmbedder(nn.Module):
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+            embedding = torch.cat(
+                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
+            )
         return embedding
 
     def forward(self, t):

@@ -49,6 +49,22 @@ not redistributed)
     huggingface.co/LibreYOLO/SenseNovaVision7b; the loader prints the
     non-commercial notice before every automatic download.
 
+MODUS / Bagel (Apache License 2.0 code; external custom-term weights)
+    Path:    libreyolo/models/modus/
+    License: libreyolo/models/modus/NOTICE
+    Source:  https://github.com/EPFL-VILAB/Modus
+    Commit:  c299ef0fbba1cfe7c93336c45d7085afd770c0fa
+
+    LibreMODUS vendors only the analysis-inference portions of the upstream
+    Apache-2.0 implementation and reuses LibreYOLO's audited Apache-2.0 Bagel
+    runtime. The upstream CC BY-NC 4.0 modeling_utils.py file is explicitly
+    excluded. Weights are never redistributed or mirrored: they remain in the
+    user's local cache and are fetched directly from EPFL-VILAB/MODUS at a
+    pinned revision using the user's own authenticated account. The upstream
+    model card declares custom
+    ``bagel-derived`` terms and requests research-only use. See the family
+    NOTICE for the code/weights separation and exact provenance.
+
 MobileNetV4 / timm (Apache License 2.0)
     Path:    libreyolo/models/mobilenetv4/
     License: libreyolo/models/mobilenetv4/NOTICE  (Apache-2.0)
