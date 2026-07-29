@@ -653,7 +653,17 @@ def _marker_preprocess(image, imgsz, color_format):
     )
 
 
-def _marker_parse_outputs(per_image, imgsz, orig_size, conf, ratio=1.0, iou=0.45, max_det=300):
+def _marker_parse_outputs(
+    per_image,
+    imgsz,
+    orig_size,
+    conf,
+    ratio=1.0,
+    iou=0.45,
+    max_det=300,
+    classes=None,
+):
+    del classes
     marker = float(np.asarray(per_image[0]).ravel()[0])
     return (
         np.array([[0.0, 0.0, 1.0, 1.0]], dtype=np.float32),
