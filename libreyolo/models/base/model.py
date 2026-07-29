@@ -121,6 +121,10 @@ class BaseModel(ABC):
     INPUT_SIZES: ClassVar[dict[str, int]] = {}
     SUPPORTED_TASKS: ClassVar[tuple[str, ...]] = ("detect",)
     DEFAULT_TASK: ClassVar[str] = "detect"
+    # Override when multiple runtime tasks intentionally share one checkpoint
+    # artifact. Filename parsing then advertises only the tasks with distinct
+    # published weight files while SUPPORTED_TASKS remains the runtime surface.
+    WEIGHT_TASKS: ClassVar[Optional[tuple[str, ...]]] = None
     # When True, the task suffix is mandatory in weight filenames (e.g. a
     # classify-only family requires ``-cls``); detect families leave it optional.
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = False
@@ -562,7 +566,7 @@ class BaseModel(ABC):
         sizes_pattern = "|".join(re.escape(size) for size in sizes)
         prefix = cls.FILENAME_PREFIX.lower()
         ext = re.escape(cls.WEIGHT_EXT)
-        suffixes = task_suffix_pattern(cls.SUPPORTED_TASKS)
+        suffixes = task_suffix_pattern(cls.WEIGHT_TASKS or cls.SUPPORTED_TASKS)
         if suffixes:
             # Families with no suffixless (detect) task can require the task
             # suffix so that e.g. ``LibreResNet50.pt`` is not accepted as a
@@ -876,6 +880,51 @@ class BaseModel(ABC):
     ) -> Union[Results, List[Results], Generator[Results, None, None]]:
         """Alias for __call__ method."""
         return self(*args, **kwargs)
+
+    def embed(self, source=None, **kwargs) -> torch.Tensor:
+        """Return all embedding rows for ``source`` as ``(N_total, D)``.
+
+        This is a convenience wrapper over :meth:`predict`. Models must be
+        constructed with ``task="embed"`` so their results populate
+        ``Results.embeddings``.
+        """
+        if "embed" not in self._supported_tasks():
+            raise NotImplementedError(
+                f"The '{self.family}' family does not support task='embed'."
+            )
+        from ...utils.results import stack_result_embeddings
+
+        return stack_result_embeddings(self.predict(source, **kwargs))
+
+    def _postprocess_embeddings(
+        self,
+        output: Any,
+        *,
+        gallery=None,
+        threshold: float = 0.4,
+    ) -> Dict[str, Any]:
+        """Normalize whole-image features and build the shared result payload."""
+        features = output[0] if isinstance(output, (list, tuple)) else output
+        features = torch.as_tensor(features).float()
+        if features.ndim == 1:
+            features = features.unsqueeze(0)
+        if features.ndim != 2:
+            raise ValueError(
+                "Embedding models must emit features with shape (N, D); "
+                f"got {tuple(features.shape)}."
+            )
+        norms = torch.linalg.vector_norm(features, dim=-1, keepdim=True)
+        if bool((norms <= 1e-12).any()):
+            raise ValueError("Embedding model emitted an all-zero feature row.")
+        normalized = (features / norms).cpu()
+        payload: Dict[str, Any] = {"embeddings": normalized}
+        if gallery is not None:
+            payload["identities"] = gallery.identify(
+                normalized,
+                threshold=threshold,
+                model=self,
+            )
+        return payload
 
     def _predict_augment(
         self,

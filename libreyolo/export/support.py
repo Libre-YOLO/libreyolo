@@ -149,6 +149,16 @@ _add(
 )
 _add(
     "blocked",
+    ("clip", "siglip2", "dinov2"),
+    ("embed",),
+    EXPORT_FORMATS,
+    reason=(
+        "Embedding export is not implemented in v1; use the native "
+        "predict()/embed() API."
+    ),
+)
+_add(
+    "blocked",
     ("birefnet", "feynobg"),
     ("matte",),
     ("ncnn",),

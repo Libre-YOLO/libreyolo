@@ -1013,15 +1013,12 @@ class Gaze(_TensorPayload):
 
 
 class Embeddings(_TensorPayload):
-    """Per-face L2-normalized identity embeddings for a single image.
+    """L2-normalized vectors produced by the generic ``embed`` task.
 
-    Data shape: ``(N, D)`` where ``D`` is the model's embedding dimension
-    (e.g. 512 for an ArcFace/iResNet head, 128 for a MobileFaceNet-style head).
-    Each row is L2-normalized by the
-    inference runner and aligned row-by-row with the parent ``Results.boxes``
-    (the face boxes), exactly like ``Gaze``. Cosine similarity between two
-    normalized rows is their dot product, so identity verification is a
-    threshold on ``.similarity(...)``.
+    Data always has shape ``(N, D)``. A whole-image result carries one row and
+    no boxes; region embeddings are row-aligned with ``Results.boxes``. Each
+    row is float32 and L2-normalized by its inference path, so cosine
+    similarity is a dot product.
     """
 
     def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
@@ -1071,7 +1068,7 @@ class Embeddings(_TensorPayload):
         return sim[:, 0] if single else sim
 
     def verify(self, i: int, j: int, threshold: float = 0.4) -> bool:
-        """Whether face rows ``i`` and ``j`` are the same identity."""
+        """Whether rows ``i`` and ``j`` meet a cosine-similarity threshold."""
         sim = self.similarity(self.data[j])
         return bool(float(sim[i]) >= threshold)
 
@@ -1083,11 +1080,11 @@ class Embeddings(_TensorPayload):
 
 
 class Identities:
-    """Per-face identification outcome, row-aligned with ``Results.boxes``.
+    """Named gallery matches row-aligned with ``Results.embeddings``.
 
-    Produced by the ``embed`` task when a ``FaceGallery`` is supplied.
-    ``name`` is ``None`` for faces below the match threshold (*unknown*):
-    an unidentified face is never assigned the nearest wrong person.
+    Produced by the ``embed`` task when a ``Gallery`` is supplied. ``name`` is
+    ``None`` below the match threshold (*unknown*); the nearest below-threshold
+    name is never guessed.
     """
 
     def __init__(
@@ -1105,12 +1102,12 @@ class Identities:
 
     @property
     def name(self) -> List[Optional[str]]:
-        """Matched identity per face, ``None`` for unknown."""
+        """Matched name per embedding row, ``None`` for unknown."""
         return list(self._names)
 
     @property
     def score(self) -> np.ndarray:
-        """Best gallery cosine similarity per face."""
+        """Best gallery cosine similarity per embedding row."""
         return self._scores
 
     @property
@@ -1607,6 +1604,26 @@ class Results:
         embeddings: bool = False,
     ) -> List[Dict[str, Any]]:
         if self.boxes is None:
+            if self.embeddings is not None:
+                emb = (
+                    self.embeddings.numpy()
+                    if isinstance(self.embeddings.data, torch.Tensor)
+                    else self.embeddings
+                )
+                rows = []
+                for i in range(len(emb)):
+                    row = {"embedding_dim": int(emb.dim)}
+                    if embeddings:
+                        row["embedding"] = [
+                            round(float(value), decimals) for value in emb.data[i]
+                        ]
+                    if self.identities is not None and i < len(self.identities):
+                        row["identity"] = self.identities.name[i]
+                        row["identity_score"] = round(
+                            float(self.identities.score[i]), decimals
+                        )
+                    rows.append(row)
+                return rows
             if self.ocr is not None:
                 ocr_np = self.ocr.numpy()
                 h, w = self.orig_shape
@@ -1887,3 +1904,53 @@ class Results:
         if self.frame_idx is not None:
             parts.append(f"frame_idx={self.frame_idx}")
         return f"Results({', '.join(parts)})"
+
+
+def stack_result_embeddings(prediction: Any) -> torch.Tensor:
+    """Stack every ``Results.embeddings`` row into one CPU float32 tensor."""
+    payloads: List[torch.Tensor] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Results):
+            if value.embeddings is None:
+                raise RuntimeError(
+                    "Prediction did not produce embeddings. Load the model with "
+                    "task='embed' before calling embed()."
+                )
+            data = value.embeddings.data
+            tensor = (
+                data.detach().to(device="cpu", dtype=torch.float32)
+                if isinstance(data, torch.Tensor)
+                else torch.as_tensor(data, dtype=torch.float32)
+            )
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            if tensor.ndim != 2:
+                raise RuntimeError(
+                    f"Expected (N, D) embeddings, got shape {tuple(tensor.shape)}."
+                )
+            payloads.append(tensor)
+            return
+        if isinstance(value, (str, bytes, np.ndarray)):
+            raise RuntimeError(
+                "Prediction did not return Results objects with embeddings."
+            )
+        try:
+            iterator = iter(value)
+        except TypeError as exc:
+            raise RuntimeError(
+                "Prediction did not return Results objects with embeddings."
+            ) from exc
+        for item in iterator:
+            collect(item)
+
+    collect(prediction)
+    if not payloads:
+        return torch.empty((0, 0), dtype=torch.float32)
+    dimensions = {int(tensor.shape[1]) for tensor in payloads}
+    if len(dimensions) != 1:
+        raise RuntimeError(
+            "Cannot stack embeddings with different dimensions: "
+            f"{sorted(dimensions)}."
+        )
+    return torch.cat(payloads, dim=0)

@@ -60,8 +60,8 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `convnext`  | `LibreConvNeXt`  | CamelCase preserved (upstream brand casing `ConvNeXt`) — classify-only family |
 | `efficientnetv2` | `LibreEfficientNetV2` | CamelCase preserved (EfficientNet is not an acronym) — classify-only accuracy tier |
 | `resnet`    | `LibreResNet`    | CamelCase preserved (`ResNet` brand casing) — classify-only baseline |
-| `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot open-vocab classify) — inference-only |
-| `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot open-vocab classify); inference-only |
+| `clip`      | `LibreCLIP`     | All-caps acronym (`CLIP` zero-shot classify + image/text embed) — inference-only |
+| `siglip2`   | `LibreSigLIP2`  | Upstream brand casing preserved (`SigLIP`) + version (`SigLIP 2` zero-shot classify + image/text embed); inference-only |
 | `nafnet`    | `LibreNAFNet`   | All-caps acronym + CamelCase `Net`; restore-only image-restoration family |
 | `realesrgan` | `LibreRealESRGAN` | Upstream brand casing (`RealESRGAN`); restore-only super-resolution family |
 | `swinir`    | `LibreSwinIR`    | Upstream brand casing (`SwinIR`); restore-only transformer super-resolution family |
@@ -274,16 +274,21 @@ Detection quads are genuine polygons (rotated text) and do not populate
 aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
 the API boundary.
 
-`embed` is the task for face identity embeddings (facial recognition). Models
-expose `Results.embeddings`, an `(N, D)` payload of L2-normalized identity
-vectors row-aligned with the face boxes, so cosine similarity is a dot product.
-Supplying a `FaceGallery` of enrolled identities adds `Results.identities`
-(matched name and score per face, `None` when below threshold). The task is
-two-stage and inference-only: training, validation, and re-export raise.
-Canonical embed filenames must carry the `-embed` suffix; task aliases
+`embed` turns an image, image region, or paired-tower text into a float32,
+L2-normalized vector whose dot product measures agreement. Whole-image results
+carry `Results.embeddings` with shape `(1, D)` and no boxes; region results use
+`(N, D)` rows aligned with `Results.boxes`. Paired image/text families expose
+`model.embed_text(texts) -> (M, D)`; a string passed to `model(...)` remains an
+image path and is never inferred to be text. `Gallery` stores named references
+for any shape, while `FaceGallery` remains its compatibility alias.
+
+Dedicated embed checkpoints use `-embed`. Dual-task CLIP and SigLIP2 reuse
+their existing `-cls` two-tower artifact with an explicit `task="embed"`; no
+duplicate artifact is published for identical weights. DINOv2 likewise loads
+an existing family checkpoint and bypasses its task head. Task aliases
 `facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
 `embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
-for the full contract.
+for the face-region contract and ADR 0015 for the general contract.
 `mesh` is the task for human body mesh recovery: recovering a posed 3D body per
 detected person. Models expose `Results.meshes`, row-aligned with
 `Results.boxes` exactly as pose keypoints are, carrying the parametric core
@@ -338,7 +343,7 @@ Detector-factory family support follows:
 | `rtmdet`    | `("detect", "segment")` (default: detect) | detect | RTMDet-Ins uses `-seg`; detect training is gated experimental, segment training is not implemented |
 | `picodet`   | `("detect",)` (default)             | detect | detect-only |
 | `rfdetr`    | `("detect", "segment", "pose", "obb")` | detect | seg uses smaller sizes; pose/OBB use detect sizes |
-| `dinov2`    | `("semantic", "classify")`          | semantic | DINOv2 backbone + task head (semantic dense head at 518 / classify linear probe at 224); NOT the RF-DETR detector |
+| `dinov2`    | `("semantic", "classify", "embed")` | semantic | DINOv2 backbone + task head; embed bypasses heads and returns the 384-d final CLS token at 224 (all sizes share DINOv2-S); no text tower |
 | `eomt`      | `("semantic", "segment", "panoptic")` | semantic | DINOv2 backbone; sizes s/b/l. Semantic: ADE20K 150-class at 512. Instance segment: COCO 80-class at 640 (l also at 1280). Panoptic: COCO 133-class at 640. Upstream ships no COCO instance checkpoint at s/b. DINOv3 variants excluded |
 | `pidnet`    | `("semantic",)`                     | semantic | real-time PIDNet semantic segmentation; s/m/l at 1024; Cityscapes 19-class checkpoints; inference + `val`; not trainable in LibreYOLO |
 | `segformer` | `("semantic",)`                     | semantic | SegFormer MiT-b0..b5 encoder + all-MLP decode head; ADE20K 150-class at 512 (b5 at 640). Pretrained weights are NON-COMMERCIAL (NVIDIA Source Code License, research/evaluation only); also trainable from scratch via `model.train(...)` for unrestricted use |
@@ -360,6 +365,9 @@ Detector-factory family support follows:
 | `convnext`  | `("classify",)`                | classify | ConvNeXt V1 image classifier; t/s/b at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `efficientnetv2` | `("classify",)`             | classify | EfficientNetV2-base image classifier; b0/b1/b2/b3 at 224/240/260/300; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
 | `resnet`    | `("classify",)`             | classify | vanilla ResNet image classifier (v1.5); 18/34/50/101 at 224; predict + top-1/top-5 `val` + CE fine-tune train + ONNX |
+| `clip`      | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or whole-image/text embeddings in one space |
+| `siglip2`   | `("classify", "embed")`     | classify | shared two-tower `-cls` weights; zero-shot classify or multilingual whole-image/text embeddings in one space |
+| `facerec`   | `("embed",)`                | embed | two-stage face-region embeddings; rows align with face boxes; inference-only |
 
 Families that override `SUPPORTED_TASKS` also declare `TASK_INPUT_SIZES` so
 each task can use a different per-size input resolution (relevant for RF-DETR).
@@ -414,6 +422,8 @@ LibreRFDETRn-obb.pt        # obb
 # dinov2 — DINOv2 backbone + task head (NOT the RF-DETR detector)
 LibreDINOv2n.pt            # semantic (default task; dense head at 518)
 LibreDINOv2n-cls.pt        # classify (linear probe at 224)
+# Either artifact may be loaded with task="embed"; the head is bypassed and
+# the final 384-d DINOv2-S CLS token is returned. No duplicate -embed weights.
 
 # eomt - semantic (ADE20K), instance segmentation (COCO), and panoptic (COCO things+stuff)
 LibreEoMTl-sem.pt          # EoMT-L, ADE20K 150-class semantic, DINOv2 backbone, 512px
@@ -493,14 +503,15 @@ LibrePPOCRl-ocr.pt               # server det + server rec (quality tier), Apach
 
 ```text
 # clip — CLIP zero-shot, open-vocabulary (set_classes); no fixed label set.
-# Defaults to ImageNet-1k labels; classify task suffix `-cls`.
+# Defaults to ImageNet-1k classify. Use the same -cls artifact with
+# task="embed"; no duplicate -embed checkpoint is published.
 LibreCLIPb32-cls.pt       # OpenCLIP ViT-B/32, LAION-2B (MIT weights)
 LibreCLIPb16-cls.pt       # OpenCLIP ViT-B/16, LAION-2B (MIT weights)
 LibreCLIPl14-cls.pt       # OpenCLIP ViT-L/14, LAION-2B (config + converter ready; weights not yet published)
 
-# siglip2: SigLIP 2 zero-shot, open-vocabulary (set_classes); multilingual
+# siglip2: SigLIP 2 zero-shot classify or paired image/text embedding.
 # SentencePiece tokenizer, sigmoid-native scoring with a multi_label option.
-# Size codes bake the native resolution in, like clip's b32/b16/l14.
+# Use the same -cls artifact with task="embed"; size codes bake in resolution.
 LibreSigLIP2b16-cls.pt    # google/siglip2-base-patch16-256 (Apache-2.0 weights), 256 px
 LibreSigLIP2so400m-cls.pt # google/siglip2-so400m-patch14-384 (Apache-2.0 weights), 384 px
 ```
@@ -615,9 +626,13 @@ new artifacts.
 <prefix>(?P<size>{size_alternation})(?P<task>{task_suffixes})?(?P<variant>-{variants})?\.pt
 ```
 
-with `task_suffixes` derived from `SUPPORTED_TASKS` via
-`libreyolo.tasks.task_suffix_pattern`. This is the single source of truth for
-parsing a filename back into `(family, size, task, variant)`.
+with `task_suffixes` derived from `WEIGHT_TASKS` when a family declares it,
+otherwise from `SUPPORTED_TASKS`, via
+`libreyolo.tasks.task_suffix_pattern`. `WEIGHT_TASKS` is used only when
+multiple runtime tasks share one artifact (CLIP, SigLIP2, and DINOv2 embed);
+it prevents a nonexistent duplicate checkpoint suffix from being advertised.
+This is the single source of truth for parsing a filename back into
+`(family, size, task, variant)`.
 
 The `variant` group only exists for families that declare `WEIGHT_VARIANTS`, a
 dataset suffix for published checkpoints trained on a non-default dataset.

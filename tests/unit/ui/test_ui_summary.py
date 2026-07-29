@@ -152,7 +152,11 @@ class _Identities(list):
     [
         # Embed results carry face boxes; they must not read as detection.
         (
-            result(boxes=[object(), object()], embeddings=[object(), object()]),
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                names={0: "face"},
+            ),
             ("embed", "2 faces"),
         ),
         (
@@ -160,6 +164,7 @@ class _Identities(list):
                 boxes=[object()],
                 embeddings=[object()],
                 identities=_Identities(["alice"], [0.8]),
+                names={0: "face"},
             ),
             ("embed", "alice"),
         ),
@@ -168,6 +173,7 @@ class _Identities(list):
                 boxes=[object(), object()],
                 embeddings=[object(), object()],
                 identities=_Identities(["alice", None], [0.8, 0.1]),
+                names={0: "face"},
             ),
             ("embed", "alice (+1 unknown face)"),
         ),
@@ -176,8 +182,27 @@ class _Identities(list):
                 boxes=[object(), object()],
                 embeddings=[object(), object()],
                 identities=_Identities([None, None], [0.1, 0.2]),
+                names={0: "face"},
             ),
             ("embed", "2 unknown faces"),
+        ),
+        (
+            result(embeddings=[object()]),
+            ("embed", "1 image"),
+        ),
+        (
+            result(
+                embeddings=[object()],
+                identities=_Identities([None], [0.2]),
+            ),
+            ("embed", "1 unknown image"),
+        ),
+        (
+            result(
+                embeddings=[object()],
+                identities=_Identities(["parkour"], [0.9]),
+            ),
+            ("embed", "parkour"),
         ),
     ],
 )

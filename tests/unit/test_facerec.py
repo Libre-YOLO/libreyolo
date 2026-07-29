@@ -48,6 +48,15 @@ def test_embed_suffix_roundtrip():
     assert SUFFIX_TO_TASK["embed"] == "embed"
 
 
+def test_base_embed_verb_rejects_unsupported_family():
+    from libreyolo.models.resnet.model import LibreResNet
+
+    model = object.__new__(LibreResNet)
+    model.family = "resnet"
+    with pytest.raises(NotImplementedError, match="does not support"):
+        model.embed("image.jpg")
+
+
 # ---------------------------------------------------------------------------
 # Embeddings payload
 # ---------------------------------------------------------------------------
@@ -335,6 +344,36 @@ def test_gallery_enroll_embedding_and_match():
     assert g.identities == ["alice"]
 
 
+def test_gallery_generic_root_export_and_face_alias():
+    from libreyolo import FaceGallery, Gallery
+    from libreyolo.models.facerec import FaceGallery as LegacyFaceGallery
+
+    assert FaceGallery is Gallery
+    assert LegacyFaceGallery is Gallery
+    assert repr(Gallery()).startswith("Gallery(")
+
+
+def test_gallery_enroll_stores_every_region_row():
+    from types import SimpleNamespace
+
+    from libreyolo import Gallery
+
+    class _RegionEmbedder:
+        _weights_fingerprint = "region-model"
+
+        def predict(self, _source):
+            return SimpleNamespace(
+                embeddings=Embeddings(
+                    np.stack([_vec(8, 0), _vec(8, 1)], axis=0)
+                )
+            )
+
+    gallery = Gallery(_RegionEmbedder())
+    assert gallery.enroll("person", "image.jpg") == 2
+    assert len(gallery._vectors) == 2
+    assert gallery.match(_vec(8, 1), threshold=0.9)[0][0][0] == "person"
+
+
 def test_gallery_dim_mismatch_raises():
     from libreyolo.models.facerec import FaceGallery
 
@@ -362,6 +401,32 @@ def test_gallery_save_load_roundtrip(tmp_path):
 
     with pytest.raises(ValueError):
         FaceGallery().save(tmp_path / "empty.npz")
+
+
+def test_gallery_loads_legacy_face_archive(tmp_path):
+    import json
+
+    from libreyolo import Gallery
+
+    path = tmp_path / "legacy.gallery.npz"
+    np.savez_compressed(
+        path,
+        vectors=np.stack([_vec(8, 0), _vec(8, 2)]),
+        names=np.asarray(["alice", "bob"]),
+        meta=np.asarray(
+            json.dumps(
+                {
+                    "format": "libreyolo-face-gallery-v1",
+                    "dim": 8,
+                    "model_fingerprint": None,
+                }
+            )
+        ),
+    )
+
+    loaded = Gallery.load(path)
+    assert loaded.identities == ["alice", "bob"]
+    assert loaded.match(_vec(8, 2))[0][0][0] == "bob"
 
 
 def test_gallery_model_fingerprint_guard(tmp_path, tiny_onnx):

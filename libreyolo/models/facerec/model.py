@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import numpy as np
+import torch
 
 from ..l2cs.face import FaceBox, FaceDetector, resolve_face_detector
 from .preprocess import PreprocCfg, l2_normalize, preprocess_aligned, resolve_preproc
@@ -139,6 +140,17 @@ class LibreFaceEmbedder:
 
     def predict(self, *args, **kwargs):
         return self(*args, **kwargs)
+
+    def embed(self, source=None, **kwargs) -> torch.Tensor:
+        """Return all face-region rows across ``source`` as ``(N_total, D)``."""
+        from ...utils.results import stack_result_embeddings
+
+        prediction = (
+            [self.predict(item, **kwargs) for item in source]
+            if isinstance(source, (list, tuple))
+            else self.predict(source, **kwargs)
+        )
+        return stack_result_embeddings(prediction)
 
     def verify(
         self,

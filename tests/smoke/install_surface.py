@@ -55,12 +55,16 @@ def _load_json_stdout(result: subprocess.CompletedProcess[str]) -> dict[str, Any
 
 def _check_import_surface(expect_source: str, source_root: Path | None) -> None:
     import libreyolo
-    from libreyolo import LibreYOLO, Results, SAMPLE_IMAGE
+    from libreyolo import FaceGallery, Gallery, LibreYOLO, Results, SAMPLE_IMAGE
 
     if not callable(LibreYOLO):
         raise AssertionError("LibreYOLO import did not resolve to a callable")
     if Results.__name__ != "Results":
         raise AssertionError("Results import did not resolve correctly")
+    if FaceGallery is not Gallery:
+        raise AssertionError("FaceGallery did not resolve to the Gallery alias")
+    if "Gallery" not in libreyolo.__all__ or "FaceGallery" not in libreyolo.__all__:
+        raise AssertionError("Gallery exports are missing from libreyolo.__all__")
 
     # The LibreVLM tier exposes a factory plus family classes via lazy imports
     # (transformers is not required to import these names).

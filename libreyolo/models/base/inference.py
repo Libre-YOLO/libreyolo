@@ -51,6 +51,7 @@ from ...utils.predict_args import normalize_predict_kwargs
 from ...utils.results import (
     Boxes,
     DepthMap,
+    Embeddings,
     Keypoints,
     Masks,
     Matte,
@@ -221,9 +222,23 @@ class InferenceRunner:
         Returns:
             Results, list of Results, or generator of Results (video + stream).
         """
-        kwargs = normalize_predict_kwargs(kwargs, passthrough={"num_select"})
+        kwargs = normalize_predict_kwargs(
+            kwargs, passthrough={"num_select", "gallery", "threshold"}
+        )
         if device is not None:
             self._set_device(device)
+        if (
+            kwargs.get("gallery") is not None
+            and getattr(self.model, "task", None) != "embed"
+        ):
+            raise ValueError(
+                "gallery= is only supported by models loaded with task='embed'."
+            )
+        if augment and getattr(self.model, "task", None) == "embed":
+            raise ValueError(
+                "Test-time augmentation does not support embedding models. "
+                "Use augment=False."
+            )
 
         if output_file_format is not None:
             output_file_format = output_file_format.lower().lstrip(".")
@@ -612,10 +627,12 @@ class InferenceRunner:
 
     def _save_annotated_image(self, result: Results, original_img, save_path: Path) -> None:
         """Internal helper to draw boxes, masks, and keypoints and save to disk."""
-        # Classification results carry probs and no boxes; there is nothing to
-        # draw, so persist the source image as-is rather than dereferencing
-        # ``result.boxes`` (which is None).
-        if result.boxes is None and getattr(result, "probs", None) is not None:
+        # Classification and whole-image embed results carry no boxes; there is
+        # nothing to draw, so persist the source image as-is.
+        if result.boxes is None and (
+            getattr(result, "probs", None) is not None
+            or getattr(result, "embeddings", None) is not None
+        ):
             original_img.save(save_path)
             log_saved_result(result, save_path)
             return
@@ -793,6 +810,27 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 probs=Probs(probs_t),
+            )
+
+        # Whole-image embedding: one normalized row, no boxes. Optional
+        # identities are produced by Gallery during model postprocessing.
+        embeddings_data = detections.get("embeddings")
+        if embeddings_data is not None:
+            orig_w, orig_h = original_size
+            embeddings_t = (
+                embeddings_data.float()
+                if isinstance(embeddings_data, torch.Tensor)
+                else torch.as_tensor(embeddings_data, dtype=torch.float32)
+            )
+            if embeddings_t.ndim == 1:
+                embeddings_t = embeddings_t.unsqueeze(0)
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names={},
+                embeddings=Embeddings(embeddings_t, (orig_h, orig_w)),
+                identities=detections.get("identities"),
             )
 
         # Semantic segmentation: a dense class map, no boxes.
@@ -1237,7 +1275,7 @@ class InferenceRunner:
         # Tiling is a detection-time technique; for whole-image classification
         # and dense semantic maps it is meaningless, so fall back to a single
         # forward pass.
-        if getattr(self.model, "task", None) in ("classify", "semantic"):
+        if getattr(self.model, "task", None) in ("classify", "semantic", "embed"):
             return self._predict_single(
                 image,
                 save=save,

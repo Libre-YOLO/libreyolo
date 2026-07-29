@@ -237,7 +237,11 @@ def test_default_download_urls_keep_task_repo_suffixes():
         cls = getattr(importlib.import_module(module_name), class_name)
         if "get_download_url" in cls.__dict__:
             continue
-        for task in metadata["tasks"]:
+        # Runtime tasks can intentionally share an artifact. In that case the
+        # family advertises only the distinct published suffixes through
+        # WEIGHT_TASKS (for example classify weights reused by embed).
+        weight_tasks = cls.WEIGHT_TASKS or metadata["tasks"]
+        for task in weight_tasks:
             sizes = metadata["task_sizes"].get(task) or metadata["default_imgsz"]
             if not sizes or not cls.FILENAME_PREFIX:
                 continue

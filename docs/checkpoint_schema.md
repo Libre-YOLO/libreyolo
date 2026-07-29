@@ -32,8 +32,8 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`, or
-  `ocr`.
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `restore`, `matte`,
+  `ocr`, `embed`, or `mesh`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
   should write every key. Readers may pad missing keys with `class_i` labels for
