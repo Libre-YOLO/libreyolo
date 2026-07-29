@@ -633,6 +633,24 @@ rehost the lite weights pending an explicit license confirmation. See
 weights/LICENSE_NOTICE.txt.
 
 --------------------------------------------------------------------
+FeyNobg (Feyn Inc.)
+--------------------------------------------------------------------
+Source: https://huggingface.co/feyninc/FeyNobg
+        (reference library: https://github.com/feyninc/nobg)
+License: Apache-2.0 (code and weights)
+Copyright (c) 2026 Feyn Inc.
+Used for: the FeyNobg background-removal model family
+          (libreyolo\models\feynobg\, matte task). FeyNobg is
+          architecturally BiRefNet with the third Swin-L stage deepened
+          from 18 to 24 blocks; the family reuses the LibreYOLO BiRefNet
+          port's nn module with a family-local dimension table and
+          converts the released Apache-2.0 weights (state-dict
+          metadata-wrap plus post-training-quantized fp8/nvfp4
+          variants). No code was copied from the nobg library. Upstream
+          training data is not disclosed; LibreYOLO redistributes only
+          the released weights.
+
+--------------------------------------------------------------------
 PaddleOCR (PaddlePaddle)
 --------------------------------------------------------------------
 Source: https://github.com/PaddlePaddle/PaddleOCR (commit 211989f)

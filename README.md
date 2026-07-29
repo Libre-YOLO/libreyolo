@@ -134,7 +134,7 @@ selects the task. These families are extras on top of the core library.
 - **Depth estimation:** Depth Anything 3, Depth Anything V2, ZipDepth
 - **Surface-normal estimation:** MoGe-2 (ViT-S/B/L)
 - **Image restoration & super-resolution:** NAFNet, Real-ESRGAN, SwinIR
-- **Background removal (matting):** BiRefNet
+- **Background removal (matting):** BiRefNet, FeyNobg
 - **OCR:** PP-OCR
 - **Gaze estimation:** L2CS
 - **Facial recognition (face embedding):** LibreFaceRec (verification + gallery identification)

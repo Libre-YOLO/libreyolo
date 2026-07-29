@@ -10,6 +10,7 @@ from ..command_utils import (
     exit_with_error,
     help_json_callback,
     load_model_or_exit,
+    parse_imgsz_str,
     resolve_model_or_exit,
 )
 from ..output import OutputHandler
@@ -24,7 +25,10 @@ def export_cmd(
             "tflite (alias: litert), coreml, coreai (Apple, macOS only)"
         ),
     ),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
+    imgsz: Optional[str] = typer.Option(
+        None,
+        help="Input image size: 640 or 480x640 (HxW); 480,640 remains supported",
+    ),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
@@ -121,20 +125,13 @@ def export_cmd(
         export_kwargs["iou"] = iou
         if fmt == "onnx":
             export_kwargs["max_det"] = max_det
+    parsed_imgsz = None
     if imgsz is not None:
-        if "," in imgsz:
-            parts = imgsz.split(",")
-            if len(parts) != 2:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz format: {imgsz}. Use e.g. 640 or 640,480.")
-            try:
-                export_kwargs["imgsz"] = (int(parts[0]), int(parts[1]))
-            except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz values: {imgsz}. Use integer dimensions.")
-        else:
-            try:
-                export_kwargs["imgsz"] = int(imgsz)
-            except ValueError:
-                exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
+        try:
+            parsed_imgsz = parse_imgsz_str(imgsz)
+        except ValueError as exc:
+            exit_with_error(out, "invalid_imgsz", str(exc))
+        export_kwargs["imgsz"] = parsed_imgsz
     if data is not None:
         export_kwargs["data"] = data
     if data is not None or int8:
@@ -173,11 +170,11 @@ def export_cmd(
     else:
         size_mb = 0.0
 
-    if imgsz is not None and "," in imgsz:
-        parts = imgsz.split(",")
-        input_h, input_w = int(parts[0]), int(parts[1])
-    elif imgsz is not None:
-        input_h = input_w = int(imgsz)
+    if parsed_imgsz is not None:
+        if isinstance(parsed_imgsz, int):
+            input_h = input_w = parsed_imgsz
+        else:
+            input_h, input_w = parsed_imgsz
     else:
         native = (
             loaded_model._get_input_size()

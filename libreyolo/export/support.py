@@ -149,7 +149,7 @@ _add(
 )
 _add(
     "blocked",
-    ("birefnet",),
+    ("birefnet", "feynobg"),
     ("matte",),
     ("ncnn",),
     reason=(
@@ -171,7 +171,7 @@ _add(
 )
 _add(
     "experimental",
-    ("birefnet",),
+    ("birefnet", "feynobg"),
     ("matte",),
     ("onnx",),
     reason=(
@@ -185,6 +185,14 @@ _add(
     ("matte",),
     ("torchscript",),
     since="1.4",
+    constraint="fixed 1024x1024 input",
+)
+_add(
+    "validated",
+    ("feynobg",),
+    ("matte",),
+    ("torchscript",),
+    since="1.5",
     constraint="fixed 1024x1024 input",
 )
 _add(

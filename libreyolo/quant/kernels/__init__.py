@@ -129,8 +129,11 @@ def resolve(op: str) -> Optional[Callable]:
 
 def active() -> Dict[str, str]:
     """Map of op slot to the name of the implementation currently selected."""
+    # Importing the optional in-tree kernels registers new slots. Do that
+    # before iterating so a first-ever active() call cannot mutate the dict.
+    _ensure_intree_loaded()
     out = {}
-    for op, entries in _REGISTRY.items():
+    for op, entries in list(_REGISTRY.items()):
         impl = resolve(op)
         out[op] = next(
             (e["name"] for e in entries if e["impl"] is impl), "unavailable"
@@ -166,6 +169,11 @@ register("unpack_nvfp4", _packing.unpack_nvfp4_weight, name="reference")
 for _op in UNPACK_OPS:
     globals()[_op] = _make_proxy(_op)
 
+
+# In-tree GEMM kernels built on stock torch (no triton, no build step).
+# fp8_gemm: finalized fp8 QuantLinear on the fp8 tensor cores via
+# torch._scaled_mm (Ada/Hopper/Blackwell); resolves to None elsewhere.
+from . import scaled_mm_fp8  # noqa: E402,F401  (self-registers)
 
 # Optional out-of-tree compiled kernels (e.g. the CUTLASS NVFP4 GEMM).
 # The package self-registers on import; absence is the normal case.

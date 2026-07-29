@@ -7,6 +7,8 @@ from typing import Any, NoReturn, Optional, Set, Tuple, Union
 import click
 import typer
 
+from libreyolo.utils.image_size import normalize_imgsz
+
 from .errors import CLIError
 from .output import OutputHandler
 
@@ -87,40 +89,20 @@ def parse_imgsz_str(imgsz: str | int | None) -> int | tuple[int, int] | None:
         "640"      -> 640
         "480x640"  -> (480, 640)
         "480X640"  -> (480, 640)
+        "480,640"  -> (480, 640), legacy alias
         None       -> None
         int        -> int (pass-through)
     """
     if imgsz is None:
         return None
-    if isinstance(imgsz, int):
-        if imgsz <= 0:
-            raise ValueError(f"imgsz must be positive, got {imgsz}.")
-        return imgsz
-    s = str(imgsz).strip()
-    if not s:
+    if isinstance(imgsz, str) and not imgsz.strip():
         return None
-    if "x" in s.lower():
-        parts = s.lower().split("x", 1)
-        try:
-            h, w = int(parts[0]), int(parts[1])
-        except (ValueError, IndexError):
-            raise ValueError(
-                f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
-            )
-        if h <= 0 or w <= 0:
-            raise ValueError(
-                f"imgsz dimensions must be positive, got ({h}, {w})."
-            )
-        return h if h == w else (h, w)
-    try:
-        value = int(s)
-    except ValueError:
-        raise ValueError(
-            f"Invalid imgsz format: '{imgsz}'. Use 640 (square) or 480x640 (HxW)."
-        )
-    if value <= 0:
-        raise ValueError(f"imgsz must be positive, got {value}.")
-    return value
+    return normalize_imgsz(
+        imgsz,
+        name="imgsz",
+        allow_string=True,
+        allow_comma=True,
+    )
 
 
 def get_loaded_model_input_size(
