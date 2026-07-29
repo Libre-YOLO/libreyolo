@@ -70,7 +70,7 @@ def test_tflite_support_keys_use_canonical_tasks():
 
     assert all(task in TASKS for _, task in supported_tflite_exports())
     assert get_support("yolo3", "detect", "tflite").tier == "blocked"
-    assert get_support("rfdetr", "detect", "tflite").tier == "experimental"
+    assert get_support("rfdetr", "detect", "tflite").tier == "blocked"
     assert get_support("rfdetr", "segment", "tflite").tier == "blocked"
 
 
@@ -138,6 +138,32 @@ def test_round6_tflite_blocks_are_measured(family, task, reason_fragment):
 
 def test_yolonas_detect_tflite_is_validated():
     assert get_support("yolonas", "detect", "tflite").tier == "validated"
+
+
+def test_round7_swinir_fixed_canvas_exports_are_validated():
+    for format in ("onnx", "torchscript", "openvino", "tflite"):
+        entry = get_support("swinir", "restore", format)
+        assert entry.tier == "validated"
+        assert "exactly match" in entry.constraint
+
+
+@pytest.mark.parametrize(
+    ("family", "task", "format", "reason_fragment"),
+    [
+        ("swinir", "restore", "ncnn", "5-rank"),
+        ("birefnet", "matte", "openvino", "DeformConv-19"),
+        ("feynobg", "matte", "openvino", "DeformConv-19"),
+        ("dfine", "segment", "tflite", "GatherElements"),
+        ("rfdetr", "detect", "tflite", "STRIDED_SLICE"),
+        ("rtdetrv4", "detect", "tflite", "640x640"),
+    ],
+)
+def test_round7_measured_blocks_are_explicit(
+    family, task, format, reason_fragment
+):
+    entry = get_support(family, task, format)
+    assert entry.tier == "blocked"
+    assert reason_fragment in entry.reason
 
 
 def test_coreai_validated_tier_has_hardware_parity_coverage():
@@ -210,9 +236,10 @@ def test_openvino_validated_tier_has_runtime_parity_coverage():
         ("rfdetr", "detect"),
         ("rtmdet", "detect"),
         ("rtdetr", "detect"),
-        ("rtdetrv4", "detect"),
-        ("segformer", "semantic"),
-        ("yolo1", "detect"),
+            ("rtdetrv4", "detect"),
+            ("segformer", "semantic"),
+            ("swinir", "restore"),
+            ("yolo1", "detect"),
         ("yolo2", "detect"),
         ("yolo3", "detect"),
         ("yolo4", "detect"),

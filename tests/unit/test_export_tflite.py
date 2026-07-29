@@ -80,11 +80,14 @@ def test_tflite_family_support_scaffold():
 
     exports = supported_tflite_exports()
     assert ("yolo9", "detect") in exports
-    assert ("rfdetr", "detect") in exports
+    assert ("swinir", "restore") in exports
+    assert ("rfdetr", "detect") not in exports
     assert ("rfdetr", "segment") not in exports
     assert ("rfdetr", "pose") not in exports
     ensure_tflite_family_supported("yolo9", "detect")
-    ensure_tflite_family_supported("rfdetr", "detect")
+    ensure_tflite_family_supported("swinir", "restore")
+    with pytest.raises(NotImplementedError, match="STRIDED_SLICE"):
+        ensure_tflite_family_supported("rfdetr", "detect")
     with pytest.raises(NotImplementedError, match="Einsum"):
         ensure_tflite_family_supported("rfdetr", "segment")
     with pytest.raises(NotImplementedError, match="timebox"):

@@ -8,7 +8,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
+| birefnet | matte | exp | ✓ | exp |  |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
@@ -30,7 +30,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
-| feynobg | matte | exp | ✓ | exp | exp |  |  |  |  |
+| feynobg | matte | exp | ✓ | exp |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
@@ -55,7 +55,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | qwen3vl | detect |  |  |  |  |  |  |  |  |
 | realesrgan | restore | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | resnet | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
-| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
+| rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  |  | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -72,7 +72,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
-| swinir | restore | exp | exp | exp | exp | exp |  |  |  |
+| swinir | restore | ✓ | ✓ | exp | ✓ |  | ✓ |  |  |
 | teed | edge | ✓ |  |  |  |  |  |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | yolo2 | detect | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
@@ -180,6 +180,10 @@ A check mark applies only under any constraint listed here.
 - `segformer` / `semantic` / `openvino`: fixed square input divisible by 32
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `swinir` / `restore` / `onnx`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
+- `swinir` / `restore` / `torchscript`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
+- `swinir` / `restore` / `openvino`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
+- `swinir` / `restore` / `tflite`: fixed export canvas; raw-output and predict parity are validated when the source dimensions exactly match that canvas. Smaller sources are padded to the canvas before the exported transformer and can diverge from native variable-size inference.
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
 - `yolo1` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `yolo1` / `detect` / `ncnn`: fixed 448x448 input
@@ -211,6 +215,7 @@ A check mark applies only under any constraint listed here.
 
 ## Blocked combinations
 
+- `birefnet` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `birefnet` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `birefnet` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `birefnet` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -258,7 +263,7 @@ A check mark applies only under any constraint listed here.
 - `dfine` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `ncnn`: NCNN export is not supported for D-FINE: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
-- `dfine` / `segment` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `dfine` / `segment` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError.
 - `dfine` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `dfine` / `segment` / `coreai`: This family and task have not been validated for Core AI export.
 - `dinov2` / `semantic` / `ncnn`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
@@ -318,6 +323,7 @@ A check mark applies only under any constraint listed here.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreml`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `feynobg` / `matte` / `openvino`: OpenVINO 2026.2 cannot lower the shared matte decoder's standard ONNX DeformConv-19 operation.
 - `feynobg` / `matte` / `ncnn`: BiRefNet's decoder requires torchvision deformable convolution, which PNNX/NCNN cannot lower to a runnable graph.
 - `feynobg` / `matte` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `feynobg` / `matte` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -460,6 +466,7 @@ A check mark applies only under any constraint listed here.
 - `realesrgan` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `resnet` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rfdetr` / `detect` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
+- `rfdetr` / `detect` / `tflite`: onnx2tf emits a flatbuffer at the native 384x384 canvas, but LiteRT cannot allocate it because STRIDED_SLICE receives an input above its supported 5-D rank.
 - `rfdetr` / `segment` / `ncnn`: NCNN export is not supported for RF-DETR: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `rfdetr` / `segment` / `tflite`: onnx2tf 2.4.x assigns an invalid NHWC layout to the segmentation-head Einsum (78 channels versus the required 256), so conversion fails.
 - `rfdetr` / `segment` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -478,7 +485,7 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `rtdetrv2` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtdetrv4` / `detect` / `ncnn`: NCNN export is not supported for RT-DETRv4: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
-- `rtdetrv4` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `rtdetrv4` / `detect` / `tflite`: onnx2tf flatbuffer-direct lowering crashes in GatherElements shape handling with an axis IndexError at the native 640x640 canvas.
 - `rtdetrv4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `rtmdet` / `detect` / `ncnn`: PNNX 20260526 reports an unregistered nn.Conv2d layer and leaves the RTMDet NCNN graph without usable input blobs.
 - `rtmdet` / `detect` / `tflite`: LiteRT rejects the converted detector's CONV_2D channel layout (96 input channels versus a zero filter-channel dimension).
@@ -550,7 +557,7 @@ A check mark applies only under any constraint listed here.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `swinir` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
+- `swinir` / `restore` / `ncnn`: PNNX writes NCNN artifacts after reporting unsupported 5-rank Permute operations, but the NCNN runtime process exits while loading or executing the resulting graph.
 - `swinir` / `restore` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.
 - `teed` / `edge` / `torchscript`: The edge exported-runtime contract is ONNX-only in v1; add runtime parity before enabling another format.

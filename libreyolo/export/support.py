@@ -106,13 +106,14 @@ _add(
     since="1.3",
 )
 _add(
-    "experimental",
+    "blocked",
     ("rfdetr",),
     ("detect",),
     ("tflite",),
     reason=(
-        "The RF-DETR converter path is available, but the project does not "
-        "yet have a runtime parity test for the generated LiteRT artifact."
+        "onnx2tf emits a flatbuffer at the native 384x384 canvas, but LiteRT "
+        "cannot allocate it because STRIDED_SLICE receives an input above its "
+        "supported 5-D rank."
     ),
 )
 _add(
@@ -676,16 +677,57 @@ _add(
     ),
 )
 _add(
-    "experimental",
+    "validated",
     ("swinir",),
     ("restore",),
-    ("onnx",),
+    ("onnx", "torchscript", "openvino", "tflite"),
+    since="1.6",
+    constraint=(
+        "fixed export canvas; raw-output and predict parity are validated when "
+        "the source dimensions exactly match that canvas. Smaller sources are "
+        "padded to the canvas before the exported transformer and can diverge "
+        "from native variable-size inference."
+    ),
+)
+_add(
+    "blocked",
+    ("swinir",),
+    ("restore",),
+    ("ncnn",),
     reason=(
-        "The exported graph runs at a fixed canvas. Inputs smaller than the "
-        "canvas are padded before the transformer, and the window attention "
-        "and layer norms see that padding: measured drift against native "
-        "inference reaches many grey levels. Match the exported canvas size "
-        "for best fidelity."
+        "PNNX writes NCNN artifacts after reporting unsupported 5-rank "
+        "Permute operations, but the NCNN runtime process exits while loading "
+        "or executing the resulting graph."
+    ),
+)
+_add(
+    "blocked",
+    ("birefnet", "feynobg"),
+    ("matte",),
+    ("openvino",),
+    reason=(
+        "OpenVINO 2026.2 cannot lower the shared matte decoder's standard "
+        "ONNX DeformConv-19 operation."
+    ),
+)
+_add(
+    "blocked",
+    ("dfine",),
+    ("segment",),
+    ("tflite",),
+    reason=(
+        "onnx2tf flatbuffer-direct lowering crashes in GatherElements shape "
+        "handling with an axis IndexError."
+    ),
+)
+_add(
+    "blocked",
+    ("rtdetrv4",),
+    ("detect",),
+    ("tflite",),
+    reason=(
+        "onnx2tf flatbuffer-direct lowering crashes in GatherElements shape "
+        "handling with an axis IndexError at the native 640x640 canvas."
     ),
 )
 _add(
