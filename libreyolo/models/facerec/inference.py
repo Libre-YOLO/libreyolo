@@ -182,7 +182,14 @@ class FaceEmbedRunner:
         crops, kept = [], []
         for f in faces:
             try:
-                crops.append(align_face(rgb_np, f.xyxy, f.landmarks, image_size=112))
+                crops.append(
+                    align_face(
+                        rgb_np,
+                        f.xyxy,
+                        f.landmarks,
+                        image_size=int(self.model.cfg.size),
+                    )
+                )
                 kept.append(f)
             except ValueError as e:
                 logger.warning("Skipping degenerate face crop: %s", e)

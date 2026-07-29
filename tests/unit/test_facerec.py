@@ -145,6 +145,46 @@ def test_align_face_landmarks_and_fallback():
     assert fallback.shape == (112, 112, 3)
 
 
+def test_runner_uses_artifact_declared_alignment_size(monkeypatch):
+    from types import SimpleNamespace
+
+    from libreyolo.models.facerec.inference import FaceEmbedRunner
+
+    observed_sizes = []
+
+    def fake_align_face(image, box, landmarks, image_size):
+        observed_sizes.append(image_size)
+        return np.zeros((image_size, image_size, 3), dtype=np.uint8)
+
+    monkeypatch.setattr(
+        "libreyolo.models.facerec.inference.align_face",
+        fake_align_face,
+    )
+    model = SimpleNamespace(
+        cfg=SimpleNamespace(size=128),
+        dim=4,
+        names={0: "face"},
+        embed_aligned=lambda crops: np.ones(
+            (len(crops), 4),
+            dtype=np.float32,
+        ),
+    )
+    face = SimpleNamespace(
+        xyxy=(0.0, 0.0, 64.0, 64.0),
+        score=0.9,
+        landmarks=None,
+    )
+    result = FaceEmbedRunner(model)._run_embed(
+        np.zeros((64, 64, 3), dtype=np.uint8),
+        [face],
+        (64, 64),
+        None,
+    )
+
+    assert observed_sizes == [128]
+    assert result.embeddings.data.shape == (1, 4)
+
+
 # ---------------------------------------------------------------------------
 # End-to-end with a synthetic ONNX recognition head
 # ---------------------------------------------------------------------------
@@ -261,10 +301,14 @@ def test_resolve_facerec_weight_downloads_bare_name(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "libreyolo.utils.download.download_url_to_path", fake_download
     )
+    monkeypatch.setattr(
+        "libreyolo.models.facerec.weights.verify_facerec_weight_file",
+        lambda *_args, **_kwargs: None,
+    )
     got = resolve_facerec_weight("librefacerec-l")
     assert P(got) == P("weights") / "librefacerec-l.onnx"
     assert P(got).exists()
-    assert calls["url"].endswith("librefacerec-l/resolve/main/librefacerec-l.onnx")
+    assert "e8b0e91bf2931579177b9821171d35a759579df6" in calls["url"]
 
 
 def test_resolve_facerec_weight_unknown_name(tmp_path, monkeypatch):
@@ -275,9 +319,32 @@ def test_resolve_facerec_weight_unknown_name(tmp_path, monkeypatch):
         resolve_facerec_weight("librefacerec-zz.onnx")
 
 
-def test_factory_routes_librefacerec_name(monkeypatch, tmp_path):
-    import shutil
+def test_reserved_official_weight_is_hash_verified(tmp_path, monkeypatch):
+    import hashlib
 
+    from libreyolo.models.facerec import weights
+
+    payload = b"pinned-face-weights"
+    path = tmp_path / "librefacerec-l.onnx"
+    path.write_bytes(payload)
+    monkeypatch.setitem(
+        weights.FACEREC_OFFICIAL_EMBEDDER,
+        "size_bytes",
+        len(payload),
+    )
+    monkeypatch.setitem(
+        weights.FACEREC_OFFICIAL_EMBEDDER,
+        "sha256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+    weights.verify_facerec_weight_file(path)
+
+    path.write_bytes(payload + b"x")
+    with pytest.raises(ValueError, match="byte length"):
+        weights.verify_facerec_weight_file(path)
+
+
+def test_factory_routes_librefacerec_name(monkeypatch, tmp_path):
     from libreyolo import LibreYOLO
     from libreyolo.models.facerec import LibreFaceEmbedder
 
@@ -286,6 +353,10 @@ def test_factory_routes_librefacerec_name(monkeypatch, tmp_path):
     wdir = tmp_path / "weights"
     wdir.mkdir()
     _build_tiny_face_onnx(str(wdir / "librefacerec-l.onnx"), dim=8)
+    monkeypatch.setattr(
+        "libreyolo.models.facerec.weights.verify_facerec_weight_file",
+        lambda *_args, **_kwargs: None,
+    )
 
     model = LibreYOLO("librefacerec-l")
     assert isinstance(model, LibreFaceEmbedder)
@@ -293,6 +364,100 @@ def test_factory_routes_librefacerec_name(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="embed"):
         LibreYOLO("librefacerec-l", task="detect")
+
+
+def test_coreml_face_model_uses_artifact_preprocess(
+    monkeypatch,
+    tmp_path,
+):
+    from libreyolo.models.facerec import LibreFaceEmbedder
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    calls = {}
+
+    class FakeSession:
+        preprocess = {
+            "size": 112,
+            "color_order": "RGB",
+            "mean": 127.5,
+            "scale": 1.0 / 127.5,
+            "layout": "NCHW",
+        }
+        embedding_dim = 8
+        metadata = {"size": "l"}
+
+        def __init__(self, path, *, compute_units):
+            calls.update(path=path, compute_units=compute_units)
+
+        def get_inputs(self):
+            return [type("IO", (), {"name": "aligned_face"})()]
+
+        def run(self, output_names, inputs):
+            assert output_names is None
+            assert set(inputs) == {"aligned_face"}
+            return [np.arange(8, dtype=np.float32)[None]]
+
+    monkeypatch.setattr(
+        "libreyolo.backends.coreml_facerec.CoreMLFaceSession",
+        FakeSession,
+    )
+    model = LibreFaceEmbedder(
+        str(package),
+        compute_units="cpu_and_ne",
+    )
+    assert calls == {
+        "path": str(package),
+        "compute_units": "cpu_and_ne",
+    }
+    assert model.device == "coreml"
+    assert model.size == "l"
+    assert model.dim == 8
+    assert model._get_input_size() == 112
+    output = model.embed_aligned(
+        [np.zeros((112, 112, 3), dtype=np.uint8)]
+    )
+    assert output.shape == (1, 8)
+    np.testing.assert_allclose(np.linalg.norm(output, axis=1), 1.0)
+
+    with pytest.raises(ValueError, match="conflicts"):
+        LibreFaceEmbedder(str(package), preproc="raw_bgr")
+
+
+def test_factory_routes_metadata_declared_face_coreml_package(
+    monkeypatch,
+    tmp_path,
+):
+    from libreyolo import LibreYOLO
+
+    package = tmp_path / "renamed.mlpackage"
+    package.mkdir()
+    captured = {}
+
+    monkeypatch.setattr(
+        "libreyolo.backends.coreml_facerec.coreml_package_family",
+        lambda _path: "facerec",
+    )
+
+    def fake_embedder(path, **kwargs):
+        captured.update(path=path, **kwargs)
+        return "face-coreml"
+
+    monkeypatch.setattr(
+        "libreyolo.models.facerec.LibreFaceEmbedder",
+        fake_embedder,
+    )
+    assert (
+        LibreYOLO(
+            str(package),
+            compute_units="cpu_only",
+            task="facial-recognition",
+        )
+        == "face-coreml"
+    )
+    assert captured["path"] == str(package)
+    assert captured["compute_units"] == "cpu_only"
+    assert captured["task"] == "facial-recognition"
 
 
 def test_cli_names_resolve_facerec():
@@ -328,7 +493,6 @@ def test_gallery_enroll_embedding_and_match():
     matches = g.match(_vec(8, 1), top_k=2, threshold=0.3)
     assert matches[0][0] == ("alice", pytest.approx(1.0))
     # below-threshold queries return no name, never the nearest wrong person
-    q = np.full(8, 0.1, dtype=np.float32)
     assert g.match(_vec(8, 5), threshold=0.5) == [[]]
 
     assert g.remove("bob") == 1
@@ -383,6 +547,37 @@ def test_gallery_model_fingerprint_guard(tmp_path, tiny_onnx):
     other._weights_fingerprint = "deadbeefdeadbeef"
     with pytest.raises(ValueError, match="different embedding model"):
         FaceGallery.load(p, embedder=other)
+
+
+def test_gallery_fingerprint_covers_complete_coreml_package(tmp_path):
+    from libreyolo.models.facerec.gallery import model_file_fingerprint
+
+    package = tmp_path / "face.mlpackage"
+    (package / "Data" / "weights").mkdir(parents=True)
+    (package / "Manifest.json").write_text("{}", encoding="utf-8")
+    weight = package / "Data" / "weights" / "weight.bin"
+    weight.write_bytes(b"first")
+
+    first = model_file_fingerprint(package)
+    assert first == model_file_fingerprint(package)
+    weight.write_bytes(b"second")
+    assert model_file_fingerprint(package) != first
+
+
+def test_gallery_fingerprint_rejects_package_symlink(tmp_path):
+    from libreyolo.models.facerec.gallery import model_file_fingerprint
+
+    package = tmp_path / "face.mlpackage"
+    package.mkdir()
+    target = package / "weight.bin"
+    target.write_bytes(b"weights")
+    link = package / "alias.bin"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("Symbolic-link creation is unavailable on this host.")
+    with pytest.raises(ValueError, match="symbolic links"):
+        model_file_fingerprint(package)
 
 
 def test_gallery_enroll_from_images_and_identify(tiny_onnx, tmp_path):

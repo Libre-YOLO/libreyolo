@@ -129,18 +129,26 @@ def export_cmd(
     }:
         dynamic = True
 
-    # Build export kwargs
+    # Build export kwargs. The face component has a deliberately narrow
+    # conversion contract; do not inject ONNX-only defaults that its public
+    # exporter correctly rejects as irrelevant.
+    facerec_coreml = fmt == "coreml" and loaded_model.FAMILY == "facerec"
     export_kwargs: dict = {
         "half": half,
         "int8": int8,
         "dynamic": dynamic,
-        "simplify": simplify,
-        "opset": opset,
         "batch": batch,
         "device": device,
-        "verbose": verbose,
     }
-    if fmt == "coreml":
+    if not facerec_coreml:
+        export_kwargs.update(
+            {
+                "simplify": simplify,
+                "opset": opset,
+                "verbose": verbose,
+            }
+        )
+    if fmt == "coreml" and loaded_model.FAMILY == "ppocr":
         export_kwargs["rec_batch_max"] = rec_batch_max
         if rec_max_width is not None:
             export_kwargs["rec_max_width"] = rec_max_width
@@ -166,7 +174,7 @@ def export_cmd(
                 exit_with_error(out, "invalid_imgsz", f"Invalid imgsz: {imgsz}. Use e.g. 640 or 640,480.")
     if data is not None:
         export_kwargs["data"] = data
-    if data is not None or int8:
+    if data is not None or (int8 and not facerec_coreml):
         export_kwargs["fraction"] = fraction
         export_kwargs["allow_download_scripts"] = allow_download_scripts
 
@@ -215,13 +223,21 @@ def export_cmd(
         )
         input_h = input_w = native
 
+    if (
+        loaded_model.FAMILY == "facerec"
+        and str(loaded_model.cfg.layout).upper() == "NHWC"
+    ):
+        input_shape = [batch, input_h, input_w, 3]
+    else:
+        input_shape = [batch, 3, input_h, input_w]
+
     data_out = {
         "source_model": model,
         "model_family": loaded_model.FAMILY,
         "format": fmt,
         "output_path": str(output_path),
         "file_size_mb": round(size_mb, 1),
-        "input_shape": [batch, 3, input_h, input_w],
+        "input_shape": input_shape,
         "dynamic": dynamic,
         "half": half,
         "int8": int8,
@@ -231,7 +247,7 @@ def export_cmd(
         data_out["_human_text"] = (
             f"Exported {loaded_model.FAMILY}-{loaded_model.size} to {fmt.upper()}: "
             f"{output_path} ({size_mb:.1f} MB)\n"
-            f"  Input: [{batch}, 3, {input_h}, {input_w}], "
+            f"  Input: {input_shape}, "
             f"dynamic={dynamic}, half={half}, int8={int8}"
         )
 

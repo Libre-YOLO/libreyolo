@@ -29,15 +29,68 @@ _FINGERPRINT_CHUNK = 1024 * 1024
 
 
 def model_file_fingerprint(model_path: str | Path) -> str:
-    """Stable content fingerprint (sha256) of a weights file."""
+    """Stable fingerprint of an ONNX file or complete Core ML package."""
+
+    path = Path(model_path)
+    if path.is_symlink():
+        raise ValueError(
+            f"Face model artifacts must not be symbolic links: {path}"
+        )
+    if path.is_dir():
+        if path.suffix.lower() != ".mlpackage":
+            raise ValueError(
+                "Face model directories must be Core ML .mlpackage "
+                f"artifacts, got {path}."
+            )
+        return _directory_fingerprint(path)
+    if path.suffix.lower() == ".onnx":
+        from ...export.coreml_facerec import (
+            facerec_onnx_source_manifest,
+        )
+
+        digest, _ = facerec_onnx_source_manifest(path)
+        return digest[:16]
+    if not path.is_file():
+        raise FileNotFoundError(f"Face model artifact does not exist: {path}")
+
     h = hashlib.sha256()
-    with open(model_path, "rb") as f:
+    with path.open("rb") as f:
         while True:
             chunk = f.read(_FINGERPRINT_CHUNK)
             if not chunk:
                 break
             h.update(chunk)
     return h.hexdigest()[:16]
+
+
+def _directory_fingerprint(root: Path) -> str:
+    files = []
+    for entry in root.rglob("*"):
+        if entry.is_symlink():
+            raise ValueError(
+                "Face Core ML packages must not contain symbolic links: "
+                f"{entry}"
+            )
+        if entry.is_file():
+            files.append(entry)
+        elif not entry.is_dir():
+            raise ValueError(
+                f"Face Core ML package contains a special entry: {entry}"
+            )
+    if not files:
+        raise ValueError(f"Face Core ML package is empty: {root}")
+
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda value: value.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        size = path.stat().st_size
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(size.to_bytes(8, "big"))
+        with path.open("rb") as handle:
+            while chunk := handle.read(_FINGERPRINT_CHUNK):
+                digest.update(chunk)
+    return digest.hexdigest()[:16]
 
 
 def _unit(vec: np.ndarray) -> np.ndarray:

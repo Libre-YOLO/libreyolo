@@ -93,8 +93,12 @@ with `face_boxes=[...]`.
   more than false ones. Recalibrate for other embedders and for your
   population, and note LFW is a saturated, frontal, celebrity-photo
   benchmark where leading models report roughly 99.5% and above.
-- Training, validation, and export raise `NotImplementedError`: like gaze,
-  this is an inference product consuming opaque ONNX graphs.
+- Training and validation raise `NotImplementedError`: like gaze, this is an
+  inference product consuming opaque ONNX graphs. The sole export exception is
+  `model.export(format="coreml")`, a parity-gated mechanical conversion of the
+  aligned-face recognition component. Detection, alignment, preprocessing,
+  and L2 normalization remain host operations; Apple runtime parity is still
+  required before the route can leave its experimental tier.
 
 The full contract, including the alternatives these decisions rule out, is
 recorded in [`adr/0013-embed-task-contract.md`](adr/0013-embed-task-contract.md).

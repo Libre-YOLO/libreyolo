@@ -17,6 +17,7 @@ See ``docs/librevlm_design.md`` and ``docs/adr/0002-librevlm-contract.md``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
 from .base import LibreVLMModel
@@ -26,7 +27,7 @@ from .kosmos2 import LibreKosmos2
 from .lfm2 import LibreLFM2VL
 from .locateanything import LibreLocateAnything
 from .qwen3vl import LibreQwen3VL
-from .smolvlm import LibreSmolVLM2
+from .smolvlm import CoreMLSmolVLM2, LibreSmolVLM2
 
 # alias -> (family class, size)
 _ALIASES: Dict[str, Tuple[Type[LibreVLMModel], str]] = {
@@ -72,16 +73,28 @@ def LibreVLM(model: str = _DEFAULT_MODEL, **kwargs) -> LibreVLMModel:
     """Load a vision-language detector by name.
 
     Args:
-        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``).
-            Defaults to Qwen3-VL-4B (Apache-2.0).
+        model: Model alias (e.g. ``"qwen3-vl-4b"``, ``"lfm2-vl-450m"``)
+            or a portable SmolVLM2 ``.coremlvlm`` directory. Defaults to
+            Qwen3-VL-4B (Apache-2.0).
         **kwargs: Forwarded to the family constructor: ``device``, ``names``
             (initial class vocabulary, same as calling ``set_classes`` after
-            load), ``prompt`` (override the detection prompt), ``max_new_tokens``.
+            load), ``prompt`` (override the detection prompt),
+            ``max_new_tokens``. Core ML bundles additionally accept
+            ``compute_units``.
 
     Returns:
         A ``LibreVLMModel`` instance with the standard predict/track surface.
     """
-    key = str(model).strip().lower()
+    model_value = str(model).strip()
+    candidate = Path(model_value)
+    if candidate.suffix.lower() == ".coremlvlm":
+        if not candidate.is_dir():
+            raise FileNotFoundError(
+                f"Core ML VLM bundle does not exist: {candidate}"
+            )
+        return CoreMLSmolVLM2(str(candidate), **kwargs)
+
+    key = model_value.lower()
     if key in _LAZY_ALIASES:
         from ..sensenova import LibreSenseNovaVision
 
@@ -110,6 +123,7 @@ __all__ = [
     "LibreLFM2VL",
     "LibreQwen3VL",
     "LibreSmolVLM2",
+    "CoreMLSmolVLM2",
     "LibreInternVL3",
     "LibreFlorence2",
     "LibreKosmos2",

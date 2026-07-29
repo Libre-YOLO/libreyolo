@@ -12,6 +12,12 @@ from typing import Any
 
 
 OPTIONAL_MODELS = (
+    (
+        "libreyolo.models.facerec.model",
+        "LibreFaceEmbedder",
+        "onnx",
+        "onnxruntime",
+    ),
     ("libreyolo.models.sam.model", "LibreSAM1", "sam", "transformers"),
     ("libreyolo.models.sam.sam2", "LibreSAM2", "sam", "transformers"),
     ("libreyolo.models.sam.edgetam", "LibreEdgeTAM", "sam", "transformers"),

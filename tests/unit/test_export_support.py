@@ -65,7 +65,12 @@ def test_public_lazy_model_classes_are_in_the_inventory_contract():
             break
     assert lazy_mapping is not None
 
-    facade_classes = {"LibreOpenVocab", "LibreSAM", "LibreVLM"}
+    facade_classes = {
+        "FaceGallery",
+        "LibreOpenVocab",
+        "LibreSAM",
+        "LibreVLM",
+    }
     public_lazy_models = {
         class_name
         for module_name, class_name in lazy_mapping.values()
@@ -134,9 +139,14 @@ def test_coreml_matrix_is_explicit_and_never_overclaims_validation():
     assert entries
     assert all(entry.tier in {"experimental", "blocked"} for entry in entries.values())
     assert not any(entry.tier == "validated" for entry in entries.values())
+    dedicated_component_routes = {
+        ("facerec", "embed"),
+        ("smolvlm2", "detect"),
+    }
     assert {
         key for key, entry in entries.items() if entry.tier == "experimental"
-    } == supported_coreml_exports()
+    } == supported_coreml_exports() | (dedicated_component_routes & entries.keys())
+    assert not (dedicated_component_routes & supported_coreml_exports())
 
     deimv2 = get_support("deimv2", "detect", "coreml")
     assert deimv2.tier == "experimental"

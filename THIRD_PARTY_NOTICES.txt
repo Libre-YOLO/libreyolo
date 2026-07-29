@@ -927,7 +927,10 @@ Source: https://github.com/huggingface/transformers
 Commit: ddb849abe009d1089e6c691bfc897f27211c663c (v5.12.1)
 Files:
   src/transformers/models/smolvlm/modeling_smolvlm.py
+  src/transformers/models/smolvlm/processing_smolvlm.py
+  src/transformers/models/smolvlm/image_processing_smolvlm.py
   src/transformers/models/llama/modeling_llama.py
+  src/transformers/generation/logits_process.py
 License: Apache License 2.0
 Copyright 2020 The Hugging Face Inc. team
 Checkpoint: HuggingFaceTB/SmolVLM2-500M-Video-Instruct
@@ -936,9 +939,11 @@ Checkpoint license: Apache License 2.0
 Checkpoint model.safetensors SHA-256:
   b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3
 Used for: the conversion-only fixed-square vision and stateful Llama decoder
-          wrappers in libreyolo/export/coreml_vlm.py. The wrappers compose
-          Transformers modules while specializing the all-valid image grid
-          and replacing DynamicCache with an aggregate Core ML state ABI.
+          wrappers in libreyolo/export/coreml_vlm.py, plus the pinned processor,
+          greedy-generation, and portable-bundle host contract in
+          libreyolo/backends/coreml_vlm.py. The conversion wrappers compose
+          Transformers modules while specializing the all-valid image grid and
+          replacing DynamicCache with an aggregate Core ML state ABI.
 
 The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
 
@@ -966,16 +971,34 @@ huggingface.co/LibreYOLO/SenseNovaVision7b; mirroring does not change the
 license. See libreyolo/models/sensenova/NOTICE for the full provenance chain.
 
 --------------------------------------------------------------------
+onnx2torch
+--------------------------------------------------------------------
+Source: https://github.com/ENOT-AutoDL/onnx2torch
+Version: v1.5.15
+Commit: 369412ad62c81ca5b360554572820755e31b9b7a
+License: Apache License 2.0
+Used for: optional mechanical conversion of opaque face-recognition ONNX
+          graphs into PyTorch modules for parity-gated Core ML export. The
+          dependency is invoked as a library; no onnx2torch source is copied,
+          adapted, or vendored into LibreYOLO.
+
+The full Apache License 2.0 text is included at licenses/Apache-2.0.txt.
+
+--------------------------------------------------------------------
 AuraFace-v1 (fal.ai)
 --------------------------------------------------------------------
 Source: https://huggingface.co/fal/AuraFace-v1
+Revision: af6d057c9b0ec4071d4c49c80e3539258798b609
 License: Apache-2.0 (weights)
 Used for: the librefacerec-l face-embedding ONNX weights (single file
 glintr100.onnx, mirrored unmodified to the LibreYOLO Hugging Face org
-as librefacerec-l.onnx). No code is ported; the graph is consumed
-opaquely via onnxruntime. Upstream training data is undisclosed; only
-this single Apache-2.0 file is mirrored, none of the other artifacts
-in the upstream repository.
+as librefacerec-l.onnx at revision
+e8b0e91bf2931579177b9821171d35a759579df6). The byte-identical file is
+260694151 bytes with SHA-256
+a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60.
+No code is ported; the graph is consumed opaquely via onnxruntime.
+Upstream training data is undisclosed; only this single Apache-2.0 file is
+mirrored, none of the other artifacts in the upstream repository.
 
 --------------------------------------------------------------------
 YuNet face detector (OpenCV Zoo)

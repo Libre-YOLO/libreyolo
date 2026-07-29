@@ -176,7 +176,17 @@ siglip2-convert = [
     "transformers>=5.1.0",
 ]
 coreml = [
+    # Face-embedding Core ML export mechanically converts a loaded ONNX graph.
+    "libreyolo[onnx]",
+    "onnx2torch==1.5.15",
     "coremltools>=8.0",
+]
+coreml-vlm = [
+    # The stateful SmolVLM2 contract is intentionally pinned to the exact
+    # converter/frontend and host processor versions covered by parity tests.
+    "coremltools>=9.0,<10",
+    "transformers==5.12.1",
+    "num2words>=0.5.0",
 ]
 tensorboard = [
     "tensorboard>=2.13.0",
@@ -203,6 +213,7 @@ all = [
     "libreyolo[clip]",
     "libreyolo[siglip2]",
     "libreyolo[coreml]",
+    "libreyolo[coreml-vlm]",
     "libreyolo[vlm]",
     "libreyolo[sam]",
     "libreyolo[label]",

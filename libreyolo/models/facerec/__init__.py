@@ -9,7 +9,12 @@ from .align import ARCFACE_DST_112, align_face, estimate_norm
 from .gallery import FaceGallery
 from .model import LibreFaceEmbedder, OpenCVFaceDetector
 from .preprocess import PreprocCfg
-from .weights import FACEREC_WEIGHT_URLS, resolve_facerec_weight
+from .weights import (
+    FACEREC_OFFICIAL_EMBEDDER,
+    FACEREC_WEIGHT_URLS,
+    resolve_facerec_weight,
+    verify_facerec_weight_file,
+)
 
 __all__ = [
     "LibreFaceEmbedder",
@@ -20,5 +25,7 @@ __all__ = [
     "estimate_norm",
     "ARCFACE_DST_112",
     "FACEREC_WEIGHT_URLS",
+    "FACEREC_OFFICIAL_EMBEDDER",
     "resolve_facerec_weight",
+    "verify_facerec_weight_file",
 ]

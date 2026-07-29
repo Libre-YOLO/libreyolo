@@ -266,6 +266,19 @@ project the weights were derived from. Per-family summary:
              Distilled by upstream from SAM 2.1 and SAM 3; teacher weights
              are not included or redistributed.
 
+    Face embedding (LibreYOLO/librefacerec-l)           Apache-2.0
+             Byte-identical mirror of fal/AuraFace-v1 glintr100.onnx.
+             Upstream revision:
+               af6d057c9b0ec4071d4c49c80e3539258798b609
+             LibreYOLO mirror revision:
+               e8b0e91bf2931579177b9821171d35a759579df6
+             librefacerec-l.onnx:
+               260694151 bytes
+               SHA-256
+               a7933ea5330113b01c9b60351d8f4c33003f145d8470ac5f0e52ee2effe25c60
+             Both model cards declare Apache-2.0. The graph is consumed
+             opaquely; LibreYOLO does not port the upstream architecture code.
+
 The LICENSE and NOTICE files on each Hugging Face model card are the
 authoritative source for redistribution terms. Users converting
 third-party checkpoints locally are responsible for complying with the

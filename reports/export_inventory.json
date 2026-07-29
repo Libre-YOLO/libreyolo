@@ -351,6 +351,23 @@
     "optional_extra": null,
     "available": true
   },
+  "facerec": {
+    "class": "libreyolo.models.facerec.model.LibreFaceEmbedder",
+    "tasks": [
+      "embed"
+    ],
+    "default_task": "embed",
+    "sizes": {
+      "l": 112
+    },
+    "default_imgsz": {
+      "l": 112
+    },
+    "task_sizes": {},
+    "export_override": "custom",
+    "optional_extra": "onnx",
+    "available": true
+  },
   "florence2": {
     "class": "libreyolo.models.vlm.florence2.LibreFlorence2",
     "tasks": [
@@ -1105,7 +1122,7 @@
       "500m": 512
     },
     "task_sizes": {},
-    "export_override": "blocked",
+    "export_override": "custom",
     "optional_extra": "vlm",
     "available": true
   },

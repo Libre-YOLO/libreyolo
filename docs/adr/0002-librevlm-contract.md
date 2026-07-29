@@ -162,7 +162,11 @@ executing mutable upstream model-repository code under the same alias.
 
 - Training / fine-tuning (`train()` raises; fine-tune upstream).
 - Dataset validation / mAP (`val()` raises; see "Confidence").
-- Export to ONNX/TensorRT/etc. (`export()` raises; generative decode).
+- Generic one-graph export to ONNX/TensorRT/etc. (`export()` raises). The exact
+  SmolVLM2-500M snapshot has a narrow stateful Core ML exception that packages
+  three named functions, processor assets, host decode logic, provenance, and
+  licenses as `.coremlvlm`; see
+  [ADR 0014](0014-coreml-vlm-bundle-contract.md).
 - CLI: the `libreyolo` command does not resolve VLM aliases in v1. The tier is a
   Python-API surface (`LibreVLM(...)`); `predict`/`track` parity is at the API
   level, not the CLI.
@@ -191,3 +195,6 @@ executing mutable upstream model-repository code under the same alias.
   grounding tokens and override the inference hooks. See the Available-models
   table in [`../librevlm_design.md`](../librevlm_design.md).
 - Offline parser unit tests plus a `vlm`-marked end-to-end smoke test.
+- Experimental SmolVLM2-500M Core ML export/runtime with fixed 2K/4K contexts
+  and a hash-bound portable `.coremlvlm` bundle. Linux conversion/spec parity
+  is recorded; Apple stateful-runtime parity remains pending.

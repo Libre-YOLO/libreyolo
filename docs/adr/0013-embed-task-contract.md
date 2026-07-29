@@ -71,11 +71,17 @@ alternative:
 Embedding vectors are omitted from `summary()` and JSON output by default (a
 512-float vector is roughly 2 KB per face); `summary(embeddings=True)` opts in.
 
-Out of scope in v1: training, dataset validation, and re-export
-(`model.train()`, `.val()`, `.export()` raise), because the family wraps an
-existing ONNX graph. Also out of scope: face attribute prediction (age, gender,
-emotion), which is a different ethical surface, and clustering of unlabeled
-collections, which callers can do from the raw embeddings.
+Out of scope in v1: training and dataset validation (`model.train()` and
+`.val()` raise). Re-export remains out of scope except for one narrow
+deployment conversion: `.export(format="coreml")` may mechanically translate
+the loaded ONNX graph through the Apache-2.0 `onnx2torch` dependency after
+numeric ONNX-to-PyTorch and exact eager-to-trace parity gates. That conversion
+is fixed batch one; face detection, five-point alignment, preprocessing, and
+L2 normalization stay on the host. It is experimental until raw and normalized
+embedding parity is recorded with the Apple runtime. Also out of scope: face
+attribute prediction (age, gender, emotion), which is a different ethical
+surface, and clustering of unlabeled collections, which callers can do from
+the raw embeddings.
 
 ## Consequences
 

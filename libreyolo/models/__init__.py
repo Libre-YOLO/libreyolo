@@ -269,7 +269,12 @@ def LibreYOLO(
             )
         from .facerec import LibreFaceEmbedder
 
-        return LibreFaceEmbedder(model_path, device=device)
+        return LibreFaceEmbedder(
+            model_path,
+            device=device,
+            task=task,
+            compute_units=compute_units,
+        )
 
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
@@ -281,7 +286,7 @@ def LibreYOLO(
         if task is not None and normalize_task(task) == "embed":
             from .facerec import LibreFaceEmbedder
 
-            return LibreFaceEmbedder(model_path, device=device)
+            return LibreFaceEmbedder(model_path, device=device, task=task)
 
         from ..backends.onnx import OnnxBackend
 
@@ -317,7 +322,24 @@ def LibreYOLO(
             model_path, nb_classes=nb_classes, device=device, task=task
         )
 
-    if Path(model_path).is_dir() and Path(model_path).suffix == ".mlpackage":
+    if (
+        Path(model_path).is_dir()
+        and Path(model_path).suffix.lower() == ".mlpackage"
+    ):
+        from ..backends.coreml_facerec import coreml_package_family
+        from ..tasks import normalize_task
+
+        package_family = coreml_package_family(model_path)
+        requested_task = normalize_task(task) if task is not None else None
+        if package_family == "facerec" or requested_task == "embed":
+            from .facerec import LibreFaceEmbedder
+
+            return LibreFaceEmbedder(
+                model_path,
+                device=device,
+                task=task,
+                compute_units=compute_units,
+            )
         from ..backends.coreml import CoreMLBackend
 
         return CoreMLBackend(

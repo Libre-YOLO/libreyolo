@@ -1253,6 +1253,24 @@ _add(
 )
 _add(
     "experimental",
+    ("facerec",),
+    ("embed",),
+    ("coreml",),
+    reason=(
+        "The complete pinned 65.1M-parameter ONNX recognition head has "
+        "numeric ONNX-to-PyTorch parity, exact eager-to-trace parity, and "
+        "Core ML Tools 9 FP16/FP32 ML Program conversion evidence; macOS "
+        "runtime parity is pending."
+    ),
+    constraint=(
+        "Fixed batch-one aligned-face component. Face detection, five-point "
+        "OpenCV alignment, preprocessing, and L2 normalization remain host "
+        "operations. The package accepts one aligned crop and emits one raw "
+        "embedding; galleries are fingerprint-bound to the complete artifact."
+    ),
+)
+_add(
+    "experimental",
     ("eomt",),
     ("semantic", "segment", "panoptic"),
     ("coreml",),
@@ -1474,8 +1492,29 @@ _add(
     ),
 )
 _add(
+    "experimental",
+    ("smolvlm2",),
+    ("detect",),
+    ("coreml",),
+    reason=(
+        "The complete pinned 507.5M-parameter SmolVLM2-500M graph has "
+        "source-wrapper parity and completes Core ML Tools 9 conversion as "
+        "three named functions with a stateful FP16 KV cache. A real portable "
+        "bundle was rebuilt and spec-validated on Linux; macOS state/runtime "
+        "parity is pending."
+    ),
+    constraint=(
+        "Only the exact Apache-2.0 500M snapshot and reviewed 2K/4K context "
+        "profiles are supported. The host performs pinned tokenization, fixed "
+        "2048x2048 RGB stretch into 17 512x512 crops, image-token merging, "
+        "causal controls, greedy decoding, repetition penalty, detokenization, "
+        "and result parsing. Deployment requires iOS 18 or macOS 15 and the "
+        "portable .coremlvlm bundle; 8K is rejected pending peak-memory proof."
+    ),
+)
+_add(
     "blocked",
-    ("florence2", "internvl3", "kosmos2", "lfm2vl", "qwen3vl", "smolvlm2"),
+    ("florence2", "internvl3", "kosmos2", "lfm2vl", "qwen3vl"),
     ("detect",),
     ("coreml",),
     reason=(
@@ -1526,6 +1565,11 @@ _TASK_BLOCKS = {
 }
 
 _FAMILY_BLOCKS = {
+    "facerec": (
+        "The inference-only face head permits only its parity-gated mechanical "
+        "ONNX-to-Core ML deployment conversion; other re-export formats remain "
+        "out of scope."
+    ),
     "depth_anything3": (
         "Depth Anything 3 currently rejects export for every format; its "
         "depth graph has not been added to the exported-runtime contract."

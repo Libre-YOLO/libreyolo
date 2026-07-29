@@ -38,6 +38,15 @@ size marked with `*`. The authoritative list is `_ALIASES` in
 | `locate-anything`, `-3b`*                     | LocateAnything | NVIDIA non-commercial | remote-code grounder; boxes and points |
 | `sensenova-vision`, `-7b`*                    | SenseNova-Vision | Apache-2.0 code, CC BY-NC 4.0 weights | unified multimodal; 7 tasks, vendored port, heavy |
 
+SmolVLM2-500M is the first VLM with an export route. Its experimental Core ML
+path is deliberately not a generic `.mlpackage`: it emits a portable
+`.coremlvlm` directory containing the stateful multifunction package, exactly
+11 pinned processor/tokenizer assets, a hash-bound manifest, and the full
+Apache-2.0 license. Only 2048- and 4096-token contexts are public; Apple
+stateful-runtime parity is still pending. The exact artifact and host contract
+are documented in
+[`adr/0014-coreml-vlm-bundle-contract.md`](adr/0014-coreml-vlm-bundle-contract.md).
+
 Florence-2 and Kosmos-2 do not use a chat template: they are driven by task /
 grounding prompts and decode boxes via the processor's `post_process_generation`,
 so their families override the three inference hooks (and Florence-2's boxes come
@@ -257,6 +266,10 @@ These are deliberate v1 scoping choices, called out so behavior matches expectat
   runs one image at a time, so a larger `batch=` gives no throughput gain in v1.
 - **Python-API only.** The `libreyolo` CLI does not resolve VLM aliases yet; use
   `LibreVLM(...)` from Python. `predict`/`track` parity is at the API level.
+- **Core ML is profile-specific.** Only the exact SmolVLM2-500M 2K/4K bundle
+  contract is implemented. Other VLM families, SmolVLM2-2.2B, and the 8K
+  profile remain blocked until each has its own bounded conversion, processor,
+  state, runtime, and memory proof.
 - **`chat()` and `prompt=`** apply to the chat-template families only; Florence-2
   and Kosmos-2 are task-token driven (`chat()` raises, `prompt=` is ignored).
 - **Point support is family-specific.** LocateAnything supports `task="point"`

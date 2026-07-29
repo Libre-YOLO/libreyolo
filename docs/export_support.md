@@ -27,6 +27,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  | exp |  |
 | eomt | segment |  |  |  |  |  |  | exp |  |
 | eomt | panoptic |  |  |  |  |  |  | exp |  |
+| facerec | embed |  |  |  |  |  |  | exp |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
 | fomo | point | ✓ | ✓ | exp | exp | ✓ |  | exp | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  | exp |  |
@@ -71,7 +72,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sensenovavision | depth |  |  |  |  |  |  |  |  |
 | sensenovavision | ocr |  |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  | exp | ✓ |
-| smolvlm2 | detect |  |  |  |  |  |  |  |  |
+| smolvlm2 | detect |  |  |  |  |  |  | exp |  |
 | swinir | restore | exp | exp | exp | exp | exp |  | exp |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  | exp | ✓ |
 | yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  | exp | ✓ |
@@ -188,6 +189,7 @@ Experimental rows may be narrower than the family-wide size surface.
 - `eomt` / `semantic` / `coreml`: Fixed square DINOv2 S/B/L component. The graph emits compact raw class-query logits and stride-4 mask logits. LibreYOLO preserves EoMT's exact shortest-edge split/stitch geometry for semantic and longest-edge top-left pad/query decoding for instance and panoptic tasks on the host. The functional attention-mask graph has real Core ML Tools 9 conversion evidence; macOS runtime parity is pending.
 - `eomt` / `segment` / `coreml`: Fixed square DINOv2 S/B/L component. The graph emits compact raw class-query logits and stride-4 mask logits. LibreYOLO preserves EoMT's exact shortest-edge split/stitch geometry for semantic and longest-edge top-left pad/query decoding for instance and panoptic tasks on the host. The functional attention-mask graph has real Core ML Tools 9 conversion evidence; macOS runtime parity is pending.
 - `eomt` / `panoptic` / `coreml`: Fixed square DINOv2 S/B/L component. The graph emits compact raw class-query logits and stride-4 mask logits. LibreYOLO preserves EoMT's exact shortest-edge split/stitch geometry for semantic and longest-edge top-left pad/query decoding for instance and panoptic tasks on the host. The functional attention-mask graph has real Core ML Tools 9 conversion evidence; macOS runtime parity is pending.
+- `facerec` / `embed` / `coreml`: Fixed batch-one aligned-face component. Face detection, five-point OpenCV alignment, preprocessing, and L2 normalization remain host operations. The package accepts one aligned crop and emits one raw embedding; galleries are fingerprint-bound to the complete artifact.
 - `grounding_dino` / `detect` / `coreml`: Sizes `t` and `b` use a fixed 800x800 batch-one RGB stretch profile, 900 queries, and at most 256 BERT tokens. The exact pre-fusion BERT boundary, prompt tokens, masks, positions, and WordPiece ABI are frozen; changing classes requires re-export. Fixed stretch differs from the native keep-aspect image policy for non-square sources.
 - `mobilenetv4` / `classify` / `coreml`: CLIP and SigLIP2 freeze the current class set and require their native input resolution. SigLIP2 preserves the exported softmax or sigmoid classification activation.
 - `mobilesam` / `segment` / `coreml`: FP32 only. One fixed model-ready image encoder and six named prompt decoders cover points, boxes, points+boxes, and single/multimask modes. Point count is bounded by prompt_max_points (default 16); raw-image preprocessing, prompt transforms, query loops, and mask upscaling remain exact host operations. SAM3 is visual-prompt-only and converted artifacts are local-user-only under its custom license.
@@ -204,6 +206,7 @@ Experimental rows may be narrower than the family-wide size surface.
 - `sam3` / `segment` / `coreml`: FP32 only. One fixed model-ready image encoder and six named prompt decoders cover points, boxes, points+boxes, and single/multimask modes. Point count is bounded by prompt_max_points (default 16); raw-image preprocessing, prompt transforms, query loops, and mask upscaling remain exact host operations. SAM3 is visual-prompt-only and converted artifacts are local-user-only under its custom license.
 - `segformer` / `semantic` / `coreml`: All b0-b5 eval graphs pass fixed-canvas two-probe TorchScript trace parity. The architecture/source is permissive, but published ADE20K weights remain restricted to research or evaluation.
 - `siglip2` / `classify` / `coreml`: CLIP and SigLIP2 freeze the current class set and require their native input resolution. SigLIP2 preserves the exported softmax or sigmoid classification activation.
+- `smolvlm2` / `detect` / `coreml`: Only the exact Apache-2.0 500M snapshot and reviewed 2K/4K context profiles are supported. The host performs pinned tokenization, fixed 2048x2048 RGB stretch into 17 512x512 crops, image-token merging, causal controls, greedy decoding, repetition penalty, detokenization, and result parsing. Deployment requires iOS 18 or macOS 15 and the portable .coremlvlm bundle; 8K is rejected pending peak-memory proof.
 - `swinir` / `restore` / `coreml`: Sizes `s`, `m`, and `l` are enabled at their native 64x64 canvas. Every full graph has bit-exact two-probe TorchScript parity and Core ML Tools 9 FP16 ML Program conversion evidence. The exact source canvas is required; non-native canvases and Apple runtime parity remain pending.
 - `yolonas` / `detect` / `coreml`: Square fixed canvas with the native longest-side cap: 636-centered RGB padding for detect; 640 top-left placement, bottom/right padding, and BGR graph input for pose. Current evidence uses license-clean synthetic graphs, not restricted published weights.
 - `yolonas` / `pose` / `coreml`: Square fixed canvas with the native longest-side cap: 636-centered RGB padding for detect; 640 top-left placement, bottom/right padding, and BGR graph input for pose. Current evidence uses license-clean synthetic graphs, not restricted published weights.
@@ -304,6 +307,13 @@ accept user-trained weights even when a published checkpoint is restricted.
 - `eomt` / `panoptic` / `ncnn`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `tflite`: EoMT instance and panoptic export do not yet have runtime parsing.
 - `eomt` / `panoptic` / `coreai`: EoMT instance and panoptic export do not yet have runtime parsing.
+- `facerec` / `embed` / `onnx`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `torchscript`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `tensorrt`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `openvino`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `ncnn`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `tflite`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
+- `facerec` / `embed` / `coreai`: The inference-only face head permits only its parity-gated mechanical ONNX-to-Core ML deployment conversion; other re-export formats remain out of scope.
 - `florence2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `florence2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
@@ -540,7 +550,6 @@ accept user-trained weights even when a published checkpoint is restricted.
 - `smolvlm2` / `detect` / `openvino`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `ncnn`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
-- `smolvlm2` / `detect` / `coreml`: Generative vision-language inference requires tokenizer, prefill, decode, and state/cache runtime components rather than one image graph.
 - `smolvlm2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
 - `swinir` / `restore` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `swinir` / `restore` / `coreai`: The export process DIES rather than hangs, and the kill point moves between runs, which is the signature of memory exhaustion rather than a stuck loop. One run reached 'Step 3/3: Optimizing and writing the asset' before stopping; a later run of the same graph at the same 128 canvas died inside to_coreai() before returning, in both cases with a leaked-semaphore warning and no traceback. Window attention unrolls into a very large number of small ops, so the converter's peak memory is the prime suspect on a 16 GB machine. Next steps: watch RSS during conversion, try the smallest available size at a 64 canvas, and check the system log for a memory kill. Do NOT assume optimize() is at fault; an earlier note said so on the strength of a single run and the second run contradicted it.

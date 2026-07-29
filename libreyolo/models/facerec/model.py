@@ -19,7 +19,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from ..l2cs.face import FaceBox, FaceDetector, resolve_face_detector
+from ..l2cs.face import FaceBox, resolve_face_detector
 from .preprocess import PreprocCfg, l2_normalize, preprocess_aligned, resolve_preproc
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,9 @@ class LibreFaceEmbedder:
     """
 
     FAMILY = "facerec"
+    FILENAME_PREFIX = "librefacerec-"
+    INPUT_SIZES = {"l": 112}
+    TASK_INPUT_SIZES = {}
     SUPPORTED_TASKS = ("embed",)
     DEFAULT_TASK = "embed"
 
@@ -53,14 +56,16 @@ class LibreFaceEmbedder:
         face_detector: Any = None,
         names: Optional[dict] = None,
         task: str | None = "embed",
+        compute_units: str = "all",
     ):
-        try:
-            import onnxruntime as ort
-        except ImportError as e:  # pragma: no cover - env dependent
-            raise ImportError(
-                "Face embedding requires onnxruntime. "
-                'Install with: pip install "libreyolo[onnx]"'
-            ) from e
+        from ...tasks import normalize_task
+
+        resolved_task = normalize_task(task or self.DEFAULT_TASK)
+        if resolved_task != "embed":
+            raise ValueError(
+                "LibreFaceEmbedder supports only the 'embed' "
+                f"(facial-recognition) task, got task={task!r}."
+            )
 
         if not Path(model_path).exists():
             from .weights import is_facerec_weight_name, resolve_facerec_weight
@@ -69,40 +74,109 @@ class LibreFaceEmbedder:
                 model_path = resolve_facerec_weight(model_path)
             else:
                 raise FileNotFoundError(
-                    f"Face-embedding ONNX model not found: {model_path}"
+                    f"Face-embedding model not found: {model_path}"
                 )
 
-        available = ort.get_available_providers()
-        if device in ("auto", "cuda", "gpu") and "CUDAExecutionProvider" in available:
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            self.device = "cuda"
+        path = Path(model_path)
+        is_coreml = path.is_dir() and path.suffix.lower() == ".mlpackage"
+        if path.is_file() and path.suffix.lower() == ".onnx":
+            from .weights import verify_facerec_weight_file
+
+            verify_facerec_weight_file(path)
+        explicit_cfg = None if preproc is None else resolve_preproc(preproc)
+        if is_coreml:
+            from ...backends.coreml_facerec import CoreMLFaceSession
+
+            self.session = CoreMLFaceSession(
+                str(path),
+                compute_units=compute_units,
+            )
+            payload = self.session.preprocess
+            artifact_cfg = PreprocCfg(
+                size=int(payload["size"]),
+                color_order=str(payload["color_order"]),
+                mean=float(payload["mean"]),
+                scale=float(payload["scale"]),
+                layout=str(payload["layout"]),
+            )
+            if explicit_cfg is not None and explicit_cfg != artifact_cfg:
+                raise ValueError(
+                    "Explicit face preprocessing conflicts with the Core ML "
+                    f"artifact contract: {explicit_cfg!r} != {artifact_cfg!r}."
+                )
+            self.cfg = artifact_cfg
+            self.device = "coreml"
+            self.input_name = self.session.get_inputs()[0].name
+            self._dim = int(self.session.embedding_dim)
+            self.size = str(self.session.metadata.get("size", "custom"))
         else:
-            providers = ["CPUExecutionProvider"]
-            self.device = "cpu"
+            if path.suffix.lower() != ".onnx" or not path.is_file():
+                raise ValueError(
+                    "LibreFaceEmbedder requires an ONNX file or a face "
+                    f"Core ML .mlpackage, got {path}."
+                )
+            try:
+                import onnxruntime as ort
+            except ImportError as e:  # pragma: no cover - env dependent
+                raise ImportError(
+                    "Face embedding requires onnxruntime. "
+                    'Install with: pip install "libreyolo[onnx]"'
+                ) from e
 
-        so = ort.SessionOptions()
-        so.log_severity_level = 3  # silence "initializer in graph inputs" spam
-        self.session = ort.InferenceSession(model_path, sess_options=so, providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
+            available = ort.get_available_providers()
+            if (
+                device in ("auto", "cuda", "gpu")
+                and "CUDAExecutionProvider" in available
+            ):
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                self.device = "cuda"
+            else:
+                providers = ["CPUExecutionProvider"]
+                self.device = "cpu"
 
-        self.model_path = model_path
+            so = ort.SessionOptions()
+            so.log_severity_level = 3
+            self.session = ort.InferenceSession(
+                str(path),
+                sess_options=so,
+                providers=providers,
+            )
+            self.input_name = self.session.get_inputs()[0].name
+            self.cfg = explicit_cfg or PreprocCfg.arcface()
+            out_dim = self.session.get_outputs()[0].shape[-1]
+            self._dim = int(out_dim) if isinstance(out_dim, int) else None
+            self.size = (
+                "l"
+                if path.name.lower() == "librefacerec-l.onnx"
+                else "custom"
+            )
+
+        self.model_path = str(path)
         self.family = self.FAMILY
         self.task = "embed"
-        self.cfg = resolve_preproc(preproc)
         self.names = names or {0: "face"}
         self.face_detector = (
             resolve_face_detector(face_detector) if face_detector is not None else None
         )
         self._default_detector_instance = None
 
-        out_dim = self.session.get_outputs()[0].shape[-1]
-        self._dim = int(out_dim) if isinstance(out_dim, int) else None
-
     # ------------------------------------------------------------------
     @property
     def dim(self) -> Optional[int]:
-        """Embedding dimension (``None`` if the ONNX graph declares it dynamic)."""
+        """Embedding dimension (``None`` if an ONNX graph declares it dynamic)."""
         return self._dim
+
+    def _get_model_name(self) -> str:
+        return self.FAMILY
+
+    def _get_input_size(self) -> int:
+        return int(self.cfg.size)
+
+    @classmethod
+    def get_download_url(cls, filename: str) -> str | None:
+        from .weights import FACEREC_WEIGHT_URLS
+
+        return FACEREC_WEIGHT_URLS.get(Path(filename).name.lower())
 
     def embed_aligned(self, aligned_crops: List[np.ndarray]) -> np.ndarray:
         """List of aligned HxWx3 RGB uint8 crops -> ``(N, D)`` L2-normalized."""
@@ -180,10 +254,16 @@ class LibreFaceEmbedder:
             "verification accuracy with the `compare` API on labeled pairs."
         )
 
-    def export(self, *args, **kwargs):
-        raise NotImplementedError(
-            "LibreFaceEmbedder already wraps an ONNX graph; re-export is not supported."
-        )
+    def export(self, format: str = "onnx", **kwargs) -> str:
+        normalized = str(format).strip().lower()
+        if normalized not in {"coreml", "mlpackage"}:
+            raise NotImplementedError(
+                "LibreFaceEmbedder supports only the mechanical Core ML "
+                "deployment conversion of its loaded ONNX graph."
+            )
+        from ...export.coreml_facerec import export_facerec_coreml
+
+        return export_facerec_coreml(self, kwargs)
 
 
 def _top_embedding(result) -> Optional[np.ndarray]:
