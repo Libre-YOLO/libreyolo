@@ -693,10 +693,10 @@ class LibreDINOv2(BaseModel):
     # =========================================================================
 
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
-        if self.task == "classify" and format.lower() == "onnx":
+        if self.task == "classify" and format.lower() in {"onnx", "coreai"}:
             return super().export(format=format, opset=opset, **kwargs)
         if self.task == "semantic":
             return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
-            "LibreDINOv2 classify export currently supports ONNX only."
+            "LibreDINOv2 classify export currently supports ONNX and Core AI only."
         )

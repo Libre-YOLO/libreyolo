@@ -72,9 +72,10 @@ def decode_export(
         a = anc.shape[0]
         x = output.view(b, a, 5 + num_classes, h, w).permute(0, 1, 3, 4, 2).sigmoid()
 
-        # Device-agnostic grids (new_ones/cumsum); anchors are buffers.
-        col = (output.new_ones(w).cumsum(0) - 1.0).view(1, 1, 1, w)
-        row = (output.new_ones(h).cumsum(0) - 1.0).view(1, 1, h, 1)
+        # Build the fixed-canvas grid directly. Core AI 0.4.1 mislowers the
+        # equivalent ``new_ones(...).cumsum(0) - 1`` expression.
+        col = torch.arange(w, device=output.device, dtype=output.dtype).view(1, 1, 1, w)
+        row = torch.arange(h, device=output.device, dtype=output.dtype).view(1, 1, h, 1)
         aw = anc[:, 0].view(1, a, 1, 1)
         ah = anc[:, 1].view(1, a, 1, 1)
 

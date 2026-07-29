@@ -19,7 +19,10 @@ def export_cmd(
     model: str = typer.Option(..., help="Model weights (.pt)"),
     format: str = typer.Option(
         "onnx",
-        help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite (alias: litert), coreml",
+        help=(
+            "Export format: onnx, torchscript, tensorrt, openvino, ncnn, "
+            "tflite (alias: litert), coreml, coreai (Apple, macOS only)"
+        ),
     ),
     imgsz: Optional[str] = typer.Option(None, help="Input image size (e.g. 640 or 640,480)"),
     batch: int = typer.Option(1, help="Export batch size"),

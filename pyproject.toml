@@ -46,6 +46,13 @@ onnx = [
     "onnxsim>=0.4.0",
     "onnxruntime>=1.16.0",
 ]
+coreai = [
+    # Core AI (.aimodel) export, macOS only: the toolchain neither converts
+    # nor runs elsewhere. Kept out of every aggregate extra on purpose,
+    # because coreai-torch pins torch to 2.11.x and would drag the whole
+    # environment onto that version.
+    "coreai-torch>=0.4.1; sys_platform == 'darwin'",
+]
 rfdetr = [
     "transformers>=5.1.0",
 ]

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import importlib
+import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,9 +15,7 @@ import pytest
 from libreyolo.export.exporter import NcnnExporter, OnnxExporter
 from libreyolo.export.support import EXPORT_FORMATS, SUPPORT, get_support
 from libreyolo.models.inventory import collect_model_inventory
-from libreyolo.tasks import TASKS
-from libreyolo.tasks import task_to_suffix
-
+from libreyolo.tasks import TASKS, task_to_suffix
 
 pytestmark = pytest.mark.unit
 
@@ -117,6 +115,49 @@ def test_observed_cpu_toolchain_blocks_are_explicit():
     assert fomo_tflite.tier == "blocked" and "depthwise" in fomo_tflite.reason
 
 
+def test_coreai_validated_tier_has_hardware_parity_coverage():
+    validated = {
+        (family, task)
+        for (family, task, fmt), entry in SUPPORT.items()
+        if fmt == "coreai" and entry.tier == "validated"
+    }
+    assert validated == {
+        ("clip", "classify"),
+        ("convnext", "classify"),
+        ("deim", "detect"),
+        ("deimv2", "detect"),
+        ("depth_anything", "depth"),
+        ("dfine", "detect"),
+        ("ec", "detect"),
+        ("efficientnetv2", "classify"),
+        ("fomo", "point"),
+        ("lingbotvision", "semantic"),
+        ("mobilenetv4", "classify"),
+        ("nafnet", "restore"),
+        ("picodet", "detect"),
+        ("pidnet", "semantic"),
+        ("realesrgan", "restore"),
+        ("resnet", "classify"),
+        ("rfdetr", "detect"),
+        ("rtdetr", "detect"),
+        ("rtdetrv2", "detect"),
+        ("rtdetrv4", "detect"),
+        ("rtmdet", "detect"),
+        ("siglip2", "classify"),
+        ("yolo1", "detect"),
+        ("yolo2", "detect"),
+        ("yolo3", "detect"),
+        ("yolo4", "detect"),
+        ("yolo7", "detect"),
+        ("yolo9", "detect"),
+        ("yolo9_e2e", "detect"),
+        ("yolo9_p2", "detect"),
+        ("yolonas", "detect"),
+        ("yolox", "detect"),
+        ("zipdepth", "depth"),
+    }
+
+
 def test_fallback_reasons_describe_project_support_not_developer_environment():
     semantic = get_support("unwired_family", "semantic", "onnx")
     tensorrt = get_support("unwired_family", "detect", "tensorrt")
@@ -134,10 +175,11 @@ def test_compat_table_paths_do_not_depend_on_working_directory(tmp_path, monkeyp
 
     monkeypatch.chdir(tmp_path)
     assert gen_compat_table.INVENTORY_PATH.exists()
-    rows, _ = gen_compat_table._rows()
+    rows, _, _ = gen_compat_table._rows()
     assert rows
     # The full matrix lives in docs/export_support.md; the README is curated.
     assert gen_compat_table.render_docs().startswith("# Export support")
+
 
 def test_dump_inventory_refuses_partial_overwrite(tmp_path):
     from tools.dump_model_inventory import write_inventory
@@ -223,3 +265,12 @@ def test_generated_export_docs_are_current():
         env=env,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_generated_docs_expose_validated_constraints():
+    from tools.gen_compat_table import render_docs
+
+    docs = render_docs()
+    assert "## Validated constraints" in docs
+    assert "`yolonas` / `detect` / `coreai`" in docs
+    assert "raw-image preprocessing" in docs

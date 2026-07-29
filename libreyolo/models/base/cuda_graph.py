@@ -26,7 +26,6 @@ needs nothing: replay reads the new values from the same addresses.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import inspect
 import logging

@@ -272,12 +272,29 @@ class MSDeformAttn(nn.Module):
         """
         batch_size, len_query, _ = query.shape
         batch_size, len_input, _ = input_flatten.shape
-        expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
-        if self._export:
+        # torch.export captures torch._assert on a tensor comparison as an
+        # aten.item call, which produces an unbacked symbol and makes the
+        # graph unguardable ("Could not guard on data-dependent expression
+        # Eq(u0, 1)"). The check is a developer sanity check over spatial
+        # shapes that are constant for a fixed export canvas, so evaluate it
+        # in Python when the shapes are concrete and skip the tensor path.
+        if not torch.jit.is_tracing() and not isinstance(
+            input_spatial_shapes, torch.fx.Proxy
+        ):
+            try:
+                expected_len_in = int(
+                    (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
+                )
+            except Exception:  # noqa: BLE001 - symbolic shapes under export
+                expected_len_in = None
+            if expected_len_in is not None and not isinstance(len_input, torch.Tensor):
+                assert expected_len_in == len_input, error_msg
+        elif self._export:
+            expected_len_in = (
+                input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]
+            ).sum()
             torch._assert(expected_len_in == len_input, error_msg)
-        else:
-            assert expected_len_in == len_input, error_msg
 
         value = self.value_proj(input_flatten)
         if input_padding_mask is not None:

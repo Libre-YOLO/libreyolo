@@ -17,6 +17,8 @@ from typing import Optional, Tuple, Union
 
 import torch
 
+from ..tasks import task_to_suffix
+from ..utils.serialization import SCHEMA_VERSION
 from .onnx import (
     _get_version,
     _requires_onnx_opset17,
@@ -24,10 +26,8 @@ from .onnx import (
     export_onnx,
     quantize_onnx_int8,
 )
-from .torchscript import export_torchscript
 from .support import get_support, validated_alternatives
-from ..tasks import task_to_suffix
-from ..utils.serialization import SCHEMA_VERSION
+from .torchscript import export_torchscript
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,7 @@ _RECTANGULAR_EXPORT_FAMILIES = {
     "realesrgan",
 }
 _RECTANGULAR_EXPORT_FORMATS = {
+    "coreai",
     "coreml",
     "ncnn",
     "onnx",
@@ -313,6 +314,17 @@ class BaseExporter(ABC):
         pre_trace_hook = kwargs.pop("_pre_trace_hook", None)
 
         task = getattr(self.model, "task", "detect")
+        if task == "mesh":
+            # Gated off for the first version, as semantic and point were: the
+            # runtime metadata contract for a mesh graph (which body model,
+            # how many betas, whether the body-model decoder is inside the
+            # graph or applied afterwards) has to be defined before artifacts
+            # exist that backends would have to keep reading.
+            raise NotImplementedError(
+                "Body-mesh export is not implemented yet. The exported-graph "
+                "metadata contract for the mesh task is still to be defined; "
+                "run mesh models through the PyTorch path for now."
+            )
         if task == "depth":
             # Depth export uses the fixed-resolution dense contract: backends
             # stretch-resize to the exported canvas and resize the depth map
@@ -374,6 +386,8 @@ class BaseExporter(ABC):
         if getattr(self.model, "task", "detect") == "matte":
             from ..models.birefnet.export import (
                 MIN_OPSET as _MATTE_MIN_OPSET,
+            )
+            from ..models.birefnet.export import (
                 register_deform_conv2d_onnx_symbolic,
             )
 
@@ -504,6 +518,10 @@ class BaseExporter(ABC):
                 stacklevel=2,
             )
             half = False
+        if half and not self.supports_fp16:
+            raise NotImplementedError(
+                f"{self.format_name.upper()} FP16 export is not supported."
+            )
         if int8 and not self.supports_int8:
             raise NotImplementedError(
                 f"{self.format_name.upper()} INT8 export is not supported."
@@ -1458,6 +1476,80 @@ class TFLiteExporter(BaseExporter):
             verbose=verbose,
             onnx2tf_args=onnx2tf_args,
             metadata=metadata,
+        )
+
+
+class CoreAIExporter(BaseExporter):
+    """Apple Core AI (``.aimodel``) export via ``torch.export``.
+
+    Unlike the Core ML path this uses a real graph capture rather than a
+    single recorded trace, so the static-eval monkey patches that path needs
+    are not required here. Artifacts are static-shape in v1 and declare a
+    minimum OS of v27, which is the only value the toolchain offers.
+    """
+
+    format_name = "coreai"
+    suffix = ".aimodel"
+    requires_onnx = False
+    supports_int8 = False
+    supports_fp16 = False
+    apply_model_half = False
+    supports_embedded_nms = False
+
+    def __call__(self, *, dynamic: bool = False, **kwargs) -> str:
+        """Export a fixed-canvas Core AI artifact.
+
+        The base exporter defaults ``dynamic=True`` for ONNX. Core AI has no
+        dynamic-shape contract in v1, so its format-specific default is false
+        and an explicit request is rejected rather than mislabeled.
+        """
+        if dynamic:
+            raise NotImplementedError(
+                "Core AI export uses a fixed input shape; dynamic=True is not "
+                "supported."
+            )
+        return super().__call__(dynamic=False, **kwargs)
+
+    def _preflight(self, **kwargs):
+        # Support policy is checked before optional dependencies, as required
+        # by ADR 0011. Dependency validation still happens before the
+        # destructive LoRA merge in BaseExporter.__call__.
+        super()._preflight(**kwargs)
+
+        # Check the optional dependency HERE, not at conversion time. Preflight
+        # runs before __call__ merges any live LoRA adapters, and that merge is
+        # destructive. Discovering the missing package afterwards would leave
+        # the caller's model permanently modified with no artifact to show for
+        # it.
+        from .coreai import _require_coreai
+
+        _require_coreai()
+
+    def _build_metadata(self, precision, dynamic, onnx_path, imgsz=None):
+        # v1 artifacts are fixed-canvas, mirroring the CoreML/NCNN overrides.
+        meta = super()._build_metadata(precision, dynamic, onnx_path, imgsz=imgsz)
+        meta["dynamic"] = False
+        return meta
+
+    def _export(
+        self,
+        nn_model,
+        dummy,
+        *,
+        output_path,
+        precision,
+        metadata,
+        **kwargs,
+    ):
+        from .coreai import export_coreai
+
+        return export_coreai(
+            nn_model,
+            dummy,
+            output_path=output_path,
+            precision=precision,
+            metadata=metadata,
+            model_family=self.model._get_model_name(),
         )
 
 
