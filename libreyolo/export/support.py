@@ -1035,6 +1035,10 @@ _TASK_BLOCKS = {
         "This family is not wired to the shared dense-logits and backend "
         "argmax semantic export contract."
     ),
+    "mesh": (
+        "Body-mesh export is blocked until its graph outputs, metadata, and "
+        "backend runtime contract are defined."
+    ),
     "normal": (
         "This family is not wired to the fixed-canvas dense unit-normal "
         "export and backend renormalization contract."
