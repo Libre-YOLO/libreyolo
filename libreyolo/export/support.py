@@ -442,6 +442,25 @@ _add(
 )
 _add(
     "validated",
+    (
+        "picodet",
+        "rtmdet",
+        "yolo1",
+        "yolo2",
+        "yolo3",
+        "yolo4",
+        "yolo7",
+        "yolo9_e2e",
+        "yolo9_p2",
+        "yolox",
+    ),
+    ("detect",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed export canvas; YOLO1 requires 448x448",
+)
+_add(
+    "validated",
     ("yolo2", "yolo3", "yolo4"),
     ("detect",),
     ("ncnn",),
@@ -505,6 +524,14 @@ _add(
     ("detect", "pose"),
     ("ncnn",),
     since="1.4",
+)
+_add(
+    "validated",
+    ("yolonas",),
+    ("detect", "pose"),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed export canvas",
 )
 _add(
     "validated",

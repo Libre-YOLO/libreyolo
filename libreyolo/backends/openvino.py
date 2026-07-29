@@ -111,7 +111,11 @@ class OpenVINOBackend(BaseBackend):
         core = ov.Core()
         ov_model = core.read_model(str(xml_path))
         self._dynamic_batch_axis = self._detect_dynamic_batch_axis(ov_model)
-        self.compiled_model = core.compile_model(ov_model, ov_device)
+        self.compiled_model = core.compile_model(
+            ov_model,
+            ov_device,
+            self._compile_config(ov_device),
+        )
         self.embedded_nms = runtime_metadata.get("embedded_nms", False)
         self.embedded_nms_raw_output_index = self._find_output_index("raw")
 
@@ -152,6 +156,11 @@ class OpenVINOBackend(BaseBackend):
 
     def _supports_batched_inference(self) -> bool:
         return self._dynamic_batch_axis and not getattr(self, "embedded_nms", False)
+
+    @staticmethod
+    def _compile_config(ov_device: str) -> dict[str, str]:
+        """Keep exported FP32 graphs in FP32 on CPU instead of a BF16 hint."""
+        return {"INFERENCE_PRECISION_HINT": "f32"} if ov_device == "CPU" else {}
 
     def _find_output_index(self, expected_name: str) -> int | None:
         """Find a compiled output by tensor name without depending on one OV API."""

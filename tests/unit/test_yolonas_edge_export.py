@@ -12,11 +12,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(("task", "size"), [("detect", "s"), ("pose", "n")])
-@pytest.mark.parametrize("format", ["onnx", "torchscript", "ncnn"])
+@pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino", "ncnn"])
 def test_yolonas_raw_parity(tmp_path, task, size, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
     if format == "ncnn" and (
         importlib.util.find_spec("pnnx") is None
         or importlib.util.find_spec("ncnn") is None
@@ -58,3 +60,10 @@ def test_yolonas_raw_parity(tmp_path, task, size, format):
             rtol=1e-3,
             atol=1e-3,
         )
+    if format == "openvino":
+        image = np.random.default_rng(45).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = LibreYOLO(artifact, device="cpu").predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)

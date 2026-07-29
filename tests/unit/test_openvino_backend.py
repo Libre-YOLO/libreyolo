@@ -114,3 +114,10 @@ def test_openvino_backend_finds_named_raw_output():
     )()
 
     assert backend._find_output_index("raw") == 1
+
+
+def test_openvino_backend_requests_fp32_inference_on_cpu_only():
+    assert OpenVINOBackend._compile_config("CPU") == {
+        "INFERENCE_PRECISION_HINT": "f32"
+    }
+    assert OpenVINOBackend._compile_config("GPU") == {}
