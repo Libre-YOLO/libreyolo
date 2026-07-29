@@ -266,6 +266,21 @@ project the weights were derived from. Per-family summary:
              Distilled by upstream from SAM 2.1 and SAM 3; teacher weights
              are not included or redistributed.
 
+    SmolVLM2-500M (HuggingFaceTB/SmolVLM2-500M-Video-Instruct)
+                                                               Apache-2.0
+             Downloaded directly from the upstream Hugging Face repository;
+             LibreYOLO does not rehost the source checkpoint. The exact
+             snapshot accepted by the stateful Core ML conversion contract is:
+               revision:
+                 7b375e1b73b11138ff12fe22c8f2822d8fe03467
+               model.safetensors:
+                 2029990624 bytes
+               SHA-256:
+                 b9bfd456c9472c0acd5719d6e514c4b859891af205ee1a736552fd3497b8b0c3
+             The upstream model card declares Apache-2.0. The source
+             safetensors file is conversion input and is not copied into the
+             portable .coremlvlm deployment bundle.
+
     Face embedding (LibreYOLO/librefacerec-l)           Apache-2.0
              Byte-identical mirror of fal/AuraFace-v1 glintr100.onnx.
              Upstream revision:
