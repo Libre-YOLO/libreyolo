@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. The face-region contract remains in force and is generalized to
+whole-image and paired-text embeddings by ADR 0015.
 
 ## Context
 

@@ -6,13 +6,18 @@ aligned to a canonical 112x112 crop, and an ONNX recognition head emits an
 L2-normalized identity embedding. Verification and identification are cosine
 similarity on those embeddings.
 
+Face recognition is the region-aligned shape of LibreYOLO's general `embed`
+task. Whole-image and paired text embedding use the same vector and gallery
+contract without face boxes; see
+[`adr/0015-embed-generalization.md`](adr/0015-embed-generalization.md).
+
 Canonical task name: `embed`. Aliases: `facial-recognition`, `face`,
 `faceid`, `recognition`, `embedding`.
 
 ## Quickstart
 
 ```python
-from libreyolo import LibreYOLO, FaceGallery
+from libreyolo import Gallery, LibreYOLO
 
 model = LibreYOLO("librefacerec-l")   # auto-downloads embedder + default detector
 
@@ -25,7 +30,7 @@ model.verify("a.jpg", "b.jpg", threshold=0.4)
 # {'similarity': 0.72, 'same_person': True, 'threshold': 0.4}
 
 # 1:N identification
-gallery = FaceGallery(embedder=model)
+gallery = Gallery(model)
 gallery.enroll("alice", ["alice1.jpg", "alice2.jpg"])
 gallery.save("team.gallery.npz")
 
@@ -33,6 +38,9 @@ results = model("group.jpg", gallery=gallery, threshold=0.4)
 results.identities.name                # ["alice", None, ...] (None = unknown)
 results.identities.score               # best gallery cosine per face
 ```
+
+`FaceGallery` remains a permanent alias of `Gallery`, including the legacy
+`libreyolo.models.facerec` import path.
 
 ```bash
 libreyolo compare model=facerec-l source=a.jpg source2=b.jpg
@@ -96,8 +104,10 @@ with `face_boxes=[...]`.
 - Training, validation, and export raise `NotImplementedError`: like gaze,
   this is an inference product consuming opaque ONNX graphs.
 
-The full contract, including the alternatives these decisions rule out, is
-recorded in [`adr/0013-embed-task-contract.md`](adr/0013-embed-task-contract.md).
+The face-region contract is recorded in
+[`adr/0013-embed-task-contract.md`](adr/0013-embed-task-contract.md) and amended
+by the general three-shape contract in
+[`adr/0015-embed-generalization.md`](adr/0015-embed-generalization.md).
 
 ## Responsible use
 

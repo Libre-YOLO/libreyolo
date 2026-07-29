@@ -1,4 +1,4 @@
-"""LibreCLIP — native CLIP zero-shot (open-vocabulary) classification.
+"""LibreCLIP — zero-shot classification and paired image/text embedding.
 
 LibreCLIP is a classifier that needs **no training and no fixed label set**::
 
@@ -20,6 +20,10 @@ dependency. Weights are the MIT-redistributable OpenCLIP LAION-2B checkpoints
 
 Zero-shot only: ``train()`` raises. ONNX export bakes the *current* label set
 into a fixed ``[B, K]`` classifier graph (see :meth:`export`).
+
+With ``task="embed"``, image prediction returns one normalized vector and
+``embed_text`` returns normalized text rows in the same space. The default task
+remains ``classify`` and its behavior is unchanged.
 """
 
 from __future__ import annotations
@@ -53,7 +57,7 @@ CLIP_STD: Tuple[float, float, float] = (0.26862954, 0.26130258, 0.27577711)
 
 
 class LibreCLIP(BaseModel):
-    """Open-vocabulary zero-shot image classifier (inference only)."""
+    """Dual-tower zero-shot classifier and image/text embedder."""
 
     FAMILY: ClassVar[str] = "clip"
     FILENAME_PREFIX: ClassVar[str] = "LibreCLIP"
@@ -62,7 +66,8 @@ class LibreCLIP(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {
         size: cfg.image_size for size, cfg in CLIP_CONFIGS.items()
     }
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("classify", "embed")
+    WEIGHT_TASKS: ClassVar[Tuple[str, ...]] = ("classify",)
     DEFAULT_TASK: ClassVar[str] = "classify"
     REQUIRE_TASK_SUFFIX: ClassVar[bool] = True
     TRAIN_CONFIG = None
@@ -127,8 +132,11 @@ class LibreCLIP(BaseModel):
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "classify"
-        if resolved_task != "classify":
-            raise ValueError(f"LibreCLIP only supports task='classify'; got {task!r}.")
+        if resolved_task not in self.SUPPORTED_TASKS:
+            raise ValueError(
+                "LibreCLIP supports task in ('classify', 'embed'); "
+                f"got {task!r}."
+            )
 
         # Resolve the weight source: explicit dict/path, or default per-size
         # checkpoint name for zero-config autodownload.
@@ -165,6 +173,8 @@ class LibreCLIP(BaseModel):
         )
 
         self._load_weights(weight_source)
+        if isinstance(weight_source, str) and Path(weight_source).is_file():
+            self.model_path = str(weight_source)
         self.model.eval()
 
         from .tokenizer import SimpleTokenizer
@@ -173,10 +183,15 @@ class LibreCLIP(BaseModel):
 
         # Default to ImageNet-1k so predict() works zero-config; or honor the
         # caller's initial class list.
-        if classes is not None:
-            self.set_classes(list(classes), templates=self._default_templates)
+        if self.task == "classify":
+            if classes is not None:
+                self.set_classes(list(classes), templates=self._default_templates)
+            else:
+                self.set_classes(
+                    imagenet1k_classnames(), templates=self._default_templates
+                )
         else:
-            self.set_classes(imagenet1k_classnames(), templates=self._default_templates)
+            self.names = {}
 
     @staticmethod
     def _extract_state(ckpt: dict) -> dict:
@@ -199,6 +214,17 @@ class LibreCLIP(BaseModel):
             feats = self.model.encode_text(tokens)
             out.append(F.normalize(feats, dim=-1))
         return torch.cat(out, dim=0)
+
+    def embed_text(self, texts: str | Sequence[str]) -> torch.Tensor:
+        """Embed text rows in the same vector space as image embeddings."""
+        items = [texts] if isinstance(texts, str) else list(texts)
+        if any(not isinstance(text, str) for text in items):
+            raise TypeError("embed_text() expects a string or a sequence of strings.")
+        if not items:
+            return torch.empty(
+                (0, self.model.config.embed_dim), dtype=torch.float32
+            )
+        return self._encode_texts(items).float().cpu()
 
     def set_classes(
         self,
@@ -302,9 +328,11 @@ class LibreCLIP(BaseModel):
         return transform(img).unsqueeze(0), img, (orig_w, orig_h), 1.0
 
     def _forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        image_features = self.model.encode_image(input_tensor.to(self.device))
+        if self.task == "embed":
+            return F.normalize(image_features.float(), dim=-1)
         if self._text_embeds is None:
             raise RuntimeError("No classes set; call set_classes() first.")
-        image_features = self.model.encode_image(input_tensor.to(self.device))
         image_features = F.normalize(image_features, dim=-1)
         logit_scale = self.model.logit_scale.exp()
         # Align cached text embeds to the image features' device/dtype so a model
@@ -323,6 +351,12 @@ class LibreCLIP(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "embed":
+            return self._postprocess_embeddings(
+                output,
+                gallery=kwargs.get("gallery"),
+                threshold=kwargs.get("threshold"),
+            )
         logits = output[0] if isinstance(output, (list, tuple)) else output
         probs = torch.softmax(logits.float(), dim=1)[0]
         return {"probs": probs.cpu()}
@@ -357,9 +391,13 @@ class LibreCLIP(BaseModel):
                 f"being loaded into '{self.FAMILY}'."
             )
         ckpt_task = loaded.get("task")
-        if isinstance(ckpt_task, str) and normalize_task(ckpt_task) != "classify":
+        if (
+            isinstance(ckpt_task, str)
+            and normalize_task(ckpt_task) not in ("classify", "embed")
+        ):
             raise RuntimeError(
-                f"Checkpoint task={normalize_task(ckpt_task)!r} is not 'classify'."
+                f"Checkpoint task={normalize_task(ckpt_task)!r} is not compatible "
+                "with LibreCLIP."
             )
 
         state = self._extract_state(loaded)
@@ -387,6 +425,11 @@ class LibreCLIP(BaseModel):
         labels, calls :meth:`set_classes`, then runs the CLIP-preprocessing
         validator. Zero-shot accuracy depends on the label *wording*.
         """
+        if self.task != "classify":
+            raise NotImplementedError(
+                "LibreCLIP retrieval validation is not implemented; load "
+                "task='classify' for zero-shot classification validation."
+            )
         from ...data.classify_dataset import get_class_names, resolve_classify_data
 
         if data is None:
@@ -421,6 +464,11 @@ class LibreCLIP(BaseModel):
         inference). The ONNX is fixed to the labels set at export time and to a
         fixed input resolution; re-export to change either.
         """
+        if self.task != "classify":
+            raise NotImplementedError(
+                "LibreCLIP task='embed' export is not implemented. Export a "
+                "task='classify' model to freeze its current label set."
+            )
         if format.lower() not in {"onnx", "coreai"}:
             raise NotImplementedError(
                 f"LibreCLIP export to {format!r} is not implemented; only 'onnx' "

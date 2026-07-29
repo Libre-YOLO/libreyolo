@@ -48,6 +48,15 @@ def test_embed_suffix_roundtrip():
     assert SUFFIX_TO_TASK["embed"] == "embed"
 
 
+def test_base_embed_verb_rejects_unsupported_family():
+    from libreyolo.models.resnet.model import LibreResNet
+
+    model = object.__new__(LibreResNet)
+    model.family = "resnet"
+    with pytest.raises(NotImplementedError, match="does not support"):
+        model.embed("image.jpg")
+
+
 # ---------------------------------------------------------------------------
 # Embeddings payload
 # ---------------------------------------------------------------------------
@@ -335,6 +344,59 @@ def test_gallery_enroll_embedding_and_match():
     assert g.identities == ["alice"]
 
 
+def test_gallery_generic_root_export_and_face_alias():
+    from libreyolo import FaceGallery, Gallery
+    from libreyolo.models.facerec import FaceGallery as LegacyFaceGallery
+
+    assert FaceGallery is Gallery
+    assert LegacyFaceGallery is Gallery
+    assert repr(Gallery()).startswith("Gallery(")
+
+
+class _FakeBoxes:
+    def __init__(self, conf):
+        self.conf = np.asarray(conf, dtype=np.float32)
+
+    def __len__(self):
+        return int(self.conf.shape[0])
+
+
+class _TwoFaceEmbedder:
+    """Reference photo with the subject (conf 0.9) plus a bystander (conf 0.3)."""
+
+    _weights_fingerprint = "region-model"
+
+    def predict(self, _source):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            embeddings=Embeddings(np.stack([_vec(8, 0), _vec(8, 1)], axis=0)),
+            boxes=_FakeBoxes([0.3, 0.9]),
+        )
+
+
+def test_gallery_enroll_defaults_to_most_prominent_row():
+    from libreyolo import Gallery
+
+    gallery = Gallery(_TwoFaceEmbedder())
+    assert gallery.enroll("person", "image.jpg") == 1
+    assert len(gallery._vectors) == 1
+    # The stored reference is the conf-0.9 row, not the bystander.
+    assert gallery.match(_vec(8, 1), threshold=0.9)[0][0][0] == "person"
+    assert gallery.match(_vec(8, 0), threshold=0.9) == [[]]
+
+
+def test_gallery_enroll_select_all_stores_every_region_row():
+    from libreyolo import Gallery
+
+    gallery = Gallery(_TwoFaceEmbedder())
+    assert gallery.enroll("person", "image.jpg", select="all") == 2
+    assert len(gallery._vectors) == 2
+    assert gallery.match(_vec(8, 0), threshold=0.9)[0][0][0] == "person"
+    with pytest.raises(ValueError, match="select"):
+        gallery.enroll("person", "image.jpg", select="first")
+
+
 def test_gallery_dim_mismatch_raises():
     from libreyolo.models.facerec import FaceGallery
 
@@ -364,6 +426,32 @@ def test_gallery_save_load_roundtrip(tmp_path):
         FaceGallery().save(tmp_path / "empty.npz")
 
 
+def test_gallery_loads_legacy_face_archive(tmp_path):
+    import json
+
+    from libreyolo import Gallery
+
+    path = tmp_path / "legacy.gallery.npz"
+    np.savez_compressed(
+        path,
+        vectors=np.stack([_vec(8, 0), _vec(8, 2)]),
+        names=np.asarray(["alice", "bob"]),
+        meta=np.asarray(
+            json.dumps(
+                {
+                    "format": "libreyolo-face-gallery-v1",
+                    "dim": 8,
+                    "model_fingerprint": None,
+                }
+            )
+        ),
+    )
+
+    loaded = Gallery.load(path)
+    assert loaded.identities == ["alice", "bob"]
+    assert loaded.match(_vec(8, 2))[0][0][0] == "bob"
+
+
 def test_gallery_model_fingerprint_guard(tmp_path, tiny_onnx):
     from libreyolo.models.facerec import FaceGallery, LibreFaceEmbedder
 
@@ -383,6 +471,45 @@ def test_gallery_model_fingerprint_guard(tmp_path, tiny_onnx):
     other._weights_fingerprint = "deadbeefdeadbeef"
     with pytest.raises(ValueError, match="different embedding model"):
         FaceGallery.load(p, embedder=other)
+
+
+def test_gallery_unknown_fingerprint_matches_without_binding():
+    from libreyolo import Gallery
+
+    class _NoFingerprint:
+        """No weights file, no state dict: fingerprint cannot be computed."""
+
+    bound = Gallery()
+    bound._model_fingerprint = "cafecafecafecafe"
+    bound.enroll_embedding("alice", _vec(8, 0))
+    # A model without a computable fingerprint still matches a bound gallery.
+    assert bound.match(_vec(8, 0), model=_NoFingerprint())[0][0][0] == "alice"
+
+    # Matching never binds: an unbound gallery accepts two different models.
+    unbound = Gallery()
+    unbound.enroll_embedding("alice", _vec(8, 0))
+    model_a = type("_A", (), {"_weights_fingerprint": "aaaa"})()
+    model_b = type("_B", (), {"_weights_fingerprint": "bbbb"})()
+    unbound.match(_vec(8, 0), model=model_a)
+    unbound.match(_vec(8, 0), model=model_b)
+    assert unbound._model_fingerprint is None
+
+
+def test_stack_result_embeddings_ignores_zero_row_payloads():
+    from libreyolo.utils.results import Results, stack_result_embeddings
+
+    empty = Results(
+        boxes=None,
+        orig_shape=(4, 4),
+        embeddings=Embeddings(np.zeros((0, 0), dtype=np.float32)),
+    )
+    full = Results(
+        boxes=None,
+        orig_shape=(4, 4),
+        embeddings=Embeddings(np.stack([_vec(8, 0), _vec(8, 1)])),
+    )
+    assert stack_result_embeddings([empty, full]).shape == (2, 8)
+    assert stack_result_embeddings([empty]).shape == (0, 0)
 
 
 def test_gallery_enroll_from_images_and_identify(tiny_onnx, tmp_path):

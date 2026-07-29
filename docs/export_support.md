@@ -10,6 +10,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  | ✓ |
+| clip | embed |  |  |  |  |  |  |  |  |
 | convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
@@ -19,6 +20,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  |  |  |  |  |  | exp |
+| dinov2 | embed |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -67,6 +69,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |
 | segformer | semantic |  |  |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
+| siglip2 | embed |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |  |
 | yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
@@ -177,6 +180,14 @@ A check mark applies only under any constraint listed here.
 - `clip` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `clip` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `clip` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `clip` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `convnext` / `classify` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `deim` / `detect` / `ncnn`: NCNN export is not supported for DEIM: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `deim` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
@@ -212,6 +223,14 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX only.
 - `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `dinov2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `ec` / `detect` / `ncnn`: NCNN export is not supported for EC: the model requires decoder or sampling operations unavailable in NCNN. Use ONNX, OpenVINO, TorchScript, or TensorRT instead.
 - `ec` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `ec` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
@@ -472,6 +491,14 @@ A check mark applies only under any constraint listed here.
 - `siglip2` / `classify` / `ncnn`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tflite`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `coreml`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
+- `siglip2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `openvino`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `ncnn`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `tflite`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `coreml`: Embedding export is not implemented in v1; use the native predict()/embed() API.
+- `siglip2` / `embed` / `coreai`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `smolvlm2` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `smolvlm2` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.

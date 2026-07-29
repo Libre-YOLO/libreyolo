@@ -228,8 +228,9 @@ def predict_cmd(
         exit_with_error(
             out,
             "config_unsupported",
-            "--gallery is only supported for facial-recognition models "
-            "(e.g. model=facerec-l).",
+            "--gallery is only supported for embed-task models "
+            "(e.g. model=facerec-l, or a CLIP/SigLIP2/DINOv2 model loaded "
+            "with task=embed).",
         )
 
     # FP16 (half) precision: exported runtimes (ONNX, TensorRT, ...) accept the

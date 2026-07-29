@@ -63,9 +63,18 @@ def _summarize_result(result) -> tuple[str, str]:
     if gaze is not None:
         return "gaze", _plural(len(gaze), "face")
 
-    # Embeddings for the same reason: embed results also carry face boxes.
+    # Region embeddings may carry boxes; whole-image embeddings do not.
     embeddings = getattr(result, "embeddings", None)
     if embeddings is not None:
+        if getattr(result, "boxes", None) is None:
+            unit = "image"
+        else:
+            unit = (
+                "face"
+                if "face" in getattr(result, "names", {}).values()
+                else "region"
+            )
+        unknown_unit = f"unknown {unit}"
         identities = getattr(result, "identities", None)
         if identities is not None and len(identities) == len(embeddings):
             known = list(dict.fromkeys(n for n in identities.name if n is not None))
@@ -73,10 +82,10 @@ def _summarize_result(result) -> tuple[str, str]:
             if known:
                 label = ", ".join(known)
                 if unknown:
-                    label += f" (+{_plural(unknown, 'unknown face')})"
+                    label += f" (+{_plural(unknown, unknown_unit)})"
                 return "embed", label
-            return "embed", _plural(len(identities), "unknown face")
-        return "embed", _plural(len(embeddings), "face")
+            return "embed", _plural(len(identities), unknown_unit)
+        return "embed", _plural(len(embeddings), unit)
 
     boxes = getattr(result, "boxes", None)
     if boxes is not None:
