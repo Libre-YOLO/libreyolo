@@ -11,50 +11,50 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
 | clip | classify | ✓ |  |  |  |  |  |  | ✓ |
 | clip | embed |  |  |  |  |  |  |  |  |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| convnext | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
 | deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
-| dinov2 | classify | ✓ |  |  |  |  |  |  | exp |
+| dinov2 | classify | ✓ | ✓ |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |
 | ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| efficientnetv2 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp | exp |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| fomo | point | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |
-| l2cs | gaze | ✓ |  |  |  |  |  |  |  |
+| l2cs | gaze | ✓ | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |
 | lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| mobilenetv4 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |
 | moge2 | normal | ✓ |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| nafnet | restore | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |
 | picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| pidnet | semantic | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | ppocr | ocr |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| realesrgan | restore | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
@@ -68,7 +68,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | sam2 | segment |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |
-| segformer | semantic |  |  |  |  |  |  |  |  |
+| segformer | semantic | ✓ | ✓ |  |  |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
@@ -85,7 +85,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |  |
 | yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | ✓ |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| zipdepth | depth | ✓ | ✓ | exp | ✓ | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -104,43 +104,54 @@ A check mark applies only under any constraint listed here.
 - `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
 - `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `convnext` / `classify` / `openvino`: fixed family-native input resolution
 - `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dinov2` / `semantic` / `onnx`: fixed 518x518 input
 - `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
 - `dinov2` / `classify` / `onnx`: fixed 224x224 input
+- `dinov2` / `classify` / `torchscript`: fixed 224x224 input
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `ec` / `pose` / `onnx`: fixed 640x640 input
 - `ec` / `pose` / `torchscript`: fixed 640x640 input
 - `ec` / `segment` / `onnx`: fixed 640x640 input
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
+- `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
+- `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
 - `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
+- `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `moge2` / `normal` / `onnx`: fixed square batch-1 export canvas divisible by 14; exported inference rejects non-square sources rather than stretching image-plane geometry; the official MIT ViT-S/B/L normal checkpoints are covered by FP32 same-canvas native-versus-ONNX angular parity below 0.1 degree
 - `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
 - `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
+- `nafnet` / `restore` / `openvino`: fixed-resolution export canvas
 - `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
 - `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `picodet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `picosam3` / `segment` / `onnx`: raw fixed-96 ROI contract: roi_image -> mask_logits
+- `pidnet` / `semantic` / `openvino`: fixed square input
 - `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `realesrgan` / `restore` / `onnx`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
 - `realesrgan` / `restore` / `torchscript`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `openvino`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `ncnn`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
 - `realesrgan` / `restore` / `tflite`: fixed-resolution export canvas
 - `realesrgan` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `resnet` / `classify` / `openvino`: fixed family-native input resolution
 - `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
 - `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
@@ -153,6 +164,8 @@ A check mark applies only under any constraint listed here.
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtmdet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `segformer` / `semantic` / `onnx`: fixed square input divisible by 32
+- `segformer` / `semantic` / `torchscript`: fixed square input divisible by 32
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
@@ -169,6 +182,7 @@ A check mark applies only under any constraint listed here.
 - `yolox` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `openvino`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `ncnn`: fixed-resolution export canvas
 - `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
@@ -228,12 +242,11 @@ A check mark applies only under any constraint listed here.
 - `dinov2` / `semantic` / `tflite`: The dense-logits runtime contract is implemented, but this transformer graph has not produced a parity-valid edge-runtime artifact.
 - `dinov2` / `semantic` / `coreml`: The CoreML wrapper does not implement the dense semantic-logits contract.
 - `dinov2` / `semantic` / `coreai`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `dinov2` / `classify` / `torchscript`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX only.
-- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX only.
+- `dinov2` / `classify` / `tensorrt`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
+- `dinov2` / `classify` / `openvino`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
+- `dinov2` / `classify` / `ncnn`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
+- `dinov2` / `classify` / `tflite`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
+- `dinov2` / `classify` / `coreml`: LibreDINOv2 classify export currently supports ONNX and TorchScript only.
 - `dinov2` / `embed` / `onnx`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `torchscript`: Embedding export is not implemented in v1; use the native predict()/embed() API.
 - `dinov2` / `embed` / `tensorrt`: Embedding export is not implemented in v1; use the native predict()/embed() API.
@@ -320,13 +333,12 @@ A check mark applies only under any constraint listed here.
 - `kosmos2` / `detect` / `tflite`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreml`: Generative VLM export is out of scope for v1.
 - `kosmos2` / `detect` / `coreai`: Generative VLM export is out of scope for v1.
-- `l2cs` / `gaze` / `torchscript`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `tensorrt`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `openvino`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `ncnn`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `tflite`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `coreml`: The v1 L2CS gaze export contract supports ONNX only.
-- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The v1 gaze export contract supports ONNX only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here. Wiring the gaze contract beyond ONNX comes first.
+- `l2cs` / `gaze` / `tensorrt`: The L2CS gaze export contract supports ONNX and TorchScript only.
+- `l2cs` / `gaze` / `openvino`: The L2CS gaze export contract supports ONNX and TorchScript only.
+- `l2cs` / `gaze` / `ncnn`: The L2CS gaze export contract supports ONNX and TorchScript only.
+- `l2cs` / `gaze` / `tflite`: The L2CS gaze export contract supports ONNX and TorchScript only.
+- `l2cs` / `gaze` / `coreml`: The L2CS gaze export contract supports ONNX and TorchScript only.
+- `l2cs` / `gaze` / `coreai`: The model itself refuses: 'LibreL2CS export to coreai is not implemented. The gaze export contract supports ONNX and TorchScript only.' That is a model-side decision, unchanged by opening the support gate, so nothing about Core AI is being tested here.
 - `lfm2vl` / `detect` / `onnx`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `torchscript`: Generative VLM export is out of scope for v1.
 - `lfm2vl` / `detect` / `tensorrt`: Generative VLM export is out of scope for v1.
@@ -488,14 +500,12 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `tflite`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreml`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
-- `segformer` / `semantic` / `onnx`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `torchscript`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `openvino`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `ncnn`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `tflite`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
+- `segformer` / `semantic` / `ncnn`: PNNX leaves unsupported pnnx.Expression nodes in the SegFormer graph; the generated NCNN network reports 'network graph not ready' and has no runnable input blob.
+- `segformer` / `semantic` / `tflite`: onnx2tf emits a flatbuffer, but LiteRT cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `coreai`: LibreSegformer implements no export path at all ('Export is not implemented for LibreSegformer yet'), so this is not a Core AI limitation. Note its weights are non-commercial regardless.
+- `segformer` / `semantic` / `coreai`: The SegFormer Core AI capture path has not been assessed. Its published weights are non-commercial regardless of export format.
 - `siglip2` / `classify` / `torchscript`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `tensorrt`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.
 - `siglip2` / `classify` / `openvino`: Frozen-class vision-language export is ONNX-only in v1; re-export the frozen ONNX graph for a different deployment runtime.

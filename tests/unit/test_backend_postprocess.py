@@ -1725,6 +1725,46 @@ def test_backend_save_annotated_accepts_directory_output_path(tmp_path):
     assert result.saved_path == str(expected)
 
 
+@pytest.mark.parametrize("task", ["semantic", "matte", "point"])
+def test_backend_save_annotated_handles_boxless_dense_results(tmp_path, task):
+    from libreyolo.utils.results import Matte, Points, Results, SemanticMask
+
+    backend = _DummyBackend(
+        "fomo" if task == "point" else "test",
+        task=task,
+        supported_tasks=(task,),
+        imgsz=8,
+    )
+    payload = {}
+    if task == "semantic":
+        payload["semantic_mask"] = SemanticMask(torch.zeros(8, 8), (8, 8))
+    elif task == "matte":
+        payload["matte"] = Matte(torch.ones(8, 8), (8, 8))
+    else:
+        payload["points"] = Points(
+            torch.tensor([[4.0, 4.0, 0.0, 0.9]]),
+            (8, 8),
+        )
+    result = Results(
+        boxes=None,
+        orig_shape=(8, 8),
+        names={0: "object"},
+        **payload,
+    )
+    output = tmp_path / f"{task}.jpg"
+
+    backend._save_annotated(
+        result,
+        Image.new("RGB", (8, 8), "white"),
+        output.name,
+        str(output),
+    )
+
+    expected = output.with_suffix(".png") if task == "matte" else output
+    assert expected.exists()
+    assert result.saved_path == str(expected)
+
+
 def test_tensorrt_backend_detects_obb_task_from_filename():
     from libreyolo.backends.tensorrt import TensorRTBackend
 

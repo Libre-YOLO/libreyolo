@@ -238,6 +238,51 @@ class TestSegformerWrapper:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
+    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    def test_exported_predict_parity(self, tmp_path, format):
+        if format == "onnx":
+            pytest.importorskip("onnx")
+            pytest.importorskip("onnxruntime")
+
+        from libreyolo import LibreYOLO
+        from libreyolo.models.segformer.model import LibreSegformer
+
+        torch.manual_seed(17)
+        model = LibreSegformer(
+            model_path=None,
+            size="b0",
+            task="semantic",
+            nb_classes=3,
+            device="cpu",
+        )
+        image = np.random.default_rng(17).integers(
+            0,
+            256,
+            size=(48, 80, 3),
+            dtype=np.uint8,
+        )
+        native = model.predict(image, imgsz=64).semantic_mask.data
+        output = (
+            tmp_path
+            / {
+                "onnx": "segformer.onnx",
+                "torchscript": "segformer.torchscript",
+            }[format]
+        )
+
+        artifact = model.export(
+            format=format,
+            output_path=str(output),
+            imgsz=64,
+            half=False,
+            dynamic=False,
+            simplify=False,
+        )
+        exported = LibreYOLO(artifact, device="cpu").predict(image).semantic_mask.data
+
+        agreement = (native == exported).float().mean().item()
+        assert agreement > 0.99
+
     def test_val_augment_smoke(self, tmp_path):
         """augment=True must run the shared BaseModel/SemanticValidator flip
         TTA path, not raise the old 'does not support semantic segmentation'

@@ -124,6 +124,14 @@ _add(
 )
 _add(
     "validated",
+    ("mobilenetv4", "convnext", "efficientnetv2", "resnet"),
+    ("classify",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed family-native input resolution",
+)
+_add(
+    "validated",
     ("clip", "siglip2"),
     ("classify",),
     ("onnx",),
@@ -144,8 +152,10 @@ _add(
     "blocked",
     ("dinov2",),
     ("classify",),
-    tuple(fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "coreai"}),
-    reason="LibreDINOv2 classify export currently supports ONNX only.",
+    tuple(
+        fmt for fmt in EXPORT_FORMATS if fmt not in {"onnx", "torchscript", "coreai"}
+    ),
+    reason="LibreDINOv2 classify export currently supports ONNX and TorchScript only.",
 )
 _add(
     "blocked",
@@ -224,12 +234,22 @@ _add(
 )
 _add(
     "experimental",
-    ("dinov2", "eomt", "pidnet", "lingbotvision"),
+    ("dinov2", "eomt", "lingbotvision"),
     ("semantic",),
-    ("tensorrt", "openvino"),
+    ("openvino",),
     reason=(
         "The dense-logits contract is wired, but the project has not yet "
-        "recorded TensorRT or OpenVINO runtime parity for these families."
+        "recorded OpenVINO runtime parity for these families."
+    ),
+)
+_add(
+    "experimental",
+    ("dinov2", "eomt", "pidnet", "lingbotvision"),
+    ("semantic",),
+    ("tensorrt",),
+    reason=(
+        "The dense-logits contract is wired, but the project has not yet "
+        "recorded TensorRT runtime parity for these families."
     ),
 )
 _add(
@@ -241,9 +261,17 @@ _add(
 )
 _add(
     "validated",
+    ("pidnet",),
+    ("semantic",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed square input",
+)
+_add(
+    "validated",
     ("l2cs",),
     ("gaze",),
-    ("onnx",),
+    ("onnx", "torchscript"),
     since="1.4",
     constraint="head-only contract: each input image is one face crop",
 )
@@ -253,6 +281,14 @@ _add(
     ("restore",),
     ("onnx", "torchscript", "ncnn"),
     since="1.4",
+    constraint="fixed-resolution export canvas",
+)
+_add(
+    "validated",
+    ("nafnet",),
+    ("restore",),
+    ("openvino",),
+    since="1.6",
     constraint="fixed-resolution export canvas",
 )
 _add(
@@ -272,6 +308,14 @@ _add(
     ("onnx", "torchscript", "ncnn"),
     since="1.4",
     constraint="ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas",
+)
+_add(
+    "validated",
+    ("realesrgan",),
+    ("restore",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed-resolution export canvas",
 )
 _add(
     "validated",
@@ -331,11 +375,19 @@ _add(
     "experimental",
     ("fomo",),
     ("point",),
-    ("tensorrt", "openvino"),
+    ("tensorrt",),
     reason=(
         "The raw-heatmap contract is wired, but the project has not yet "
-        "recorded TensorRT or OpenVINO runtime parity for FOMO."
+        "recorded TensorRT runtime parity for FOMO."
     ),
+)
+_add(
+    "validated",
+    ("fomo",),
+    ("point",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed square input",
 )
 _add(
     "validated",
@@ -362,6 +414,14 @@ _add(
         "The edge exported-runtime contract is ONNX-only in v1; add runtime "
         "parity before enabling another format."
     ),
+)
+_add(
+    "validated",
+    ("zipdepth",),
+    ("depth",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed-resolution export canvas",
 )
 _add(
     "blocked",
@@ -590,9 +650,38 @@ _add(
 )
 _add(
     "validated",
+    ("segformer",),
+    ("semantic",),
+    ("onnx", "torchscript"),
+    since="1.6",
+    constraint="fixed square input divisible by 32",
+)
+_add(
+    "blocked",
+    ("segformer",),
+    ("semantic",),
+    ("tflite",),
+    reason=(
+        "onnx2tf emits a flatbuffer, but LiteRT cannot prepare its attention "
+        "reshape (1024 input elements versus 256 output elements)."
+    ),
+)
+_add(
+    "blocked",
+    ("segformer",),
+    ("semantic",),
+    ("ncnn",),
+    reason=(
+        "PNNX leaves unsupported pnnx.Expression nodes in the SegFormer graph; "
+        "the generated NCNN network reports 'network graph not ready' and has "
+        "no runnable input blob."
+    ),
+)
+_add(
+    "validated",
     ("dinov2",),
     ("classify",),
-    ("onnx",),
+    ("onnx", "torchscript"),
     since="1.4",
     constraint="fixed 224x224 input",
 )
@@ -632,6 +721,14 @@ _add(
     ("depth",),
     ("onnx", "torchscript"),
     since="1.4",
+)
+_add(
+    "validated",
+    ("depth_anything",),
+    ("depth",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed input resolution divisible by 14",
 )
 _add(
     "blocked",
@@ -989,9 +1086,8 @@ _add(
     ("semantic",),
     ("coreai",),
     reason=(
-        "LibreSegformer implements no export path at all ('Export is not "
-        "implemented for LibreSegformer yet'), so this is not a Core AI "
-        "limitation. Note its weights are non-commercial regardless."
+        "The SegFormer Core AI capture path has not been assessed. Its published "
+        "weights are non-commercial regardless of export format."
     ),
 )
 _add(
@@ -1031,10 +1127,9 @@ _add(
     ("coreai",),
     reason=(
         "The model itself refuses: 'LibreL2CS export to coreai is not "
-        "implemented. The v1 gaze export contract supports ONNX only.' That "
-        "is a model-side decision, unchanged by opening the support gate, so "
-        "nothing about Core AI is being tested here. Wiring the gaze contract "
-        "beyond ONNX comes first."
+        "implemented. The gaze export contract supports ONNX and TorchScript "
+        "only.' That is a model-side decision, unchanged by opening the support "
+        "gate, so nothing about Core AI is being tested here."
     ),
 )
 _add(
@@ -1085,7 +1180,7 @@ _FAMILY_BLOCKS = {
         "depth graph has not been added to the exported-runtime contract."
     ),
     "eomt": "EoMT instance and panoptic export do not yet have runtime parsing.",
-    "l2cs": "The v1 L2CS gaze export contract supports ONNX only.",
+    "l2cs": "The L2CS gaze export contract supports ONNX and TorchScript only.",
     "sam": "Promptable model export is out of scope for the v1 runtime contract.",
     "sam2": "Promptable model export is out of scope for the v1 runtime contract.",
     "edgetam": "Promptable model export is out of scope for the v1 runtime contract.",

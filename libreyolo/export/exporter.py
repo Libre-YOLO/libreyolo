@@ -1019,6 +1019,17 @@ class BaseExporter(ABC):
         }
         if onnx_path is not None:
             meta["exported_from"] = str(Path(onnx_path).name)
+        # Classification eval preprocessing must travel with every artifact,
+        # not just ONNX. Exported-backend predict() otherwise falls back to
+        # crop_pct=0.875 and bilinear resize, which changes classifier logits
+        # for families such as ResNet (0.95/bicubic).
+        if task == "classify":
+            crop_pct = getattr(self.model, "crop_pct", None)
+            interpolation = getattr(self.model, "interpolation", None)
+            if crop_pct is not None:
+                meta["crop_pct"] = float(crop_pct)
+            if interpolation is not None:
+                meta["interpolation"] = str(interpolation)
         if task == "pose":
             meta.update(_pose_keypoint_shape_metadata(self.model))
         if task == "gaze":

@@ -8,7 +8,12 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+    _read_runtime_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,7 @@ class NcnnBackend(BaseBackend):
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
         pose_metadata = {}
+        runtime_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -78,6 +84,7 @@ class NcnnBackend(BaseBackend):
                 resolved_nb_classes,
                 names,
                 pose_metadata,
+                runtime_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -131,6 +138,11 @@ class NcnnBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=runtime_metadata.get("crop_pct"),
+            interpolation=runtime_metadata.get("interpolation"),
+            num_bins=runtime_metadata.get("num_bins"),
+            bin_width_deg=runtime_metadata.get("bin_width_deg"),
+            offset_deg=runtime_metadata.get("offset_deg"),
             **pose_metadata,
         )
 
@@ -166,7 +178,9 @@ class NcnnBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
+            Tuple of (model_family, model_size, task, supported_tasks,
+            default_task, imgsz, nb_classes, names, pose_metadata,
+            runtime_metadata).
         """
         import yaml
 
@@ -216,6 +230,7 @@ class NcnnBackend(BaseBackend):
             nb_classes,
             names,
             _read_pose_metadata(meta),
+            _read_runtime_metadata(meta),
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:

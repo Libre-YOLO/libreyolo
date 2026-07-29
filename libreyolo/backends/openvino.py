@@ -8,7 +8,13 @@ import numpy as np
 
 from ..tasks import normalize_supported_tasks, normalize_task, resolve_task
 from ..utils.serialization import warn_on_metadata_schema_version
-from .base import BaseBackend, ImageSize, _read_metadata_imgsz, _read_pose_metadata
+from .base import (
+    BaseBackend,
+    ImageSize,
+    _read_metadata_imgsz,
+    _read_pose_metadata,
+    _read_runtime_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,7 @@ class OpenVINOBackend(BaseBackend):
         resolved_nb_classes = nb_classes if nb_classes is not None else 80
         names = self.build_names(resolved_nb_classes)
         pose_metadata = {}
+        runtime_metadata = {}
 
         metadata_path = model_dir / "metadata.yaml"
         if metadata_path.exists():
@@ -74,6 +81,7 @@ class OpenVINOBackend(BaseBackend):
                 resolved_nb_classes,
                 names,
                 pose_metadata,
+                runtime_metadata,
             ) = self._read_metadata(metadata_path, nb_classes)
             task = resolve_task(
                 explicit_task=explicit_task,
@@ -104,6 +112,8 @@ class OpenVINOBackend(BaseBackend):
         ov_model = core.read_model(str(xml_path))
         self._dynamic_batch_axis = self._detect_dynamic_batch_axis(ov_model)
         self.compiled_model = core.compile_model(ov_model, ov_device)
+        self.embedded_nms = runtime_metadata.get("embedded_nms", False)
+        self.embedded_nms_raw_output_index = self._find_output_index("raw")
 
         static_imgsz = self._read_static_input_imgsz(ov_model)
         if static_imgsz is not None:
@@ -120,6 +130,11 @@ class OpenVINOBackend(BaseBackend):
             task=task,
             supported_tasks=supported_tasks,
             default_task=default_task,
+            crop_pct=runtime_metadata.get("crop_pct"),
+            interpolation=runtime_metadata.get("interpolation"),
+            num_bins=runtime_metadata.get("num_bins"),
+            bin_width_deg=runtime_metadata.get("bin_width_deg"),
+            offset_deg=runtime_metadata.get("offset_deg"),
             **pose_metadata,
         )
 
@@ -137,6 +152,22 @@ class OpenVINOBackend(BaseBackend):
 
     def _supports_batched_inference(self) -> bool:
         return self._dynamic_batch_axis and not getattr(self, "embedded_nms", False)
+
+    def _find_output_index(self, expected_name: str) -> int | None:
+        """Find a compiled output by tensor name without depending on one OV API."""
+        for index, output in enumerate(self.compiled_model.outputs):
+            names = set()
+            try:
+                names.update(output.get_names())
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                names.add(output.get_any_name())
+            except (AttributeError, RuntimeError):
+                pass
+            if expected_name in names:
+                return index
+        return None
 
     @staticmethod
     def _read_static_input_imgsz(ov_model) -> ImageSize | None:
@@ -159,7 +190,9 @@ class OpenVINOBackend(BaseBackend):
         """Read metadata from metadata.yaml file.
 
         Returns:
-            Tuple of (model_family, model_size, task, supported_tasks, default_task, imgsz, nb_classes, names, pose_metadata).
+            Tuple of (model_family, model_size, task, supported_tasks,
+            default_task, imgsz, nb_classes, names, pose_metadata,
+            runtime_metadata).
         """
         import yaml
 
@@ -175,7 +208,9 @@ class OpenVINOBackend(BaseBackend):
         model_size = meta.get("model_size") or meta.get("size")
         default_task = normalize_task(meta.get("default_task"), default="detect")
         task = normalize_task(meta.get("task"), default=default_task)
-        supported_tasks = normalize_supported_tasks(meta.get("supported_tasks", (task,)))
+        supported_tasks = normalize_supported_tasks(
+            meta.get("supported_tasks", (task,))
+        )
         imgsz = (
             _read_metadata_imgsz(
                 meta,
@@ -207,6 +242,7 @@ class OpenVINOBackend(BaseBackend):
             nb_classes,
             names,
             _read_pose_metadata(meta),
+            _read_runtime_metadata(meta),
         )
 
     def _run_inference(self, blob: np.ndarray) -> list:

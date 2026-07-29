@@ -868,6 +868,28 @@ class TestExporterFormats:
         backend = TorchScriptBackend(str(output_path), device="cpu")
         assert backend.imgsz == (16, 32)
 
+    def test_torchscript_backend_preserves_classification_preprocessing(self, tmp_path):
+        wrapper = _make_wrapper(model_name="resnet", input_size=32)
+        wrapper.task = "classify"
+        wrapper.SUPPORTED_TASKS = ("classify",)
+        wrapper.DEFAULT_TASK = "classify"
+        wrapper.crop_pct = 0.95
+        wrapper.interpolation = "bicubic"
+        output_path = tmp_path / "classifier.torchscript"
+
+        TorchScriptExporter(wrapper)(
+            output_path=str(output_path),
+            imgsz=32,
+            device="cpu",
+        )
+
+        from libreyolo.backends.torchscript import TorchScriptBackend
+
+        backend = TorchScriptBackend(str(output_path), device="cpu")
+        assert backend.task == "classify"
+        assert backend.crop_pct == pytest.approx(0.95)
+        assert backend.interpolation == "bicubic"
+
     def test_rectangular_int8_calibration_receives_tuple_imgsz(
         self, monkeypatch, tmp_path
     ):

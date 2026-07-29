@@ -834,10 +834,15 @@ class LibreDINOv2(BaseModel):
             raise NotImplementedError(
                 "LibreDINOv2 task='embed' export is not implemented."
             )
-        if self.task == "classify" and format.lower() in {"onnx", "coreai"}:
+        if self.task == "classify" and format.lower() in {
+            "onnx",
+            "torchscript",
+            "coreai",
+        }:
             return super().export(format=format, opset=opset, **kwargs)
         if self.task == "semantic":
             return super().export(format=format, opset=opset, **kwargs)
         raise NotImplementedError(
-            "LibreDINOv2 classify export currently supports ONNX and Core AI only."
+            "LibreDINOv2 classify export currently supports ONNX, TorchScript, "
+            "and Core AI only."
         )

@@ -74,7 +74,8 @@ def test_tflite_support_keys_use_canonical_tasks():
     assert get_support("rfdetr", "segment", "tflite").tier == "blocked"
 
 
-def test_dinov2_classify_routes_to_base_onnx_export(monkeypatch):
+@pytest.mark.parametrize("format", ["onnx", "torchscript"])
+def test_dinov2_classify_routes_to_base_export(monkeypatch, format):
     from libreyolo.models.base.model import BaseModel
     from libreyolo.models.dinov2.model import LibreDINOv2
 
@@ -84,11 +85,11 @@ def test_dinov2_classify_routes_to_base_onnx_export(monkeypatch):
 
     def fake_export(self, format="onnx", **kwargs):
         captured.update(format=format, **kwargs)
-        return "dinov2.onnx"
+        return f"dinov2.{format}"
 
     monkeypatch.setattr(BaseModel, "export", fake_export)
-    assert model.export("onnx", dynamic=False) == "dinov2.onnx"
-    assert captured == {"format": "onnx", "opset": 17, "dynamic": False}
+    assert model.export(format, dynamic=False) == f"dinov2.{format}"
+    assert captured == {"format": format, "opset": 17, "dynamic": False}
 
 
 def test_dinov2_semantic_routes_to_shared_export(monkeypatch):
@@ -154,6 +155,28 @@ def test_coreai_validated_tier_has_hardware_parity_coverage():
         ("yolo9_p2", "detect"),
         ("yolonas", "detect"),
         ("yolox", "detect"),
+        ("zipdepth", "depth"),
+    }
+
+
+def test_openvino_validated_tier_has_runtime_parity_coverage():
+    validated = {
+        (family, task)
+        for (family, task, fmt), entry in SUPPORT.items()
+        if fmt == "openvino" and entry.tier == "validated"
+    }
+    assert validated == {
+        ("convnext", "classify"),
+        ("depth_anything", "depth"),
+        ("efficientnetv2", "classify"),
+        ("fomo", "point"),
+        ("mobilenetv4", "classify"),
+        ("nafnet", "restore"),
+        ("pidnet", "semantic"),
+        ("realesrgan", "restore"),
+        ("resnet", "classify"),
+        ("rfdetr", "detect"),
+        ("yolo9", "detect"),
         ("zipdepth", "depth"),
     }
 

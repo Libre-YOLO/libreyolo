@@ -164,6 +164,27 @@ class TestNCNNMetadataYAML:
 
         assert parsed[5] == (320, 640)
 
+    def test_backend_reads_classification_preprocessing_metadata(self, tmp_path):
+        """ncnn predict() must reuse the classifier's exported eval transform."""
+        from libreyolo.backends.ncnn import NcnnBackend
+
+        metadata_path = tmp_path / "metadata.yaml"
+        metadata_path.write_text(
+            "\n".join(
+                [
+                    "model_family: resnet",
+                    "task: classify",
+                    "crop_pct: 0.95",
+                    "interpolation: bicubic",
+                ]
+            )
+        )
+
+        runtime_metadata = NcnnBackend._read_metadata(metadata_path)[9]
+
+        assert runtime_metadata["crop_pct"] == pytest.approx(0.95)
+        assert runtime_metadata["interpolation"] == "bicubic"
+
 
 class TestNCNNExportValidation:
     """Test ncnn export validation in exporter."""
