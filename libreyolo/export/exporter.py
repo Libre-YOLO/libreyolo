@@ -624,12 +624,13 @@ class BaseExporter(ABC):
                     f"downsample factor {padder_size}, got {imgsz}."
                 )
         dense_task = getattr(self.model, "task", "detect")
-        if dense_task in {"depth", "normal"}:
-            divisor_attr = (
-                "depth_imgsz_divisor"
-                if dense_task == "depth"
-                else "normal_imgsz_divisor"
-            )
+        divisor_attrs = {
+            "depth": "depth_imgsz_divisor",
+            "normal": "normal_imgsz_divisor",
+            "semantic": "semantic_imgsz_divisor",
+        }
+        if dense_task in divisor_attrs:
+            divisor_attr = divisor_attrs[dense_task]
             divisor = int(getattr(self.model, divisor_attr, 1) or 1)
             if imgsz[0] % divisor or imgsz[1] % divisor:
                 raise ValueError(

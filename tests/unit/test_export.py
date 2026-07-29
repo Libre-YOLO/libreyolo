@@ -594,6 +594,23 @@ class TestExporterFormats:
                 int8=False,
             )
 
+    def test_semantic_export_rejects_unaligned_imgsz(self):
+        wrapper = _make_wrapper(model_name="segformer", input_size=32)
+        wrapper.task = "semantic"
+        wrapper.semantic_imgsz_divisor = 32
+
+        with pytest.raises(
+            ValueError,
+            match=r"Semantic export imgsz must be divisible.*stride 32",
+        ):
+            OnnxExporter(wrapper)._resolve_params(
+                output_path=None,
+                imgsz=100,
+                device="cpu",
+                half=False,
+                int8=False,
+            )
+
     @pytest.mark.parametrize(
         "family",
         ["dfine", "deim", "deimv2", "ec", "rfdetr", "rtdetr", "rtdetrv2", "rtdetrv4"],
