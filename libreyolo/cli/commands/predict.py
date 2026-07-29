@@ -105,7 +105,9 @@ def predict_cmd(
     model: str = typer.Option("yolox-s", help="Model name or path"),
     conf: float = typer.Option(0.25, help="Confidence threshold"),
     iou: float = typer.Option(0.45, help="NMS IoU threshold"),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size: 640 (square) or 480x640 (HxW)"),
+    imgsz: Optional[str] = typer.Option(
+        None, help="Input image size: 640 (square) or 480x640 (HxW)"
+    ),
     classes: Optional[str] = typer.Option(
         None, help="Filter by class IDs, e.g. [0,2,5]"
     ),
@@ -363,10 +365,13 @@ def predict_cmd(
                     )
                     class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
                 result_data["detections"] = detections
-                summary = ", ".join(
-                    f"{v} {k}{'s' if v > 1 else ''}"
-                    for k, v in class_counts.items()
-                ) or "(no detections)"
+                summary = (
+                    ", ".join(
+                        f"{v} {k}{'s' if v > 1 else ''}"
+                        for k, v in class_counts.items()
+                    )
+                    or "(no detections)"
+                )
             elif getattr(r, "probs", None) is not None:
                 top_rows = r.summary()
                 result_data["classification"] = top_rows[0] if top_rows else None
@@ -403,7 +408,19 @@ def predict_cmd(
                     "frame": "opencv",
                     "orientation": "camera-facing",
                 }
-                summary = f"normal map {normal_map.data.shape[1]}x{normal_map.data.shape[0]}"
+                summary = (
+                    f"normal map {normal_map.data.shape[1]}x{normal_map.data.shape[0]}"
+                )
+            elif getattr(r, "edges", None) is not None:
+                edge_map = r.edges
+                result_data["edges"] = {
+                    "shape": list(edge_map.data.shape),
+                    "dtype": str(edge_map.data.dtype),
+                    "min": round(float(edge_map.array.min()), 4),
+                    "max": round(float(edge_map.array.max()), 4),
+                    "mean": round(float(edge_map.array.mean()), 4),
+                }
+                summary = f"edge map {edge_map.data.shape[1]}x{edge_map.data.shape[0]}"
             else:
                 summary = "(no detections)"
 

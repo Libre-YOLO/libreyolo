@@ -32,7 +32,7 @@ Required field meanings:
   `dfine`, or `ec`.
 - `size`: model variant within the family, such as `t`, `s`, `r18`, or `atto`.
 - `task`: canonical task, one of `detect`, `segment`, `semantic`, `panoptic`,
-  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `normal`, `restore`,
+  `pose`, `classify`, `gaze`, `obb`, `point`, `depth`, `edge`, `normal`, `restore`,
   `matte`, `ocr`, `embed`, or `mesh`.
 - `nc`: positive integer class count.
 - `names`: `dict[int, str]` with keys in `0..nc-1`. Official checkpoints
@@ -87,6 +87,11 @@ the dimensions are recorded rather than assumed, the same way pose records
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.
+
+Edge checkpoints use the task string `edge`, `nc: 1`, and
+`names: {0: "edge"}`. The single class-like slot exists only for checkpoint
+schema compatibility; edge predictions are dense float32 probability maps in
+`[0, 1]`, not classes.
 
 Restore checkpoints use the task string `restore`, `nc: 1`, and
 `names: {0: "image"}`. The single class-like slot exists only for checkpoint
@@ -275,6 +280,27 @@ distributed as training checkpoints.
 
 For release compatibility, readers accept legacy best-metric aliases such as
 `best_mAP50_95`, `best_mAP50`, `best_metric`, and `best_metric_name`.
+
+## External Snapshot Exception
+
+The schema above governs LibreYOLO-authored `.pt` checkpoints. It does not
+rename or wrap multi-file upstream snapshots used by separate model tiers.
+
+LibreMODUS size `14b-a7b` is one such explicit exception. The alias
+`libremodus-14b-a7b` resolves through `LibreVLM(...)` to a directory containing
+the pinned upstream safetensors, configs, and tokenizer files. LibreYOLO neither
+adds v1.0 metadata to that directory nor republishes it as a `.pt` file. A local
+FP8 cache is an internal sharded safetensors derivative keyed by source and
+recipe; it is not an official checkpoint and must not be uploaded.
+
+Before dispatch, the LibreMODUS loader validates all required files and checks
+that the rebuilt tokenizer length exactly matches the row count of
+`language_model.model.embed_tokens.weight`. That tensor is authoritative
+because the released `llm_config.json` retains the smaller base-vocabulary
+value.
+
+See [`nomenclature.md`](nomenclature.md) and
+[`libremodus.md`](libremodus.md).
 
 ## Legacy And Foreign Weights
 

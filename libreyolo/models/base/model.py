@@ -385,9 +385,7 @@ class BaseModel(ABC):
         size = imgsz or self.input_size
         if dtype is None:
             dtype = next(self.model.parameters()).dtype
-        dummy = torch.zeros(
-            (batch, 3, size, size), dtype=dtype, device=self.device
-        )
+        dummy = torch.zeros((batch, 3, size, size), dtype=dtype, device=self.device)
         with torch.no_grad():
             self._get_graph_runner().capture(dummy)
 
@@ -769,8 +767,11 @@ class BaseModel(ABC):
                 ckpt_task = loaded.get("task")
                 if ckpt_task is not None:
                     normalized_ckpt_task = normalize_task(ckpt_task)
-                    if normalized_ckpt_task != self.task and not self._allow_checkpoint_task_mismatch(
-                        normalized_ckpt_task
+                    if (
+                        normalized_ckpt_task != self.task
+                        and not self._allow_checkpoint_task_mismatch(
+                            normalized_ckpt_task
+                        )
                     ):
                         raise RuntimeError(
                             f"Checkpoint was trained for task='{normalized_ckpt_task}' "
@@ -809,9 +810,7 @@ class BaseModel(ABC):
             else:
                 state_dict = self._prepare_state_dict(loaded)
 
-            quant_manifest = (
-                loaded.get("quant") if isinstance(loaded, dict) else None
-            )
+            quant_manifest = loaded.get("quant") if isinstance(loaded, dict) else None
             if quant_manifest:
                 from ...quant import apply_quant_structure
 
@@ -967,6 +966,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Test-time augmentation does not support surface normals yet. "
                 "Use augment=False for normal models."
+            )
+        if getattr(self, "task", "detect") == "edge":
+            raise ValueError(
+                "Test-time augmentation does not support edge detection yet. "
+                "Use augment=False for edge models."
             )
         if getattr(self, "task", "detect") == "restore":
             raise ValueError(
@@ -1376,6 +1380,10 @@ class BaseModel(ABC):
                 "Tracking does not support surface-normal maps. "
                 "Use predict() for normal models."
             )
+        if task == "edge":
+            raise NotImplementedError(
+                "Tracking does not support edge maps. Use predict() for edge models."
+            )
         if task == "semantic":
             raise NotImplementedError(
                 "Tracking does not support semantic segmentation yet. "
@@ -1588,9 +1596,7 @@ class BaseModel(ABC):
             batch=batch,
             algorithm=algorithm,
             keep_high_precision=(
-                tuple(keep_high_precision)
-                if keep_high_precision is not None
-                else None
+                tuple(keep_high_precision) if keep_high_precision is not None else None
             ),
             allow_download_scripts=allow_download_scripts,
             verbose=verbose,
@@ -1716,6 +1722,7 @@ class BaseModel(ABC):
             DetectionValidator,
             MatteValidator,
             NormalValidator,
+            EdgeValidator,
             OBBValidator,
             OCRValidator,
             PanopticValidator,
@@ -1755,6 +1762,11 @@ class BaseModel(ABC):
             raise ValueError(
                 "Augmented validation does not support surface normals yet. "
                 "Use augment=False for normal models."
+            )
+        if augment and self.task == "edge":
+            raise ValueError(
+                "Augmented validation does not support edge detection yet. "
+                "Use augment=False for edge models."
             )
         if augment and self.task == "restore":
             raise ValueError(
@@ -1825,6 +1837,8 @@ class BaseModel(ABC):
             validator_cls = DepthValidator
         elif self.task == "normal":
             validator_cls = NormalValidator
+        elif self.task == "edge":
+            validator_cls = EdgeValidator
         elif self.task == "restore":
             validator_cls = RestoreValidator
         elif self.task == "matte":

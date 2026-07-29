@@ -40,6 +40,15 @@ from .normal_dataset import (
     normalize_normal_vectors,
     resolve_normal_data,
 )
+from .edge_dataset import (
+    EdgeDataset,
+    edge_collate_fn,
+    img2edge_mask_paths,
+    img2edge_paths,
+    load_edge_map,
+    load_edge_mask,
+    resolve_edge_data,
+)
 from .restore_dataset import (
     RestoreDataset,
     img2restore_target_paths,
@@ -109,6 +118,13 @@ __all__ = [
     "normal_collate_fn",
     "normalize_normal_vectors",
     "resolve_normal_data",
+    "EdgeDataset",
+    "edge_collate_fn",
+    "img2edge_mask_paths",
+    "img2edge_paths",
+    "load_edge_map",
+    "load_edge_mask",
+    "resolve_edge_data",
     "RestoreDataset",
     "img2restore_target_paths",
     "resolve_restore_data",

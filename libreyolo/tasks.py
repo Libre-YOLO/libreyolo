@@ -18,6 +18,7 @@ TaskType = Literal[
     "obb",
     "point",
     "depth",
+    "edge",
     "normal",
     "restore",
     "matte",
@@ -36,6 +37,7 @@ TASKS = (
     "obb",
     "point",
     "depth",
+    "edge",
     "normal",
     "restore",
     "matte",
@@ -78,6 +80,12 @@ TASK_ALIASES = {
     "depth_estimation": "depth",
     "monodepth": "depth",
     "monocular-depth": "depth",
+    "edge": "edge",
+    "edges": "edge",
+    "boundary": "edge",
+    "boundaries": "edge",
+    "edge-detection": "edge",
+    "edge_detection": "edge",
     "normal": "normal",
     "normals": "normal",
     "surface-normal": "normal",
@@ -134,6 +142,7 @@ TASK_TO_SUFFIX = {
     "obb": "obb",
     "point": "point",
     "depth": "depth",
+    "edge": "edge",
     "normal": "normal",
     "restore": "restore",
     "matte": "matte",
@@ -198,7 +207,9 @@ def task_suffix_pattern(
     supported_tasks: Iterable[str] | str | None = None,
 ) -> str:
     """Regex fragment matching supported task suffixes."""
-    tasks = TASKS if supported_tasks is None else normalize_supported_tasks(supported_tasks)
+    tasks = (
+        TASKS if supported_tasks is None else normalize_supported_tasks(supported_tasks)
+    )
     suffixes = sorted(
         (TASK_TO_SUFFIX[task] for task in tasks if task in TASK_TO_SUFFIX),
         key=len,

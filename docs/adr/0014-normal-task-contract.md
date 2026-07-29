@@ -28,7 +28,8 @@ Add the canonical task `normal`, filename suffix `-normal`, and aliases
 `normals`, `surface-normal`, `surface_normal`, `surface-normals`, and
 `surface_normals`.
 
-`Results.normal_map` contains float32 data with shape `(H, W, 3)` in `[-1, 1]`
+`Results.normal_map` (also exposed as `Results.normals`) contains float32 data
+with shape `(H, W, 3)` in `[-1, 1]`
 on the original image canvas at the original resolution. Every pixel is a
 unit vector in the OpenCV camera frame:
 

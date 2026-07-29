@@ -346,6 +346,22 @@ class BaseExporter(ABC):
                     stacklevel=2,
                 )
                 dynamic = False
+        if task == "edge":
+            # Edge specialists export a single fused probability map on a
+            # fixed square canvas; runtimes resize it back to the source.
+            if batch != 1:
+                raise ValueError(
+                    "Edge export uses a fixed-resolution, batch-1 runtime "
+                    f"contract in v1; got batch={batch}."
+                )
+            if dynamic:
+                warnings.warn(
+                    "Edge export uses a fixed-resolution runtime contract in "
+                    "v1; forcing dynamic=False.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                dynamic = False
         if (
             getattr(self.model, "task", "detect") == "restore"
             and dynamic
@@ -619,6 +635,13 @@ class BaseExporter(ABC):
                 raise ValueError(
                     f"{dense_task.capitalize()} export imgsz must be divisible "
                     "by the network "
+                    f"stride {divisor}, got {imgsz}."
+                )
+        if getattr(self.model, "task", "detect") == "edge":
+            divisor = int(getattr(self.model, "edge_imgsz_divisor", 1) or 1)
+            if imgsz[0] % divisor or imgsz[1] % divisor:
+                raise ValueError(
+                    "Edge export imgsz must be divisible by the network "
                     f"stride {divisor}, got {imgsz}."
                 )
         if model_name == "rfdetr":

@@ -89,12 +89,14 @@ class ValidationConfig:
     # Point validation
     dist_thresholds: Optional[List[float]] = None
 
+    # Edge validation (BSDS-style normalized correspondence tolerance)
+    edge_max_dist: float = 0.0075
+    edge_thresholds: Tuple[float, ...] = field(
+        default_factory=lambda: tuple(index / 100.0 for index in range(1, 100))
+    )
+
     def __post_init__(self) -> None:
-        if (
-            self.data is None
-            and self.data_dir is None
-            and self.keypoints_json is None
-        ):
+        if self.data is None and self.data_dir is None and self.keypoints_json is None:
             raise ValueError(
                 "Specify one of: 'data' (yaml), 'data_dir' (detection/segmentation), "
                 "or 'data' / 'keypoints_json' + 'images_dir' (pose)"
@@ -114,6 +116,18 @@ class ValidationConfig:
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
 
+        if not 0.0 <= self.edge_max_dist <= 1.0:
+            raise ValueError(
+                f"edge_max_dist must be in [0, 1], got {self.edge_max_dist}"
+            )
+        self.edge_thresholds = tuple(float(value) for value in self.edge_thresholds)
+        if not self.edge_thresholds or any(
+            not 0.0 <= value <= 1.0 for value in self.edge_thresholds
+        ):
+            raise ValueError(
+                "edge_thresholds must contain one or more values in [0, 1]"
+            )
+
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "ValidationConfig":
         """Load configuration from a YAML file."""
@@ -124,6 +138,10 @@ class ValidationConfig:
             config_dict["iou_thresholds"], list
         ):
             config_dict["iou_thresholds"] = tuple(config_dict["iou_thresholds"])
+        if "edge_thresholds" in config_dict and isinstance(
+            config_dict["edge_thresholds"], list
+        ):
+            config_dict["edge_thresholds"] = tuple(config_dict["edge_thresholds"])
 
         return cls(**config_dict)
 
@@ -134,6 +152,7 @@ class ValidationConfig:
 
         config_dict = self.to_dict()
         config_dict["iou_thresholds"] = list(config_dict["iou_thresholds"])
+        config_dict["edge_thresholds"] = list(config_dict["edge_thresholds"])
 
         with open(path, "w") as f:
             yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
@@ -149,5 +168,7 @@ class ValidationConfig:
 
         if isinstance(current.get("iou_thresholds"), list):
             current["iou_thresholds"] = tuple(current["iou_thresholds"])
+        if isinstance(current.get("edge_thresholds"), list):
+            current["edge_thresholds"] = tuple(current["edge_thresholds"])
 
         return ValidationConfig(**current)

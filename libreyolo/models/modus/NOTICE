@@ -1,0 +1,70 @@
+LibreMODUS third-party attribution
+==================================
+
+Code provenance
+---------------
+
+The inference-only MODUS integration adapts permissively licensed source from:
+
+    Project:  MODUS
+    Upstream: https://github.com/EPFL-VILAB/Modus
+    Commit:   c299ef0fbba1cfe7c93336c45d7085afd770c0fa
+    License:  Apache License 2.0
+    Copyright 2026 EPFL Visual Intelligence and Learning Lab (VILAB) and the
+    MODUS authors.
+
+The adapted surfaces are the 16-modality registry and tokenizer order, context
+assembly and flow sampling, and the constrained detection decoders. Training,
+FSDP, dataloaders, demos, content-generation routes, feature-tokenizer routes,
+and segmentation routes are not included.
+
+The upstream Apache NOTICE also credits:
+
+    BAGEL (https://github.com/ByteDance-Seed/Bagel)
+    Copyright 2025 Bytedance Ltd. and/or its affiliates. Apache License 2.0.
+
+    HuggingFace Transformers (https://github.com/huggingface/transformers)
+    Copyright The HuggingFace Inc. team and the Qwen team.
+    Apache License 2.0.
+
+The shared Bagel MoT decoder, Qwen2-NaViT language trunk, SigLIP-NaViT vision
+tower, FLUX autoencoder, and image transforms are imported from LibreYOLO's
+audited Apache-2.0 SenseNova implementation. Their full upstream lineage is
+recorded in:
+
+    libreyolo/models/sensenova/NOTICE
+
+Incompatible source exclusion
+-----------------------------
+
+MODUS's ``modeling/bagel/modeling_utils.py`` is marked CC BY-NC 4.0. It is not
+copied, adapted, paraphrased, or imported here. The deterministic sine/cosine
+and timestep utilities used by the shared implementation were independently
+re-derived from the permissive sources documented in the SenseNova NOTICE.
+The small ``LearnableEmbedding`` wrapper is a clean implementation of the
+public checkpoint interface (a table named ``embedding`` indexed by integer
+positions); it was not derived from that incompatible file.
+
+Weights
+-------
+
+LibreYOLO does not bundle, mirror, rename, or publish MODUS weights or a
+quantized derivative. LibreMODUS accepts a local upstream snapshot or downloads
+the required files directly from the upstream Hugging Face repository at the
+following pinned revision:
+
+    Repository: EPFL-VILAB/MODUS
+    Revision:   8428a81602c19141e422b1e1795dddcb5d2bc14b
+
+The upstream model card currently declares ``license: other``, describes the
+checkpoint as ``bagel-derived``, and requests research-only use. Those are
+checkpoint terms, not the Apache-2.0 license of the source repository. Users
+must review and comply with the current upstream model-card terms. Local FP8
+conversion is an on-device cache operation only and does not change the
+checkpoint's terms.
+
+Fresh upstream downloads require credentials from the user's own Hugging Face
+account. A complete local upstream snapshot can be used without authentication.
+
+The full Apache License 2.0 text is distributed at
+``licenses/Apache-2.0.txt``.

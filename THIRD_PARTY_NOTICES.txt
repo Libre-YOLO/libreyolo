@@ -954,6 +954,35 @@ huggingface.co/LibreYOLO/SenseNovaVision7b; mirroring does not change the
 license. See libreyolo/models/sensenova/NOTICE for the full provenance chain.
 
 --------------------------------------------------------------------
+MODUS (EPFL VILAB)
+--------------------------------------------------------------------
+Source: https://github.com/EPFL-VILAB/Modus
+Commit: c299ef0fbba1cfe7c93336c45d7085afd770c0fa
+License: Apache License 2.0 (code; see licenses/Apache-2.0.txt)
+Copyright 2026 EPFL Visual Intelligence and Learning Lab (VILAB) and the
+MODUS authors; Copyright 2025 Bytedance Ltd. and/or its affiliates;
+Copyright The HuggingFace Inc. team and the Qwen team.
+Used for: the LibreMODUS analysis-only any-to-any family
+          (libreyolo/models/modus/): the 16-modality registry and tokenizer
+          order, context/sampler logic, and constrained detection decoders are
+          adapted from the pinned Apache-2.0 source.
+          The shared Bagel/Qwen2/SigLIP/FLUX runtime comes from the audited
+          LibreSenseNovaVision port described above.
+
+The upstream CC BY-NC 4.0 modeling/bagel/modeling_utils.py file is not used.
+Its standard deterministic utilities are clean permissive implementations
+whose sources are documented in libreyolo/models/sensenova/NOTICE.
+
+Model weights are not covered by this code-license declaration. LibreYOLO does
+not bundle, mirror, rename, or publish them. It loads local files or downloads
+directly from EPFL-VILAB/MODUS at Hugging Face revision
+8428a81602c19141e422b1e1795dddcb5d2bc14b. The upstream model card declares
+license ``other``, calls the checkpoint ``bagel-derived``, and requests
+research-only use. Local FP8 caches remain on the user's machine and retain
+the source checkpoint's terms. Fresh downloads require credentials from the
+user's own Hugging Face account. See libreyolo/models/modus/NOTICE.
+
+--------------------------------------------------------------------
 AuraFace-v1 (fal.ai)
 --------------------------------------------------------------------
 Source: https://huggingface.co/fal/AuraFace-v1
@@ -1008,3 +1037,29 @@ huggingface.co/LibreYOLO/LibreSAM3DBodyd3-mesh and
 huggingface.co/LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
 text and an access gate recording acceptance. Mirroring does not change the
 license: those weights remain SAM-licensed, not MIT.
+
+--------------------------------------------------------------------
+TEED (Xavier Soria Poma)
+--------------------------------------------------------------------
+Source: https://github.com/xavysp/TEED
+Commit: 40fa4b1391dc6424f88989d0ca75d5b592c8681d
+License: MIT
+Copyright (c) 2022 Xavier Soria Poma
+Used for: the native TEED edge-detection architecture in
+          libreyolo/models/teed/nn.py. The port retains the released
+          parameter layout for strict local checkpoint conversion. The full
+          MIT notice and the source/weights/data separation are recorded in
+          libreyolo/models/teed/NOTICE.
+
+--------------------------------------------------------------------
+DexiNed (Xavier Soria Poma)
+--------------------------------------------------------------------
+Source: https://github.com/xavysp/DexiNed
+Commit: 08ed67ad0579f3969536a9719cdc1b829fb74fc1
+License: MIT
+Copyright (c) 2019 Xavier Soria Poma
+Used for: the native DexiNed edge-detection architecture in
+          libreyolo/models/dexined/nn.py. The port retains the released
+          parameter layout for strict local checkpoint conversion. The full
+          MIT notice and the source/weights/data separation are recorded in
+          libreyolo/models/dexined/NOTICE.

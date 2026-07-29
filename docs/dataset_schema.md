@@ -218,6 +218,62 @@ Float `.npy` maps are used as-is and do not apply `depth_scale`.
 
 Canonical loader: `libreyolo.data.DepthDataset`.
 
+## edge
+
+Edge detection pairs each RGB image with a same-stem, single-channel lossless
+map and an optional validity mask:
+
+```text
+images/val/scene.jpg -> edges/val/scene.png
+                      -> masks/val/scene.png    # optional
+```
+
+Edge-map rules:
+
+- the map is single-channel PNG/TIF (not an RGB visualization);
+- map resolution must equal the paired image resolution;
+- integer maps are divided by their dtype maximum; float maps must already be
+  finite and in `[0, 1]`;
+- `0` means non-edge and `1` means edge;
+- optional mask pixels are valid when nonzero;
+- resize uses nearest-neighbor interpolation for targets and masks;
+- padded pixels are invalid and do not contribute to validation.
+
+YAML keys:
+
+- `edges_dir`: edge-map directory substituted for `images` (default `edges`);
+- `edge_stem_suffix`: optional suffix appended to image stems;
+- `edge_extension`: lossless target extension (default `.png`);
+- `edge_invert`: set `true` when source maps store black edges over white;
+- `masks_dir`: optional validity-mask directory (default `masks`).
+
+```yaml
+path: edge-dataset
+train: images/train
+val: images/val
+edges_dir: edges
+masks_dir: masks
+nc: 1
+names: {0: edge}
+```
+
+Validation thins continuous predictions with four-direction gradient
+non-maximum suppression. It reports ODS and OIS F-measures over a configurable
+threshold sweep. Predicted and ground-truth pixels are matched one-to-one
+within `edge_max_dist * image_diagonal`; the default normalized tolerance is
+`0.0075`.
+
+Canonical loader: `libreyolo.data.EdgeDataset`.
+
+The loader is format-only: it does not download or redistribute benchmark
+data. BIPED/BIPEDv2 and Berkeley's BSDS data are published for non-commercial
+use, with additional terms on their official download pages. Users must obtain
+those datasets from their publishers and comply with the applicable terms;
+this generic schema does not relicense them:
+
+- BIPED/BIPEDv2: <https://www.kaggle.com/datasets/xavysp/biped>
+- BSDS500: <https://www2.eecs.berkeley.edu/Research/Projects/CS/vision/grouping/resources.html>
+
 ## normal
 
 Surface-normal estimation pairs each image with a same-stem three-channel
