@@ -56,6 +56,7 @@ from ..data import (
     load_data_config,
     resolve_default_coco_image_dir,
 )
+from ..utils.image_size import imgsz_to_hw
 from ..utils.serialization import (
     SCHEMA_VERSION,
     build_class_names,
@@ -223,20 +224,7 @@ class BaseTrainer(ABC):
 
     @property
     def input_size(self) -> Tuple[int, int]:
-        imgsz = self.config.imgsz
-        if isinstance(imgsz, int):
-            return (imgsz, imgsz)
-        if isinstance(imgsz, (list, tuple)):
-            if len(imgsz) != 2:
-                raise ValueError(
-                    f"imgsz tuple must have exactly 2 elements (height, width), "
-                    f"got {len(imgsz)}: {imgsz}."
-                )
-            return (int(imgsz[0]), int(imgsz[1]))
-        raise TypeError(
-            f"imgsz must be int or tuple[int, int], "
-            f"got {type(imgsz).__name__}: {imgsz!r}."
-        )
+        return imgsz_to_hw(self.config.imgsz, name="imgsz")
 
     # =========================================================================
     # Hook methods — subclasses override these

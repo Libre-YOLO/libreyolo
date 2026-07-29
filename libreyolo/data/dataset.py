@@ -30,6 +30,7 @@ from .obb import (
     xywhr_to_proxy_xyxy,
 )
 from libreyolo.training.distributed import is_main_process
+from libreyolo.utils.image_size import imgsz_to_hw
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         self,
         data_dir: str | None = None,
         split: str = "train",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         img_files: List[Path] | None = None,
         label_files: List[Path] | None = None,
@@ -265,20 +266,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
             label_files: List of label paths (optional, inferred if not provided).
             num_classes: Optional class-count bound used for OBB label validation.
         """
-        if isinstance(img_size, int):
-            self.img_size = (img_size, img_size)
-        elif isinstance(img_size, (list, tuple)):
-            if len(img_size) != 2:
-                raise ValueError(
-                    f"img_size must be a 2-element (height, width) tuple, "
-                    f"got {len(img_size)} elements: {img_size}."
-                )
-            self.img_size = (int(img_size[0]), int(img_size[1]))
-        else:
-            raise TypeError(
-                f"img_size must be int or (height, width) tuple, "
-                f"got {type(img_size).__name__}: {img_size!r}."
-            )
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
         self.preproc = preproc
         self._input_dim = self.img_size
         self.load_segments = load_segments
@@ -626,7 +614,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         data_dir: str,
         json_file: str = "instances_train2017.json",
         name: str = "train2017",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         load_segments: bool = False,
         load_obb: bool = False,
@@ -656,20 +644,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
-        if isinstance(img_size, int):
-            self.img_size = (img_size, img_size)
-        elif isinstance(img_size, (list, tuple)):
-            if len(img_size) != 2:
-                raise ValueError(
-                    f"img_size must be a 2-element (height, width) tuple, "
-                    f"got {len(img_size)} elements: {img_size}."
-                )
-            self.img_size = (int(img_size[0]), int(img_size[1]))
-        else:
-            raise TypeError(
-                f"img_size must be int or (height, width) tuple, "
-                f"got {type(img_size).__name__}: {img_size!r}."
-            )
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
         self._input_dim = self.img_size
         self.preproc = preproc
         self.load_segments = load_segments

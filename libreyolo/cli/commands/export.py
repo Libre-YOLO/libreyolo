@@ -22,7 +22,10 @@ def export_cmd(
         "onnx",
         help="Export format: onnx, torchscript, tensorrt, openvino, ncnn, tflite (alias: litert), coreml",
     ),
-    imgsz: Optional[str] = typer.Option(None, help="Input image size: 640 (square) or 480x640 (HxW)"),
+    imgsz: Optional[str] = typer.Option(
+        None,
+        help="Input image size: 640 or 480x640 (HxW); 480,640 remains supported",
+    ),
     batch: int = typer.Option(1, help="Export batch size"),
     half: bool = typer.Option(False, help="FP16 precision"),
     int8: bool = typer.Option(False, help="INT8 quantization"),
@@ -119,12 +122,13 @@ def export_cmd(
         export_kwargs["iou"] = iou
         if fmt == "onnx":
             export_kwargs["max_det"] = max_det
+    parsed_imgsz = None
     if imgsz is not None:
         try:
-            parsed = parse_imgsz_str(imgsz)
+            parsed_imgsz = parse_imgsz_str(imgsz)
         except ValueError as exc:
             exit_with_error(out, "invalid_imgsz", str(exc))
-        export_kwargs["imgsz"] = parsed
+        export_kwargs["imgsz"] = parsed_imgsz
     if data is not None:
         export_kwargs["data"] = data
     if data is not None or int8:
@@ -163,12 +167,11 @@ def export_cmd(
     else:
         size_mb = 0.0
 
-    if imgsz is not None:
-        parsed = parse_imgsz_str(imgsz)
-        if isinstance(parsed, int):
-            input_h = input_w = parsed
+    if parsed_imgsz is not None:
+        if isinstance(parsed_imgsz, int):
+            input_h = input_w = parsed_imgsz
         else:
-            input_h, input_w = parsed
+            input_h, input_w = parsed_imgsz
     else:
         native = (
             loaded_model._get_input_size()

@@ -33,8 +33,14 @@ class TestParseImgszStr:
     def test_rect_uppercase(self):
         assert parse_imgsz_str("480X640") == (480, 640)
 
+    def test_rect_legacy_comma(self):
+        assert parse_imgsz_str("480,640") == (480, 640)
+
     def test_square_tuple_collapses_to_int(self):
         assert parse_imgsz_str("640x640") == 640
+
+    def test_square_legacy_comma_collapses_to_int(self):
+        assert parse_imgsz_str("640,640") == 640
 
     def test_none_passthrough(self):
         assert parse_imgsz_str(None) is None
@@ -47,7 +53,10 @@ class TestParseImgszStr:
         with pytest.raises(ValueError):
             parse_imgsz_str(bad)
 
-    @pytest.mark.parametrize("bad", ["abc", "12ax640", "x640", "640x"])
+    @pytest.mark.parametrize(
+        "bad",
+        ["abc", "12ax640", "x640", "640x", "480,640,800"],
+    )
     def test_garbage_rejected(self, bad):
         with pytest.raises(ValueError):
             parse_imgsz_str(bad)
@@ -65,8 +74,21 @@ class TestTrainConfigImgsz:
     def test_rect_tuple_kept(self):
         assert TrainConfig(imgsz=(480, 640)).imgsz == (480, 640)
 
+    def test_rect_list_normalized_to_tuple(self):
+        assert TrainConfig(imgsz=[480, 640]).imgsz == (480, 640)
+
     def test_square_tuple_normalized_to_scalar(self):
         assert TrainConfig(imgsz=(640, 640)).imgsz == 640
+
+    def test_numeric_string_preserved_as_compatibility_input(self):
+        assert TrainConfig(imgsz="640").imgsz == 640
+
+    def test_hxw_string_accepted(self):
+        assert TrainConfig(imgsz="480x640").imgsz == (480, 640)
+
+    def test_python_comma_string_rejected(self):
+        with pytest.raises(ValueError):
+            TrainConfig(imgsz="480,640")
 
     def test_wrong_arity_rejected(self):
         with pytest.raises(ValueError):
@@ -79,6 +101,11 @@ class TestTrainConfigImgsz:
     def test_non_int_rejected(self):
         with pytest.raises(TypeError):
             TrainConfig(imgsz=(640.0, 480))
+
+    @pytest.mark.parametrize("bad", [640.0, True, "garbage", "0x640"])
+    def test_invalid_scalar_rejected_at_config_boundary(self, bad):
+        with pytest.raises((TypeError, ValueError)):
+            TrainConfig(imgsz=bad)
 
 
 # ---------------------------------------------------------------------------

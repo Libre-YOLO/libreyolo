@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 import yaml
 
+from libreyolo.utils.image_size import normalize_imgsz
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +49,7 @@ class TrainConfig:
     # Data
     data: Optional[str] = None
     data_dir: Optional[str] = None
-    imgsz: Union[int, Tuple[int, int]] = 640
+    imgsz: Union[int, Tuple[int, int], List[int], str] = 640
 
     # Training
     epochs: int = 300
@@ -194,26 +196,11 @@ class TrainConfig:
     profile_open: bool = True
 
     def __post_init__(self):
-        if isinstance(self.imgsz, str):
-            raise TypeError(
-                f"imgsz must be an int (square) or tuple[int, int] (height, width), "
-                f"got str: {self.imgsz!r}. "
-                "Pass an int like 640 or a tuple like (480, 640). "
-                "From the CLI use the format 640 or 480x640 (parsed automatically)."
-            )
-        if isinstance(self.imgsz, (list, tuple)):
-            if len(self.imgsz) != 2:
-                raise ValueError(
-                    f"imgsz tuple must have exactly 2 elements (height, width), "
-                    f"got {len(self.imgsz)}."
-                )
-            h, w = self.imgsz
-            if not (isinstance(h, int) and isinstance(w, int)):
-                raise TypeError(f"imgsz tuple elements must be ints, got ({type(h).__name__}, {type(w).__name__}).")
-            if h <= 0 or w <= 0:
-                raise ValueError(f"imgsz tuple elements must be positive, got ({h}, {w}).")
-            if h == w:
-                self.imgsz = h
+        self.imgsz = normalize_imgsz(
+            self.imgsz,
+            name="imgsz",
+            allow_string=True,
+        )
 
     @classmethod
     def from_kwargs(cls, **kwargs):
