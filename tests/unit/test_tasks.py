@@ -48,6 +48,18 @@ def test_normalize_depth_task_aliases():
     assert normalize_task("monocular-depth") == "depth"
 
 
+def test_normalize_normal_task_aliases():
+    for alias in (
+        "normal",
+        "normals",
+        "surface-normal",
+        "surface_normal",
+        "surface-normals",
+        "surface_normals",
+    ):
+        assert normalize_task(alias) == "normal"
+
+
 def test_normalize_restore_task_aliases():
     assert normalize_task("restore") == "restore"
     assert normalize_task("restoration") == "restore"
@@ -76,6 +88,7 @@ def test_task_type_literal_is_public():
         "obb",
         "point",
         "depth",
+        "normal",
         "restore",
         "matte",
         "ocr",
@@ -123,11 +136,13 @@ def test_task_suffix_helpers():
     assert suffix_to_task("-obb") == "obb"
     assert suffix_to_task("-point") == "point"
     assert suffix_to_task("-depth") == "depth"
+    assert suffix_to_task("-normal") == "normal"
     assert suffix_to_task("-restore") == "restore"
     assert suffix_to_task("-matte") == "matte"
     assert task_to_suffix("obb") == "obb"
     assert task_to_suffix("point") == "point"
     assert task_to_suffix("depth") == "depth"
+    assert task_to_suffix("normal") == "normal"
     assert task_to_suffix("restore") == "restore"
     assert task_to_suffix("matte") == "matte"
     assert task_to_suffix("semantic") == "sem"

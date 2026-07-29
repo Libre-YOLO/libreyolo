@@ -308,6 +308,7 @@ def run_video_inference(
     from .drawing import (
         draw_boxes,
         draw_depth_map,
+        draw_normal_map,
         draw_keypoints,
         draw_masks,
         draw_matte,
@@ -389,6 +390,14 @@ def run_video_inference(
                         if isinstance(depth_np, torch.Tensor):
                             depth_np = depth_np.cpu().numpy()
                         annotated_pil = draw_depth_map(pil_img, depth_np)
+                    elif (
+                        result.boxes is None
+                        and getattr(result, "normal_map", None) is not None
+                    ):
+                        normal_np = result.normal_map.data
+                        if isinstance(normal_np, torch.Tensor):
+                            normal_np = normal_np.cpu().numpy()
+                        annotated_pil = draw_normal_map(pil_img, normal_np)
                     elif len(result) > 0:
                         annotated_pil = pil_img
                         if result.masks is not None:

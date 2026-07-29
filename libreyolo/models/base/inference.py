@@ -33,6 +33,7 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_normal_map,
     draw_mesh,
     draw_ocr_regions,
     draw_panoptic,
@@ -51,6 +52,7 @@ from ...utils.predict_args import normalize_predict_kwargs
 from ...utils.results import (
     Boxes,
     DepthMap,
+    NormalMap,
     Keypoints,
     Masks,
     Matte,
@@ -648,6 +650,14 @@ class InferenceRunner:
             annotated_img.save(save_path)
             log_saved_result(result, save_path)
             return
+        if result.boxes is None and getattr(result, "normal_map", None) is not None:
+            normal_data = result.normal_map.data
+            if isinstance(normal_data, torch.Tensor):
+                normal_data = normal_data.cpu().numpy()
+            annotated_img = draw_normal_map(original_img, normal_data)
+            annotated_img.save(save_path)
+            log_saved_result(result, save_path)
+            return
         if result.boxes is None and getattr(result, "restored", None) is not None:
             result.restored.save(save_path)
             log_saved_result(result, save_path)
@@ -848,6 +858,23 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 depth_map=DepthMap(depth_t.float(), (orig_h, orig_w)),
+            )
+
+        # Surface normals: a dense (H, W, 3) unit-vector field, no boxes.
+        normal_data = detections.get("normal", detections.get("normals"))
+        if normal_data is not None:
+            orig_w, orig_h = original_size
+            normal_t = (
+                normal_data
+                if isinstance(normal_data, torch.Tensor)
+                else torch.as_tensor(normal_data)
+            )
+            return Results(
+                boxes=None,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                normal_map=NormalMap(normal_t.float(), (orig_h, orig_w)),
             )
 
         # Restore: a dense RGB image, no boxes. For super-resolution the restored

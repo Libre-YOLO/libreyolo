@@ -677,6 +677,47 @@ def draw_depth_map(
     return result
 
 
+def draw_normal_map(
+    img: Image.Image,
+    normal_map: np.ndarray,
+    alpha: float = 1.0,
+) -> Image.Image:
+    """Render OpenCV-frame surface normals with the canonical RGB mapping.
+
+    The payload stays as float vectors; this function alone applies
+    ``rgb = (normal + 1) / 2``. If resizing is needed, vector components are
+    interpolated independently and then renormalized.
+    """
+    normals = np.asarray(normal_map, dtype=np.float32)
+    if normals.ndim != 3 or normals.shape[-1] != 3:
+        raise ValueError(
+            f"expected (H, W, 3) normal map but got shape {normals.shape}"
+        )
+    if normals.shape[:2] != (img.height, img.width):
+        components = []
+        for component in range(3):
+            component_img = Image.fromarray(normals[..., component], mode="F")
+            component_img = component_img.resize(
+                (img.width, img.height), Image.BILINEAR
+            )
+            components.append(np.asarray(component_img, dtype=np.float32))
+        normals = np.stack(components, axis=-1)
+
+    finite = np.isfinite(normals).all(axis=-1)
+    norms = np.linalg.norm(np.where(finite[..., None], normals, 0.0), axis=-1)
+    valid = finite & (norms > 1e-12)
+    normalized = np.zeros_like(normals, dtype=np.float32)
+    normalized[valid] = normals[valid] / norms[valid, None]
+
+    colored = np.clip((normalized + 1.0) * 127.5, 0.0, 255.0).round()
+    colored = colored.astype(np.uint8)
+    colored[~valid] = 0
+    result = Image.fromarray(colored, mode="RGB")
+    if alpha < 1.0:
+        result = Image.blend(img.convert("RGB"), result, alpha)
+    return result
+
+
 def _checkerboard(
     height: int,
     width: int,

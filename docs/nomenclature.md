@@ -207,6 +207,7 @@ From `libreyolo/tasks.py`:
 | `obb`         | `-obb` |
 | `point`       | `-point` |
 | `depth`       | `-depth` |
+| `normal`      | `-normal` |
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
@@ -245,6 +246,16 @@ as a Mask2Former-style non-overlapping thing+stuff merge.
 `Results.depth_map`, a float `(H, W)` relative inverse-depth map on the
 original image canvas. Higher values mean closer to the camera; no metric unit
 is implied without user-side calibration.
+
+`normal` is the task for dense surface-normal estimation. Models expose
+`Results.normal_map`, a float32 `(H, W, 3)` unit-vector field in `[-1, 1]` on
+the original image canvas at its original resolution. Vectors use the OpenCV
+camera frame: `+x` points right, `+y` points down, and `+z` points into the
+scene. Normals face the camera (`n . ray < 0` for each visible surface), so a
+fronto-parallel wall facing the viewer is `(0, 0, -1)`. The RGB mapping
+`(normal + 1) / 2` is a visualization produced by plotting and saving; it is
+never the stored payload. Each family converts its upstream convention at the
+family boundary before constructing `NormalMap`.
 
 `restore` is the task for paired image restoration, including deblurring,
 denoising, and super-resolution. Models expose `Results.restored`, a uint8 RGB

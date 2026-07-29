@@ -9,6 +9,7 @@ from .coco_evaluator import COCOEvaluator
 from .pose_validator import PoseValidator
 from .point_validator import PointValidator
 from .depth_validator import DepthValidator
+from .normal_validator import NormalValidator
 from .restore_validator import RestoreValidator
 from .matte_validator import MatteValidator
 from .ocr_validator import OCRValidator
@@ -29,6 +30,7 @@ __all__ = [
     "PointValidator",
     "FOMOValidator",
     "DepthValidator",
+    "NormalValidator",
     "RestoreValidator",
     "MatteValidator",
     "OCRValidator",
