@@ -845,6 +845,180 @@ def test_fp16_roundtrip_keeps_float32_io(tmp_path, yolo9t):
 
 
 # ---------------------------------------------------------------------------
+# Robustness of the quant API state machine
+# ---------------------------------------------------------------------------
+
+
+def test_reference_tensor_handles_every_module_state():
+    """Device lookup must work whatever tensors a quant module owns.
+
+    A prepared MXFP4Linear without bias owns only its weight parameter and
+    registers no buffers, so a buffers-only lookup raised StopIteration and
+    crashed dequantize on the ordinary quantize -> train -> dequantize path.
+    """
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import _reference_tensor
+
+    prepared = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    assert not list(prepared.buffers())          # the condition that broke it
+    assert _reference_tensor(prepared).device == prepared.weight.device
+
+    finalized = MXFP4Linear.from_float(nn.Linear(64, 32, bias=False))
+    finalized.make_finalized()
+    assert "weight" not in dict(finalized.named_parameters())
+    assert _reference_tensor(finalized) is not None
+
+    with_bias = MXFP4Linear.from_float(nn.Linear(64, 32, bias=True))
+    assert _reference_tensor(with_bias) is not None
+
+
+def test_dequantize_survives_bias_free_mxfp4_in_prepared_state(yolo9t):
+    """dequantize_model must not crash on a bias-free prepared MXFP4Linear."""
+    from libreyolo.quant import MXFP4Linear
+    from libreyolo.quant.api import dequantize_model
+
+    root = yolo9t.model
+    parent = None
+    for module in root.modules():
+        for child_name, child in list(module.named_children()):
+            if isinstance(child, nn.Linear) and child.bias is None:
+                parent, name, original = module, child_name, child
+                break
+        if parent is not None:
+            break
+    if parent is None:  # graft one so the test is not architecture-dependent
+        parent, name = root, "_probe_linear"
+        original = nn.Linear(8, 8, bias=False)
+    setattr(parent, name, MXFP4Linear.from_float(
+        original if isinstance(original, nn.Linear) else nn.Linear(8, 8, bias=False)
+    ))
+    yolo9t._quant_manifest = {"recipe": "mxfp4", "state": "prepared"}
+
+    dequantize_model(yolo9t)  # previously raised StopIteration
+
+
+class _Boom(RuntimeError):
+    pass
+
+
+class _TinyQuantWrapper:
+    """Minimal stand-in for a model wrapper, holding real quant modules."""
+
+    FAMILY = "yolo9"
+
+    def __init__(self, quantized=True):
+        module = (
+            QuantConv2d(3, 4, 3, padding=1)
+            if quantized
+            else nn.Conv2d(3, 4, 3, padding=1, bias=False)
+        )
+        self.model = nn.Sequential(module)
+        self.device = torch.device("cpu")
+
+    def _get_input_size(self):
+        return 32
+
+    def _get_preprocess_numpy(self):
+        return None
+
+    def _get_model_name(self):
+        return "tiny"
+
+
+@pytest.mark.parametrize("fails", [True, False])
+def test_calibration_always_clears_observing_mode(monkeypatch, fails):
+    """Observing must be cleared on the failure path as well as the happy one.
+
+    Left set, every later forward keeps widening the observed ranges and
+    silently corrupts the calibration that follows.
+    """
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper()
+    quant_modules = [m for _, m in quant_api._quant_modules(wrapper.model)]
+    assert quant_modules, "fixture must contain quant modules"
+
+    class _Loader:
+        def __iter__(self):
+            yield np.zeros((1, 3, 32, 32), dtype=np.float32)
+            if fails:
+                raise _Boom("bad calibration sample")
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    if fails:
+        with pytest.raises(_Boom):
+            quant_api._run_calibration(
+                wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+                allow_download_scripts=False,
+            )
+    else:
+        quant_api._run_calibration(
+            wrapper, calib="x", batch=1, samples=1, algorithm="minmax",
+            allow_download_scripts=False,
+        )
+
+    assert not any(getattr(m, "_q_observing", False) for m in quant_modules)
+    assert wrapper.model.training
+
+
+def test_failed_calibration_rolls_back_and_allows_retry(monkeypatch):
+    """A partial calibration must not leave an untracked quantized model."""
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper(quantized=False)
+    original = wrapper.model[0]
+    state = {"fail": True, "after_batch": False}
+
+    class _Loader:
+        def __iter__(self):
+            yield np.ones((1, 3, 32, 32), dtype=np.float32)
+            if state["fail"]:
+                state["after_batch"] = True
+                raise _Boom("interrupted after one batch")
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    def quantize():
+        return quant_api.quantize_model(
+            wrapper,
+            recipe="int8",
+            calib="x",
+            batch=1,
+            samples=2,
+            keep_high_precision=(),
+            verbose=False,
+        )
+
+    with pytest.raises(_Boom):
+        quantize()
+
+    assert state["after_batch"]
+    assert wrapper.model[0] is original
+    assert wrapper.model.training
+    assert getattr(wrapper, "_quant_manifest", None) is None
+    assert not any(
+        isinstance(module, QuantConv2d) for module in wrapper.model.modules()
+    )
+
+    state["fail"] = False
+    quantize()
+    assert isinstance(wrapper.model[0], QuantConv2d)
+    assert wrapper._quant_manifest["calibrated"]
+    assert not wrapper.model[0]._q_observing
+
+
+# ---------------------------------------------------------------------------
 # birefnet (matte) family
 # ---------------------------------------------------------------------------
 
