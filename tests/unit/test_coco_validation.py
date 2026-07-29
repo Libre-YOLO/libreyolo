@@ -29,6 +29,8 @@ def _coco_metrics(base: float):
         "AR1": base + 0.06,
         "AR10": base + 0.07,
         "AR100": base + 0.08,
+        "AR_max_det": base + 0.08,
+        "max_det": 100.0,
         "AR_small": base + 0.09,
         "AR_medium": base + 0.10,
         "AR_large": base + 0.11,
@@ -88,6 +90,54 @@ def create_mock_yolo_dataset(tmp_path):
         yaml.dump(data_yaml, f)
 
     return yaml_path
+
+
+def _dense_coco_fixture(count: int):
+    """Build one COCO image with non-overlapping boxes and perfect predictions."""
+    pytest.importorskip("pycocotools")
+    from pycocotools.coco import COCO
+
+    annotations = []
+    boxes = []
+    scores = []
+    classes = []
+    columns = 25
+    for index in range(count):
+        x = float((index % columns) * 4)
+        y = float((index // columns) * 4)
+        box = [x, y, 2.0, 2.0]
+        annotations.append(
+            {
+                "id": index + 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": box,
+                "area": 4.0,
+                "iscrowd": 0,
+            }
+        )
+        boxes.append([x, y, x + 2.0, y + 2.0])
+        scores.append(1.0 - index / (count * 2.0))
+        classes.append(0)
+
+    coco = COCO()
+    coco.dataset = {
+        "info": {},
+        "licenses": [],
+        "images": [
+            {
+                "id": 1,
+                "file_name": "dense.jpg",
+                "width": 100,
+                "height": max(100, ((count + columns - 1) // columns) * 4),
+            }
+        ],
+        "annotations": annotations,
+        "categories": [{"id": 1, "name": "object"}],
+    }
+    coco.createIndex()
+    predictions = {"boxes": boxes, "scores": scores, "classes": classes}
+    return coco, predictions
 
 
 @pytest.mark.unit
@@ -154,6 +204,48 @@ def test_coco_evaluator_integration(tmp_path):
     ]
     for key in expected_keys:
         assert key in metrics, f"Missing metric: {key}"
+
+
+@pytest.mark.unit
+def test_coco_evaluator_headline_ap_uses_configured_500_cap():
+    """Overall AP must not use stock summarize's hard-coded maxDets=100 lookup."""
+    from libreyolo.validation import COCOEvaluator
+
+    coco, predictions = _dense_coco_fixture(1)
+    evaluator = COCOEvaluator(
+        coco, iou_type="bbox", label_to_category_id={0: 1}, max_det=500
+    )
+    evaluator.update(predictions, image_id=1)
+
+    metrics = evaluator.compute()
+
+    assert evaluator._last_coco_eval.params.maxDets == [1, 10, 100, 500]
+    assert metrics["max_det"] == 500
+    assert metrics["mAP"] == pytest.approx(1.0)
+    assert metrics["mAP50"] == pytest.approx(1.0)
+
+
+@pytest.mark.unit
+def test_coco_evaluator_dense_image_proves_ap500_exceeds_ap100():
+    """A dense perfect prediction set must expose the configured cap in headline AP."""
+    from libreyolo.validation import COCOEvaluator
+
+    coco, predictions = _dense_coco_fixture(500)
+    evaluator_100 = COCOEvaluator(
+        coco, iou_type="bbox", label_to_category_id={0: 1}, max_det=100
+    )
+    evaluator_500 = COCOEvaluator(
+        coco, iou_type="bbox", label_to_category_id={0: 1}, max_det=500
+    )
+    evaluator_100.update(predictions, image_id=1)
+    evaluator_500.update(predictions, image_id=1)
+
+    metrics_100 = evaluator_100.compute()
+    metrics_500 = evaluator_500.compute()
+
+    assert metrics_500["mAP"] == pytest.approx(1.0)
+    assert metrics_500["mAP"] > metrics_100["mAP"]
+    assert metrics_500["AR_max_det"] > metrics_100["AR_max_det"]
 
 
 @pytest.mark.unit

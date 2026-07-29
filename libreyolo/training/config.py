@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 import yaml
 
+from libreyolo.utils.amp import normalize_amp_dtype
 from libreyolo.utils.image_size import normalize_imgsz
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,9 @@ class TrainConfig:
     ema: bool = True
     ema_decay: float = 0.9998
     amp: bool = True
+    # CUDA autocast dtype when AMP is enabled. The explicit default preserves
+    # historical amp=True behavior while allowing reproducible BF16 training.
+    amp_dtype: str = "float16"
     # Layer freezing. An int freezes the first N family-defined freeze groups;
     # a list freezes explicit group indices or module-name selectors; a string
     # freezes matching module/parameter names.
@@ -166,6 +170,8 @@ class TrainConfig:
     exist_ok: bool = False
     save_period: int = 10
     eval_interval: int = 10
+    # Prediction and COCO-evaluation cap used by validation during training.
+    max_det: int = 300
     save_plots: bool = False
 
     # System
@@ -196,11 +202,14 @@ class TrainConfig:
     profile_open: bool = True
 
     def __post_init__(self):
+        self.amp_dtype = normalize_amp_dtype(self.amp_dtype)
         self.imgsz = normalize_imgsz(
             self.imgsz,
             name="imgsz",
             allow_string=True,
         )
+        if self.max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {self.max_det}")
 
     @classmethod
     def from_kwargs(cls, **kwargs):

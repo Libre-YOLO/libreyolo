@@ -32,6 +32,7 @@ from libreyolo.training.distributed import (
     is_distributed,
     is_main_process,
 )
+from libreyolo.utils.amp import torch_amp_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ def autobatch(
     model: nn.Module,
     imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
+    amp_dtype: str = "float16",
     fraction: float = _DEFAULT_FRACTION,
     default: int = 16,
     max_probe: int = _DEFAULT_MAX_PROBE,
@@ -109,6 +111,7 @@ def autobatch(
         model: Model already resident on the target CUDA device.
         imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP (autocast) will be used during training.
+        amp_dtype: CUDA autocast dtype used when AMP is enabled.
         fraction: Target fraction of *total* VRAM to occupy (default 0.60).
         default: Fallback batch size for non-CUDA devices or probe failures.
         max_probe: Largest batch size to probe (default 64; set to nbs).
@@ -161,12 +164,16 @@ def autobatch(
     imgsz_h, imgsz_w = imgsz if isinstance(imgsz, (list, tuple)) else (imgsz, imgsz)
     model.train()
     try:
-        ctx = torch.autocast("cuda") if amp else contextlib.nullcontext()
         for b in probe_batches:
             try:
                 torch.cuda.empty_cache()
                 torch.cuda.reset_peak_memory_stats(device)
                 x = torch.zeros(b, 3, imgsz_h, imgsz_w, dtype=torch.float32, device=device)
+                ctx = (
+                    torch.autocast("cuda", dtype=torch_amp_dtype(amp_dtype))
+                    if amp
+                    else contextlib.nullcontext()
+                )
                 with ctx:
                     out = model(x)
                 t = _find_grad_tensor(out)
@@ -241,6 +248,7 @@ def resolve_auto_batch(
     model: nn.Module,
     imgsz: Union[int, Tuple[int, int]] = 640,
     amp: bool = True,
+    amp_dtype: str = "float16",
     fraction: float = _DEFAULT_FRACTION,
     world_size: int = 1,
     default: int = 16,
@@ -260,6 +268,7 @@ def resolve_auto_batch(
         model: Model on the target device (not yet DDP-wrapped).
         imgsz: Input size — an int (square) or (height, width) tuple.
         amp: Whether AMP is active.
+        amp_dtype: CUDA autocast dtype used when AMP is active.
         fraction: Target fraction of total VRAM (default 0.60).
         world_size: Number of DDP ranks (1 for single-GPU).
         default: Fallback when CUDA is unavailable.
@@ -275,7 +284,7 @@ def resolve_auto_batch(
     if is_main_process():
         try:
             per_gpu = autobatch(
-                model, imgsz=imgsz, amp=amp, fraction=fraction,
+                model, imgsz=imgsz, amp=amp, amp_dtype=amp_dtype, fraction=fraction,
                 default=default, max_probe=max_probe,
             )
         except Exception as exc:

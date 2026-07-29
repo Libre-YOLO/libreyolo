@@ -340,6 +340,7 @@ class DetectionValidator(BaseValidator):
                 coco_api,
                 iou_type="bbox",
                 label_to_category_id=self._coco_label_to_category_id,
+                max_det=self.config.max_det,
             )
             if self.config.verbose:
                 logger.info(
@@ -404,7 +405,9 @@ class DetectionValidator(BaseValidator):
             label_files=yolo_label_files,
             **self._coco_api_kwargs(),
         )
-        self.coco_evaluator = COCOEvaluator(coco_api, iou_type="bbox")
+        self.coco_evaluator = COCOEvaluator(
+            coco_api, iou_type="bbox", max_det=self.config.max_det
+        )
 
         if self.config.verbose:
             logger.info("COCO evaluator initialized with %d images", len(coco_api.imgs))
@@ -914,6 +917,8 @@ class DetectionValidator(BaseValidator):
             "metrics/AR1": coco_metrics["AR1"],
             "metrics/AR10": coco_metrics["AR10"],
             "metrics/AR100": coco_metrics["AR100"],
+            "metrics/AR_max_det": coco_metrics["AR_max_det"],
+            "metrics/max_det": coco_metrics["max_det"],
             "metrics/AR_small": coco_metrics["AR_small"],
             "metrics/AR_medium": coco_metrics["AR_medium"],
             "metrics/AR_large": coco_metrics["AR_large"],
@@ -980,6 +985,7 @@ class SegmentationValidator(DetectionValidator):
             self.bbox_evaluator.coco_gt,
             iou_type="segm",
             label_to_category_id=self._coco_label_to_category_id,
+            max_det=self.config.max_det,
         )
 
     def _update_metrics(
@@ -1085,6 +1091,8 @@ class SegmentationValidator(DetectionValidator):
             "metrics/AR1": mask["AR1"],
             "metrics/AR10": mask["AR10"],
             "metrics/AR100": mask["AR100"],
+            "metrics/AR_max_det": mask["AR_max_det"],
+            "metrics/max_det": mask["max_det"],
             "metrics/AR_small": mask["AR_small"],
             "metrics/AR_medium": mask["AR_medium"],
             "metrics/AR_large": mask["AR_large"],

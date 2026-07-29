@@ -255,6 +255,9 @@ def train_cmd(
     seed: int = typer.Option(0, help="Random seed"),
     resume: str = typer.Option("", help="Resume training: true, or path to checkpoint"),
     amp: bool = typer.Option(True, help="Automatic Mixed Precision"),
+    amp_dtype: str = typer.Option(
+        "float16", help="CUDA AMP dtype: float16 or bfloat16"
+    ),
     pretrained: bool = typer.Option(True, help="Use pretrained weights"),
     lora: bool = typer.Option(
         False,
@@ -311,6 +314,9 @@ def train_cmd(
     # Validation
     val: bool = typer.Option(True, help="Validate during training"),
     eval_interval: int = typer.Option(10, help="Validate every N epochs"),
+    max_det: int = typer.Option(
+        300, help="Maximum detections per image during validation"
+    ),
     save_plots: bool = typer.Option(
         False, help="Save final validation plots during training"
     ),
@@ -355,6 +361,11 @@ def train_cmd(
 
     # Parse tuple/list strings
     try:
+        from libreyolo.utils.amp import normalize_amp_dtype
+
+        amp_dtype = normalize_amp_dtype(amp_dtype)
+        if max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {max_det}")
         mosaic_scale_val = (
             ast.literal_eval(mosaic_scale)
             if isinstance(mosaic_scale, str)
@@ -475,6 +486,7 @@ def train_cmd(
         "seed": seed,
         "resume": resume_val,
         "amp": amp,
+        "amp_dtype": amp_dtype,
         "lora": lora,
         "freeze": freeze_val,
         "optimizer": optimizer,
@@ -503,6 +515,7 @@ def train_cmd(
         "ema": ema,
         "ema_decay": ema_decay,
         "eval_interval": eval_interval,
+        "max_det": max_det,
         "save_plots": save_plots,
         "patience": patience,
         "project": project,
@@ -556,6 +569,9 @@ def train_cmd(
             "lr0": params["lr0"],
             "momentum": params["momentum"],
             "scheduler": params["scheduler"],
+            "amp": params["amp"],
+            "amp_dtype": params["amp_dtype"],
+            "max_det": params["max_det"],
         }
         if params.get("freeze") is not None:
             resolved_config["freeze"] = params["freeze"]
@@ -582,6 +598,9 @@ def train_cmd(
                 "lr_drop": params["lr_drop"],
                 "ema": params["ema"],
                 "ema_decay": params["ema_decay"],
+                "amp": params["amp"],
+                "amp_dtype": params["amp_dtype"],
+                "max_det": params["max_det"],
                 "save_period": params["save_period"],
                 "lora": params["lora"],
             }

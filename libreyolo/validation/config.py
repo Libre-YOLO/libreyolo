@@ -6,6 +6,8 @@ from typing import List, Optional, Tuple, Union
 
 import yaml
 
+from libreyolo.utils.amp import normalize_amp_dtype
+
 
 @dataclass
 class ValidationConfig:
@@ -30,6 +32,7 @@ class ValidationConfig:
         verbose: Whether to print detailed metrics.
         num_workers: Number of dataloader workers.
         half: Whether to use FP16 inference.
+        amp_dtype: Mixed-precision dtype used when half is enabled.
     """
 
     # Data
@@ -76,6 +79,7 @@ class ValidationConfig:
 
     # Precision
     half: bool = False
+    amp_dtype: str = "float16"
     allow_download_scripts: bool = False
 
     # TTA
@@ -96,6 +100,8 @@ class ValidationConfig:
     )
 
     def __post_init__(self) -> None:
+        self.amp_dtype = normalize_amp_dtype(self.amp_dtype)
+
         if self.data is None and self.data_dir is None and self.keypoints_json is None:
             raise ValueError(
                 "Specify one of: 'data' (yaml), 'data_dir' (detection/segmentation), "
@@ -127,6 +133,9 @@ class ValidationConfig:
             raise ValueError(
                 "edge_thresholds must contain one or more values in [0, 1]"
             )
+
+        if self.max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {self.max_det}")
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "ValidationConfig":
