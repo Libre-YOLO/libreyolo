@@ -30,6 +30,7 @@ from .obb import (
     xywhr_to_proxy_xyxy,
 )
 from libreyolo.training.distributed import is_main_process
+from libreyolo.utils.image_size import imgsz_to_hw
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ class YOLODataset(ImageCacheMixin, Dataset):
         self,
         data_dir: str | None = None,
         split: str = "train",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         img_files: List[Path] | None = None,
         label_files: List[Path] | None = None,
@@ -265,9 +266,9 @@ class YOLODataset(ImageCacheMixin, Dataset):
             label_files: List of label paths (optional, inferred if not provided).
             num_classes: Optional class-count bound used for OBB label validation.
         """
-        self.img_size = img_size
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
         self.preproc = preproc
-        self._input_dim = img_size
+        self._input_dim = self.img_size
         self.load_segments = load_segments
         self.load_obb = load_obb
         self.num_classes = num_classes
@@ -613,7 +614,7 @@ class COCODataset(ImageCacheMixin, Dataset):
         data_dir: str,
         json_file: str = "instances_train2017.json",
         name: str = "train2017",
-        img_size: Tuple[int, int] = (640, 640),
+        img_size: int | Tuple[int, int] | List[int] = (640, 640),
         preproc=None,
         load_segments: bool = False,
         load_obb: bool = False,
@@ -643,8 +644,8 @@ class COCODataset(ImageCacheMixin, Dataset):
         self.data_dir = Path(data_dir)
         self.json_file = json_file
         self.name = name
-        self.img_size = img_size
-        self._input_dim = img_size
+        self.img_size = imgsz_to_hw(img_size, name="img_size")
+        self._input_dim = self.img_size
         self.preproc = preproc
         self.load_segments = load_segments
         self.load_obb = load_obb

@@ -585,7 +585,8 @@ def test_export_cli_leaves_opset_auto_by_default(monkeypatch, tmp_path):
     assert captured["opset"] is None
 
 
-def test_export_cli_forwards_rectangular_imgsz(monkeypatch, tmp_path):
+@pytest.mark.parametrize("imgsz_arg", ["320,640", "320x640"])
+def test_export_cli_forwards_rectangular_imgsz(monkeypatch, tmp_path, imgsz_arg):
     captured = {}
 
     class _ExportModel:
@@ -615,7 +616,7 @@ def test_export_cli_forwards_rectangular_imgsz(monkeypatch, tmp_path):
             "export",
             "model=yolo9-t",
             "format=onnx",
-            "imgsz=320,640",
+            f"imgsz={imgsz_arg}",
             "batch=2",
             "--json",
         ],
