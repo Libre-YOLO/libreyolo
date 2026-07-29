@@ -65,6 +65,25 @@ Pose checkpoints additionally include:
   `0` for classes without keypoints. Runtime backends use this schema to select
   the active keypoints for the predicted class.
 
+Mesh checkpoints use the task string `mesh`, `nc: 1`, and
+`names: {0: "person"}`. Because parameter layouts differ between body models,
+the dimensions are recorded rather than assumed, the same way pose records
+`num_keypoints`:
+
+- `body_model`: the parameterization the checkpoint predicts into, such as
+  `mhr`. Required; consumers use it to interpret every field below and to pick
+  a body-model decoder.
+- `num_betas`: identity/shape coefficient count (45 for MHR).
+- `num_body_pose`: width of the body-pose parameter block (130 for MHR). This
+  is a flat parameter vector, not one triplet per joint, because rig joints
+  carry different degrees of freedom.
+- `num_vertices` / `num_joints`: geometry sizes the body-model decoder emits
+  (18439 and 127 for MHR), recorded so a payload can be validated before the
+  decoder is loaded.
+- `rotation_format`: how rotations are encoded, such as `euler_zyx` for MHR or
+  `axis_angle`. Never inferred from the tensor shape, since a 3-vector is
+  ambiguous between the two.
+
 Depth checkpoints use the task string `depth`, `nc: 1`, and
 `names: {0: "depth"}`. The single class-like slot exists only for checkpoint
 schema compatibility; depth predictions are dense float maps, not classes.

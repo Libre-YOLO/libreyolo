@@ -33,6 +33,7 @@ from ...utils.drawing import (
     draw_masks,
     draw_obb,
     draw_depth_map,
+    draw_mesh,
     draw_ocr_regions,
     draw_panoptic,
     draw_points,
@@ -53,6 +54,7 @@ from ...utils.results import (
     Keypoints,
     Masks,
     Matte,
+    Meshes,
     OBB,
     OCRRegions,
     PanopticSegmentation,
@@ -66,6 +68,80 @@ from ...utils.video import collect_video_results, is_video_file, run_video_infer
 from .cuda_graph import forward_maybe_graphed, with_cuda_graph_scope
 
 logger = logging.getLogger(__name__)
+
+
+def _as_float_tensor(
+    value,
+    shape: Tuple[int, ...],
+    default: float | None = None,
+) -> torch.Tensor:
+    """Coerce a payload entry to a float tensor, or synthesize a constant one."""
+    if value is None:
+        if default is None:
+            return torch.zeros(shape, dtype=torch.float32)
+        return torch.full(shape, float(default), dtype=torch.float32)
+    if isinstance(value, torch.Tensor):
+        return value.float()
+    return torch.as_tensor(np.asarray(value), dtype=torch.float32)
+
+
+def _build_meshes(mesh_data: dict, orig_shape: Tuple[int, int]) -> Meshes:
+    """Turn a family's mesh payload dict into a ``Meshes`` result slot."""
+    required = ("global_orient", "body_pose", "betas", "transl")
+    missing = [key for key in required if mesh_data.get(key) is None]
+    if missing:
+        raise ValueError(
+            "Mesh-task models must return a 'meshes' payload containing "
+            f"{', '.join(required)}; missing: {', '.join(missing)}."
+        )
+    body_model = mesh_data.get("body_model")
+    if not body_model:
+        raise ValueError(
+            "Mesh payloads must name their parameterization via 'body_model' "
+            "(for example 'mhr'), since field shapes depend on it."
+        )
+
+    def optional(key):
+        value = mesh_data.get(key)
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            return value
+        return torch.as_tensor(np.asarray(value))
+
+    known = set(required) | {
+        "body_model",
+        "vertices",
+        "faces",
+        "joints3d",
+        "joints2d",
+        "conf",
+        "focal_length",
+        "extras",
+    }
+    extras = dict(mesh_data.get("extras") or {})
+    # Model-specific parameters (skeleton scale, hand pose, expression) may be
+    # passed at the top level rather than nested; keep them rather than drop
+    # them silently.
+    extras.update(
+        {k: v for k, v in mesh_data.items() if k not in known and v is not None}
+    )
+
+    return Meshes(
+        optional("global_orient"),
+        optional("body_pose"),
+        optional("betas"),
+        optional("transl"),
+        body_model=str(body_model),
+        vertices=optional("vertices"),
+        faces=optional("faces"),
+        joints3d=optional("joints3d"),
+        joints2d=optional("joints2d"),
+        conf=optional("conf"),
+        focal_length=optional("focal_length"),
+        extras=extras,
+        orig_shape=orig_shape,
+    )
 
 if TYPE_CHECKING:
     from .model import BaseModel
@@ -648,6 +724,17 @@ class InferenceRunner:
                 if isinstance(kpts_np, torch.Tensor):
                     kpts_np = kpts_np.cpu().numpy()
                 annotated_img = draw_keypoints(annotated_img, kpts_np)
+            # Draw body meshes: projected vertices plus the skeleton through
+            # the projected joints.
+            if result.meshes is not None and len(result.meshes) > 0:
+                meshes_np = result.meshes.numpy()
+                annotated_img = draw_mesh(
+                    annotated_img,
+                    joints2d=meshes_np.joints2d,
+                    vertices2d=meshes_np.extras.get("vertices2d"),
+                    faces=meshes_np.faces,
+                    vertices3d=meshes_np.vertices,
+                )
         else:
             annotated_img = original_img.copy()
 
@@ -800,6 +887,33 @@ class InferenceRunner:
                 path=str(image_path) if image_path else None,
                 names=self.model.names,
                 matte=Matte(matte_t.float(), (orig_h, orig_w)),
+            )
+
+        # Mesh: per-person body meshes carried alongside their person boxes,
+        # the same row-aligned arrangement pose uses for keypoints.
+        mesh_data = detections.get("meshes")
+        if mesh_data is not None:
+            orig_w, orig_h = original_size
+            meshes = _build_meshes(mesh_data, (orig_h, orig_w))
+            boxes_data = detections.get("boxes")
+            boxes = None
+            if boxes_data is not None:
+                boxes_t = _as_float_tensor(boxes_data, (0, 4))
+                scores = detections.get("scores")
+                classes_t = detections.get("classes")
+                n = boxes_t.shape[0]
+                boxes = Boxes(
+                    boxes_t,
+                    _as_float_tensor(scores, (n,), default=1.0),
+                    _as_float_tensor(classes_t, (n,), default=0.0),
+                    orig_shape=(orig_h, orig_w),
+                )
+            return Results(
+                boxes=boxes,
+                orig_shape=(orig_h, orig_w),
+                path=str(image_path) if image_path else None,
+                names=self.model.names,
+                meshes=meshes,
             )
 
         # OCR: polygons + transcripts, no axis-aligned boxes.

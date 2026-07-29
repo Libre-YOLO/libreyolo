@@ -71,6 +71,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
 | `facerec`   | `LibreFaceEmbedder` | Descriptive family name (no upstream brand): embed-only two-stage face detection + identity-embedding family, inference-only |
+| `sam3dbody` | `LibreSAM3DBody` | All-caps acronym plus CamelCase `Body` (hyphens dropped); mesh-only family. Named in full rather than shortened so it does not collide with the `LibreSAM` promptable-segmentation tier. Sizes are backbone codes: `d3` (DINOv3 ViT-H/16+) and `h` (ViT-H). This family wraps an optional third-party package rather than porting it; see ADR 0013 |
 
 Casing rules observed in the table:
 
@@ -210,6 +211,7 @@ From `libreyolo/tasks.py`:
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
 | `embed`       | `-embed` |
+| `mesh`        | `-mesh` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
 `segmentation`, `keypoints`, `cls`, …) at the API boundary; only the canonical
@@ -280,6 +282,19 @@ Canonical embed filenames must carry the `-embed` suffix; task aliases
 `facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
 `embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
 for the full contract.
+`mesh` is the task for human body mesh recovery: recovering a posed 3D body per
+detected person. Models expose `Results.meshes`, row-aligned with
+`Results.boxes` exactly as pose keypoints are, carrying the parametric core
+(`global_orient`, `body_pose`, `betas`, `transl`) plus decoded `vertices`,
+`joints3d` and `joints2d`. Everything is in the camera frame of the original
+image, with metric translation in meters and `joints2d` in original-image
+pixels; there is no world frame in this version. Parameter layouts vary by body
+model, so `Meshes.body_model` names the parameterization and shapes are read
+from the tensors rather than assumed. Canonical mesh filenames must carry the
+`-mesh` suffix; task aliases `body-mesh`, `hmr`, and `human-mesh-recovery`
+resolve to `mesh` at the API boundary. Note that `smpl` is deliberately *not*
+an alias: the shipped body model is MHR, and accepting the name would imply an
+interoperability that is not provided. See ADR 0013 for the full contract.
 
 Dataset and label contracts are documented in
 [`dataset_schema.md`](dataset_schema.md). A task is supported by a model family

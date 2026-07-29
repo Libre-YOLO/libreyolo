@@ -921,3 +921,37 @@ Used for: the librefacerec-det default face-detector ONNX weights
 (face_detection_yunet_2023mar.onnx, mirrored unmodified to the
 LibreYOLO Hugging Face org as librefacerec-det.onnx). Consumed via
 OpenCV's bundled cv2.FaceDetectorYN; no code is ported.
+MHR / Momentum Human Rig (Meta Platforms, Inc.)
+--------------------------------------------------------------------
+Source: https://github.com/facebookresearch/MHR
+License: Apache License 2.0 (see licenses/Apache-2.0.txt)
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Used for: the body model behind the `mesh` task. No MHR code is ported. The
+TorchScript asset assets/mhr_model.pt is downloaded at runtime from the public
+upstream release by libreyolo/models/sam3dbody/mhr_body.py and cached locally;
+it is NOT mirrored by LibreYOLO. The parameter layout used to drive it (204
+model parameters, 45 identity coefficients, 72 expression coefficients) is
+documented by the upstream Apache-2.0 demo.py and mhr.py and was additionally
+verified empirically against the released asset.
+
+--------------------------------------------------------------------
+SAM 3D Body (Meta Platforms, Inc.)
+--------------------------------------------------------------------
+Source: https://github.com/facebookresearch/sam-3d-body
+License: SAM License (NOT a permissive license; it carries field-of-use
+         restrictions including military, nuclear, espionage and weapons use,
+         a no-reverse-engineering clause, and unilateral amendment by Meta)
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Used for: NO CODE FROM THIS PROJECT IS PORTED, ADAPTED OR VENDORED. Because
+the SAM License is not permissive, LibreYOLO deliberately wraps rather than
+ports it. libreyolo/models/sam3dbody/ is LibreYOLO's own MIT code that calls
+the upstream package's public API and maps its output into the Meshes result
+payload. The upstream package is an OPTIONAL dependency the user installs
+themselves; LibreYOLO ships none of it, and users who do not use the mesh task
+never encounter its terms.
+Model weights: the SAM License permits redistribution provided its terms are
+passed through, so the checkpoints are mirrored byte-identically at
+huggingface.co/LibreYOLO/LibreSAM3DBodyd3-mesh and
+huggingface.co/LibreYOLO/LibreSAM3DBodyh-mesh, each carrying the SAM License
+text and an access gate recording acceptance. Mirroring does not change the
+license: those weights remain SAM-licensed, not MIT.

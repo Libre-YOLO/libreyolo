@@ -80,6 +80,7 @@ def test_task_type_literal_is_public():
         "matte",
         "ocr",
         "embed",
+        "mesh",
     }
 
 

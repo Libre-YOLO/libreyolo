@@ -1147,6 +1147,175 @@ class Identities:
     def __repr__(self) -> str:
         known = sum(1 for n in self._names if n is not None)
         return f"Identities(n={len(self)}, known={known})"
+class Meshes:
+    """Parametric human body meshes for a single image.
+
+    Rows are aligned with the parent ``Results.boxes`` (person boxes), the same
+    contract ``Keypoints`` follows for the pose task: row ``i`` of every tensor
+    here describes the person in box ``i``.
+
+    Everything is expressed in the camera frame of the original image.
+    ``transl`` is metric (meters) with +z pointing away from the camera;
+    ``vertices`` and ``joints3d`` are metric and already include ``transl``;
+    ``joints2d`` is in pixels on the original image canvas, not on the crop the
+    network actually saw. A world/gravity frame is deliberately absent in this
+    version, so no field here silently means "world".
+
+    Parameter layouts differ between body models, so nothing about the shapes
+    is hard-coded: ``body_model`` names the parameterization and the counts are
+    read back from the tensors. For ``"mhr"`` (Momentum Human Rig), rotations
+    are Euler angles in radians rather than axis-angle, ``body_pose`` is a flat
+    per-joint parameter vector rather than one triplet per joint (rig joints
+    carry different degrees of freedom), and ``betas`` are identity blendshape
+    coefficients. Model-specific extras such as skeleton scale, hand pose and
+    facial expression live in ``extras``.
+    """
+
+    def __init__(
+        self,
+        global_orient: TensorLike,
+        body_pose: TensorLike,
+        betas: TensorLike,
+        transl: TensorLike,
+        *,
+        body_model: str,
+        vertices: TensorLike | None = None,
+        faces: TensorLike | None = None,
+        joints3d: TensorLike | None = None,
+        joints2d: TensorLike | None = None,
+        conf: TensorLike | None = None,
+        focal_length: TensorLike | None = None,
+        extras: Optional[Dict[str, TensorLike]] = None,
+        orig_shape: Tuple[int, int] | None = None,
+    ):
+        self.global_orient = global_orient
+        self.body_pose = body_pose
+        self.betas = betas
+        self.transl = transl
+        self.body_model = str(body_model)
+        self.vertices = vertices
+        # Topology is shared by every person in the image, so it is stored once
+        # and never sliced per row.
+        self.faces = faces
+        self.joints3d = joints3d
+        self.joints2d = joints2d
+        self.conf = conf
+        self.focal_length = focal_length
+        self.extras = dict(extras) if extras else {}
+        self.orig_shape = orig_shape
+
+    # Per-row tensors, in the order they are rebuilt by _rebuild().
+    _ROW_FIELDS = (
+        "global_orient",
+        "body_pose",
+        "betas",
+        "transl",
+        "vertices",
+        "joints3d",
+        "joints2d",
+        "conf",
+        "focal_length",
+    )
+
+    def _rebuild(self, fn, shared_fn=None) -> "Meshes":
+        """Rebuild with ``fn`` over per-row tensors.
+
+        ``shared_fn`` handles the shared face topology; it follows ``fn`` for
+        device and dtype moves but is the identity for row slicing, where
+        selecting a person must not touch the mesh connectivity.
+        """
+        if shared_fn is None:
+            shared_fn = fn
+        values = {name: fn(getattr(self, name)) for name in self._ROW_FIELDS}
+        return Meshes(
+            values.pop("global_orient"),
+            values.pop("body_pose"),
+            values.pop("betas"),
+            values.pop("transl"),
+            body_model=self.body_model,
+            faces=shared_fn(self.faces),
+            extras={k: fn(v) for k, v in self.extras.items()},
+            orig_shape=self.orig_shape,
+            **values,
+        )
+
+    @property
+    def num_vertices(self) -> int:
+        return 0 if self.vertices is None else int(self.vertices.shape[1])
+
+    @property
+    def num_joints(self) -> int:
+        return 0 if self.joints3d is None else int(self.joints3d.shape[1])
+
+    @property
+    def num_betas(self) -> int:
+        return int(self.betas.shape[-1])
+
+    @property
+    def has_vertices(self) -> bool:
+        return self.vertices is not None
+
+    @property
+    def params(self) -> Dict[str, TensorLike]:
+        """The parametric core, shaped to splat into a body-model forward."""
+        core = {
+            "global_orient": self.global_orient,
+            "body_pose": self.body_pose,
+            "betas": self.betas,
+            "transl": self.transl,
+        }
+        core.update(self.extras)
+        return core
+
+    def save_obj(self, path: str | Path, index: int = 0) -> None:
+        """Write one person's mesh to a Wavefront OBJ file."""
+        if self.vertices is None or self.faces is None:
+            raise ValueError(
+                "This result carries no mesh geometry, only parameters, so it "
+                "cannot be written as OBJ."
+            )
+        if not 0 <= index < len(self):
+            raise IndexError(
+                f"index {index} is out of range for {len(self)} mesh(es)"
+            )
+        verts = np.asarray(_numpy(self.vertices))[index]
+        faces = np.asarray(_numpy(self.faces))
+
+        path = Path(path)
+        if path.parent and path.parent != Path("."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f"# LibreYOLO body mesh ({self.body_model})\n")
+            for v in verts:
+                fh.write(f"v {float(v[0]):.6f} {float(v[1]):.6f} {float(v[2]):.6f}\n")
+            # OBJ vertex indices are 1-based.
+            for f in faces:
+                fh.write(f"f {int(f[0]) + 1} {int(f[1]) + 1} {int(f[2]) + 1}\n")
+
+    def to(self, *args, **kwargs) -> "Meshes":
+        return self._rebuild(lambda d: _move(d, *args, **kwargs))
+
+    def cpu(self) -> "Meshes":
+        return self._rebuild(_cpu)
+
+    def cuda(self) -> "Meshes":
+        return self._rebuild(_cuda)
+
+    def numpy(self) -> "Meshes":
+        return self._rebuild(_numpy)
+
+    def __getitem__(self, idx) -> "Meshes":
+        return self._rebuild(lambda d: _slice_first(d, idx), shared_fn=lambda d: d)
+
+    def __len__(self) -> int:
+        return int(self.global_orient.shape[0])
+
+    def __repr__(self) -> str:
+        return (
+            f"Meshes(n={len(self)}, body_model='{self.body_model}', "
+            f"betas={self.num_betas}, vertices={self.num_vertices}, "
+            f"joints={self.num_joints}, orig_shape={self.orig_shape})"
+        )
 
 
 class Results:
@@ -1168,6 +1337,7 @@ class Results:
         "ocr",
         "embeddings",
         "identities",
+        "meshes",
     )
 
     def __init__(
@@ -1196,6 +1366,7 @@ class Results:
         restore_scale: int = 1,
         embeddings: Optional[Embeddings] = None,
         identities: Optional[Identities] = None,
+        meshes: Optional[Meshes] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1225,6 +1396,7 @@ class Results:
         self.restored = restored
         self.matte = matte
         self.ocr = ocr
+        self.meshes = meshes
         # Integer upscale factor of a restore/super-resolution result: the
         # restored canvas is ``restore_scale`` times the input. 1 for
         # deblur/denoise and every non-restore task.
@@ -1256,6 +1428,7 @@ class Results:
             "restored": self.restored,
             "matte": self.matte,
             "ocr": self.ocr,
+            "meshes": self.meshes,
             "restore_scale": self.restore_scale,
             "embeddings": self.embeddings,
             "identities": self.identities,
@@ -1322,6 +1495,7 @@ class Results:
         restore_scale: Optional[int] = None,
         embeddings: Optional[Embeddings] = None,
         identities: Optional[Identities] = None,
+        meshes: Optional[Meshes] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1345,6 +1519,8 @@ class Results:
             self.depth_map = depth_map
         if restored is not None:
             self.restored = restored
+        if meshes is not None:
+            self.meshes = meshes
         if matte is not None:
             self.matte = matte if matte.orig_shape is not None else Matte(matte.data, self.orig_shape)
         if ocr is not None:
@@ -1551,6 +1727,9 @@ class Results:
         obb_np = None
         if self.obb is not None:
             obb_np = self.obb.numpy() if isinstance(self.obb.data, torch.Tensor) else self.obb
+        # Converted once rather than per row: mesh payloads carry vertex arrays
+        # large enough that repeating the conversion per person is wasteful.
+        meshes_np = self.meshes.numpy() if self.meshes is not None else None
         track_ids = _numpy(self.track_id)
         rows = []
         for i in range(len(boxes_np)):
@@ -1614,6 +1793,36 @@ class Results:
             if self.identities is not None and i < len(self.identities):
                 row["identity"] = self.identities.name[i]
                 row["identity_score"] = round(float(self.identities.score[i]), decimals)
+            if meshes_np is not None and i < len(meshes_np):
+                # Vertices are deliberately omitted: tens of thousands of
+                # coordinates per person is not something to hand back as JSON.
+                # Use ``result.meshes.vertices`` or ``save_obj`` for geometry.
+                mesh_row = {
+                    "body_model": meshes_np.body_model,
+                    "global_orient": [
+                        round(float(v), decimals) for v in meshes_np.global_orient[i]
+                    ],
+                    "transl": [round(float(v), decimals) for v in meshes_np.transl[i]],
+                    "betas": [round(float(v), decimals) for v in meshes_np.betas[i]],
+                    "num_vertices": meshes_np.num_vertices,
+                }
+                if meshes_np.conf is not None:
+                    mesh_row["confidence"] = round(float(meshes_np.conf[i]), decimals)
+                if meshes_np.focal_length is not None:
+                    mesh_row["focal_length"] = round(
+                        float(np.asarray(meshes_np.focal_length[i]).reshape(-1)[0]),
+                        decimals,
+                    )
+                if meshes_np.joints2d is not None:
+                    joints2d = meshes_np.joints2d[i]
+                    if normalize:
+                        h, w = self.orig_shape
+                        joints2d = joints2d / np.array([w, h], dtype=float)
+                    mesh_row["joints2d"] = {
+                        "x": [round(float(x), decimals) for x in joints2d[:, 0]],
+                        "y": [round(float(y), decimals) for y in joints2d[:, 1]],
+                    }
+                row["mesh"] = mesh_row
             if track_ids is not None:
                 row["track_id"] = int(track_ids[i])
             rows.append(row)
@@ -1643,6 +1852,8 @@ class Results:
             return 1
         if self.ocr is not None:
             return len(self.ocr)
+        if self.meshes is not None:
+            return len(self.meshes)
         return 0
 
     def __repr__(self) -> str:
@@ -1669,6 +1880,8 @@ class Results:
             parts.append(f"matte={self.matte}")
         if self.ocr is not None:
             parts.append(f"ocr={self.ocr}")
+        if self.meshes is not None:
+            parts.append(f"meshes={self.meshes}")
         if self.track_id is not None:
             parts.append(f"track_ids={len(self.track_id)}")
         if self.frame_idx is not None:
