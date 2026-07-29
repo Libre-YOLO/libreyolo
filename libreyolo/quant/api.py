@@ -431,14 +431,22 @@ def quantize_model(
 
         if recipe in CALIBRATED_RECIPES:
             if calib is not None:
-                seen = _run_calibration(
-                    wrapper,
-                    calib,
-                    samples,
-                    batch,
-                    allow_download_scripts,
-                    algorithm=algorithm,
-                )
+                try:
+                    seen = _run_calibration(
+                        wrapper,
+                        calib,
+                        samples,
+                        batch,
+                        allow_download_scripts,
+                        algorithm=algorithm,
+                    )
+                except BaseException:
+                    # Calibration may already have written partial observer
+                    # ranges. Restore the original float modules so the call
+                    # is transactional and the caller can safely retry.
+                    for name, module in selected.items():
+                        _swap_module(wrapper.model, name, module)
+                    raise
                 manifest["calibrated"] = True
                 manifest["calib_data"] = str(calib)
                 manifest["calib_samples"] = int(seen)

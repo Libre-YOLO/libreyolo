@@ -791,15 +791,25 @@ class _Boom(RuntimeError):
 class _TinyQuantWrapper:
     """Minimal stand-in for a model wrapper, holding real quant modules."""
 
-    def __init__(self):
-        self.model = nn.Sequential(QuantConv2d(3, 4, 3, padding=1))
-        self.device = "cpu"
+    FAMILY = "yolo9"
+
+    def __init__(self, quantized=True):
+        module = (
+            QuantConv2d(3, 4, 3, padding=1)
+            if quantized
+            else nn.Conv2d(3, 4, 3, padding=1, bias=False)
+        )
+        self.model = nn.Sequential(module)
+        self.device = torch.device("cpu")
 
     def _get_input_size(self):
         return 32
 
     def _get_preprocess_numpy(self):
         return None
+
+    def _get_model_name(self):
+        return "tiny"
 
 
 @pytest.mark.parametrize("fails", [True, False])
@@ -819,9 +829,9 @@ def test_calibration_always_clears_observing_mode(monkeypatch, fails):
 
     class _Loader:
         def __iter__(self):
+            yield np.zeros((1, 3, 32, 32), dtype=np.float32)
             if fails:
                 raise _Boom("bad calibration sample")
-            yield np.zeros((1, 3, 32, 32), dtype=np.float32)
 
     monkeypatch.setattr(
         "libreyolo.export.calibration.CalibrationDataLoader",
@@ -841,3 +851,55 @@ def test_calibration_always_clears_observing_mode(monkeypatch, fails):
         )
 
     assert not any(getattr(m, "_q_observing", False) for m in quant_modules)
+    assert wrapper.model.training
+
+
+def test_failed_calibration_rolls_back_and_allows_retry(monkeypatch):
+    """A partial calibration must not leave an untracked quantized model."""
+    import numpy as np
+
+    from libreyolo.quant import api as quant_api
+
+    wrapper = _TinyQuantWrapper(quantized=False)
+    original = wrapper.model[0]
+    state = {"fail": True, "after_batch": False}
+
+    class _Loader:
+        def __iter__(self):
+            yield np.ones((1, 3, 32, 32), dtype=np.float32)
+            if state["fail"]:
+                state["after_batch"] = True
+                raise _Boom("interrupted after one batch")
+
+    monkeypatch.setattr(
+        "libreyolo.export.calibration.CalibrationDataLoader",
+        lambda **kwargs: _Loader(),
+    )
+
+    def quantize():
+        return quant_api.quantize_model(
+            wrapper,
+            recipe="int8",
+            calib="x",
+            batch=1,
+            samples=2,
+            keep_high_precision=(),
+            verbose=False,
+        )
+
+    with pytest.raises(_Boom):
+        quantize()
+
+    assert state["after_batch"]
+    assert wrapper.model[0] is original
+    assert wrapper.model.training
+    assert getattr(wrapper, "_quant_manifest", None) is None
+    assert not any(
+        isinstance(module, QuantConv2d) for module in wrapper.model.modules()
+    )
+
+    state["fail"] = False
+    quantize()
+    assert isinstance(wrapper.model[0], QuantConv2d)
+    assert wrapper._quant_manifest["calibrated"]
+    assert not wrapper.model[0]._q_observing
