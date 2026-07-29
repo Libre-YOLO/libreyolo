@@ -1,4 +1,4 @@
-"""LibreDINOv2 — DINOv2 backbone models for semantic segmentation and classification.
+"""LibreDINOv2 — semantic, classification, and whole-image embedding.
 
 LibreDINOv2 is the honest home for the tasks that are really "DINOv2 backbone +
 a task head" rather than the RF-DETR detector:
@@ -9,8 +9,10 @@ a task head" rather than the RF-DETR detector:
   global-average-pool + linear head). The DETR decoder/queries are never built;
   this is a linear probe on the pretrained DINOv2 backbone, not the RF-DETR
   detector, so it does not belong in the RF-DETR family.
+* ``embed`` — bypasses every task head and projector, returning the final
+  normalized DINOv2 CLS token as one whole-image row.
 
-Both expose themselves as the ``dinov2`` family: checkpoints save
+All expose themselves as the ``dinov2`` family: checkpoints save
 ``model_family="dinov2"`` and the factory routes ``backbone.*`` plus
 ``predict.*`` (semantic) / ``linear.*`` (classify) keys here. LibreRFDETR no
 longer registers ``semantic`` or ``classify``.
@@ -151,17 +153,73 @@ class _DINOv2ClassifierWrapper(nn.Module):
         return self.classifier.load_state_dict(state_dict, strict=strict)
 
 
+class _DINOv2EmbedderWrapper(nn.Module):
+    """DINOv2 backbone-only wrapper returning the final CLS token."""
+
+    def __init__(self, config: str, device: str = "cpu") -> None:
+        super().__init__()
+        from ..rfdetr.nn import RFDETRClassifier
+
+        classifier = RFDETRClassifier(
+            config=config,
+            nb_classes=1,
+            device=device,
+            dropout=0.0,
+        )
+        # Retain only the encoder. The classifier backbone's projector is not
+        # used for CLS extraction; keeping its random parameters would waste
+        # memory and make state-dict fingerprints differ between otherwise
+        # identical zero-config embedders.
+        self.backbone = nn.Module()
+        self.backbone.encoder = classifier.backbone.encoder
+        dino = self.backbone.encoder.encoder
+        self.embedding_dim = int(dino.config.hidden_size)
+        self.resolution = classifier.resolution
+        self.patch_size = classifier.patch_size
+        self.num_windows = classifier.num_windows
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # The backbone normally reshapes selected patch stages for its
+        # projector. Embedding bypasses that projector and returns the final
+        # normalized CLS token.
+        dino = self.backbone.encoder.encoder
+        hidden = dino.embeddings(x)
+        encoded = dino.encoder(
+            hidden,
+            output_hidden_states=False,
+            output_attentions=False,
+            return_dict=False,
+        )
+        sequence = dino.layernorm(encoded[0])
+        return sequence[:, 0, :]
+
+    def load_state_dict(self, state_dict: dict, strict: bool = False):
+        if isinstance(state_dict, dict):
+            if "model" in state_dict and isinstance(state_dict["model"], dict):
+                state_dict = state_dict["model"]
+            elif "state_dict" in state_dict and isinstance(
+                state_dict["state_dict"], dict
+            ):
+                state_dict = state_dict["state_dict"]
+        backbone_state = {
+            key: value
+            for key, value in state_dict.items()
+            if key.startswith("backbone.")
+        }
+        return super().load_state_dict(backbone_state, strict=strict)
+
+
 # ---------------------------------------------------------------------------
 # LibreDINOv2
 # ---------------------------------------------------------------------------
 
 
 class LibreDINOv2(BaseModel):
-    """DINOv2 backbone + dense projector pyramid for semantic segmentation.
+    """DINOv2 backbone for semantic, classification, and embedding tasks.
 
-    The single supported task is ``semantic``.  Inputs are resized to a square
-    divisible by the DINOv2 patch grid (14); the model internally applies
-    ImageNet normalisation so callers hand in ``[0, 1]`` floats.
+    Semantic inputs are resized to a square divisible by the DINOv2 patch grid
+    (14). Classification and embedding use the 224-pixel classification
+    transform; embedding bypasses the projector and task heads.
 
     Args:
         model_path: Path to a ``.pt`` checkpoint, a pre-loaded state dict, or
@@ -171,7 +229,8 @@ class LibreDINOv2(BaseModel):
               the same DINOv2-S encoder).
         nb_classes: Number of semantic classes.
         device: Torch device string or ``"auto"``.
-        task: Must be ``"semantic"`` or ``None`` (resolved to ``"semantic"``).
+        task: ``"semantic"``, ``"classify"``, or ``"embed"``. The default is
+            ``"semantic"``.
     """
 
     FAMILY: ClassVar[str] = "dinov2"
@@ -182,8 +241,14 @@ class LibreDINOv2(BaseModel):
     INPUT_SIZES: ClassVar[Dict[str, int]] = {"n": 518, "s": 518, "m": 518, "l": 518}
     TASK_INPUT_SIZES: ClassVar[Dict[str, Dict[str, int]]] = {
         "classify": {"n": 224, "s": 224, "m": 224, "l": 224},
+        "embed": {"n": 224, "s": 224, "m": 224, "l": 224},
     }
-    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "classify")
+    SUPPORTED_TASKS: ClassVar[Tuple[str, ...]] = (
+        "semantic",
+        "classify",
+        "embed",
+    )
+    WEIGHT_TASKS: ClassVar[Tuple[str, ...]] = ("semantic", "classify")
     DEFAULT_TASK: ClassVar[str] = "semantic"
 
     TRAIN_CONFIG: ClassVar[type] = RFDETRConfig
@@ -250,9 +315,10 @@ class LibreDINOv2(BaseModel):
         **kwargs,
     ) -> None:
         resolved_task = normalize_task(task) if task is not None else "semantic"
-        if resolved_task not in ("semantic", "classify"):
+        if resolved_task not in self.SUPPORTED_TASKS:
             raise ValueError(
-                f"LibreDINOv2 supports task in ('semantic', 'classify'); got {task!r}."
+                "LibreDINOv2 supports task in ('semantic', 'classify', 'embed'); "
+                f"got {task!r}."
             )
 
         if isinstance(model_path, dict) and not model_path:
@@ -294,6 +360,10 @@ class LibreDINOv2(BaseModel):
 
         if weight_source is not None:
             self._load_weights(weight_source)
+            if isinstance(weight_source, str) and Path(weight_source).is_file():
+                self.model_path = str(weight_source)
+        if self.task == "embed":
+            self.names = {}
         self.model.eval()
 
     # -------------------------------------------------------------------------
@@ -342,6 +412,11 @@ class LibreDINOv2(BaseModel):
                 nb_classes=self._model_num_classes,
                 device=str(self.device),
             )
+        if self.task == "embed":
+            return _DINOv2EmbedderWrapper(
+                config=self.size,
+                device=str(self.device),
+            )
         return _DINOv2ModelWrapper(
             config=self.size,
             nb_classes=self._model_num_classes,
@@ -349,6 +424,10 @@ class LibreDINOv2(BaseModel):
         )
 
     def _rebuild_for_new_classes(self, new_nc: int) -> None:
+        if self.task == "embed":
+            raise NotImplementedError(
+                "DINOv2 embedding has no class-dependent head to rebuild."
+            )
         self.nb_classes = new_nc
         self._model_num_classes = new_nc
         if self.task == "classify":
@@ -369,6 +448,8 @@ class LibreDINOv2(BaseModel):
         return False
 
     def _get_available_layers(self) -> Dict[str, nn.Module]:
+        if self.task == "embed":
+            return {"backbone": self.model.backbone}
         core = (
             self.model.classifier if self.task == "classify" else self.model.segmenter
         )
@@ -412,7 +493,7 @@ class LibreDINOv2(BaseModel):
     ) -> Tuple[torch.Tensor, Image.Image, Tuple[int, int], float]:
         """Stretch-resize to square; the model applies ImageNet norm."""
         effective_res = input_size if input_size is not None else self.input_size
-        if self.task == "classify":
+        if self.task in ("classify", "embed"):
             from ...data.classify_dataset import build_classify_transforms
 
             img = ImageLoader.load(image, color_format=color_format)
@@ -443,6 +524,12 @@ class LibreDINOv2(BaseModel):
         max_det: int = 300,
         **kwargs,
     ) -> Dict:
+        if self.task == "embed":
+            return self._postprocess_embeddings(
+                output,
+                gallery=kwargs.get("gallery"),
+                threshold=kwargs.get("threshold"),
+            )
         if self.task == "classify":
             logits = output
             if isinstance(logits, dict):
@@ -501,6 +588,8 @@ class LibreDINOv2(BaseModel):
         if not isinstance(loaded, dict):
             raise TypeError("LibreDINOv2 checkpoints must be dictionaries")
 
+        if self.task == "embed":
+            return self._load_embed_weights(loaded)
         if self.task == "classify":
             return self._load_classify_weights(loaded)
 
@@ -547,6 +636,42 @@ class LibreDINOv2(BaseModel):
         if ckpt_names is not None:
             self.names = self._sanitize_names(ckpt_names, self.nb_classes)
         self.model.to(self.device)
+
+    def _load_embed_weights(self, loaded: dict) -> None:
+        """Load only the DINOv2 backbone from a semantic/classify artifact."""
+        checkpoint_family = loaded.get("model_family", "")
+        if checkpoint_family and checkpoint_family not in (self.FAMILY, "rfdetr"):
+            raise RuntimeError(
+                f"Checkpoint was trained with model_family={checkpoint_family!r}, "
+                "but DINOv2 embedding requires a DINOv2-family backbone."
+            )
+        checkpoint_task = loaded.get("task")
+        if (
+            isinstance(checkpoint_task, str)
+            and normalize_task(checkpoint_task) not in self.SUPPORTED_TASKS
+        ):
+            raise RuntimeError(
+                f"Checkpoint task={normalize_task(checkpoint_task)!r} is not "
+                "compatible with LibreDINOv2 embedding."
+            )
+
+        state = self._extract_state(loaded)
+        if not any(key.startswith("backbone.") for key in state):
+            raise RuntimeError("Checkpoint does not contain a LibreDINOv2 backbone.")
+        result = self.model.load_state_dict(state, strict=False)
+        missing = list(getattr(result, "missing_keys", []) or [])
+        critical_prefixes = (
+            "backbone.encoder.encoder.embeddings.",
+            "backbone.encoder.encoder.encoder.",
+            "backbone.encoder.encoder.layernorm.",
+        )
+        if any(key.startswith(critical_prefixes) for key in missing):
+            raise RuntimeError(
+                "Checkpoint is missing required DINOv2 encoder weights for "
+                "task='embed'."
+            )
+        self.model.to(self.device)
+        self.names = {}
 
     def _load_classify_weights(self, loaded: dict) -> None:
         """Load a LibreDINOv2 classification checkpoint.
@@ -617,6 +742,11 @@ class LibreDINOv2(BaseModel):
         Task is taken from ``self.task``; ``DINOv2Trainer`` (via ``RFDETRTrainer``)
         routes the classify vs semantic data/loss branches accordingly.
         """
+        if self.task == "embed":
+            raise NotImplementedError(
+                "LibreDINOv2 task='embed' is a backbone feature extractor; "
+                "training is not implemented."
+            )
         from pathlib import Path as _Path
 
         from .trainer import DINOv2Trainer
@@ -692,7 +822,18 @@ class LibreDINOv2(BaseModel):
     # Export
     # =========================================================================
 
+    def val(self, *args, **kwargs) -> Dict:
+        if self.task == "embed":
+            raise NotImplementedError(
+                "LibreDINOv2 retrieval validation is not implemented."
+            )
+        return super().val(*args, **kwargs)
+
     def export(self, format: str = "onnx", *, opset: int = 17, **kwargs) -> str:
+        if self.task == "embed":
+            raise NotImplementedError(
+                "LibreDINOv2 task='embed' export is not implemented."
+            )
         if self.task == "classify" and format.lower() in {"onnx", "coreai"}:
             return super().export(format=format, opset=opset, **kwargs)
         if self.task == "semantic":

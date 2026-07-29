@@ -152,7 +152,8 @@ def __getattr__(name):
         "Distiller": (".distillation", "Distiller"),
         "get_distill_config": (".distillation", "get_distill_config"),
         "LibreFaceEmbedder": (".models.facerec", "LibreFaceEmbedder"),
-        "FaceGallery": (".models.facerec", "FaceGallery"),
+        "Gallery": (".utils.gallery", "Gallery"),
+        "FaceGallery": (".utils.gallery", "FaceGallery"),
     }
     if name in ("LibreRFDETR", "LibreDINOv2"):
         # RF-DETR and DINOv2 share the same transformers dependency check.
@@ -253,6 +254,7 @@ __all__ = [
     "OCRRegions",
     "Embeddings",
     "Identities",
+    "Gallery",
     "FaceGallery",
     "LibreFaceEmbedder",
     # Assets

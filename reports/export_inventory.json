@@ -21,7 +21,8 @@
   "clip": {
     "class": "libreyolo.models.clip.model.LibreCLIP",
     "tasks": [
-      "classify"
+      "classify",
+      "embed"
     ],
     "default_task": "classify",
     "sizes": {
@@ -201,7 +202,8 @@
     "class": "libreyolo.models.dinov2.model.LibreDINOv2",
     "tasks": [
       "semantic",
-      "classify"
+      "classify",
+      "embed"
     ],
     "default_task": "semantic",
     "sizes": {
@@ -218,6 +220,12 @@
     },
     "task_sizes": {
       "classify": {
+        "n": 224,
+        "s": 224,
+        "m": 224,
+        "l": 224
+      },
+      "embed": {
         "n": 224,
         "s": 224,
         "m": 224,
@@ -1068,7 +1076,8 @@
   "siglip2": {
     "class": "libreyolo.models.siglip2.model.LibreSigLIP2",
     "tasks": [
-      "classify"
+      "classify",
+      "embed"
     ],
     "default_task": "classify",
     "sizes": {

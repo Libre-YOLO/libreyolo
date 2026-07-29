@@ -95,9 +95,8 @@ TASK_ALIASES = {
     "text": "ocr",
     "text-recognition": "ocr",
     "text_recognition": "ocr",
-    # Face-embedding / facial recognition. Canonical is the single-word
-    # ``embed`` (matching the family's other single-word task names and the
-    # short filename suffix), with the human-facing terms routed to it.
+    # Generic image/region embedding. Face recognition and re-identification
+    # remain aliases of the shared vector primitive.
     "embed": "embed",
     "embedding": "embed",
     "embeddings": "embed",
