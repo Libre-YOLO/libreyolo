@@ -131,3 +131,63 @@ def test_self_managed_download_l2cs_only_r50():
     assert _self_managed_download("LibreL2CSr50.pt") is True
     assert _self_managed_download("LibreL2CSr18.pt") is False
     assert _self_managed_download("definitely-not-a-weight.pt") is False
+
+
+# ---------------------------------------------------------------------------
+# Embed (facial recognition)
+# ---------------------------------------------------------------------------
+
+
+class _Identities(list):
+    """Minimal stand-in with the .name/.score surface the UI reads."""
+
+    def __init__(self, names, scores):
+        super().__init__(names)
+        self.name = list(names)
+        self.score = list(scores)
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        # Embed results carry face boxes; they must not read as detection.
+        (
+            result(boxes=[object(), object()], embeddings=[object(), object()]),
+            ("embed", "2 faces"),
+        ),
+        (
+            result(
+                boxes=[object()],
+                embeddings=[object()],
+                identities=_Identities(["alice"], [0.8]),
+            ),
+            ("embed", "alice"),
+        ),
+        (
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                identities=_Identities(["alice", None], [0.8, 0.1]),
+            ),
+            ("embed", "alice (+1 unknown face)"),
+        ),
+        (
+            result(
+                boxes=[object(), object()],
+                embeddings=[object(), object()],
+                identities=_Identities([None, None], [0.1, 0.2]),
+            ),
+            ("embed", "2 unknown faces"),
+        ),
+    ],
+)
+def test_summarize_embed(item, expected):
+    assert _summarize_result(item) == expected
+
+
+def test_embed_download_url_resolves():
+    """The UI availability probe must find a URL for the ONNX-only family."""
+    from libreyolo.ui.server import _resolve_download_url
+
+    url = _resolve_download_url("facerec-l")
+    assert url is not None and url.endswith("librefacerec-l.onnx")

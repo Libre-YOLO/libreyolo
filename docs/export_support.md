@@ -9,75 +9,75 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | Family | Task | onnx | torchscript | tensorrt | openvino | ncnn | tflite | coreml | coreai |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | birefnet | matte | exp | ✓ | exp | exp |  |  |  |  |
-| clip | classify | ✓ |  |  |  |  |  |  | exp |
-| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
-| deim | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| deimv2 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | exp |
+| clip | classify | ✓ |  |  |  |  |  |  | ✓ |
+| convnext | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| deim | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| deimv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| depth_anything | depth | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dfine | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | dinov2 | classify | ✓ |  |  |  |  |  |  | exp |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  | exp |
+| ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
-| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| efficientnetv2 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
 | florence2 | detect |  |  |  |  |  |  |  |  |
-| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| fomo | point | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | grounding_dino | detect |  |  |  |  |  |  |  |  |
 | internvl3 | detect |  |  |  |  |  |  |  |  |
 | kosmos2 | detect |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ |  |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |
-| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | exp |
+| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |
-| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| mobilenetv4 | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | mobilesam | segment |  |  |  |  |  |  |  |  |
-| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| nafnet | restore | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | omdet_turbo | detect |  |  |  |  |  |  |  |  |
 | ov_deim | detect |  |  |  |  |  |  |  |  |
 | owlv2 | detect |  |  |  |  |  |  |  |  |
-| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| picodet | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | picosam3 | segment | ✓ |  |  |  |  |  |  |  |
-| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| pidnet | semantic | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | ppocr | ocr |  |  |  |  |  |  |  |  |
 | qwen3vl | detect |  |  |  |  |  |  |  |  |
-| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
-| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | exp |
+| realesrgan | restore | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
+| resnet | classify | ✓ | ✓ | exp | exp | ✓ | ✓ |  | ✓ |
 | rfdetr | detect | ✓ | ✓ | ✓ | ✓ |  | exp | exp | ✓ |
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | exp |
-| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | exp |
-| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  | exp |
+| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
+| rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| rtmdet | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |
 | segformer | semantic |  |  |  |  |  |  |  |  |
-| siglip2 | classify | ✓ |  |  |  |  |  |  | exp |
+| siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
 | swinir | restore | exp | exp | exp | exp | exp |  |  |  |
-| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  |  |
+| yolo1 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo3 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo4 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo7 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolo9 | detect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | exp | ✓ |
-| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
-| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| yolo9_e2e | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolo9_p2 | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
+| yolonas | detect | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 | yolonas | pose | ✓ | ✓ | exp | exp | ✓ |  |  |  |
-| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | exp |
-| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | exp |
+| yolox | detect | ✓ | ✓ | exp | exp | ✓ | ✓ | exp | ✓ |
+| zipdepth | depth | ✓ | ✓ | exp | exp | ✓ |  |  | ✓ |
 
 ## Parity thresholds
 
@@ -87,6 +87,77 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - Classification: logits cosine above 0.999 and equal top-1 class.
 - Depth and restoration: PSNR above 40 dB against native output.
 - Point: peak locations equal within one output cell.
+
+## Validated constraints
+
+A check mark applies only under any constraint listed here.
+
+- `birefnet` / `matte` / `torchscript`: fixed 1024x1024 input
+- `clip` / `classify` / `onnx`: frozen-class labels and fixed input resolution
+- `clip` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `convnext` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `deim` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `deimv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `dinov2` / `semantic` / `onnx`: fixed 518x518 input
+- `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
+- `dinov2` / `classify` / `onnx`: fixed 224x224 input
+- `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `ec` / `pose` / `onnx`: fixed 640x640 input
+- `ec` / `pose` / `torchscript`: fixed 640x640 input
+- `ec` / `segment` / `onnx`: fixed 640x640 input
+- `ec` / `segment` / `torchscript`: fixed 640x640 input
+- `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `eomt` / `semantic` / `onnx`: fixed 512x512 input
+- `eomt` / `semantic` / `torchscript`: fixed 512x512 input
+- `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
+- `l2cs` / `gaze` / `onnx`: head-only contract: each input image is one face crop
+- `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
+- `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
+- `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `nafnet` / `restore` / `onnx`: fixed-resolution export canvas
+- `nafnet` / `restore` / `torchscript`: fixed-resolution export canvas
+- `nafnet` / `restore` / `ncnn`: fixed-resolution export canvas
+- `nafnet` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `picodet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `picosam3` / `segment` / `onnx`: raw fixed-96 ROI contract: roi_image -> mask_logits
+- `pidnet` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
+- `realesrgan` / `restore` / `onnx`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `torchscript`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `ncnn`: ONNX supports dynamic spatial input; TorchScript and NCNN are fixed-canvas
+- `realesrgan` / `restore` / `tflite`: fixed-resolution export canvas
+- `realesrgan` / `restore` / `coreai`: fixed export canvas; permissively licensed trained restoration checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `resnet` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `rfdetr` / `detect` / `coreai`: fixed export canvas; trained LibreRFDETRn weights are covered on macOS 27 against the graph the exporter itself prepares, using direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin. Conversion needed _rebake_rfdetr_pos_embed in export/coreai.py: the backbone bakes its position embedding for its configured 384 canvas, so exporting at any other size left an antialiased bicubic in the graph and the converter has no lowering for aten._upsample_bicubic2d_aa. The rebake re-runs the model's OWN baking path for the actual canvas, so the interpolation happens eagerly, outside the graph, computing exactly what it computed before. NOTE the reference. This family is verified against the exporter's prepared graph, not against ONNX, and the difference is not a detail: at a 640 canvas the rfdetr ONNX artifact disagrees with that same prepared graph by 9.3e-01. Core AI's rebake preserves the antialiased resize the eager model performs, whereas the ONNX path disables antialiasing (the model checks torch.onnx.is_in_onnx_export). Which artifact is right is an ONNX question and is not settled here, but ONNX cannot be used as the reference for this family at a non-native canvas.
+- `rfdetr` / `segment` / `onnx`: fixed task-native input resolution
+- `rfdetr` / `segment` / `torchscript`: fixed task-native input resolution
+- `rfdetr` / `pose` / `onnx`: fixed task-native input resolution
+- `rfdetr` / `pose` / `torchscript`: fixed task-native input resolution
+- `rfdetr` / `obb` / `onnx`: fixed task-native input resolution
+- `rfdetr` / `obb` / `torchscript`: fixed task-native input resolution
+- `rtdetr` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtmdet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
+- `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `yolo1` / `detect` / `ncnn`: fixed 448x448 input
+- `yolo1` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo2` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo3` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo4` / `detect` / `coreai`: fixed family-native canvases (YOLO1 448, YOLO2 608, YOLO3 416, YOLO4 608); representative published trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; Core AI graph preparation exactly folds Darknet inference batch normalization into the preceding convolutions because Core AI 0.4.1 does not preserve Darknet's epsilon-after-square-root formula
+- `yolo7` / `detect` / `coreai`: fixed 640x640 export canvas; trained LibreYOLO7b weights are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the export decoder uses direct arange grids because Core AI 0.4.1 mislowers the equivalent cumulative-sum expression
+- `yolo9` / `detect` / `coreai`: fixed export canvas; trained LibreYOLO9t weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `yolo9_e2e` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `yolo9_p2` / `detect` / `coreai`: fixed 640x640 export canvas; a deterministic YOLO9-P2-T model initialized from the SHA-256-pinned, permissively licensed trained LibreYOLO9t checkpoint is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion, not P2 task accuracy, and does not depend on the restricted VisDrone research-preview checkpoint
+- `yolonas` / `detect` / `coreai`: fixed 96x96 export canvas with pre-shaped canonical RGB tensors; a deterministic, license-clean synthetic YOLO-NAS-S state is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; the state receives 12 native training steps and a 20x regression-head scale to make both exported outputs non-degenerate; this validates conversion, not detection accuracy, raw-image preprocessing, or native-640 behavior, and does not convert restricted official weights
+- `yolox` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `zipdepth` / `depth` / `onnx`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `torchscript`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `ncnn`: fixed-resolution export canvas
+- `zipdepth` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 
 ## Blocked combinations
 
@@ -397,7 +468,6 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 - `yolo4` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo7` / `detect` / `tflite`: The converted LiteRT graph changes decoded box coordinates beyond the detector parity tolerance.
 - `yolo7` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
-- `yolo7` / `detect` / `coreai`: WITHDRAWN from validated. This family was recorded at 1.4e-07 on random initialisation. With trained weights, where the reference actually moves (input-sensitivity 1.3e-01), the same comparison gives 2.9e-01: the artifact does not reproduce the model. The earlier number was two near-constant tensors agreeing, not a correct conversion. yolo7 is the one family where the trained-weight re-measurement turned a pass into a failure rather than confirming it, so whatever it does differently from yolo9 and yolox, which pass the identical check at 1.9e-06 and 2.4e-06, is the place to look. Only the b size exists, so a second size cannot be used to narrow it.
 - `yolo9_e2e` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.
 - `yolo9_e2e` / `detect` / `coreml`: This family and task are not covered by the family-aware CoreML wrapper.
 - `yolo9_p2` / `detect` / `tflite`: This family and task have not been validated through the ONNX-to-TFLite path.

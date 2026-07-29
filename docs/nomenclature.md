@@ -70,6 +70,7 @@ instance, and panoptic segmentation; the `mobilenetv4` / `convnext` /
 | `zipdepth`  | `LibreZipDepth` | CamelCase preserved (`ZipDepth` brand casing); depth-only lightweight CNN (speed/edge tier) |
 | `birefnet`  | `LibreBiRefNet` | CamelCase preserved (Bilateral Reference); matte-only background-removal family |
 | `ppocr`     | `LibrePPOCR`    | All-caps acronym (PP-OCR brand, hyphen dropped); ocr-only two-stage text detection + recognition family |
+| `facerec`   | `LibreFaceEmbedder` | Descriptive family name (no upstream brand): embed-only two-stage face detection + identity-embedding family, inference-only |
 | `sam3dbody` | `LibreSAM3DBody` | All-caps acronym plus CamelCase `Body` (hyphens dropped); mesh-only family. Named in full rather than shortened so it does not collide with the `LibreSAM` promptable-segmentation tier. Sizes are backbone codes: `d3` (DINOv3 ViT-H/16+) and `h` (ViT-H). This family wraps an optional third-party package rather than porting it; see ADR 0013 |
 
 Casing rules observed in the table:
@@ -209,6 +210,7 @@ From `libreyolo/tasks.py`:
 | `restore`     | `-restore` |
 | `matte`       | `-matte` |
 | `ocr`         | `-ocr` |
+| `embed`       | `-embed` |
 | `mesh`        | `-mesh` |
 
 The factory accepts selected upstream-style aliases (`detection`, `det`,
@@ -270,6 +272,16 @@ Detection quads are genuine polygons (rotated text) and do not populate
 aliases `text`, `text-recognition`, and `text_recognition` resolve to `ocr` at
 the API boundary.
 
+`embed` is the task for face identity embeddings (facial recognition). Models
+expose `Results.embeddings`, an `(N, D)` payload of L2-normalized identity
+vectors row-aligned with the face boxes, so cosine similarity is a dot product.
+Supplying a `FaceGallery` of enrolled identities adds `Results.identities`
+(matched name and score per face, `None` when below threshold). The task is
+two-stage and inference-only: training, validation, and re-export raise.
+Canonical embed filenames must carry the `-embed` suffix; task aliases
+`facial-recognition`, `face-recognition`, `recognition`, `face`, `faceid`,
+`embedding`, and `reid` resolve to `embed` at the API boundary. See ADR 0013
+for the full contract.
 `mesh` is the task for human body mesh recovery: recovering a posed 3D body per
 detected person. Models expose `Results.meshes`, row-aligned with
 `Results.boxes` exactly as pose keypoints are, carrying the parametric core

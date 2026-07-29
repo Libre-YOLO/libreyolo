@@ -21,6 +21,7 @@ TaskType = Literal[
     "restore",
     "matte",
     "ocr",
+    "embed",
     "mesh",
 ]
 TASKS = (
@@ -37,6 +38,7 @@ TASKS = (
     "restore",
     "matte",
     "ocr",
+    "embed",
     "mesh",
 )
 
@@ -93,6 +95,20 @@ TASK_ALIASES = {
     "text": "ocr",
     "text-recognition": "ocr",
     "text_recognition": "ocr",
+    # Face-embedding / facial recognition. Canonical is the single-word
+    # ``embed`` (matching the family's other single-word task names and the
+    # short filename suffix), with the human-facing terms routed to it.
+    "embed": "embed",
+    "embedding": "embed",
+    "embeddings": "embed",
+    "facial-recognition": "embed",
+    "facial_recognition": "embed",
+    "face-recognition": "embed",
+    "face_recognition": "embed",
+    "recognition": "embed",
+    "face": "embed",
+    "faceid": "embed",
+    "reid": "embed",
     "mesh": "mesh",
     "body-mesh": "mesh",
     "body_mesh": "mesh",
@@ -114,6 +130,7 @@ TASK_TO_SUFFIX = {
     "restore": "restore",
     "matte": "matte",
     "ocr": "ocr",
+    "embed": "embed",
     "mesh": "mesh",
 }
 

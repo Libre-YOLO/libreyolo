@@ -212,6 +212,11 @@ class TestPIDNetForwardAndPredict:
         from libreyolo import LibreYOLO
         from libreyolo.models.pidnet.model import LibrePIDNet
 
+        # Random untrained logits can be almost tied, making a tiny backend
+        # rounding difference flip many argmax pixels and turn this parity
+        # check into an ambient-RNG failure. Fix the draw so the test measures
+        # the export path rather than whichever tests happened to run first.
+        torch.manual_seed(0)
         model = LibrePIDNet(
             model_path=None, size="s", task="semantic", nb_classes=3, device="cpu"
         )

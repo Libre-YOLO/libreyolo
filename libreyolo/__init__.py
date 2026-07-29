@@ -62,6 +62,8 @@ from .utils.results import (
     Matte,
     Meshes,
     OCRRegions,
+    Embeddings,
+    Identities,
 )
 
 SAMPLE_IMAGE = str(_Path(__file__).parent / "assets" / "parkour.jpg")
@@ -148,6 +150,8 @@ def __getattr__(name):
         "check_dataset": (".data", "check_dataset"),
         "Distiller": (".distillation", "Distiller"),
         "get_distill_config": (".distillation", "get_distill_config"),
+        "LibreFaceEmbedder": (".models.facerec", "LibreFaceEmbedder"),
+        "FaceGallery": (".models.facerec", "FaceGallery"),
     }
     if name in ("LibreRFDETR", "LibreDINOv2"):
         # RF-DETR and DINOv2 share the same transformers dependency check.
@@ -245,6 +249,10 @@ __all__ = [
     "Matte",
     "Meshes",
     "OCRRegions",
+    "Embeddings",
+    "Identities",
+    "FaceGallery",
+    "LibreFaceEmbedder",
     # Assets
     "SAMPLE_IMAGE",
     # Tracking
