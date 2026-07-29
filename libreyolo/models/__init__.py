@@ -256,8 +256,33 @@ def LibreYOLO(
     ensure_default_logging()
     model_path = _resolve_weights_path(model_path)
 
+    # librefacerec-* names route to the face-embedding family regardless of
+    # extension: the family is ONNX-only, auto-downloads from the LibreYOLO
+    # HF org, and infers task=embed from the name.
+    if Path(model_path).name.lower().startswith("librefacerec-"):
+        from ..tasks import normalize_task
+
+        if task is not None and normalize_task(task) != "embed":
+            raise ValueError(
+                f"librefacerec weights only support the 'embed' "
+                f"(facial-recognition) task, got task={task!r}."
+            )
+        from .facerec import LibreFaceEmbedder
+
+        return LibreFaceEmbedder(model_path, device=device)
+
     # Non-PyTorch formats: delegate to inference backends
     if model_path.endswith(".onnx"):
+        # Face embedding (facial-recognition) is an inference-only, two-stage
+        # ONNX task with no detection-shaped output, so it routes to its own
+        # runner rather than the detection ONNX backend.
+        from ..tasks import normalize_task
+
+        if task is not None and normalize_task(task) == "embed":
+            from .facerec import LibreFaceEmbedder
+
+            return LibreFaceEmbedder(model_path, device=device)
+
         from ..backends.onnx import OnnxBackend
 
         return OnnxBackend(
@@ -702,5 +727,16 @@ __all__ = [
     "LibreCLIP",
     "LibreSigLIP2",
     "LibrePPOCR",
+    "LibreFaceEmbedder",
     "try_ensure_rfdetr",
 ]
+
+
+def __getattr__(name):
+    # Lazy export so importing the face-embedding family (and its optional
+    # onnxruntime dependency) only happens on first use.
+    if name == "LibreFaceEmbedder":
+        from .facerec import LibreFaceEmbedder
+
+        return LibreFaceEmbedder
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

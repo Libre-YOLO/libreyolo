@@ -1012,6 +1012,143 @@ class Gaze(_TensorPayload):
         )
 
 
+class Embeddings(_TensorPayload):
+    """Per-face L2-normalized identity embeddings for a single image.
+
+    Data shape: ``(N, D)`` where ``D`` is the model's embedding dimension
+    (e.g. 512 for an ArcFace/iResNet head, 128 for a MobileFaceNet-style head).
+    Each row is L2-normalized by the
+    inference runner and aligned row-by-row with the parent ``Results.boxes``
+    (the face boxes), exactly like ``Gaze``. Cosine similarity between two
+    normalized rows is their dot product, so identity verification is a
+    threshold on ``.similarity(...)``.
+    """
+
+    def __init__(self, data: TensorLike, orig_shape: Tuple[int, int] | None = None):
+        if data.ndim == 1:
+            if isinstance(data, torch.Tensor):
+                data = data.unsqueeze(0)
+            else:
+                data = data[None, :]
+        if data.ndim != 2:
+            raise ValueError(
+                f"expected (N, D) embeddings, got shape {tuple(data.shape)}"
+            )
+        super().__init__(data, orig_shape)
+
+    @property
+    def dim(self) -> int:
+        return int(self.data.shape[-1])
+
+    @property
+    def normalized(self) -> TensorLike:
+        """Defensive re-L2-normalization of each row."""
+        d = self.data
+        if isinstance(d, torch.Tensor):
+            return d / d.norm(dim=-1, keepdim=True).clamp_min(1e-10)
+        norm = np.linalg.norm(d, axis=-1, keepdims=True)
+        return d / np.clip(norm, 1e-10, None)
+
+    def similarity(self, other: "Embeddings | TensorLike") -> TensorLike:
+        """Cosine similarity of these rows against ``other``.
+
+        Returns ``(N, M)`` for an ``(M, D)`` gallery (or another Embeddings),
+        or ``(N,)`` for a single ``(D,)`` vector.
+        """
+        a = self.normalized
+        b = other.normalized if isinstance(other, Embeddings) else other
+        single = getattr(b, "ndim", 2) == 1
+        if isinstance(a, torch.Tensor):
+            b = b if isinstance(b, torch.Tensor) else torch.as_tensor(b, dtype=a.dtype, device=a.device)
+            b = b.reshape(1, -1) if single else b
+            b = b / b.norm(dim=-1, keepdim=True).clamp_min(1e-10)
+            sim = a @ b.T
+        else:
+            b = b if isinstance(b, np.ndarray) else _numpy(b)
+            b = b.reshape(1, -1) if single else b
+            b = b / np.clip(np.linalg.norm(b, axis=-1, keepdims=True), 1e-10, None)
+            sim = a @ b.T
+        return sim[:, 0] if single else sim
+
+    def verify(self, i: int, j: int, threshold: float = 0.4) -> bool:
+        """Whether face rows ``i`` and ``j`` are the same identity."""
+        sim = self.similarity(self.data[j])
+        return bool(float(sim[i]) >= threshold)
+
+    def __repr__(self) -> str:
+        return (
+            f"Embeddings(n={len(self)}, dim={self.dim}, "
+            f"shape={tuple(self.data.shape)})"
+        )
+
+
+class Identities:
+    """Per-face identification outcome, row-aligned with ``Results.boxes``.
+
+    Produced by the ``embed`` task when a ``FaceGallery`` is supplied.
+    ``name`` is ``None`` for faces below the match threshold (*unknown*):
+    an unidentified face is never assigned the nearest wrong person.
+    """
+
+    def __init__(
+        self,
+        names: List[Optional[str]],
+        scores: TensorLike,
+    ):
+        self._names = list(names)
+        self._scores = np.asarray(_numpy(scores), dtype=np.float32).reshape(-1)
+        if len(self._names) != self._scores.shape[0]:
+            raise ValueError(
+                f"names ({len(self._names)}) and scores "
+                f"({self._scores.shape[0]}) must be row-aligned"
+            )
+
+    @property
+    def name(self) -> List[Optional[str]]:
+        """Matched identity per face, ``None`` for unknown."""
+        return list(self._names)
+
+    @property
+    def score(self) -> np.ndarray:
+        """Best gallery cosine similarity per face."""
+        return self._scores
+
+    @property
+    def data(self) -> List[Tuple[Optional[str], float]]:
+        return [(n, float(s)) for n, s in zip(self._names, self._scores)]
+
+    # Container protocol used by Results._apply — identity labels are
+    # device-less, so tensor movement is a no-op.
+    def to(self, *args, **kwargs) -> "Identities":
+        return self
+
+    def cpu(self) -> "Identities":
+        return self
+
+    def cuda(self) -> "Identities":
+        return self
+
+    def numpy(self) -> "Identities":
+        return self
+
+    def __getitem__(self, idx) -> "Identities":
+        if isinstance(idx, (int, np.integer)):
+            return Identities([self._names[idx]], self._scores[idx : idx + 1])
+        if isinstance(idx, slice):
+            return Identities(self._names[idx], self._scores[idx])
+        idx = np.asarray(idx)
+        if idx.dtype == bool:
+            idx = np.flatnonzero(idx)
+        return Identities([self._names[i] for i in idx], self._scores[idx])
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def __repr__(self) -> str:
+        known = sum(1 for n in self._names if n is not None)
+        return f"Identities(n={len(self)}, known={known})"
+
+
 class Results:
     """Single-image result with flat detection/segmentation slots."""
 
@@ -1029,6 +1166,8 @@ class Results:
         "restored",
         "matte",
         "ocr",
+        "embeddings",
+        "identities",
     )
 
     def __init__(
@@ -1055,6 +1194,8 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: int = 1,
+        embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
     ):
         if boxes is not None and boxes.orig_shape is None:
             boxes = boxes.with_orig_shape(orig_shape)
@@ -1088,6 +1229,8 @@ class Results:
         # restored canvas is ``restore_scale`` times the input. 1 for
         # deblur/denoise and every non-restore task.
         self.restore_scale = int(restore_scale) if restore_scale else 1
+        self.embeddings = embeddings
+        self.identities = identities
         self.orig_shape = orig_shape
         self.path = path
         self.names = names or {}
@@ -1114,6 +1257,8 @@ class Results:
             "matte": self.matte,
             "ocr": self.ocr,
             "restore_scale": self.restore_scale,
+            "embeddings": self.embeddings,
+            "identities": self.identities,
             "speed": dict(self.speed),
             "track_id": self.track_id,
             "frame_idx": self.frame_idx,
@@ -1175,6 +1320,8 @@ class Results:
         matte: Optional[Matte] = None,
         ocr: Optional[OCRRegions] = None,
         restore_scale: Optional[int] = None,
+        embeddings: Optional[Embeddings] = None,
+        identities: Optional[Identities] = None,
     ) -> "Results":
         if boxes is not None:
             self.boxes = boxes.with_orig_shape(self.orig_shape)
@@ -1208,6 +1355,10 @@ class Results:
             )
         if restore_scale is not None:
             self.restore_scale = int(restore_scale) if restore_scale else 1
+        if embeddings is not None:
+            self.embeddings = embeddings
+        if identities is not None:
+            self.identities = identities
         if track_id is not None:
             self.track_id = track_id
             if self.boxes is not None:
@@ -1273,7 +1424,12 @@ class Results:
         Image.fromarray(rgba, mode="RGBA").save(out)
         return str(out)
 
-    def summary(self, normalize: bool = False, decimals: int = 5) -> List[Dict[str, Any]]:
+    def summary(
+        self,
+        normalize: bool = False,
+        decimals: int = 5,
+        embeddings: bool = False,
+    ) -> List[Dict[str, Any]]:
         if self.boxes is None:
             if self.ocr is not None:
                 ocr_np = self.ocr.numpy()
@@ -1448,6 +1604,16 @@ class Results:
                     "pitch_deg": round(float(gaze_np.data[i, 0]) * 180.0 / math.pi, decimals),
                     "yaw_deg": round(float(gaze_np.data[i, 1]) * 180.0 / math.pi, decimals),
                 }
+            if self.embeddings is not None and i < len(self.embeddings):
+                emb = self.embeddings.numpy() if isinstance(self.embeddings.data, torch.Tensor) else self.embeddings
+                # A 512-float vector is ~2 KB/face — omit it from summaries by
+                # default and surface only its dimension; opt in with embeddings=True.
+                row["embedding_dim"] = int(emb.dim)
+                if embeddings:
+                    row["embedding"] = [round(float(v), decimals) for v in emb.data[i]]
+            if self.identities is not None and i < len(self.identities):
+                row["identity"] = self.identities.name[i]
+                row["identity_score"] = round(float(self.identities.score[i]), decimals)
             if track_ids is not None:
                 row["track_id"] = int(track_ids[i])
             rows.append(row)
@@ -1461,6 +1627,8 @@ class Results:
             return len(self.boxes)
         if self.points is not None:
             return len(self.points)
+        if self.embeddings is not None:
+            return len(self.embeddings)
         if self.probs is not None:
             return 1
         if self.semantic_mask is not None:
