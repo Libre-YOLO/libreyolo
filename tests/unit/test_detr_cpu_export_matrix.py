@@ -24,6 +24,11 @@ _ONNX_PARITY_GAPS = {
     "LibreRTDETRv2": "9% of selected boxes exceed the ONNX tolerance",
     "LibreRTDETRv4": "7.3% of selected boxes exceed the ONNX tolerance",
 }
+_OPENVINO_PARITY_GAPS = {
+    "LibreDEIM": "exactly 95% of aligned boxes meet tolerance; validation requires more than 95%",
+    "LibreDEIMv2": "42.3% of aligned scores meet the converted-runtime tolerance",
+    "LibreRTDETRv2": "92.3% of aligned boxes meet the converted-runtime tolerance",
+}
 # Families whose ONNX raw outputs are compared after Hungarian query
 # alignment. Their graphs select queries with an in-graph top-k over the
 # near-uniform scores of this test's random-init weights, so tiny host-class
@@ -34,12 +39,16 @@ _ONNX_QUERY_ALIGNED = {"LibreEC", "LibreDFINE"}
 
 
 def _export_cases():
-    for format in ("onnx", "torchscript"):
+    for format in ("onnx", "torchscript", "openvino"):
         for class_name, size, imgsz in _DETR_CASES:
             marks = ()
             if format == "onnx" and class_name in _ONNX_PARITY_GAPS:
                 marks = pytest.mark.xfail(
                     strict=True, reason=_ONNX_PARITY_GAPS[class_name]
+                )
+            if format == "openvino" and class_name in _OPENVINO_PARITY_GAPS:
+                marks = pytest.mark.xfail(
+                    strict=True, reason=_OPENVINO_PARITY_GAPS[class_name]
                 )
             yield pytest.param(
                 class_name,
@@ -79,6 +88,8 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
 
     import libreyolo
     from libreyolo.export.exporter import OnnxExporter
@@ -104,21 +115,25 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
         simplify=False,
         output_path=str(tmp_path / f"{class_name}.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())
 
     assert len(actual) == len(native)
     expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
-    if format == "onnx" and class_name in _ONNX_QUERY_ALIGNED:
+    if format == "openvino" or (
+        format == "onnx" and class_name in _ONNX_QUERY_ALIGNED
+    ):
         actual = _align_query_outputs(actual, expected_outputs)
-    rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
+    converted = format in {"onnx", "openvino"}
+    rtol, atol = (2e-3, 2e-2) if converted else (1e-3, 1e-3)
     for actual_output, expected in zip(actual, expected_outputs):
-        if format == "onnx" and expected.shape[-1] == 4:
+        if converted and expected.shape[-1] == 4:
             row_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol).all(
                 axis=-1
             )
             assert float(row_match.mean()) > 0.95
             continue
-        if format == "onnx":
+        if converted:
             element_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol)
             assert float(element_match.mean()) > 0.95
             continue
@@ -128,6 +143,13 @@ def test_detr_detect_raw_parity(tmp_path, class_name, size, imgsz, format):
             rtol=rtol,
             atol=atol,
         )
+    if format == "openvino":
+        image = np.random.default_rng(51).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.boxes is not None
+        assert result.orig_shape == (72, 96)
 
 
 _TASK_HEAD_CASES = (
@@ -137,15 +159,36 @@ _TASK_HEAD_CASES = (
 )
 
 
+def _task_head_export_cases():
+    for format in ("onnx", "torchscript", "openvino"):
+        for class_name, size, task, imgsz in _TASK_HEAD_CASES:
+            marks = ()
+            if format == "openvino" and class_name == "LibreEC" and task == "pose":
+                marks = pytest.mark.xfail(
+                    strict=True,
+                    reason="93.92% of aligned pose values meet tolerance",
+                )
+            yield pytest.param(
+                class_name,
+                size,
+                task,
+                imgsz,
+                format,
+                marks=marks,
+                id=f"{format}-{class_name}-{task}",
+            )
+
+
 @pytest.mark.parametrize(
-    ("class_name", "size", "task", "imgsz"),
-    _TASK_HEAD_CASES,
+    ("class_name", "size", "task", "imgsz", "format"),
+    _task_head_export_cases(),
 )
-@pytest.mark.parametrize("format", ["onnx", "torchscript"])
 def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
 
     import libreyolo
     from libreyolo.export.exporter import OnnxExporter
@@ -173,15 +216,17 @@ def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, form
         simplify=False,
         output_path=str(tmp_path / f"{class_name}-{task}.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())
 
     assert len(actual) == len(native)
     expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
-    if format == "onnx" and class_name == "LibreEC":
+    if format in {"onnx", "openvino"} and class_name == "LibreEC":
         actual = _align_query_outputs(actual, expected_outputs)
-    rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
+    converted = format in {"onnx", "openvino"}
+    rtol, atol = (2e-3, 2e-2) if converted else (1e-3, 1e-3)
     for actual_output, expected in zip(actual, expected_outputs):
-        if format == "onnx":
+        if converted:
             element_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol)
             assert float(element_match.mean()) > 0.95
             continue
@@ -191,21 +236,56 @@ def test_detr_task_head_raw_parity(tmp_path, class_name, size, task, imgsz, form
             rtol=rtol,
             atol=atol,
         )
+    if format == "openvino":
+        image = np.random.default_rng(52).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.orig_shape == (72, 96)
+
+
+_RFDETR_TASK_CASES = (
+    ("n", "segment", 312, 3),
+    ("n", "obb", 384, 3),
+    ("x", "pose", 576, 1),
+)
+_RFDETR_OPENVINO_GAPS = {
+    "segment": "87% of aligned box values meet tolerance",
+    "obb": "86.17% of aligned box values meet tolerance",
+    "pose": "79% of aligned box values meet tolerance",
+}
+
+
+def _rfdetr_task_export_cases():
+    for format in ("onnx", "torchscript", "openvino"):
+        for size, task, imgsz, nb_classes in _RFDETR_TASK_CASES:
+            marks = ()
+            if format == "openvino":
+                marks = pytest.mark.xfail(
+                    strict=True,
+                    reason=_RFDETR_OPENVINO_GAPS[task],
+                )
+            yield pytest.param(
+                size,
+                task,
+                imgsz,
+                nb_classes,
+                format,
+                marks=marks,
+                id=f"{format}-{size}-{task}",
+            )
 
 
 @pytest.mark.parametrize(
-    ("size", "task", "imgsz", "nb_classes"),
-    [
-        ("n", "segment", 312, 3),
-        ("n", "obb", 384, 3),
-        ("x", "pose", 576, 1),
-    ],
+    ("size", "task", "imgsz", "nb_classes", "format"),
+    _rfdetr_task_export_cases(),
 )
-@pytest.mark.parametrize("format", ["onnx", "torchscript"])
 def test_rfdetr_task_raw_parity(tmp_path, size, task, imgsz, nb_classes, format):
     if format == "onnx":
         pytest.importorskip("onnx")
         pytest.importorskip("onnxruntime")
+    if format == "openvino":
+        pytest.importorskip("openvino")
 
     import libreyolo
     from libreyolo.export.exporter import OnnxExporter
@@ -233,13 +313,17 @@ def test_rfdetr_task_raw_parity(tmp_path, size, task, imgsz, nb_classes, format)
         simplify=False,
         output_path=str(tmp_path / f"LibreRFDETR-{task}.{format}"),
     )
-    actual = libreyolo.LibreYOLO(artifact, device="cpu")._run_inference(tensor.numpy())
+    backend = libreyolo.LibreYOLO(artifact, device="cpu")
+    actual = backend._run_inference(tensor.numpy())
 
     assert len(actual) == len(native)
-    rtol, atol = (2e-3, 2e-2) if format == "onnx" else (1e-3, 1e-3)
-    for actual_output, native_output in zip(actual, native):
-        expected = native_output.detach().cpu().numpy()
-        if format == "onnx":
+    expected_outputs = tuple(output.detach().cpu().numpy() for output in native)
+    if format == "openvino":
+        actual = _align_query_outputs(actual, expected_outputs)
+    converted = format in {"onnx", "openvino"}
+    rtol, atol = (2e-3, 2e-2) if converted else (1e-3, 1e-3)
+    for actual_output, expected in zip(actual, expected_outputs):
+        if converted:
             element_match = np.isclose(actual_output, expected, rtol=rtol, atol=atol)
             assert float(element_match.mean()) > 0.95
             continue
@@ -249,3 +333,9 @@ def test_rfdetr_task_raw_parity(tmp_path, size, task, imgsz, nb_classes, format)
             rtol=rtol,
             atol=atol,
         )
+    if format == "openvino":
+        image = np.random.default_rng(53).integers(
+            0, 256, size=(72, 96, 3), dtype=np.uint8
+        )
+        result = backend.predict(image, conf=0.99)
+        assert result.orig_shape == (72, 96)

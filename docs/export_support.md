@@ -17,17 +17,17 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | depth_anything | depth | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | depth_anything3 | depth |  |  |  |  |  |  |  |  |
 | dexined | edge | ✓ |  |  |  |  |  |  |  |
-| dfine | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
-| dfine | segment | ✓ | ✓ | exp | exp |  |  |  |  |
-| dinov2 | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
+| dfine | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
+| dfine | segment | ✓ | ✓ | exp | ✓ |  |  |  |  |
+| dinov2 | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | dinov2 | classify | ✓ | ✓ |  |  |  |  |  | exp |
 | dinov2 | embed |  |  |  |  |  |  |  |  |
-| ec | detect | ✓ | ✓ | exp | exp |  |  |  | ✓ |
+| ec | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | ec | pose | ✓ | ✓ | exp | exp |  |  |  |  |
-| ec | segment | ✓ | ✓ | exp | exp |  |  |  |  |
+| ec | segment | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | edgetam | segment |  |  |  |  |  |  |  |  |
 | efficientnetv2 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
-| eomt | semantic | ✓ | ✓ | exp | exp |  |  |  |  |
+| eomt | semantic | ✓ | ✓ | exp | ✓ |  |  |  |  |
 | eomt | segment |  |  |  |  |  |  |  |  |
 | eomt | panoptic |  |  |  |  |  |  |  |  |
 | feynobg | matte | exp | ✓ | exp | exp |  |  |  |  |
@@ -38,7 +38,7 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | kosmos2 | detect |  |  |  |  |  |  |  |  |
 | l2cs | gaze | ✓ | ✓ |  |  |  |  |  |  |
 | lfm2vl | detect |  |  |  |  |  |  |  |  |
-| lingbotvision | semantic | ✓ | ✓ | exp | exp |  |  |  | ✓ |
+| lingbotvision | semantic | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | locateanything | detect |  |  |  |  |  |  |  |  |
 | locateanything | point |  |  |  |  |  |  |  |  |
 | mobilenetv4 | classify | ✓ | ✓ | exp | ✓ | ✓ | ✓ |  | ✓ |
@@ -59,16 +59,16 @@ numeric parity guarantee, and an empty cell is blocked in preflight.
 | rfdetr | segment | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | pose | ✓ | ✓ | exp | exp |  |  |  |  |
 | rfdetr | obb | ✓ | ✓ | exp | exp |  |  |  |  |
-| rtdetr | detect | ✓ | ✓ | exp | exp |  |  | exp | ✓ |
+| rtdetr | detect | ✓ | ✓ | exp | ✓ |  |  | exp | ✓ |
 | rtdetrv2 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
-| rtdetrv4 | detect | exp | ✓ | exp | exp |  |  |  | ✓ |
+| rtdetrv4 | detect | exp | ✓ | exp | ✓ |  |  |  | ✓ |
 | rtmdet | detect | ✓ | ✓ | exp | ✓ |  |  |  | ✓ |
 | rtmdet | segment |  |  |  |  |  |  |  |  |
 | sam | segment |  |  |  |  |  |  |  |  |
 | sam2 | segment |  |  |  |  |  |  |  |  |
 | sam3 | segment |  |  |  |  |  |  |  |  |
 | sam3dbody | mesh |  |  |  |  |  |  |  |  |
-| segformer | semantic | ✓ | ✓ |  |  |  |  |  |  |
+| segformer | semantic | ✓ | ✓ |  | ✓ |  |  |  |  |
 | siglip2 | classify | ✓ |  |  |  |  |  |  | ✓ |
 | siglip2 | embed |  |  |  |  |  |  |  |  |
 | smolvlm2 | detect |  |  |  |  |  |  |  |  |
@@ -111,20 +111,26 @@ A check mark applies only under any constraint listed here.
 - `depth_anything` / `depth` / `openvino`: fixed input resolution divisible by 14
 - `depth_anything` / `depth` / `coreai`: fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `dexined` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
+- `dfine` / `detect` / `openvino`: fixed export canvas
 - `dfine` / `detect` / `coreai`: fixed export canvas; trained LibreDFINEn weights are covered on macOS 27 by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
+- `dfine` / `segment` / `openvino`: fixed export canvas
 - `dinov2` / `semantic` / `onnx`: fixed 518x518 input
 - `dinov2` / `semantic` / `torchscript`: fixed 518x518 input
+- `dinov2` / `semantic` / `openvino`: fixed family-native export canvas
 - `dinov2` / `classify` / `onnx`: fixed 224x224 input
 - `dinov2` / `classify` / `torchscript`: fixed 224x224 input
+- `ec` / `detect` / `openvino`: fixed export canvas
 - `ec` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `ec` / `pose` / `onnx`: fixed 640x640 input
 - `ec` / `pose` / `torchscript`: fixed 640x640 input
 - `ec` / `segment` / `onnx`: fixed 640x640 input
 - `ec` / `segment` / `torchscript`: fixed 640x640 input
+- `ec` / `segment` / `openvino`: fixed 640x640 input
 - `efficientnetv2` / `classify` / `openvino`: fixed family-native input resolution
 - `efficientnetv2` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `eomt` / `semantic` / `onnx`: fixed 512x512 input
 - `eomt` / `semantic` / `torchscript`: fixed 512x512 input
+- `eomt` / `semantic` / `openvino`: fixed family-native export canvas
 - `feynobg` / `matte` / `torchscript`: fixed 1024x1024 input
 - `fomo` / `point` / `openvino`: fixed square input
 - `fomo` / `point` / `coreai`: native 96 canvas; a deterministic model state trained from scratch for eight steps on synthetic tensors is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; this validates conversion and the existing heatmap contract, not point-localization accuracy
@@ -132,6 +138,7 @@ A check mark applies only under any constraint listed here.
 - `l2cs` / `gaze` / `torchscript`: head-only contract: each input image is one face crop
 - `lingbotvision` / `semantic` / `onnx`: fixed 512x512 input
 - `lingbotvision` / `semantic` / `torchscript`: fixed 512x512 input
+- `lingbotvision` / `semantic` / `openvino`: fixed family-native export canvas
 - `lingbotvision` / `semantic` / `coreai`: fixed family-native canvases (PIDNet 1024, LingBotVision 512); trained LibrePIDNets-sem and LibreLingBotVisions-sem checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; exported backends already implement the shared dense-logit resize and argmax contract
 - `mobilenetv4` / `classify` / `openvino`: fixed family-native input resolution
 - `mobilenetv4` / `classify` / `coreai`: fixed export canvas; a representative published trained ImageNet checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
@@ -161,13 +168,16 @@ A check mark applies only under any constraint listed here.
 - `rfdetr` / `pose` / `torchscript`: fixed task-native input resolution
 - `rfdetr` / `obb` / `onnx`: fixed task-native input resolution
 - `rfdetr` / `obb` / `torchscript`: fixed task-native input resolution
+- `rtdetr` / `detect` / `openvino`: fixed export canvas
 - `rtdetr` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtdetrv2` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
+- `rtdetrv4` / `detect` / `openvino`: fixed export canvas
 - `rtdetrv4` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `rtmdet` / `detect` / `openvino`: fixed export canvas; YOLO1 requires 448x448
 - `rtmdet` / `detect` / `coreai`: fixed export canvas; a representative published trained checkpoint for each family is covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin; RT-DETRv2 permits one shared whole-query permutation across its box and logit outputs because DETR query rows are an unordered set
 - `segformer` / `semantic` / `onnx`: fixed square input divisible by 32
 - `segformer` / `semantic` / `torchscript`: fixed square input divisible by 32
+- `segformer` / `semantic` / `openvino`: fixed square input divisible by 32
 - `siglip2` / `classify` / `onnx`: frozen-class labels and fixed input resolution
 - `siglip2` / `classify` / `coreai`: frozen class set and fixed export canvas; permissively licensed trained checkpoints are covered on Apple hardware by direct named-output parity with a 3e-04 tolerance and a 100x input-sensitivity margin
 - `teed` / `edge` / `onnx`: fixed-resolution batch-1 edge-probability canvas
@@ -513,7 +523,6 @@ A check mark applies only under any constraint listed here.
 - `sam3dbody` / `mesh` / `coreml`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `sam3dbody` / `mesh` / `coreai`: Body-mesh export is blocked until its graph outputs, metadata, and backend runtime contract are defined.
 - `segformer` / `semantic` / `tensorrt`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
-- `segformer` / `semantic` / `openvino`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.
 - `segformer` / `semantic` / `ncnn`: PNNX leaves unsupported pnnx.Expression nodes in the SegFormer graph; the generated NCNN network reports 'network graph not ready' and has no runnable input blob.
 - `segformer` / `semantic` / `tflite`: onnx2tf emits a flatbuffer, but LiteRT cannot prepare its attention reshape (1024 input elements versus 256 output elements).
 - `segformer` / `semantic` / `coreml`: This family is not wired to the shared dense-logits and backend argmax semantic export contract.

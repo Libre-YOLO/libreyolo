@@ -233,14 +233,12 @@ _add(
     reason="Conversion is available, but runtime parity requires a macOS runner.",
 )
 _add(
-    "experimental",
+    "validated",
     ("dinov2", "eomt", "lingbotvision"),
     ("semantic",),
     ("openvino",),
-    reason=(
-        "The dense-logits contract is wired, but the project has not yet "
-        "recorded OpenVINO runtime parity for these families."
-    ),
+    since="1.6",
+    constraint="fixed family-native export canvas",
 )
 _add(
     "experimental",
@@ -617,6 +615,44 @@ _add(
     since="1.4",
 )
 _add(
+    "validated",
+    ("dfine", "ec", "rtdetr", "rtdetrv4"),
+    ("detect",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed export canvas",
+)
+_add(
+    "experimental",
+    ("deim",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "After Hungarian query alignment, exactly 95% of boxes meet the "
+        "converted-runtime tolerance; validation requires more than 95%."
+    ),
+)
+_add(
+    "experimental",
+    ("deimv2",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "After Hungarian query alignment, only 42.3% of scores meet the "
+        "converted-runtime tolerance."
+    ),
+)
+_add(
+    "experimental",
+    ("rtdetrv2",),
+    ("detect",),
+    ("openvino",),
+    reason=(
+        "After Hungarian query alignment, 92.3% of boxes meet the "
+        "converted-runtime tolerance."
+    ),
+)
+_add(
     "experimental",
     ("deim",),
     ("detect",),
@@ -653,6 +689,14 @@ _add(
 )
 _add(
     "validated",
+    ("dfine",),
+    ("segment",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed export canvas",
+)
+_add(
+    "validated",
     ("ec",),
     ("pose", "segment"),
     ("onnx", "torchscript"),
@@ -661,11 +705,40 @@ _add(
 )
 _add(
     "validated",
+    ("ec",),
+    ("segment",),
+    ("openvino",),
+    since="1.6",
+    constraint="fixed 640x640 input",
+)
+_add(
+    "experimental",
+    ("ec",),
+    ("pose",),
+    ("openvino",),
+    reason=(
+        "After Hungarian query alignment, 93.92% of pose values meet the "
+        "converted-runtime tolerance."
+    ),
+)
+_add(
+    "validated",
     ("rfdetr",),
     ("segment", "pose", "obb"),
     ("onnx", "torchscript"),
     since="1.4",
     constraint="fixed task-native input resolution",
+)
+_add(
+    "experimental",
+    ("rfdetr",),
+    ("segment", "pose", "obb"),
+    ("openvino",),
+    reason=(
+        "After Hungarian query alignment, the measured converted-runtime "
+        "match rates remain below validation: segment 87%, OBB 86.17%, "
+        "and pose 79%."
+    ),
 )
 _add(
     "validated",
@@ -680,6 +753,14 @@ _add(
     ("segformer",),
     ("semantic",),
     ("onnx", "torchscript"),
+    since="1.6",
+    constraint="fixed square input divisible by 32",
+)
+_add(
+    "validated",
+    ("segformer",),
+    ("semantic",),
+    ("openvino",),
     since="1.6",
     constraint="fixed square input divisible by 32",
 )

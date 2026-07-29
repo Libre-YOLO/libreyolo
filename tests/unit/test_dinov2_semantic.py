@@ -181,11 +181,13 @@ class TestDINOv2SemanticSegmenter:
                 model_path=None, size="n", task="detect", nb_classes=3, device="cpu"
             )
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_semantic_parity(self, fake_backbone, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
 
         from libreyolo import LibreYOLO
         from libreyolo.models.dinov2.model import LibreDINOv2
@@ -198,8 +200,11 @@ class TestDINOv2SemanticSegmenter:
             0, 256, size=(70, 70, 3), dtype=np.uint8
         )
         native = model.predict(image, imgsz=70).semantic_mask.data
-        suffix = ".onnx" if format == "onnx" else ".torchscript"
-        artifact = tmp_path / f"dinov2_semantic{suffix}"
+        artifact = tmp_path / {
+            "onnx": "dinov2_semantic.onnx",
+            "torchscript": "dinov2_semantic.torchscript",
+            "openvino": "dinov2_semantic_openvino",
+        }[format]
         model.export(
             format=format,
             output_path=str(artifact),

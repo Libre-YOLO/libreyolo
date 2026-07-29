@@ -238,11 +238,13 @@ class TestSegformerWrapper:
         assert result.semantic_mask is not None
         assert tuple(result.semantic_mask.data.shape) == (45, 90)
 
-    @pytest.mark.parametrize("format", ["onnx", "torchscript"])
+    @pytest.mark.parametrize("format", ["onnx", "torchscript", "openvino"])
     def test_exported_predict_parity(self, tmp_path, format):
         if format == "onnx":
             pytest.importorskip("onnx")
             pytest.importorskip("onnxruntime")
+        if format == "openvino":
+            pytest.importorskip("openvino")
 
         from libreyolo import LibreYOLO
         from libreyolo.models.segformer.model import LibreSegformer
@@ -267,6 +269,7 @@ class TestSegformerWrapper:
             / {
                 "onnx": "segformer.onnx",
                 "torchscript": "segformer.torchscript",
+                "openvino": "segformer_openvino",
             }[format]
         )
 
