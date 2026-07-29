@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -50,6 +51,18 @@ def _coalesce_model(model: Any = None, embedder: Any = None) -> Any:
     if model is not None and embedder is not None and model is not embedder:
         raise ValueError("Pass either model= or embedder=, not two different models.")
     return model if model is not None else embedder
+
+
+def _best_row_index(result: Any, data: np.ndarray) -> int:
+    """Index of the most prominent row: highest box confidence, else row 0."""
+    boxes = getattr(result, "boxes", None)
+    if boxes is None or len(boxes) != len(data):
+        return 0
+    conf = np.asarray(_to_numpy(getattr(boxes, "conf", [])), dtype=np.float32)
+    conf = conf.reshape(-1)
+    if conf.size != len(data):
+        return 0
+    return int(np.argmax(conf))
 
 
 def _iter_results(prediction: Any) -> Iterable[Any]:
@@ -103,24 +116,32 @@ class Gallery:
         *,
         model: Any = None,
         embedder: Any = None,
+        select: str = "best",
     ) -> int:
-        """Embed one or more sources and store every returned row.
+        """Embed one or more sources and store their reference rows.
 
-        Whole-image embedders contribute one row per source. Region embedders
-        contribute every region row returned for a source. The return value is
-        the number of reference rows added.
+        With ``select="best"`` (the default) each prediction result
+        contributes one row: the highest-confidence row when the result
+        carries row-aligned box confidences (the most prominent face),
+        otherwise the first row. A reference photo that also contains
+        bystanders therefore enrolls only its main subject.
+        ``select="all"`` stores every returned row instead. The return value
+        is the number of reference rows added.
         """
+        if select not in ("best", "all"):
+            raise ValueError(f"select must be 'best' or 'all', got {select!r}.")
         selected = _coalesce_model(model, embedder) or self.embedder
         if selected is None:
             raise ValueError(
                 "Gallery.enroll needs a model: construct Gallery(model), pass "
                 "model=, or use enroll_embedding() for precomputed vectors."
             )
-        self._bind_or_check_model(selected)
+        self._bind_model(selected)
 
-        source_items = (
-            list(sources) if isinstance(sources, (list, tuple)) else [sources]
-        )
+        if isinstance(sources, (str, Path)) or not isinstance(sources, Sequence):
+            source_items = [sources]
+        else:
+            source_items = list(sources)
         added = 0
         for source in source_items:
             predict = getattr(selected, "predict", None)
@@ -138,6 +159,9 @@ class Gallery:
                         "Embedding predictions must have shape (N, D); "
                         f"got {tuple(data.shape)}."
                     )
+                if select == "best":
+                    index = _best_row_index(result, data)
+                    data = data[index : index + 1]
                 for vector in data:
                     self.enroll_embedding(name, vector)
                     source_rows += 1
@@ -212,7 +236,7 @@ class Gallery:
         if top_k < 1:
             raise ValueError(f"top_k must be >= 1, got {top_k}.")
         if model is not None:
-            self._bind_or_check_model(model)
+            self._check_model(model)
         data = embeddings.data if hasattr(embeddings, "data") else embeddings
         queries = np.asarray(_to_numpy(data), dtype=np.float32)
         if queries.ndim == 1:
@@ -278,17 +302,32 @@ class Gallery:
             scores.append(best_score)
         return Identities(names, np.asarray(scores, dtype=np.float32))
 
-    def _bind_or_check_model(self, model: Any) -> None:
+    def _bind_model(self, model: Any) -> None:
+        """Bind this gallery to ``model``'s fingerprint, or verify it matches.
+
+        Only enrollment (and construction) binds; matching never mutates the
+        gallery, so read paths cannot lock an unbound gallery to one model.
+        """
         fingerprint = _embedder_fingerprint(model)
         if self._model_fingerprint is None:
             self._model_fingerprint = fingerprint
             return
-        if fingerprint is None:
-            raise ValueError(
-                "This gallery is bound to a weights fingerprint, but the supplied "
-                "model has no fingerprintable weights."
-            )
-        if fingerprint != self._model_fingerprint:
+        self._require_match(fingerprint)
+
+    def _check_model(self, model: Any) -> None:
+        """Verify ``model`` matches without binding.
+
+        A model whose fingerprint cannot be computed (weights file moved, no
+        state dict) passes: refusing to match would strand valid galleries.
+        """
+        self._require_match(_embedder_fingerprint(model))
+
+    def _require_match(self, fingerprint: Optional[str]) -> None:
+        if (
+            fingerprint is not None
+            and self._model_fingerprint is not None
+            and fingerprint != self._model_fingerprint
+        ):
             raise ValueError(
                 "This gallery was built with a different embedding model "
                 f"(gallery fingerprint {self._model_fingerprint}, model "
@@ -355,7 +394,7 @@ class Gallery:
         selected = _coalesce_model(model, embedder)
         if selected is not None:
             gallery.embedder = selected
-            gallery._bind_or_check_model(selected)
+            gallery._check_model(selected)
         return gallery
 
 

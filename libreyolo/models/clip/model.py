@@ -355,7 +355,7 @@ class LibreCLIP(BaseModel):
             return self._postprocess_embeddings(
                 output,
                 gallery=kwargs.get("gallery"),
-                threshold=float(kwargs.get("threshold", 0.4)),
+                threshold=kwargs.get("threshold"),
             )
         logits = output[0] if isinstance(output, (list, tuple)) else output
         probs = torch.softmax(logits.float(), dim=1)[0]

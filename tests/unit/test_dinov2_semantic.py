@@ -270,6 +270,45 @@ class TestDINOv2Embed:
             torch.tensor([[2.0, 3.0, 4.0, 5.0]]).repeat(2, 1),
         )
 
+    def test_wrapper_matches_canonical_hf_forward(self):
+        """The hand-rolled embeddings->encoder->layernorm->CLS path must stay
+        equivalent to the canonical model forward at num_windows=1."""
+        from libreyolo.models.dinov2.model import _DINOv2EmbedderWrapper
+        from libreyolo.models.rfdetr.dinov2 import (
+            WindowedDinov2WithRegistersBackbone,
+            WindowedDinov2WithRegistersConfig,
+            WindowedDinov2WithRegistersModel,
+        )
+
+        config = WindowedDinov2WithRegistersConfig(
+            image_size=28,
+            patch_size=14,
+            hidden_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_register_tokens=2,
+            num_windows=1,
+            out_indices=[1],
+        )
+        torch.manual_seed(0)
+        backbone = WindowedDinov2WithRegistersBackbone(config).eval()
+        canonical = WindowedDinov2WithRegistersModel(config).eval()
+        canonical.load_state_dict(backbone.state_dict())
+
+        wrapper = object.__new__(_DINOv2EmbedderWrapper)
+        nn.Module.__init__(wrapper)
+        container = nn.Module()
+        container.encoder = backbone
+        wrapper.backbone = nn.Module()
+        wrapper.backbone.encoder = container
+
+        x = torch.randn(2, 3, 28, 28)
+        with torch.no_grad():
+            ours = wrapper(x)
+            expected = canonical(x).pooler_output
+        assert ours.shape == (2, 16)
+        torch.testing.assert_close(ours, expected)
+
     def test_predict_and_embed_verb_contract(self, monkeypatch):
         from libreyolo.models.dinov2.model import LibreDINOv2
 

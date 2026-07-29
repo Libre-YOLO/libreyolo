@@ -901,9 +901,10 @@ class BaseModel(ABC):
         output: Any,
         *,
         gallery=None,
-        threshold: float = 0.4,
+        threshold: Optional[float] = 0.4,
     ) -> Dict[str, Any]:
         """Normalize whole-image features and build the shared result payload."""
+        threshold = 0.4 if threshold is None else float(threshold)
         features = output[0] if isinstance(output, (list, tuple)) else output
         features = torch.as_tensor(features).float()
         if features.ndim == 1:

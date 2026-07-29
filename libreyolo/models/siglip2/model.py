@@ -412,7 +412,7 @@ class LibreSigLIP2(BaseModel):
             return self._postprocess_embeddings(
                 output,
                 gallery=kwargs.get("gallery"),
-                threshold=float(kwargs.get("threshold", 0.4)),
+                threshold=kwargs.get("threshold"),
             )
         logits = output[0] if isinstance(output, (list, tuple)) else output
         probs = siglip2_probs(logits, self._multi_label)[0]

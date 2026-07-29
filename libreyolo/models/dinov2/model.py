@@ -12,7 +12,7 @@ a task head" rather than the RF-DETR detector:
 * ``embed`` — bypasses every task head and projector, returning the final
   normalized DINOv2 CLS token as one whole-image row.
 
-Both expose themselves as the ``dinov2`` family: checkpoints save
+All expose themselves as the ``dinov2`` family: checkpoints save
 ``model_family="dinov2"`` and the factory routes ``backbone.*`` plus
 ``predict.*`` (semantic) / ``linear.*`` (classify) keys here. LibreRFDETR no
 longer registers ``semantic`` or ``classify``.
@@ -528,7 +528,7 @@ class LibreDINOv2(BaseModel):
             return self._postprocess_embeddings(
                 output,
                 gallery=kwargs.get("gallery"),
-                threshold=float(kwargs.get("threshold", 0.4)),
+                threshold=kwargs.get("threshold"),
             )
         if self.task == "classify":
             logits = output

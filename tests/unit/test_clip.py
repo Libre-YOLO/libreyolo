@@ -295,6 +295,18 @@ class TestEmbedTask:
         assert unknown.identities.name == [None]
         assert float(unknown.identities.score[0]) == pytest.approx(1.0, abs=1e-5)
 
+    def test_embed_kwargs_rejected_outside_embed_task(self, tiny_clip):
+        image = Image.new("RGB", (40, 30), color=(10, 20, 30))
+        with pytest.raises(ValueError, match="threshold= is only supported"):
+            tiny_clip(image, threshold=0.5)
+        with pytest.raises(ValueError, match="gallery= is only supported"):
+            tiny_clip(image, gallery=object())
+
+    def test_embed_task_rejects_augment(self, tiny_clip_embed):
+        image = Image.new("RGB", (40, 30), color=(10, 20, 30))
+        with pytest.raises(ValueError, match="augmentation"):
+            tiny_clip_embed(image, augment=True)
+
     def test_factory_explicit_embed_uses_classify_artifact(
         self, tiny_clip_embed, tmp_path
     ):

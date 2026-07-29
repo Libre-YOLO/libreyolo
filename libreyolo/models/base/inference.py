@@ -234,6 +234,15 @@ class InferenceRunner:
             raise ValueError(
                 "gallery= is only supported by models loaded with task='embed'."
             )
+        if (
+            kwargs.get("threshold") is not None
+            and getattr(self.model, "task", None) != "embed"
+        ):
+            raise ValueError(
+                "threshold= is only supported by models loaded with "
+                "task='embed' (the gallery match threshold). For detection "
+                "confidence use conf=."
+            )
         if augment and getattr(self.model, "task", None) == "embed":
             raise ValueError(
                 "Test-time augmentation does not support embedding models. "

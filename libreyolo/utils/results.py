@@ -1947,10 +1947,17 @@ def stack_result_embeddings(prediction: Any) -> torch.Tensor:
     collect(prediction)
     if not payloads:
         return torch.empty((0, 0), dtype=torch.float32)
-    dimensions = {int(tensor.shape[1]) for tensor in payloads}
+    # Zero-row payloads (e.g. a face-less image whose embedder had not yet
+    # resolved its dimension) contribute no rows and must not fail or skew the
+    # dimension-consistency check.
+    non_empty = [tensor for tensor in payloads if tensor.shape[0] > 0]
+    if not non_empty:
+        width = max(int(tensor.shape[1]) for tensor in payloads)
+        return torch.empty((0, width), dtype=torch.float32)
+    dimensions = {int(tensor.shape[1]) for tensor in non_empty}
     if len(dimensions) != 1:
         raise RuntimeError(
             "Cannot stack embeddings with different dimensions: "
             f"{sorted(dimensions)}."
         )
-    return torch.cat(payloads, dim=0)
+    return torch.cat(non_empty, dim=0)
