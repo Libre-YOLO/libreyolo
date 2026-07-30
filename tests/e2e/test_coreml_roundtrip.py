@@ -2218,8 +2218,14 @@ def test_coreml_fomo_synthetic_trained_parity(tmp_path):
 def test_coreml_picosam3_trained_roi_component_parity(tmp_path):
     """Validate the fixed one-ROI graph and sequential public placement."""
     from libreyolo import LibrePicoSAM3, LibreYOLO
+    from libreyolo.export.support import get_support
 
     model = LibrePicoSAM3(size="pico", device="cpu")
+    requested_compute_units = (
+        "validated"
+        if get_support("picosam3", "segment", "coreml").tier == "validated"
+        else "cpu_only"
+    )
     # Two visibly occupied prompts exercise sequential fixed-batch ROI calls,
     # exact host crop/resize placement, and one fresh public artifact load.
     source = _public_non_square_source()
@@ -2234,10 +2240,14 @@ def test_coreml_picosam3_trained_roi_component_parity(tmp_path):
         "segment",
         96,
         tmp_path,
+        compute_units=requested_compute_units,
     )
     del model
     gc.collect()
-    deployed_model = LibreYOLO(artifact)
+    deployed_model = LibreYOLO(
+        artifact,
+        compute_units=requested_compute_units,
+    )
     deployed = deployed_model.predict(
         source,
         bboxes=boxes,

@@ -630,6 +630,19 @@ _PROFILES = (
         "pico",
         96,
         "LibrePicoSAM3pico",
+        source_kind="pytorch-traced-graph-state-v2",
+        source_sha256=(
+            "3ff98bd4f49b8b6115dcddfb9bd8b94b"
+            "fe3ab418a8186d16c3fa9179b4f63624"
+        ),
+        deployment_abi_sha256=(
+            "c3f157ba2a82874c24ad2fe433ffc4dd"
+            "c1260cb2aed098e45631b6b3de60a7aa"
+        ),
+        evidence_sha256=(
+            "84b11ac10976df004505b6b9daecb84e"
+            "784f58fffd98533f21e236b6c961b9b7"
+        ),
         runtime_all=True,
         class_count=1,
     ),
