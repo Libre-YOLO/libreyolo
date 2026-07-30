@@ -19,6 +19,12 @@ import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
+from libreyolo.utils.amp import (
+    amp_uses_grad_scaler,
+    normalize_amp_dtype,
+    torch_amp_dtype,
+)
+
 from .artifacts import TrainingArtifactsCallback, TrainingStatusCallback
 from .callbacks import (
     TrainCallbackList,
@@ -110,6 +116,19 @@ class BaseTrainer(ABC):
         **kwargs,
     ):
         self.config = self._config_class().from_kwargs(**kwargs)
+        self.config.amp_dtype = normalize_amp_dtype(
+            getattr(self.config, "amp_dtype", "float16")
+        )
+        self.config.max_det = int(getattr(self.config, "max_det", 300))
+        if self.config.max_det < 1:
+            raise ValueError(f"max_det must be >= 1, got {self.config.max_det}")
+        self.config.eval_max_det = getattr(self.config, "eval_max_det", None)
+        if self.config.eval_max_det is not None:
+            self.config.eval_max_det = int(self.config.eval_max_det)
+            if self.config.eval_max_det < 1:
+                raise ValueError(
+                    f"eval_max_det must be >= 1, got {self.config.eval_max_det}"
+                )
         self.model = model
         self.wrapper_model = wrapper_model
         self.callbacks = TrainCallbackList(callbacks)
@@ -1349,6 +1368,7 @@ class BaseTrainer(ABC):
                 self.model,
                 imgsz=self.config.imgsz,
                 amp=self.config.amp,
+                amp_dtype=self.config.amp_dtype,
                 world_size=self.world_size,
                 nbs=getattr(self.config, "nbs", None),
                 fraction=getattr(self.wrapper_model, "autobatch_fraction", _DEFAULT_FRACTION),
@@ -1448,9 +1468,25 @@ class BaseTrainer(ABC):
                 )
 
         if self.config.amp and self.device.type == "cuda":
-            self.scaler = GradScaler("cuda")
+            amp_torch_dtype = torch_amp_dtype(self.config.amp_dtype)
+            if (
+                amp_torch_dtype == torch.bfloat16
+                and torch.cuda.is_available()
+                and not torch.cuda.is_bf16_supported()
+            ):
+                raise RuntimeError(
+                    "amp_dtype='bfloat16' requires a CUDA device with BF16 support"
+                )
+            # FP16 needs loss scaling. BF16's wider exponent range does not,
+            # but a disabled scaler keeps the optimizer path shared.
+            self.scaler = GradScaler(
+                "cuda", enabled=amp_uses_grad_scaler(self.config.amp_dtype)
+            )
             if is_main_process():
-                logger.info("Using mixed precision training (AMP)")
+                logger.info(
+                    "Using mixed precision training (AMP, dtype=%s)",
+                    self.config.amp_dtype,
+                )
         else:
             self.scaler = None
 
@@ -1530,6 +1566,7 @@ class BaseTrainer(ABC):
                         "batch": self.config.batch,
                         "imgsz": self.config.imgsz,
                         "amp": bool(self.config.amp),
+                        "amp_dtype": self.config.amp_dtype,
                         "workers": self.config.workers,
                     },
                 )
@@ -1544,6 +1581,13 @@ class BaseTrainer(ABC):
         params un-grad'd on some batches.
         """
         return False
+
+    def _autocast_context(self):
+        """Create a CUDA autocast context using the configured dtype."""
+        return autocast(
+            "cuda",
+            dtype=torch_amp_dtype(getattr(self.config, "amp_dtype", "float16")),
+        )
 
     def _ddp_static_graph(self) -> bool:
         """Whether to pass ``static_graph=True`` to DDP.
@@ -2088,7 +2132,7 @@ class BaseTrainer(ABC):
             # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
                 if self.scaler is not None:
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         distiller.teacher_forward(imgs)
                 else:
                     distiller.teacher_forward(imgs)
@@ -2101,7 +2145,7 @@ class BaseTrainer(ABC):
             # _sync_distiller_grads, keeping student and distiller consistent.
             if self.scaler is not None:
                 with self._prof_phase("forward"):
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
@@ -2270,7 +2314,7 @@ class BaseTrainer(ABC):
             # the frozen teacher doesn't pay full-precision compute each step.
             if distiller is not None:
                 if self.scaler is not None:
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         distiller.teacher_forward(imgs)
                 else:
                     distiller.teacher_forward(imgs)
@@ -2283,7 +2327,7 @@ class BaseTrainer(ABC):
             # gradient averaging is already correct — see scale_loss_for_ddp).
             if self.scaler is not None:
                 with self._prof_phase("forward"):
-                    with autocast("cuda"):
+                    with self._autocast_context():
                         outputs = self.on_forward(imgs, targets, polygons=polygons)
                         total_loss_raw = outputs["total_loss"]
                         if distiller is not None:
@@ -2457,8 +2501,11 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 conf_thres=0.001,
                 iou_thres=0.65,
+                max_det=getattr(self.config, "max_det", 300),
+                eval_max_det=getattr(self.config, "eval_max_det", None),
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=getattr(self.config, "amp_dtype", "float16"),
                 verbose=False,
                 num_workers=self.config.workers,
                 save_plots=val_save_plots,
@@ -2549,6 +2596,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2601,6 +2649,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2653,6 +2702,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",
@@ -2706,6 +2756,7 @@ class BaseTrainer(ABC):
                 imgsz=self.config.imgsz,
                 device=str(self.device),
                 half=self.config.amp and self.device.type == "cuda",
+                amp_dtype=self.config.amp_dtype,
                 verbose=False,
                 num_workers=self.config.workers,
                 split="val",

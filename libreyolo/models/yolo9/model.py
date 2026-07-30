@@ -495,6 +495,7 @@ class LibreYOLO9(BaseModel):
         exist_ok: bool = _TRAIN_DEFAULTS.exist_ok,
         resume: bool = _TRAIN_DEFAULTS.resume,
         amp: bool = _TRAIN_DEFAULTS.amp,
+        amp_dtype: str = _TRAIN_DEFAULTS.amp_dtype,
         patience: int = _TRAIN_DEFAULTS.patience,
         allow_download_scripts: bool = False,
         pretrained: bool | str | Path | None = None,
@@ -519,6 +520,7 @@ class LibreYOLO9(BaseModel):
             exist_ok: If True, overwrite existing experiment directory.
             resume: If True, resume training from checkpoint.
             amp: Enable automatic mixed precision training.
+            amp_dtype: CUDA AMP dtype, ``float16`` or ``bfloat16``.
             patience: Early stopping patience.
             pretrained: Optional training initialization weights. Use True to
                 load the matching LibreYOLO9 detect checkpoint for transfer
@@ -532,6 +534,19 @@ class LibreYOLO9(BaseModel):
             Training results dict with final_loss, best_mAP50, best_mAP50_95, etc.
         """
         from libreyolo.data import load_data_config
+
+        # Seed before adapting the class head. Rebuilding for a dataset with a
+        # different class count initializes new parameters, so seeding later
+        # would make identical seed= runs start from different heads.
+        if seed >= 0:
+            import random
+            import numpy as np
+
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
         try:
             data_config = load_data_config(
@@ -578,16 +593,6 @@ class LibreYOLO9(BaseModel):
                 stats["skipped"],
             )
 
-        if seed >= 0:
-            import random
-            import numpy as np
-
-            random.seed(seed)
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            if str(device).lower() not in ("cpu", "mps") and torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
-
         trainer_kwargs = dict(
             model=self.model,
             wrapper_model=self,
@@ -607,6 +612,7 @@ class LibreYOLO9(BaseModel):
             exist_ok=exist_ok,
             resume=resume,
             amp=amp,
+            amp_dtype=amp_dtype,
             patience=patience,
             allow_download_scripts=allow_download_scripts,
             callbacks=callbacks,

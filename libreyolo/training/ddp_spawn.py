@@ -213,6 +213,7 @@ def spawn_for_model(
                 model_instance.model,
                 imgsz=imgsz,
                 amp=bool(train_kw.get("amp", True)),
+                amp_dtype=str(train_kw.get("amp_dtype", "float16")),
                 world_size=nprocs,
                 nbs=nbs,
                 fraction=getattr(model_instance, "autobatch_fraction", _DEFAULT_FRACTION),

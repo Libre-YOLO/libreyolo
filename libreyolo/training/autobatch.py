@@ -32,6 +32,7 @@ from libreyolo.training.distributed import (
     is_distributed,
     is_main_process,
 )
+from libreyolo.utils.amp import torch_amp_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,8 @@ def autobatch(
     fraction: float = _DEFAULT_FRACTION,
     default: int = 16,
     max_probe: int = _DEFAULT_MAX_PROBE,
+    *,
+    amp_dtype: str = "float16",
 ) -> int:
     """Estimate the optimal *global* batch size for the given model and image size.
 
@@ -112,6 +115,7 @@ def autobatch(
         fraction: Target fraction of *total* VRAM to occupy (default 0.60).
         default: Fallback batch size for non-CUDA devices or probe failures.
         max_probe: Largest batch size to probe (default 64; set to nbs).
+        amp_dtype: CUDA autocast dtype used when AMP is enabled.
 
     Returns:
         Estimated optimal global batch size — a power of 2, always ≥ 1.
@@ -161,12 +165,16 @@ def autobatch(
     imgsz_h, imgsz_w = imgsz if isinstance(imgsz, (list, tuple)) else (imgsz, imgsz)
     model.train()
     try:
-        ctx = torch.autocast("cuda") if amp else contextlib.nullcontext()
         for b in probe_batches:
             try:
                 torch.cuda.empty_cache()
                 torch.cuda.reset_peak_memory_stats(device)
                 x = torch.zeros(b, 3, imgsz_h, imgsz_w, dtype=torch.float32, device=device)
+                ctx = (
+                    torch.autocast("cuda", dtype=torch_amp_dtype(amp_dtype))
+                    if amp
+                    else contextlib.nullcontext()
+                )
                 with ctx:
                     out = model(x)
                 t = _find_grad_tensor(out)
@@ -245,6 +253,8 @@ def resolve_auto_batch(
     world_size: int = 1,
     default: int = 16,
     nbs: int | None = None,
+    *,
+    amp_dtype: str = "float16",
 ) -> int:
     """Run ``autobatch`` on rank 0 and broadcast the result to all ranks.
 
@@ -265,6 +275,7 @@ def resolve_auto_batch(
         default: Fallback when CUDA is unavailable.
         nbs: Nominal batch size — caps the global batch and sets the probe
             limit so per-GPU capacity never exceeds nbs.
+        amp_dtype: CUDA autocast dtype used when AMP is active.
 
     Returns:
         Global batch size, divisible by *world_size* and ≥ 1.
@@ -275,7 +286,7 @@ def resolve_auto_batch(
     if is_main_process():
         try:
             per_gpu = autobatch(
-                model, imgsz=imgsz, amp=amp, fraction=fraction,
+                model, imgsz=imgsz, amp=amp, amp_dtype=amp_dtype, fraction=fraction,
                 default=default, max_probe=max_probe,
             )
         except Exception as exc:

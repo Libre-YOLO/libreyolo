@@ -80,6 +80,41 @@ def test_batch_throughput_scales(tmp_path):
     assert a["img_per_s"] > 0
 
 
+def test_cuda_autocast_uses_configured_dtype(monkeypatch):
+    calls = []
+
+    class _Context:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_):
+            return False
+
+    def fake_autocast(device_type, *, dtype):
+        calls.append((device_type, dtype))
+        return _Context()
+
+    prof = InferenceProfiler(
+        _StubModel(),
+        warmup=0,
+        runs=2,
+        imgsz=32,
+        half=True,
+        amp_dtype="bf16",
+        trace=False,
+    )
+    prof._is_cuda = True
+    monkeypatch.setattr(
+        "libreyolo.profiling.inference.torch.autocast",
+        fake_autocast,
+    )
+
+    prof._forward(torch.zeros(1, 3, 32, 32))
+
+    assert calls == [("cuda", torch.bfloat16)]
+    assert prof.amp_dtype == "bfloat16"
+
+
 def test_verdict_nms_bound(tmp_path):
     prof = InferenceProfiler(_StubModel(nms_sleep=0.004), warmup=1, runs=6,
                              imgsz=32, trace=False, save_dir=tmp_path)

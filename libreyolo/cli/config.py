@@ -433,6 +433,9 @@ def _build_rfdetr_train_kwargs(
         "device": "device",
         "flip_prob": "flip_prob",
         "amp": "amp",
+        "amp_dtype": "amp_dtype",
+        "max_det": "max_det",
+        "eval_max_det": "eval_max_det",
         "lora": "lora",
         "freeze": "freeze",
         "log_interval": "log_interval",
@@ -504,6 +507,7 @@ def build_family_train_kwargs(
             "ema",
             "ema_decay",
             "amp",
+            "amp_dtype",
             "name",
         }
         for internal_name in size_defaulted:

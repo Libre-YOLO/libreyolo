@@ -3,6 +3,45 @@ following open-source projects. Each upstream is listed with its
 license and the LibreYOLO module(s) that port from it.
 
 --------------------------------------------------------------------
+COCO API / pycocotools
+--------------------------------------------------------------------
+Source: https://github.com/ppwwyyxx/cocoapi
+Commit: ac87f5077ad6b8864c2dc5e93d14cae62d1db05a
+Version: pycocotools 2.0.11
+License: FreeBSD (BSD-2-Clause)
+Copyright (c) 2014, Piotr Dollar and Tsung-Yi Lin
+Used for: the configurable maxDets metric extraction in
+          libreyolo/validation/coco_evaluator.py, adapted from COCOeval's
+          accumulated precision/recall tensor layout and summary logic.
+
+Copyright (c) 2014, Piotr Dollar and Tsung-Yi Lin
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The views and conclusions contained in the software and documentation are those
+of the authors and should not be interpreted as representing official policies,
+either expressed or implied, of the FreeBSD Project.
+
+--------------------------------------------------------------------
 SAHI
 --------------------------------------------------------------------
 Source: https://github.com/obss/sahi
