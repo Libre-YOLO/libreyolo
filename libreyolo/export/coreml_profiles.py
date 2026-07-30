@@ -720,6 +720,19 @@ _PROFILES = (
         "base",
         1024,
         "LibreSAM base",
+        source_kind="pytorch-captured-bundle-state-v1",
+        source_sha256=(
+            "98e9d6e4fedbb1389cf1b74915b72d38"
+            "2397fc2cba8ed050764ecaa5fadc6c7c"
+        ),
+        deployment_abi_sha256=(
+            "c65591c48054b1d9627d123112f4129a"
+            "08e8d972a28aa5dd66ac9d73805f423e"
+        ),
+        evidence_sha256=(
+            "67ebf657d738ddcd0ec6a2b4d8c4758b"
+            "289dd6934c85e215382c50b956b25b64"
+        ),
         prompt_max_points=4,
         class_count=1,
     ),
